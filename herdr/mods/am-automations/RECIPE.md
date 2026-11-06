@@ -36,6 +36,8 @@ three views:
 - **Form**: name, schedule pills over a cron field, repo with `Choose…`, "runs in" (new worktree,
   repo root, existing space), agent pills (installed agents plus hc templates), model, prompt, timeout,
   MCP config, and `Next: …` previewed live; `Cancel` / `Save`.
+  An entry saved with a retired agent (`gemini`) shows it as a dimmed `gemini (retired)` pill, picked;
+  the value is kept and saved back unchanged, and no other form offers it.
 
 ## How it behaves
 
@@ -64,6 +66,7 @@ three views:
 ## Built from
 
 `mods/am-automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
+`retired.js` (the retired agents: a byte-equal copy of am-sidebar's, the pack's one list),
 `automations.svg` (a clock, 24×24 stroke), `mod.json`
 (`place: "none"`, title "Automations"), `LICENSE` (this pack's Apache-2.0) and `LICENSE-upstream`
 (DnzzL's MIT, verbatim). Herdr API: `exec`, `hc`, `home`, `theme`, `terminals`, `spaces`, `run`,

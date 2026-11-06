@@ -14,6 +14,7 @@ import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from
 import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
+import { markConversation } from './stage.js'
 import { MENTION_ORIGIN, currentPart, relativeShort } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
 import { BotMark, lookOf } from './mark.js'
@@ -54,6 +55,7 @@ import { rememberOpen, takeReopen } from './reopen.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
 import { addStrings, dateLocale, hostText, installLocale, language, t } from './i18n.js'
+import { allowPlace } from './places.js'
 import { noteClientError, quietly } from './diagnostics.js'
 import { RIGHTBAR_ATTRIBUTES, columnOpened, createSwitchWindow, drawerOpened, rightColumnOpen } from './right-panel.js'
 import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
@@ -197,7 +199,7 @@ export function apply(ctx) {
   const pull = async () => {
     const order = ++pulls
     const known = roster.getSnapshot()
-    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', locale: language() })
+    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', locale: language(), allowPlace: allowPlace() })
     if (order < applied) return
     applied = order
     const nextActivity = JSON.stringify(value.activity ?? {})
@@ -420,7 +422,7 @@ export function apply(ctx) {
   const agentSessions = (agentId) => {
     const snapshot = roster.getSnapshot()
     const agent = snapshot.agentsById[agentId]
-    const ids = agent === undefined ? [] : [...agentRowSessions(agent, snapshot)]
+    const ids = agent === undefined ? [] : [...agentRowSessions(agent, snapshot, Date.now())]
     for (const [id, owner] of pendingAdopt) if (owner === agentId && !ids.includes(id)) ids.push(id)
     return ids
   }
@@ -993,6 +995,9 @@ export function apply(ctx) {
     }
   }
   const installConversation = () => [
+    // First on, last off: the page mark the Stage composer rules key on (stage.js), so a Bot
+    // composer card is two-row from its first paint, before DSH mounts its input slots (#322).
+    () => markConversation(),
     () => installUserTimes(),
     () => installCompiledStyles(COMPOSER_PACK_CSS, 'composer-packs'),
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),

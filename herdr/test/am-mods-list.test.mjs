@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as core from "../mods/am-mods/core.js";
+import * as release from "../mods/am-sidebar/release.js";
 import { PACK_MODS, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
 const io = {
@@ -131,4 +132,63 @@ test("groupMods: the pack, yours, then built-in folded to one row; the counts ar
   const bare = core.groupMods(mods.filter((m) => m.kind !== "pack"));
   assert.deepEqual(bare.groups.map((g) => g.key), ["yours", "herdr"]);
   assert.deepEqual(bare.counts, ["2 yours", "2 built-in"], "no count for a group that is not drawn");
+});
+
+// #305: Herdr drops a layout whose block names a mod missing from mods/, so the switch reads what
+// the stock layout names. The tree is the repo's own herdr-layout file, never an app home's.
+const STOCK_LAYOUT = JSON.parse(readFileSync(new URL("../../herdr-layout/layouts/automagik.json", import.meta.url), "utf8"));
+
+test("layoutNeeds: the stock layout's blocks (header and floating ones too) and its right-click menu", () => {
+  const { blocks, menu } = core.layoutNeeds(STOCK_LAYOUT);
+  assert.deepEqual([...blocks].sort(), ["am-footer", "am-sidebar", "am-status", "am-tabs", "changes", "files", "pane", "workspace-chrome"]);
+  assert.equal(menu, "am-markdown");
+  const floating = { id: "root", children: [{ id: "a", floating: [{ id: "f", content: { mod: "float-mod" } }] }] };
+  assert.deepEqual([...core.layoutNeeds(floating).blocks], ["float-mod"]);
+  assert.deepEqual(core.layoutNeeds(null), { blocks: new Set(), menu: null });
+  assert.deepEqual(core.layoutNeeds({}), { blocks: new Set(), menu: null });
+});
+
+test("layoutGuard: a block's mod is refused with the layout's name; the menu's only noted; others pass", () => {
+  for (const mod of ["am-sidebar", "am-footer", "am-tabs", "am-status"]) {
+    const g = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod });
+    assert.match(g?.refuse ?? "", new RegExp(`^${mod} stays on: the automagik layout shows it`));
+    assert.match(g.refuse, /ctrl-shift-l/);
+  }
+  const menu = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-markdown" });
+  assert.equal(menu?.refuse, undefined);
+  assert.match(menu?.note ?? "", /the automagik layout's right-click menu/);
+  for (const mod of ["am-quota", "am-automations", "am-new-menu", "scratch"]) {
+    assert.equal(core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod }), null, mod);
+  }
+  assert.match(core.layoutGuard({ tree: STOCK_LAYOUT, mod: "am-tabs" }).refuse, /the shown layout shows it/);
+  assert.equal(core.layoutGuard({ name: "main", tree: {}, mod: "am-sidebar" }), null, "no tree: nothing to guard");
+});
+
+// #414: `am uninstall herdr.<mod>` (parts.mjs) asks with release.js's copy, since the pack's entries
+// never load another mod's files: both functions byte for byte as the mod manager's.
+// #430: `am uninstall herdr.layout` asks with release.js's packageLayoutGuard the same way.
+test("layoutNeeds, layoutGuard and packageLayoutGuard: release.js's copies are core.js's, byte for byte", () => {
+  assert.equal(String(release.layoutNeeds), String(core.layoutNeeds));
+  assert.equal(String(release.layoutGuard), String(core.layoutGuard));
+  assert.equal(String(release.packageLayoutGuard), String(core.packageLayoutGuard));
+});
+
+test("layoutGuard: `then` names what follows the switch; off is the default", () => {
+  const off = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-footer" }).refuse;
+  assert.match(off, /Switch layouts first \(ctrl-shift-l\), then turn it off$/);
+  for (const then of ["remove it", "uninstall it"]) {
+    const g = core.layoutGuard({ name: "automagik", tree: STOCK_LAYOUT, mod: "am-footer", then });
+    assert.equal(g.refuse, off.replace(/turn it off$/, then));
+  }
+});
+
+test("packageLayoutGuard: the package's own layout that Herdr shows is refused; any other passes", () => {
+  const g = core.packageLayoutGuard({ name: "Mine", layouts: ["other.json", "mine.json"] });
+  assert.match(g.refuse, /^the Mine layout is this package's \(layouts\/mine\.json\) and Herdr shows it: .*then remove it$/);
+  assert.equal(core.packageLayoutGuard({ name: "automagik", layouts: ["mine.json"] }), null);
+  assert.equal(core.packageLayoutGuard({ name: null, layouts: ["mine.json"] }), null, "no layout shown: nothing to guard");
+  assert.equal(core.packageLayoutGuard({ name: "mine", layouts: undefined }), null, "a record with no layouts");
+  // `then` names what follows the switch; remove is the default (the mod manager's).
+  const un = core.packageLayoutGuard({ name: "Mine", layouts: ["mine.json"], then: "uninstall it" }).refuse;
+  assert.equal(un, g.refuse.replace(/remove it$/, "uninstall it"));
 });

@@ -22,7 +22,7 @@ const STATES = ['idle', 'thinking', 'searching', 'working', 'sending', 'orbit', 
 const WORK = ['thinking', 'searching', 'working', 'sending', 'orbit']
 export const botState = (running, activity, alert, { failed = false, unread = false } = {}) => (alert ? 'alert'
   : running ? (WORK.includes(activity) ? activity : 'working') : failed ? 'failed' : activity === 'waiting' ? 'waiting' : unread ? 'review' : 'idle')
-export const toolState = name => (/^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? 'sending'
+export const toolState = name => (/^(message_bot|stop_bot|create_bot|update_bot|delete_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? 'sending'
   : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? 'searching' : 'working')
 
 // Eyes follow the pointer on large marks.

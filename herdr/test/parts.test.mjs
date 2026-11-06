@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -457,4 +457,253 @@ test("--purge keeps the hooks journal when the briefing entry point is am's, and
     assert.equal(existsSync(journal), ams, ams ? "am's journal stays" : "the pack's journal goes");
     assert.ok(m.logs.some((l) => (ams ? /left the briefing hooks and their entry point: they are not the pack's/ : /removed the briefing hook's entry point/).test(l)));
   }
+});
+
+// #414: uninstall of one mod asks the layout Herdr shows, as the mod manager's off and remove do
+// (#305): "layout" from `herdr-app status` (a fake in this machine's ~/.local/bin, never the real
+// one), its tree from the app home's layouts/<name>.json.
+function showing(m, layout) {
+  mkdirSync(m.binDir, { recursive: true });
+  const fake = join(m.binDir, "herdr-app");
+  writeFileSync(fake, layout === null ? "#!/bin/sh\nexit 1\n"
+    : `#!/bin/sh\n[ "$1" = status ] || exit 2\nprintf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' '${layout}'\n`);
+  execFileSync("chmod", ["755", fake]);
+}
+const isOff = (m, mod) => existsSync(join(m.off, mod, "main.js")) && !existsSync(join(m.mods, mod));
+
+test("uninstall of a mod the shown layout's blocks name is refused, naming the layout; the folder stays", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  assert.ok(existsSync(join(m.app, "layouts", "automagik.json")), "the pack's layout is in place");
+  showing(m, "automagik");
+  for (const mod of ["am-footer", "am-status", "am-tabs"]) {
+    assert.throws(() => uninstall(m.ctx(), P(`herdr.${mod}`)),
+      new RegExp(`^Error: ${mod} stays on: the automagik layout shows it, .*Switch layouts first \\(ctrl-shift-l\\), then uninstall it; from a terminal: herdr-app do layout\\.switch`));
+    assert.ok(existsSync(join(m.mods, mod, "main.js")) && !existsSync(join(m.off, mod)), `${mod} stays in mods/`);
+  }
+  // The same through the entry am runs: exit 1, the message on stdout.
+  const out = [];
+  assert.equal(main(["uninstall", "herdr.am-footer"], { ctx: m.ctx({ AM_JSON: "1" }), out: (l) => out.push(l) }), 1);
+  assert.match(JSON.parse(out[0]).detail, /^am-footer stays on: the automagik layout shows it/);
+  assert.ok(m.calls.some((c) => c[0] === "herdr-app" && c[1] === "status"));
+});
+
+test("uninstall of a mod the shown layout doesn't name switches it off; the menu's mod goes with a note", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  showing(m, "automagik");
+  const before = m.logs.length;
+  assert.equal(uninstall(m.ctx(), P("herdr.am-new-menu")).changed, true);
+  assert.ok(isOff(m, "am-new-menu"));
+  assert.ok(!m.logs.slice(before).some((l) => /layout/.test(l)), m.logs.slice(before).join("\n"));
+  // terminal_menu: Herdr warns and falls back to its own menu, the layout stays.
+  assert.equal(uninstall(m.ctx(), P("herdr.am-markdown")).changed, true);
+  assert.ok(isOff(m, "am-markdown"));
+  assert.ok(m.logs.includes("am-markdown was the automagik layout's right-click menu: Herdr's own menu shows instead"), m.logs.join("\n"));
+  // Another layout shown, one of the person's that names none of the pack: am-footer goes.
+  writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+  showing(m, "mine");
+  assert.equal(uninstall(m.ctx(), P("herdr.am-footer")).changed, true);
+  assert.ok(isOff(m, "am-footer"));
+});
+
+test("uninstall when the shown layout can't be read: the mod goes off, and the layouts that show it are named", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const warned = (mod, why) => m.logs.some((l) => l.startsWith(`switching ${mod} off without knowing the layout Herdr shows (${why}): automagik shows it`));
+  // No herdr-app at all: this machine's PATH has none, so nothing reaches a running Herdr.
+  assert.ok(!m.env.PATH.split(":").some((d) => existsSync(join(d, "herdr-app"))), m.env.PATH);
+  assert.equal(uninstall(m.ctx(), P("herdr.am-footer")).changed, true);
+  assert.ok(isOff(m, "am-footer"));
+  assert.ok(warned("am-footer", "no herdr-app"), m.logs.join("\n"));
+  // herdr-app status fails (Herdr not running).
+  showing(m, null);
+  assert.equal(uninstall(m.ctx(), P("herdr.am-status")).changed, true);
+  assert.ok(warned("am-status", "herdr-app status gave no layout: is Herdr running?"), m.logs.join("\n"));
+  // A layout named whose file is not readable JSON: fail open, said.
+  writeFileSync(join(m.app, "layouts", "broken.json"), "{");
+  showing(m, "broken");
+  assert.equal(uninstall(m.ctx(), P("herdr.am-tabs")).changed, true);
+  assert.ok(m.logs.some((l) => /^switching am-tabs off without knowing the layout Herdr shows \(.*broken\.json is unreadable/.test(l)), m.logs.join("\n"));
+  // A mod no layout's block names: nothing said about layouts.
+  const before = m.logs.length;
+  uninstall(m.ctx(), P("herdr.am-new-menu"));
+  assert.ok(!m.logs.slice(before).some((l) => /layout/.test(l)), m.logs.slice(before).join("\n"));
+});
+
+// #420: the whole pack's uninstall asks the shown layout before anything leaves, as one mod's does.
+const packOn = (m) => PACK_MODS.filter((mod) => !OFF_BY_DEFAULT.includes(mod)).every((mod) => existsSync(join(m.mods, mod, "main.js")));
+
+test("uninstall of the pack while the shown layout's blocks name its mods is refused; nothing moves", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const layout = join(m.app, "layouts", "automagik.json");
+  const marker = join(m.app, "automagik-herdr", "installed-by-install.sh");
+  showing(m, "automagik");
+  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")),
+    /^Error: am-\S+ stays on: the automagik layout shows it, .*Switch layouts first \(ctrl-shift-l\), then uninstall the pack \(its blocks name .+ too\); from a terminal: herdr-app do layout\.switch/);
+  assert.ok(packOn(m) && existsSync(layout) && existsSync(marker), "the pack, its layout and its record stay");
+  // A layout of the person's that shows the sidebar: refused too, naming it.
+  writeFileSync(join(m.app, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "am-sidebar" } }] }));
+  showing(m, "main-agents");
+  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")), /^Error: am-sidebar stays on: the main-agents layout shows it, .*then uninstall the pack; from a terminal/);
+  assert.ok(packOn(m));
+  // One that names none of the pack: the pack goes.
+  writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+  showing(m, "mine");
+  assert.equal(uninstall(m.ctx(), P("herdr.pack")).changed, true);
+  assert.ok(!existsSync(join(m.mods, "am-sidebar")) && !existsSync(marker));
+});
+
+test("uninstall of the pack with no shown layout to read goes on, naming the person's layouts that show its mods", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  writeFileSync(join(m.app, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "am-sidebar" } }] }));
+  // A name with a path: the real reason, never "is Herdr running".
+  showing(m, "../elsewhere");
+  assert.equal(uninstall(m.ctx(), P("herdr.pack")).changed, true);
+  const said = m.logs.find((l) => l.startsWith("uninstalling the pack without knowing the layout Herdr shows"));
+  assert.ok(said, m.logs.join("\n"));
+  assert.match(said, /\(Herdr shows the layout "\.\.\/elsewhere", a name with a path, so no file in .*layouts was read\): main-agents \(am-sidebar\) shows the pack's mods/);
+  assert.doesNotMatch(said, /automagik \(/, "the pack's own layout, removed with it, is not listed");
+  assert.ok(!m.logs.some((l) => /is Herdr running/.test(l)));
+  assert.ok(!existsSync(join(m.mods, "am-sidebar")));
+});
+
+test("one mod's uninstall with a shown layout name holding a path gives that reason", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  showing(m, "sub/automagik");
+  assert.equal(uninstall(m.ctx(), P("herdr.am-footer")).changed, true);
+  assert.ok(m.logs.some((l) => l.startsWith('switching am-footer off without knowing the layout Herdr shows (Herdr shows the layout "sub/automagik", a name with a path')), m.logs.join("\n"));
+});
+
+// RFC 0012 delivery 7 decides how a fork takes a member's place; until then its folder changes nothing.
+test("a fork's folder in mods/ doesn't lift the refusal: the member stays on, the layout's bytes don't change", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  showing(m, "automagik");
+  mkdirSync(join(m.mods, "my-footer"), { recursive: true });
+  writeFileSync(join(m.mods, "my-footer", "main.js"), "// a fork\n");
+  writeFileSync(join(m.mods, "my-footer", "mod.json"), "{}\n");
+  const layout = join(m.app, "layouts", "automagik.json");
+  const before = readFileSync(layout);
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-footer")), /^Error: am-footer stays on: the automagik layout shows it/);
+  assert.ok(existsSync(join(m.mods, "am-footer", "main.js")));
+  assert.ok(readFileSync(layout).equals(before));
+});
+
+test("uninstall of the pack: a switched-off mod the shown layout names doesn't refuse it", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  showing(m, "automagik");
+  uninstall(m.ctx(), P("herdr.am-new-menu"));
+  assert.ok(isOff(m, "am-new-menu"));
+  writeFileSync(join(m.app, "layouts", "mine.json"), JSON.stringify({ id: "root", children: [{ id: "n", content: { mod: "am-new-menu" } }] }));
+  showing(m, "mine");
+  assert.equal(uninstall(m.ctx(), P("herdr.pack")).changed, true);
+  assert.ok(!existsSync(join(m.mods, "am-sidebar")));
+});
+
+// #430: `am uninstall herdr.layout` asks the shown layout as the mod manager's package remove does (#420).
+test("uninstall of herdr.layout while Herdr shows it is refused, naming it and both ways to switch; nothing changes", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.layout"), packSource);
+  const live = join(m.app, "layouts", "automagik.json");
+  const before = readFileSync(live);
+  for (const name of ["automagik", "Automagik"]) {
+    showing(m, name);
+    assert.throws(() => uninstall(m.ctx(), P("herdr.layout")), (e) => e.message === `the ${name} layout is this package's (layouts/automagik.json) `
+      + "and Herdr shows it: removing the package takes it away (plain Herdr instead). Switch layouts first (ctrl-shift-l), "
+      + `then uninstall it; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+    assert.ok(readFileSync(live).equals(before), "the layout's bytes don't change");
+    assert.equal(readMarker(m.mods).layout, "added");
+  }
+  // The same through the entry am runs: exit 1, the message on stdout.
+  showing(m, "automagik");
+  const out = [];
+  assert.equal(main(["uninstall", "herdr.layout"], { ctx: m.ctx({ AM_JSON: "1" }), out: (l) => out.push(l) }), 1);
+  assert.match(JSON.parse(out[0]).detail, /^the automagik layout is this package's \(layouts\/automagik\.json\) and Herdr shows it/);
+  assert.ok(readFileSync(live).equals(before));
+  // A copy that is yours is left whatever is shown: never refused, never removed.
+  writeFileSync(live, "{\"mine\": true}\n");
+  assert.match(uninstall(m.ctx(), P("herdr.layout")).detail, /it is yours, left as it is/);
+  assert.equal(readFileSync(live, "utf8"), "{\"mine\": true}\n");
+});
+
+test("uninstall of herdr.layout while Herdr shows another layout removes it, main included", (t) => {
+  for (const shown of ["main", "mine"]) {
+    const m = machine(t);
+    install(m.ctx(), P("herdr.layout"), packSource);
+    const live = join(m.app, "layouts", "automagik.json");
+    showing(m, shown);
+    assert.equal(uninstall(m.ctx(), P("herdr.layout")).changed, true);
+    assert.ok(!existsSync(live), shown);
+    assert.equal(readMarker(m.mods).layout, "removed");
+    assert.ok(m.logs.includes(`removed ${live}`), m.logs.join("\n"));
+  }
+});
+
+test("uninstall of herdr.layout when the shown layout can't be read goes on, saying why and how to switch back", (t) => {
+  const removed = (m, why) => m.logs.includes(`removed ${join(m.app, "layouts", "automagik.json")} without knowing the layout Herdr shows (${why}); `
+    + `if Herdr shows it, switch layouts (ctrl-shift-l); from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+  // No herdr-app at all: this machine's PATH has none.
+  const a = machine(t);
+  install(a.ctx(), P("herdr.layout"), packSource);
+  assert.ok(!a.env.PATH.split(":").some((d) => existsSync(join(d, "herdr-app"))), a.env.PATH);
+  assert.equal(uninstall(a.ctx(), P("herdr.layout")).changed, true);
+  assert.ok(!existsSync(join(a.app, "layouts", "automagik.json")));
+  assert.ok(removed(a, "no herdr-app"), a.logs.join("\n"));
+  // herdr-app status fails (Herdr not running).
+  const b = machine(t);
+  install(b.ctx(), P("herdr.layout"), packSource);
+  showing(b, null);
+  assert.equal(uninstall(b.ctx(), P("herdr.layout")).changed, true);
+  assert.ok(!existsSync(join(b.app, "layouts", "automagik.json")));
+  assert.ok(removed(b, "herdr-app status gave no layout: is Herdr running?"), b.logs.join("\n"));
+});
+
+test("the refusal leaves out the layout.switch command while main is the layout in the way", (t) => {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  writeFileSync(join(m.app, "layouts", "main.json"), JSON.stringify({ id: "root", children: [{ id: "s", content: { mod: "am-sidebar" } }] }));
+  showing(m, "main");
+  assert.throws(() => uninstall(m.ctx(), P("herdr.pack")), (e) => /^am-sidebar stays on: the main layout shows it, .*then uninstall the pack$/.test(e.message));
+  assert.ok(existsSync(join(m.mods, "am-sidebar", "main.js")));
+});
+
+// ---- #492 review: a linked mods/ is not the person's layouts/; what the log says is what happened ----
+
+/** The pack installed, then mods/ made a link to a folder outside the app home (the folders inside it). */
+function linkedMods(t) {
+  const m = machine(t);
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const ext = join(m.dir, "their-mods");
+  renameSync(m.mods, ext);
+  symlinkSync(ext, m.mods);
+  return { m, ext, prev: join(m.app, "automagik-herdr", ".prev") };
+}
+
+test("herdr.pack uninstall with a linked mods/: each folder it says it moved is in the kept set, and none is left behind", (t) => {
+  const { m, ext, prev } = linkedMods(t);
+  const on = PACK_MODS.filter((x) => existsSync(join(ext, x)));
+  const r = uninstall(m.ctx(), P("herdr.pack"));
+  assert.equal(r.ok, true);
+  const said = m.logs.join("\n");
+  assert.match(said, /moved the pack out of .*mods \(/);
+  for (const x of on) {
+    assert.ok(existsSync(join(prev, x)), `${x} said moved, so it is in .prev`);
+    assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
+  }
+  assert.equal(readMarker(m.mods), null, "nothing stays, so the record goes");
+});
+
+test("herdr.pack uninstall --purge with a linked mods/: the folders it says it deleted are gone from mods/", (t) => {
+  const { m, ext } = linkedMods(t);
+  const on = PACK_MODS.filter((x) => existsSync(join(ext, x)));
+  const r = uninstall(m.ctx(), P("herdr.pack"), { purge: true });
+  assert.equal(r.ok, true);
+  assert.match(m.logs.join("\n"), /deleted the pack's folders \(.*\) and their data \(--purge\)/);
+  for (const x of on) assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
+  assert.equal(readMarker(m.mods), null);
 });

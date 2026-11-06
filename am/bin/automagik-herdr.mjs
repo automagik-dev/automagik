@@ -19,14 +19,14 @@ import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
-  parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
+  botsText, parseBots, plannedOf, projectKeyOf, projectOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
-  shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
+  freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
-import { interpreterPath } from "../agentPath.mjs";
-import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
+import { agentOnMachine, interpreterPath } from "../agentPath.mjs";
+import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
@@ -37,7 +37,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
 import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
   claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
-import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, updatesOff } from "../release.js";
+import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
@@ -47,9 +47,12 @@ import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
 
-/** A refusal or a usage mistake: printed on stderr, exit `code`. */
+/**
+ * A refusal or a usage mistake: printed on stderr, exit `code`. `detail`: fields a --json run
+ * also prints on stdout, beside `error` (the message), for a caller that shows them (#413).
+ */
 export class CliError extends Error {
-  constructor(message, code = 1) { super(message); this.code = code; }
+  constructor(message, code = 1, detail = null) { super(message); this.code = code; this.detail = detail; }
 }
 
 // ---- files and programs ----
@@ -76,13 +79,14 @@ async function slot(fn) {
   try { return await fn(); } finally { running -= 1; waiting.shift()?.(); }
 }
 
-/** Runs a program: { code, stdout, stderr }; code 127 when it isn't there. */
+/** Runs a program: { code, stdout, stderr }; code 127 when it isn't there; killed: true when its timeout ended it. */
 export function runProgram(command, args, { cwd, timeout = 15000 } = {}) {
   return slot(() => new Promise((done) => {
     try {
       execFile(command, args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (!err) return done({ code: 0, stdout, stderr });
-        done({ code: err.code === "ENOENT" ? 127 : (typeof err.code === "number" ? err.code : 1), stdout: stdout ?? "", stderr: stderr || String(err.message) });
+        done({ code: err.code === "ENOENT" ? 127 : (typeof err.code === "number" ? err.code : 1), stdout: stdout ?? "", stderr: stderr || String(err.message),
+          ...(err.killed ? { killed: true } : {}) });
       });
     } catch (e) { done({ code: 127, stdout: "", stderr: String(e?.message ?? e) }); }
   }));
@@ -111,8 +115,8 @@ const commandKeyOf = async (opts) => {
   return key;
 };
 
-async function hc(args) {
-  const r = await runProgram(programPath("hc") ?? "hc", args);
+async function hc(args, { timeout } = {}) {
+  const r = await runProgram(programPath("hc") ?? "hc", args, { timeout });
   if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
   return r;
 }
@@ -126,8 +130,8 @@ async function hcJson(args) {
   return parsed(r, args);
 }
 /** `hc get <t> --json`, or null when hc says there is no such terminal (hc itself missing still throws). */
-async function hcGet(terminal) {
-  const r = await hc(["get", terminal, "--json"]);
+async function hcGet(terminal, { timeout } = {}) {
+  const r = await hc(["get", terminal, "--json"], { timeout });
   return r.code === 0 ? parsed(r, ["get", terminal]) : null;
 }
 const local = (address) => typeof address === "string" && !address.includes("/");
@@ -213,8 +217,8 @@ const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${mac
 // herdr-core there: its file ops (remoteFile.js) and one program, as `hc exec --on` runs it.
 const remoteIo = {
   hc,
-  exec: async (command, args, machine, { cwd } = {}) =>
-    decodeExec(await hc(["exec", "--json", "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), 60),
+  exec: async (command, args, machine, { cwd, timeout } = {}) =>
+    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args], { timeout: timeout ? (timeout + 10) * 1000 : undefined }), timeout ?? 60),
 };
 
 // What hc said: its error's message when it printed one as JSON.
@@ -292,7 +296,7 @@ async function writeRemoteBots(project, raw) {
   }
   try {
     if (raw === null) await removeRemoteText(remoteIo, machine, path, expected);
-    else await writeRemoteText(remoteIo, machine, path, `${JSON.stringify(raw, null, 2)}\n`, expected);
+    else await writeRemoteText(remoteIo, machine, path, botsText(raw, expected), expected);
   } catch (e) {
     if (e instanceof StaleSnapshot) throw new CliError(`Not saved: ${fileName(project)} changed since it was read (another edit landed first). Run the command again.`);
     // A write whose answer was lost and that the file doesn't show: said as it is.
@@ -359,7 +363,7 @@ export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) 
   if (now !== expected) throw new CliError(`Not saved: ${path} changed since it was read (another edit landed first). Run the command again.`);
   try {
     if (raw === null) return io.remove(path);
-    const text = `${JSON.stringify(raw, null, 2)}\n`;
+    const text = botsText(raw, expected ?? before); // indented as the file is (#230)
     if (expected === null) { io.mkdir(under(key, ".herdr")); io.create(path, text); } else io.replace(path, text);
   } catch (e) {
     if (e?.code === "EEXIST") throw new CliError(`Not saved: ${path} appeared since it was read. Run the command again.`);
@@ -569,6 +573,17 @@ async function projectDefining(botId, folder) {
  * that defines the bot. The file is created, even empty, so it happens once.
  */
 async function importLabels(path) {
+  const found = await labelRows();
+  try {
+    await withLockAsync(ledgerLock(path), async () => {
+      if (existsSync(path)) return; // another CLI imported first
+      appendAttach(path, found, "ax");
+    });
+  } catch (e) { throw asCliError(e); }
+}
+
+/** The one-time import's rows (importLabels), worked out and not written. */
+async function labelRows() {
   const core = await coreId();
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
   // One terminal hc fails to answer for is left out, never the whole import.
@@ -584,12 +599,7 @@ async function importLabels(path) {
     const project = await projectDefining(bot, pick.foreground?.cwd ?? pick.cwd);
     if (project) found.push(attachRow({ event: "attach", bot, project, terminal: pick.address, core, created_ms: pick.created_ms, by: "import" }));
   }
-  try {
-    await withLockAsync(ledgerLock(path), async () => {
-      if (existsSync(path)) return; // another CLI imported first
-      appendAttach(path, found, "ax");
-    });
-  } catch (e) { throw asCliError(e); }
+  return found;
 }
 
 /** End rows (by "sweep") for bindings hc no longer confirms, under the lock; a failure only warns. */
@@ -610,11 +620,14 @@ async function sweep(path, ended) {
 /**
  * The ledger's rows, the one-time import done first when there is no file. With no app home
  * (Herdr not set up here) nothing is imported or made: no rows, until a start or attach.
+ * readOnly (the import's dry run, #486): the one-time import's rows as it would write them,
+ * and no file made.
  */
-async function ledgerRows(path) {
+async function ledgerRows(path, readOnly = false) {
   const rows = readAttachFile(path);
   if (rows !== null) return rows;
   if (!existsSync(appHome())) return [];
+  if (readOnly) return labelRows();
   await importLabels(path);
   return readAttachFile(path) ?? [];
 }
@@ -625,16 +638,18 @@ let viewOnce = null;
  * byTerminal: Map address -> { binding, get } }. Every binding is checked with `hc get`;
  * one hc no longer confirms (finished, gone, or its id reused) is left out, and its end row
  * written. Once per run: commands that write the ledger decide again under its lock.
+ * readOnly (the import's dry run, #486, the run's first caller): the same view, with no
+ * one-time import written and no end row; the run's later calls get that view too.
  */
-export function attachView() {
+export function attachView({ readOnly = false } = {}) {
   viewOnce ??= (async () => {
     const path = attachPath(appHome());
-    const rows = await ledgerRows(path);
+    const rows = await ledgerRows(path, readOnly);
     const core = await coreId();
     const machines = await machinesNow();
     const { byKey } = foldAttach(rows);
     const { live, ended, unknown } = await confirmBindings([...byKey.values()], core, lookup, UNANSWERED, machines);
-    if (ended.length) await sweep(path, ended);
+    if (ended.length && !readOnly) await sweep(path, ended);
     // live: this computer's bindings by bot. liveAt / unknownAt: every binding by place and bot
     // (atKey; a linked machine's place is its core id, and a project's checkouts on two
     // machines share their bots' ids). byTerminal: by hc address ("lab/t8" for a machine's).
@@ -832,6 +847,7 @@ const OPTIONS = {
   fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" }, "fresh-shared": { type: "boolean" },
   cwd: { type: "string" },
   machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
+  "from-hc": { type: "boolean" }, "squad-label": { type: "string" }, apply: { type: "boolean" },
 };
 
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
@@ -895,6 +911,23 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   attach <bot> <terminal> [--move]   tie a running pane to the bot; a bot attached elsewhere
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
+  import --from-hc [--squad-label L] [--apply]
+                                a running hc team as bots: each live pane on this computer
+                                labelled L= (default: squad) with an hc name and an agent in front
+                                becomes a bot of that name, attached to that pane. In each squad
+                                the captain (the pane labelled role=captain, else the one whose
+                                name or template is the squad's name then -cap or -captain, as
+                                web-cap) reports to the main bot and the others to their
+                                captain; a member's rank is its role= label when that is a rank,
+                                else its name's last word (dev, test, review, fix, pm). Prints
+                                the plan and writes nothing, the attach ledger included, unless
+                                --apply, which prints it, then creates and attaches. A pane
+                                already playing its bot only gets its lost labels back, so a
+                                second run changes nothing. Any conflict (a pane playing or
+                                labelled for another bot, a bot of that name attached
+                                elsewhere, under another lead or of another agent, a squad
+                                without one captain) refuses the whole import. Never starts,
+                                moves or restarts a pane
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
   history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
                                 starts, sessions (and the newest transcript) and workers
@@ -954,7 +987,9 @@ keys to (its git main checkout), or --project's. With --machine, --project is an
 folder on that machine and the file is read and written there by the same rule (a file
 changed since it was read is never overwritten); its panes run there (M/tN). A pane that
 reports no status to hc can't say it is waiting for an approval: restart refuses it unless
---force, which still sends it no keys.`;
+--force, which still sends it no keys. restart --tree is this computer's only for now: with
+--machine it is refused before anything is read or started there, and a bot whose helpers
+end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
 
 function readInstructions(opts) {
   if (opts.instructions !== undefined && opts["instructions-file"] !== undefined) throw new CliError("Give --instructions or --instructions-file, not both.", 2);
@@ -1449,9 +1484,9 @@ async function windowPlace(key, labelled = null, seen = null) {
   }
   const place = first || (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
   // The space is this start's: its first tab holds only the shell space.new started, closed
-  // once the bot shows in a tab of its own there (launchSeat, spareTab).
-  const shell = ours && place?.space === ours.id ? ours.tabs.find((t) => t.panes.some((p) => p.terminal === out.terminal)) : null;
-  return shell && typeof out.terminal === "string" ? { ...place, spare: { space: ours.id, tab: shell.id, terminal: out.terminal } } : place;
+  // once the bot shows in a tab of its own there (launchSeat, closeSpare).
+  const spare = ours && place?.space === ours.id ? freshSpare(ours, out.terminal) : null;
+  return spare ? { ...place, spare } : place;
 }
 
 /**
@@ -1466,19 +1501,37 @@ const TAB_WAIT_MS = (() => {
 const TAB_STEP_MS = 200;
 
 /**
- * Waits for the window to show `terminal` (a terminal of this computer) in a pane: the window's
- * spaces then, with each tab's `index` (its position, from 1, as tab.move counts) and
- * `terminals`, and the space and tab showing it: { spaces, space, tab }. Null when no window
- * answers, or the pane hasn't shown after TAB_WAIT_MS.
+ * `pgrep <args>` on this computer as pgrep exited: { code, stdout, stderr }, its own; null when
+ * it never exited by itself (not run, killed, past its 15 s): what it would have said is unknown.
  */
-async function windowShows(terminal, ms = TAB_WAIT_MS) {
+const pgrepHere = (args) => new Promise((done) => {
+  try {
+    execFile("pgrep", args, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (!err) return done({ code: 0, stdout, stderr });
+      done(typeof err.code === "number" ? { code: err.code, stdout: stdout ?? "", stderr: stderr ?? "" } : null);
+    });
+  } catch { done(null); }
+});
+
+/** A terminal id without the machine name a linked machine's may come with (`vm/t5` -> `t5`). */
+const bareId = (t) => (typeof t === "string" ? t.slice(t.indexOf("/") + 1) : t);
+
+/**
+ * Waits for the window to show `terminal` (a terminal of this computer, or of `machine` in that
+ * machine's spaces) in a pane: the window's spaces then, with each tab's `index` (its
+ * position, from 1, as tab.move counts) and `terminals` (a machine's as bare ids, bareId), and
+ * the space and tab showing it: { spaces, space, tab }. Null when no window answers, or the pane
+ * hasn't shown after TAB_WAIT_MS.
+ */
+async function windowShows(terminal, ms = TAB_WAIT_MS, machine = null) {
   const until = Date.now() + ms;
+  const id = machine ? bareId : (t) => t;
   for (;;) {
     const read = await windowRead();
     if (!read) return null;
-    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => p.terminal),
+    const spaces = read.map((s) => ({ ...s, tabs: s.tabs.map((t, i) => ({ ...t, index: i + 1, terminals: t.panes.map((p) => id(p.terminal)),
       count: t.paneCount })) }));
-    for (const space of spaces.filter((x) => !x.machine)) {
+    for (const space of spaces.filter((x) => (machine ? x.machine === machine : !x.machine))) {
       const tab = space.tabs.find((t) => t.terminals.includes(terminal));
       if (tab) return { spaces, space, tab };
     }
@@ -1520,20 +1573,63 @@ async function cmdStart(opts, [ref]) {
 
 // ---- a bot's pane on a linked machine (automagik#206 part b): start and restart ----
 
+// How long one question to a linked machine may take, in seconds: a login shell runs the person's
+// profile, so this bounds it. remoteIo.exec gives hc 10 s over it, so a slow link still brings
+// hc's own "timed out" back: ended earlier, hc answers nothing and the machine reads as away.
+const AGENT_WAIT_S = 10;
+
+// A start from the sidebar on a Herdr that ends a mod's programs at 30 s (#444): the time that
+// limit ends this CLI, ms since the epoch (launch.js machineCli, before its exec, so it counts
+// run.sh's node search and node's own startup). Unset (a terminal, a Herdr that takes exec's
+// timeout): no deadline. hc's own bound for one call, 15 s, doesn't fit twice in that limit, so
+// the calls after the last check get DEADLINE_CALL_MS each: hc run, then at most two more (hc get
+// and, with no created_ms, hc kill; or, with no address, hc ls and hc kill), and 1 s for the row
+// and the exit: DEADLINE_MARGIN_MS. Checked before a new space is asked for (with
+// DEADLINE_PLACE_MS more for windowPlaceOn's calls) and again just before hc run.
+const DEADLINE = (() => { const n = Number(process.env.AUTOMAGIK_HERDR_DEADLINE); return Number.isSafeInteger(n) && n > 0 ? n : null; })();
+export const DEADLINE_CALL_MS = 5000;
+export const DEADLINE_MARGIN_MS = 3 * DEADLINE_CALL_MS + 1000;
+export const DEADLINE_PLACE_MS = 4000;
+const deadlineLeft = () => (DEADLINE === null ? Infinity : DEADLINE - Date.now());
+const callBound = () => (DEADLINE === null ? {} : { timeout: DEADLINE_CALL_MS });
+/** A start the deadline stops before it starts anything: why, and the command for a terminal. */
+function tooLate(bot, machine, key, need, space = null) {
+  const left = Math.max(0, Math.floor(deadlineLeft() / 1000));
+  return new CliError(`Only ${left} s of this Herdr's 30 s limit for the sidebar's programs was left, and starting ${bot.name} `
+    + `on ${machine} needs ${need / 1000} s to finish once its pane starts, so nothing was started`
+    + `${space ? ` (the space it opened, ${space}, stays, with only its shell)` : ""}. `
+    + `Start it from a terminal: automagik-herdr start ${shellWord(bot.id)} --project ${shellWord(key)} --machine ${shellWord(machine)}`);
+}
+
 /**
- * The agent `argv` starts, checked on `machine` as hc runs programs there (`command -v`):
- * refused when it isn't there or the machine doesn't answer.
+ * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
+ * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
+ * and the user bin folders), so a check that passes is a launch that finds it: refused when it
+ * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
+ * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
  */
 async function agentThere(machine, argv, name) {
-  const r = await remoteIo.exec("sh", ["-c", 'command -v "$1"', "sh", argv[0]], machine);
-  if (r.code === -1) throw new CliError(`${machine} can't be reached: ${hcSaid(r.stderr)}`);
-  if (r.code !== 0) throw new CliError(`${name} (${argv[0]}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there.`);
+  const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
+  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S });
+  const quiet = seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
+    : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
+  if (seen.state === "away") throw new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
+  if (seen.state === "missing") {
+    throw new CliError(`${name} (${argv[0]}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there, `
+      + `its login shell's PATH, ~/.local/bin or ~/.bun/bin${quiet ? ` (${quiet})` : ""}.`);
+  }
+  if (seen.state === "no-interpreter") {
+    throw new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
+      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
+  }
+  return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
 }
 
 /**
  * Where a start on `machine` goes in Herdr's window: a space of that machine showing the
- * project (its folder, or one keying to it there), else a new one (space.new on that machine);
- * null with no window to ask.
+ * project (its folder, or one keying to it there), else a new one (space.new on that machine),
+ * with its `spare` shell (freshSpare, its terminal as a bare id) for closeSpare once the bot
+ * shows there; null with no window to ask.
  */
 async function windowPlaceOn(machine, key) {
   const find = async () => {
@@ -1556,11 +1652,19 @@ async function windowPlaceOn(machine, key) {
   if (r.code !== 0) return null;
   let out = {};
   try { out = JSON.parse(r.stdout) ?? {}; } catch { /* found in ls instead */ }
-  return (await find()).hit ?? (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  const now = await find();
+  const place = now.hit ?? (typeof out.space === "string" ? { space: out.space, tab: null, from: null } : null);
+  // The space is this start's when it is the one found: its shell's tab, as windowPlace's.
+  const shell = typeof out.terminal === "string" ? bareId(out.terminal) : null;
+  const ours = shell && now.spaces?.find((s) => s.id === place?.space && s.machine === machine
+    && (s.id === out.space || s.tabs.some((t) => t.panes.some((p) => bareId(p.terminal) === shell))));
+  const spare = ours ? freshSpare(ours, shell, (a, b) => bareId(a) === b) : null;
+  return spare ? { ...place, spare } : place;
 }
 
 /**
- * A bot's pane on the project's linked machine: `hc run --on` with Start's labels (--no-parent: no
+ * A bot's pane on the project's linked machine: `hc run --on` with Start's labels and the PATH
+ * agentThere checked the agent under, as /usr/bin/env PATH=<it> (hc run has no --env; --no-parent: no
  * lead as its hc parent there yet, and never the calling terminal), placed in the window on that machine's space. `over`: argv, cwd, place (the old
  * pane's, a restart), carry (labels kept), replacing (a restart: no "already running" check
  * and no attach row here; restartOnMachine writes them once the new pane is up). A Claude bot
@@ -1580,42 +1684,48 @@ async function seatOnMachine(project, bot, over = {}) {
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
   const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  await agentThere(machine, argv, agent.name ?? agentKey);
+  const there = await agentThere(machine, argv, agent.name ?? agentKey);
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A start: that space only, the bot in a tab of its own (as launchSeat).
+  if (over.place === undefined && deadlineLeft() < DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) {
+    throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS);
+  }
   const place = over.place !== undefined ? over.place : spaceOnly(await windowPlaceOn(machine, key));
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels });
+    parent: ["--no-parent"], argv, labels, path: there.path });
   args.splice(1, 0, "--on", machine);
-  const warnings = agentKey === "claude" ? [noHookThere(bot, machine)] : [];
+  const warnings = [...there.warnings, ...(agentKey === "claude" ? [noHookThere(bot, machine)] : [])];
   const run = async () => {
-    const r = await hc(args);
-    if (r.code !== 0) throw new CliError(`hc run on ${machine} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
+    if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
+    const r = await hc(args, callBound());
+    // Ended at its bound, hc run may still have started the pane there: looked for by name below.
+    if (r.code !== 0 && !r.killed) throw new CliError(`hc run on ${machine} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
     let address = null;
-    try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
+    try { address = r.killed ? null : JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (typeof address !== "string" || !address.includes("/")) {
       // It may run anyway: found by the name it was given (hc ls) and ended, never left beside the bot's pane.
       let stray = null;
-      try { stray = rowsOf(await hcJson(["ls"])).find((x) => x?.name === name && String(x.address ?? "").startsWith(`${machine}/`))?.address ?? null; } catch { stray = null; }
-      const killed = stray ? (await hc(["kill", stray])).code === 0 : false;
-      throw new CliError(`hc run on ${machine} gave no terminal address (${r.stdout.trim() || "nothing"}); `
+      try { stray = rowsOf(parsed(await hc(["ls", "--json"], callBound()), ["ls"])).find((x) => x?.name === name && String(x.address ?? "").startsWith(`${machine}/`))?.address ?? null; } catch { stray = null; }
+      const killed = stray ? (await hc(["kill", stray], callBound())).code === 0 : false;
+      const said = r.killed ? `didn't answer within ${(DEADLINE === null ? 15000 : DEADLINE_CALL_MS) / 1000} s` : `gave no terminal address (${r.stdout.trim() || "nothing"})`;
+      throw new CliError(`hc run on ${machine} ${said}; `
         + (killed ? `the pane it started (${stray}, named ${name}) was ended.` : `if a pane named ${name} started there, end it with hc kill.`));
     }
-    const get = await hcGet(address).catch(() => null);
+    const get = await hcGet(address, callBound()).catch(() => null);
     if (!Number.isSafeInteger(get?.created_ms)) {
       // No created_ms: no row can name it, so it isn't left running beside the bot's pane.
-      const killed = (await hc(["kill", address])).code === 0;
+      const killed = (await hc(["kill", address], callBound())).code === 0;
       throw new CliError(`${address} started, but hc get gave no created_ms, so it could have no attach row; `
         + (killed ? "it was ended." : `it couldn't be ended: end it with hc kill ${address}.`));
     }
     return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place, warnings };
   };
   if (over.replacing) return run();
-  return underLedger(async ({ machines, heldBy, holds, write }) => {
+  const seat = await underLedger(async ({ machines, heldBy, holds, write }) => {
     const mine = await holds(heldBy(bot.id, m.id));
     if (mine && mine.binding.project === key) return { running: addressOf(mine.binding, machines) };
     const seat = await run();
@@ -1627,6 +1737,14 @@ async function seatOnMachine(project, bot, over = {}) {
     }
     return seat;
   });
+  // A space this start made: its spare shell's tab closed once the bot shows there (closeSpare).
+  if (!seat.running && place?.spare && TAB_WAIT_MS > 0) {
+    // Under a deadline its waits (TAB_WAIT_MS, then four calls) don't fit: the tab stays, said.
+    const why = DEADLINE !== null ? `The new space's spare shell tab wasn't closed: this Herdr's 30 s limit for the sidebar's programs leaves no time for it.`
+      : await closeSpare(place.spare, seat.terminal, machine);
+    if (why) seat.warnings.push(why);
+  }
+  return seat;
 }
 
 const seatOnJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, machine: seat.machine, argv: seat.argv, labels: seat.labels,
@@ -1653,9 +1771,9 @@ async function startOnMachine(opts, project, bot) {
 }
 
 /**
- * restart --machine: cmdRestart's rule on the project's linked machine. The old pane must say
- * whether its agent is busy: one that reports no status to hc (Hermes) is refused unless
- * --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
+ * restart --machine: cmdRestart's rule on the project's linked machine, without --tree (cmdRestart
+ * refuses it there, #437). The old pane must say whether its agent is busy: one that reports no
+ * status to hc (Hermes) is refused unless --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
  * folder, resuming as restartPlan says (an agent's own --continue resumes the folder's latest
  * conversation: refused while another bot's same agent runs in that folder there); the old
  * pane is ended (hc kill) only once the new one has kept its agent in front. No keys are sent.
@@ -1671,8 +1789,8 @@ async function restartOnMachine(opts, project, bot, entry) {
   }
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
-    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force });
-    if (refusal) throw new CliError(refusal);
+    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force, onMachine: true });
+    if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
         + `could end it mid-turn. Nothing was restarted. Look at the pane first, then pass --force to restart anyway `
@@ -1684,15 +1802,16 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (!run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
   // The old pane's agent.session label, as restartPlan reads it for the agent.
   const label = old?.labels?.[SESSION_LABEL] ?? null;
-  const plan = restartPlan({
+  const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
-  });
+  };
+  let plan = restartPlan(planned);
   let cwd = key;
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
   // A session counts only when the command really resumes it by id (--resume <id> in its argv).
-  const session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
@@ -1710,19 +1829,36 @@ async function restartOnMachine(opts, project, bot, entry) {
     const refusal = continueRefusal({ name: bot.name, old, cwd, sharers, agent: agentTable()[plan.agent]?.name ?? plan.agent });
     if (refusal) throw new CliError(refusal);
   }
-  const seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
+  let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...seat.warnings];
   report(warnings);
   if (old) {
-    const up = await agentUp(seat.address);
+    let up = await agentUp(seat.address);
+    // Codex can't resume the thread at all (#413): one new pane on a new thread, as cmdRestart does.
+    const gone = up.state === "ended" ? await endedCause(seat.address) : null;
+    if (providerGone(plan, gone)) {
+      const thread = plan.resume[0] === "resume" && plan.resume[1] && plan.resume[1] !== "--last" ? plan.resume[1] : null;
+      const note = providerGoneNote(thread, seat.address, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      session = null;
+      warnings.push(`${bot.name} starts on a new conversation: ${note}.`);
+      report([warnings.at(-1)]);
+      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: carriedLabels(old), replacing: true });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      warnings.push(...again.warnings);
+      report(again.warnings);
+      seat = again;
+      up = await agentUp(seat.address);
+    }
     if (up.state !== "live") {
-      const ended = up.state === "ended" || (await hc(["kill", seat.address])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.address} exited before its agent was up (hc read ${seat.address} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : "")
-        : `${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.address])).code === 0;
+      throw new CliError(`${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     const created = Number.isSafeInteger(up.get?.created_ms) ? up.get.created_ms : seat.created_ms;
@@ -1892,17 +2028,37 @@ async function launchSeat(project, bot, over = {}) {
 }
 
 /**
- * Closes the spare shell's tab of a space this start made (windowPlace's `spare`) once the
- * window shows the bot's pane (`terminal`) in another tab there: never before, so the space
- * always keeps a tab, and only while that tab holds the shell alone, one pane, with nothing
- * but the shell itself in front (spareTab, shellIdle). Never `confirmed`: should Herdr see
- * anything worth asking about, the person is asked. Null, or a warning when the close failed.
+ * The child processes of the shell `get` names (`pgrep -P` its pid, on `machine` through hc
+ * for a linked one's): their pids, [] for none, or null when that can't be told (no pid, no
+ * pgrep, an error, the machine not answering), and shellIdle then never counts it idle. None
+ * only as pgrep itself says it: it exited 1 with nothing on stdout or stderr. Here pgrep runs
+ * through pgrepHere, never runProgram, which gives code 1 and its own message on stderr for a
+ * pgrep it couldn't run (EACCES) or killed at its timeout as well as for every failed exit.
  */
-async function closeSpare(spare, terminal) {
-  const shown = await windowShows(terminal);
+async function shellChildren(get, machine = null) {
+  if (!Number.isSafeInteger(get?.pid) || get.pid <= 0) return null;
+  const args = ["-P", String(get.pid)];
+  const r = machine ? await remoteIo.exec("pgrep", args, machine) : await pgrepHere(args);
+  if (!r) return null;
+  const pids = (r.stdout ?? "").split(/\s+/).filter(Boolean);
+  if (r.code === 1 && !pids.length && !(r.stderr ?? "").trim()) return [];
+  return r.code === 0 && pids.length && pids.every((x) => /^\d+$/.test(x)) ? pids : null;
+}
+
+/**
+ * Closes the spare shell's tab of a space this start made (windowPlace's or windowPlaceOn's
+ * `spare`) once the window shows the bot's pane (`terminal`; on `machine`, a linked one's) in
+ * another tab there: never before, so the space always keeps a tab, and only while that tab
+ * holds the shell alone with nothing but the shell itself in front and no job of its own
+ * running (spareTab, shellIdle, shellChildren). Never `confirmed`: Herdr asks the person only
+ * before closing a space's last tab, which this never is. Null, or a warning when it failed.
+ */
+async function closeSpare(spare, terminal, machine = null) {
+  const shown = await windowShows(terminal, TAB_WAIT_MS, machine);
   if (!shown || shown.space.id !== spare.space) return null;
   if (!spareTab(spare, shown.space.tabs, terminal, true)) return null;
-  const idle = shellIdle(await hcGet(spare.terminal).catch(() => null));
+  const get = await hcGet(machine ? `${machine}/${spare.terminal}` : spare.terminal).catch(() => null);
+  const idle = shellIdle(get, await shellChildren(get, machine));
   const tab = spareTab(spare, shown.space.tabs, terminal, idle);
   if (!tab) return null;
   const why = await windowDo("tab.close", { id: tab });
@@ -1942,6 +2098,70 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
     if (Date.now() >= until) return { state: "late", get };
     await later(250);
   }
+}
+
+// A line that names a failure: an error word, or a code in brackets as codex gives one
+// ("model provider example-proxy is no longer configured (modelProviderNotConfigured)").
+const FAILURE_WORD = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b/i;
+const FAILURE_CODE = /\([a-z]+[A-Z][A-Za-z]*\)/; // camelCase only: never "(quit)" or "(default)"
+const failureLine = (l) => FAILURE_WORD.test(l) || FAILURE_CODE.test(l);
+// A line with nothing to say: box drawing, rules, a bare shell prompt.
+const EMPTY_LINE = /^[\s\u2500-\u257f\u2580-\u259f\-_=*•·.:>❯›$%#]*$/;
+
+/**
+ * The agent's own last word on a screen (`hc read`'s text), #413: of its last lines with
+ * something on them, the last one that names a failure, else the last one; null for none.
+ */
+export function causeLine(text) {
+  const lines = screenTail(text, 40).split("\n").map((l) => l.trim()).filter((l) => l && !EMPTY_LINE.test(l));
+  const line = lines.findLast(failureLine) ?? lines.at(-1);
+  if (!line) return null;
+  return line.length > 300 ? `${line.slice(0, 299)}…` : line;
+}
+
+/** The last line `terminal`'s agent left on its screen (causeLine), or null when it can't be read. */
+async function endedCause(terminal) {
+  try {
+    const r = await hc(["read", terminal, "--lines", "40", "--json"]);
+    if (r.code !== 0) return null;
+    let text = r.stdout;
+    try { const j = JSON.parse(r.stdout); text = typeof j?.text === "string" ? j.text : null; } catch { /* plain text */ }
+    if (text === null) return null;
+    return causeLine(text);
+  } catch { return null; }
+}
+
+/** Why `terminal` ended before its agent was up: { text, cause }, the text naming the agent's last line (endedCause) when it left one. */
+async function exitedWhy(terminal) {
+  const cause = await endedCause(terminal);
+  return { cause, text: `${terminal} exited before its agent was up${cause ? `; its agent said: "${cause}" (hc read ${terminal} shows the rest)` : ` (hc read ${terminal} says why)`}` };
+}
+
+/**
+ * restartRefusal's refusal of a busy pane: --json prints `refused` ("working": mid-turn;
+ * "helpers": helpers that end with it) and its `terminal`, so a caller can wait for it (#413).
+ */
+const busyRefusal = (refusal, old) => new CliError(refusal, 1, { refused: old?.status?.state === "working" ? "working" : "helpers", terminal: old.address });
+
+// Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
+// on a provider since removed from the config): that thread can't be resumed, only left behind.
+// Its own error code only, never a bare "no longer configured" another failure might print.
+const PROVIDER_GONE = /\bmodelProviderNotConfigured\b/;
+
+/**
+ * Whether a resume that exited (its agent's last line `cause`) is codex unable to resume the
+ * thread at all (PROVIDER_GONE: codex's modelProviderNotConfigured), the one failure a restart
+ * answers by starting fresh (#413).
+ */
+const providerGone = (plan, cause) => plan.mode === "resume" && plan.agent === "codex" && PROVIDER_GONE.test(cause ?? "");
+/** The note a restart that left such a thread behind carries: the old thread and what codex said. */
+const providerGoneNote = (thread, terminal, cause) =>
+  `codex can't resume ${thread ? `thread ${thread}` : "the folder's latest thread"} (${terminal} said "${cause}"), so it starts on a new one`;
+
+/** A replacement that exited before its agent was up: the refusal; --json prints the cause beside the replacement `terminal`. */
+async function exitedBefore(terminal, rest) {
+  const { cause, text } = await exitedWhy(terminal);
+  return new CliError(`${text}; ${rest}`, 1, { terminal, cause });
 }
 
 /** The workers ledger's rows ([] when it can't be read). */
@@ -2059,7 +2279,9 @@ const TREE_TURN_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS) 
 const TREE_TURN_POLL_MS = Math.min(2000, Math.max(100, Math.floor(TREE_TURN_WAIT_MS / 10)));
 
 /**
- * --tree, before the bot's new pane starts: waits (TREE_TURN_WAIT_MS) until the old pane and every
+ * --tree, before the bot's new pane starts: refused (unless --force) while the old pane or a helper
+ * in `plans` waits for an answer, or has an agent that reports no status to hc, which may be
+ * mid-turn (#413; a plain program reports none and passes); else waits (TREE_TURN_WAIT_MS) until the old pane and every
  * helper in `plans` are idle at one look, so no turn ends (and types its note into the old pane)
  * once two panes could hold the bot's session. A helper's note can start the old pane's turn, so
  * all are looked at again each time. Refused (CliError), nothing started, when one is still
@@ -2073,7 +2295,20 @@ async function treeIdle(old, plans, say, { force = false } = {}) {
     const states = await Promise.all([old.address, ...plans.map((q) => q.replaced)].map((a) => hcState(a)));
     const unread = states.filter((x) => x.state === "unknown").map((x) => x.why);
     if (unread.length) throw new CliError(`${unread.join("; ")}: --tree can't tell whether it is mid-turn. Nothing was started.`);
-    const busy = [old.address, ...plans.map((q) => q.replaced)].filter((_, i) => states[i].state === "live" && states[i].get?.status?.state === "working");
+    const panes = [{ address: old.address, agent: agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) }, ...plans.map((q) => ({ address: q.replaced, agent: q.agent }))]
+      .map((p, i) => ({ ...p, live: states[i].state === "live", status: states[i].get?.status?.state }));
+    const asking = panes.filter((p) => p.live && p.status === "blocked").map((p) => p.address);
+    if (asking.length) {
+      const one = asking.length === 1;
+      throw new CliError(`${asking.join(", ")} ${one ? "is" : "are"} waiting for an answer. Nothing was started: answer ${one ? "it" : "them"} first, or pass --force to end ${one ? "it" : "them"}.`);
+    }
+    const silent = panes.filter((p) => p.agent && p.live && typeof p.status !== "string").map((p) => p.address);
+    if (silent.length) {
+      const one = silent.length === 1;
+      throw new CliError(`${silent.join(", ")} ${one ? "doesn't" : "don't"} tell hc whether ${one ? "it is" : "they are"} busy, so --tree can't tell whether ${one ? "it has" : "they have"} finished. `
+        + `Nothing was started. Look at ${one ? "it" : "them"} first, then pass --force to restart anyway.`);
+    }
+    const busy = panes.filter((p) => p.live && p.status === "working").map((p) => p.address);
     if (!busy.length) {
       const live = plans.filter((_, i) => states[i + 1].state === "live");
       for (const q of plans.filter((_, i) => states[i + 1].state !== "live")) say(`${q.replaced} ended by itself before the restart, so it isn't run again.`);
@@ -2142,7 +2377,7 @@ function byHand(p, parent) {
  */
 async function rerunHelpers(plans, parent, say) {
   const out = plans.map((p) => ({ name: p.name, replaced: p.replaced, terminal: null, bot: p.binding?.bot ?? null, agent: p.agent ?? null,
-    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, by_hand: null, still_running: false }));
+    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, cause: null, by_hand: null, still_running: false }));
   for (const [i, p] of plans.entries()) {
     const who = `${p.replaced}${p.name && p.name !== p.replaced ? ` (${p.name})` : ""}`;
     const failed = (why) => {
@@ -2167,9 +2402,14 @@ async function rerunHelpers(plans, parent, say) {
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
     const up = await agentUp(address);
     if (up.state !== "live") {
-      const killed = up.state === "ended" || (await hc(["kill", address])).code === 0;
-      failed(up.state === "ended" ? `${address} exited before its agent was up (hc read ${address} says why)`
-        : `${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
+      if (up.state === "ended") {
+        const why = await exitedWhy(address);
+        out[i].cause = why.cause;
+        failed(why.text);
+        continue;
+      }
+      const killed = (await hc(["kill", address])).code === 0;
+      failed(`${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
       continue;
     }
     out[i].terminal = address;
@@ -2287,6 +2527,16 @@ async function cmdRestart(opts, [ref]) {
   if (opts.cwd !== undefined && opts.machine !== undefined) {
     throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
   }
+  // --tree on a linked machine isn't built yet (#437): refused before anything is read there, so
+  // its helpers are never left behind by a restart that looks done. Each sentence that says what
+  // happened names no flag: the Accounts panel shows a refusal without the clauses that name one.
+  if (opts.tree && opts.machine !== undefined) {
+    throw new CliError(`Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: `
+      + `${ref} and its helpers on ${opts.machine} still run as they were, on the account they started with. `
+      + `By hand: wait for a helper still working to finish, end each helper's pane (hc kill ${opts.machine}/tN for one), `
+      + `then restart ${ref} there without --tree. A helper that still had work to do, start again yourself with hc run `
+      + `on ${opts.machine} once ${ref} is back.`, 2);
+  }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
     if (!dir || !isDir(dir)) throw new CliError(`--cwd ${opts.cwd || '""'} isn't a folder on this computer.`, 2);
@@ -2319,7 +2569,7 @@ async function cmdRestart(opts, [ref]) {
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
   if (old) {
     const refusal = restartRefusal({ name: bot.name, old, helpers, force: opts.force, tree: opts.tree });
-    if (refusal) throw new CliError(refusal);
+    if (refusal) throw busyRefusal(refusal, old);
   }
   const agents = agentTable();
   const ledger = workerLedgerRows();
@@ -2355,7 +2605,7 @@ async function cmdRestart(opts, [ref]) {
       + `or pick a folder whose slug is the same.`);
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
+  let resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
@@ -2376,7 +2626,7 @@ async function cmdRestart(opts, [ref]) {
   if (tree.length) plans = await treeIdle(old, tree, (w) => early.push(w), { force: opts.force });
   // A resumed session keeps its label on the new pane, so the next restart resumes it too.
   const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
-  const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
+  let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
@@ -2392,14 +2642,29 @@ async function cmdRestart(opts, [ref]) {
   let oldEnded = false;
   if (old) {
     // The old pane ends only once the new one has kept its agent up: the space is never left empty.
-    const up = await agentUp(seat.terminal);
+    let up = await agentUp(seat.terminal);
+    // Codex can't resume the thread at all (its model provider is gone, #413): one new pane on a
+    // new thread, the old one named in the note; any other failure stays a failure.
+    const gone = up.state === "ended" ? await endedCause(seat.terminal) : null;
+    if (providerGone(plan, gone)) {
+      const note = providerGoneNote(resumeId, seat.terminal, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      resumeId = null;
+      say(`${bot.name} starts on a new conversation: ${note}.`);
+      const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry: carriedLabels(old), replacing: held.binding });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      for (const w of again.hook.warnings) say(w);
+      seat = again;
+      up = await agentUp(seat.terminal);
+    }
     if (up.state !== "live") {
       // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
-      const ended = up.state === "ended" || (await hc(["kill", seat.terminal])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.terminal} exited before its agent was up (hc read ${seat.terminal} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : "")
-        : `${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.terminal, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.terminal])).code === 0;
+      throw new CliError(`${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     // Up: the ledger moves the bot to the new terminal, under its lock.
@@ -2639,6 +2904,252 @@ async function cmdDetach(opts, [ref]) {
   const machine = held?.binding.machine ?? null;
   return opts.json ? { id, defined: Boolean(bot), detached, ...(machine ? { machine } : {}), labelsCleared: cleared }
     : from ? `${name} detached from ${from}.` : `${name} has no pane on this computer.`;
+}
+
+// ---- import (#232): a running hc team as bots ----
+
+// The squad's captain by its hc name or template, when no seat of the squad is labelled
+// role=captain: the squad's name, a separator, then cap or captain (web-cap, web_captain), so
+// escape-cap is no captain of web, and a bare "cap" none at all (#486).
+const CAPTAIN_NAME = /^(.+)[-_.](cap|captain)$/i;
+// A member's rank by its name's last word, when its pane's role= label is not a rank.
+const RANK_WORDS = { dev: "dev", test: "tester", tester: "tester", qa: "tester", review: "reviewer", reviewer: "reviewer",
+  fix: "fixer", fixer: "fixer", pm: "pm", int: "integrator", integrator: "integrator" };
+const byTerminal = (a, b) => a.terminal.localeCompare(b.terminal, undefined, { numeric: true });
+
+/** How a seat is its squad's captain by name (#486): "name", "template" or null; never a seat whose role= is another rank. */
+function captainByName(squad, seat) {
+  const role = seat.get.labels?.role;
+  if (RANKS.includes(role) && role !== "captain") return null;
+  const of = (n) => typeof n === "string" && CAPTAIN_NAME.exec(n.trim())?.[1].toLowerCase() === squad.toLowerCase();
+  return of(seat.name) ? "name" : of(seat.get.template) ? "template" : null;
+}
+
+function seatRank(get, name) {
+  const role = get.labels?.role;
+  if (RANKS.includes(role) && role !== "captain") return role;
+  return RANK_WORDS[name.toLowerCase().split(/[-_.]/).pop()] ?? null;
+}
+
+/**
+ * The import's plan (#232): { seats, skipped, conflicts, raw }, from this computer's live panes
+ * labelled `label`=. A seat is one with an hc name and an agent in front: "already" (it plays the
+ * bot of its name, by the attach ledger), "attach" (that bot is defined and attached nowhere, as
+ * a run cut short before its attaches leaves it) or "create" (then attach). Captains first, every
+ * new bot is checked as create checks it against the file as the plan grows it; `raw` is that
+ * file. Nothing is written here; readOnly (the dry run, #486) keeps the ledger view from
+ * writing too (attachView).
+ */
+async function importPlan(project, label, { readOnly = false } = {}) {
+  const { file } = project;
+  const main = mainBotOf(file);
+  const conflicts = [];
+  const skipped = [];
+  if (!main) {
+    conflicts.push(`${under(project.key, BOTS_PATH)} has no main bot; the import makes captains and members under it. `
+      + "Create it first: automagik-herdr create --name N --agent A");
+  }
+  const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
+  const gets = (await Promise.all(rows.map(async (r) => {
+    const g = await hcLookup(r.address);
+    return g ? { ...g, address: g.address ?? r.address, name: g.name ?? r.name ?? null } : null;
+  }))).filter((g) => g?.state === "live" && local(g.address) && typeof g.labels?.[label] === "string" && g.labels[label].trim());
+  const view = await attachView({ readOnly });
+  const agents = agentTable();
+  const botName = (id) => { const b = file.bots.find((x) => x.id === id); return b ? `${b.name} (${b.id})` : `bot ${id}`; };
+  const seats = [];
+  for (const get of gets) {
+    const terminal = get.address;
+    const name = typeof get.name === "string" && get.name.trim() && get.name !== terminal ? get.name.trim() : null;
+    const seat = { squad: get.labels[label].trim(), terminal, name, agent: null, rank: null, captain: false, action: "create", id: null, get };
+    const named = name ? file.bots.find((b) => b.name.toLowerCase() === name.toLowerCase()) ?? null : null;
+    const at = `${terminal}${name ? ` (${name})` : ""}`;
+    const held = view.byTerminal.get(terminal)?.binding ?? null;
+    if (held) {
+      if (named && held.bot === named.id) {
+        // Its labels as attach sets them (#486): lost ones come back by attaching again, which
+        // writes no ledger row for a pane that already plays its bot.
+        const have = get.labels ?? {};
+        const lead = leadIdOf(file, named.id);
+        let leadRows = [];
+        try { leadRows = lead ? await liveRows(lead) : []; } catch { leadRows = []; }
+        const relabel = [...(have[BOT_LABEL] !== named.id ? [`${BOT_LABEL}=${named.id}`] : []),
+          ...attachWords(file, named.id, { ...have, [BOT_LABEL]: named.id }, leadRows)];
+        seats.push({ ...seat, action: "already", id: named.id, bot: named, relabel });
+        continue;
+      }
+      conflicts.push(`${at} already plays ${botName(held.bot)}; the import never takes another bot's pane. Detach that bot `
+        + `first, or take ${label}= off the pane (hc label ${terminal} ${label}=).`);
+      continue;
+    }
+    if (get.labels[WORKER_OF_LABEL]) { skipped.push({ terminal, name, why: "a worker (worker.of), not a seat" }); continue; }
+    if (!name) { skipped.push({ terminal, name, why: "no hc name to name its bot by" }); continue; }
+    const claude = isClaude({ report: { app: get.status?.app } }, get) || agentKeyOfArgv(get.foreground?.argv) === "claude";
+    const agent = agentKeyOfArgv(get.foreground?.argv, agents) ?? (claude ? "claude" : null);
+    if (!agent) { skipped.push({ terminal, name, why: "no coding agent in front" }); continue; }
+    const tagged = get.labels[BOT_LABEL];
+    if (tagged && tagged !== named?.id && file.bots.some((b) => b.id === tagged)) {
+      conflicts.push(`${at} is labelled ${BOT_LABEL}=${tagged}, ${botName(tagged)}; the import never takes another bot's pane.`);
+      continue;
+    }
+    if (claude) {
+      const cwd = get.foreground?.cwd;
+      if (!cwd) { conflicts.push(`Can't read where ${at}'s Claude session runs (hc get ${terminal}).`); continue; }
+      const refusal = attachRefusal({ botName: name, projectKey: project.key, sessionFolder: cwd, sessionKey: await keyOf(cwd) });
+      if (refusal) { conflicts.push(`${at}: ${refusal}`); continue; }
+    }
+    if (named) {
+      const there = liveFor(view, named.id, project);
+      if (there) {
+        conflicts.push(`${botName(named.id)} already plays ${there.binding.terminal}, not ${terminal}; the import never moves a bot. `
+          + `Detach it first (automagik-herdr detach ${named.id}), or give the seat another hc name.`);
+        continue;
+      }
+      if (named.kind === "main" || named.planned) {
+        conflicts.push(`${at}: ${botName(named.id)} is ${named.kind === "main" ? "the main bot" : "planned"}, so the import can't make it a squad's seat.`);
+        continue;
+      }
+      if (named.agent && named.agent !== agent) {
+        conflicts.push(`${at} runs ${agent}, and ${botName(named.id)} is defined with agent ${named.agent}; the import never attaches `
+          + `a bot to another agent's pane. Edit it first (automagik-herdr edit ${named.id} --agent ${agent}), or give the seat another hc name.`);
+        continue;
+      }
+      seats.push({ ...seat, agent, action: "attach", id: named.id, bot: named });
+      continue;
+    }
+    seats.push({ ...seat, agent });
+  }
+  const byName = new Map();
+  for (const s of seats) byName.set(s.name.toLowerCase(), [...(byName.get(s.name.toLowerCase()) ?? []), s.terminal]);
+  for (const [n, ts] of byName) if (ts.length > 1) conflicts.push(`${ts.join(", ")} share the hc name "${n}"; names pick bots, so rename all but one.`);
+  // Each squad: its one captain first, then its members by terminal.
+  const ordered = [];
+  const squads = new Map();
+  for (const s of seats) squads.set(s.squad, [...(squads.get(s.squad) ?? []), s]);
+  for (const squad of [...squads.keys()].sort()) {
+    const all = squads.get(squad).sort(byTerminal);
+    const labelled = all.filter((s) => s.get.labels?.role === "captain");
+    const caps = labelled.length ? labelled : all.filter((s) => captainByName(squad, s));
+    const by = labelled.length ? "role" : caps.length === 1 ? captainByName(squad, caps[0]) : null;
+    if (caps.length !== 1) {
+      conflicts.push(caps.length
+        ? `Squad ${squad} has ${caps.length} captains (${caps.map((s) => `${s.terminal} ${s.name}`).join(", ")}); keep role=captain on one: hc label <terminal> role=captain.`
+        : `Squad ${squad} has no captain: label one pane role=captain (hc label <terminal> role=captain), or name it ${squad}-cap.`);
+      continue;
+    }
+    for (const s of [caps[0], ...all.filter((x) => x !== caps[0])]) {
+      s.captain = s === caps[0];
+      s.captainBy = s.captain ? by : null;
+      s.lead = s.captain ? main : null;
+      s.rank = s.captain ? "captain" : seatRank(s.get, s.name);
+      if (!s.captain) s.leadSeat = caps[0];
+      ordered.push(s);
+    }
+  }
+  if (!main) return { seats: ordered, skipped, conflicts, raw: project.raw };
+  // A defined bot is attached only where the plan would have put it: same lead.
+  let raw = project.raw;
+  let grown = file;
+  for (const s of ordered) {
+    const leadId = s.captain ? main.id : s.leadSeat.id;
+    if (s.action === "attach") {
+      const has = s.bot.lead ?? main.id;
+      if (!leadId || has !== leadId) {
+        conflicts.push(`${s.terminal} (${s.name}): ${botName(s.bot.id)} is defined with lead ${botName(has)}, and the import would `
+          + `make it ${s.captain ? `the ${s.squad} captain, under ${botName(main.id)}` : `report to ${s.leadSeat.name}`}. Edit it first.`);
+      }
+      continue;
+    }
+    if (s.action !== "create") continue;
+    if (!leadId) continue; // its captain is refused above
+    const id = newBotId();
+    try {
+      const entry = entryFrom({ name: s.name, agent: s.agent, rank: s.rank ?? undefined, lead: s.captain ? undefined : leadId,
+        role: s.captain ? `Captain of the ${s.squad} squad` : `Member of the ${s.squad} squad` }, { id, kind: "member" }, { file: grown }, { creating: true });
+      raw = applyBotEdit(raw, entry);
+      grown = parseBots(JSON.stringify(raw)).file;
+      s.id = id;
+    } catch (e) {
+      if (!(e instanceof CliError)) throw e;
+      conflicts.push(`${s.terminal} (${s.name}): ${e.message}`);
+    }
+  }
+  return { seats: ordered, skipped, conflicts, raw };
+}
+
+/** A seat as the plan prints it; a new bot's id only once it is made. captainBy: "role", "name", "template" or null. */
+const seatOut = (s, made) => ({ squad: s.squad, terminal: s.terminal, name: s.name, action: s.action, captain: s.captain, captainBy: s.captainBy ?? null,
+  lead: s.captain ? (s.lead?.name ?? null) : s.leadSeat.name, rank: s.action === "create" ? s.rank : (s.bot.rank ?? null),
+  agent: s.agent ?? s.bot?.agent ?? null, id: s.action === "create" && !made ? null : s.id, relabel: s.relabel ?? [] });
+/** A seat --apply attaches: every one but a seat already playing its bot with all its labels (#486). */
+const importTodo = (s) => s.action !== "already" || s.relabel.length > 0;
+const CAPTAIN_BY = { role: " by role=captain", name: " by name", template: " by template" };
+
+function importText(plan, { key, label, apply }) {
+  const lines = [`Import of the panes labelled ${label}= into ${key}${apply ? "" : " (dry run: nothing is changed)"}:`];
+  if (!plan.seats.length && !plan.skipped.length && !plan.conflicts.length) lines.push(`  No live pane on this computer is labelled ${label}=.`);
+  let squad = null;
+  for (const s of plan.seats) {
+    if (s.squad !== squad) { squad = s.squad; lines.push(`  squad ${squad}`); }
+    const who = s.captain ? `captain${CAPTAIN_BY[s.captainBy] ?? ""}, reports to ${s.lead?.name ?? "the main bot"}` : `member, lead ${s.leadSeat.name}${s.rank ? `, rank ${s.rank}` : ""}`;
+    lines.push(`    ${s.terminal}  ${s.action === "already" ? `${s.name} (${s.id}) already plays it: ${s.relabel.length ? `its lost labels go back (${s.relabel.join(" ")})` : "nothing to do"}`
+      : s.action === "attach" ? `attach ${s.name} (${s.id}), defined already`
+        : `create ${s.name} (${who}, ${s.agent}), then attach`}`);
+  }
+  for (const k of plan.skipped) lines.push(`  skipped ${k.terminal}${k.name ? ` (${k.name})` : ""}: ${k.why}`);
+  for (const c of plan.conflicts) lines.push(`  conflict: ${c}`);
+  const todo = plan.seats.filter(importTodo).length;
+  if (plan.conflicts.length) lines.push(`Nothing was changed: ${plan.conflicts.length} conflict(s) refuse the import.`);
+  else if (!todo) lines.push("Nothing to do: every seat already plays its bot.");
+  else if (!apply) lines.push(`Run it with --apply: ${todo} seat(s) to import.`);
+  return lines.join("\n");
+}
+
+async function cmdImport(opts) {
+  if (!opts["from-hc"]) throw new CliError("import needs its source: automagik-herdr import --from-hc [--squad-label L] [--apply].", 2);
+  const label = opts["squad-label"] ?? "squad";
+  if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new CliError(`--squad-label: "${label}" isn't an hc label key.`, 2);
+  const project = await editProjectFor(opts);
+  if (project.dir !== project.key) {
+    throw new CliError(`Run the import in ${project.key}: attach reads ${under(project.key, BOTS_PATH)}, and from this worktree the bots `
+      + `would go to ${under(project.dir, BOTS_PATH)}. Nothing was changed.`);
+  }
+  const plan = await importPlan(project, label, { readOnly: !opts.apply });
+  const apply = Boolean(opts.apply) && !plan.conflicts.length;
+  const todo = plan.seats.filter(importTodo);
+  const out = { project: project.key, squadLabel: label, dryRun: !opts.apply, seats: plan.seats.map((s) => seatOut(s, false)),
+    skipped: plan.skipped, conflicts: plan.conflicts, attached: [], stopped: null };
+  if (plan.conflicts.length) {
+    exitAfter.code = 1;
+    report([`import refused, nothing was changed: ${plan.conflicts.length} conflict(s).`]);
+  }
+  if (!opts.json) process.stdout.write(`${importText(plan, { key: project.key, label, apply: Boolean(opts.apply) })}\n`);
+  if (apply && todo.length) {
+    // One write for every new bot, then one attach per seat, captains first: attach checks
+    // again under the ledger's lock and never moves a bot (no --move).
+    if (todo.some((s) => s.action === "create")) {
+      await saveProject(project, plan.raw);
+      await relabelAfter(project.file, plan.raw);
+    }
+    for (const s of todo) {
+      try {
+        const r = await cmdAttach({ project: opts.project, json: true }, [s.id, s.terminal]);
+        out.attached.push({ id: s.id, name: s.name, terminal: s.terminal, created: s.action === "create", already: r.already, warnings: r.warnings });
+        const now = s.action === "already" ? "is" : "is now";
+        if (!opts.json) process.stdout.write(`  ${s.name} (${s.id}) ${now} ${s.terminal}${s.action === "create" ? ", created" : s.action === "already" ? ", its labels back" : ""}.\n`);
+      } catch (e) {
+        if (!(e instanceof CliError)) throw e;
+        out.stopped = { terminal: s.terminal, name: s.name, error: e.message };
+        exitAfter.code = 1;
+        report([`import stopped at ${s.terminal} (${s.name}): ${e.message} The bots made so far are saved; run the import again to attach the rest.`]);
+        break;
+      }
+    }
+    out.seats = plan.seats.map((s) => seatOut(s, true));
+    await tidyQuietly();
+  }
+  if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  return PRINTED;
 }
 
 async function cmdWhois(opts, [terminal]) {
@@ -3172,6 +3683,8 @@ async function cmdWorker(opts, rest) {
 
 /** The hooks notice (migrateHooks.mjs hooksNotice) on lines of its own after the summary, or "". */
 const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.length ? `\n${lines.join("\n")}` : ""; };
+/** Each mod an install held for a layout (update.mjs `held`, #420, #432) on a line of its own, or "". */
+const heldLines = (installed) => (installed.held ?? []).map((h) => `\n${heldModLine(h, installed.version)}`).join("");
 
 /**
  * `update`: install the latest release, `--check` only reports, `--rollback` swaps the kept
@@ -3224,7 +3737,7 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
   if (r.installed) {
-    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${meter.lines.map((l) => `\n${l}`).join("")}`;
+    return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${heldLines(r.installed)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }
   if (r.update) return `Automagik Herdr ${current} is installed; ${r.update.version} is out (${r.update.page}). Run \`automagik-herdr update\` to install it.`;
   return `Automagik Herdr ${current} is installed; the latest release is ${r.latest ?? "none yet"}. Up to date.${note}`;
@@ -3400,7 +3913,7 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
 }
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
+  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
   tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
@@ -3441,6 +3954,7 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
     process.stderr.write(`automagik-herdr: ${message}\n`);
+    if (opts.json && e instanceof CliError && e.detail) process.stdout.write(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`);
     return e instanceof CliError ? e.code : 1;
   }
 }

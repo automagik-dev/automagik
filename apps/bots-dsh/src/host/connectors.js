@@ -9,6 +9,8 @@
 // send it anywhere. The Secrets page can still share it. Signing in is `signIn` alone, so a browser login can
 // take its place later without touching the mount.
 
+import { refusal } from './refusal.js'
+
 export const GITHUB = 'github'
 export const GITHUB_SECRET = 'GITHUB_TOKEN'
 const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client'
@@ -29,12 +31,12 @@ export async function signIn(token, { api = DEFAULTS.api, fetch: request = fetch
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
     })
   } catch {
-    throw new Error('Could not reach GitHub')
+    throw refusal('Could not reach GitHub')
   }
-  if (response.status === 401) throw new Error('GitHub did not accept this token')
-  if (!response.ok) throw new Error(`GitHub answered ${response.status}`)
+  if (response.status === 401) throw refusal('GitHub did not accept this token')
+  if (!response.ok) throw refusal(`GitHub answered ${response.status}`)
   const user = await response.json().catch(() => ({}))
-  if (typeof user?.login !== 'string') throw new Error('GitHub did not say who this token belongs to')
+  if (typeof user?.login !== 'string') throw refusal('GitHub did not say who this token belongs to')
   return { login: user.login }
 }
 
@@ -117,15 +119,15 @@ export function install(rt) {
   }]
 
   const known = id => {
-    if (options === null || id !== GITHUB) throw new Error('No such connector')
+    if (options === null || id !== GITHUB) throw refusal('No such connector')
   }
 
   const endpoints = {
     async 'connector-connect'(body) {
       known(body.id)
       const token = typeof body.token === 'string' ? body.token.trim() : ''
-      if (token === '') throw new Error('Paste a token first')
-      if (insecure) throw new Error(INSECURE)
+      if (token === '') throw refusal('Paste a token first')
+      if (insecure) throw refusal(INSECURE)
       await rt.loadSecrets()
       const kept = rt.secretValue(GITHUB_SECRET) !== undefined
       const { login } = await signIn(token, { api: options.api })

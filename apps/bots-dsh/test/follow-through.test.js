@@ -568,6 +568,90 @@ test('a task a restart cut stays running and reports only when it really ends', 
   assert.match(text(host.agentOf('a').calls[0]), /^\[Task "Ranking" finished/)
 })
 
+// #164. A task the restart pass does not set going has no other way to end: nothing is
+// left to send its turn/end. `sessions` is the tasks record, oldest first.
+const cutTasks = (home, sessions, tasks, extra = {}) => {
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ ...stateOf(home), agents: { t: { id: 't', kind: 'tasks', name: 'Tasks', sessions, createdAt: 1 } }, tasks, ...extra }))
+}
+const working = (title, at) => ({ title, from: 'a', at, status: 'working' })
+const cutAt = time => [{ type: 'turn/start', time: time - 60_000 }, { type: 'turn/end', time, data: { reason: { kind: 'interrupted' } } }]
+
+test('a task the restart pass leaves cut reads stopped from the time it was cut; the others stay', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const home = freshHome(t)
+  const now = Date.now()
+  const twoDays = 2 * 24 * 60 * 60 * 1000
+  const newer = Array.from({ length: 7 }, (_, at) => `newer-${at}`)
+  const tasks = Object.fromEntries(['past-twelve', 'twice', 'stale', 'fresh', 'running', 'not-cut'].map(id => [id, working(id, now - 3 * twoDays)]))
+  cutTasks(home, ['past-twelve', ...newer, 'twice', 'stale', 'fresh', 'running', 'not-cut'], tasks, { restartResumes: { twice: { count: 2, at: now - 1000 } } })
+  const host = await start(home)
+  withLog(host, 'past-twelve', cutAt(now - 1000))
+  withLog(host, 'twice', cutAt(now - 2000))
+  withLog(host, 'stale', cutAt(now - twoDays))
+  withLog(host, 'fresh', cutAt(now - 3000))
+  withLog(host, 'running', cutAt(now - 4000)).status = 'running'
+  withLog(host, 'not-cut', [{ type: 'turn/start', time: now - 5000 }])
+  t.mock.timers.tick(3000)
+  const done = await host.ctx.get('omniTeam').resumesDone
+  assert.deepEqual(done, { resumed: ['fresh'], resent: [] })
+  const saved = stateOf(home).tasks
+  const ending = id => [saved[id].status, saved[id].endedAt, saved[id].summary]
+  const cut = 'A restart cut this task off and it was not picked up again.'
+  // Past the twelve newest, past two resumes, past a day: resume.js will not go back to it.
+  assert.deepEqual(ending('past-twelve'), ['stopped', now - 1000, cut])
+  assert.deepEqual(ending('twice'), ['stopped', now - 2000, cut])
+  assert.deepEqual(ending('stale'), ['stopped', now - twoDays, cut])
+  for (const id of ['fresh', 'running', 'not-cut']) assert.deepEqual(ending(id), ['working', undefined, undefined], id)
+  // Its Session stays where it was, and no Bot is woken at the start for an old task.
+  assert.equal(stateOf(home).agents.t.sessions.length, 13)
+  assert.equal(host.agentOf('a').calls.length, 0)
+})
+
+test('a task that really ends while the pass opens its Session keeps its real end', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const home = freshHome(t)
+  const now = Date.now()
+  const newer = Array.from({ length: 12 }, (_, at) => `newer-${at}`)
+  cutTasks(home, ['far', ...newer], { far: working('Long report', now - 3_600_000) })
+  const host = await start(home)
+  withLog(host, 'far', cutAt(now - 1000))
+  const team = host.ctx.get('omniTeam')
+  const open = host.ctx.sessionController.resolveAgent
+  let reached
+  let release
+  const atGate = new Promise((resolve) => { reached = resolve })
+  const gate = new Promise((resolve) => { release = resolve })
+  // Past the twelve newest, so only the look for a cut task opens it.
+  host.ctx.sessionController.resolveAgent = async (id) => {
+    if (id === 'far') {
+      reached()
+      await gate
+    }
+    return open(id)
+  }
+  t.mock.timers.tick(3000)
+  await Promise.race([atGate, team.resumesDone])
+  host.emit('far', 'assistant/message', { message: { content: [{ type: 'text', text: 'All done.' }] } })
+  host.emit('far', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  release()
+  await team.resumesDone
+  await settle(() => host.agentOf('a').calls.length === 1)
+  assert.deepEqual([team.state.tasks.far.status, team.state.tasks.far.summary], ['done', 'All done.'])
+})
+
+test('a stop in a Session with no task record writes nothing for it and tells no Bot', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const home = freshHome(t)
+  cutTasks(home, ['no-record'], {})
+  const host = await start(home)
+  withLog(host, 'no-record', [{ type: 'turn/start', time: Date.now() - 1000 }])
+  host.emit('no-record', 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
+  t.mock.timers.tick(3000)
+  await host.ctx.get('omniTeam').resumesDone
+  assert.deepEqual([stateOf(home).tasks, stateOf(home).agents.t.sessions], [{}, ['no-record']])
+  assert.equal(host.agentOf('a').calls.length, 0)
+})
+
 test('a message a shutdown cancelled is sent again once; one still waiting, taken up, withdrawn or for a Session no Bot owns is not', async (t) => {
   const home = freshHome(t)
   const first = await start(home)

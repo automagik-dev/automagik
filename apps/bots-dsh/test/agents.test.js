@@ -209,7 +209,8 @@ test('native association requires a durable save and rolls back ownership on dis
     if (!failed) { failed = true; throw new Error('disk full') }
     return save(options)
   }
-  assert.match((await bench.adopt()).error.message, /disk full/)
+  // The save's raw message stays out of the reply; only its kind does.
+  assert.equal((await bench.adopt()).error.message, 'Something went wrong (Error).')
   assert.equal(bench.rt.selfOf('picked'), undefined)
   assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
   assert.deepEqual(bench.archived, [])
@@ -241,7 +242,7 @@ test('native preset flush failure leaves the source and target ownership intact'
     assert.equal(bench.target.preset, 'cordis')
     throw new Error('preset disk failure')
   }
-  assert.match((await bench.adopt()).error.message, /preset disk failure/)
+  assert.equal((await bench.adopt()).error.message, 'Something went wrong (Error).')
   assert.equal(bench.rt.selfOf('picked'), undefined)
   assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
   assert.deepEqual(bench.archived, [])
@@ -319,7 +320,7 @@ test('adoption and rollback save failures restore both records without archiving
   const save = rt.save
   let fail = true
   rt.save = async () => { if (fail) { fail = false; throw new Error('disk full') } return save() }
-  assert.match((await call('agent-bot-adopt', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).error.message, 'Something went wrong (Error).')
   assert.equal(rt.state.agents[entry.id], original)
   assert.equal(original.adoptedBotId, undefined)
   assert.equal(rt.state.bots[entry.sessions[0]], undefined)
@@ -327,7 +328,7 @@ test('adoption and rollback save failures restore both records without archiving
   assert.equal((await call('agent-bot-adopt', { agentId: entry.id })).ok, true)
   const bot = rt.state.bots[entry.sessions[0]]
   fail = true
-  assert.match((await call('agent-bot-rollback', { agentId: entry.id })).error.message, /disk full/)
+  assert.equal((await call('agent-bot-rollback', { agentId: entry.id })).error.message, 'Something went wrong (Error).')
   assert.equal(original.adoptedBotId, bot.id)
   assert.equal(rt.state.bots[bot.id], bot)
   assert.equal(rt.agentOf(bot.id), undefined)
@@ -459,7 +460,7 @@ test('UI DSH creation fails without leaving a plain orphan if membership cannot 
   }
   const result = await call('add-agent', { name: 'Native newcomer', teamMember: true })
   assert.equal(result.ok, false)
-  assert.match(result.error.message, /membership disk failure/)
+  assert.equal(result.error.message, 'Something went wrong (Error).')
   assert.equal(failed, true)
   assert.deepEqual(rt.state.agents, {})
   assert.equal(rt.findBot('Native newcomer'), undefined)
@@ -648,8 +649,9 @@ test('unallocated reservation cleanup accepts only a matching native unknown-ses
     }
     const result = await first.call('add-agent', { name: 'Never allocated', teamMember: true })
     assert.equal(result.ok, false)
-    assert.match(result.error.message, /allocation refused/)
     if (matching) {
+      // Nothing cleaned up after the raw allocation failure, so its message is hidden.
+      assert.equal(result.error.message, 'Something went wrong (Error).')
       assert.doesNotMatch(result.error.message, /Cleanup pending/)
       assert.deepEqual(rt.state.agents, {})
       assert.deepEqual(JSON.parse(readFileSync(join(first.home, 'state.json'), 'utf8')).agents, {})
@@ -850,7 +852,7 @@ test('terminal failed receipt preserves structured native allocated identity', a
   }
   const result = await first.call('add-agent', { name: 'Native attach failure', teamMember: true })
   assert.equal(result.ok, false)
-  assert.match(result.error.message, /workspace attach failed/)
+  assert.equal(result.error.message, 'Something went wrong (session/workspace-attach-failed).')
   assert.deepEqual(first.archived, ['native-allocated-before-attach-failed'])
   assert.deepEqual(first.ctx.provided.get('omniTeam').state.agents, {})
 })

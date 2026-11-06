@@ -4,6 +4,7 @@
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
 // its layer is loaded (../shared/permission-levels.js).
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
+import { refusal } from './refusal.js'
 import { narrowerLevel } from './permission-rank.js'
 
 export function install(rt) {
@@ -213,7 +214,7 @@ export function install(rt) {
 
   function checkPreset(name) {
     const service = presets()
-    if (service === undefined) throw new Error('Permissions are not available in this DeepSeek Harness')
+    if (service === undefined) throw refusal('Permissions are not available in this DeepSeek Harness')
     const wanted = String(name ?? '').trim()
     service.resolve(wanted)
     return wanted
@@ -254,7 +255,7 @@ export function install(rt) {
     if (service === undefined) return undefined
     const own = creator.permission ?? service.catalog().defaultPreset
     const level = narrowerLevel(service, own, own)
-    if (level === undefined) throw new Error(`no permission level of ${creator.name} can be given to a new Bot`)
+    if (level === undefined) throw refusal(`no permission level of ${creator.name} can be given to a new Bot`)
     return level
   }
 

@@ -91,6 +91,20 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
   quiet.mock.restore()
 })
 
+test('a note keeps real frames only, never a message line shaped like one', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-diag-'))
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5 }))
+  const marker = ['frame', 'canary', String(Date.now() % 100_000)].join('-')
+  // A message cannot reach the note's text, but its newline can reach the stack this
+  // note is handed; a line that only starts with `at` must not be kept as a frame.
+  const stack = `Error: boom\n    at ${marker}\n    at probe (file:///probe.mjs:1:2)\n    at async probe (native)`
+  const rt = host(home)
+  rt.noteFailure({ source: 'api', text: 'probe: Error', stack })
+  const [entry] = await rt.diagnostics.entries()
+  assert.equal(entry.stack, 'at probe (file:///probe.mjs:1:2)\nat async probe (native)')
+  assert.ok(!JSON.stringify(entry).includes(marker), JSON.stringify(entry))
+})
+
 test('warnings send only cleaned text to the logger and stderr', (t) => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-diag-'))
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5 }))

@@ -9,6 +9,7 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readF
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJsonLines } from "./log-lines.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
@@ -1037,6 +1038,124 @@ test("a layout already showing the pack (the owner's main-agents): --yes switche
   assert.doesNotMatch(r.out, /layout\.switch|sidebar appears/);
 });
 
+// ---- #387: a kept layout still placing Herdr's workspace-status gets am-status in that block ----
+
+const SWAPPED = /swapped Herdr's workspace-status for am-status in /;
+/** The owner's kept layouts: automagik.json (4-space, the status block still Herdr's) and a compact main-agents. */
+const keptLayouts = (s) => {
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const automagik = `${JSON.stringify(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")), null, 4)}\n`.replace('"mod": "am-status"', '"mod": "workspace-status"');
+  const agents = JSON.stringify({ id: "root", type: "row", children: [
+    { id: "spaces", type: "block", content: { mod: "am-sidebar" } }, { id: "main", type: "block", content: { mod: "terminal" } },
+    { id: "status", type: "block", size: { px: 28 }, content: { mod: "workspace-status" } }] });
+  // Plain Herdr's own layout: it doesn't show the pack, so it stays Herdr's.
+  const plain = '{ "id": "root", "children": [{ "id": "status", "content": { "mod": "workspace-status" } }] }\n';
+  writeFileSync(join(dir, "automagik.json"), automagik);
+  writeFileSync(join(dir, "main-agents.json"), agents);
+  writeFileSync(join(dir, "main.json"), plain);
+  return {
+    read: (name) => readFileSync(join(dir, `${name}.json`), "utf8"),
+    automagik: automagik.replace('"mod": "workspace-status"', '"mod": "am-status"'),
+    agents: agents.replace('"mod":"workspace-status"', '"mod":"am-status"'),
+    plain,
+  };
+};
+
+test("#387: a kept layout placing workspace-status gets am-status in that block, said in the output; the rest stays byte for byte", (t) => {
+  const s = scratch(t);
+  const k = keptLayouts(s);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(s.mark(), /^layout=kept$/m);
+  assert.equal(k.read("automagik"), k.automagik, "only the status block changed");
+  assert.equal(k.read("main-agents"), k.agents, "only the status block changed, the compact form kept");
+  assert.equal(k.read("main"), k.plain, "a layout that doesn't show the pack is left alone");
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/automagik\\.json`));
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json: .*; nothing else in the file changed`));
+  assert.doesNotMatch(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main\\.json`));
+  // The same release again (install.sh's repair run): nothing left to swap, nothing said.
+  const again = s.run("--yes");
+  assert.equal(again.code, 0, again.err);
+  assert.equal(k.read("automagik"), k.automagik);
+  assert.equal(k.read("main-agents"), k.agents);
+  assert.equal(k.read("main"), k.plain);
+  assert.doesNotMatch(again.out, SWAPPED);
+});
+
+test("#387: rerunning the installed release swaps the block in a layout edited since the install", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const k = keptLayouts(s);
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Checking the installed Automagik Herdr 9\.9\.0/);
+  assert.equal(k.read("automagik"), k.automagik);
+  assert.equal(k.read("main-agents"), k.agents);
+  assert.equal(k.read("main"), k.plain);
+  assert.match(r.out, new RegExp(`${SWAPPED.source}\\S*/layouts/main-agents\\.json`));
+});
+
+test("#387: a layout already placing am-status, or placing neither, is left byte for byte, with no swap said", (t) => {
+  const s = scratch(t);
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const automagik = `${JSON.stringify(JSON.parse(readFileSync(LAYOUT_SRC, "utf8")), null, 4)}\n`;
+  const sidebar = { id: "spaces", type: "block", content: { mod: "am-sidebar" } };
+  const herdr = { id: "status", type: "block", content: { mod: "workspace-status" } };
+  const both = `${JSON.stringify({ id: "root", children: [sidebar, herdr, { id: "am", type: "block", content: { mod: "am-status" } }] })}\n`;
+  const neither = `${JSON.stringify({ id: "root", children: [sidebar] }, null, 2)}\n`;
+  writeFileSync(join(dir, "automagik.json"), automagik);
+  writeFileSync(join(dir, "both.json"), both);
+  writeFileSync(join(dir, "neither.json"), neither);
+  s.publish("9.9.0");
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(s.mark(), /^layout=kept$/m);
+  assert.equal(readFileSync(join(dir, "automagik.json"), "utf8"), automagik);
+  assert.equal(readFileSync(join(dir, "both.json"), "utf8"), both, "am-status is already placed: never swapped");
+  assert.equal(readFileSync(join(dir, "neither.json"), "utf8"), neither, "no block is added");
+  assert.doesNotMatch(r.out, SWAPPED);
+  // The layout with neither still gets the note naming what it lacks and where to copy it from.
+  assert.match(r.out, /Your layout neither \(.*\) shows the Automagik sidebar, but not the rest of the pack: .*the status bar with the pack version \(am-status\)/);
+});
+
+test("#387: a kept layout placing workspace-status twice is left byte for byte, and the install says why, every run", (t) => {
+  const s = scratch(t);
+  const dir = join(s.appHome, "layouts");
+  mkdirSync(dir, { recursive: true });
+  const twice = (id) => `${JSON.stringify({ id, children: [{ id: "spaces", content: { mod: "am-sidebar" } },
+    { id: "a", content: { mod: "workspace-status" } }, { id: "b", content: { mod: "workspace-status" } }] }, null, 2)}\n`;
+  writeFileSync(join(dir, "automagik.json"), twice("mine"));
+  writeFileSync(join(dir, "main-agents.json"), twice("root"));
+  s.publish("9.9.0");
+  for (const run of [s.run("--yes"), s.run("--yes")]) {
+    assert.equal(run.code, 0, run.err);
+    assert.equal(readFileSync(join(dir, "automagik.json"), "utf8"), twice("mine"));
+    assert.equal(readFileSync(join(dir, "main-agents.json"), "utf8"), twice("root"));
+    assert.doesNotMatch(run.out, SWAPPED);
+    for (const name of ["automagik", "main-agents"]) {
+      assert.match(run.out, new RegExp(`left: \\S*/layouts/${name}\\.json \\(it places Herdr's workspace-status 2 times, so am-status \\(the status bar`));
+    }
+  }
+  assert.match(s.mark(), /^layout=kept$/m);
+});
+
+test("#387 audit: every layout the pack ships places am-status, and none places Herdr's workspace-status", () => {
+  const dir = dirname(LAYOUT_SRC);
+  const names = readdirSync(dir).filter((n) => n.endsWith(".json"));
+  assert.deepEqual(names, ["automagik.json"], "the pack ships one layout; a new one joins this audit");
+  for (const name of names) {
+    const mods = [];
+    const walk = (n) => { if (n?.content?.mod) mods.push(n.content.mod); (n?.children ?? []).forEach(walk); };
+    walk(JSON.parse(readFileSync(join(dir, name), "utf8")));
+    assert.equal(mods.filter((m) => m === "am-status").length, 1, `${name} places am-status once`);
+    assert.equal(mods.includes("workspace-status"), false, `${name} places no workspace-status`);
+  }
+});
+
 test("no herdr-app, or no status from it: the command is printed and nothing else is tried", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
@@ -1478,7 +1597,7 @@ const linkMachines = (s) => {
     { name: "lin", state: "connected", uname: "Linux x86_64", home: lin }, { name: "off", state: "disconnected", uname: "Linux aarch64", home: lin }] }));
   return {
     meter: join(lin, ".local", "bin", "usagemeter"),
-    execs: () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === "exec"),
+    execs: () => readJsonLines(log).filter((a) => a[0] === "exec"),
   };
 };
 
@@ -1586,4 +1705,308 @@ test("usagemeter: --uninstall removes a pack-installed binary and leaves one the
   assert.match(p.out, /Left .*usagemeter: Pocket Link .* runs it too/);
   assert.equal(meterSays(pocket), "usagemeter 0.3.0");
   assert.equal(treeSum(join(pocket.mods, "pocket-link")), pl);
+});
+
+// ---- #420: --uninstall asks the shown layout first, as `am uninstall herdr.pack` does ----
+
+test("--uninstall is refused while the shown layout's blocks name a pack mod; nothing moves", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  s.addHerdrApp();
+  s.show("automagik");
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /the pack stays: the automagik layout shows am-\S+(, am-\S+)+, and Herdr drops a layout whose mod is gone \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l, or herdr-app do layout\.switch '\{"name":"main"\}'\), then uninstall the pack\./);
+  assert.ok(existsSync(join(s.pack, "VERSION")) && existsSync(layout) && existsSync(join(s.state, "installed-by-install.sh")), "the pack, its layout and its record stay");
+  // The person's own layout that shows the sidebar: refused too.
+  writeFileSync(join(s.appHome, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.show("main-agents");
+  const own = s.run("--uninstall");
+  assert.equal(own.code, 1);
+  assert.match(own.err, /the main-agents layout shows am-sidebar, and Herdr drops/);
+  assert.ok(existsSync(join(s.pack, "VERSION")));
+  // One that names none of the pack: it goes, as before.
+  writeFileSync(join(s.appHome, "layouts", "mine.json"), "{\"id\":\"root\"}\n");
+  s.show("mine");
+  const gone = s.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall with no layout to read goes on, naming the person's layouts that show a pack mod", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.addHerdrApp();
+  s.show("../elsewhere");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Uninstalling the pack without knowing the layout Herdr shows \(Herdr shows the layout "\.\.\/elsewhere", a name with a path, so no file in .*layouts was read\): your layout main-agents \(.*main-agents\.json\) shows am-sidebar, and Herdr drops/);
+  assert.doesNotMatch(r.out, /your layout automagik /, "the pack's own copy, removed with it, is not listed");
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall doesn't wait for a herdr-app status that never answers", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.bin, "herdr-app"), "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(join(s.bin, "herdr-app"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "1";
+  const began = Date.now();
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.ok(Date.now() - began < 20_000, "well under the fake's 30 s");
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("the --uninstall refusal leaves out the layout.switch command while main is the layout in the way", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "main.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.addHerdrApp();
+  s.show("main");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Switch layouts first \(ctrl-shift-l\), then uninstall the pack\./);
+  assert.doesNotMatch(r.err, /layout\.switch/);
+});
+
+test("the status bound leaves no sleep behind after an answer", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "mine.json"), "{\"id\":\"root\"}\n");
+  s.addHerdrApp();
+  s.show("mine");
+  // An answer slow enough that the watchdog's sleep has started.
+  const app = join(s.bin, "herdr-app");
+  writeFileSync(app, readFileSync(app, "utf8").replace("#!/bin/sh\n", "#!/bin/sh\n/bin/sleep 0.5\n"));
+  // A sleep that logs its pid, and a bound long enough that a left one is still running below.
+  const pids = join(s.root, "sleep-pids");
+  writeFileSync(join(s.bin, "sleep"), `#!/bin/sh\necho $$ >> "${pids}"\nexec /bin/sleep "$@"\n`);
+  chmodSync(join(s.bin, "sleep"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "60";
+  assert.equal(s.run("--uninstall").code, 0);
+  const left = readFileSync(pids, "utf8").split("\n").filter(Boolean).map(Number).filter((pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  });
+  for (const pid of left) process.kill(pid);
+  assert.deepEqual(left, [], "no sleep still running");
+});
+
+// ---- #448, #450: --uninstall's removals through the installed updater (update.mjs pack-out) ----
+
+/**
+ * A node on install.sh's PATH that logs each pack-out run (what is still there, its arguments) and
+ * runs the real one. `fail`: exits 1 having done nothing; `partial`: moves its first --move folder
+ * into --to, then exits 1 (a pack-out killed partway, whose undo never ran).
+ */
+function nodeShim(s, { fail = false, partial = false } = {}) {
+  const log = join(s.root, "pack-out.log");
+  writeFileSync(log, "");
+  const stop = partial
+    ? 'to=; first=; prev=\n  for a; do case $prev in --to) to=$a ;; --move) [ -n "$first" ] || first=$a ;; esac; prev=$a; done\n'
+      + '  mv "$first" "$to/${first##*/}"\n  echo \'{"error":"killed"}\'; exit 1'
+    : fail ? 'echo \'{"error":"no room"}\'; exit 1' : "";
+  exe(join(s.bin, "node"), "#!/bin/sh\n"
+    + 'case " $* " in *" pack-out "*)\n'
+    + `  { [ -L "${s.link}" ] && echo link-there; [ -f "${join(s.pack, "update.mjs")}" ] && echo updater-there; printf '%s\\n' "$*"; } >> "${log}"\n`
+    + `  ${stop} ;;\nesac\n`
+    + `exec "${process.execPath}" "$@"\n`);
+  return () => readFileSync(log, "utf8");
+}
+
+test("--uninstall with Node removes the layout and the folders through the updater, before the command link and the pack go", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  const ran = nodeShim(s);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack through its updater \(.*am-sidebar\/update\.mjs pack-out\)/);
+  const log = ran();
+  assert.match(log, /^link-there$/m, "the command link was still there");
+  assert.match(log, /^updater-there$/m, "the updater was still in mods/");
+  assert.ok(log.includes(`--layout ${layout}`) && log.includes(`--move ${s.pack}`), log);
+  assert.match(r.out, /Removed the automagik layout/);
+  assert.equal(existsSync(layout), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")), "kept in .prev");
+  assert.equal(existsSync(s.link), false);
+});
+
+test("--uninstall through the updater leaves the pack's layout in a linked layouts/ folder (#448)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layouts = join(s.appHome, "layouts"), theirs = join(s.root, "their-layouts");
+  cpSync(layouts, theirs, { recursive: true });
+  rmSync(layouts, { recursive: true });
+  symlinkSync(theirs, layouts);
+  const before = treeSum(theirs);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack through its updater/);
+  assert.match(r.out, /Left .*layouts\/automagik\.json: .*layouts is a link, your own folder, not one this installer made; the file in it stays yours\./);
+  assert.equal(treeSum(theirs), before);
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall with an updater that has no pack-out (an older pack) takes the shell path and says so", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const upd = join(s.pack, "update.mjs");
+  writeFileSync(upd, readFileSync(upd, "utf8").replaceAll("pack-out", "pack-gone"));
+  const ran = nodeShim(s);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack with this script \(the installed updater has no pack-out \(an older pack\)\)\./);
+  assert.equal(ran(), "", "pack-out never ran");
+  assert.equal(existsSync(join(s.appHome, "layouts", "automagik.json")), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")));
+});
+
+test("--uninstall whose updater's pack-out fails falls back to the shell path and says why", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  nodeShim(s, { fail: true });
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack with this script instead \(the updater's pack-out failed: no room; it changed nothing\)\./);
+  assert.equal(existsSync(join(s.appHome, "layouts", "automagik.json")), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")));
+});
+
+test("--uninstall is refused while Herdr shows the pack's layout, even when every mod it names is a link (#450)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  // Each mod the layout's blocks name becomes a link to a checkout outside the app home.
+  const named = [...readFileSync(layout, "utf8").matchAll(/"mod"\s*:\s*"([a-z0-9-]+)"/g)].map((m) => m[1])
+    .filter((m, i, all) => all.indexOf(m) === i && existsSync(join(s.mods, m)));
+  assert.ok(named.length > 0, "the pack's layout names its mods");
+  for (const m of named) {
+    const to = join(s.root, "checkout", m);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(join(s.mods, m), to, { recursive: true });
+    rmSync(join(s.mods, m), { recursive: true });
+    symlinkSync(to, join(s.mods, m));
+  }
+  s.addHerdrApp();
+  s.show("automagik");
+  const before = readFileSync(layout);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /the automagik layout is this package's \(layouts\/automagik\.json\) and Herdr shows it: removing the package takes it away \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l, or herdr-app do layout\.switch '\{"name":"main"\}'\), then uninstall the pack\./);
+  assert.deepEqual(readFileSync(layout), before, "the layout keeps its bytes");
+  assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
+});
+
+test("--uninstall through the updater with a linked mods/: the folders move to the kept set as the log says, and the record goes", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const ext = join(s.root, "their-mods");
+  cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
+  rmSync(s.mods, { recursive: true });
+  symlinkSync(ext, s.mods);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack through its updater/);
+  const moved = r.out.match(/Moved the pack out of \S+ \(([^)]*)\); it is kept in/)?.[1].split(",") ?? [];
+  assert.ok(moved.includes("am-sidebar"), r.out);
+  for (const x of moved) {
+    assert.ok(existsSync(join(s.state, ".prev", x)), `${x} said moved, so it is in .prev`);
+    assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
+  }
+  assert.doesNotMatch(r.out, /where it is/);
+  assert.equal(existsSync(join(s.state, "installed-by-install.sh")), false, "nothing stays, so the record goes");
+});
+
+test("--uninstall whose pack-out stops partway: nothing more moves, the record stays, and it says where each folder is", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const before = readdirSync(s.mods).sort();
+  nodeShim(s, { partial: true });
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1, r.out);
+  const out = r.err.match(/the updater's pack-out stopped partway \(killed\)\. Already out, in \S+\/\.prev-next\.\w+: (am-[a-z0-9-]+)\. Still in place: am-\S+(, am-\S+)*\. The automagik layout \(\S+\) is in place\. The record \(\S+\) stays: move the folders in \S+ back/)?.[1];
+  assert.ok(out, r.err);
+  assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
+  assert.deepEqual(readdirSync(s.mods).sort(), before.filter((x) => x !== out), "only the one pack-out moved is out");
+  const next = readdirSync(s.state).filter((x) => x.startsWith(".prev-next."));
+  assert.deepEqual(next.map((x) => readdirSync(join(s.state, x))), [[out]]);
+  assert.ok(existsSync(s.link), "the command link stays");
+});
+
+test("--uninstall refuses the shown pack layout by its name in any case, as the CLI does (#450)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  // Only on a case-insensitive disk (macOS's) does Herdr show AutoMagik from automagik.json.
+  if (!existsSync(join(s.appHome, "layouts", "AutoMagik.json"))) { t.skip("case-sensitive disk"); return; }
+  const named = [...readFileSync(layout, "utf8").matchAll(/"mod"\s*:\s*"([a-z0-9-]+)"/g)].map((m) => m[1])
+    .filter((m, i, all) => all.indexOf(m) === i && existsSync(join(s.mods, m)));
+  for (const m of named) {
+    const to = join(s.root, "checkout", m);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(join(s.mods, m), to, { recursive: true });
+    rmSync(join(s.mods, m), { recursive: true });
+    symlinkSync(to, join(s.mods, m));
+  }
+  s.addHerdrApp();
+  s.show("AutoMagik");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.err, /the AutoMagik layout is this package's \(layouts\/automagik\.json\) and Herdr shows it/);
+  assert.ok(existsSync(layout));
+});
+
+test("--uninstall with every named mod a link and a linked layouts/: the shown layout stays, so nothing is refused (#448, #450)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layouts = join(s.appHome, "layouts"), theirs = join(s.root, "their-layouts");
+  const named = [...readFileSync(join(layouts, "automagik.json"), "utf8").matchAll(/"mod"\s*:\s*"([a-z0-9-]+)"/g)].map((m) => m[1])
+    .filter((m, i, all) => all.indexOf(m) === i && existsSync(join(s.mods, m)));
+  for (const m of named) {
+    const to = join(s.root, "checkout", m);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(join(s.mods, m), to, { recursive: true });
+    rmSync(join(s.mods, m), { recursive: true });
+    symlinkSync(to, join(s.mods, m));
+  }
+  cpSync(layouts, theirs, { recursive: true });
+  rmSync(layouts, { recursive: true });
+  symlinkSync(theirs, layouts);
+  const before = treeSum(theirs);
+  s.addHerdrApp();
+  s.show("automagik");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Left .*layouts\/automagik\.json: .*layouts is a link, your own folder/);
+  assert.equal(treeSum(theirs), before);
+  for (const m of named) assert.equal(lstatSync(join(s.mods, m)).isSymbolicLink(), true, `${m} stays a link`);
+});
+
+test("a release whose update.mjs imports layoutSafe.mjs but lacks it installs nothing", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0", { edit: (src) => rmSync(join(src, "am-sidebar", "layoutSafe.mjs")) });
+  const r = s.run("--yes");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.err, /am-sidebar\/layoutSafe\.mjs is not a plain file: nothing was installed\./);
+  assert.equal(existsSync(s.pack), false);
 });

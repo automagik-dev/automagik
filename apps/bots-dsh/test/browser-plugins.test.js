@@ -11,6 +11,7 @@ import { mountBrowserPlugin } from '../src/host/browser/mount.js'
 import { systemPrompt as refsPrompt, toolDefs as refsTools } from '../src/host/browser/refs.js'
 import { keepTabs, restoreTabs, TABS_FILE } from '../src/host/browser/tabs.js'
 import { fakeApproval, fakeContext } from './fake-ctx.js'
+import { until } from './until.js'
 
 const TEAM = {
   version: 1,
@@ -175,17 +176,20 @@ test('a Bot\'s tabs are saved as they change and come back in a browser that ope
     const listeners = {}
     return { pages: () => pages, on: (name, listener) => { listeners[name] = listener }, newPage: async () => { const page = pageOf('about:blank'); pages.push(page); listeners.page?.(page); return page } }
   }
-  const settled = () => new Promise(resolve => setTimeout(resolve, 600))
+  // The save hook fires after tabs.json has been written, so each wait below follows the
+  // debounced save instead of guessing how long its 400 ms delay plus the write takes.
+  const saves = []
+  const saved = { tabs: [{ url: 'https://a.example/one', title: 'one' }, { url: 'https://b.example/two', title: 'two' }], active: 1 }
 
   const first = [pageOf('https://a.example/one', 'one'), pageOf('https://b.example/two', 'two')]
-  const keeper = keepTabs({ context: contextOf(first), dir, activePage: () => first[1], onSave() {} })
-  await settled()
-  const saved = { tabs: [{ url: 'https://a.example/one', title: 'one' }, { url: 'https://b.example/two', title: 'two' }], active: 1 }
+  const keeper = keepTabs({ context: contextOf(first), dir, activePage: () => first[1], onSave: entry => saves.push(entry) })
+  await until(() => saves.length === 1, { label: 'the open tabs were saved', t })
+  assert.deepEqual(saves[0], saved)
   assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
   // A browser on its way out saves nothing more: its closing tabs do not replace the list.
   keeper.stop()
   first.length = 0
-  await settled()
+  keeper.changed()
   assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
 
   // After a crash or a restart the browser opens blank, and the saved tabs come back; one whose
@@ -196,13 +200,13 @@ test('a Bot\'s tabs are saved as they change and come back in a browser that ope
   const active = await restoreTabs(context, dir, blank[0])
   assert.deepEqual(context.pages().map(page => page.url()), ['https://a.example/one', 'about:blank'])
   assert.equal(active, context.pages()[1])
-  const again = keepTabs({ context, dir, activePage: () => active, onSave() {} })
-  await settled()
+  const again = keepTabs({ context, dir, activePage: () => active, onSave: entry => saves.push(entry) })
+  await until(() => saves.length === 2, { label: 'the restored tabs were saved', t })
   assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')), saved)
   // Tabs closed while the browser is open leave the list, the last one too.
   blank.length = 0
   again.changed()
-  await settled()
+  await until(() => saves.length === 3, { label: 'the closed tabs were saved', t })
   assert.deepEqual(JSON.parse(readFileSync(join(dir, TABS_FILE), 'utf8')).tabs, [])
   again.stop()
   // A browser that already shows a web page keeps what it has.

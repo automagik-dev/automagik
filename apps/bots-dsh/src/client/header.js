@@ -130,8 +130,10 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   // from a small button beside the header's other buttons.
   const pill = away || memoryNotice
   return h('div', { className: native ? 'bt-native-head' : 'bt-head' },
+    // The pill's arrow reads data-expanded: aria-expanded belongs to the Details button alone,
+    // so the memory notice exposes no expanded state to assistive tech.
     pill ? h('button', {
-      type: 'button', className: 'bt-pill', 'aria-expanded': away ? undefined : detailsOpen, 'data-memory': memoryNotice ? 'updated' : undefined,
+      type: 'button', className: 'bt-pill', 'data-expanded': away ? undefined : detailsOpen, 'data-memory': memoryNotice ? 'updated' : undefined,
       'aria-label': away ? t('Back to chat') : memoryNotice ? t('Memory updated. Open {name}\'s memory', { name: roster.byId[changed]?.name ?? name }) : t('View conversation details'),
       title: away ? name : undefined,
       onClick: () => (away ? selectView('chat') : memoryNotice ? actions.openMemory(changed) : actions.toggleDetails(sessionId)),

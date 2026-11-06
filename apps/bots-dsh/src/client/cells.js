@@ -824,6 +824,10 @@ function toolActivity(name, arg, findBot, self) {
       const target = findBot(arg('name')) ?? findBot(arg('bot')) ?? (arg('bot') ? undefined : self)
       return { label: t('Updating {name}', { name: target?.name ?? t('a Bot') }), state: 'sending' }
     }
+    case 'delete_bot': {
+      const target = findBot(arg('bot'))
+      return { label: target ? t('Deleting {name}', { name: target.name }) : t('Deleting another Bot'), state: 'sending' }
+    }
     case 'list_bots': return { label: t('Checking the team'), state: 'searching' }
     case 'read_group_chat': return { label: t('Reading {name}', { name: arg('group') ?? t('a group chat') }), state: 'searching' }
     case 'read_own_chat': return { label: t('Looking back through the chat'), state: 'searching' }
@@ -1014,7 +1018,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 // The calls ToolCell draws. A PTC program (`run_code`) dispatches the real tools as
 // its sub-calls, so a call draws by its own name wherever it sits in the tree.
 // Another Omni plugin's tools draw when they register a card (extend.js).
-const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view', 'browser_handoff', 'generate_image'])
+const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view', 'browser_handoff', 'generate_image'])
 // Calls whose card a dock above the composer carries when the call is not drawn.
 const CARDS = new Set(['ask_user', 'request_secret', 'show_view', 'browser_handoff'])
 
@@ -1078,6 +1082,14 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
     case 'update_bot': {
       const target = findBot(arg('name')) ?? findBot(arg('bot')) ?? (arg('bot') ? undefined : self)
       return done && target ? h(EventLine, { prefix: t('Updated'), bots: [target], onOpen: bot => actions.openSession(bot.id) }) : null
+    }
+    case 'delete_bot': {
+      // The Bot is gone from the roster once the call settles, so its name comes from the call,
+      // and there is no chat left to open.
+      const name = arg('bot') ?? '…'
+      if (!done) return null
+      if (call.isError) return h('div', { className: 'bt-event' }, t("Couldn't delete {name}", { name }))
+      return h('div', { className: 'bt-event' }, h('span', null, t('Deleted')), h('span', null, name))
     }
     case 'group_relay':
       return h(GroupReplies, { sessionId, callId: call.callId, done, content: call.content, roster, actions, useUi, useWork })

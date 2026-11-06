@@ -10,6 +10,7 @@
 // holding a safe interpreter file, are run or put on PATH: real paths whose every folder up
 // to / is owned by this user or root and not world-writable (a root sticky /tmp passes). Not loaded by Herdr (node: imports); the CLI and the tests share it. Apache-2.0.
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { accessSync, closeSync, constants, lstatSync, openSync, readdirSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -169,4 +170,104 @@ export function interpreterPath(program, path, env = process.env) {
   }
   return { path: path ? `${dir}:${path}` : dir,
     note: `${name} runs under ${interp}, which isn't on its PATH: ${dir} put first on it.` };
+}
+
+// ---- an agent on a linked machine (#425) ----
+//
+// herdr-core there may run as a service (a systemd --user unit, launchd) whose PATH never saw the
+// person's ~/.profile, and hc run has no --env. So the machine's login shell is asked for its
+// PATH once; the check and the pane both use the PATH made from it, the pane through
+// /usr/bin/env PATH=<it> as a local start does. An absolute path alone wouldn't do: codex is
+// often a #!/usr/bin/env node script, and an agent runs git and its tools from PATH too.
+
+/**
+ * Run as `sh -c LOGIN_PATH_SH sh <command>`: <command> through the login shell ($SHELL, else
+ * passwd's, else sh), no stdin and no stderr, its last 64 KiB of stdout kept (a profile may
+ * print anything). The bound is hc exec's --timeout, which ends everything it started.
+ */
+export const LOGIN_PATH_SH = `s=\${SHELL:-}
+[ -x "$s" ] || s=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
+[ -x "$s" ] || s=/bin/sh
+"$s" -lc "$1" </dev/null 2>/dev/null | tail -c 65536`;
+
+/**
+ * The command for LOGIN_PATH_SH: the same words in sh, bash, zsh and fish, and $PATH read from
+ * the environment, so fish's list comes back joined by colons. A shell that can't run it says
+ * nothing between the markers, and that is only "no answer".
+ */
+export const loginPathAsk = (marker) => `printf %s ${marker}-from; /usr/bin/env printenv PATH; printf %s ${marker}-to`;
+
+/**
+ * The PATH between this call's markers in what a login shell printed, its relative entries
+ * (they would follow the pane's cwd) dropped; null when there is none or it isn't one line.
+ * The last marker counts, since a profile prints before the command runs. This is text: it
+ * only ever goes on as one argv word.
+ */
+export function loginPathOf(text, marker) {
+  const out = String(text ?? "");
+  const from = out.lastIndexOf(`${marker}-from`);
+  const to = out.indexOf(`${marker}-to`, from);
+  if (from < 0 || to < 0) return null;
+  const value = out.slice(from + marker.length + 5, to).replace(/\n$/, "");
+  // eslint-disable-next-line no-control-regex
+  if (value.length > 16384 || /[\x00-\x1f\x7f]/.test(value)) return null;
+  const dirs = [...new Set(value.split(":").filter((d) => d.startsWith("/")))];
+  return dirs.length ? dirs.join(":") : null;
+}
+
+/**
+ * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing>`. The PATH a pane there gets:
+ * the login shell's, then what hc's own PATH adds (nothing that works today is lost), or the
+ * other way round when hc's own PATH finds the agent as a file, so a machine that works keeps
+ * the same agent and interpreter (#436); then the user bin folders that exist (a profile that
+ * didn't answer, or doesn't add them), /usr/bin and /bin, and last the folders of the agent's
+ * real file (npm's <prefix>/bin holds its node). Prints that PATH, the agent's absolute file and
+ * its first line; exit 3 when no such file. Both words are data here: neither is ever evaluated.
+ */
+export const AGENT_PATH_SH = `agent=$1 path= first=$2 rest=$PATH
+case $(command -v "$agent" 2>/dev/null) in /*) first=$PATH rest=$2 ;; esac
+add() {
+  case $1 in /*) ;; *) return ;; esac
+  case ":$path:" in *":$1:"*) ;; *) path=\${path:+$path:}$1 ;; esac
+}
+set -f; IFS=:
+for d in $first $rest; do add "$d"; done
+unset IFS; set +f
+for d in "$HOME/.local/bin" "$HOME/.bun/bin" /usr/bin /bin; do [ -d "$d" ] && add "$d"; done
+PATH=$path; export PATH
+file=$(command -v "$agent") || exit 3
+case $file in /*) ;; *) exit 3 ;; esac
+real=$(readlink -f "$file" 2>/dev/null) && [ -n "$real" ] || real=$file
+add "\${real%/*}"
+case $real in */lib/node_modules/*) d=\${real%/lib/node_modules/*}/bin; [ -d "$d" ] && add "$d" ;; esac
+printf '%s\\n%s\\n%s\\n' "$path" "$file" "$(head -c 256 "$real" 2>/dev/null | head -n 1)"`;
+
+/**
+ * Finds `program` on a linked machine, as a pane there will: `exec(command, args, { timeout })`
+ * runs one program there (hc exec) and resolves { code, stdout, stderr }, code -1 for no answer.
+ * Resolves { state: "found", path, file, login } (path: the PATH to start it with; login: whether
+ * the login shell answered, "timed out" when it was too slow), { state: "missing", login },
+ * { state: "no-interpreter", file, interpreter, login } (its #!/usr/bin/env program isn't on that
+ * PATH, so env would fail in the pane) or { state: "away", why }. A login shell that is slow, broken
+ * or silent is not a failure: the rest still answers. A machine that doesn't answer is.
+ */
+export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
+  const marker = `am-path-${randomBytes(8).toString("hex")}`;
+  const asked = await exec("sh", ["-c", LOGIN_PATH_SH, "sh", loginPathAsk(marker)], { timeout: wait });
+  const timedOut = asked.code === -1 && /^timed out/.test(asked.stderr ?? "");
+  // decodeExec's -1 with no words is a program ended by a signal (a profile that kills its shell): the machine answered.
+  if (asked.code === -1 && !timedOut && asked.stderr) return { state: "away", why: asked.stderr };
+  const path = loginPathOf(asked.stdout, marker);
+  const login = path !== null ? true : timedOut ? "timed out" : false;
+  const seen = await exec("sh", ["-c", AGENT_PATH_SH, "sh", program, path ?? ""], { timeout: wait });
+  if (seen.code === -1) return { state: "away", why: seen.stderr };
+  if (seen.code !== 0) return { state: "missing", login };
+  const [runPath, file, first] = seen.stdout.split("\n");
+  const interpreter = envInterpreter(first);
+  if (interpreter) {
+    const r = await exec("/usr/bin/env", [`PATH=${runPath}`, "sh", "-c", 'command -v "$1"', "sh", interpreter], { timeout: wait });
+    if (r.code === -1) return { state: "away", why: r.stderr };
+    if (r.code !== 0) return { state: "no-interpreter", file, interpreter, login };
+  }
+  return { state: "found", path: runPath, file, login };
 }

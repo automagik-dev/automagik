@@ -201,9 +201,9 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-swap{color:var(--bt-ink-3);font-size:12px}
 .bt-pill-go{flex:none;display:inline-flex;align-items:center;justify-content:flex-end;width:0;margin-left:-8px;overflow:hidden;opacity:0;filter:blur(6px);transform:translateX(-6px);color:var(--bt-ink-2);transition:width ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},margin-left ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},transform ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},opacity .18s ease,filter .18s ease}
 .bt-pill-go svg{flex:none;transition:transform ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
-.bt-pill:hover .bt-pill-go,.bt-pill:focus-visible .bt-pill-go,.bt-pill[aria-expanded=true] .bt-pill-go{width:18px;margin-left:0;opacity:1;filter:none;transform:none}
-.bt-pill[aria-expanded=true] .bt-pill-go svg{transform:rotate(180deg)}
-.bt-pill[data-memory=updated]:is(:hover,:focus-visible,[aria-expanded=true]) .bt-pill-go{width:0;margin-left:-8px;opacity:0;filter:blur(6px);transform:translateX(-6px)}
+.bt-pill:hover .bt-pill-go,.bt-pill:focus-visible .bt-pill-go,.bt-pill[data-expanded=true] .bt-pill-go{width:18px;margin-left:0;opacity:1;filter:none;transform:none}
+.bt-pill[data-expanded=true] .bt-pill-go svg{transform:rotate(180deg)}
+.bt-pill[data-memory=updated]:is(:hover,:focus-visible,[data-expanded=true]) .bt-pill-go{width:0;margin-left:-8px;opacity:0;filter:blur(6px);transform:translateX(-6px)}
 @media (prefers-reduced-motion:reduce){.bt-pill,.bt-pill-go,.bt-pill-go svg{transition:none!important}.bt-pill-go{filter:none}.bt-pill:active{transform:none}}
 
 /* The width settings: the share of the column a bubble may take, and the flat text. */
@@ -1038,8 +1038,10 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 [class*="_root"]:has(> [data-composer-card]){padding:0 11px 13px 16px!important}
 /* DSH centres its queued-message dock on the stack with a 16px clearance each side; the card
    above sits in that 16/11 root, so the dock follows it: the card's width less the two insets,
-   moved onto the card's axis (#91). */
+   moved onto the card's axis (#91). The goal bar and the todo panel sit in the stack too, four
+   insets narrower than the card, so they follow it the same way (issue 363). */
 [class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) [data-queue-dock]{width:calc(100% - 27px - 2*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
+[class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) :is([data-goal-bar],[data-testid="todo-panel"]){width:calc(100% - 27px - 4*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
 [class*="_root"]:has(> [data-composer-card])>[data-composer-card]{max-width:min(992px,100%)!important}
 [data-composer-card]>[class*="_row"]{display:contents!important}
 [data-composer-card] [class*="_tools"]{order:1!important;flex:none!important;align-self:flex-end!important;margin:0!important}
@@ -1075,7 +1077,9 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}
 [data-composer-card] button[class*="_primary"] svg{width:14px;height:14px}
 [data-composer-card] button[class*="_primary"]:disabled{display:none!important}
-body:not([data-bt-advanced]) [data-composer-dock]{display:none!important}
+/* The dock's display is one decision, so the case the show rule below covers is excluded
+   here: hiding it too left (0,2,1) against (0,2,0), both !important, and the hide won (issue 404). */
+body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:none!important}
 .bt-native-head{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-native-head .bt-head-details{position:static}
 .bt-native-note{display:flex;flex-wrap:wrap;gap:6px;font:12px/18px var(--bt-font);color:var(--bt-ink-2)}

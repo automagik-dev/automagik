@@ -1,7 +1,10 @@
 {
   "session_id": "00000000-0000-4000-8000-000000000002",
   "transcript_path": "/home/user/.claude/projects/-home-user-code-my-app/00000000-0000-4000-8000-000000000002.jsonl",
-  "cwd": "/home/user/code/my-app",
+  "cwd": "/home/user/code/my-app/packages/api",
+  "prompt_id": "00000000-0000-4000-8000-0000000000a2",
+  "effort": { "level": "high" },
+  "session_name": "API work",
   "model": { "id": "claude-opus-5-5", "display_name": "Opus 5.5" },
   "workspace": { "current_dir": "/home/user/code/my-app/packages/api", "project_dir": "/home/user/code/my-app", "added_dirs": [] },
   "version": "2.1.318",
@@ -16,10 +19,11 @@
     "remaining_percentage": 60
   },
   "exceeds_200k_tokens": true,
+  "prompt_cache": { "warm": true, "caching_observed": true, "ttl": "1h", "requests": 120, "misses": 0, "hit_ratio": 0.98 },
   "fast_mode": false,
   "thinking": { "enabled": true },
   "rate_limits": {
     "five_hour": { "used_percentage": 23.5, "resets_at": 1793808000 },
-    "seven_day": { "used_percentage": 58, "resets_at": 1794153600 }
+    "seven_day": { "used_percentage": 31, "resets_at": 1794153600 }
   }
 }

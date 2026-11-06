@@ -361,27 +361,49 @@ export function placementFrom(gets) {
  * when the space was made, `terminal` the bot's. `tabs`: that space's tabs now, each
  * { id, terminals, count } (the terminals its panes show; `count` every pane, a mod pane too,
  * null when unknown). `idle`: the shell has nothing but itself in front (shellIdle). The spare
- * tab's id only while it holds that idle shell alone (a known count of one pane) and the bot
- * shows in another tab of the space, so the space is never left without a tab and nothing else
- * is ever closed; else null. With no pane count it is never closed: a mod pane could be there.
+ * tab's id only while it holds that idle shell alone and the bot shows in another tab of the
+ * space, so the space is never left without a tab and nothing else is ever closed; else null.
+ * Alone: a known count of one pane; with no count (`herdr-app ls` gives none), only a `fresh`
+ * spare, one the start saw right after its own space.new as that space's one tab holding that
+ * shell alone (freshSpare): else a mod pane could be there, and it is never closed.
  */
 export function spareTab(spare, tabs, terminal, idle) {
   if (idle !== true || !spare?.tab || !spare.terminal || !terminal) return null;
   const list = tabs ?? [];
   const tab = list.find((t) => t?.id === spare.tab);
   const terminals = tab?.terminals ?? [];
-  if (!tab || !Number.isSafeInteger(tab.count) || tab.count !== 1 || terminals.length !== 1 || terminals[0] !== spare.terminal) return null;
+  const alone = Number.isSafeInteger(tab?.count) ? tab.count === 1 : tab?.count == null && spare.fresh === true;
+  if (!tab || !alone || terminals.length !== 1 || terminals[0] !== spare.terminal) return null;
   return list.some((t) => t?.id !== spare.tab && (t?.terminals ?? []).includes(terminal)) ? spare.tab : null;
 }
 
 /**
- * True when `hc get`'s answer shows the shell itself in front: its foreground process is the
- * terminal's own (foreground.pid === pid, both given) and a bare shell, its name and flags only.
- * False for anything else in front, a shell running a script or command (`bash deploy.sh`,
- * `sh -c …`) included, or when hc gave no answer or no pids: then the shell is never closed.
+ * The spare shell space.new just made, as the start saw it in the window right after:
+ * { space, tab, terminal, fresh } for `space` (state.mjs spacesOf) and the shell `terminal`
+ * space.new printed, or null when no tab there shows it. `same(a, b)` compares two terminal
+ * ids (a linked machine's may come with its name). `fresh`: the space is that one tab with that
+ * shell as its only terminal, as space.new makes it (spareTab's proof when ls gives no count).
  */
-export function shellIdle(get) {
+export function freshSpare(space, terminal, same = (a, b) => a === b) {
+  if (!space || typeof terminal !== "string" || !terminal) return null;
+  const tabs = space.tabs ?? [];
+  const tab = tabs.find((t) => (t?.panes ?? []).some((p) => same(p?.terminal, terminal)));
+  if (!tab) return null;
+  return { space: space.id, tab: tab.id, terminal, fresh: tabs.length === 1 && tab.panes.length === 1 };
+}
+
+/**
+ * True when `hc get`'s answer shows the shell itself in front: its foreground process is the
+ * terminal's own (foreground.pid === pid, both given) and a bare shell, its name and flags only,
+ * with no process of its own running (`children`: its child pids, `pgrep -P`; [] for none).
+ * False for anything else in front, a shell running a script or command (`bash deploy.sh`,
+ * `sh -c …`) included; for a shell at its prompt with a job left running (`sleep 99 &`) or any
+ * other child (hc get lists none, so they are asked of the OS); and when hc gave no answer or no
+ * pids, or the children are unknown (`children` not an array): then the shell is never closed.
+ */
+export function shellIdle(get, children) {
   const fg = get?.foreground;
+  if (!Array.isArray(children) || children.length) return false;
   if (!Number.isSafeInteger(get?.pid) || fg?.pid !== get.pid) return false;
   const argv = Array.isArray(fg.argv) && fg.argv.length ? fg.argv : [fg.name];
   // A bare interactive shell: its name and flags only (-zsh, bash -i, zsh -l); never -c or a script.

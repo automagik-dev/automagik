@@ -123,9 +123,35 @@ never red. Red is kept for errors (a failed read or switch).
   (`since`) before the switch. If any of them has no start time the panel can't split them
   reliably: it lists every running bot of that tool and says so. **Restart N bots** asks for a
   second press within five seconds, then runs `automagik-herdr restart <bot> --project <project>`
-  for each, one at a time (each resumes its conversation), and names any it refused (a working
-  bot is refused rather than forced). Without the sidebar mod there is no CLI: the banner says to
-  run `automagik-herdr restart <bot>` instead.
+  for each, one at a time (each resumes its conversation), each in an hc terminal of its own
+  rather than through Herdr's `exec`, so Herdr's 30 s limit on a mod's programs can't end a
+  restart part-way. The panel follows that terminal to its end, reads what the CLI answered, and
+  names any bot it refused, with the
+  CLI's reason: a new pane that exited before its agent was up says what its agent printed last
+  (codex's `modelProviderNotConfigured`, say). A Codex thread codex refuses with
+  `modelProviderNotConfigured` can't be resumed: that bot starts on a new conversation, listed with
+  the old thread's id. A bot mid-turn is
+  refused rather than forced and shown as busy, with **Restart <bot> when idle**: one `hc wait` at
+  a time on its pane, a few at most, then one restart once its pane is done or idle. How long that
+  can run depends on Herdr: released versions cut each wait at 30 s, about 2 minutes in all; one
+  with `exec`'s `timeout` waits up to 30 minutes. If it gives up, the panel says how long it
+  really waited. A bot with helpers that would end with its pane needs no second press: once its
+  helpers are done or idle the panel restarts it with them, waiting first for any still working
+  (those panes only, the same way) and reading them all again just before the restart. A pane or
+  helper waiting for an answer, a pane gone, one hc can't read, a helper in error or with helpers
+  of its own, or a helper with an agent that reports no status: no restart, and the bot stays
+  listed with why. A plain program reports no status and doesn't hold the restart up. Pressing the button while it waits cancels;
+  the panel keeps the wait in memory only, so a reload drops it. Any number of helpers restart
+  this way. A restart whose terminal ends or goes with no answer says it may have stopped part-way
+  and what to check; one still running after about 5 minutes (40 s more per helper) is named with
+  its terminal, and pressing again starts no second restart of that bot while it runs. The
+  restart's terminal (labelled `am-quota.restart=<bot>`, removed by hc once it ends) leaves its
+  answer in `data/am-quota/runs/` of the app home; files there older than a day go at the next
+  restart. That terminal starts in herdr-core's environment, so the CLI gets Herdr's own `PATH`,
+  `HOME`, `NVM_DIR`, `VIRTUAL_ENV` and `HERMES_HOME`, and finds node and the agents as it did
+  before. The panel never names a CLI flag:
+  a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
+  `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates
   it on use, so whichever side refreshes first can sign the other out. Expect to re-import or sign in
   on the side that lost it; the banner after a Claude switch says so too.

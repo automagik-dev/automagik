@@ -13,7 +13,9 @@ import { redact as clientRedact, redactText as clientRedactText, secretsIn as cl
 const WORDS = ['correct', 'horse', 'battery', 'staple']
 const PHRASE = WORDS.join(' ')
 const JOINED = WORDS.join('')
-const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass']
+const KEYS = ['password', 'PASSWD', 'pass', 'Secret', 'client_secret', 'passphrase', 'TOKEN', 'api_key', 'private_key', 'db_password', 'DB_PASS', 'x-api-key', 'secret_key', 'SECRET_KEY', 'aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY', 'accessToken', 'clientSecret', 'dbPassword', 'apiKey', 'privateKey', 'authToken', 'dbPass', 'userPass', 'adminPass', 'ClientSecret', 'AccessToken', 'DbPassword', 'DbPass',
+  // Invisible characters inside the name, read as the name (#348).
+  'pass\u200bword', 'pass\u0000word', 'db\u200bPassword', 'API\ufeff_KEY']
 const SCHEMES = [`authorization: bearer ${JOINED}`, `AUTHORIZATION: BEARER ${JOINED}`, `Authorization: basic ${JOINED}`, `{"authorization": "bearer ${PHRASE}"}`]
 // 80k characters of each input that could make a rule quadratic: a start after - or --, an open
 // quote, a camelCase run, a YAML block, an open escaped JSON value, a prefix run, many line starts,
@@ -46,7 +48,14 @@ const ADVERSARIAL = {
   'line starts': '\n '.repeat(40_000),
   'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
   'YAML keys': '\npassword: |'.repeat(6_700),
+  'YAML block, LF, stray CRs': `password: |\n  ${'a line\r'.repeat(10_000)}`,
+  'YAML block, CRLF, stray CRs and LFs': `password: |\r\n  ${'a line\ra line\n'.repeat(5_000)}`,
+  'YAML block, CR, stray LFs': `password: |\r  ${'a line\n'.repeat(10_000)}`,
+  'YAML block, LF, stray CRs at line starts': `password: |\n${'\r  a line\n'.repeat(7_000)}`,
+  'YAML block, CR, stray LF blank lines': `password: |${'\r\n'.repeat(40_000)}`,
   'names mid-line': 'a password: '.repeat(6_700),
+  'an explicit key line of names, then its colon line': `? ${'a password '.repeat(6_700)}\n:\n`,
+  'explicit key lines': '? password\n:\n'.repeat(8_000),
   'camelCase names mid-line': 'x dbPassword: '.repeat(5_700),
   'bearer runs': 'bearer x '.repeat(9_000),
   'bearer long run': `bearer ${'a'.repeat(80_000)}`,
@@ -76,6 +85,29 @@ const ADVERSARIAL = {
   'escaped quote pairs in an open value': `password: "${'\\"'.repeat(40_000)}`,
   'escaped quote pairs in an escaped value': `{\\"password\\": \\"${'\\"'.repeat(40_000)}`,
   ...Object.fromEntries(INDENTED),
+  // Invisible characters, raw and escaped, in and around names, and anchors after names (#348).
+  'invisibles inside a word': 'a\u200b'.repeat(40_000),
+  'invisibles before colons': '\u200b:'.repeat(40_000),
+  'a BOM run': '\ufeff'.repeat(80_000),
+  'a name, a BOM run, no separator': `pass\u200bword${'\ufeff'.repeat(80_000)}`,
+  'a name, then spaces': `pass\u200bword${' '.repeat(80_000)}`,
+  'escaped invisibles inside a word': 'a\\u0000'.repeat(13_000),
+  'escaped invisibles after backslashes': '\\\\u200b'.repeat(11_000),
+  'names with invisibles mid-line': 'a pass\u200bword: '.repeat(4_400),
+  'anchors after a name': 'password: & '.repeat(6_700),
+  'tags after a name, no value': 'password: !!str'.repeat(5_300),
+  // Key lines whose value comes on a later line (#396, #410): each read once, forward from its line.
+  'key lines with comments': 'password: &a # c\n'.repeat(5_000),
+  'bare key lines': 'password:\n'.repeat(8_000),
+  'a key line, a comment run, then a child': `password:\n${'# c\n'.repeat(20_000)}  user: x`,
+  'a key line, an anchor run, then a sibling': `password:\n${'  &a\n'.repeat(16_000)}next: x`,
+  'comment lines naming keys': '# password: &a\n'.repeat(6_000),
+  'a key line, then a value with a space run': `password:\n  x${' '.repeat(80_000)}#`,
+  'a key line, then a long word run': `password:\n  ${'a '.repeat(40_000)}`,
+  'key lines ending at a lone CR': 'password: &a\r'.repeat(8_000),
+  'a key line, then a CRLF blank run': `password:${'\r\n'.repeat(40_000)}x`,
+  'parents and children': 'secret: &d\n  user: x\n'.repeat(4_000),
+  'open quotes under key lines': 'password:\n  "x\n'.repeat(5_000),
 }
 const YAML_LINES = Array.from({ length: 400 }, (_, i) => `    ${PHRASE} ${i}\n`) // more than either keep
 // A bare value is one unbroken run (only its first word would be hidden), so it never takes the
@@ -86,8 +118,20 @@ const FORMS = [
   ['--key=value', (k) => `tool --${k}=${JOINED}`, 'bare'], ['--key="value"', (k, v) => `tool --${k}="${v}"`],
   ['key: value, bare', (k) => `${k}: ${JOINED}`, 'bare'],
   ['escaped JSON', (k, v) => `{\\"${k}\\": \\"${v}\\"}`],
-  ['YAML >', (k, v) => `\n${k}: >\n  ${v}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k, v) => `\n  ${k}: |-\n    ${v}\n\n    ${PHRASE}\n  next: shown`],
+  // A YAML block with LF, CRLF or lone CR line ends.
+  ...[['', '\n'], [', CRLF', '\r\n'], [', CR', '\r']].flatMap(([eol, n]) => [
+    [`YAML >${eol}`, (k, v) => `${n}${k}: >${n}  ${v}${n}  ${PHRASE}${n}next: shown`],
+    [`YAML |${eol}`, (k, v) => `${n}  ${k}: |-${n}    ${v}${n}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
+  // A stray line end the key line does not use, inside the block: part of the value (#346).
+  ...[['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']].flatMap(([eol, n, stray, s]) => [
+    [`YAML |, ${eol}, a stray ${stray} mid-line`, (k, v) => `${n}${k}: |${n}  ${v}${s}${PHRASE}${n}next: shown`],
+    [`YAML >, ${eol}, a stray ${stray} at a line start`, (k, v) => `${n}${k}: >${n}  ${v}${n}${s}  ${PHRASE}${n}next: shown`],
+    [`YAML |-, ${eol}, a stray ${stray} on a blank line`, (k, v) => `${n}  ${k}: |-${n}    ${v}${n}${s}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
   ['key = value', (k) => `${k} = ${JOINED}`, 'bare'], ['key : "value"', (k, v) => `${k} : "${v}"`], ['{"key" : "value"}', (k, v) => `{"${k}" : "${v}"}`],
+  // YAML anchors and tags before the value (#348).
+  ['key: &a !!str "value"', (k, v) => `${k}: &a !!str "${v}"`], ['key: !!str value, bare', (k) => `${k}: !!str ${JOINED}`, 'bare'],
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text, bare]) => [`${k} (${form})`, (v = PHRASE) => text(k, v), bare]))
 const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase()) || t.toLowerCase().includes(w)))
@@ -171,13 +215,32 @@ test('fields named for a pass count are kept; fields named for a pass are hidden
 })
 
 test('a YAML block longer than the 16 KiB bound, streamed a line at a time: no word of it is shown', () => {
-  for (const key of ['password', 'dbPassword']) {
-    const r = rig()
-    r.push(`config:\n  ${key}: |\n`)
-    for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line)
-    assert.deepEqual(leaked(r.served()), [], key)
-    r.push('next: shown')
-    assert.match(r.served(), /next: shown/, key)
+  for (const [eol, n] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const r = rig()
+      r.push(`config:${n}  ${key}: |${n}`)
+      for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line.replace(/\n$/, n))
+      assert.deepEqual(leaked(r.served()), [], `${key}, ${eol}`)
+      r.push('next: shown')
+      assert.match(r.served(), /next: shown/, `${key}, ${eol}`)
+    }
+  }
+})
+
+// A stray line end the key line does not use is part of the value, also when a delta ends on one:
+// the bound keeps an indented block line, so the unindented rest of that line stays hidden (#346).
+test('a YAML block streamed past the 16 KiB bound with stray line ends: no word of it is shown', () => {
+  for (const [eol, n, s] of [['LF', '\n', '\r'], ['CRLF', '\r\n', '\r'], ['CRLF', '\r\n', '\n'], ['CR', '\r', '\n']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const what = `${key}, ${eol} key, a stray ${JSON.stringify(s)}`
+      const r = rig()
+      r.push(`config:${n}  ${key}: |${n}`)
+      for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line.replace(/\n$/, s))
+      r.push(`${PHRASE}${n}`)
+      assert.deepEqual(leaked(r.served()), [], what)
+      r.push('next: shown')
+      assert.match(r.served(), /next: shown/, what)
+    }
   }
 })
 

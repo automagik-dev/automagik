@@ -9,10 +9,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DocError, docGet } from "../mods/am-sidebar/docGet.mjs";
+import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const METER = { tasks: { "gl-1": { usd: 1.25, work_min: 30, lead_min: 4 } } };
+// Taken before any test mocks setTimeout: that test's own waits stay on the wall clock.
+const realSetTimeout = setTimeout;
 
 function scene(t, state = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-doc-cli-")));
@@ -33,7 +36,7 @@ function scene(t, state = {}) {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: "utf8", timeout: 20000 });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   return { cli, calls, hcState, hc, env };
 }
@@ -127,20 +130,31 @@ test("doc get: malformed JSON from hc, or an answer with no value, exits 1 with 
   }
 });
 
-test("docGet: no answer in time is a failure (1), and hc connect is ended", async (t) => {
+test("docGet: no answer in time is a failure (1), and hc connect is ended", { timeout: 30_000 }, async (t) => {
   const s = scene(t, { connectHang: true });
-  const started = Date.now();
-  await assert.rejects(docGet("herdr-meter", { hc: s.hc, env: s.env, timeoutMs: 2000 }), (e) => {
+  // docGet's 2 s runs on a mocked clock that this test moves only once the fake has written its
+  // pid, so the fake's start (bin/hc, exec node, imports, the write) races nothing (#426). The
+  // wait ends at that write; 20 s is only where a fake that never gets there stops being waited
+  // for, and it then fails at the pid below.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const refused = assert.rejects(docGet("herdr-meter", { hc: s.hc, env: s.env, timeoutMs: 2000 }), (e) => {
     assert.ok(e instanceof DocError);
     assert.equal(e.code, 1);
     assert.match(e.message, /no answer for doc herdr-meter/);
     return true;
   });
-  assert.ok(Date.now() - started < 8000);
+  const startBudget = Date.now() + 20_000;
+  while (!s.hcState().connectPid && Date.now() < startBudget) await new Promise((go) => realSetTimeout(go, 20));
   const { connectPid } = s.hcState();
+  // A docGet that misses this tick never ends the fake: the test's timeout fails it, and this ends it.
+  let alive = true;
+  t.after(() => { if (alive && connectPid) { try { process.kill(connectPid, "SIGKILL"); } catch { /* gone */ } } });
+  t.mock.timers.tick(2000);
+  await refused;
+  t.mock.timers.tick(1000); // docGet's grace before its SIGKILL
+  t.mock.timers.reset();
   assert.ok(connectPid > 0);
   const deadline = Date.now() + 3000;
-  let alive = true;
   while (alive && Date.now() < deadline) {
     try { process.kill(connectPid, 0); await new Promise((go) => setTimeout(go, 50)); } catch { alive = false; }
   }

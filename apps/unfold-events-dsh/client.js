@@ -1366,6 +1366,31 @@ function slotLine(slot, now) {
 
 // src/client/redact.js
 var REDACTED = "[redacted]";
+var INVISIBLE_GATE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\u/u;
+var INVISIBLE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff])/gu;
+var INVISIBLE_NAME = /(?<![A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))(?:(?<!\\)|(?=[nrt]))((?:[A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))+)((?:\\?["'])?[ \t]*[:=][ \t]*)((?:[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))*)/gu;
+var NAME_STEM = /pass|secret|token|key|authorization/i;
+var INVISIBLE_EXPLICIT = /(^|\r\n|\r(?!\n)|\n)([ \t]*(?:-[ \t]+)?\?[ \t][^\r\n#]*?["']?)((?:[A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))+)(["']?[ \t]*(?:#[^\r\n]*)?(?=\r\n|\r(?!\n)|\n|$))/gu;
+function nameText(s) {
+  if (!INVISIBLE_GATE.test(s)) return s;
+  return s.replace(INVISIBLE_NAME, (m, run, sep, after) => {
+    const name = run.replace(INVISIBLE, "");
+    return (name !== run || after) && NAME_STEM.test(name) ? `${name}${sep}` : m;
+  }).replace(INVISIBLE_EXPLICIT, (m, nl, head, run, tail) => {
+    const name = run.replace(INVISIBLE, "");
+    return name !== run && NAME_STEM.test(name) ? `${nl}${head}${name}${tail}` : m;
+  });
+}
+var OPEN_END = false;
+function laterLine(m, nl, indent, before, name, sep, props, tail, run, br, indicator, body, prefix, q, close, offset, string) {
+  const head = `${nl}${indent}${before}${name}${sep}`;
+  if (indicator !== void 0) return `${head}${props}${tail}${run}${br}${indicator}${/\S/.test(body) ? `${/^\r?\n|^\r/.exec(body)[0]}${/[\r\n]([ \t]*)\S/.exec(body)[1]}${REDACTED}` : body}`;
+  if (prefix !== void 0) {
+    if (OPEN_END && q === void 0 && !/[\r\n]/.test(string.slice(offset + m.length))) return `${head}${props}${tail}${run}${br}${prefix}`;
+    return `${head}${props}${tail}${run}${br}${prefix}${q ? `${q}${REDACTED}${close}` : REDACTED}`;
+  }
+  return `${head}${props.replace(/^([ \t]+)[\s\S]+$/, `$1${REDACTED}`)}${tail}${run}`;
+}
 var SECRET_TEXT = [
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
@@ -1375,14 +1400,42 @@ var SECRET_TEXT = [
   // streamed `KEY="…` is hidden until its quote arrives). The `=` is found first and the name
   // looked for behind it, so a long word of names is one pass, with or without a value after it.
   [/\b([A-Z0-9_]+)=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, (_, name) => `${name}=${REDACTED}`, /=/],
-  // A YAML block scalar under a name (`password: |` or `>`, then the lines indented under it) is
-  // hidden whole, its key line kept, text before the name on that line too. These run first, so
-  // the name rules leave its `|` or `>` alone. The indent is taken whole (a lookahead and its
-  // backreference), so a long one is one pass.
-  [/(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/gi, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `
-${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
-  [/(^|\n)(?=[^\n]*:[ \t]*[>|][-+0-9]*[ \t]*(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*[>|][-+0-9]*[ \t]*)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*(?=\n|$)))*)/g, (_, nl, indent, before, name, sep, block) => `${nl}${indent}${before}${name}${sep}${/\S/.test(block) ? `
-${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
+  // A block indicator with an anchor or tag before it (`password: &a |`, `!!str >-`,
+  // `!<tag:yaml.org,2002:str> |`, one or two of them, each followed by a space or tab) hides
+  // that property with the block: it serves as `password: |` and its block, the shape of the
+  // plain form. The plain indicator, and every key line the scan below reads more broadly
+  // (quoted keys, invisible characters, explicit keys past blanks), is left to `[redactYamlBlocks]`.
+  // YAML allows at most one anchor and one tag on a node, so a line with three or more is
+  // invalid and no rule here or below matches it: it is left as written and nothing on it is
+  // remembered (#396).
+  [/(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){1,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))([ \t]*:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2}([>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/gi, (_, nl, indent, before, name, sep, indicator, block) => `${nl}${indent}${before}${name}${sep}${indicator}${/\S/.test(block) ? `
+${indent}  ${REDACTED}${block.endsWith("\r") ? "\r" : ""}` : block}`, /:[ \t]*[&!>|]/],
+  [/(^|\n)(?=[^\n]*:[ \t]*(?:[&!][^\s"'`]*[ \t]+){1,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?=([ \t]*))\2([^\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))([ \t]*:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2}([>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?)(?=\n|$)((?:\n(?:\2[ \t]+[^\n]*|[ \t]*\r?(?=\n|$)))*)/g, (_, nl, indent, before, name, sep, indicator, block) => `${nl}${indent}${before}${name}${sep}${indicator}${/\S/.test(block) ? `
+${indent}  ${REDACTED}${block.endsWith("\r") ? "\r" : ""}` : block}`, /:[ \t]*[&!>|]/],
+  // A YAML block scalar under a name (`password: |` or `>`, then the lines under it) is hidden
+  // whole, its key line kept, text before the name on that line too: YAML_KEY finds its key line
+  // and yamlBlockEnd where the block ends. It runs before the name rules, so they leave its `|`
+  // or `>` alone.
+  [redactYamlBlocks, null, /:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[&!>|]/],
+  // A credential key line that ends at its colon, or at up to two anchors and tags (`&a`, `!!str`),
+  // a comment after them or not, continues on a later line (#396, #410). Blank lines and comment lines
+  // are skipped, and so are lines of anchors and tags alone indented under the key. Then the first
+  // line strictly more indented than the key line is its value, hidden with the plain lines that
+  // continue it (a quoted one up to its closing quote), or a block indicator (`|`, `>-`), whose
+  // lines are hidden. A more indented mapping line (a name and a colon, quoted or not) is a child
+  // key, never the value: it is left to the name rules, which hide only a credential child's value.
+  // A line at the key's indent or less is a sibling: nothing is hidden or remembered from it, and an
+  // anchor or tag with no value on the key line is hidden, as at the end of the text. A comment is
+  // never a value, a comment line that names a credential starts nothing, and the key line and each
+  // blank, comment, anchor and tag line stay as written. A line ends at \n, \r\n or a lone \r. Each
+  // line is read forward from its start, its indent taken whole (a lookahead and its backreference),
+  // so a key line costs one pass over it and the lines under it. An explicit key (#406), a `? name`
+  // line (a list item's `- ? name` too) then a `:` line at its indent with nothing after the colon
+  // but blanks, anchors, tags or a comment, is a key line too: its `:` line ends it, and the lines
+  // under it are read from there. A `? name` line followed by a `:` line with a block indicator
+  // (`: |`, `: >-`, anchors and tags too) is the previous rules' block form.
+  [/(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)|[ \t]*(?:-[ \t]+)?\?[ \t][^\r\n]*(?:\r?\n|\r(?!\n))[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?[ \t]*:|["']?[ \t]*(?=[\r\n])(?<=(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t][^\r\n]*)(?:\r?\n|\r(?!\n))\2[ \t]*:)((?:[ \t]+[&!][^\s"'`]*){0,2})((?:[ \t]+#[^\r\n]*)?[ \t]*)((?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*)(?:((?:\r?\n|\r(?!\n)))(?:(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)|(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(?:(?:Bearer|Basic)[ \t]+(?=[A-Za-z0-9._~+/=-]))?)(?:(["'`])(?:(?!\13)[^\\]|\\[\s\S]|\\$)*(\13|$)|(?:[^ \t\r\n]|[ \t]+(?![ \t#\r\n]|$))+(?:(?:(?:\r?\n|\r(?!\n))[ \t]*(?=[\r\n]))*(?:\r?\n|\r(?!\n))\2[ \t]+(?![ \t#\r\n])[^\r\n]*)*))|(?=(?:\r?\n|\r(?!\n))(?!\2[ \t])[ \t]*[^\s#]|$))/gi, laterLine, /:[ \t]*(?:[&!#][^\r\n]*)?(?:[\r\n]|$)/],
+  [/(^|(?:\r?\n|\r(?!\n)))(?=[^\r\n]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)|[ \t]*(?:-[ \t]+)?\?[ \t][^\r\n]*(?:\r?\n|\r(?!\n))[ \t]*:(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?=([ \t]*))\2([^\r\n#]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?[ \t]*:|["']?[ \t]*(?=[\r\n])(?<=(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t][^\r\n]*)(?:\r?\n|\r(?!\n))\2[ \t]*:)((?:[ \t]+[&!][^\s"'`]*){0,2})((?:[ \t]+#[^\r\n]*)?[ \t]*)((?:(?:\r?\n|\r(?!\n))(?:[ \t]*(?:#[^\r\n]*)?|\2[ \t]+[&!][^\s"'`]*(?:[ \t]+[&!][^\s"'`]*)?(?:[ \t]+#[^\r\n]*)?[ \t]*)(?=[\r\n]|$))*)(?:((?:\r?\n|\r(?!\n)))(?:(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*)(?=[\r\n]|$)((?:(?:\r?\n|\r(?!\n))(?:\2[ \t]+[^\r\n]*|[ \t]*(?=[\r\n]|$)))*)|(\2[ \t]+(?:[&!][^\s"'`]*[ \t]+){0,2}(?![ \t&!#\r\n]|[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?=[\r\n]|$)|(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:[^\r\n: \t]|[ \t]+(?=[^\r\n: \t#]))+)[ \t]*:(?:[ \t]|(?=[\r\n]|$)))(?:(?:Bearer|bearer|BEARER|Basic|basic|BASIC)[ \t]+(?=[A-Za-z0-9._~+/=-]))?)(?:(["'`])(?:(?!\13)[^\\]|\\[\s\S]|\\$)*(\13|$)|(?:[^ \t\r\n]|[ \t]+(?![ \t#\r\n]|$))+(?:(?:(?:\r?\n|\r(?!\n))[ \t]*(?=[\r\n]))*(?:\r?\n|\r(?!\n))\2[ \t]+(?![ \t#\r\n])[^\r\n]*)*))|(?=(?:\r?\n|\r(?!\n))(?!\2[ \t])[ \t]*[^\s#]|$))/g, laterLine, /:[ \t]*(?:[&!#][^\r\n]*)?(?:[\r\n]|$)/],
   // `name: value` / `name=value`, in JSON too. A quoted value ("…", '…' or `…`; spaces and escapes
   // included) runs to its unescaped closing quote, or to the end while open. After a name, an
   // authorization scheme in any case (`authorization: bearer x`) keeps its word and hides what
@@ -1391,12 +1444,27 @@ ${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
   // key, private key or authorization, in any case, as a whole token with any prefix joined by _ or
   // - (db_password, x-api-key, aws_secret_access_key), also right after a - or -- (--api-key=x):
   // `bypass` and `tokenizer` are words, not names.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /[:=]/],
+  // After a name and its colon, up to two YAML anchors and tags (`&a`, `!!str`, `!secret`, in either
+  // order, each followed by a space or tab, on the colon's line) come before the value: they are
+  // hidden with it, so `password: &a x` serves as `password: [redacted]`, the shape of the plain
+  // scalar. The skip never crosses a line break, so `password: &a` then `username: bob` hides only
+  // `&a` and the next line's key is never read, or remembered, as the value. Anchors and tags
+  // then a block indicator (and a comment) at the end of the line are a block scalar's key line
+  // (the rules above), never a value, so neither an anchor nor a tag is read as one. YAML allows
+  // at most one anchor and one tag on a node: a line with three or more before its value or its
+  // indicator is invalid YAML, and these rules do not match it, so it is left as written, no anchor
+  // or tag is hidden as its value and nothing on it is remembered; the block rules do not read it
+  // either.
+  // A key line that ends at its colon, or at its anchors and tags, or at a comment, is the later-line
+  // rule's above, never these rules': here a name with no value on its line reads no later line, and
+  // a comment is not a value. A quoted name with nothing after its colon (`"password":`) still reads
+  // the next line, as JSON may break there.
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))((?:["']?\s*=|\s*:(?!(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))|["']\s*:(?!(?=[ \t]+[&!#])(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)))\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?!Bearer\b|Basic\b|\[redacted\])[^\s"',}]+)/gi, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /[:=]/],
   // The same names in camelCase or PascalCase (accessToken, ClientSecret, dbPassword, DbPass,
   // apiKey, authToken), case sensitive and whole-token, so accessLevel, MaxTokens, passRate and
   // PassengerCount stay words.
   // A name is a key only with its value, so a firstPass in prose stays a word.
-  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))(["']?\s*[:=]\s*)(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*[ \t]*(?:\n|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /Token|Secret|Pass|Key|Authorization/],
+  [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))((?:["']?\s*=|\s*:(?!(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))|["']\s*:(?!(?=[ \t]+[&!#])(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)))\s*)(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:(["'`])(?:(?!\3)[^\\]|\\[\s\S]|\\$)*(\3|$)|(Bearer|bearer|BEARER|Basic|basic|BASIC)\s+[A-Za-z0-9._~+/=-]+|(?![>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*(?:[\r\n]|$))(?!(?:Bearer|bearer|BEARER|Basic|basic|BASIC)\b|\[redacted\])[^\s"',}]+)/g, (_, name, sep, q, close, scheme) => q ? `${name}${sep}${q}${REDACTED}${close}` : scheme ? `${name}${sep}${scheme} ${REDACTED}` : `${name}${sep}${REDACTED}`, /Token|Secret|Pass|Key|Authorization/],
   // JSON inside a JSON string (`{\"password\": \"…\"}`): the value runs to its escaped closing
   // quote, its own escapes doubled, or to a bare quote that ends the outer string.
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))(\\"\s*:\s*)\\"((?:[^\\"]|\\[^\\"]|\\\\(?:\\[\s\S]|\\$|[^\\]|$)|\\$)*)(\\"|"|$)/gi, (_, name, sep, value, close) => `${name}${sep}\\"${REDACTED}${close}`, /\\"/],
@@ -1411,12 +1479,71 @@ ${indent}  ${REDACTED}` : block}`, /:[ \t]*[>|]/],
   [/\bAIza[0-9A-Za-z_-]{20,}/g, () => REDACTED],
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
   [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}/g, () => REDACTED],
-  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED]
+  [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED],
+  // A line a cut padded with blanks (#406 F-B): a run of blanks as long as the keep is the cut's
+  // padding, not text. Its head is gone — the name on it cannot be read (a child key arrives as
+  // "pass" and "word:") — so once the line has ended it is hidden whole, and while it is still
+  // arriving (a growing buffer's last line, OPEN_END) its rest is withheld, as the value that
+  // completes it is not remembered yet (#406's last frame). It runs LAST, on purpose: a padded line
+  // that is a key line still names the value on the lines under it, and the rules above hide that
+  // value first; hiding this line first would destroy the name and leave the value orphaned and
+  // served, however the deltas were split (#406 CLASS). A pad-only line is the blank line the cut
+  // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
+  // (a key line skips it to its value).
+  [/^[^\n]*$/gm, (line2, at, all) => {
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(line2);
+    if (!pad) return line2;
+    if (!/[^ \t]/.test(line2)) return " ";
+    return OPEN_END && at + line2.length === all.length ? line2.slice(0, pad.index + pad[0].length) : REDACTED;
+  }, /(?<![ \t])[ \t]{4096,}/]
 ];
-function redactText(s) {
+var YAML_KEY = [
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[&!>|])(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))((?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*["'])?[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))/gi,
+  /(^|\r\n|\r(?!\n)|\n)(?=[^\r\n]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[&!>|])(?=([ \t]*))\2([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))((?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*["'])?[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))/g,
+  /(^|\r\n|\r(?!\n)|\n)(?=(?:(?![\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#|[\r\n]|$))[^\r\n]*(?:\r\n|\r(?!\n)|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*|[^\r\n]*(?:\r\n|\r|\n))[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))(?=((?:(?=([ \t]*))\3(?=[^\r\n]*(?:\r\n|\r|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*\3[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:))?))([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization))((?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*["'])?[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))/gi,
+  /(^|\r\n|\r(?!\n)|\n)(?=(?:(?![\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#|[\r\n]|$))[^\r\n]*(?:\r\n|\r(?!\n)|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*|[^\r\n]*(?:\r\n|\r|\n))[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))(?=((?:(?=([ \t]*))\3(?=[^\r\n]*(?:\r\n|\r|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*\3[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:))?))([^\r\n]*?(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt])))((?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))((?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*["'])?[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r|\n)(?:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?:\r\n|\r(?!\n)|\n))*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:[&!][^&!\r\n\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*){0,3}[>|][-+0-9]*[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*(?:#[^\r\n]*)?(?=[\r\n]|$))/g
+];
+function yamlBlockEnd(s, at, indent) {
+  const eol = s.startsWith("\r\n", at) ? "\r\n" : s.charAt(at);
+  let end = at;
+  while (eol && s.startsWith(eol, end)) {
+    let from = end + eol.length;
+    if (eol === "\r" && s[from] === "\n") from++;
+    let next = s.indexOf(eol, from);
+    if (next < 0) next = s.length;
+    const lead = /^[\s\x00-\x08\x0E-\x1F\x7F-\x9F\xAD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064]*/.exec(s.slice(from, next))[0];
+    if (from + lead.length < next && /^ *$/.test(lead) && indent.startsWith(lead)) break;
+    end = next;
+  }
+  return end;
+}
+function redactYamlBlocks(s) {
   let out = s;
-  for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = out.replace(re, fn);
+  for (const re of YAML_KEY) {
+    let done = "";
+    let from = 0;
+    re.lastIndex = 0;
+    for (let m = re.exec(out); m; m = re.exec(out)) {
+      const at = m.index + m[0].length;
+      const end = yamlBlockEnd(out, at, m[2]);
+      const block = out.slice(at, end);
+      done += `${out.slice(from, at)}${/\S/.test(block) ? `${block.match(/^(?:\r\n?|\n)/)[0]}${m[2]}  ${REDACTED}` : block}`;
+      from = re.lastIndex = end;
+    }
+    out = `${done}${out.slice(from)}`;
+  }
   return out;
+}
+function redactText(s, open = false) {
+  const was = OPEN_END;
+  OPEN_END = open;
+  try {
+    let out = nameText(s);
+    for (const [re, fn, gate] of SECRET_TEXT) if (!gate || gate.test(out)) out = typeof re === "function" ? re(out) : out.replace(re, fn);
+    return out;
+  } finally {
+    OPEN_END = was;
+  }
 }
 
 // src/client/index.jsx

@@ -6,6 +6,7 @@
 // in state.json, so a save never rewrites them; only the host that owns the
 // team writes them.
 import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { refusal } from './refusal.js'
 import { dirname, join } from 'node:path'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import { replaceFile } from './files.js'
@@ -13,6 +14,12 @@ import { replaceFile } from './files.js'
 export const RESTART_ERROR = 'Omni restarted before this answer finished.'
 export const TOOL_ERROR = 'The model called a tool again after being told not to, so this aside was not answered.'
 export const EMPTY_ERROR = 'The model wrote nothing.'
+// What a failed model call may say: its kind only. A provider's message can quote the
+// request, its endpoint or its key, so the card the user reads, and the log, name the
+// kind and nothing else.
+const KIND = /^[\w./-]{1,40}$/
+export const failureKind = failure => [failure?.code, failure?.name].find(value => typeof value === 'string' && KIND.test(value)) ?? 'error'
+export const modelFailure = (failure, what = 'The model call failed') => `${what} (${failureKind(failure)}).`
 // Events that still belong to a turn. A model selection or a title does not.
 const MESSAGE_EVENTS = new Set(['user/message', 'assistant/message', 'tool/call', 'tool/result', 'turn/start', 'turn/end'])
 // Host-only projection. `turnBoundary` clears its open seq on turn/end, so a
@@ -170,7 +177,8 @@ export async function callAside(ctx, rt, snapshot, { extra = [], question, promp
   })) assembler.push(chunk)
   const finish = assembler.finish
   if (finish.kind === 'error' || finish.kind === 'aborted') {
-    return { failed: finish.failure?.message ?? finish.kind }
+    const kind = finish.kind === 'aborted' ? 'aborted' : failureKind(finish.failure)
+    return { failed: `The model call failed (${kind}).` }
   }
   const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
   // Checked before a tool-call retry: a truncated tool call is not a request.
@@ -187,9 +195,9 @@ export function locatePrivate(rt, raw, groupError) {
   const grouped = rt.roomOf(raw) !== undefined || rt.roomOf(sessionId) !== undefined
     || rt.groupOwners.has(raw) || rt.groupOwners.has(sessionId)
     || past?.roomId !== undefined
-  if (grouped) throw new Error(groupError)
+  if (grouped) throw refusal(groupError)
   const botId = rt.chatOwners.get(sessionId) ?? rt.botOf(raw)?.id
-  if (botId === undefined || rt.botOf(botId) === undefined) throw new Error('Unknown Bot')
+  if (botId === undefined || rt.botOf(botId) === undefined) throw refusal('Unknown Bot')
   return { sessionId, botId }
 }
 
@@ -360,7 +368,8 @@ export function install(rt) {
 
   // Channel can be installed without the roster (the thinking route test). The
   // full runtime always has deleteBot, and that is the path that must drop cards: the
-  // roster runs this after its checks, once the Bot is out of its groups (#366).
+  // roster runs this after its checks, once the Bot is out of its groups (#366) and its
+  // Sessions are released, so a failed release keeps the cards (#376).
   if (typeof rt.beforeBotDelete === 'function') rt.beforeBotDelete(dropBot)
 
   Object.assign(rt, { btwDelete, btwDispose, btwView, btwPartCards: readPart })

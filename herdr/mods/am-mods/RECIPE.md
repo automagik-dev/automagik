@@ -42,6 +42,25 @@ All of it in English (the rest of the pack is; there is no locale mechanism to s
 
 - **On/off** moves the folder between `mods/` and `mods-disabled/` (`core.setEnabled`): the app
   loads only `mods/`, so off is real and nothing is deleted. Herdr's own mods are refused.
+  So is off for a mod a block of the shown layout names (`layout()`, its name `shared("layout")`;
+  `core.layoutGuard`): Herdr drops a layout whose mod is missing and shows plain Herdr, so the
+  message names the layout and says to switch layouts first. Its `terminal_menu` mod may go off
+  (Herdr warns and falls back to its own menu); the message says so. Turning on is never blocked.
+  Remove (`x`) asks the same before its question, for every mod of a package that is on (#414):
+  refused, "then remove it", for a block's mod; the menu's goes, with the note. `am uninstall
+  herdr.<mod>` asks too (`am-sidebar/release.js` carries a copy of both functions, a test keeps
+  them equal), reading the shown layout from `herdr-app status`; when that gives none, it switches
+  the mod off anyway and names each of `layouts/` that shows it. A package whose own layout
+  (its record's `layouts`) is the one shown is refused first (`core.packageLayoutGuard`, #420):
+  remove moves that layout aside; `am uninstall herdr.layout` asks with release.js's copy, "then
+  uninstall it" (#430), and removes the layout anyway, saying why, when `herdr-app status` gives
+  none. `am uninstall herdr.pack` and `install.sh --uninstall` refuse
+  while the shown layout's blocks name a pack mod; an update holds a mod it no longer ships in
+  `mods/` while a layout's block names it. A package update that stops shipping its layout Herdr
+  shows (`shared("layout")`) keeps that file in `layouts/` and in the record, and says so (#431):
+  the review marks it, the message names it; the next update after a switch moves it aside. With
+  no shown layout to read, it is moved aside as any other the update drops, and the message names
+  it and says why.
 - **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
   name before the rename, `migrate.js` SHARED_RENAMES; source,
   prefix, commit, mods, layouts, keys added, risks seen). Update and remove work off them.

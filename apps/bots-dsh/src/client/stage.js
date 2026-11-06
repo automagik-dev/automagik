@@ -89,13 +89,35 @@ html body .bt-connect:hover{background:var(--st-tag)}
 html body :is(.bt-menu-label,.bt-list-label,.bt-section-label){font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink-2)}
 `
 
+// The Bot conversation group's mark on the page (<html>): the Stage composer rules key on it.
+export const CONVERSATION_MARK = 'data-bt-conversation'
+
+// Sets the mark for as long as the conversation group is mounted; returns its disposer.
+export function markConversation(root = document.documentElement) {
+  root.setAttribute(CONVERSATION_MARK, '')
+  return () => root.removeAttribute(CONVERSATION_MARK)
+}
+
 // Controls on the bench: flat, a hairline around, ink for the primary one; the send button
-// is the one piece of clay. The two-row structure below belongs only to Bot
-// composers (ComposerPlus). Plain Agent/wish sessions keep this theme but withdraw
-// CONVERSATION_CSS: their native card is a column, where a 100% flex basis is height.
+// is the one piece of clay. The two-row structure below belongs only to the Bot composer:
+// its six rules key on CONVERSATION_MARK, which the conversation group sets on <html> as its
+// first step and removes as its last (index.js installConversation), the group that brings
+// CONVERSATION_CSS's row card and ComposerPlus. Plain Agent/wish sessions keep this theme
+// but mount no conversation group, so they have no marker: their native card is a column,
+// where a 100% flex basis is height (#88). The marker is on the page, not in the card,
+// because DSH paints the card before it mounts any input slot: a marker inside the card
+// (the "+", #319) came a few frames late and the card jumped from one row to two (#322).
+// Until the slots mount the controls row is empty, so the tools group keeps the box of the
+// "+" it will hold (28px square, as the mic and voice buttons): wide enough to wrap below the
+// draft, tall enough for the row. A floor only: it never caps what grows.
 // The card is capped at 760px; DSH's queued-message dock sizes itself from the wider native
 // card variable, so it takes the same cap less its two insets, as natively (#91). Its panel
-// then sits 16px inside each card edge and keeps DSH's own 3px seam under the card.
+// then sits 16px inside each card edge and keeps DSH's own 3px seam under the card. The goal
+// bar, the todo panel and the Bot's side-question (btw) dock size from that variable too, with
+// no padding of their own: they take the cap less four insets, so each sits 16px inside each
+// card edge as natively, and their inner boxes follow, since the variable can be narrower or
+// wider than the card it no longer drives (#363). The variable itself is left alone: the hero
+// shell, the hero stack and the composer notice read it as well.
 const CONTROLS = `
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button){border:1px solid var(--st-line-2);border-radius:10px;background:transparent;box-shadow:none;font-weight:600;transition:background-color .16s ease}
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button):hover:not(:disabled){background:var(--bt-hover)}
@@ -106,13 +128,15 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [class*="_composerStack"] [data-queue-dock]{max-width:calc(760px - 2*var(--dsh-composer-dock-inset,8px))!important}
+html body [class*="_composerStack"] :is([data-goal-bar],[data-goal-bar]>*,[data-testid="todo-panel"],[data-composer-dock]:has(.bt-btw),.bt-btw-dock){max-width:calc(760px - 4*var(--dsh-composer-dock-inset,8px))}
+html body [class*="_composerStack"] [data-composer-dock]:has(.bt-btw){width:calc(100% - 4*var(--dsh-composer-dock-inset,8px))}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus){flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [data-composer-input]{min-height:40px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-slot="conversation.input.attachments"]{order:-1!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [data-composer-input]{min-height:40px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px;min-width:28px;min-height:28px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-slot="conversation.input.attachments"]{order:-1!important}
 html body [data-composer-card]:focus-within{border-color:var(--st-ring)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--st-ring) 14%,transparent)!important}
 html body [data-composer-card] button[class*="_primary"],html body .bt-voice{background:var(--st-cyan)!important;color:var(--st-cyan-ink)!important;box-shadow:var(--st-clay)!important;border:0!important}
 html body :is(.bt-plus,.bt-mic){background:transparent;box-shadow:none;color:var(--bt-ink-2)}

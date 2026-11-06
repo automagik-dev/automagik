@@ -10,9 +10,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
-import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
+import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, freshSpare, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
 const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
 import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
+import { readJsonLines } from "./log-lines.mjs";
 
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -83,6 +84,15 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh"], count: null }, bot], "t100", true), null);
   assert.equal(spareTab(spare, [{ id: "t5", terminals: ["t-sh", "t100"] }], "t100", true), null);
+  // A fresh spare (seen right after this start's own space.new as its one tab, that shell alone):
+  // no count is enough; a count that says more still keeps it, and so does a second terminal.
+  const fresh = { ...spare, fresh: true };
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", true), "t5");
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"], count: null }, bot], "t100", true), "t5");
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"], count: 2 }, bot], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh", "t9"] }, bot], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }], "t100", true), null);
+  assert.equal(spareTab(fresh, [{ id: "t5", terminals: ["t-sh"] }, bot], "t100", false), null);
   // Something other than the shell in front, or not known: kept.
   assert.equal(spareTab(spare, [shell, bot], "t100", false), null);
   assert.equal(spareTab(spare, [shell, bot], "t100"), null);
@@ -92,20 +102,41 @@ test("spareTab: a new space's shell tab is closed only once the bot shows in a t
   assert.equal(spareTab(null, [shell, bot], "t100", true), null);
 });
 
-test("shellIdle: the terminal's own process in front, a bare shell; a script, a command, another pid or no answer is not idle", () => {
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }), true);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["/bin/bash", "-i"] } }), true);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, name: "zsh" } }), true);
+test("shellIdle: the terminal's own process in front, a bare shell with no child; a script, a command, a job, another pid or no answer is not idle", () => {
+  // A plain prompt: the shell in front, no process of its own (pgrep -P: none).
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, []), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["/bin/bash", "-i"] } }, []), true);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, name: "zsh" } }, []), true);
+  // At its prompt with a job left running (`sleep 99 &`): the shell is in front, but not idle.
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, ["4242"]), false);
+  // Its children unknown (pgrep missing or failing, never asked): never idle.
+  for (const unknown of [undefined, null, "", 0]) assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["-zsh"] } }, unknown), false, String(unknown));
   // Another process in front: vim, or a shell's child (bash deploy.sh run from it).
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["vim", "notes.md"] } }), false);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["bash", "deploy.sh"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["vim", "notes.md"] } }, []), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 8, argv: ["bash", "deploy.sh"] } }, []), false);
   // The terminal's own process, but running a script or a command string.
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["bash", "deploy.sh"] } }), false);
-  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["bash", "deploy.sh"] } }, []), false);
+  assert.equal(shellIdle({ pid: 7, foreground: { pid: 7, argv: ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "make"] } }, []), false);
   // No pids to compare, or no answer.
-  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }), false);
-  assert.equal(shellIdle(null), false);
-  assert.equal(shellIdle({}), false);
+  assert.equal(shellIdle({ foreground: { argv: ["-zsh"] } }, []), false);
+  assert.equal(shellIdle(null, []), false);
+  assert.equal(shellIdle({}, []), false);
+});
+
+test("freshSpare: space.new's shell is fresh only while the space is that one tab with that shell alone", () => {
+  const made = { id: "s5", tabs: [{ id: "t5", panes: [{ pane: "p5", terminal: "t-sh" }] }] };
+  assert.deepEqual(freshSpare(made, "t-sh"), { space: "s5", tab: "t5", terminal: "t-sh", fresh: true });
+  // Another tab there already, or a second terminal beside the shell: a spare, but not fresh.
+  assert.equal(freshSpare({ ...made, tabs: [...made.tabs, { id: "t6", panes: [] }] }, "t-sh").fresh, false);
+  assert.equal(freshSpare({ id: "s5", tabs: [{ id: "t5", panes: [{ terminal: "t-sh" }, { terminal: "t9" }] }] }, "t-sh").fresh, false);
+  // A linked machine's ids, compared as the caller says.
+  const vm = { id: "s7", tabs: [{ id: "t7", panes: [{ terminal: "vm/t-sh" }] }] };
+  assert.equal(freshSpare(vm, "t-sh"), null);
+  assert.deepEqual(freshSpare(vm, "t-sh", (a, b) => a.split("/").pop() === b), { space: "s7", tab: "t7", terminal: "t-sh", fresh: true });
+  // Not shown there, or nothing printed: none.
+  assert.equal(freshSpare(made, "t-other"), null);
+  assert.equal(freshSpare(made, undefined), null);
+  assert.equal(freshSpare(null, "t-sh"), null);
 });
 
 test("names: slugged to hc's alphabet, suffixed when taken", () => {
@@ -191,7 +222,7 @@ async function world(t, { file = team(), terminals = () => [] } = {}) {
   });
   Object.assign(state, { spaces: [], panes: [], shared: new Map(), setSharedCalls: 0, offline: new Set(), calls: [], terminals: [], focused: null,
     hcCalls: [], runs: [], notes: [], appHome: app, agents: [{ key: "claude", name: "Claude Code", run: ["claude"], installed: true }] });
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const setHc = (st) => writeFileSync(statePath, JSON.stringify(st));
   const ledger = () => { try { return readFileSync(join(app, "automagik-herdr/attach.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
@@ -286,7 +317,7 @@ test("startBot: the space it opened keeps no lone shell tab: closed once the bot
     }
   };
   assert.deepEqual(await startBot(w.main, ID.main, { sleep }), { terminal: "t100" });
-  // Never `confirmed`: Herdr asks the person whenever it would.
+  // Never `confirmed`: Herdr asks the person only before closing a space's last tab.
   assert.deepEqual(state.runs, [["space.new", { name: "proj", folder: w.main, machine: "" }], ["tab.close", { id: "t5" }]]);
   // A bot that never shows (within waitMs) leaves the shell's tab be: the space keeps a tab.
   state.spaces = [];
@@ -387,6 +418,99 @@ test("with no CLI under the app home, Start and Attach say so and nothing runs",
   const r = await startBot("/p", ID.main);
   assert.ok(r.refused, "refused");
   assert.equal(await liveTerminalOf(ID.main), null);
+});
+
+// ---- a linked machine: Herdr's exec limit (#444) ----
+
+// The world's hc with a linked machine `vm` (a scratch home here, claude on its PATH) holding
+// the team's project, and Herdr's answer to the timeout probe; every exec timeout is kept.
+async function linked(t, w, probe) {
+  const vm = join(w.root, "vm"), vmBin = join(w.root, "vm-bin"), project = join(vm, "proj");
+  mkdirSync(join(project, ".herdr"), { recursive: true });
+  mkdirSync(vmBin);
+  exe(join(vmBin, "claude"), "#!/bin/sh\nexit 0\n");
+  await run("git", ["init", "-q", project]);
+  writeFileSync(join(project, ".herdr", "bots.json"), JSON.stringify(team()));
+  w.setHc({ ...w.hcState(), machines: [{ name: "vm", id: "core-of-vm", state: "connected", uname: "Linux x86_64", home: vm, path: vmBin }] });
+  Object.assign(state, { timeoutProbe: probe, execTimeouts: [] });
+  t.after(() => { delete state.timeoutProbe; delete state.execTimeouts; });
+  return project;
+}
+const { MACHINE_EXEC_MS, MACHINE_WORST_MS, SHORT_EXEC_MS, machineCli } = await import("../mods/am-sidebar/launch.js");
+const { restartAnswer, restartArgs } = await import("../mods/am-sidebar/restart.js");
+
+const deadlineOf = () => state.calls.filter((c) => c.kind === "exec" && c.command === "env")
+  .map((c) => c.args.find((a) => a.startsWith("AUTOMAGIK_HERDR_DEADLINE=")) ?? null);
+
+test("a start on a linked machine: exec gets 600 s, above the CLI's worst case there, on a Herdr that takes it; the pane and its row", async (t) => {
+  const w = await world(t);
+  const project = await linked(t, w, "honours");
+  // The bound is Herdr's cap, and above the worst case computed for a start and a restart there.
+  assert.equal(MACHINE_EXEC_MS, 600_000);
+  assert.ok(MACHINE_EXEC_MS > MACHINE_WORST_MS.start && MACHINE_EXEC_MS > MACHINE_WORST_MS.restart);
+  const r = await startBot(project, ID.dev, {}, "vm");
+  assert.deepEqual(r, { terminal: "vm/t100" });
+  const cli = state.execTimeouts.filter((x) => x.command === "env");
+  assert.deepEqual(cli, [{ command: "env", timeout: MACHINE_EXEC_MS }], "the CLI ran once, with the machine bound");
+  assert.deepEqual(state.execTimeouts[0], { command: "true", timeout: "probe" }, "asked first");
+  assert.deepEqual(deadlineOf(), [null], "no deadline where Herdr takes the timeout");
+  assert.ok(w.calls().some((c) => c[0] === "run" && c[1] === "--on" && c[2] === "vm"));
+  assert.deepEqual(w.ledger().map((x) => [x.event, x.terminal, x.machine, x.by]), [["attach", "t100", "vm", "start"]]);
+  // This computer's Start passes no timeout: only a linked machine's does.
+  state.spaces = [{ id: "s1", folder: w.main, machine: null, active: true, tabs: [{ id: "a", active: true }] }];
+  state.execTimeouts = [];
+  assert.ok((await startBot(w.main, ID.dev)).terminal);
+  assert.deepEqual(state.execTimeouts.filter((x) => x.command === "env"), []);
+});
+
+for (const probe of ["ignores", "unreadable"]) {
+  test(`a Herdr whose exec timeout ${probe === "ignores" ? "is ignored" : "can't be read"} counts as 30 s: a start on a linked machine runs with that deadline, a restart is refused`, async (t) => {
+    const w = await world(t);
+    const project = await linked(t, w, probe);
+    const before = Date.now();
+    assert.deepEqual(await startBot(project, ID.dev, {}, "vm"), { terminal: "vm/t100" });
+    const after = Date.now();
+    // The deadline: 30 s from before exec, passed to the CLI beside the 600 s Herdr ignores.
+    const [word] = deadlineOf();
+    const at = Number(word?.split("=")[1]);
+    assert.ok(at >= before + SHORT_EXEC_MS && at <= after + SHORT_EXEC_MS, word);
+    assert.deepEqual(state.execTimeouts, [{ command: "true", timeout: "probe" }, { command: "env", timeout: MACHINE_EXEC_MS }]);
+    assert.ok(w.calls().some((c) => c[0] === "run" && c[2] === "vm"));
+    assert.deepEqual(w.ledger().map((x) => [x.event, x.terminal, x.machine]), [["attach", "t100", "vm"]]);
+    // Restart, plain (it resumes), as the button asks: refused before the CLI, no Force or Fresh offered.
+    const runs = w.calls().length;
+    state.execTimeouts = [];
+    const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, machine: "vm" }), "restart"));
+    assert.deepEqual([again.forceable, again.freshable], [false, false]);
+    assert.match(again.refused, /^This Herdr ends the sidebar's programs at 30 s .*a restart on vm .*that pane running beside the old one, both on one session\. Nothing was restarted\. /);
+    assert.ok(again.refused.endsWith(`Restart it from a terminal: automagik-herdr restart ${ID.dev} --project ${project} --machine vm`), again.refused);
+    assert.deepEqual(state.execTimeouts, [{ command: "true", timeout: "probe" }], "only the probe ran");
+    assert.equal(w.calls().length, runs, "no hc call");
+    assert.equal(w.ledger().length, 1);
+  });
+}
+
+test("Herdr ending the CLI (its 30 s, or the 600 s): may have stopped part-way, what to check, the terminal command; nothing offered again", async (t) => {
+  const w = await world(t);
+  const project = await linked(t, w, "honours");
+  state.execFault = (command) => (command === "env" ? new Error("env took longer than 600 s and was stopped") : null);
+  t.after(() => { delete state.execFault; });
+  const r = await startBot(project, ID.dev, {}, "vm");
+  assert.match(r.refused, /^Herdr ended automagik-herdr start on vm \(env took longer than 600 s and was stopped\), and it may have stopped part-way: a pane may run it with no attach row: /);
+  assert.match(r.refused, new RegExp(`automagik-herdr whois --bot ${ID.dev} --project ${project} --machine vm and vm's panes \\(hc ls\\)`));
+  assert.ok(r.refused.endsWith(`Then start it from a terminal if it isn't running: automagik-herdr start ${ID.dev} --project ${project} --machine vm`), r.refused);
+  const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, force: true, machine: "vm" }), "restart"));
+  assert.deepEqual([again.forceable, again.freshable], [false, false], "--force in the command offers no Restart anyway");
+  assert.match(again.refused, /its old pane and a new one may both run it/);
+  assert.ok(again.refused.endsWith(`automagik-herdr restart ${ID.dev} --project ${project} --machine vm --force`));
+});
+
+test("the terminal command quotes a folder the shell would split", async () => {
+  state.timeoutProbe = "ignores";
+  try {
+    const r = await machineCli(["restart", ID.dev, "--project", "/srv/my proj's", "--machine", "vm"], "restart");
+    assert.ok(r.err.endsWith(`automagik-herdr restart ${ID.dev} --project '/srv/my proj'\\''s' --machine vm`), r.err);
+  } finally { delete state.timeoutProbe; }
 });
 
 test("hc's keep wrapper: the program it runs is in front (lab/t8's hermes --tui); once it exits, the shell", () => {

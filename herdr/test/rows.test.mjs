@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
-  secondLine, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf,
+  secondLine, modelDefaultsFrom, modelTextsUpdate, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf, parentMarkOf, parentMarkText,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -42,8 +42,9 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   ];
   const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
   assert.deepEqual(Object.keys(live).sort(), ["b-captaincap", "b-devdevdevd", "b-mainmainma", "b-pmpmpmpmpm"]);
-  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null });
+  assert.deepEqual({ ...live["b-captaincap"], program: undefined }, { terminal: "t3", duplicate: true, parent: null, status: "idle", status_ms: NOW - 1000, program: undefined, argv: null, panes: ["t3", "t2"] });
   assert.equal(live["b-mainmainma"].duplicate, false);
+  assert.ok(!("panes" in live["b-mainmainma"]), "one holder: the entry is as before");
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
   assert.ok(liveFrom(terms)["b-unknownbot"]);
@@ -239,6 +240,46 @@ test("secondLine: the model a live pane runs (its command line, else the agent's
   const planned = file.bots.find((b) => b.id === "b-plannedpla");
   assert.equal(secondLine(row(planned, "planned"), tree, { texts }), "waits for auth v2");
   for (const kind of ["bot", "main"]) assert.doesNotMatch(secondLine(row(cap, kind, live), tree, { texts }), /GPT-6\.1 Terra/);
+});
+
+test("model defaults: the config texts are parsed once per change (main.js loadModelTexts), never per row drawn", () => {
+  const big = (model) => JSON.stringify({ model, permissions: { allow: Array.from({ length: 2000 }, (_, i) => `Bash(tool-${i}:*)`) } });
+  const files = (claude) => ({ claudeSettings: big(claude), codexConfig: 'model = "gpt-5.5"\n[profiles.x]\nmodel = "o9"\n', antigravitySettings: JSON.stringify({ model: "Gemini 3" }), hermesConfig: null });
+  const parse = JSON.parse;
+  let parses = 0;
+  JSON.parse = (...a) => { parses += 1; return parse(...a); };
+  try {
+    // Every 15 s the same texts come back: parsed on the first read only.
+    let seen, state;
+    for (let i = 0; i < 5; i += 1) {
+      const next = modelTextsUpdate(seen, files("sonnet"));
+      if (i === 0) assert.ok(next); else assert.equal(next, null);
+      if (next) ({ seen } = next), (state = next);
+    }
+    assert.equal(parses, 2, "claude's and antigravity's settings, once each");
+    assert.deepEqual(state.defaults, { claude: "sonnet", codex: "gpt-5.5", antigravity: "Gemini 3" });
+    assert.deepEqual(state.defaults, modelDefaultsFrom(state.texts));
+    parses = 0;
+    // Drawing: 3 agents x 50 live rows whose command line names no model read no text at all.
+    const untouchable = new Proxy({}, { get: (_, k) => { throw new Error(`texts.${String(k)} read while drawing`); } });
+    const tree = { key: "/repo/proj/" };
+    const row = (agent) => ({ kind: "bot", node: { bot: bot(`b-${agent}`, { agent, role: "Dev" }), live: { terminal: "t1" }, argv: [agent === "antigravity" ? "agy" : agent] } });
+    const want = { claude: "Dev · sonnet", codex: "Dev · gpt-5.5", antigravity: "Dev · Gemini 3" };
+    for (let i = 0; i < 50; i += 1) {
+      for (const agent of Object.keys(want)) assert.equal(secondLine(row(agent), tree, { texts: untouchable, defaults: state.defaults }), want[agent]);
+    }
+    assert.equal(parses, 0);
+    // A changed text: parsed once more, and the rows show the new default.
+    const changed = modelTextsUpdate(seen, files("opus"));
+    assert.equal(parses, 2);
+    assert.equal(secondLine(row("claude"), tree, { texts: untouchable, defaults: changed.defaults }), "Dev · opus");
+    // Without parsed defaults (other callers), the default is parsed only when the command line names no model.
+    parses = 0;
+    const named = { kind: "bot", node: { bot: bot("b-claude", { role: "Dev" }), live: { terminal: "t1" }, argv: ["claude", "--model", "haiku"] } };
+    assert.equal(secondLine(named, tree, { texts: untouchable }), "Dev · haiku");
+    assert.equal(secondLine(row("claude"), tree, { texts: changed.texts }), "Dev · opus");
+    assert.equal(parses, 1);
+  } finally { JSON.parse = parse; }
 });
 
 test("liveFrom and buildTree carry the live pane's foreground command line when the row has it", () => {
@@ -557,4 +598,70 @@ test("#227: a pane keyed to a project no listed checkout of its bot is (restart 
   // A pane on another machine pairs with that machine's project of the key, never this computer's.
   assert.equal(listedKeyOf(onlyMain, () => MAIN)({ ...terms[2], address: "box/t3" }), null);
   assert.equal(listedKeyOf([{ key: MAIN, machine: "box", file }], () => MAIN)({ ...terms[2], address: "box/t3" }), MAIN);
+});
+
+// automagik#231: membership stays from bots.json's lead; a row only marks a live pane whose hc
+// parent is neither absent nor its lead's live pane, naming both addresses in the tooltip.
+const markOf = (terms, projects = [{ key: KEY, file, spaces: ["s1"] }]) => {
+  const trees = buildTree({ projects, live: liveFrom(terms, knownBots(projects)), terminals: terms, now: NOW });
+  const eng = trees[0].categories.find((c) => c.id === "eng").bots.find((n) => n.bot.id === "b-captaincap");
+  return { main: trees[0].main, cap: eng, dev: eng.members.find((n) => n.bot.id === "b-devdevdevd") };
+};
+const captainAt = (address) => T(address, { labels: { bot: "b-captaincap" } });
+const devAt = (address, parent) => T(address, { labels: { bot: "b-devdevdevd" }, parent });
+
+test("#231: a live pane whose hc parent is not its lead's pane is marked with both addresses", () => {
+  const { dev } = markOf([T("t1", { labels: { bot: "b-mainmainma" } }), captainAt("t2"), devAt("t3", "t1")]);
+  assert.deepEqual(dev.parentMark, { parent: "t1", leadPanes: ["t2"], lead: "b-captaincap", leadName: "captaincap" });
+  assert.equal(dev.members.length, 0, "membership is the file's lead, never the hc parent");
+  // A dead parent (the dogfooding case: t19s -> t19q, gone) is marked the same way.
+  assert.equal(markOf([captainAt("t2"), devAt("t3", "t19q")]).dev.parentMark.parent, "t19q");
+});
+
+test("#231: no mark when the parent is the lead's pane, absent, or the lead has no live pane", () => {
+  for (const [why, terms] of [
+    ["equal", [captainAt("t2"), devAt("t3", "t2")]],
+    ["absent", [captainAt("t2"), devAt("t3", null)]],
+    ["no lead pane", [devAt("t3", "t9")]],
+  ]) {
+    const { dev, cap, main } = markOf(terms);
+    assert.ok(dev.live && !("parentMark" in dev), why);
+    assert.ok(!("parentMark" in cap) && !("parentMark" in main), why);
+  }
+  // The main bot has no lead: never marked, whatever its parent.
+  const { main } = markOf([T("t1", { labels: { bot: "b-mainmainma" }, parent: "t7" })]);
+  assert.ok(main.live && !("parentMark" in main));
+});
+
+test("#231: a remote pane compares on its own machine, a bare parent id being that machine's", () => {
+  const box = [{ key: KEY, machine: "box", file, spaces: ["s1"] }];
+  for (const parent of ["t2", "box/t2"]) assert.ok(!("parentMark" in markOf([captainAt("box/t2"), devAt("box/t3", parent)], box).dev), parent);
+  assert.deepEqual(markOf([captainAt("box/t2"), devAt("box/t3", "t9")], box).dev.parentMark,
+    { parent: "box/t9", leadPanes: ["box/t2"], lead: "b-captaincap", leadName: "captaincap" });
+  // The same id on another machine is another pane.
+  assert.equal(markOf([captainAt("t2"), devAt("box/t3", "t2")]).dev.parentMark.parent, "box/t2");
+});
+
+test("#231: the mark's tooltip names the hc parent, then the lead's pane and name", () => {
+  assert.equal(parentMarkText({ parent: "box/t9", leadPanes: ["box/t2"], lead: "b-captaincap", leadName: "Captain" }),
+    "Its hc parent is box/t9, not its lead's pane box/t2 (Captain)");
+  assert.equal(parentMarkText({ parent: "t1", leadPanes: ["t2"], lead: "b-x", leadName: null }), "Its hc parent is t1, not its lead's pane t2");
+  assert.equal(parentMarkText({ parent: "t9", leadPanes: ["t5", "t2"], lead: "b-x", leadName: "Captain" }),
+    "Its hc parent is t9, not its lead's panes t5, t2 (Captain)");
+  assert.equal(parentMarkOf({ terminal: "t3", parent: "t2" }, { terminal: "t2" }), null);
+  assert.equal(parentMarkOf({ terminal: "t3", parent: "t2" }, null), null);
+});
+
+test("#231: a lead with two live panes: a parent that is either is no mark; a third terminal is, naming both", () => {
+  const older = T("t2", { labels: { bot: "b-captaincap" }, created_ms: 10 }), newer = T("t5", { labels: { bot: "b-captaincap" }, created_ms: 20 });
+  for (const parent of ["t2", "t5"]) assert.ok(!("parentMark" in markOf([older, newer, devAt("t3", parent)]).dev), parent);
+  const { dev, cap } = markOf([older, newer, devAt("t3", "t9")]);
+  assert.equal(cap.live.terminal, "t5", "the sidebar shows the newest");
+  assert.deepEqual(dev.parentMark, { parent: "t9", leadPanes: ["t5", "t2"], lead: "b-captaincap", leadName: "captaincap" });
+  assert.equal(parentMarkText(dev.parentMark), "Its hc parent is t9, not its lead's panes t5, t2 (captaincap)");
+  // On a remote machine too: a bare parent id is that machine's, matched against every pane.
+  const box = [{ key: KEY, machine: "box", file, spaces: ["s1"] }];
+  const remote = (parent) => markOf([{ ...older, address: "box/t2" }, { ...newer, address: "box/t5" }, devAt("box/t3", parent)], box).dev;
+  assert.ok(!("parentMark" in remote("t2")));
+  assert.deepEqual(remote("t9").parentMark.leadPanes, ["box/t5", "box/t2"]);
 });

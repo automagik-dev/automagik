@@ -15,17 +15,91 @@ const cliPath = (dir) => `${dir.replace(/\/+$/, "")}/mods/${PACK_NAME}/bin/autom
 
 /**
  * Runs `automagik-herdr <args> --json` with this app home: { code, out (its JSON, or null),
- * err (stderr, the `automagik-herdr: ` prefixes dropped) }. Never rejects.
+ * err (stderr, the `automagik-herdr: ` prefixes dropped) }; `thrown: true` when exec itself
+ * failed (Herdr ended the CLI at its limit, say). Never rejects. `timeout`: exec's, in ms;
+ * `env`: more KEY=value words for the CLI.
  */
-export async function runCli(args) {
+export async function runCli(args, { timeout, env = [] } = {}) {
   const dir = appHome();
   let r;
-  try { r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"]); } catch (e) {
-    return { code: 127, out: null, err: String(e?.message ?? e) };
+  try {
+    r = await exec("env", [`HERDR_APP_HOME=${dir}`, ...env, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"], ...(timeout ? [{ timeout }] : []));
+  } catch (e) {
+    return { code: 127, out: null, err: String(e?.message ?? e), thrown: true };
   }
   let out = null;
   try { out = JSON.parse(r.stdout); } catch { out = null; }
   return { code: r.code, out, err: String(r.stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+}
+
+// ---- Start and Restart on a linked machine (#444): Herdr's exec limit ----
+//
+// Herdr ends a mod's exec at 30 s unless given a `timeout` (its cap 10 min), and its kill reaches
+// the CLI itself (run.sh execs node). Ended after `hc run`, a start leaves a pane with no attach
+// row, and a restart leaves the new pane beside the old one, both able to resume one session.
+// The CLI's own worst case there, every call at its own bound (15 s for each hc, herdr-app or
+// remote program; 20 s for each of agentThere's three questions; 3 s for each lock wait), with
+// git answering on the machine and at most 8 ledger rows, helpers and other panes there to check:
+// a start 18 x 15 s + 71.2 s = 341.2 s (agentThere 60 s, closeSpare's 5 s wait), plus 60 s for
+// each other space of that machine Herdr shows; a restart 23 x 15 s + 2 x 60 s (agentThere)
+// + 2 x 45.25 s (agentUp: its 30 s, a 250 ms step, then one last hc get) + 6 s of locks = 561.5 s
+// (two seats when codex can't resume its thread, #413). More rows, helpers or spaces, or a
+// project outside git deep in the tree there, can still pass the cap. The timeout is passed on
+// every Herdr: one that doesn't take it ignores it.
+export const MACHINE_WORST_MS = Object.freeze({ start: 341_200, restart: 561_500 });
+export const MACHINE_EXEC_MS = 600_000;
+/** Herdr's own limit for a program run with no timeout it takes. */
+export const SHORT_EXEC_MS = 30_000;
+
+/**
+ * Whether the running Herdr honours exec's `timeout` (am-quota's probe): one that does refuses
+ * a timeout that isn't a number, before it runs anything; one that doesn't runs the harmless
+ * program. Any other answer counts as not, the safe side. Asked on every press, never kept: an
+ * answer that couldn't be read then is asked again next time.
+ */
+export async function honoursTimeout() {
+  try {
+    await exec("true", [], { timeout: "probe" });
+    return false;
+  } catch (e) {
+    return /timeout must be/.test(String(e?.message ?? e));
+  }
+}
+
+const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, "'\\''")}'`);
+
+/**
+ * runCli for `start` or `restart` with --machine (`what`), with MACHINE_EXEC_MS. On a Herdr that
+ * doesn't take it, or can't say, Herdr ends the CLI at 30 s: a start runs with that deadline
+ * (AUTOMAGIK_HERDR_DEADLINE, an absolute time taken before exec, so it counts run.sh and node's
+ * startup), and the CLI starts nothing when too little of it is left to finish; a restart isn't
+ * run, since after hc run it may still wait 30 s for the agent, and two panes on one session is
+ * the worse failure. That refusal, and an exec that failed (Herdr ended the CLI at its limit),
+ * come back as { code: 1, out: null, err, asIs: true }: err names what to check and the same
+ * command for a terminal, where no limit applies.
+ */
+export async function machineCli(args, what) {
+  const at = args.indexOf("--machine");
+  const machine = at >= 0 ? args[at + 1] : "that machine";
+  const command = `automagik-herdr ${args.map(shellWord).join(" ")}`;
+  const long = await honoursTimeout();
+  if (!long && what === "restart") {
+    return { code: 1, out: null, asIs: true,
+      err: `This Herdr ends the sidebar's programs at 30 s (it takes no longer exec timeout, or didn't say), and a restart on ${machine} `
+        + `can take minutes when it answers slowly: ended after its new pane started, it would leave that pane running beside the old one, `
+        + `both on one session. Nothing was restarted. Restart it from a terminal: ${command}` };
+  }
+  const env = long ? [] : [`AUTOMAGIK_HERDR_DEADLINE=${Date.now() + SHORT_EXEC_MS}`];
+  const r = await runCli(args, { timeout: MACHINE_EXEC_MS, env });
+  if (!r.thrown) return r;
+  const bot = shellWord(args[1]);
+  const project = args.indexOf("--project") >= 0 ? ` --project ${shellWord(args[args.indexOf("--project") + 1])}` : "";
+  const check = what === "restart"
+    ? `its old pane and a new one may both run it: check ${machine}'s panes (hc ls) and end the one automagik-herdr whois --bot ${bot}${project} --machine ${shellWord(machine)} doesn't name with hc kill`
+    : `a pane may run it with no attach row: check with automagik-herdr whois --bot ${bot}${project} --machine ${shellWord(machine)} and ${machine}'s panes (hc ls), and end a pane of it the attach ledger doesn't name with hc kill`;
+  return { code: 1, out: null, asIs: true,
+    err: `Herdr ended automagik-herdr ${what} on ${machine} (${r.err}), and it may have stopped part-way: ${check}. `
+      + `Then ${what} it from a terminal if it isn't running: ${command}` };
 }
 
 const refusedBy = (r, what) => ({ refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` });
@@ -140,8 +214,9 @@ async function openSpace(projectKey, sleep, { waitMs = 5000, stepMs = 100 } = {}
 
 // Once the bot just started (`terminal`) shows in its own tab of the space openSpace made, that
 // space's spare shell tab is closed (spareTab: only while it holds that shell alone, one pane,
-// with nothing but the shell in front), never `confirmed`, so Herdr asks the person whenever it
-// would. Looked for every stepMs for up to waitMs; a bot that doesn't show in time leaves it.
+// with nothing but the shell in front). Never `confirmed`: Herdr asks the person only before
+// closing a space's last tab, and this is never the last one (the bot's tab stays). Looked for
+// every stepMs for up to waitMs; a bot that doesn't show in time leaves it.
 async function closeSpare(spare, terminal, sleep, { waitMs = 5000, stepMs = 100 } = {}) {
   for (let waited = 0; ; waited += stepMs) {
     const space = localSpaces().find((s) => s.id === spare.space);
@@ -194,7 +269,7 @@ export async function startBot(projectKey, botId, place = {}, machine = null) {
 
 // Start on a linked machine (automagik#206): the CLI finds the window place there itself.
 async function startOn(projectKey, botId, machine) {
-  const r = await runCli(["start", botId, "--project", projectKey, "--machine", machine]);
+  const r = await machineCli(["start", botId, "--project", projectKey, "--machine", machine], "start");
   if (r.code !== 0) return refusedBy(r, "start");
   if (r.out?.running) {
     run("agent.focus", { terminal: `${machine}/${r.out.running}` });

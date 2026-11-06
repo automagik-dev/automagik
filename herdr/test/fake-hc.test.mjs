@@ -4,9 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { completeLines, readJsonLines } from "./log-lines.mjs";
 
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 
@@ -45,4 +46,23 @@ test("fake hc: many calls at once that save and read the state never read it par
   assert.equal(JSON.parse(readFileSync(state, "utf8")).terminals.length, 3000);
   const { readdirSync } = await import("node:fs");
   assert.deepEqual(readdirSync(root).filter((f) => f.includes(".tmp")), []);
+});
+
+// #421: a call appends its line to the shared log while another call reads it, and that read can
+// see the last line only part written. The readers keep complete lines; the next read sees it.
+test("fake logs: a read leaves out a last line not yet ended by its newline; the next read has it (#421)", (t) => {
+  assert.deepEqual(completeLines(""), []);
+  assert.deepEqual(completeLines("a\nb"), ["a"]);
+  assert.deepEqual(completeLines("a\nb\n"), ["a", "b"]);
+  assert.deepEqual(completeLines("a\n\nb\n"), ["a", "b"]);
+  const root = mkdtempSync(join(tmpdir(), "hb-fakelog-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = join(root, "hc.log");
+  // The log as CI run 42117078205 read it: the last line cut 4 characters in.
+  writeFileSync(log, '["get","t0"]\n["ge');
+  assert.throws(() => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)), SyntaxError,
+    "the old reader parsed the cut line");
+  assert.deepEqual(readJsonLines(log), [["get", "t0"]]);
+  appendFileSync(log, 't","t9"]\n');
+  assert.deepEqual(readJsonLines(log), [["get", "t0"], ["get", "t9"]]);
 });

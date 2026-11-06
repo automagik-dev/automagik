@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkBots, PROJECTS_FILE } from "../mods/am-sidebar/model.js";
+import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -44,7 +45,7 @@ function scene(t, { state = "connected" } = {}) {
   };
   const on = ["--machine", "vm", "--project", project];
   const botsPath = join(project, ".herdr/bots.json");
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const setState = (fn) => { const s = JSON.parse(readFileSync(statePath, "utf8")); fn(s); writeFileSync(statePath, JSON.stringify(s)); };
   return { root, project, local, app, cli, on, botsPath, calls, setState, bots: () => JSON.parse(readFileSync(botsPath, "utf8")) };
 }
@@ -193,4 +194,19 @@ test("--machine: a create that landed there before the link dropped is reported 
   const r = s.cli(["create", ...s.on, "--name", "Hedge", "--agent", "claude"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.bots().bots.map((b) => b.name), ["Hedge"]);
+});
+
+test("create, edit and rm --machine keep the file's tabs there (#230); a new file there is two spaces", (t) => {
+  const s = scene(t);
+  const made = s.cli(["create", ...s.on, "--name", "Hedge", "--agent", "claude"]);
+  assert.equal(made.code, 0, made.err);
+  const first = readFileSync(s.botsPath, "utf8");
+  assert.equal(first, `${JSON.stringify(JSON.parse(first), null, 2)}\n`);
+  writeFileSync(s.botsPath, `${JSON.stringify(JSON.parse(first), null, "\t")}\n`);
+  for (const args of [["create", "--name", "Trader", "--agent", "claude"], ["edit", "Trader", "--role", "trades"], ["rm", "Trader"]]) {
+    const r = s.cli([...args, ...s.on]);
+    assert.equal(r.code, 0, `${args.join(" ")}: ${r.err}`);
+    const text = readFileSync(s.botsPath, "utf8");
+    assert.equal(text, `${JSON.stringify(JSON.parse(text), null, "\t")}\n`, `${args.join(" ")} kept tabs`);
+  }
 });

@@ -429,3 +429,52 @@ test("writeBots on another machine: created there by exclusive create, edited by
   await assert.rejects(writeBots(key, next, now, "vm"), (e) => !/stale/.test(e.message) && /vm/.test(e.message));
   assert.equal(readFileSync(path, "utf8"), now);
 });
+
+// #230: a project's formatter may use tabs (Biome's default) or four spaces; a write keeps the
+// indentation the file has, and a new file is two spaces, as before.
+const indented = (file, indent) => `${JSON.stringify(file, null, indent)}\n`;
+const firstIndent = (text) => /\n([ \t]+)\S/.exec(text)?.[1];
+test("writeBots keeps the file's indentation (#230): tabs and four spaces stay, a new file is two spaces", async (t) => {
+  reset();
+  for (const indent of ["\t", "    "]) {
+    const { main } = await repo(t);
+    put(main, indented(sample(), indent));
+    const path = join(main, ".herdr", "bots.json");
+    const text = readFileSync(path, "utf8");
+    const edit = sample();
+    edit.bots[1].role = "builds";
+    await writeBots(main, edit, text);
+    assert.equal(readFileSync(path, "utf8"), indented(edit, indent));
+  }
+  const fresh = join(scratch(t), "fresh");
+  mkdirSync(fresh);
+  await writeBots(fresh, sample(), null);
+  assert.equal(readFileSync(join(fresh, ".herdr", "bots.json"), "utf8"), indented(sample(), 2));
+});
+
+test("writeBots from a worktree with no file of its own copies the main checkout's indentation (#230)", async (t) => {
+  reset();
+  const { main, tree } = await repo(t);
+  put(main, indented(sample(), "\t"));
+  const mainText = readFileSync(join(main, ".herdr", "bots.json"), "utf8");
+  const edit = sample();
+  edit.bots[1].role = "builds";
+  await writeBots(main, edit, null, null, { dir: tree, before: mainText });
+  assert.equal(readFileSync(join(tree, ".herdr", "bots.json"), "utf8"), indented(edit, "\t"));
+});
+
+test("writeBots on another machine keeps the file's tabs there (#230)", async (t) => {
+  reset();
+  state.hcCalls = [];
+  state.hcAnswer = hcFileOps(state);
+  t.after(() => { state.hcAnswer = () => ({ code: 0, stdout: "{}", stderr: "" }); });
+  const key = join(scratch(t), "hedgefund");
+  put(key, indented(sample(), "\t"));
+  const path = join(key, ".herdr", "bots.json");
+  const next = sample();
+  next.bots[1].role = "trades";
+  await writeBots(key, next, readFileSync(path, "utf8"), "vm");
+  const now = readFileSync(path, "utf8");
+  assert.equal(firstIndent(now), "\t");
+  assert.equal(now, indented(next, "\t"));
+});

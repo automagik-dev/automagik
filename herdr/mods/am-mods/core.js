@@ -216,7 +216,8 @@ async function writeKeys(io, appHome, change) {
 // mod is built in a staging folder (the package's files, then the installed copy's private state),
 // and only then are the record's old folders moved aside (never deleted) and the staged ones
 // renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
-export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
+// `shown`: the name of the layout Herdr shows (`shared("layout")`); none read, nothing is held.
+export async function applyInstall(io, { appHome, plan, source, prefix, sha, record, shown = null }) {
   if (plan.clashes.length) throw new Error(`already there: ${plan.clashes.join(", ")}`);
   if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
   const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
@@ -246,6 +247,10 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   const aside = [];
   const placed = [];
   const laid = [];
+  // The record's layout Herdr shows (`shown`, its name) that this commit no longer ships stays in
+  // layouts/ and in the record (#431): moved aside, Herdr would show plain Herdr. The next update
+  // after a switch moves it aside.
+  const held = droppedLayouts(record, plan).filter((l) => isShownLayout(shown, l));
   try {
     for (const m of record?.mods ?? []) {
       const live = `${appHome}/mods/${m}`;
@@ -261,6 +266,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
     }
     for (const l of record?.layouts ?? []) {
       const p = `${appHome}/layouts/${l}`;
+      if (held.includes(l)) continue;
       if (await present(io, p)) aside.push([p, await moveAside(io, appHome, p, l)]);
     }
     for (const l of plan.layouts) {
@@ -283,7 +289,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   }
   const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
   return {
-    source, prefix, sha, mods: plan.mods, layouts: plan.layouts, keys: dedupeKeys(keys),
+    source, prefix, sha, mods: plan.mods, layouts: [...plan.layouts, ...held], keys: dedupeKeys(keys),
     risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
   };
 }
@@ -487,6 +493,75 @@ export async function setEnabled(io, { appHome, name, enabled }) {
   const to = enabled ? "mods" : OFF_DIR;
   await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);
+}
+
+// The mods a layout tree (Herdr's `layout()`, the shown layouts/<name>.json) names. `blocks`: every
+// `content.mod` in it (blocks, floating ones, pane headers); Herdr refuses a layout whose block
+// names a mod missing from mods/ ("needs mods that aren't here") and shows plain Herdr instead.
+// `menu`: the root's `terminal_menu`, which Herdr only warns about and swaps for its own "menu".
+export function layoutNeeds(tree) {
+  const blocks = new Set();
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (typeof node.content?.mod === "string") blocks.add(node.content.mod);
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(tree);
+  const menu = typeof tree?.terminal_menu === "string" ? tree.terminal_menu : null;
+  return { blocks, menu };
+}
+
+// Before a mod goes off or out of mods/ (`then`: what the person does after switching, "turn it
+// off", "remove it", "uninstall it"): what the shown layout (`name`, `tree`) loses. `refuse` when a
+// block names it, since that would drop the whole layout; `note` when it is only the right-click
+// menu. am-sidebar/release.js carries a copy for `am uninstall` (test/am-mods-list.test.mjs).
+export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
+  const { blocks, menu } = layoutNeeds(tree);
+  const layout = name ? `the ${name} layout` : "the shown layout";
+  if (blocks.has(mod)) {
+    return { refuse: `${mod} stays on: ${layout} shows it, and Herdr drops a layout whose mod is off`
+      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+  }
+  if (menu === mod) return { note: `${layout}'s right-click menu: Herdr's own menu shows instead` };
+  return null;
+}
+
+// Before a package's remove (#420): uninstall() moves its own layouts (`layouts`, the record's file
+// names) aside, so the one Herdr shows (`name`) would vanish from the screen. `refuse` for that one,
+// else null. `then` names what follows the switch (`am uninstall herdr.layout` asks too, #430).
+export function packageLayoutGuard({ name, layouts, then = "remove it" }) {
+  if (typeof name !== "string" || !name) return null;
+  const own = (layouts ?? []).find((l) => typeof l === "string" && l.toLowerCase() === `${name.toLowerCase()}.json`);
+  if (!own) return null;
+  return { refuse: `the ${name} layout is this package's (layouts/${own}) and Herdr shows it: removing the package takes it away`
+    + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+}
+
+/** Whether layouts/`file` is the layout Herdr shows (`name`, case-insensitive as macOS's disk); no name, no. */
+export function isShownLayout(name, file) {
+  return typeof name === "string" && name !== "" && typeof file === "string" && file.toLowerCase() === `${name.toLowerCase()}.json`;
+}
+
+/** The record's layouts an update to `plan` no longer ships (applyInstall moves them aside unless shown). */
+export function droppedLayouts(record, plan) {
+  const now = lower(plan?.layouts ?? []);
+  return (record?.layouts ?? []).filter((l) => !now.has(String(l).toLowerCase()));
+}
+
+// After an update (#431): what is said of each layout it no longer ships. `held` (applyInstall kept
+// it: Herdr shows it) in the guard's wording; with no shown layout to read (`shown` none), each one
+// moved aside is named with that reason (fail open); else nothing (an unshown layout goes quietly).
+export function droppedLayoutLines({ dropped, held, shown }) {
+  const name = (f) => f.replace(/\.json$/i, "");
+  const known = typeof shown === "string" && shown !== "";
+  return dropped.flatMap((f) => (held.includes(f)
+    ? [`kept layouts/${f}: the ${name(f)} layout is this package's (layouts/${f}) and Herdr shows it; this update no longer ships it,`
+      + " and moving it aside would leave plain Herdr. Switch layouts (ctrl-shift-l), and the next update moves it aside"]
+    : known ? []
+      : [`moved layouts/${f} to the backup folder without knowing the layout Herdr shows (no layout to read; is Herdr running?):`
+        + ` this update no longer ships the ${name(f)} layout. Showing it? Switch layouts (ctrl-shift-l)`]));
 }
 
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login

@@ -12,7 +12,7 @@ import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
 import { badges, botChildren, nav, useEntries } from './extend.js'
-import { agentRowSessions, approvalFor, runningTasksOf, taskState, waitsForUser } from './task-card.js'
+import { agentRowSessions, approvalFor, endLabel, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 import { useApproval } from './approvals.js'
 import { WorkCodeSwitch } from './work-code-switch.js'
 import { BotPills, pillLabels } from './capability-pills.js'
@@ -250,14 +250,15 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
     },
   },
   h('span', { className: 'bt-agent-sub-title' }, session.title),
-  h('span', { className: 'bt-agent-sub-time' }, session.at > 0 ? relativeShort(session.at) : ''))
+  h('span', { className: 'bt-agent-sub-time' }, [session.ended, session.at > 0 ? relativeShort(session.at) : ''].filter(Boolean).join(' · ')))
 }
 
 // A DSH bot's row: its plain dsh Sessions, under the Bots with a terminal mark. The tasks
-// record has a row only while it keeps a task whose Bot is gone (agentRowSessions).
+// record has a row only while it keeps a Session no other list shows (agentRowSessions);
+// the minute's tick moves a task here as the Live rail lets go of it.
 function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  const own = agentRowSessions(agent, roster)
   const tasks = agent.kind === 'tasks'
+  const own = agentRowSessions(agent, roster, useMinute(tasks))
   const name = tasks ? t('Tasks') : agent.name
   const info = useSessions(list => JSON.stringify(own.map((id) => {
     const row = list.byId[id]
@@ -274,12 +275,17 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
     id, running: map.get(id)?.running === true, unread: map.get(id)?.completionUnread === true,
   }))))
   const statuses = Object.fromEntries(JSON.parse(statusInfo).map(entry => [entry.id, entry]))
-  const sessions = JSON.parse(info).map(session => ({
-    ...session,
-    running: statuses[session.id]?.running ?? session.running,
-    unread: statuses[session.id]?.unread ?? false,
-    title: session.title === '' ? t('New session') : session.title,
-  }))
+  const sessions = JSON.parse(info).map((session) => {
+    // A task's record says what its Session cannot: its title, and how it ended.
+    const task = tasks ? roster.tasks?.[session.id] : undefined
+    return {
+      ...session,
+      running: statuses[session.id]?.running ?? session.running,
+      unread: statuses[session.id]?.unread ?? false,
+      title: session.title === '' ? task?.title ?? t('New session') : session.title,
+      ended: task === undefined || task.status === 'working' ? undefined : endLabel({ status: task.status }),
+    }
+  })
   const renaming = useUi(value => value.renameAgent)
   const active = sessions.some(session => session.active)
   const running = sessions.some(session => session.running)

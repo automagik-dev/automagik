@@ -1,24 +1,57 @@
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
+import { readFileSync, realpathSync } from 'node:fs'
+import { createRequire, registerHooks } from 'node:module'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { foldCalls } from '../src/host/usage.js'
 import { buildUsageStats, normalizeUsage } from '../src/shared/usage-stats.js'
 
 // Execute the pinned native implementation, not a copied/reimplemented formula.
 // Append a test-only export in memory; no installed package or source is written.
-const nativeUrl = new URL('../dev/harness/node_modules/@deepseek-ai/dsh-token-meter/lib/index.js', import.meta.url).href
-const hook = registerHooks({ load(url, context, next) {
-  const loaded = next(url, context)
-  if (url !== nativeUrl) return loaded
-  const source = typeof loaded.source === 'string' ? loaded.source : new TextDecoder().decode(loaded.source)
-  assert.ok(source.includes('const tokenUsageProjectionDefinition = {'))
-  return { ...loaded, source: `${source}\nexport { tokenUsageProjectionDefinition as __accountingProjection };\n` }
-} })
+// The harness is the one the suite loads (`bun run harness` installs it in dev/harness; DSH_HARNESS
+// names another install or a checkout). Without that package, or when it has no projection to
+// append, the tests skip and say what is missing rather than read `wire` off undefined.
+const plugin = dirname(dirname(fileURLToPath(import.meta.url)))
+const harness = process.env.DSH_HARNESS ?? join(plugin, 'dev', 'harness')
+const marker = 'const tokenUsageProjectionDefinition = {'
+const pin = JSON.parse(readFileSync(join(plugin, 'dev', 'harness', 'package.json'), 'utf8')).dependencies['@deepseek-ai/dsh']
+const native = (() => {
+  let file
+  try {
+    file = createRequire(join(harness, 'package.json')).resolve('@deepseek-ai/dsh-token-meter')
+  } catch {
+    return { skip: `needs @deepseek-ai/dsh-token-meter from an installed harness (bun run harness installs it in dev/harness; looked in ${harness})` }
+  }
+  const version = JSON.parse(readFileSync(join(dirname(file), '..', 'package.json'), 'utf8')).version
+  const source = readFileSync(file, 'utf8')
+  if (!source.includes(marker)) return { skip: `@deepseek-ai/dsh-token-meter ${version} in ${harness} has no tokenUsageProjectionDefinition; the tests pin DSH ${pin} (bun run harness)` }
+  return { file, url: pathToFileURL(file).href }
+})()
 let projection
-try {
-  ;({ __accountingProjection: projection } = await import(nativeUrl))
-} finally {
-  hook.deregister()
+if (native.skip === undefined) {
+  // Node loads a symlinked package by its real path, so key the in-memory append on that path:
+  // an exact URL match misses a linked dev/harness install and leaves `projection` undefined.
+  const real = realpathSync(native.file)
+  const hook = registerHooks({ load(url, context, next) {
+    const loaded = next(url, context)
+    if (!url.startsWith('file:')) return loaded
+    let file
+    try {
+      file = realpathSync(fileURLToPath(url.split('?')[0]))
+    } catch {
+      return loaded
+    }
+    if (file !== real) return loaded
+    const source = typeof loaded.source === 'string' ? loaded.source : new TextDecoder().decode(loaded.source)
+    assert.ok(source.includes(marker))
+    return { ...loaded, source: `${source}\nexport { tokenUsageProjectionDefinition as __accountingProjection };\n` }
+  } })
+  try {
+    ;({ __accountingProjection: projection } = await import(native.url))
+  } finally {
+    hook.deregister()
+  }
 }
 
 const header = {
@@ -53,7 +86,7 @@ const matchedEvents = [
   settlement('assistant/message', 2, 0, usage(2, 3, 0, 0)),
 ]
 
-test('matched synthetic provider/model/effort/tools: native and Bot billing buckets agree through retries/replacement/knownzero', () => {
+test('matched synthetic provider/model/effort/tools: native and Bot billing buckets agree through retries/replacement/knownzero', { skip: native.skip }, () => {
   const nativeEvents = structuredClone(matchedEvents)
   const botEvents = structuredClone(matchedEvents)
   assert.deepEqual(nativeEvents[0].data.header, botEvents[0].data.header)
@@ -69,7 +102,7 @@ test('matched synthetic provider/model/effort/tools: native and Bot billing buck
   assert.deepEqual(nativeEvents, botEvents) // neither fold mutates the matched request contract
 })
 
-test('Bot-owned auxiliary overhead increases allIn exactly once, not the native foreground baseline', () => {
+test('Bot-owned auxiliary overhead increases allIn exactly once, not the native foreground baseline', { skip: native.skip }, () => {
   const overhead = { key: 'aux', attemptId: 'aux', requestId: 'aux-request', turnId: null, session: 'own-chat',
     kind: 'checkpoint', provider: header.data.header.config.provider, retryOrdinal: 0, ...normalizeUsage(usage(7, 2, 3, 0)),
   }
@@ -85,7 +118,7 @@ test('Bot-owned auxiliary overhead increases allIn exactly once, not the native 
   // Accounting correctness only: no model calls, effectiveness, cost or timing comparison.
 })
 
-test('native legacy cache0 cannot recover absence: Bot intentionally retains unknown rather than claim knownzero', () => {
+test('native legacy cache0 cannot recover absence: Bot intentionally retains unknown rather than claim knownzero', { skip: native.skip }, () => {
   const events = [header, settlement('assistant/message', 1, 0, { inputTokens: 8, outputTokens: 2 })]
   assert.deepEqual(nativeTotals(events), { input: 8, output: 2, cacheRead: 0, cacheWrite: 0 })
   assert.deepEqual(buckets(botStats(events).scopes.bot.allIn), { input: 8, output: 2, cacheRead: null, cacheWrite: null })
