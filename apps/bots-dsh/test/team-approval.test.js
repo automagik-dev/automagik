@@ -43,6 +43,14 @@ test('the card takes over only the team\'s own tools, with or without the bridge
   assert.equal(isTeamApproval({ kind: 'question', toolName: 'message_bot' }), false)
 })
 
+test('a delete approval names the Bot and its consequences', () => {
+  const view = approvalView('delete_bot', { bot: 'Writer' }, 'Omni')
+  assert.equal(view.title, 'Omni wants to delete Writer')
+  assert.equal(view.to, 'Writer')
+  assert.match(view.note, /archives its memory and conversations/)
+  assert.equal(isTeamApproval({ kind: 'approval', toolName: 'delete_bot' }), true)
+})
+
 test('arguments that are not the bridge\'s JSON give no fields, and nothing shows as raw JSON', () => {
   assert.deepEqual(plain(argsOf('escalate sandbox')), {})
   assert.deepEqual(plain(argsOf('[1,2]')), {})

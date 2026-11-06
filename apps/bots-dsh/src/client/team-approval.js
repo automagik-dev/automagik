@@ -10,7 +10,7 @@ import { t } from './i18n.js'
 // Enter allows and Escape rejects, as on DSH's card. Other tools keep DSH's card.
 
 export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
-const TEAM_TOOLS = new Set(['message_bot', 'start_task', 'stop_bot', 'create_bot', 'update_bot', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'group_relay', 'remember', 'forget', 'save_capability', 'delete_capability', 'show_view'])
+const TEAM_TOOLS = new Set(['message_bot', 'start_task', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'group_relay', 'remember', 'forget', 'save_capability', 'delete_capability', 'show_view'])
 export const isTeamApproval = pending => pending?.kind === 'approval' && TEAM_TOOLS.has(teamToolOf(pending.toolName))
 
 /** The call's arguments from the request's reason: the bridge's JSON, else none. */
@@ -36,6 +36,7 @@ export function approvalView(toolName, args, from) {
     case 'stop_bot': return { title: t('{from} wants to stop {to}', { from: who, to: text(args.to) || text(args.name) || t('another Bot') }), to: text(args.to) || text(args.name), quote: text(args.reason), rows: [] }
     case 'create_bot': return { title: t('{from} wants to add {name} to the team', { from: who, name: text(args.name) || t('a Bot') }), quote: text(args.instructions), rows: rows(['role', 'model']) }
     case 'update_bot': return { title: t('{from} wants to change {name}', { from: who, name: text(args.name) || text(args.to) || t('a Bot') }), quote: text(args.instructions), rows: rows(['role', 'model']) }
+    case 'delete_bot': return { title: t('{from} wants to delete {to}', { from: who, to: text(args.bot) || t('another Bot') }), to: text(args.bot), note: t('Deleting archives its memory and conversations, removes it from the team and groups, and deletes its secrets.'), rows: [] }
     case 'post_to_group': case 'group_relay': return { title: t('{from} wants to post in {group}', { from: who, group: text(args.group) || text(args.to) || t('a group chat') }), quote: text(args.message) || text(args.text), rows: [] }
     case 'remember': return { title: t('{from} wants to remember this', { from: who }), quote: text(args.text) || text(args.fact) || text(args.memory), rows: [] }
     case 'forget': return { title: t('{from} wants to forget this', { from: who }), quote: text(args.text) || text(args.fact) || text(args.memory), rows: [] }

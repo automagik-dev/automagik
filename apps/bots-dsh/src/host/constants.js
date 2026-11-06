@@ -81,7 +81,7 @@ export const DSH_BOT_NAME_MAX = 40
 // Every tool this plugin registers for Bots. `read_browser` only exists in the
 // Desktop profile, so a restriction filters this list down to registered names.
 export const TEAM_TOOLS = [
-  'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'list_bot_models',
+  'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'list_bot_models',
   'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',

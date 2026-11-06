@@ -393,6 +393,27 @@ export function install(rt) {
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'delete_bot',
+    description: 'Main Bot only. Delete a Bot from the team for good, only when the user explicitly asks to delete that Bot. Its memory and conversations are archived, its secrets are deleted, and it leaves every group chat; its tasks go on without it and its folder stays on disk. A Main Bot cannot be deleted, and neither can an adopted DSH bot.',
+    parameters: {
+      bot: { type: 'string', required: true, description: 'Exact Bot name from list_bots; this Bot is permanently removed from the team' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const self = rt.selfOf(exec.agent?.id)
+      if (!rt.isMain(self)) refuse('Only a Main Bot can delete Bots.')
+      const target = rt.findBot(args.bot)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      if (target.id === self) refuse('You cannot delete yourself.')
+      // The same host deletion the sidebar's Delete calls: its own checks refuse a Main Bot
+      // and an adopted DSH bot, and it removes membership, secrets and archived sessions.
+      await rt.deleteBot(target.id)
+      return `Deleted ${target.name}. Its memory and conversations are archived, its secrets are deleted, and it has left every group chat. Its tasks go on without it and its folder stays on disk.`
+    },
+  }))
+
   // DSH's working_directory changes a Session's folder in place, and the next part starts in
   // the Bot's working folder again. A Bot that changes to a folder outside its working folder
   // sets its working folder instead, with update_bot's checks, and goes on in a fresh part
