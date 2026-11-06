@@ -30,12 +30,19 @@ three views:
 
 - **List**: `INBOX` (finished runs not yet seen, with "Mark all read" and "Nothing new."), then
   `AUTOMATIONS` — per entry a dot, the name, `▶`, its schedule and next run, and "agent · model ·
-  workspace"; entries that did not load follow on an `ansi1` tint with the message.
+  workspace · permissions"; entries that did not load follow on an `ansi1` tint with the message.
 - **Detail**: name, `Run now` / `Pause` / `Edit` / `Delete` (delete asks once), schedule, next, repo,
-  where it runs, agent, the prompt, and `HISTORY` per run with status, duration or error, and when.
+  where it runs, agent, permissions, the prompt, and `HISTORY` per run with status, duration or error, and when.
 - **Form**: name, schedule pills over a cron field, repo with `Choose…`, "runs in" (new worktree,
-  repo root, existing space), agent pills (installed agents plus hc templates), model, prompt, timeout,
-  MCP config, and `Next: …` previewed live; `Cancel` / `Save`.
+  repo root, existing space), agent pills (installed agents plus hc templates), model, `PERMISSIONS`,
+  prompt, timeout, MCP config, and `Next: …` previewed live; `Cancel` / `Save`. A prompt naming a
+  terminal address gets a `blocked`-coloured line under it.
+- **PERMISSIONS** (#498): pills for the mode the run starts the agent in — `As saved: <mode>` (an
+  existing entry), `Automatic (<flag>)` (codex and claude), `Agent default` — a line "Runs <mode>:
+  <agent> <args>", and a field for more words to the agent (`agent_args` past the permission flags;
+  quote a word with a space). pi and any agent without a known automatic mode get "<agent> has no
+  known automatic mode: it runs with its own default." A template shows its command's mode instead,
+  "<template>: <mode>. The template's command brings its own flags; the panel adds none."
   An entry saved with a retired agent (`gemini`) shows it as a dimmed `gemini (retired)` pill, picked;
   the value is kept and saved back unchanged, and no other form offers it.
 
@@ -56,6 +63,18 @@ three views:
   label `automation=<name>`.
 - **Inbox**: clicking a finished run marks it seen and focuses its terminal if still live, else opens
   the automation.
+- **Permissions** (#498, owner ruling 2026-11-06): a new automation starts on `Automatic`, the
+  flags in `modes.js` `AUTO_ARGS` (codex `--dangerously-bypass-approvals-and-sandbox`, claude
+  `--dangerously-skip-permissions`: an unattended run must be able to work); `Agent default` saves
+  no permission flag. An existing entry opens on `As saved` and goes back exactly as it came:
+  nothing is migrated or rewritten on load or on an edit that leaves the mode and args alone. A
+  template run is given no flags (the scheduler passes none to a template anyway).
+- **Put replaces the whole entry** (#501), so the form sends back what it does not edit:
+  `agent_args`, `catch_up_minutes`, `disabled` (a paused entry stays paused) and `workflow`.
+- **Address warning** (#498): a prompt holding an hc address (`t3q1`, `khal-labs/t9`: a `t`, a
+  digit, then letters and digits) is warned about on every preview and on Save, "… is a terminal
+  address; it changes on restart. Name the bot instead"; it is saved all the same. A name given with
+  `hc --name` is not caught.
 - **Form** re-runs `put --dry-run` on every keystroke or pill (last answer wins), so the previewed
   next runs are the server's; `Save` runs `put` (with `--original` when editing).
 - **Toasts**: a run that turns `failed` or `missed` after the panel started posts a notification;
@@ -66,6 +85,7 @@ three views:
 ## Built from
 
 `mods/am-automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
+`modes.js` (permission flags read as a mode, the automatic flags, the address check; pure),
 `retired.js` (the retired agents: a byte-equal copy of am-sidebar's, the pack's one list),
 `automations.svg` (a clock, 24×24 stroke), `mod.json`
 (`place: "none"`, title "Automations"), `LICENSE` (this pack's Apache-2.0) and `LICENSE-upstream`
