@@ -168,7 +168,7 @@ test('a refusal or an unavailable approval never runs the tool, and the agent ge
   never.backchannel.dispose()
 })
 
-test('each level gates a bridge call as DSH gates its own tools: Manual asks, Auto and Full do not', async () => {
+test('each level gates a bridge call as DSH gates its own tools: Manual asks, Auto and Full raise no bridge dialog', async () => {
   const runAt = async ({ sandbox, policy, answer = 'allowed-once' }) => {
     const run = host({ sandbox, policy, answer })
     await run.backchannel.listen()
@@ -189,9 +189,10 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Au
   assert.equal(manual.asked.length, 1)
   assert.equal(manual.body.isError, false)
   assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
-  // Auto as DSH's real preset defines it (danger-full-access + ask): the bridge cannot be
-  // reviewed out-of-band, so it routes the call through the pipeline without asking, and the
-  // call still runs (stated limit: auto-review does not see bridge calls).
+  // Auto as DSH's real preset defines it (danger-full-access + ask): the bridge raises no
+  // dialog of its own; it routes the call into tools.execute, where DSH's auto-review gate
+  // decides. This host composes no auto-review listener, so the body runs here; the Bot
+  // suite's acp-team-tools test mounts the real pipeline and proves AUTO_REVIEW_FAILED.
   const auto = await runAt({ sandbox: 'danger-full-access', policy: 'ask' })
   assert.equal(auto.asked.length, 0)
   assert.equal(auto.body.isError, false)

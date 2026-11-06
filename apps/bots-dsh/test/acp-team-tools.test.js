@@ -8,8 +8,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { Context } from '@deepseek-ai/cordis'
 import { apply as applyAutoReview } from '@deepseek-ai/dsh-experimental-auto-review'
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
+import { apply as applyToolExecutor, inject as toolExecutorInject } from '@deepseek-ai/dsh-tool-executor-native'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
@@ -76,10 +81,9 @@ async function start() {
   const offeredAt = (level) => [...ctx.registeredTools.values()]
     .filter(tool => level !== 'read-only' || !MUTATING_TOOLS.has(tool.name))
     .map(tool => tool.name)
-  // One bridge call, in the order the ACP bridge runs it: the offer check, then the level's
-  // gate, then DSH's tool pipeline. Auto has no bridge dialog: auto-review's pre-execute is
-  // the gate, and this Session has no assistant block for it to read, so it fails closed.
-  const bridgeCall = async (sessionId, name, args, { level = 'workspace-write', autoReview, next } = {}) => {
+  // One Manual bridge call, in the order the ACP bridge runs it: the offer check, then the
+  // Session level's approval, then the Bot tool. Auto is the real tools pipeline below.
+  const bridgeCall = async (sessionId, name, args, { level = 'workspace-write', next } = {}) => {
     assert.ok(offeredAt(level).includes(name), `${name} is offered at ${level}`)
     const session = sessionOf(sessionId).session
     const body = async () => {
@@ -87,46 +91,77 @@ async function start() {
       const value = await tool.execute(args, { agent: { id: sessionId, session }, callId: 'bridge-1' })
       return { isError: false, value }
     }
-    if (autoReview !== undefined) {
-      const id = 'bridge-1'
-      session.append('tool/call', { turn: 1, step: 0, callId: id, name, arguments: JSON.stringify(args) })
-      const exec = { callId: id, rootCallId: id, name, arguments: args, agent: { session }, signal: new AbortController().signal }
-      const decision = await autoReview(exec, async () => ({ kind: 'allow' }))
-      if (decision.kind !== 'allow') return { isError: true, error: decision.info }
-      return body()
-    }
     const outcome = await askApproval(sessionId, {}, next ?? (() => 'allowed-once'))
     if (outcome !== 'allowed-once') return { isError: true, error: { code: String(outcome).toUpperCase() } }
     return body()
   }
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
   await call('state', {})
-  return { ctx, agents, call, askApproval, offeredAt, bridgeCall, stop }
+  return { ctx, agents, sessionOf, call, askApproval, offeredAt, bridgeCall, stop }
 }
 
-// Auto review's real pre-execute listener, over the same Session the bridge writes. The
-// wrapper runs it exactly where DSH's tool pipeline does, before the body.
-function autoReview() {
-  const preExecute = []
-  const ctx = {
-    permissionPresets: { current: () => 'auto', registerAuto: () => () => {} },
-    approval: { overrideOf: () => 'never' },
-    workingDirectory: { ensure: async () => '/tmp' },
-    sessions: { list: () => [] },
-    llm: { stream: () => { throw new Error('a refused snapshot never reaches the reviewer') } },
-    on: (name, listener) => {
-      if (name === 'tools/pre-execute') preExecute.push(listener)
-      return () => {}
-    },
-    effect: (fn) => {
-      const iterator = fn()
-      let next = iterator.next()
-      while (!next.done) next = iterator.next(next.value)
-      return next.value
-    },
-  }
+// DSH's real tools service with auto-review's own pre-execute listener. The bridge's call is
+// exactly `tools.execute`; this mounts the pipeline the bridge reaches, so the decision is the
+// one a production Auto Session gets, not a listener called by hand. The assistant block and
+// the tool/call row are what the bridge writes on Auto (RFC 0003 delivery 6).
+const REVIEW_ALLOW = '{"risk":"low","decision":"allow"}'
+const REVIEW_DENY = '{"risk":"high","decision":"deny","reason":"no"}'
+const reviewer = text => (async function* () {
+  yield { type: 'block-start', index: 0, blockType: 'text' }
+  yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+  yield { type: 'finish', reason: { kind: 'stop' } }
+})()
+
+async function autoReviewPipeline(tool, agent, decision = 'deny') {
+  const ctx = new Context()
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await ctx.plugin({ apply: applyToolExecutor, inject: toolExecutorInject })
+  ctx.provide('approval', { overrideOf: () => 'never', effectivePolicy: () => 'ask', request: async () => 'allowed-once' })
+  ctx.provide('permissionPresets', { current: () => 'auto', registerAuto: () => () => {} })
+  ctx.provide('sessions', { list: () => [] })
+  ctx.provide('workingDirectory', { ensure: async () => '/tmp' })
+  ctx.provide('llm', { stream: () => reviewer(decision === 'allow' ? REVIEW_ALLOW : REVIEW_DENY) })
   applyAutoReview(ctx)
-  return async (exec, next) => preExecute[0](exec, next)
+  let ran = false
+  ctx.tools.register(defineTool({
+    name: tool.name,
+    description: tool.description,
+    parameters: {
+      group: { type: 'string', required: true },
+      message: { type: 'string', required: true },
+    },
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+    async execute(args, exec) {
+      ran = true
+      return tool.execute(args, exec)
+    },
+  }))
+  return {
+    ran: () => ran,
+    async execute(args) {
+      const id = 'bridge-1'
+      const parameters = { type: 'object', properties: { group: { type: 'string' }, message: { type: 'string' } } }
+      agent.session.requestHeader = () => ({ config: { provider: 'acp-claude', model: 'opus' }, tools: [{ name: tool.name, description: tool.description, parameters }] })
+      agent.session.append('assistant/message', {
+        turn: 1,
+        step: 0,
+        stream: [],
+        message: createAssistantMessage({
+          content: [{ type: 'tool-call', id, name: tool.name, arguments: JSON.stringify(args) }],
+          source: { provider: 'acp-claude', model: 'opus', bridge: true, synthetic: 'acp-bridge' },
+        }),
+      }, { surfaceOp: 'append' })
+      agent.session.append('tool/call', { turn: 1, step: 0, callId: id, name: tool.name, arguments: JSON.stringify(args) })
+      const batch = await ctx.tools.execute({
+        calls: [{ id, name: tool.name, arguments: JSON.stringify(args) }],
+        agent,
+        signal: new AbortController().signal,
+      })
+      return batch.results[0].result
+    },
+    dispose: () => ctx.fiber.dispose(),
+  }
 }
 
 test('a team tool posts to the Bot\'s group through the bridge, and the call carries the approval row', async (t) => {
@@ -152,16 +187,28 @@ test('a team tool posts to the Bot\'s group through the bridge, and the call car
   assert.match(JSON.stringify(room?.calls ?? []), /the report is ready/)
 })
 
-test('an Auto Bot\'s bridge call is refused by auto-review with AUTO_REVIEW_FAILED, and nothing posts', async (t) => {
+test('an Auto Bot\'s team tool goes through auto-review: allow runs, deny refuses with AUTO_REVIEW_DENIED', async (t) => {
   const host = await start()
   t.after(host.stop)
-  const refusal = await host.bridgeCall('b', 'post_to_group', { group: 'Ops', message: 'should not post' }, { level: 'danger-full-access', autoReview: autoReview() })
-  assert.equal(refusal.isError, true)
-  assert.equal(refusal.error.code, 'AUTO_REVIEW_FAILED')
-  // No silent run: the room has no post, and no approval was left waiting.
-  const state = (await host.call('state', {})).value
-  assert.deepEqual(state.work.approvals, [])
-  assert.equal(JSON.stringify(state.rooms).includes('should not post'), false)
+  const tool = host.ctx.registeredTools.get('post_to_group')
+  const allow = await autoReviewPipeline(tool, { id: 'b', session: host.sessionOf('b').session }, 'allow')
+  t.after(() => allow.dispose())
+  const allowed = await allow.execute({ group: 'Ops', message: 'reviewed post' })
+  assert.equal(allowed.isError, false)
+  assert.equal(allow.ran(), true)
+  assert.match(JSON.stringify(host.agents.get('r1')?.calls ?? []), /reviewed post/)
+
+  const denySession = Session.create('b-deny')
+  denySession.append('turn/start', { turn: 1 })
+  denySession.append('step/start', { turn: 1, step: 0 })
+  const deny = await autoReviewPipeline(tool, { id: 'b', session: denySession }, 'deny')
+  t.after(() => deny.dispose())
+  const refused = await deny.execute({ group: 'Ops', message: 'denied post' })
+  assert.equal(refused.isError, true)
+  assert.equal(refused.error.info.code, 'AUTO_REVIEW_DENIED')
+  assert.equal(deny.ran(), false)
+  assert.equal(JSON.stringify(host.agents.get('r1')?.calls ?? []).includes('denied post'), false)
+  assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
 })
 
 test('a read-only Bot is not offered a file-writing tool through the bridge', async (t) => {

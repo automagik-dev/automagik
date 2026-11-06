@@ -27,8 +27,9 @@ export function acpClaudeTarget(bot, listed) {
   const model = moved.slice(moved.indexOf('/') + 1)
   if (listed.includes(model)) return `${ACP_AGENT}/${model}`
   // The agents' own catalog uses Claude Code's aliases (`opus`, `sonnet`, `haiku`), while
-  // pi-ai names exact versions. Same family, same route; no listing means no move.
-  const family = claudeFamilyOf(bot.claudeCodeModel)
+  // pi-ai names exact versions. Same family, same route; no listing means no move. Claude
+  // Code's `default` names no family on its own, so the pi-ai model it became names it.
+  const family = claudeFamilyOf(bot.claudeCodeModel) ?? claudeFamilyOf(`claude-code/${model}`)
   if (family !== undefined && listed.includes(family)) return `${ACP_AGENT}/${family}`
   return undefined
 }
@@ -42,7 +43,7 @@ async function acpClaudeReady(ctx) {
   const acp = ctx.get?.('acpAgents')
   let bridge
   try {
-    bridge = typeof acp?.bridge === 'function' ? acp.bridge() : undefined
+    bridge = typeof acp?.bridge === 'function' ? await acp.bridge() : undefined
   } catch {
     return undefined
   }
@@ -100,6 +101,9 @@ export function install(rt) {
     }
     if (!waiting) state.claudeAcpMoved = true
     if (moved.length > 0 || !waiting) await rt.save()
+    // A lock lost during the save leaves the file unchanged; do not move live Sessions to a
+    // model the team file does not record.
+    if (rt.readOnly?.() !== undefined) return
     for (const bot of moved) {
       const apply = rt.applyModel
       if (typeof apply !== 'function') break
@@ -108,13 +112,30 @@ export function install(rt) {
     }
   }
 
-  /** One pass at a time: a catalog or settings change while it runs queues nothing. */
+  // One pass at a time. An event that arrives while a pass awaits the route sets `again`,
+  // so an adapter that lands mid-pass still moves the team in a second pass.
+  let again = false
   const migrate = () => {
-    if (running === undefined) {
-      running = move()
-        .catch(error => rt.warn('ds-bot: the Claude Bots were not moved to acp-claude: %s', error))
-        .finally(() => { running = undefined })
+    if (running !== undefined) {
+      again = true
+      return running
     }
+    running = (async () => {
+      for (;;) {
+        again = false
+        await move()
+        if (!again) break
+      }
+    })()
+      .catch(error => rt.warn('ds-bot: the Claude Bots were not moved to acp-claude: %s', error))
+      .finally(() => {
+        running = undefined
+        // An event that landed after the loop's last check gets its own pass.
+        if (again) {
+          again = false
+          void migrate()
+        }
+      })
     return running
   }
 

@@ -356,24 +356,40 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   assert.match(line, /\[hidden\]/)
 })
 
-test('the service gates the Bot team\'s Claude move on dshTools and this build\'s probes', () => {
-  const serviceWith = (config) => {
+test('the service gates the Bot team\'s Claude move on a real bridge probe, cached per adapter version', async () => {
+  const installed = { path: '/fake/adapter', version: '1.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  const serviceFor = (config, { bin = installed, withTools = true } = {}) => {
     let service
     const ctx = {
       llm: { registerAdapter: () => () => {}, listProviders: () => [] },
       agents: { get: () => undefined },
-      get: () => undefined,
+      get: (name) => {
+        if (name === 'tools') return withTools ? { definitions: () => tools, executable: () => tools[0] } : undefined
+        if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+        if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+        if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+        return undefined
+      },
       provide: (name, value) => { if (name === 'acpAgents') service = value },
       on: () => {},
       effect: () => {},
       logger: { warn: () => {}, info: () => {} },
     }
-    apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => undefined }, find: () => undefined, signedIn: async () => undefined })
-    return service.bridge()
+    apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => bin ?? undefined }, find: () => undefined, signedIn: async () => undefined })
+    return service
   }
-  // Off is the 2026-11-03 behaviour; on, this build carries every delivery-4/6 probe.
-  assert.deepEqual(serviceWith({}), { on: false, probesPass: true })
-  assert.deepEqual(serviceWith({ dshTools: true }), { on: true, probesPass: true })
+  // Off is the 2026-11-03 behaviour and never spawns the bridge.
+  assert.deepEqual(await serviceFor({}).bridge(), { on: false, probesPass: false })
+  // On, the bridge really answers initialize + tools/list for a minted credential.
+  const on = serviceFor({ dshTools: true })
+  assert.deepEqual(await on.bridge(), { on: true, probesPass: true })
+  // The answer is cached per installed adapter version: a second ask starts no second probe.
+  const second = await on.bridge()
+  assert.deepEqual(second, { on: true, probesPass: true })
+  // An adapter that is not installed, or a bridge with no tools to list, fails closed.
+  assert.deepEqual(await serviceFor({ dshTools: true }, { bin: null }).bridge(), { on: true, probesPass: false })
+  assert.deepEqual(await serviceFor({ dshTools: true }, { withTools: false }).bridge(), { on: true, probesPass: false })
 })
 
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {

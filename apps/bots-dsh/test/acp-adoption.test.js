@@ -148,7 +148,7 @@ test('a Bot the person moved off its pi-ai Claude model is left alone', async (t
   assert.equal(state.bots.d3.claudeCodeModel, 'claude-code/opus')
 })
 
-test('a Bot whose model the route does not list is left alone, and the team stays open to a later adapter', async (t) => {
+test('a Bot whose model the route does not list is left alone, and the team is not marked done', async (t) => {
   // Only `default`: neither opus nor the exact pi-ai id is served by the route yet.
   const host = await start(seed(), { acp: readyAcp(['default']) })
   t.after(host.stop)
@@ -159,6 +159,43 @@ test('a Bot whose model the route does not list is left alone, and the team stay
   assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
   // Not marked: an adapter installed later may list them, and that catalog moves them then.
   assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('a Bot moved from Claude Code\'s default model takes Opus on the route', async (t) => {
+  const def = {
+    id: 'def', sessionId: 'def', name: 'Default', role: 'Boss', instructions: '', createdAt: 4,
+    model: 'anthropic/claude-opus-5-5', claudeCodeModel: 'claude-code/default',
+  }
+  const host = await start(seed({ def }))
+  t.after(host.stop)
+  await host.moved()
+  await until(() => host.saved().bots.def.appliedModel === 'acp-claude/opus', { label: 'the default Bot moved' })
+  assert.equal(host.saved().bots.def.model, 'acp-claude/opus')
+})
+
+test('an event that lands while the route is being read runs one more pass', async (t) => {
+  let release
+  let calls = 0
+  const acp = {
+    ...readyAcp(),
+    status: () => {
+      calls += 1
+      if (calls === 1) {
+        return new Promise((resolve) => {
+          release = () => resolve({ agents: [{ id: 'acp-claude', connector: { state: 'installing' }, model: { listed: false } }] })
+        })
+      }
+      return Promise.resolve({ agents: [{ id: 'acp-claude', connector: { state: 'ready' }, model: { listed: true } }] })
+    },
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await until(() => calls === 1, { label: 'the first route read started' })
+  // The adapter lands while the first pass waits on the route.
+  host.ctx.emit('llm/adapters-updated')
+  release()
+  await until(() => host.saved().claudeAcpMoved === true, { label: 'the queued pass moved the team' })
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
 })
 
 test('dshTools off is the 2026-11-03 behaviour: no Bot moves', async (t) => {
