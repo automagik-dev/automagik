@@ -34,7 +34,7 @@ function answer({ machine = "arm64", scheduler = null } = {}) {
     if (command !== scheduler) return { code: 127, stdout: "", stderr: `cannot run ${command}: no such file` };
     if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ automations: [], invalid: [], scheduler: { pid: 1 }, paused: false }), stderr: "" };
     if (args[0] === "history") return { code: 0, stdout: "[]", stderr: "" };
-    return { code: 0, stdout: "0.11.3\n", stderr: "" };
+    return { code: 0, stdout: "0.12.1\n", stderr: "" };
   };
 }
 
@@ -110,7 +110,7 @@ function listing(automations) {
     if (command !== "herdr-automations") return { code: 127, stdout: "", stderr: `cannot run ${command}: no such file` };
     if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ automations, invalid: [], scheduler: { pid: 1 }, paused: false }), stderr: "" };
     if (args[0] === "history") return { code: 0, stdout: "[]", stderr: "" };
-    return { code: 0, stdout: "0.11.3\n", stderr: "" };
+    return { code: 0, stdout: "0.12.1\n", stderr: "" };
   };
   return puts;
 }
@@ -169,7 +169,9 @@ test("a non-retired automation: no retired pill, its agent picked as before; a n
 // ---- the stub scheduler (#501, #498) ----
 // A stand-in herdr-automations in a temp home's ~/.local/bin: it records every argv and every
 // put's JSON, and keeps its entries in a fake automations.yaml (JSON, which YAML reads) in that
-// home. Its put replaces the whole entry, as v0.11.3's config.Put does (edit.go). Only the stub
+// home. Its put changes only the keys it is sent and removes a sent key whose value is empty, as
+// v0.12.1's config.Put does (edit.go setKeys; the yaml tags are omitempty), and its ls leaves out
+// the keys v0.12.1's api.Automation has no field for (close_workspace, session). Only the stub
 // and `sh` (the panel's stdin hand-over) really run; any other program, the real scheduler's
 // bare name included, is refused, so no test can reach a real config.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
@@ -186,14 +188,18 @@ const out = (x) => process.stdout.write(JSON.stringify(x));
 let input = "";
 if (args[0] === "put") input = fs.readFileSync(0, "utf8");
 fs.appendFileSync(path.join(home, "argv.jsonl"), JSON.stringify({ argv: args, input }) + "\n");
-if (args[0] === "version") process.stdout.write("0.11.3\n");
-else if (args[0] === "ls") out({ automations: read(), invalid: [], scheduler: { pid: 1 }, paused: false });
+if (args[0] === "version") process.stdout.write("0.12.1\n");
+else if (args[0] === "ls") out({ automations: read().map(({ close_workspace, session, ...a }) => a), invalid: [], scheduler: { pid: 1 }, paused: false });
 else if (args[0] === "history") out([]);
 else if (args[0] === "put") {
   const entry = JSON.parse(input), list = read();
   const at = args[1] === "--original" ? list.findIndex((a) => a.name === args[2]) : -1;
   if (!args.includes("--dry-run")) {
-    if (at >= 0) list[at] = entry; else list.push(entry);
+    const empty = (k, v) => !["name", "cron", "repo"].includes(k)
+      && (v === undefined || v === null || v === "" || v === 0 || v === false || (Array.isArray(v) && !v.length));
+    const into = at >= 0 ? list[at] : {};
+    for (const [k, v] of Object.entries(entry)) if (empty(k, v)) delete into[k]; else into[k] = v;
+    if (at < 0) list.push(into);
     fs.writeFileSync(yaml, JSON.stringify(list, null, 2));
   }
   out({ next: ["2026-11-09T09:00:00Z"] });
@@ -330,7 +336,8 @@ test("a new pi automation: no automatic mode, the form says so, and it saves no 
     assert.ok(!n.has("f-mode-auto"));
     assert.equal(textOf(n.get("f-mode-none")), "pi has no known automatic mode: it runs with its own default.");
     await saveIt(view, cx);
-    assert.equal(s.saves()[0].entry.agent_args, undefined);
+    assert.deepEqual(s.saves()[0].entry.agent_args, [], "sent empty: put keeps a key it is not sent");
+    assert.ok(!("agent_args" in s.yaml()[0]), "none in the config");
   } finally { s.done(); }
 });
 
@@ -358,7 +365,7 @@ test("an existing entry with no agent_args shows 'agent default' and stays witho
     await saveIt(view, cx);
     const saved = s.saves();
     assert.equal(saved.length, 1);
-    assert.ok(!("agent_args" in saved[0].entry), "no agent_args sent");
+    assert.deepEqual(saved[0].entry.agent_args, [], "sent empty, which keeps none");
     assert.ok(!("agent_args" in s.yaml()[0]), "none in the config");
   } finally { s.done(); }
 });
@@ -384,6 +391,38 @@ test("an existing automatic entry turned down to Agent default loses only the pe
     draw().get("f-mode-default").click({}, cx);
     await saveIt(view, cx);
     assert.deepEqual(s.saves()[0].entry.agent_args, ["--verbose"]);
+  } finally { s.done(); }
+});
+
+// v0.12.0 changed put to keep every key it is not sent (edit.go setKeys). A form that sent no
+// agent_args for "none" would leave the old flag in place: agent_args always goes, [] for none.
+test("an automatic-only entry turned down to Agent default keeps no flag in the config (v0.12 put)", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("codex"), agent_args: ["--dangerously-bypass-approvals-and-sandbox"] }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    draw().get("f-mode-default").click({}, cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(saved.raw.includes(`"agent_args":[]`), "sent, and empty");
+    assert.ok(!("agent_args" in s.yaml()[0]), "the bypass flag is gone from the config");
+  } finally { s.done(); }
+});
+
+// close_workspace (and session) can only be hand-written: v0.12.1's put has no field for them, and
+// a key it is sent with no value is removed. The panel never sends either, so an edit keeps them.
+test("a hand-written close_workspace and session survive a prompt-only edit; put is never sent them", async () => {
+  const { s, view, cx } = await stubPanel([{ ...nightly("claude"), close_workspace: "on-success", session: "night" }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(!("close_workspace" in saved.entry) && !("session" in saved.entry), "neither key sent");
+    assert.equal(s.yaml()[0].close_workspace, "on-success");
+    assert.equal(s.yaml()[0].session, "night");
+    assert.equal(s.yaml()[0].prompt, "p, said again");
   } finally { s.done(); }
 });
 
@@ -417,11 +456,11 @@ test("a template run shows its command's mode, and the panel adds no flags to it
     assert.match(textOf(n.get("f-mode-template")), /^reviewer-opus: automatic \(skips permissions\)\. .*adds none/);
     view.form.prompt.type("p2", cx);
     await saveIt(view, cx);
-    assert.ok(!("agent_args" in s.saves()[0].entry));
+    assert.deepEqual(s.saves()[0].entry.agent_args, [], "a template entry with none sends none");
     await fillNew(view, cx, draw, "codex");
     draw().get("f-agent-template:dev-sol").click({}, cx);
     await saveIt(view, cx);
-    assert.ok(!("agent_args" in s.saves()[1].entry), "a new template entry gets no automatic flag either");
+    assert.deepEqual(s.saves()[1].entry.agent_args, [], "a new template entry gets no automatic flag either");
   } finally { s.done(); }
 });
 
