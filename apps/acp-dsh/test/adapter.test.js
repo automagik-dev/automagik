@@ -41,7 +41,8 @@ function host({ answer = 'allowed-once' } = {}) {
     on: () => {},
     effect: (fn) => { disposers.push(fn()) },
   }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  // The old path, explicitly: dshTools defaults on, so this host is the kill-switch suite.
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
   const h = { adapter: registered['acp-fake'], agent, tools, asked, appended, close, registered }
   return h
@@ -327,7 +328,8 @@ test('sideModel is a live setting, DeepSeek Flash by default', async () => {
 test('an agent that cannot start fails the step with its reason', async () => {
   const registered = {}
   const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: () => undefined }, get: () => undefined }
-  apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs'), claude: false, codex: false })
+  const fake = join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs')
+  apply(ctx, { fakeAgent: fake, claude: false, codex: false, dshTools: false })
   const chunks = []
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
@@ -603,7 +605,10 @@ function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write
     ...extra,
   }
   const backchannel = new Backchannel({ ctx })
-  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]), { dshTools: () => toolsOn, backchannel, redactor })
+  // `toolsOn` is true/false, or a getter for a live switch a test flips mid-run.
+  const dshTools = typeof toolsOn === 'function' ? toolsOn : () => toolsOn
+  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]),
+    { dshTools, backchannel, redactor })
   const close = () => { adapter.dispose(); backchannel.dispose() }
   return { adapter, spec, ctx, agent, session, definitions, asked, executed, backchannel, close }
 }
@@ -946,7 +951,9 @@ test('a Session moving to an agent carries its transcript redacted, and each cro
   }
 })
 
-test('the plugin wiring hands the bridge to a Session when dshTools is set', async () => {
+// The plugin's own wiring (apply), with DSH's tools service behind the bridge: what a real
+// DSH tools call needs, and the one place `dshTools` is read from Config.
+function bridgeWiring() {
   const session = Session.create('s1')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
@@ -975,15 +982,51 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
   }
   const registered = {}
   ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: true })
+  return { ctx, registered, asked, agent, session }
+}
+
+test('the plugin wiring hands the bridge to a Session by default (dshTools unset)', async () => {
+  const w = bridgeWiring()
+  apply(w.ctx, { fakeAgent: FAKE, claude: false, codex: false })
   try {
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
-    const chunks = await step(registered['acp-fake'], messages)
+    const chunks = await step(w.registered['acp-fake'], messages)
     assert.match(textIn(chunks), /The bridge said: ran bash/)
-    assert.equal(asked.length, 1)
-    assert.equal(asked[0].toolName, 'bash')
+    assert.equal(w.asked.length, 1)
+    assert.equal(w.asked[0].toolName, 'bash')
   } finally {
-    registered['acp-fake'].dispose()
+    w.registered['acp-fake'].dispose()
+  }
+})
+
+test('the kill switch is live: false is the old path, true restores crossings', async () => {
+  const w = bridgeWiring()
+  let on = true
+  apply(w.ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: { get: () => on } })
+  const adapter = w.registered['acp-fake']
+  const boundary = () => w.session.snapshotEvents()
+    .filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+  try {
+    const ask = text => [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }],
+    }]
+    const first = await step(adapter, ask('bridge bash'))
+    assert.match(textIn(first), /The bridge said: ran bash/)
+    assert.equal(w.asked.length, 1)
+    // False is the kill switch: a model selection no longer crosses, so the agent session (and
+    // its bridge) is kept, exactly as on 2026-11-03.
+    on = false
+    const away = { type: 'model/selection', data: { provider: 'deepseek-official' } }
+    adapter.noteEvent(w.session, away)
+    assert.equal(adapter.live.size, 1)
+    assert.equal(boundary().length, 0)
+    // On again: the same switch, still live, crosses.
+    on = true
+    adapter.noteEvent(w.session, away)
+    assert.equal(adapter.live.size, 0)
+    assert.equal(boundary().length, 1)
+  } finally {
+    adapter.dispose()
   }
 })
 
@@ -1073,7 +1116,7 @@ test('with dshTools off the agent\'s stream is logged as it arrived', async () =
   }
 })
 
-test('with dshTools unset (the default), the agent runs its own tools and no bridge is spawned', async () => {
+test('dshTools false is the kill switch: own tools, no bridge spawned', async () => {
   const session = Session.create('s1')
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
   const ctx = {
@@ -1086,7 +1129,7 @@ test('with dshTools unset (the default), the agent runs its own tools and no bri
   }
   const registered = {}
   ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   try {
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
     const chunks = await step(registered['acp-fake'], messages)
@@ -1097,6 +1140,37 @@ test('with dshTools unset (the default), the agent runs its own tools and no bri
     assert.equal(JSON.parse(call.block.arguments).title, 'mcp__dsh__bash')
   } finally {
     registered['acp-fake'].dispose()
+  }
+})
+
+test("a person's own MCP server passes the drift check; a built-in tool is drift", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-mcp-drift-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ spec: { drift: true }, trace })
+  try {
+    const plain = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }],
+    }]
+    await step(h.adapter, plain)
+    // DSH hands the agent only the bridge. Anything else in its tool list is the person's own
+    // server, loaded by their CLI from its own user-scope config, not by this plugin.
+    const opened = traceEvents(trace).find(event => event.event === 'new-session')
+    assert.deepEqual(opened.servers, ['dsh'])
+    // The allowlist is `mcp__*`, by design: a user-scope server's call is not adapter drift.
+    const personal = { structuredName: 'mcp__personalmcp__search', title: 'search', mcp: true }
+    h.adapter.checkDrift('s1', AGENTS['acp-claude'], personal)
+    assert.notEqual(personal.drift, true)
+    const drift = () => h.session.snapshotEvents()
+      .filter(event => event.type === 'plugin:acp-dsh/toolset-drift')
+    assert.equal(drift().length, 0)
+    // A built-in tool is drift: recorded on the turn and cancelled.
+    const bash = { structuredName: 'Bash', title: 'Bash' }
+    h.adapter.checkDrift('s1', AGENTS['acp-claude'], bash)
+    assert.equal(bash.drift, true)
+    assert.equal(drift().length, 1)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

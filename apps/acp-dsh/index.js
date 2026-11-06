@@ -28,8 +28,13 @@ import { crossed } from './src/host/switch.js'
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
-// claude, codex and sideModel are live (volatile): DSH's settings service writes them without remounting
-// the plugin, and loader/volatile-update brings the change here.
+// The bridge, its DSH approval, the drift detector and live switching are on unless the person
+// turns them off; the key is public (installed teams keep it in their profile patch). One source
+// for the schema default and for a direct `apply` without a parsed Config.
+export const DSH_TOOLS_DEFAULT = true
+
+// claude, codex, sideModel and dshTools are live (volatile): DSH's settings service writes them
+// without remounting the plugin, and loader/volatile-update brings the change here.
 export const Config = z.object({
   claude: z.boolean().default(true).volatile().description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
   codex: z.boolean().default(true).volatile().description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
@@ -38,9 +43,18 @@ export const Config = z.object({
     model: z.string().required(),
   }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
-  // Off unless set: the 2026-11-03 behaviour, and the rollback (RFC 0003, amendment, "Setting
-  // and order"). On: the bridge, its DSH approval, the drift detector and live switching.
-  dshTools: z.boolean().default(false).volatile().description("Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own rules say, turn the agent's built-in tools off where its adapter allows, and carry the transcript when a Session moves between providers. Off is the behaviour without it: each agent keeps its own tools and its own approvals."),
+  // On unless explicitly false: the bridge, its DSH approval, the drift detector and live
+  // switching (RFC 0003, amendment, "Setting and order"). False is the kill switch and the
+  // 2026-11-03 behaviour. Hidden from settings forms (`.hidden()`): it is a rollback lever, not
+  // a preference, and stays writable through DSH's settings service and the profile patch.
+  dshTools: z.boolean().default(DSH_TOOLS_DEFAULT).volatile().hidden().description([
+    "Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's",
+    "preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own",
+    "rules say, turn the agent's built-in tools off where its adapter allows, and carry the",
+    'transcript when a Session moves between providers. On unless explicitly false; false is the',
+    'kill switch and the behaviour without it: each agent keeps its own tools and its own',
+    'approvals.',
+  ].join(' ')),
 })
 
 export const SERVICE = 'acpAgents'
@@ -52,6 +66,13 @@ export const PROBE_RETRY_MS = 10 * 60 * 1000
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
 
+// `dshTools` with the schema default applied: absent means on, and only an explicit false (a
+// plain false or a live reference reading false) is the kill switch.
+export const dshToolsOn = (value) => {
+  const read = flagOf(value)
+  return (read === undefined ? DSH_TOOLS_DEFAULT : read) === true
+}
+
 // The Node that runs an adapter: the one running DSH (as Node when that is Electron's binary),
 // never another node on the PATH, which may be too old for the adapter (Node 22 or newer).
 export function nodeCommand() {
@@ -60,7 +81,8 @@ export function nodeCommand() {
 
 /**
  * @param {any} ctx
- * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string }} [config]
+ * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
+ *   [config]
  * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  */
@@ -80,7 +102,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const backchannel = new Backchannel({ ctx, log })
   const redact = redactorFor(ctx)
   const adapter = new AcpAdapter(ctx, agents, {
-    dshTools: () => flagOf(config.dshTools) === true,
+    dshTools: () => dshToolsOn(config.dshTools),
     backchannel,
     redactor: redact,
   })
@@ -309,7 +331,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
 
   async function bridgeStatus() {
     if (disposed) return { on: false, probesPass: false }
-    const on = flagOf(config.dshTools) === true
+    const on = dshToolsOn(config.dshTools)
     if (!on) return { on: false, probesPass: false }
     const spec = AGENTS['acp-claude']
     const bin = store.binOf(spec.adapter, spec.bin)
@@ -373,7 +395,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
-  const crossing = crossed(agents, ctx, redact, () => flagOf(config.dshTools) === true)
+  const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
   ctx.on?.('llm/stream', crossing)
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())

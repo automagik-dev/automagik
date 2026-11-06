@@ -214,6 +214,31 @@ test("a Session's Auto row beats a delegated child's never policy: not full acce
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
 })
 
+test('an Auto Session without the preset service is never Full', () => {
+  // dsh-subagent pins a delegated child to `never`; only the Session's own committed Auto row
+  // keeps it from reading as Full access (which would let a call run with no review).
+  const auto = { snapshotEvents: () => [
+    { type: 'permission/preset', data: { preset: 'auto' } },
+    { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+  ] }
+  const never = { effectivePolicy: () => 'never' }
+  assert.deepEqual(levelOf(never, auto),
+    { sandbox: 'danger-full-access', policy: 'never', full: false, auto: true })
+  assert.equal(fullAccess(never, auto), false)
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(levelOf(never, auto)), ['auto', 'default'])
+  // A service that throws on the read falls back to the same row.
+  const throwing = { current: () => { throw new Error('the preset service went away') } }
+  assert.equal(fullAccess(never, auto, undefined, throwing), false)
+  assert.equal(levelOf(never, auto, undefined, throwing).auto, true)
+  // No Auto row and no service: Full access still reads Full, as DSH's own Full preset should.
+  const full = { snapshotEvents: () => [
+    { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+  ] }
+  assert.deepEqual(levelOf(never, full),
+    { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
+  assert.equal(fullAccess(never, full), true)
+})
+
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
   const ask = { effectivePolicy: () => 'ask' }
   const never = { effectivePolicy: () => 'never' }
@@ -384,9 +409,12 @@ test('the service gates the Bot team\'s Claude move on a real bridge probe, cach
     apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => bin ?? undefined }, find: () => undefined, signedIn: async () => undefined })
     return { service, toolReads: () => toolReads, setMode: next => { toolsMode = next } }
   }
-  // Off is the 2026-11-03 behaviour and never spawns the bridge.
-  assert.deepEqual(await serviceFor({}).service.bridge(), { on: false, probesPass: false })
-  // On, the bridge really answers initialize + tools/list for a minted credential.
+  // On is the default: an absent dshTools still probes and the bridge answers initialize +
+  // tools/list for a minted credential.
+  assert.deepEqual(await serviceFor({}).service.bridge(), { on: true, probesPass: true })
+  // False is the kill switch: the 2026-11-03 behaviour, and the bridge is never spawned.
+  assert.deepEqual(await serviceFor({ dshTools: false }).service.bridge(),
+    { on: false, probesPass: false })
   const on = serviceFor({ dshTools: true })
   assert.deepEqual(await on.service.bridge(), { on: true, probesPass: true })
   // Success is cached: a second ask reads no tools again (no second probe).

@@ -143,6 +143,16 @@ function sandboxOf(session, sandboxPolicy) {
   return undefined
 }
 
+// The Session's stored permission preset, from its own log: the identity the permission service
+// folds, including Auto under a delegated child's `never` approval.
+function presetOf(session) {
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.type === 'permission/preset') return events[i].data?.preset
+  }
+  return undefined
+}
+
 /** The Session's level: its sandbox mode, its approval policy, and whether that is full access. */
 export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
   let policy
@@ -153,6 +163,10 @@ export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
     sandbox = sandboxOf(session, sandboxPolicy)
     preset = permissionPresets?.current?.(session)
   } catch {}
+  // A host without DSH's permission-preset service (or one whose read throws) still has the
+  // Session's committed row. Auto's identity must survive that read: under a delegated child's
+  // `never` policy it would otherwise look like Full access and bypass the review it promises.
+  if (preset === undefined) preset = presetOf(session)
   // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Auto is
   // `ask` with no sandbox (AUTO_PRESET_SPEC), and Manual is the stock `ask` + workspace-write.
   // A Session's Auto row wins over the effective policy: dsh-subagent pins a child to `never` so

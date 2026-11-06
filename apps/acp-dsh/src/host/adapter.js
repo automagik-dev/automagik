@@ -219,7 +219,7 @@ export class AcpAdapter extends LlmAdapter {
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
   }
 
-  /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, off unless set). */
+  /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, on unless false). */
   bridgeOn() {
     return this.dshTools() === true && this.backchannel !== undefined
   }
