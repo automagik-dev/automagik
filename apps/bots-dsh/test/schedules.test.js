@@ -42,6 +42,7 @@ function scheduleService() {
         timeZone: timing.daily?.time_zone ?? timing.weekly?.time_zone ?? timing.cron?.time_zone,
         weekdays: timing.weekly?.weekdays,
         expression: timing.cron?.expression,
+        rrule: timing.rrule,
         request,
         target: request.target,
         status: 'active',
@@ -144,6 +145,8 @@ test('a failed task move can resume without losing identical remaining tasks', a
   const seed = { title: 'Ping', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w2' } }
   await schedule.create(seed)
   await schedule.create(seed)
+  // The Bot's own schedule tool makes rrule tasks on 0.2.2; a rotation must carry them too.
+  await schedule.create({ title: 'Bot task', prompt: 'Check the build', timing: { kind: 'rrule', rrule: 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY' }, target: { kind: 'session', sessionId: 'w2' } })
 
   const create = schedule.create
   let attempts = 0
@@ -154,10 +157,12 @@ test('a failed task move can resume without losing identical remaining tasks', a
   await assert.rejects(rt.moveSchedules('w2', 's9'), /down/)
   const on = id => [...schedule.tasks.values()].filter(task => task.target.sessionId === id)
   assert.equal(on('s9').length, 1)
-  assert.equal(on('w2').length, 1)
+  assert.equal(on('w2').length, 2)
 
   schedule.create = create
   await rt.moveSchedules('w2', 's9')
-  assert.equal(on('s9').length, 2)
+  assert.equal(on('s9').length, 3)
   assert.equal(on('w2').length, 0)
+  const movedRrule = on('s9').find(task => task.request.timing.kind === 'rrule')
+  assert.equal(movedRrule?.request.timing.rrule, 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY')
 })

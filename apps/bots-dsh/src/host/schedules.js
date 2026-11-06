@@ -38,6 +38,8 @@ function timingOf(record) {
     case 'daily': return { kind: 'daily', daily: { time: record.time, time_zone: record.timeZone } }
     case 'weekly': return { kind: 'weekly', weekly: { time: record.time, time_zone: record.timeZone, weekdays: record.weekdays } }
     case 'cron': return { kind: 'cron', cron: { expression: record.expression, time_zone: record.timeZone } }
+    // DSH 0.2.2's own schedule tools create rrule tasks; a move must carry them too.
+    case 'rrule': return { kind: 'rrule', rrule: record.rrule }
     default: return null
   }
 }

@@ -63,7 +63,20 @@ test('DSH 0.2.2 takes the adapter\'s typed timing and session target, lists, cat
   assert.deepEqual(catalogued.target, { kind: 'session', sessionId: 's1' })
   assert.equal(catalogued.status, 'active')
 
+  // DSH 0.2.2's own schedule tool creates rrule tasks; the adapter's move must rebuild one.
+  const recurring = await schedule.create({
+    title: 'Bot task',
+    prompt: 'Check the build',
+    timing: { kind: 'rrule', rrule: 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY' },
+    target: { kind: 'session', sessionId: 's1' },
+  })
+  assert.equal(recurring.kind, 'rrule')
+  assert.match(recurring.rrule, /RRULE:FREQ=DAILY/)
+
   await schedule.edit({ id: created.id, action: 'delete' })
+  const left = await schedule.catalog()
+  assert.deepEqual(left.map(entry => [entry.id, entry.kind]), [[recurring.id, 'rrule']])
+  await schedule.edit({ id: recurring.id, action: 'delete' })
   assert.deepEqual(await schedule.catalog(), [])
 })
 
@@ -73,5 +86,5 @@ test('the old session-scoped create shape is refused by DSH 0.2.2', async () => 
     title: 'Old part',
     prompt: 'x',
     every_seconds: 3600,
-  }))
+  }), error => error?.name === 'ScheduleInputError')
 })
