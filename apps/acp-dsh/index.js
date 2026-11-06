@@ -12,7 +12,8 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. It writes nothing: the switches are this plugin's own
 // live settings, written through DSH's settings service.
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
+import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside, SIDE_MODEL } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
@@ -101,7 +102,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
-      error => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`) },
+      // The store's short message is already redacted and home-relative; the raw installer
+      // error is not, so it never reaches the host log.
+      () => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`) },
     )
   }
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
@@ -170,6 +173,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
 
+  // A path under the person's home is shown relative to it, as the Bot team's report row does.
+  const shownPath = (path) => {
+    if (typeof path !== 'string') return undefined
+    const home = homedir()
+    return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
+  }
+
   // What one agent has, without spawning anything: the CLI search ran in the last reconcile,
   // the sign-in in the last refresh (a settings page refreshes when it opens).
   const statusOf = async (id) => {
@@ -178,11 +188,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const on = enabled(spec)
     const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = store.busy?.(spec.adapter) === true
-    const error = store.lastError?.(spec.adapter)
+    const failure = store.lastFailure?.(spec.adapter)
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
         : bin !== undefined ? 'ready'
-          : busy || error === undefined ? 'installing'
+          : busy || failure === undefined ? 'installing'
             : 'failed'
     // In the picker: DSH serves the route. Read from the registry, never the model list, which may
     // wait on a first read of the agent's models (catalog.js); a settings page must not.
@@ -199,7 +209,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       connector: {
         state: connector,
         ...(bin ? { version: bin.version } : {}),
-        ...(connector === 'failed' ? { error } : {}),
+        ...(connector === 'failed'
+          ? {
+            error: failure?.message,
+            ...(failure?.diagnostic ? { diagnostic: failure.diagnostic } : {}),
+            ...(failure?.logPath ? { logPath: shownPath(failure.logPath) } : {}),
+          }
+          : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),

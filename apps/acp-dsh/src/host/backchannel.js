@@ -72,13 +72,15 @@ export function offeredTools(ctx, agent) {
     }))
 }
 
-/** A stable fingerprint of what the bridge would list: preset, level and every tool's schema. */
+/** A stable fingerprint of what the bridge would list: preset, level (Auto and Full included) and every tool's schema. */
 export function signatureOf(ctx, agent) {
   const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
   return JSON.stringify({
     preset: presetOf(ctx, agent?.session),
     sandbox: level.sandbox ?? null,
     approval: level.policy ?? null,
+    auto: level.auto === true,
+    full: level.full === true,
     tools: offeredTools(ctx, agent).map((tool) => [tool.name, tool.description, tool.inputSchema]),
   })
 }

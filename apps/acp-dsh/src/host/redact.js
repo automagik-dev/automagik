@@ -1,39 +1,52 @@
-// Redaction before history crosses a provider boundary: a Session's transcript is replayed into
-// another provider (the outbound replay, `switch.js`) only after it passes this filter. Scope is
-// exactly that crossing (RFC 0003, amendment, "Live switching"): the agent's own streamed answer
-// is logged as a native model's answer is, and the bridge's DSH tool results are DSH's, so
-// neither passes through this module. The secret values saved for a Bot's Session go first in the
-// replay, then the credential shapes the Bot team's diagnostics mask.
+// The credential shapes removed from diagnostics, installer output and failure rows, and before
+// text crosses a provider boundary (a Session's transcript replayed into another provider, an
+// agent's answer streamed into DSH's log). This is the one edited source;
+// apps/acp-dsh/src/host/redact.js, apps/welcome-dsh/src/host/redact.js and
+// apps/welcome-dsh/src/client/redact.js are byte-equal copies (each plugin installs on its own),
+// checked by scripts/redact-copies.test.ts.
 //
 // The secret store belongs to the Bot team's runtime (`omniTeam`), which composes only where
 // Bots run; acp-dsh reads it when it is there and never requires it. A chat that is not a Bot's
 // has no secret store, so only the credential shapes apply.
+//
+// No imports: the client copy is bundled into the welcome's browser half.
+const CREDENTIAL_MARK = '[hidden]'
 
-// Shapes of credentials that are not saved keys: provider keys, bearer tokens, and token or
-// key parameters in addresses. The same table as apps/bots-dsh/src/host/diagnostics.js, plus
-// npm's token shape below (the Bot team's table does not carry it yet; an agent's streamed
-// answer can be replayed to another provider, so it is masked on that crossing too).
 export const CREDENTIALS = Object.freeze([
   [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
-  [/\bnpm_[A-Za-z0-9]{16,}/g, '[hidden]'],
-  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
-  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
-  [/\bAKIA[0-9A-Z]{16}\b/g, '[hidden]'],
-  [/\bxox[baprs]-[A-Za-z0-9-]{8,}/g, '[hidden]'],
-  [/\bAIza[A-Za-z0-9_-]{20,}/g, '[hidden]'],
-  // JSON web tokens: three base64url parts, the first always starting eyJ.
-  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, '[hidden]'],
-  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, '$1 [hidden]'],
-  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, '$1[hidden]'],
-  [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, '$1[hidden]'],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, CREDENTIAL_MARK],
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, CREDENTIAL_MARK],
+  [/\bAKIA[0-9A-Z]{16}\b/g, CREDENTIAL_MARK],
+  [/\bxox[baprs]-[A-Za-z0-9-]{8,}/g, CREDENTIAL_MARK],
+  [/\bAIza[A-Za-z0-9_-]{20,}/g, CREDENTIAL_MARK],
+  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, CREDENTIAL_MARK],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, `$1 ${CREDENTIAL_MARK}`],
+  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, `$1${CREDENTIAL_MARK}`],
+  // npm registry credentials: an access token (8+ chars; shorter is indistinguishable from a
+  // package name), the .npmrc keys as JSON (quoted key or value), their npm_config_* env
+  // spelling, NPM_TOKEN, and any userinfo in an http(s) URL. The userinfo rule is greedy to
+  // the last @ before the path, so a password with an unencoded @ or a token-only userinfo is
+  // covered too.
+  [/\bnpm_[A-Za-z0-9]{8,}/g, 'npm_[hidden]'],
+  [/(\bnpm_config_(?:_?authToken|_?auth|_?password)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
+  [/(\b_(?:authToken|auth|password)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
+  // Any env name ending in NPM_TOKEN or AUTH_TOKEN (NPM_TOKEN, MY_NPM_TOKEN, NODE_AUTH_TOKEN),
+  // as a key with = or :, JSON-quoted keys included.
+  [/(\b[A-Z0-9_]*(?:NPM_TOKEN|AUTH_TOKEN)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
+  [/(\bhttps?:\/\/)[^/\s]+@/gi, `$1${CREDENTIAL_MARK}@`],
+  [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, `$1${CREDENTIAL_MARK}`],
 ])
+
+/** Remove credential-shaped strings from text before it is stored or shown. */
+export function redactText(text) {
+  let out = String(text ?? '')
+  for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement)
+  return out
+}
 
 /** A string with every credential shape masked; other types pass through untouched. */
 export function credentialShapes(text) {
-  if (typeof text !== 'string') return text
-  let out = text
-  for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement)
-  return out
+  return typeof text === 'string' ? redactText(text) : text
 }
 
 /**
