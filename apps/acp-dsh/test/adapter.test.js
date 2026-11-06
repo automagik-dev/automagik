@@ -10,6 +10,7 @@ import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import { apply } from '../index.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 import { Backchannel } from '../src/host/backchannel.js'
+import { credentialShapes } from '../src/host/redact.js'
 import { BOUNDARY_KIND } from '../src/host/switch.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
 
@@ -43,9 +44,9 @@ function host({ answer = 'allowed-once' } = {}) {
   return h
 }
 
-async function step(adapter, messages, { signal, onChunk, model = 'default', effort } = {}) {
+async function step(adapter, messages, { signal, onChunk, model = 'default', effort, provider = 'acp-fake' } = {}) {
   const chunks = []
-  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model, ...(effort ? { reasoningEffort: effort } : {}), sessionId: 's1', messages, signal }))) {
+  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider, model, ...(effort ? { reasoningEffort: effort } : {}), sessionId: 's1', messages, signal }))) {
     chunks.push(chunk)
     onChunk?.(chunks)
   }
@@ -547,6 +548,11 @@ test('with dshTools on, DSH approves a DSH tool call and the bridge writes its c
   }
 })
 
+// UNPROVEN HERE: a saved always-allow rule for `mcp__*` in a real Claude Code profile can only
+// be exercised on a live CLI run, and no live turn was run here. What this test proves is the
+// mechanism that makes such a rule unable to skip DSH: acp-dsh answers the ACP permission
+// request itself (allow-once, no DSH dialog from it) and the bridge's own DSH approval still
+// runs exactly once. The saved-rule case itself is labelled unproven in the PR body.
 test('an allow-once rule answers the agent\'s own permission request and still cannot skip DSH\'s one dialog', async () => {
   const h = dshHost()
   try {
@@ -573,8 +579,10 @@ test('a bridge the adapter never starts fails the turn with acp_bridge_missing',
   }
 })
 
-test('a built-in tool call with dshTools on is recorded as acp_toolset_drift and the turn is cancelled', async () => {
-  const h = dshHost({ spec: { drift: true } })
+test('a built-in tool call with dshTools on is recorded as acp_toolset_drift and cancelled on the same trace', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-drift-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ spec: { drift: true }, trace })
   try {
     const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'drift' }] }])
     assert.equal(chunks.at(-1).reason.kind, 'aborted')
@@ -583,8 +591,20 @@ test('a built-in tool call with dshTools on is recorded as acp_toolset_drift and
     assert.equal(record.data.name, 'Bash')
     assert.equal(h.asked.length, 0)
     assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    // Observed, not inferred: the agent saw the built-in call and then session/cancel for the
+    // same ACP session, in that order, exactly once.
+    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const builtin = events.find(event => event.event === 'builtin-tool-call')
+    const cancel = events.find(event => event.event === 'cancel')
+    assert.ok(builtin, 'the agent made the built-in call')
+    assert.ok(cancel, 'the agent received session/cancel')
+    assert.equal(cancel.sessionId, builtin.sessionId, 'the cancel names the same trace')
+    assert.ok(events.indexOf(cancel) > events.indexOf(builtin), 'the cancel follows the call')
+    assert.equal(events.filter(event => event.event === 'cancel').length, 1)
+    t.diagnostic(`builtin ${builtin.name} ${builtin.toolCallId} on ${builtin.sessionId}; session/cancel on ${cancel.sessionId}`)
   } finally {
     h.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
@@ -764,6 +784,59 @@ test('the adapter\'s own deferred-tool loader gets no DSH card and no dialog', a
     assert.match(textIn(chunks), /I found it\./)
     assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
     assert.equal(h.asked.length, 0)
+  } finally {
+    h.close()
+  }
+})
+
+test('a credential the agent streamed crosses to another provider redacted: inbound is not redacted, the replay is', async () => {
+  // Ingest is the agent's answer, logged as a native answer would be (asserted below), so the
+  // canary starts from that very text. What must be redacted is the history that crosses.
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-replay-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ redactor: credentialShapes, trace })
+  try {
+    h.adapter.agents.set('acp-fake-b', { ...h.spec, name: 'Fake agent B' })
+    const first = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] }])
+    const streamed = textIn(first)
+    // The agent produced these values, and DSH logs them as the assistant's words.
+    assert.match(streamed, /sk-abcdef123456/)
+    assert.match(streamed, /npm_abcdefghijklmnopqrstuvwxyz/)
+    assert.match(streamed, /Bearer abcdefgh1234/)
+    const messages = [
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] },
+      { role: 'assistant', source: { kind: 'model', provider: 'acp-fake' }, content: [{ type: 'text', text: streamed }] },
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'next' }] },
+    ]
+    await step(h.adapter, messages, { provider: 'acp-fake-b' })
+    // What the second agent received is the replayed history: read from its own prompt trace,
+    // not from its answer (an answer may itself carry whatever the person showed it).
+    const prompts = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(event => event.event === 'prompt')
+    const prompt = prompts.at(-1).text
+    assert.doesNotMatch(prompt, /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/)
+    assert.match(prompt, /sk-\[hidden\]/)
+    assert.match(prompt, /moved from Fake agent to Fake agent B/)
+    // The crossing is visible, and the agent's answer is what it got.
+    const rows = h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+    assert.equal(rows.length, 1)
+    assert.match(rows[0].data.source.summary, /Now answered by Fake agent B \(acp-fake-b\)/)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an MCP call with no structured name (codex) draws no ACP card and asks nothing', async () => {
+  // codex-acp sends `name: null` + `_meta.is_mcp_tool_call` for an MCP call: acp-dsh cannot match
+  // it, so it must leave the call entirely to the bridge/server and draw no card.
+  const h = dshHost({ spec: { refresh: 'fork' } })
+  try {
+    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'mcp-call' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.match(textIn(chunks), /The MCP tool answered\./)
+    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    assert.equal(h.asked.length, 0)
+    assert.equal(h.executed.length, 0)
   } finally {
     h.close()
   }

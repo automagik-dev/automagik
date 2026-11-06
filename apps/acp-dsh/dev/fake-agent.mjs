@@ -155,6 +155,7 @@ const implementation = {
   },
   async authenticate() { return {} },
   async cancel({ sessionId }) {
+    trace({ event: 'cancel', sessionId })
     const session = sessions.get(sessionId)
     if (session) {
       session.cancelled = true
@@ -166,6 +167,8 @@ const implementation = {
     session.cancelled = false
     session.turns++
     const said = prompt.filter(block => block.type === 'text').map(block => block.text).join(' ')
+    // What the client actually sent this turn (a replayed transcript, for a crossing).
+    trace({ event: 'prompt', sessionId, turns: session.turns, text: said })
     const update = u => conn.sessionUpdate({ sessionId, update: u })
     if (OFFERS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
@@ -179,6 +182,7 @@ const implementation = {
     // detector records it and cancels on this trace.
     if (/drift/.test(said)) {
       const toolCallId = `drift-${session.turns}`
+      trace({ event: 'builtin-tool-call', sessionId, toolCallId, name: 'Bash' })
       await update({ sessionUpdate: 'tool_call', toolCallId, name: 'Bash', title: 'Bash: rm -rf build', kind: 'execute', status: 'pending', rawInput: { command: 'rm -rf build' } })
       if (!session.cancelled) await new Promise((resolve) => { session.wake = resolve })
       return { stopReason: 'cancelled' }
@@ -189,6 +193,28 @@ const implementation = {
       await update({ sessionUpdate: 'tool_call', toolCallId, name: 'ToolSearch', title: 'ToolSearch', kind: 'other', status: 'pending', rawInput: { query: 'select:mcp__dsh__bash' } })
       await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'found bash' } }] })
       await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' I found it.' } })
+      return { stopReason: 'end_turn' }
+    }
+    // Agent output carrying credentials: DSH logs what the agent says, so the plugin must
+    // redact it before it is written down.
+    if (/leak-tool/.test(said)) {
+      const toolCallId = `leak-${session.turns}`
+      await update({ sessionUpdate: 'tool_call', toolCallId, title: 'Read key', kind: 'read', status: 'pending', rawInput: { file_path: '/tmp/leak', note: 'sk-abcdef123456' } })
+      await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'token sk-abcdef123456 npm_abcdefghijklmnopqrstuvwxyz' } }] })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' done' } })
+      return { stopReason: 'end_turn' }
+    }
+    if (/leak/.test(said)) {
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'leak sk-abcdef123456 npm_abcdefghijklmnopqrstuvwxyz Bearer abcdefgh1234' } })
+      await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thought sk-abcdef123456' } })
+      return { stopReason: 'end_turn' }
+    }
+    // An MCP call from codex-acp: no structured name at all, only `is_mcp_tool_call`.
+    if (/mcp-call/.test(said)) {
+      const toolCallId = `mcp-${session.turns}`
+      await update({ sessionUpdate: 'tool_call', toolCallId, title: 'mcp.dsh.bash', kind: 'other', status: 'pending', _meta: { is_mcp_tool_call: true } })
+      await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'answered' } }] })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' The MCP tool answered.' } })
       return { stopReason: 'end_turn' }
     }
     // A tool call on the `dsh` bridge, by the name Claude Code puts on the wire. With "permit"

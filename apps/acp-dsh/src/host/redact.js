@@ -11,6 +11,9 @@
 // key parameters in addresses. Kept byte-equal to apps/bots-dsh/src/host/diagnostics.js.
 export const CREDENTIALS = Object.freeze([
   [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
+  // npm's own token shape; the Bot team's table does not carry it yet, and an agent's streamed
+  // answer can be replayed to another provider, so it is masked on that crossing too.
+  [/\bnpm_[A-Za-z0-9]{16,}/g, '[hidden]'],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
   [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[hidden]'],

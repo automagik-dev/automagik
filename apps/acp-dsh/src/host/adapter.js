@@ -449,6 +449,9 @@ export class AcpAdapter extends LlmAdapter {
     for (;;) {
       const event = await live.run.next(options.signal)
       if (event.type === 'end' || event.type === 'error') live.open = false
+      // Inbound text is the agent's answer to the person, logged as a native model's answer
+      // would be: DSH does not redact at ingest, and neither does this plugin. The redactor
+      // applies where history crosses providers (the outbound replay, `replayBlocks`).
       if (event.type === 'text') yield* blocks.add('text', event.text)
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {
