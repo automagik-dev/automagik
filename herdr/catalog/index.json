@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-06T13:51:22.439Z",
+  "generatedAt": "2026-11-06T14:26:02.082Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-06T10:47:39-03:00",
+      "pushedAt": "2026-11-06T11:21:02-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",
@@ -62,7 +62,7 @@
         {
           "name": "am-quota",
           "title": "Automagik Accounts",
-          "blurb": "**Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude Code or Codex account this computer uses will last, and moves the tool to another account on your own CLIProxyAPI before it runs out. A personal tool for people who run one; accounts are"
+          "blurb": "**Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude Code or Codex account this computer uses will last, and moves the tool to another account on your own CLIProxyAPI before it runs out. A personal tool for people who run one; Codex accoun"
         },
         {
           "name": "am-sidebar",
