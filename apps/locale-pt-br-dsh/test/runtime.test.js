@@ -15,9 +15,29 @@ if (!harness) {
   process.exit(1)
 }
 
-// The runtime class out of DSH's client bundle; it is constructed with no settings scope, so the
-// browser's languages decide, as on a first visit.
-function runtime(languages) {
+// A durable preference scope, as DSH hands the locale runtime (configForms' `locale`).
+function fakeHost(preference) {
+  const value = preference === undefined ? {} : { preference }
+  const listeners = new Set()
+  return {
+    getSnapshot: () => ({ value }),
+    subscribe(fn) {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+    set(field, next) {
+      value[field] = next
+      for (const fn of listeners) fn()
+    },
+    get preference() {
+      return value.preference
+    },
+  }
+}
+
+// The runtime class out of DSH's client bundle. Without a settings scope, the browser's
+// languages decide, as on a first visit; `host` is DSH's durable preference scope.
+function runtime(languages, { host } = {}) {
   const loads = []
   runInNewContext(readFileSync(join(harness, BUNDLE), 'utf8'), {
     window: { __ModuleLoader__: { load: (entry) => loads.push(entry) } },
@@ -25,43 +45,81 @@ function runtime(languages) {
   })
   const platform = new Proxy({}, { get: (_target, name) => (name === '__esModule' ? true : () => {}) })
   const { LocaleRuntime } = loads[0].factory(() => platform)
-  const ctx = fakeCtx(null)
+  const ctx = fakeCtx(null, { host })
   ctx.emit = () => {}
-  const locale = new LocaleRuntime(ctx)
+  const locale = new LocaleRuntime(ctx, host)
   ctx.locale = locale
   return { locale, ctx }
 }
 
 const pack = loadClient().exports
 
-test('DSH\'s runtime takes the language and opens in it for a pt-BR browser', () => {
+// DSH 0.2.2's own language and dictionaries, as its client bundles register them.
+function dshPortuguese(locale) {
+  locale.addLanguage({ id: 'pt', label: 'Português', fallback: 'en' })
+  locale.register('pluginManager', 'pt', { panel: 'Plugins', title: 'Plugins' })
+  locale.register('question', 'pt', { 'reply.label': 'Responder a perguntas pendentes anteriores' })
+  locale.register('sidebar', 'pt', { 'session.new': 'Nova sessão' })
+}
+
+test('DSH gives the pack\'s pt-BR language to a pt-BR browser and opens in it', () => {
   const { locale, ctx } = runtime(['pt-BR', 'pt', 'en-US'])
   assert.equal(locale.getLocale().active, 'en')
   pack.apply(ctx)
   const { active, locales } = locale.getLocale()
   assert.equal(active, 'pt-BR')
-  assert.deepEqual({ ...locales.find((entry) => entry.id === 'pt-BR') }, { id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
+  assert.deepEqual({ ...locales.find((entry) => entry.id === 'pt-BR') }, { id: 'pt-BR', label: 'Português', fallback: 'en' })
 })
 
-test('DSH\'s runtime reads a DSH namespace in pt-BR and falls back to en for a key the pack lacks', () => {
+test('DSH reads omni-ui in pt-BR and falls back to en for a key the pack lacks', () => {
   const { locale, ctx } = runtime(['pt-BR'])
-  locale.register('sidebar', { en: { 'session.new': 'New Session', 'only.en': 'Only in English' }, zh: { 'session.new': '新会话', 'only.en': '仅英文' } })
   pack.apply(ctx)
-  const t = locale.bind('sidebar')
-  assert.equal(t('session.new'), 'Nova sessão')
-  assert.equal(t('only.en'), 'Only in English')
+  const t = locale.bind('omni-ui')
+  assert.equal(t('Main Bot'), 'Bot principal')
+  assert.equal(t('a key the Bot team does not have'), 'a key the Bot team does not have')
 })
 
-test('DSH\'s runtime opens in pt-BR for a browser that asks for Portuguese first', () => {
-  const { locale, ctx } = runtime(['pt', 'en-US'])
-  pack.apply(ctx)
-  assert.equal(locale.getLocale().active, 'pt-BR')
-})
-
-test('DSH\'s runtime keeps an English browser in English with the pack loaded', () => {
+test('DSH keeps an English browser in English with the pack loaded', () => {
   const { locale, ctx } = runtime(['en-US'])
-  locale.register('sidebar', { en: { 'session.new': 'New Session' }, zh: { 'session.new': '新会话' } })
   pack.apply(ctx)
   assert.equal(locale.getLocale().active, 'en')
-  assert.equal(locale.bind('sidebar')('session.new'), 'New Session')
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Main Bot')
+})
+
+test('on DSH 0.2.1 the pt-BR entry renders the four strings DSH has', () => {
+  const { locale, ctx } = runtime(['pt-BR', 'en-US'])
+  pack.apply(ctx)
+  assert.equal(locale.getLocale().active, 'pt-BR')
+  locale.register('pluginManager', { en: { previewAlt: 'Preview of {name}', previewUnavailable: 'No preview' } })
+  locale.register('question', { en: { 'reply.open': 'Open details', 'reply.close': 'Close details' } })
+  assert.equal(locale.bind('pluginManager')('previewAlt', { name: 'Bots' }), 'Prévia do recurso de Bots')
+  assert.equal(locale.bind('question')('reply.open'), 'Abrir os detalhes da pergunta')
+})
+
+// The proof for DSH 0.2.2: one Portuguese entry, omni-ui under it, and a saved pt-BR choice
+// that still resolves to Portuguese on a browser that asks for English.
+test('a saved pt-BR choice resolves to DSH pt on 0.2.2, with one Portuguese entry', () => {
+  const host = fakeHost('pt-BR')
+  const { locale, ctx } = runtime(['en-US'], { host })
+  dshPortuguese(locale)
+  assert.equal(locale.getLocale().active, 'en')
+  assert.doesNotThrow(() => pack.apply(ctx))
+  const { active, locales } = locale.getLocale()
+  assert.equal(active, 'pt')
+  assert.equal(host.preference, 'pt')
+  const portuguese = Array.from(locales).filter((entry) => entry.id.toLowerCase().startsWith('pt'))
+  assert.deepEqual(Array.from(portuguese, (entry) => [entry.id, entry.label]), [['pt', 'Português']])
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
+  assert.equal(locale.bind('sidebar')('session.new'), 'Nova sessão')
+})
+
+test('a fresh browser on 0.2.2 gets DSH pt and no second Portuguese entry', () => {
+  const host = fakeHost()
+  const { locale, ctx } = runtime(['en-US'], { host })
+  dshPortuguese(locale)
+  pack.apply(ctx)
+  assert.equal(locale.getLocale().active, 'en')
+  assert.equal(host.preference, undefined)
+  const locales = Array.from(locale.getLocale().locales)
+  assert.deepEqual(Array.from(locales.filter((entry) => entry.id.startsWith('pt')), (entry) => entry.id), ['pt'])
 })
