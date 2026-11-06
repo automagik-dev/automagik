@@ -277,6 +277,35 @@ test('the browser copy remembers an explicit key\'s continued value at the end o
   }
 })
 
+// #495: a trailing comment after an explicit key's name ends at its own line end, so the quoted
+// block's first line is still hidden in place and remembered, and a later bare occurrence is masked.
+// The comment is not part of the value's context: the plain spelling is the same rule, which base
+// served with no memory at all (a deliberate widening here). The comment swallows nothing after its
+// line, and the sibling key that follows the block is neither hidden nor remembered.
+const COMMENT = ['Zq9', 'marker'].join('')
+const NEXT_VALUE = ['Shown', '9value'].join('')
+const COMMENTED = [
+  ['an invisible name', `? "${FILL['{pass}']}\u00ad${FILL['{word}']}" # note\n: |\n  ${COMMENT}`],
+  ['a plain name', `? "${FILL['{pass}']}${FILL['{word}']}" # note\n: |\n  ${COMMENT}`],
+]
+for (const [what, input] of COMMENTED) {
+  test(`#495: a quoted explicit-block value under ${what} with a trailing comment is hidden and remembered`, () => {
+    const name = `${FILL['{pass}']}${FILL['{word}']}`
+    assert.equal(clientRedactText(input), `? "${name}" # note\n: |\n  [redacted]`, 'hidden in place')
+    const kept = clientSecretsIn(`${input}\n`)
+    assert.ok(kept.includes(COMMENT), 'remembered')
+    assert.ok(!masked(`later note: ${COMMENT}`, kept).includes(COMMENT), 'a later bare occurrence is masked')
+  })
+}
+
+test('#495: a trailing comment swallows nothing after its line and makes no sibling remembered', () => {
+  for (const [what, input] of COMMENTED) {
+    const text = `${input}\nsibling: ${NEXT_VALUE}\n`
+    assert.ok(clientRedactText(text).endsWith(`\nsibling: ${NEXT_VALUE}\n`), `${what}: the next line is served as written`)
+    assert.ok(!clientSecretsIn(text).includes(NEXT_VALUE), `${what}: a sibling value is not remembered`)
+  }
+})
+
 // #406 F-B residual: a cut pads the unfinished line with blanks. The window and the browser copy read
 // a growing buffer, so a bare token on that line is neither hidden nor remembered until its line ends
 // (a colon makes it a child key, a line end its parent's scalar); until then it is withheld, never

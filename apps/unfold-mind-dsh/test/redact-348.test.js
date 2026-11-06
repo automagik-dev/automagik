@@ -168,6 +168,35 @@ test('continuation: an explicit key\'s continued value is remembered at the end 
   }
 })
 
+// #495: a trailing comment after an explicit key's name ends at its own line end, so the quoted
+// block's first line is still hidden in place and remembered, and a later bare occurrence is masked.
+// The comment is not part of the value's context: the plain spelling is the same rule, which base
+// served with no memory at all (a deliberate widening here). The comment swallows nothing after its
+// line, and the sibling key that follows the block is neither hidden nor remembered.
+const COMMENT = ['Zq9', 'marker'].join('')
+const NEXT_VALUE = ['Shown', '9value'].join('')
+const COMMENTED = [
+  ['an invisible name', `? "${FILL['{pass}']}\u00ad${FILL['{word}']}" # note\n: |\n  ${COMMENT}`],
+  ['a plain name', `? "${FILL['{pass}']}${FILL['{word}']}" # note\n: |\n  ${COMMENT}`],
+]
+for (const [what, input] of COMMENTED) {
+  test(`#495: a quoted explicit-block value under ${what} with a trailing comment is hidden and remembered`, () => {
+    const name = `${FILL['{pass}']}${FILL['{word}']}`
+    assert.equal(redactText(input), `? "${name}" # note\n: |\n  ${REDACTED}`, 'hidden in place')
+    const kept = secretsIn(`${input}\n`)
+    assert.ok(kept.includes(COMMENT), 'remembered')
+    assert.ok(!masked(`later note: ${COMMENT}`, kept).includes(COMMENT), 'a later bare occurrence is masked')
+  })
+}
+
+test('#495: a trailing comment swallows nothing after its line and makes no sibling remembered', () => {
+  for (const [what, input] of COMMENTED) {
+    const text = `${input}\nsibling: ${NEXT_VALUE}\n`
+    assert.ok(redactText(text).endsWith(`\nsibling: ${NEXT_VALUE}\n`), `${what}: the next line is served as written`)
+    assert.ok(!secretsIn(text).includes(NEXT_VALUE), `${what}: a sibling value is not remembered`)
+  }
+})
+
 test('served: a value on a later line stays hidden in the stream, whole and a character at a time; a kept one is served', () => {
   for (const [what, input] of CONTINUED_HIDDEN) {
     const whole = journal()
