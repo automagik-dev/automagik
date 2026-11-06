@@ -11862,9 +11862,33 @@ function AcpSettingsSection() {
     )
   );
 }
+function AcpSectionIcon({ size = 16 }) {
+  return (0, import_react7.createElement)(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 16 16",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: 1.4,
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true"
+    },
+    (0, import_react7.createElement)("rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2.5 }),
+    (0, import_react7.createElement)("path", { d: "M4.6 6.2 6.8 8l-2.2 1.8M8.3 10.2h3.1" })
+  );
+}
 function installAcpSection(ctx) {
-  return ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
+  const section = ctx.slots.inject("settings.section", () => ctx.slots.register({ name: "settings.section", id: SETTINGS_SECTION, order: 30, label: () => t("Claude Code and Codex") }, AcpSettingsSection)) ?? (() => {
   });
+  const icon = ctx.slots.inject("settings.section.icon", () => ctx.slots.register({ name: "settings.section.icon", id: SETTINGS_SECTION, order: 30 }, AcpSectionIcon)) ?? (() => {
+  });
+  return () => {
+    section();
+    icon();
+  };
 }
 var ACP_CSS = `
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}
