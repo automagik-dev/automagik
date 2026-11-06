@@ -286,7 +286,8 @@ const shown = (text) => (text.length > 60 ? `${text.slice(0, 57)}...` : text);
  * PATH_PREPEND (colon-separated absolute folders, put first on the pane's PATH) and HERDR_APP_HOME
  * (one absolute folder: the app home the pane and its briefing use there); blank lines and
  * # comments are skipped. Anything else (another key, a key twice, a relative or empty folder, a
- * control character, a line that isn't KEY=value) refuses the whole file: { prepend: null,
+ * folder with a space at its start or end, a control character, a line that isn't KEY=value)
+ * refuses the whole file: { prepend: null,
  * appHome: null, error: "line N: why" }, and the start goes on as it would without it. No file
  * (null) is { prepend: null, appHome: null, error: null }. The values are data: never evaluated.
  */
@@ -305,6 +306,8 @@ export function paneEnvOf(text) {
     if (!PANE_ENV_KEYS.includes(key)) return refuse(`${shown(key)} isn't a key pane-env takes (${PANE_ENV_KEYS.join(", ")})`);
     if (key in got) return refuse(`${key} is set twice`);
     const dirs = key === "PATH_PREPEND" ? value.split(":") : [value];
+    const padded = dirs.find((d) => d !== d.trim());
+    if (padded !== undefined) return refuse(`${key}: "${shown(padded)}" has a space at its start or end`);
     const bad = dirs.find((d) => !d.startsWith("/"));
     if (bad !== undefined) return refuse(`${key}: "${shown(bad)}" isn't an absolute folder`);
     got[key] = [...new Set(dirs.map(folder))].join(":");

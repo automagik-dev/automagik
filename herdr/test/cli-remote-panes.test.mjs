@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -195,21 +195,61 @@ const vmApp = (s) => join(s.root, "vm/.config/herdr-app");
 const briefedIn = (dir) => (existsSync(join(dir, "automagik-herdr/briefings")) ? readdirSync(join(dir, "automagik-herdr/briefings")) : []);
 const hookOf = (s) => JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8")).hooks.UserPromptSubmit[0].hooks[0].command;
 
-test("start --machine of a Claude bot with no briefing entry there: its briefing file there, no hook, the noHookThere warning, started", (t) => {
+const modeOf = (path) => statSync(path).mode & 0o777;
+
+test("start --machine of a Claude bot with no app home there: none is made; one warning, no briefing file or hook, started", (t) => {
   const s = scene(t);
   const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
+  const warnings = r.json().warnings;
+  assert.equal(warnings.length, 1, warnings.join("\n"));
+  assert.match(warnings[0], new RegExp(`^Hedge runs on vm without its briefing in its system prompt or per turn: its app home there, `
+    + `${vmApp(s)}, isn't a folder, and a start never makes one\\.`));
+  assert.match(r.err, /Hedge runs on vm without its briefing/);
+  assert.equal(r.json().hookWritten, false);
+  // The shared-box rule: nothing under that machine's home, no hook in the project there.
+  assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
+  assert.equal(existsSync(join(s.project, ".claude")), false);
+  assert.equal(existsSync(join(s.home, ".claude")), false);
+  assert.deepEqual(agentPart(startedWith(s)), ["claude"], "started, without the flag");
+  assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
+});
+
+test("start --machine of a Claude bot with an app home there but no briefing entry: its briefing file (0600, folder 0700), noHookThere", (t) => {
+  const s = scene(t);
+  mkdirSync(vmApp(s), { recursive: true });
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings.length, 1, r.json().warnings.join("\n"));
   assert.match(r.err, /Hedge runs on vm without its per-turn briefing/);
   assert.match(r.json().warnings.join(" "), /automagik-herdr machine install vm/);
   assert.equal(r.json().hookWritten, false);
   assert.equal(existsSync(join(s.project, ".claude")), false, "no hook there pointing at a missing briefing.mjs");
-  assert.equal(existsSync(join(s.home, ".claude")), false);
   // The system prompt still has it: the file in vm's own app home ($HOME/.config/herdr-app there).
   const words = agentPart(startedWith(s));
   assert.deepEqual(words.slice(0, 2), ["claude", "--append-system-prompt-file"]);
   assert.ok(words[2].startsWith(`${vmApp(s)}/automagik-herdr/briefings/`), words[2]);
   assert.match(readFileSync(words[2], "utf8"), /^<herdr-bot>\n[^]*You are Hedge/);
+  // Private, as a local start writes it (briefedLaunch: 0600 in 0700), whatever the umask there.
+  assert.equal(modeOf(words[2]).toString(8), "600");
+  assert.equal(modeOf(join(vmApp(s), "automagik-herdr/briefings")).toString(8), "700");
   assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
+});
+
+test("start --machine with a pane-env that is left out: no app home there is used, not even the default one", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  writeFileSync(join(s.project, ".herdr/pane-env"), "HERDR_APP_HOME=/srv/bots/herdr-app \n");
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const warnings = r.json().warnings;
+  assert.equal(warnings.length, 2, warnings.join("\n"));
+  assert.match(warnings[0], /pane-env on vm was left out \(line 1: HERDR_APP_HOME: "\/srv\/bots\/herdr-app " has a space at its start or end\)/);
+  assert.match(warnings[1], /^Hedge runs on vm without its briefing in its system prompt or per turn: its \.herdr\/pane-env there was left out, so no app home there is used, not even the default one\./);
+  assert.deepEqual(agentPart(startedWith(s)), ["claude"]);
+  assert.equal(startedWith(s).some((w) => w.startsWith("HERDR_APP_HOME=")), false);
+  assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
+  assert.equal(existsSync(join(s.project, ".claude")), false);
 });
 
 test("start --machine of a Claude bot: the briefing file and the per-turn hook in that project, both pointing at vm's app home", (t) => {
@@ -230,12 +270,42 @@ test("start --machine of a Claude bot: the briefing file and the per-turn hook i
   assert.deepEqual(briefedIn(s.app), []);
   assert.equal(existsSync(join(s.home, ".claude")), false);
   assert.equal(existsSync(join(s.root, ".claude")), false);
-  // A second start there (after the first pane ends) finds the hook in place: written once.
+  assert.equal(modeOf(words[2]).toString(8), "600");
+  // A second start there (after the first pane ends) finds the hook in place: written once. Its
+  // briefing file, changed and opened up since, is rewritten through hc file edit and made 0600 again.
   assert.equal(s.cli(["detach", "Hedge", ...s.on]).code, 0);
+  writeFileSync(words[2], "<herdr-bot>\nan older briefing\n");
+  chmodSync(words[2], 0o664);
   const again = s.cli(["start", "Hedge", ...s.on, "--json"]);
   assert.equal(again.code, 0, again.err);
+  assert.deepEqual(again.json().warnings, []);
   assert.equal(again.json().hookWritten, false);
   assert.equal(JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8")).hooks.UserPromptSubmit.length, 1);
+  assert.match(readFileSync(words[2], "utf8"), /You are Hedge/);
+  assert.equal(modeOf(words[2]).toString(8), "600");
+  assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.at(-1) === words[2]));
+});
+
+test("start --machine of a Claude bot: the hook merges into that project's settings.local.json there, keeping what is in it", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const theirs = { permissions: { allow: ["Bash(ls:*)"] }, hooks: {
+    UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo their own prompt hook" }] }],
+    PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "echo their own tool hook" }] }],
+  } };
+  mkdirSync(join(s.project, ".claude"));
+  writeFileSync(join(s.project, ".claude/settings.local.json"), `${JSON.stringify(theirs, null, 2)}\n`);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().hookWritten, true);
+  const now = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
+  assert.deepEqual(now.permissions, theirs.permissions);
+  assert.deepEqual(now.hooks.PreToolUse, theirs.hooks.PreToolUse);
+  assert.deepEqual(now.hooks.UserPromptSubmit[0], theirs.hooks.UserPromptSubmit[0], "their prompt hook first, as it was");
+  assert.equal(now.hooks.UserPromptSubmit.length, 2);
+  assert.match(now.hooks.UserPromptSubmit[1].hooks[0].command, new RegExp(`${vmApp(s)}/automagik-herdr/briefing\\.mjs`));
+  // Edited in place there (hc file edit on the text read), never replaced from a local path.
+  assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.at(-1) === join(s.project, ".claude/settings.local.json")));
 });
 
 test("start --machine of an omp bot: the briefing as its --append-system-prompt text; no file and no hook there", (t) => {

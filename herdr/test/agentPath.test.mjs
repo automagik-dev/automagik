@@ -474,6 +474,11 @@ test("paneEnvOf: another key, a relative path, a key twice or a line that isn't 
   refused("HERDR_APP_HOME=/a\nHERDR_APP_HOME=/b", /line 2: HERDR_APP_HOME is set twice/);
   refused("export PATH_PREPEND=/a", /export PATH_PREPEND isn't a key/);
   refused("PATH_PREPEND /a", /line 1: "PATH_PREPEND \/a" isn't KEY=value/);
+  // A space at a value's start or end would make a folder of that name there (review F3).
+  refused("HERDR_APP_HOME=/srv/app ", /line 1: HERDR_APP_HOME: "\/srv\/app " has a space at its start or end/);
+  refused("HERDR_APP_HOME= /srv/app", /HERDR_APP_HOME: " \/srv\/app" has a space at its start or end/);
+  refused("PATH_PREPEND=/opt/a:/opt/b :/opt/c", /PATH_PREPEND: "\/opt\/b " has a space at its start or end/);
+  refused("\ufeffPATH_PREPEND=/opt/a", /isn't a key pane-env takes/);
   refused("HERDR_APP_HOME=/a\u0007", /line 1: a control character/);
   refused(`${"X".repeat(500)}`, /isn't KEY=value/);
   assert.ok(paneEnvOf("X".repeat(500)).error.length < 200, "a long line is cut short in the warning");
@@ -496,4 +501,18 @@ test("agentOnMachine: PATH_PREPEND's folders come first, so the agent and its in
   rmSync(join(hc, "fakenode"));
   assert.equal((await agentOnMachine(service(s, { hc }), "claude")).state, "no-interpreter");
   assert.equal((await agentOnMachine(service(s, { hc }), "claude", { prepend: pre })).state, "found");
+});
+
+test("AGENT_PATH_SH: PATH_PREPEND folders with spaces, $, backticks and quotes are one word each, never evaluated", async (t) => {
+  const s = scratch(t);
+  const canary = join(s.root, "ran");
+  const odd = join(s.root, `a b $HOME \`touch ${canary}\` $(touch ${canary}) 'q' "d"`);
+  const hc = join(s.root, "hc-bin");
+  exe(join(hc, "claude"), "#!/usr/bin/env fakenode\n");
+  exe(join(odd, "fakenode"), "#!/bin/sh\necho odd node\n");
+  const got = await agentOnMachine(service(s, { hc }), "claude", { prepend: odd });
+  assert.equal(got.state, "found");
+  assert.equal(got.path.split(":")[0], odd, "the folder as it is, first");
+  assert.equal(runs(got.path, "claude").stdout, "odd node\n");
+  assert.equal(existsSync(canary), false, "nothing in it ran");
 });

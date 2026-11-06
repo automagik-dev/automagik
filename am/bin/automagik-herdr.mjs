@@ -40,7 +40,7 @@ import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, install
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
-import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
+import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, utf8Length, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
@@ -1740,17 +1740,18 @@ async function agentThere(machine, argv, name, prepend = null) {
 
 /**
  * A project's pane-env on `machine` (agentPath.mjs paneEnvOf: PATH_PREPEND, HERDR_APP_HOME), read
- * there through hc: { prepend, appHome, warnings }. No file: nothing, so the start is as before
- * #582. A file it refuses, or one that can't be read, is one warning and nothing: the start goes on.
+ * there through hc: { prepend, appHome, refused, warnings }. No file: nothing, so the start is as
+ * before #582. A file it refuses, or one that can't be read, is one warning, `refused` and nothing
+ * else: the start goes on, and briefingHomeOn then uses no app home there at all.
  */
 async function paneEnvOn(machine, key) {
   const path = under(key, PANE_ENV_PATH);
-  const none = (why) => ({ prepend: null, appHome: null,
+  const none = (why) => ({ prepend: null, appHome: null, refused: true,
     warnings: [`${path} on ${machine} was left out (${why}): the pane starts as it would without it.`] });
   let text;
   try { text = await readRemoteText(remoteIo, machine, path); } catch (e) { return none(e?.message ?? String(e)); }
   const env = paneEnvOf(text);
-  return env.error ? none(env.error) : { prepend: env.prepend, appHome: env.appHome, warnings: [] };
+  return env.error ? none(env.error) : { prepend: env.prepend, appHome: env.appHome, refused: false, warnings: [] };
 }
 
 /** That machine's default app home, ~/.config/herdr-app by its own $HOME, or null when it gives none. */
@@ -1761,23 +1762,56 @@ async function appHomeOn(machine) {
   return home.startsWith("/") && !/[\x00-\x1f\x7f]/.test(home) ? `${home.replace(/\/+$/, "")}/.config/herdr-app` : null;
 }
 
-// A file of the pack's own on `machine` (a briefing), written there through hc by remoteFile.js's
-// compare-and-swap; a new one's folder is made first under umask 077, as briefedLaunch's (0700).
-const PRIVATE_DIR_SH = 'umask 077 && mkdir -p -- "$1"';
-async function ownFileOn(machine, path, text) {
-  const before = await readRemoteText(remoteIo, machine, path);
-  if (before === text) return;
-  if (before === null) {
-    const r = await remoteIo.exec("sh", ["-c", PRIVATE_DIR_SH, "sh", dirname(path)], machine, { timeout: AGENT_WAIT_S });
-    if (r.code !== 0) throw new Error(`couldn't make ${dirname(path)}: ${hcSaid(r.stderr || r.stdout) || `exit ${r.code}`}`);
+/**
+ * The app home on `machine` a bot's briefing file and hook go in (#582): pane-env's HERDR_APP_HOME,
+ * else that machine's ~/.config/herdr-app, and only while that folder is there already: a start
+ * never makes an app home on a linked machine (it may be a shared one). A pane-env that was left
+ * out means none at all, never the default. Resolves { dir (null: no briefing file and no hook
+ * there), warnings (one when null) }.
+ */
+async function briefingHomeOn(machine, bot, paneEnv) {
+  const none = (why) => ({ dir: null, warnings: [`${bot.name} runs on ${machine} without its briefing in its system prompt or per turn: ${why}. `
+    + `Its role and team still come from ${BOTS_PATH}.`] });
+  if (paneEnv.refused) return none(`its ${PANE_ENV_PATH} there was left out, so no app home there is used, not even the default one`);
+  const dir = paneEnv.appHome ?? await appHomeOn(machine);
+  if (!dir) return none(`${machine} gave no home folder for its app home`);
+  if ((await remoteIo.exec("test", ["-d", dir], machine, { timeout: AGENT_WAIT_S })).code !== 0) {
+    return none(`its app home there, ${dir}, isn't a folder, and a start never makes one. Install automagik-herdr on ${machine}, `
+      + `or set HERDR_APP_HOME in the project's ${PANE_ENV_PATH} there to an app home that is there`);
   }
-  await writeRemoteText(remoteIo, machine, path, text, before);
+  return { dir, warnings: [] };
+}
+
+// A file of the pack's own on `machine` (a briefing), private as briefedLaunch's (0600 in a 0700
+// folder). A new one is made under umask 077 with noclobber, so a file that appeared since the read
+// is never replaced; one already there is edited by remoteFile.js's compare-and-swap and set to
+// 0600 (no "--": BSD chmod reads it as a file after the mode; the path is absolute). Only ever
+// under an app home that is there (briefingHomeOn); remoteFile.js's own create is
+// left as it is for bots.json.
+const PRIVATE_CREATE_SH = 'umask 077; p=$1; mkdir -p -- "${p%/*}" || exit 1; '
+  + 'if [ -e "$p" ] || [ -L "$p" ]; then exit 17; fi; set -C; '
+  + '{ : > "$p"; } 2>/dev/null || exit 1; '
+  + 'printf "%s" "$2" >| "$p" || { rm -f -- "$p"; exit 1; }';
+async function ownFileOn(machine, path, text) {
+  if (utf8Length(text) > REMOTE_TEXT_MAX) throw new Error(`over ${REMOTE_TEXT_MAX / 1024} KiB, too large to send there`);
+  const before = await readRemoteText(remoteIo, machine, path);
+  const said = (r) => hcSaid((r.stderr || r.stdout).trim()) || `exit ${r.code}`;
+  if (before === null) {
+    const r = await remoteIo.exec("sh", ["-c", PRIVATE_CREATE_SH, "sh", path, text], machine, { timeout: AGENT_WAIT_S });
+    if (r.code === 17) throw new Error("it appeared there since it was read");
+    if (r.code !== 0) throw new Error(`couldn't create it: ${said(r)}`);
+    return;
+  }
+  if (before !== text) await writeRemoteText(remoteIo, machine, path, text, before);
+  const r = await remoteIo.exec("chmod", ["600", path], machine, { timeout: AGENT_WAIT_S });
+  if (r.code !== 0) throw new Error(`couldn't make it private (chmod 600): ${said(r)}`);
 }
 
 /**
  * briefedLaunch on a linked machine (#582): `argv` with the bot's launch briefing put in as the
  * agent takes it (models.js BRIEFING: its file, its text or its environment), a file written on
- * `machine` through hc under `boxHome`, that machine's app home. An agent whose briefing yields
+ * `machine` through hc under `boxHome`, that machine's app home (briefingHomeOn's; null: no file,
+ * that warning said why). An agent whose briefing yields
  * to its own config file (BRIEFING's ownConfig: codex, hermes) starts as it is, since only this
  * computer's config is read. Never throws: { argv, env, warnings }.
  */
@@ -1791,11 +1825,12 @@ async function briefedOn(machine, project, bot, agentKey, argv, boxHome) {
   if (way === "file") {
     const path = boxHome ? briefingFilePath(boxHome, project.key, bot.id) : null;
     try {
-      if (!path) throw new Error(`${machine} gave no home folder for its app home`);
-      await ownFileOn(machine, path, `${text}\n`);
-      launch = briefingLaunch(agentKey, { path });
+      if (path) {
+        await ownFileOn(machine, path, `${text}\n`);
+        launch = briefingLaunch(agentKey, { path });
+      }
     } catch (e) {
-      warnings.push(`${bot.name} starts on ${machine} without its briefing in its system prompt (${path ?? "its briefing file"}: ${e?.message ?? e}).`);
+      warnings.push(`${bot.name} starts on ${machine} without its briefing in its system prompt (${path}: ${e?.message ?? e}).`);
     }
   } else {
     launch = briefingLaunch(agentKey, { text });
@@ -1889,14 +1924,15 @@ async function seatOnMachine(project, bot, over = {}) {
   const command = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
   const paneEnv = await paneEnvOn(machine, key);
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend);
-  // The briefing there, as a local start has it (#582), in that machine's app home: pane-env's
-  // HERDR_APP_HOME, else its ~/.config/herdr-app (asked only when a file or the hook needs it).
-  const needsHome = !paneEnv.appHome && !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
-  const boxHome = paneEnv.appHome ?? (needsHome ? await appHomeOn(machine) : null);
-  const briefed = await briefedOn(machine, project, bot, agentKey, command, boxHome);
+  // The briefing there, as a local start has it (#582), in that machine's app home while it is
+  // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
+  const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
+  const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
+  const briefed = await briefedOn(machine, project, bot, agentKey, command, home.dir);
   const argv = briefed.argv;
   // The hook goes in before the session starts, so Claude Code reads it at startup.
-  const hook = briefingHook(agentKey) ? await briefingHookOn(machine, bot, over.cwd ?? key, boxHome) : { written: false, warnings: [] };
+  const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
+    : { written: false, warnings: [] };
   const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
@@ -1911,7 +1947,7 @@ async function seatOnMachine(project, bot, over = {}) {
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
     parent: ["--no-parent"], argv, labels, path: there.path, env });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...paneEnv.warnings, ...there.warnings, ...briefed.warnings, ...hook.warnings];
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());
