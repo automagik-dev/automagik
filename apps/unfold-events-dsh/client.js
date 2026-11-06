@@ -1492,11 +1492,11 @@ ${indent}  ${REDACTED}${block.endsWith("\r") ? "\r" : ""}` : block}`, /:[ \t]*[&
   // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
   // (a key line skips it to its value).
   [/^[^\n]*$/gm, (line2, at, all) => {
-    const pad = /[ \t]{4096,}/.exec(line2);
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(line2);
     if (!pad) return line2;
     if (!/[^ \t]/.test(line2)) return " ";
     return OPEN_END && at + line2.length === all.length ? line2.slice(0, pad.index + pad[0].length) : REDACTED;
-  }, /[ \t]{4096,}/]
+  }, /(?<![ \t])[ \t]{4096,}/]
 ];
 function redactText(s, open = false) {
   const was = OPEN_END;

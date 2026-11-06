@@ -165,13 +165,15 @@ const SECRET_TEXT = [
   // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
   // (a key line skips it to its value).
   [/^[^\n]*$/gm, (line, at, all) => {
-    const pad = /[ \t]{4096,}/.exec(line)
+    // A pad is read from its run's first blank only, so a run just short of the keep is scanned once,
+    // not again from each of its blanks (it was quadratic in a growing buffer's padded last line).
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(line)
     if (!pad) return line
     if (!/[^ \t]/.test(line)) return ' '
     // While the line is still arriving (a growing buffer's last line) everything after the pad is
     // withheld: the head is cut, so the line cannot be read, and no rule above has served it.
     return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
-  }, /[ \t]{4096,}/],
+  }, /(?<![ \t])[ \t]{4096,}/],
 ]
 
 export function redactText(s, open = false) {
@@ -222,7 +224,7 @@ const SECRET_VALUES = [
   // arrives as "pass" and "word:"), and the value after the pad's first colon is remembered
   // fail-closed, once it has ended, so a later bare occurrence is masked too. The line itself is
   // hidden whole by SECRET_TEXT; a quoted value there is not remembered, only hidden.
-  [/(?:^|[^ \t])[ \t]{4096,}(?=[^ \t])[^\n]*?[:=][ \t]*([^\s"',}\r\n]+)/g, /[ \t]{4096,}/, 'ended'],
+  [/(?:^|[^ \t])[ \t]{4096,}(?=[^ \t])[^\n]*?[:=][ \t]*([^\s"',}\r\n]+)/g, /(?<![ \t])[ \t]{4096,}/, 'ended'],
   /(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))(sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,})(?=[^A-Za-z0-9_-])/g, // a whole, CLOSED sk- key only: a run still open at the end of the text is never remembered, so a key streamed in parts cannot fill SECRETS_KEPT with its prefixes
   [/\b[A-Z0-9_]+=(?<=(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY)[A-Z0-9_]*=)("(?:[^"\\]|\\[\s\S]|\\$)*(?:"|$)|'(?:[^'\\]|\\[\s\S]|\\$)*(?:'|$)|`(?:[^`\\]|\\[\s\S]|\\$)*(?:`|$)|\S+)/g, /=/],
   [/(?=[A-Za-z0-9])(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z0-9]+[_-])*(?:passphrase|passw(?:or)?d|pass|secret(?:[_-](?:access[_-])?key)?|token|api[_-]?key|private[_-]?key|authorization)(?:["']?\s*=|\s*:(?!(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$))|["']\s*:(?!(?=[ \t]+[&!#])(?:[ \t]+[&!][^\s"'`]*){0,2}(?:[ \t]+#[^\r\n]*)?[ \t]*(?:[\r\n]|$)))\s*(?!(?:[&!][^\s"'`]*[ \t]+){3})(?!(?:[&!][^\s"'`]*[ \t]+)*[>|][-+0-9]*(?:[ \t]*#[^\r\n]*)?[ \t]*\r?(?:\n|$))(?:(?<=:[ \t]*)(?:[&!][^\s"'`]*[ \t]+){1,2})?(?:"((?:[^"\\]|\\[\s\S]|\\$)+)|'((?:[^'\\]|\\[\s\S]|\\$)+)|`((?:[^`\\]|\\[\s\S]|\\$)+)|(?:Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)|(?!Bearer\b|Basic\b|\[redacted\]|[&!])([^\s"',}]+))/gi, /[:=]/],

@@ -14,6 +14,13 @@
 
 const TEXT_TAIL = 240
 const RAW_MAX = 16 * 1024
+// A reply's unfinished last line is held whole, from its first character, up to LINE_MAX characters
+// (#406 Design A), twice the bound as Mind holds twice its keep; a longer one is withheld from its
+// first character and kept as its head, a pad for what was dropped and its last LINE_TAIL characters.
+const LINE_MAX = 2 * RAW_MAX
+const LINE_TAIL = 4 * 1024
+const OVER_PAD = ' '.repeat(4096)
+const LINE_END = /\r\n|\n|\r(?=[\s\S])/g
 const CAUSES_PER_ROW = 4
 const PRODUCERS_MAX = 256
 const UNKNOWN_MAX = 32
@@ -37,6 +44,7 @@ export class EventWindow {
     this.listeners = new Set()
     this.raw = new Map() // row key -> raw joined text, open text rows only (private)
     this.orphan = new Map() // row key -> what is still arriving after a dropped head: {token} | {quote} | {line}
+    this.line = new Map() // row key -> its unfinished last line, held whole: {open} | {head, tail} once oversize (private)
   }
 
   onChange(listener) {
@@ -72,10 +80,9 @@ export class EventWindow {
     }
     const row = newRow(d)
     if (row.text !== undefined) {
-      const { raw, orphan } = boundRaw(row.text)
-      if (orphan) this.orphan.set(row.key, orphan)
-      this.raw.set(row.key, raw)
-      row.text = shownTail(raw)
+      const text = row.text
+      this.raw.set(row.key, '')
+      this.feed(row, text)
       // The emitted row carries no unredacted reply text either: its other fields key-aware, its
       // first delta redacted, and its summary the redacted tail (never a clipped raw prefix).
       row.fields = { ...redact(row.fields), text: redactText(String(row.fields.text ?? ''), true) }
@@ -163,54 +170,106 @@ export class EventWindow {
       addAudio(row.audio, d.fields)
       row.summary = `${row.audio.chunks} audio chunks, ${Math.round(row.audio.ms)} ms`
     }
-    if (row.text !== undefined) {
-      let add = String(d.fields.text ?? '')
-      const pending = this.orphan.get(row.key)
-      if (pending?.quote) {
-        // Inside a quoted credential value whose key was dropped: withhold everything up to and
-        // including its UNESCAPED closing quote, however many deltas that takes; a backslash that
-        // ended the previous delta escapes this delta's first character.
-        const { close, escaped } = closingQuote(add, 0, pending.quote, pending.escaped)
-        if (close >= 0) this.orphan.delete(row.key)
-        else this.orphan.set(row.key, { quote: pending.quote, escaped })
-        add = close < 0 ? '' : add.slice(close + 1)
-      } else if (pending?.line) {
-        // The dropped head was a name's first part (a colon followed it): the rest of its line is a
-        // value it could have named, withheld to the line's end, however many deltas that takes.
-        const breakAt = add.search(/[\r\n]/)
-        if (breakAt < 0) add = ''
-        else {
-          this.orphan.delete(row.key)
-          add = add.slice(breakAt)
-        }
-      } else if (pending) {
-        // A run whose context was dropped is still arriving: discard any leading blanks and the
-        // next whole token (it may span deltas), so its value can never be shown orphaned.
-        const head = add.match(/^\s*\S*/)[0]
-        const rest = add.slice(head.length)
-        if (/^\s*:/.test(add) || head.endsWith(':')) {
-          // A colon right after the dropped token makes it a name's first part (#406 F-B): its line
-          // holds that name's value, so the rest of the line is withheld to its end.
-          const breakAt = rest.search(/[\r\n]/)
-          if (breakAt < 0) {
-            this.orphan.set(row.key, { line: true })
-            add = ''
-          } else {
-            this.orphan.delete(row.key)
-            add = rest.slice(breakAt)
-          }
-        } else if (!rest) add = '' // the token is still arriving
-        else {
-          this.orphan.delete(row.key) // the token ended (whitespace follows): the rest is prose
-          add = rest
-        }
+    if (row.text !== undefined) this.take(row, String(d.fields.text ?? ''))
+  }
+
+  /** A text delta: what a dropped head still withholds is discarded, the rest fed to the row. */
+  take(row, add) {
+    const pending = this.orphan.get(row.key)
+    if (pending?.quote) {
+      // Inside a quoted credential value whose key was dropped: withhold everything up to and
+      // including its UNESCAPED closing quote, however many deltas that takes; a backslash that
+      // ended the previous delta escapes this delta's first character.
+      const { close, escaped } = closingQuote(add, 0, pending.quote, pending.escaped)
+      if (close >= 0) this.orphan.delete(row.key)
+      else this.orphan.set(row.key, { quote: pending.quote, escaped })
+      add = close < 0 ? '' : add.slice(close + 1)
+    } else if (pending?.line) {
+      // The dropped head was a name's first part (a colon followed it): the rest of its line is a
+      // value it could have named, withheld to the line's end, however many deltas that takes.
+      const breakAt = add.search(/[\r\n]/)
+      if (breakAt < 0) add = ''
+      else {
+        this.orphan.delete(row.key)
+        add = add.slice(breakAt)
       }
-      const { raw, orphan } = boundRaw((this.raw.get(row.key) ?? row.text) + add)
-      if (orphan) this.orphan.set(row.key, orphan)
-      this.raw.set(row.key, raw)
-      row.text = shownTail(raw)
-      row.summary = row.text
+    } else if (pending) {
+      // A run whose context was dropped is still arriving: discard any leading blanks and the
+      // next whole token (it may span deltas), so its value can never be shown orphaned.
+      const head = add.match(/^\s*\S*/)[0]
+      const rest = add.slice(head.length)
+      if (/^\s*:/.test(add) || head.endsWith(':')) {
+        // A colon right after the dropped token makes it a name's first part (#406 F-B): its line
+        // holds that name's value, so the rest of the line is withheld to its end.
+        const breakAt = rest.search(/[\r\n]/)
+        if (breakAt < 0) {
+          this.orphan.set(row.key, { line: true })
+          add = ''
+        } else {
+          this.orphan.delete(row.key)
+          add = rest.slice(breakAt)
+        }
+      } else if (!rest) add = '' // the token is still arriving
+      else {
+        this.orphan.delete(row.key) // the token ended (whitespace follows): the rest is prose
+        add = rest
+      }
     }
+    this.feed(row, add)
+  }
+
+  /**
+   * The reply's text is held in two parts (#406 Design A): `raw`, the committed text, which ends at
+   * a line terminator (\n, \r\n, or a \r with something after it), and `line`, the unfinished last
+   * line, held whole from its first character and carried across deltas, however many it comes in.
+   * A delta with no terminator is only appended to it; at a terminator the lines it completed join
+   * the committed text and only then does the 16 KiB bound cut it, so the bound never starts inside
+   * the open line and what is kept depends on the text alone, not on where the deltas were split.
+   * An open line longer than LINE_MAX is withheld from its first character, fail-closed, with no text
+   * in its place until its terminator; it is then committed as its first LINE_MAX characters, a
+   * 4 KiB blank run for what was dropped and its last LINE_TAIL characters, so the rules read it as
+   * a cut-padded line. Every line that long is committed that way, however it arrived.
+   */
+  feed(row, add) {
+    const held = this.line.get(row.key) ?? { open: '' }
+    const over = held.head !== undefined
+    // A \r at the end of the open line may be a CRLF's first half: it ends its line only once
+    // something other than \n follows it.
+    const crEnds = (over ? held.tail : held.open).endsWith('\r') && add !== '' && add[0] !== '\n'
+    LINE_END.lastIndex = 0
+    const first = crEnds ? null : LINE_END.exec(add)
+    if (!crEnds && !first) {
+      if (over) held.tail = `${held.tail}${add}`.slice(-LINE_TAIL)
+      else {
+        held.open = `${held.open}${add}`
+        if (held.open.length > LINE_MAX) Object.assign(held, { head: held.open.slice(0, LINE_MAX), tail: held.open.slice(-LINE_TAIL), open: '' })
+      }
+      this.line.set(row.key, held)
+      return this.show(row)
+    }
+    const stop = crEnds ? 0 : first.index + first[0].length
+    let done = over ? `${held.head}${OVER_PAD}${`${held.tail}${add.slice(0, crEnds ? 0 : first.index)}`.slice(-LINE_TAIL)}${crEnds ? '' : first[0]}` : oversize(`${held.open}${add.slice(0, stop)}`)
+    let pos = stop
+    LINE_END.lastIndex = stop
+    for (let m; (m = LINE_END.exec(add)); pos = m.index + m[0].length) done += oversize(add.slice(pos, m.index + m[0].length))
+    const { raw, orphan } = boundRaw(`${this.raw.get(row.key) ?? ''}${done}`)
+    this.raw.set(row.key, raw)
+    this.line.set(row.key, { open: '' })
+    // The rest of the delta is the new open line; when the cut dropped a head whose value is still
+    // arriving, the rest is read as what it withholds first.
+    if (orphan) {
+      this.orphan.set(row.key, orphan)
+      return this.take(row, add.slice(pos))
+    }
+    return this.feed(row, add.slice(pos))
+  }
+
+  /** The shown text: the committed text and the open line; an oversize one is withheld, no text. */
+  show(row) {
+    const held = this.line.get(row.key)
+    const raw = this.raw.get(row.key) ?? ''
+    row.text = shownTail(held?.head !== undefined ? raw : `${raw}${held?.open ?? ''}`)
+    row.summary = row.text
   }
 
   closeMessage(responseId) {
@@ -219,6 +278,7 @@ export class EventWindow {
       this.open.delete(key)
       this.raw.delete(row.key)
       this.orphan.delete(row.key)
+      this.line.delete(row.key)
     }
   }
 
@@ -232,6 +292,7 @@ export class EventWindow {
     for (const [key, row] of this.open) if (row === old) this.open.delete(key)
     this.raw.delete(old.key)
     this.orphan.delete(old.key)
+    this.line.delete(old.key)
     for (const cause of old.causes) {
       const entry = this.effects.get(cause)
       entry?.keys.delete(old.key)
@@ -430,13 +491,15 @@ const SECRET_TEXT = [
   // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
   // (a key line skips it to its value).
   [/^[^\n]*$/gm, (line, at, all) => {
-    const pad = /[ \t]{4096,}/.exec(line)
+    // A pad is read from its run's first blank only, so a run just short of the keep is scanned once,
+    // not again from each of its blanks (it was quadratic in a growing buffer's padded last line).
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(line)
     if (!pad) return line
     if (!/[^ \t]/.test(line)) return ' '
     // While the line is still arriving (a growing buffer's last line) everything after the pad is
     // withheld: the head is cut, so the line cannot be read, and no rule above has served it.
     return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
-  }, /[ \t]{4096,}/],
+  }, /(?<![ \t])[ \t]{4096,}/],
 ]
 
 export function redactText(s, open = false) {
@@ -692,6 +755,12 @@ function padLineEnd(raw, pad) {
   return raw.startsWith('\r\n', end) ? end + 2 : /[\r\n]/.test(raw[end] ?? '') ? end + 1 : end
 }
 
+/** A completed line longer than LINE_MAX, as an oversize open line is committed. */
+function oversize(line) {
+  const body = line.replace(/(?:\r\n|\n|\r)$/, '')
+  return body.length > LINE_MAX ? `${body.slice(0, LINE_MAX)}${OVER_PAD}${body.slice(-LINE_TAIL)}${line.slice(body.length)}` : line
+}
+
 function boundRaw(text) {
   // Names read without their invisible characters (#348), as redactText reads them, so the spans
   // and the context before a cut are found under `pass\u200bword: ` too.
@@ -702,16 +771,26 @@ function boundRaw(text) {
   // A cut before or inside a pad (a blank run as long as the keep) keeps the open key line before it
   // and drops the pad, as a cut in the blank run that ends a key line does below (#406 Design A):
   // a key line padded past the bound (`? name`, `- ? name`, `name:` and a pad) still names the
-  // value that arrives on the lines under it, however many lines the delta that crossed the bound
-  // completed.
-  for (const pad of raw.matchAll(/[ \t]{4096,}/g)) {
+  // value that arrives on the lines under it, whatever the split of the deltas that crossed the
+  // bound (a 1-character delta first cuts inside the `? name` itself).
+  for (const pad of raw.matchAll(/(?<![ \t])[ \t]{4096,}/g)) {
     if (cut >= pad.index + pad[0].length) continue
-    // Only blanks after it: the cut in that run is read below, as it always was.
-    if (!/\S/.test(raw.slice(pad.index + pad[0].length))) break
     const end = padLineEnd(raw, pad)
     const key = openKeyLine(raw.slice(0, end), RAW_MAX)
     const kept = key === null ? null : `${key}${raw.slice(end)}`
     if (kept !== null && kept.length <= RAW_MAX) return { raw: kept, orphan: null }
+    // A cut on the pad's own line that keeps no key line: the line came whole (an open line is
+    // held to its terminator) and is a cut-padded line now, hidden whole as the rules hide one, so
+    // the rest of it goes with the pad and the lines after it are read as written. A quoted value
+    // that runs on past the line's end is left to the span rules below, which withhold it.
+    const lineStart = Math.max(raw.lastIndexOf('\n', pad.index - 1), raw.lastIndexOf('\r', pad.index - 1)) + 1
+    if (cut >= lineStart) {
+      const next = raw.slice(pad.index + pad[0].length).search(/\r\n|\n|\r/)
+      const after = next < 0 ? raw.length : pad.index + pad[0].length + next
+      if (!spans.some((sp) => sp.start < after && (!sp.closed || sp.end > after))) {
+        return { raw: next < 0 ? '' : raw.slice(raw.startsWith('\r\n', after) ? after + 2 : after + 1), orphan: null }
+      }
+    }
     break
   }
   for (let i = 0; i < 8; i++) {
@@ -727,7 +806,10 @@ function boundRaw(text) {
       // a key or a keyword such as "Bearer" still precedes what the next delta brings.
       const line = openKeyLine(raw, RAW_MAX)
       if (line !== null) return { raw: line, orphan: null }
-      const last = raw.match(/(?<!\S)\S+\s*$/)?.[0] ?? ''
+      const lastAt = raw.search(/(?<!\S)\S+\s*$/)
+      const last = lastAt < 0 ? '' : raw.slice(lastAt)
+      // A word inside a quoted value the cut skipped is that value, dropped with its key.
+      if (lastAt >= 0 && spans.some((sp) => sp.start <= lastAt && lastAt < sp.end)) return { raw: '', orphan: null }
       return last.length <= RAW_MAX ? { raw: last, orphan: null } : { raw: '', orphan: { token: true } }
     }
     cut += next

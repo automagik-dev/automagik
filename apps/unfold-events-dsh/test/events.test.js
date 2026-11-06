@@ -691,7 +691,8 @@ test('the bounded private raw text never starts with an orphaned credential valu
   h.push(delta(1, ` ${TOKEN.slice(0, 8)}`, 'rH'))
   h.push(delta(2, `${TOKEN.slice(8)} after`, 'rH'))
   assert.deepEqual(leaks(h.rows[0].text), [], h.rows[0].text.slice(-60))
-  assert.equal(h.rows[0].text, ' after')
+  // The open line is held whole (#406 Design A), so its keyword is read with the value it names.
+  assert.equal(h.rows[0].text, 'Bearer [redacted] after')
   // Ordinary text is untouched, and closing the reply drops the private raw text.
   const t = new EventWindow(catalog, { limit: 10 })
   t.push(delta(0, 'hello ', 'rV'))
@@ -794,14 +795,15 @@ test('quoted credential: escapes are honoured across the 16 KiB trim, closed or 
   const r = quotedRig() // a closed value with an escaped quote, crossing the bound
   r.push('ordinary start ')
   r.push(`MY_TOKEN="prefix ${' '.repeat(17000)}\\" ${QTOKEN}" tail`)
-  assert.equal(r.shown().trim(), 'tail')
+  // The open line is held whole (#406 Design A): the value is read under its key, the rest as written.
+  assert.equal(r.shown(), 'ordinary start MY_TOKEN=[redacted] tail')
   assert.deepEqual(r.seen.filter((p) => p.includes(QTOKEN)), [])
   const o = quotedRig() // an open value over the bound whose last delta ends in a backslash
   o.push(`MY_TOKEN="${' '.repeat(17000)}x\\`)
   o.push(`" ${QTOKEN}`) // escaped: must stay withheld
   assert.ok(!o.shown().includes(QTOKEN), o.shown())
   o.push('" after')
-  assert.equal(o.shown(), ' after')
+  assert.equal(o.shown(), 'MY_TOKEN=[redacted] after')
   assert.deepEqual(o.seen.filter((p) => p.includes(QTOKEN)), [])
 })
 
@@ -827,13 +829,14 @@ test('quoted credential: the same while streaming in chunks and across the 16 Ki
     const b = quotedRig() // a closed value crossing the bound
     b.push('ordinary start ')
     b.push(`{"api_key": "${prefix}${' '.repeat(17000)}${QTOKEN}"} tail`)
-    assert.equal(b.shown().trim(), 'tail', prefix) // the trim resumes at the next whole token after the value
+    // The open line is held whole (#406 Design A): the value is read under its key, the rest as written.
+    assert.equal(b.shown(), 'ordinary start {"api_key": "[redacted]"} tail', prefix)
     assert.deepEqual(b.seen.filter((p) => p.includes(QTOKEN)), [], prefix)
     const o = quotedRig() // still open past the bound, then closed
     o.push(`{"api_key": "${prefix}${' '.repeat(17000)}`)
     o.push(QTOKEN)
     o.push('" after')
-    assert.equal(o.shown(), ' after', prefix)
+    assert.equal(o.shown(), '{"api_key": "[redacted]" after', prefix)
     assert.deepEqual(o.seen.filter((p) => p.includes(QTOKEN)), [], prefix)
   }
 })

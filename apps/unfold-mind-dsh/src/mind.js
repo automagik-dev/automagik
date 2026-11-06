@@ -707,8 +707,8 @@ export class MindStream {
  * line's head is kept whatever the split. The open line is served and remembered as the rules read
  * a growing buffer's last line (`open`): a value still arriving there is hidden, and one that needs
  * a later line (a key line's continued value, an explicit key's, a padded line's) is remembered
- * only once its terminator arrives. An open line longer than PENDING_MAX is hidden from its first
- * character, fail-closed, and served as one placeholder until its terminator; it is then committed
+ * only once its terminator arrives. An open line longer than PENDING_MAX is withheld from its first
+ * character, fail-closed, with no text in its place until its terminator; it is then committed
  * as its first PENDING_MAX characters, a 4 KiB blank run for what was dropped, and its last
  * TEXT_KEEP characters, so the rules read it as a cut-padded line (hidden whole once ended, its key
  * line still naming the value on the lines under it). Every line that long is committed that way,
@@ -805,8 +805,6 @@ function renderText(row, cut) {
   if (truncated) text = hideAfterCut(text)
   text = redactText(text, true)
   for (const v of row.secrets) text = text.split(v).join(REDACTED)
-  // An oversize open line is withheld from its first character: one placeholder stands for it.
-  if (row.rawOver) text = `${text}${REDACTED}`
   row.textCut = row.textCut || truncated
   row.text = text
 }
@@ -845,12 +843,12 @@ function keptTail(full) {
     // A pad (#406 F-B): a run of blanks as long as the keep, with no key line before it, is the
     // cut's padding, not text. It is kept (its last TEXT_KEEP chars) with the rest of the line, so
     // that line still reads as the cut's and is hidden whole once it ends.
-    const pad = /[ \t]{4096,}/.exec(full)
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(full)
     return pad ? padKept(full, pad) : full.slice(at)
   }
   // The cut is not in the run, but a pad may still reach into the keep, and is kept as it is there:
   // trimming it further would leave too little of it to read the line as the cut's.
-  const pad = /[ \t]{4096,}/.exec(full)
+  const pad = /(?<![ \t])[ \t]{4096,}/.exec(full)
   if (pad && pad.index + pad[0].length > at && !span) return padKept(full, pad)
   if (!span) return full.slice(at)
   if (span.closed) return full.slice(span.end)

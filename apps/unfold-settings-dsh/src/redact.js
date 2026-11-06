@@ -163,13 +163,15 @@ const SECRET_TEXT = [
   // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
   // (a key line skips it to its value).
   [/^[^\n]*$/gm, (line, at, all) => {
-    const pad = /[ \t]{4096,}/.exec(line)
+    // A pad is read from its run's first blank only, so a run just short of the keep is scanned once,
+    // not again from each of its blanks (it was quadratic in a growing buffer's padded last line).
+    const pad = /(?<![ \t])[ \t]{4096,}/.exec(line)
     if (!pad) return line
     if (!/[^ \t]/.test(line)) return ' '
     // While the line is still arriving (a growing buffer's last line) everything after the pad is
     // withheld: the head is cut, so the line cannot be read, and no rule above has served it.
     return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
-  }, /[ \t]{4096,}/],
+  }, /(?<![ \t])[ \t]{4096,}/],
 ]
 
 export function redactText(s, open = false) {
