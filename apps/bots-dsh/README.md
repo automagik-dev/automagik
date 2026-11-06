@@ -154,8 +154,8 @@ the agent offers it. With `dshTools` off nothing moves onto the route, as on 202
 already moved goes back to exactly that model and level, and so does one whose route disappears
 (the plugin, the agent setting or its CLI). A Bot the person changed after the move keeps their
 pick, never overwritten by the rollback. When the agent offers no level matching the Bot's, the
-Bot keeps its setting in the team and the agent runs on its own; the one-time move writes no chat
-row for that. On an ACP route the Bot's team tools reach it over the
+Bot keeps its setting in the team, the agent runs on its own, and the ACP plugin notes that in
+the chat. On an ACP route the Bot's team tools reach it over the
 same per-session bridge: `post_to_group`, `message_bot` and the rest are offered, and every call
 asks DSH's approval under the Bot's level before it runs. On **Auto**, the bridge gives
 auto-review the call: an allowed call runs, a denied one is refused with `AUTO_REVIEW_DENIED`,
