@@ -50,8 +50,9 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
   runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
-  dialog), Full access does not. A Session that moves between providers carries its transcript,
-  redacted, and each crossing writes a provider-boundary row.
+  dialog), Full access does not. A Session that moves between providers carries its transcript
+  redacted at each crossing — the replay out to an agent, and the transcript handed back to a
+  native provider — and each crossing writes a provider-boundary row the chat shows.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model

@@ -13,7 +13,8 @@
 // {terminal, before, limit?}; chat.send {terminal, text, id}; chat.sendHeld / chat.cancelHeld
 // {terminal, id}; chat.answer {terminal, row, choice}; chat.interrupt {terminal}. Every write needs
 // a subscription to that terminal on this connection (the engine refuses others). Rows are never
-// logged.
+// logged. A `dsh:<botId>` terminal is an Automagik Bot's chat (dsh-source.mjs): read only, every
+// write on it is refused.
 
 /** Frame kinds, as herdr-core's. */
 export const DATA = 0
@@ -206,7 +207,8 @@ export class ChatConnection {
       case 'chat.list':
         // A just-made engine has not heard from herdr-core yet: wait for its first snapshot.
         await this.engine.ready()
-        return ok({ terminals: this.engine.list() })
+        // The DSH chats (dsh-source.mjs) are listed over a socket: list() may be async.
+        return ok({ terminals: await this.engine.list() })
       case 'chat.subscribe': {
         if (!terminal) return errorOf(id, 'invalid_params', 'terminal')
         if (this.byTerminal.has(terminal)) return ok({ channel: this.byTerminal.get(terminal) })
@@ -250,6 +252,8 @@ export class ChatConnection {
     if (!sub.handle) return null
     this.subs.set(channel, sub)
     this.byTerminal.set(terminal, channel)
+    // A source that sends its own snapshot (a DSH chat, dsh-source.mjs) is started with the cursor.
+    if (sub.handle.streamsSnapshot) { sub.handle.start(after); return channel }
     // First: where the chat stands. A cursor still held gets what it missed; one that is not (the
     // bridge restarted, or it fell out of the last 500 rows) gets reset and the latest page.
     const missed = after ? sub.handle.rows(after) : null
