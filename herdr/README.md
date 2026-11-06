@@ -280,6 +280,7 @@ automagik-herdr start <bot> [--space ID] [--tab ID]
 automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
+automagik-herdr import --from-hc [--squad-label L] [--apply]
 automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr history <bot>
 automagik-herdr brief <bot>
@@ -289,6 +290,17 @@ automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
 automagik-herdr update [--check | --rollback]
 ```
 
+- `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
+  labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
+  that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
+  the one whose name or template ends in `-cap` or `-captain`) reports to the main bot and the rest
+  to their captain. Without `--apply` it prints the plan and changes nothing; with it, it prints
+  the plan, writes every new bot at once and attaches each seat as `attach` does, never with
+  `--move`. A pane already playing its bot is left as it is, so a second run changes nothing, and
+  a bot defined but attached nowhere (a run cut short) is only attached. Any conflict refuses the
+  whole import, nothing written: a pane playing or labelled for another bot, a bot of the seat's
+  name attached elsewhere or under another lead, a squad without exactly one captain, a Claude
+  session outside the project, or no main bot. It never starts, moves or restarts a pane.
 - Every command takes `--json` and `--project <folder>`. Without `--project`, the project is
   the one the current folder belongs to: its git main checkout, or outside git the nearest
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
