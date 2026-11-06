@@ -206,3 +206,31 @@ test("an op inside a linked folder of the app home is found as writing through a
   assert.deepEqual(r.throughLinks, [join(h.app, "layouts", "automagik.json")]);
   assert.equal(change(h.app, [{ op: "move", from: join(h.mods, "a"), to: join(h.kept, "a"), mkdir: true }]).throughLinks.length, 0);
 });
+
+/** The refusal's exact words (#494), written out so a changed line fails here. */
+const linkedLine = (mods, to) => `mods/ (${mods}) is a link to ${to}, your own folder, not one this install made: nothing is moved `
+  + "through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
+
+test("#494: a linked mods/ refuses an op in it before anything, in its own words; one beside it goes", (t) => {
+  const h = home(t);
+  const ext = join(h.root, "their-mods");
+  renameSync(h.mods, ext);
+  symlinkSync(ext, h.mods);
+  let asked = false;
+  const r = change(h.app, [{ op: "move", from: join(h.mods, "a"), to: join(h.kept, "a"), mkdir: true }], {
+    ask: () => { asked = true; return { name: null, tree: null, why: "x" }; }, needed: "refuse", prepare: () => { throw new Error("prepare ran"); },
+  });
+  assert.equal(r.refused, linkedLine(h.mods, ext));
+  assert.equal(r.done, false);
+  assert.equal(asked, false, "Herdr is not asked: nothing could be done anyway");
+  assert.deepEqual(readdirSync(ext).sort(), ["a", "b"]);
+  assert.equal(existsSync(h.kept), false);
+  // Into a linked mods/ too (a folder put back), and a remove in it.
+  assert.equal(change(h.app, [{ op: "move", from: join(h.root, "x"), to: join(h.mods, "x") }]).refused, linkedLine(h.mods, ext));
+  assert.equal(change(h.app, [{ op: "remove", path: join(h.mods, "b") }]).refused, linkedLine(h.mods, ext));
+  // An op that never reaches mods/ (mods-disabled/ beside it) goes.
+  write(join(h.app, "mods-disabled", "c", "main.js"), "// c\n");
+  const off = change(h.app, [{ op: "move", from: join(h.app, "mods-disabled", "c"), to: join(h.kept, "c"), mkdir: true }]);
+  assert.equal(off.refused, null);
+  assert.ok(existsSync(join(h.kept, "c", "main.js")));
+});

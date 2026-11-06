@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  checkMods, markerOf, offDirOf, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, offDirOf, packOut, pickUpdate, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
   autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
@@ -1802,4 +1802,41 @@ test("a renamed mod's old folder a layout names still leaves: the migration move
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---- #494: a linked mods/ is the person's folder: nothing moves through it, and the refusal says why ----
+
+/** The refusal's exact words (layoutSafe.mjs linkedModsLine), written out so a changed line fails here. */
+const linkedLine = (mods, to) => `mods/ (${mods}) is a link to ${to}, your own folder, not one this install made: nothing is moved `
+  + "through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
+
+/** The pack at 0.1.0, then mods/ made a link to a folder outside the app home (the folders inside it). */
+function linkedHome(t) {
+  const { home, mods } = appHome("0.1.0");
+  const ext = mkdtempSync(join(tmpdir(), "their-mods-"));
+  t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(ext, { recursive: true, force: true }); });
+  renameSync(mods, join(ext, "mods"));
+  symlinkSync(join(ext, "mods"), mods);
+  return { home, mods, ext: join(ext, "mods") };
+}
+
+test("#494: an update through a linked mods/ is refused with why: nothing moves, the record stays 0.1.0", async (t) => {
+  const h = linkedHome(t);
+  const tgz = tarball("0.2.0");
+  t.after(() => rmSync(tgz.src, { recursive: true, force: true }));
+  const before = readdirSync(h.ext).sort();
+  await assert.rejects(applyUpdate({ tgzPath: tgz.path, version: "0.2.0", modsDir: h.mods }), (e) => e.message === linkedLine(h.mods, h.ext));
+  assert.deepEqual(readdirSync(h.ext).sort(), before);
+  assert.equal(readFileSync(join(h.ext, "am-sidebar", "main.js"), "utf8"), 'export const v = "0.1.0";\n');
+  assert.equal(readMarker(h.mods).version, "0.1.0", "the record still names what mods/ holds");
+  assert.equal(existsSync(prevSetOf(h.mods)), false, "nothing went into the kept set");
+});
+
+test("#494: pack-out through a linked mods/ is refused with why: no folder moves, no line says one did", (t) => {
+  const h = linkedHome(t);
+  const to = join(stateDirOf(h.mods), ".prev-next.test");
+  mkdirSync(to);
+  assert.throws(() => packOut({ modsDir: h.mods, to, move: [join(h.mods, "am-tabs")] }), (e) => e.message === linkedLine(h.mods, h.ext));
+  assert.ok(existsSync(join(h.ext, "am-tabs", "main.js")));
+  assert.deepEqual(readdirSync(to), []);
 });

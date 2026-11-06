@@ -4,11 +4,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as core from "../mods/am-mods/core.js";
 import * as release from "../mods/am-sidebar/release.js";
+import { linkedModsLine } from "../mods/am-sidebar/layoutSafe.mjs";
 import { PACK_MODS, formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
 const io = {
@@ -214,4 +215,46 @@ test("packageRemoveLines: no name from Herdr says why, the package, its mods and
   ]);
   // A name read: the guards checked it, nothing to say.
   assert.deepEqual(core.packageRemoveLines({ record, shown: "automagik", naming }), []);
+});
+
+// ---- #494: a linked mods/ is the person's folder: the manager moves nothing through it ----
+
+/** The refusal's exact words, written out so a changed line fails here. */
+const linkedLine = (mods, to) => `mods/ (${mods}) is a link to ${to}, your own folder, not one this install made: nothing is moved `
+  + "through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
+
+/** A scratch app home whose mods/ (scratch in it) is a link to a folder outside it, and scratchy.json. */
+function linkedHome(t) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-linked-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appHome = join(root, "app"), ext = join(root, "their-mods");
+  write(join(ext, "scratch", "mod.json"), "{}");
+  write(join(appHome, "layouts", "scratchy.json"), "{}");
+  symlinkSync(ext, join(appHome, "mods"));
+  return { root, appHome, ext };
+}
+
+test("linkedModsLine: the mod manager's words are layoutSafe.mjs's, word for word (#494)", () => {
+  assert.equal(core.linkedModsLine("/app/mods", "/elsewhere"), linkedLine("/app/mods", "/elsewhere"));
+  assert.equal(core.linkedModsLine("/app/mods", "/elsewhere"), linkedModsLine("/app/mods", "/elsewhere"));
+});
+
+test("a package's remove and its update through a linked mods/ are refused with why; nothing moves (#494)", async (t) => {
+  const h = linkedHome(t);
+  const want = linkedLine(join(h.appHome, "mods"), h.ext);
+  assert.equal(await core.linkedModsRefusal(io, h.appHome), want);
+  const record = { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] };
+  await assert.rejects(core.uninstall(io, { appHome: h.appHome, record }), (e) => e.message === want);
+  const base = join(h.root, "repo");
+  write(join(base, "mods", "scratch", "main.js"), "// v2\n");
+  const plan = { clashes: [], mods: ["scratch"], layouts: [], keyAdds: [], keyConflicts: [], risks: [], base };
+  await assert.rejects(core.applyInstall(io, { appHome: h.appHome, plan, source: "someone/scratch", prefix: "", sha: "abc", record }), (e) => e.message === want);
+  assert.deepEqual(readdirSync(h.ext), ["scratch"]);
+  assert.ok(existsSync(join(h.appHome, "layouts", "scratchy.json")));
+  assert.equal(existsSync(join(h.appHome, "automagik-herdr")), false, "no backup or staging folder made");
+  // A plain mods/ says nothing.
+  const plain = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-plain-")));
+  t.after(() => rmSync(plain, { recursive: true, force: true }));
+  mkdirSync(join(plain, "mods"));
+  assert.equal(await core.linkedModsRefusal(io, plain), null);
 });

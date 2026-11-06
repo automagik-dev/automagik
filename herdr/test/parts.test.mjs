@@ -672,7 +672,7 @@ test("the refusal leaves out the layout.switch command while main is the layout 
   assert.ok(existsSync(join(m.mods, "am-sidebar", "main.js")));
 });
 
-// ---- #492 review: a linked mods/ is not the person's layouts/; what the log says is what happened ----
+// ---- #494: a linked mods/ is the person's folder: nothing moves through it, and the refusal says why ----
 
 /** The pack installed, then mods/ made a link to a folder outside the app home (the folders inside it). */
 function linkedMods(t) {
@@ -683,27 +683,28 @@ function linkedMods(t) {
   symlinkSync(ext, m.mods);
   return { m, ext, prev: join(m.app, "automagik-herdr", ".prev") };
 }
+/** The refusal's exact words (layoutSafe.mjs linkedModsLine), written out so a changed line fails here. */
+const linkedLine = (mods, to) => `mods/ (${mods}) is a link to ${to}, your own folder, not one this install made: nothing is moved `
+  + "through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
 
-test("herdr.pack uninstall with a linked mods/: each folder it says it moved is in the kept set, and none is left behind", (t) => {
-  const { m, ext, prev } = linkedMods(t);
-  const on = PACK_MODS.filter((x) => existsSync(join(ext, x)));
-  const r = uninstall(m.ctx(), P("herdr.pack"));
-  assert.equal(r.ok, true);
-  const said = m.logs.join("\n");
-  assert.match(said, /moved the pack out of .*mods \(/);
-  for (const x of on) {
-    assert.ok(existsSync(join(prev, x)), `${x} said moved, so it is in .prev`);
-    assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
-  }
-  assert.equal(readMarker(m.mods), null, "nothing stays, so the record goes");
-});
+for (const purge of [false, true]) {
+  test(`am uninstall herdr.pack${purge ? " --purge" : ""} with a linked mods/: refused in the CLI's output, nothing moves, the record stays (#494)`, (t) => {
+    const { m, ext, prev } = linkedMods(t);
+    const before = readdirSync(ext).sort();
+    const record = readMarker(m.mods);
+    const out = [];
+    assert.equal(main(["uninstall", "herdr.pack", ...(purge ? ["--purge"] : [])], { ctx: m.ctx(), out: (l) => out.push(l) }), 1);
+    assert.deepEqual(out, [linkedLine(m.mods, ext)]);
+    assert.deepEqual(readdirSync(ext).sort(), before, "every folder in the linked mods/ stays");
+    assert.equal(existsSync(prev), false, "nothing went into the kept set");
+    assert.deepEqual(readMarker(m.mods), record, "the record stays");
+    assert.ok(existsSync(join(m.app, "layouts", "automagik.json")), "the layout stays");
+  });
+}
 
-test("herdr.pack uninstall --purge with a linked mods/: the folders it says it deleted are gone from mods/", (t) => {
+test("am uninstall herdr.am-tabs with a linked mods/: refused, it stays in mods/, nothing in mods-disabled/ (#494)", (t) => {
   const { m, ext } = linkedMods(t);
-  const on = PACK_MODS.filter((x) => existsSync(join(ext, x)));
-  const r = uninstall(m.ctx(), P("herdr.pack"), { purge: true });
-  assert.equal(r.ok, true);
-  assert.match(m.logs.join("\n"), /deleted the pack's folders \(.*\) and their data \(--purge\)/);
-  for (const x of on) assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
-  assert.equal(readMarker(m.mods), null);
+  assert.throws(() => uninstall(m.ctx(), P("herdr.am-tabs")), (e) => e.message === linkedLine(m.mods, ext));
+  assert.ok(existsSync(join(ext, "am-tabs", "main.js")));
+  assert.equal(existsSync(join(m.off, "am-tabs")), false);
 });

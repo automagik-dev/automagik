@@ -15,7 +15,7 @@
 // shown layout's own file (#450) and leave what a link reaches (#448).
 
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { layoutGuard, layoutNeeds, packageLayoutGuard } from "./release.js";
 
@@ -27,6 +27,14 @@ const isFile = (path) => { try { return statSync(path).isFile(); } catch { retur
 /** What a refusal adds after "Switch layouts first": the command, left out while main is shown (it names main). */
 export const switchCommand = (shown) => (typeof shown === "string" && shown.toLowerCase() === "main" ? ""
   : `; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+
+/**
+ * The refusal of a linked mods/ (#494): `modsDir` is a link to `target` (its text as written), the
+ * person's folder, so nothing is moved in or out through it. install.sh's linked_mods_line and
+ * mods/am-mods core.js linkedModsLine say the same words.
+ */
+export const linkedModsLine = (modsDir, target) => `mods/ (${modsDir}) is a link to ${target}, your own folder, not one this install made: `
+  + "nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
 
 /** Where an operation reads and writes: `[from, to]` for a move or a replace, `[path]` for a remove. */
 const pathsOf = (op) => (op.op === "remove" ? [op.path] : [op.from, op.to]);
@@ -156,7 +164,9 @@ function aside(path) {
  * - `rename`: the rename of moves and replaces (injectable for tests; an undo uses renameSync).
  * - `log`: where notes and warnings go.
  * Writing through a link is found and returned (`throughLinks`), never refused here: each caller
- * still checks the links it checks today, or passes `links: "hold-layouts"`.
+ * still checks the links it checks today, or passes `links: "hold-layouts"`. One link is always
+ * refused, first: mods/ itself (`modsDir`) a link, while an op reads or writes in it (#494,
+ * linkedModsLine); a caller throws the reason, as for any refusal.
  * Returns `{ refused, held, left, notes, shown, throughLinks, done }`: `refused` is the reason, nothing done.
  */
 export function change(home, ops, options = {}) {
@@ -166,6 +176,12 @@ export function change(home, ops, options = {}) {
   } = options;
   const root = home ? resolve(home) : null;
   const modsDir = options.modsDir ? resolve(options.modsDir) : root && join(root, "mods");
+  // A linked mods/ (#494) is the person's folder: an op reading or writing in it is refused before
+  // anything else (no layout asked, nothing done), whatever the caller's options.
+  const inMods = (p) => Boolean(modsDir) && resolve(p).startsWith(modsDir + sep);
+  if (modsDir && isLink(modsDir) && ops.some((op) => pathsOf(op).some(inMods))) {
+    return { refused: linkedModsLine(modsDir, readlinkSync(modsDir)), held: [], left: [], notes: [], shown: null, throughLinks: [], done: false };
+  }
   // A mod folder leaves for good when no later op puts one back at the same place.
   const takes = (i) => {
     const from = ops[i].op === "remove" ? ops[i].path : ops[i].op === "move" ? ops[i].from : null;

@@ -33,8 +33,7 @@ const LINKED_MODS_ANOTHER = "linked mods/ folder, another layout shown";
 const LINKED = [LINKED_MODS, LINKED_MODS_ANOTHER];
 const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING, ...LINKED];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
-const EXPECTED_FAIL = Object.fromEntries(["package update dropping the shown layout", "package update dropping the shown layout's mod", "package remove"]
-  .flatMap((r) => LINKED.map((s) => [`${r} | ${s}`, "#494"])));
+const EXPECTED_FAIL = {};
 /** A refusal of a linked mods/ (#494): it names the link as the person's folder and moves nothing through it. */
 const LINKED_MODS_REFUSAL = /mods\/ \(\S+\) is a link to \S+, your own folder, not one this install made: nothing is moved through it/;
 

@@ -1954,25 +1954,31 @@ test("--uninstall is refused while Herdr shows the pack's layout, even when ever
   assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
 });
 
-test("--uninstall through the updater with a linked mods/: the folders move to the kept set as the log says, and the record goes", (t) => {
-  const s = scratch(t);
-  s.publish("9.9.0");
-  assert.equal(s.run("--yes").code, 0);
-  const ext = join(s.root, "their-mods");
-  cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
-  rmSync(s.mods, { recursive: true });
-  symlinkSync(ext, s.mods);
-  const r = s.run("--uninstall");
-  assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Removing the pack through its updater/);
-  const moved = r.out.match(/Moved the pack out of \S+ \(([^)]*)\); it is kept in/)?.[1].split(",") ?? [];
-  assert.ok(moved.includes("am-sidebar"), r.out);
-  for (const x of moved) {
-    assert.ok(existsSync(join(s.state, ".prev", x)), `${x} said moved, so it is in .prev`);
-    assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
+test("#494: --uninstall with a linked mods/ refuses before anything, saying why, Node or not: nothing moves, the record and the link stay", (t) => {
+  for (const node of [true, false]) {
+    const s = scratch(t);
+    s.publish("9.9.0");
+    assert.equal(s.run("--yes").code, 0);
+    const ext = join(s.root, "their-mods");
+    cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
+    rmSync(s.mods, { recursive: true });
+    symlinkSync(ext, s.mods);
+    const before = readdirSync(ext).sort();
+    // With Node, the shim logs a pack-out; without (one on PATH that fails), the shell path.
+    const packOuts = node ? nodeShim(s) : (exe(join(s.bin, "node"), "#!/bin/sh\nexit 1\n"), () => "");
+    const r = s.run("--uninstall");
+    assert.equal(r.code, 1, `node: ${node}\n${r.out}`);
+    // The exact words (layoutSafe.mjs linkedModsLine's), written out so a changed line fails here.
+    assert.ok(r.err.includes(`automagik-herdr install: mods/ (${s.mods}) is a link to ${ext}, your own folder, not one this install made: `
+      + "nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again\n"), r.err);
+    assert.deepEqual(readdirSync(ext).sort(), before, "every folder in the linked mods/ stays");
+    assert.equal(packOuts(), "", "the updater's pack-out never ran");
+    assert.doesNotMatch(r.out, /Removing the pack|Moved the pack|Removed the automagik layout/);
+    assert.equal(readdirSync(s.state).some((x) => x.startsWith(".prev")), false, "nothing went into a kept set");
+    assert.ok(existsSync(join(s.appHome, "layouts", "automagik.json")), "the layout stays");
+    assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
+    assert.ok(existsSync(s.link), "the command link stays");
   }
-  assert.doesNotMatch(r.out, /where it is/);
-  assert.equal(existsSync(join(s.state, "installed-by-install.sh")), false, "nothing stays, so the record goes");
 });
 
 test("--uninstall whose pack-out stops partway: nothing more moves, the record stays, and it says where each folder is", (t) => {

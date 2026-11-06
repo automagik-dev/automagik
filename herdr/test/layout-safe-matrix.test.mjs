@@ -52,16 +52,11 @@ export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout
 
 /**
  * Today's gaps: `${route} | ${shape}` → the issue. "new" names a gap no issue tracks yet (reported
- * with this PR, not fixed in it). #494 (a linked mods/) is the only one here; the mod manager's are in
+ * with this PR, not fixed in it). None left here (#494 closed the last); the mod manager's are in
  * layout-safe-matrix-mods.test.mjs.
  */
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
-export const EXPECTED_FAIL = {
-  // #494: through a linked mods/, the routes move the person's folders (a layout guard stops some first).
-  ...Object.fromEntries(["update retire", "rename", "repair"].map((r) => [`${r} | ${LINKED_MODS}`, "#494"])),
-  ...Object.fromEntries(["one-mod uninstall", ...PACK_ROUTES, "update retire", "rename", "rollback", "repair"]
-    .map((r) => [`${r} | ${LINKED_MODS_ANOTHER}`, "#494"])),
-};
+export const EXPECTED_FAIL = {};
 
 const exe = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };

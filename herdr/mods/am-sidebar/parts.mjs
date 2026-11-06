@@ -243,7 +243,8 @@ export function install(ctx, part, source) {
       if (!record.mods.includes(part.mod)) throw new Error(`mods/${part.mod} is not the pack's (a folder of your own is left alone; install.sh --adopt replaces it)`);
       const live = join(ctx.modsDir, part.mod), off = join(ctx.offDir, part.mod);
       if (!exists(live) && exists(off) && !isLink(off)) {
-        change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        const r = change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        if (r.refused) throw new Error(r.refused);
         ctx.log(`switched ${part.mod} back on (mods-disabled/ → mods/)`);
         changed = true;
       }
@@ -434,7 +435,8 @@ function uninstallPack(ctx, { purge }) {
   for (const a of record.adopted) {
     const from = join(state, a.path), to = join(ctx.modsDir, a.mod);
     if (isDir(from) && !isLink(from) && !exists(to)) {
-      change(ctx.appHome, [{ op: "move", from, to }]);
+      const r = change(ctx.appHome, [{ op: "move", from, to }]);
+      if (r.refused) throw new Error(r.refused);
       lines.push(`put back ${to}, the one that was there before the install`);
     }
   }
