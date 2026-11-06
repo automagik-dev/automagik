@@ -84,8 +84,10 @@ export class EventWindow {
       this.raw.set(row.key, '')
       this.feed(row, text)
       // The emitted row carries no unredacted reply text either: its other fields key-aware, its
-      // first delta redacted, and its summary the redacted tail (never a clipped raw prefix).
-      row.fields = { ...redact(row.fields), text: redactText(String(row.fields.text ?? ''), true) }
+      // first delta redacted, and its summary the redacted tail (never a clipped raw prefix). The
+      // text is redacted once, as a growing buffer: the key-aware pass skips it (blanked in place,
+      // so the fields keep their order), since its result would be replaced.
+      row.fields = { ...redact({ ...row.fields, text: '' }), text: redactText(String(row.fields.text ?? ''), true) }
       row.summary = row.text
     }
     this.rows.push(row)
