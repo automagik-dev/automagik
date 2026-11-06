@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FakeElectron, RELAY_PORT, TOKEN } from './driver.mjs'
+import { launchUrlMismatch, maskUrl as masked } from './launch-url.mjs'
 import { createLineMasker } from './redact.mjs'
 
 const IMAGE = process.argv[2]
@@ -46,7 +47,6 @@ const LAUNCH_URL = /^http:\/\/127\.0\.0\.1:41700\/\S*token=\S+$/
 const say = line => console.log(`[smoke] ${line}`)
 const docker = (args, options = {}) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options })
 const expect = (condition, message) => { if (!condition) throw new Error(message) }
-const masked = url => String(url).replace(/token=[^&\s]+/, 'token=<masked>')
 const work = mkdtempSync(join(tmpdir(), 'automagik-smoke-'))
 const results = []
 
@@ -128,17 +128,27 @@ class Guest {
   }
 }
 
+// A check that cannot run because the check before it never reached its run answers this, rather
+// than failing on the state that check would have set: the artefact is not this check's.
+const skipped = reason => ({ skip: reason })
+const isSkip = outcome => typeof outcome === 'object' && outcome !== null && 'skip' in outcome
+
 async function check(number, name, run) {
   const started = Date.now()
   let guest
   try {
     guest = new Guest(`check${number}`)
-    const detail = await run(guest)
+    const outcome = await run(guest)
     const forced = await guest.remove()
     guest = null
     expect(forced.length === 0, forced.join('; '))
-    results.push({ number, name, ok: true, detail })
-    say(`CHECK ${number} PASS (${Date.now() - started} ms): ${name}: ${detail}`)
+    if (isSkip(outcome)) {
+      results.push({ number, name, ok: true, skipped: true, detail: outcome.skip })
+      say(`CHECK ${number} SKIP (${Date.now() - started} ms): ${name}: ${outcome.skip}`)
+      return
+    }
+    results.push({ number, name, ok: true, detail: outcome })
+    say(`CHECK ${number} PASS (${Date.now() - started} ms): ${name}: ${outcome}`)
   } catch (error) {
     if (guest) await guest.remove().catch(() => {})
     results.push({ number, name, ok: false, detail: error.message })
@@ -213,13 +223,16 @@ try {
     expect(ready.v === 1, `ready's v is ${ready.v}`)
     expect(ready.port === 41700, `ready's port is ${ready.port}`)
     expect(LAUNCH_URL.test(ready.url), `ready's url ${masked(ready.url)} is not DSH's launch URL on 41700`)
-    // The URL is DSH's own launch line, verbatim.
-    expect(electron.stderr.includes(`dsh web: ${ready.url}`), `ready's url ${masked(ready.url)} is not the one DSH printed`)
     expect(electron.protocolError === null, `stdout carried something that is no frame: ${electron.protocolError?.message}`)
     const answer = await signIn(guest, ready.url)
+    realStop = await guest.stop(electron, DSH_PROCESS)
+    // The stop waits for 'close', both pipes drained: DSH's launch line can no longer still be in
+    // flight when its url is compared with the ready frame's. Both sides are raw, so the token is
+    // part of the evidence; only the message masks it.
+    const mismatch = launchUrlMismatch(ready.url, electron.stderr)
+    expect(mismatch === null, mismatch)
     const log = guest.run('cat', `${DESKTOP}/logs/dsh.log`)
     expect(log.includes(`dsh web: ${ready.url}`), 'the volume\'s dsh.log lacks DSH\'s launch line')
-    realStop = await guest.stop(electron, DSH_PROCESS)
     return `ready {v: 1, port: 41700, url: ${masked(ready.url)}} = DSH's launch line; launch URL ${answer.first} -> ${answer.location} with ${answer.cookie}…, page ${answer.signedIn} signed in, ${answer.bare} without; dsh.log in the volume and on stderr; stopped in ${realStop} ms`
   })
 
@@ -253,8 +266,13 @@ try {
   })
 
   await check(4, 'closing stdin stops DSH within 5 s', async () => {
-    expect(realStop !== undefined, 'the real DSH run did not get to its stop (check 2)')
-    expect(fakeStop !== undefined, 'the fake DSH run did not get to its stop (check 3)')
+    const missing = [
+      realStop === undefined && 'CHECK 2',
+      fakeStop === undefined && 'CHECK 3',
+    ].filter(Boolean)
+    // A check's failure is reported there; its stop value is absent here, and that is not this
+    // check's verdict. Never report the absence as a timing or state failure of the stop itself.
+    if (missing.length > 0) return skipped(`skipped: ${missing.join(' and ')} did not reach a run`)
     return `real DSH ${realStop} ms, fake DSH ${fakeStop} ms, limit ${STOP_LIMIT_MS} ms; no DSH process left and 41700 free after each`
   })
 
@@ -318,13 +336,17 @@ try {
   rmSync(work, { recursive: true, force: true })
 }
 
-const lines = results.map(({ number, name, ok, detail }) => `CHECK ${number}/5 ${ok ? 'PASS' : 'FAIL'}: ${name} — ${detail.split('\n')[0]}`)
+const lines = results.map(({ number, name, ok, skipped, detail }) => {
+  const state = !ok ? 'FAIL' : skipped ? 'SKIP' : 'PASS'
+  return `CHECK ${number}/5 ${state}: ${name} — ${detail.split('\n')[0]}`
+})
 say(`summary\n${lines.join('\n')}`)
 if (process.env.GITHUB_STEP_SUMMARY) {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Linux image smoke\n\n${lines.map(line => `- ${line}`).join('\n')}\n`)
 }
-const passed = results.filter(result => result.ok).length
-if (passed !== 5 || results.length !== 5) {
-  console.error(`[smoke] ${passed} of 5 checks passed`)
+const passed = results.filter(result => result.ok && !result.skipped).length
+const skips = results.filter(result => result.skipped).length
+if (!results.every(result => result.ok) || results.length !== 5) {
+  console.error(`[smoke] ${passed} of 5 checks passed${skips > 0 ? `, ${skips} skipped` : ''}`)
   process.exit(1)
 }

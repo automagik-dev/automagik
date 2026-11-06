@@ -19,6 +19,9 @@ export class FakeElectron {
     this.protocolError = null
     this.#waiters = new Set()
     this.exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal, at: Date.now() })))
+    // 'close' follows both stdio pipes being drained and closed, so `stderr` is complete. 'exit'
+    // alone can beat the last chunk, and stdout's frame must not race stderr's launch line.
+    this.closed = new Promise(resolve => child.once('close', () => this.exited.then(resolve)))
     const reader = new FrameReader(frame => this.#take(frame), (error) => { this.protocolError = error })
     child.stdout.on('data', chunk => reader.push(chunk))
     child.stderr.on('data', (chunk) => { this.stderr += chunk.toString('utf8') })
@@ -82,11 +85,15 @@ export class FakeElectron {
     return this.waitFor(frame => frame.type === 'ipc' && frame.message?.type === type, ms, `ipc ${type}`).then(frame => frame.message)
   }
 
-  /** Closes the launcher's stdin; answers how it exited and how long after the close it took. */
+  /**
+   * Closes the launcher's stdin; answers how it exited and how long after the close it took.
+   * Waits for 'close', not just 'exit': then both pipes have delivered everything, so a reader
+   * may compare what came on one with what came on the other.
+   */
   async close() {
     const at = Date.now()
     this.child.stdin.end()
-    const { code, signal, at: end } = await this.exited
+    const { code, signal, at: end } = await this.closed
     return { code, signal, ms: end - at }
   }
 }
