@@ -58,10 +58,15 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   the agent's call to finish and, when the agent asks permission, asks DSH's approval service and
   hands the agent the answer. A DSH tool call is not a mirror call: the bridge is the MCP server,
   so the bridge writes the `tool/call`/`tool/result` rows and DSH draws the single card from
-  them; the call never reaches the mirror, and acp-dsh draws no card for that ACP call. acp-dsh
-  matches it by the structured MCP tool name (`mcp__dsh__<tool>`, the name Claude Code sends),
-  never by the display title. DSH's side requests on an ACP route (a title, a summary) are refused
-  at the `llm/stream` waterfall, so they never reach the agent as prompts.
+  them; the call never reaches the mirror, and acp-dsh draws no card for that ACP call. On
+  `acp-claude`, acp-dsh matches it by the structured MCP tool name (`mcp__dsh__<tool>`, the name
+  Claude Code sends in `session/request_permission`), never by the display title. On
+  `acp-codex` the spike gives no structured name for the call at all (the only
+  `mcp__<server>__<tool>` name it saw was inside Claude Code's permission request, which Auto
+  never sends), so matching there is unsupported until delivery 6 proves a structured name in
+  its tool call; until then acp-dsh draws no card from the ACP call and the bridge's rows are the
+  single record. DSH's side requests on an ACP route (a title, a summary) are refused at the
+  `llm/stream` waterfall, so they never reach the agent as prompts.
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
   (Amended, 2026-11-06: that bridge carries the Session's whole preset tool set, the team's tools
@@ -237,9 +242,13 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
 4. **Bots' tools over MCP.** The bridge's first slice: the team's tools reach the agent over the
    same per-session bridge delivery 6 completes. Lane: plugin, behind `dshTools`, off unless
    set. Check: with the setting on, a Bot on `acp-claude` posts to its group through a team tool,
-   and a tool above its level is not offered. With it, once per team, a Bot that ran on the
-   Claude Code plugin (`claudeCodeModel`) and is still on the pi-ai model it was moved to goes to
-   `acp-claude`, only where that route lists its model (adapter installed) and `dshTools` is on.
+   and a tool above its level is not offered. The back-channel is probed here, not only in
+   delivery 6: a team-tool call raises `approval/asked` before it runs, a request without
+   `DSH_BRIDGE_CREDENTIAL` is refused, one Session's credential is refused for another, and a
+   fork revokes the old one. A build that cannot pass those stays hidden (not offered under
+   `dshTools`) until it does. With it, once per team, a Bot that ran on the Claude Code plugin
+   (`claudeCodeModel`) and is still on the pi-ai model it was moved to goes to `acp-claude`, only
+   where that route lists its model (adapter installed) and those probes pass.
    Rollback: revert; the Bot is chat-only on ACP.
 5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
@@ -254,16 +263,21 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    is not offered, and the agent's own tools are absent — probed with a **shell** tool, not only
    a file write, because `tools: []` also removes Bash in the adapter (read from its bundle); on
    `acp-codex` the same approval holds for DSH tools, the source session is `session/close`d after
-   `session/fork`, a preset change refreshes the offered DSH tools by that fork, and the turn says
-   the agent's own tools stay. The bridge credential is probed too: a request without
-   `DSH_BRIDGE_CREDENTIAL` is refused, one Session's credential is refused for another, a fork
-   revokes the old one, and a credential alone cannot approve (the approval is server-side). The
-   runtime detector for adapter drift is the plugin's `acp_tool` handler and its bridge
-   handshake: with `dshTools` on and `acp-claude`, a call that is a built-in file or shell tool
-   (the adapter should have removed them) fails the turn with `acp_toolset_drift`, and a bridge
-   that never completes `initialize`+`tools/list` over the back-channel fails the turn with
-   `acp_bridge_missing` before the prompt runs. Every spike fact is tied to adapter versions that
-   update themselves (D17), so both checks run at delivery 6's start, not only in CI. Rollback:
+   `session/fork` (its `session/close` support is unproven until this check), a preset change
+   refreshes the offered DSH tools by that fork, and the turn says the agent's own tools stay.
+   The bridge credential is probed too: a request without `DSH_BRIDGE_CREDENTIAL` is refused, one
+   Session's credential is refused for another, a fork revokes the old one, and a credential
+   alone cannot approve (the approval is server-side). The runtime detector for adapter drift is
+   an allowlist, not a denylist: with `dshTools` on, every structured tool name the agent uses
+   must be an MCP name — `mcp__dsh__<tool>` for the bridge, or `mcp__<server>__<tool>` for a
+   server the session was given; any other structured name (a built-in file or shell tool, which
+   `tools: []` should have removed) is drift. On the first non-MCP tool call the plugin records
+   `acp_toolset_drift` and calls `session/cancel` on that same trace. It DETECTS and CANCELS; it
+   does NOT prevent that first call: the handler runs after the call started, and in Auto or Full
+   access there is no `request_permission` to deny. A bridge that never completes
+   `initialize`+`tools/list` over the back-channel fails the turn with `acp_bridge_missing`
+   before the prompt runs. The check runs at EVERY session start, not only at delivery 6's start
+   or in CI: every spike fact is tied to adapter versions that update themselves (D17). Rollback:
    turn the setting off (the 2026-11-03 behaviour).
 7. **Live switching** (amended, 2026-11-06). A Session moves between providers with its history,
    each way: the transcript is replayed (redacted) into the target, and what the agent streams is
@@ -368,18 +382,22 @@ ACP request above).
 
 **Refreshing the tool list.** On a preset or level change the bridge re-announces its tools
 (`notifications/tools/list_changed`) and serves the new list. The rule is ordering, not a settle
-delay: on this host `session/new` took ~3.55 s, and a `list_changed` that arrived before
-`session/new` answered (2 s and 3 s after server start) was dropped, while one after the answer
-(4 s) was re-listed. The tools must be listed before `session/new` answers; acp-dsh is the side
-that sees that answer, so acp-dsh tells the bridge over the back-channel, and the bridge holds its
-first announcement until then; if no `tools/list` follows, it re-announces on the next turn.
-`session/resume` was not spiked; treat it as the same ordering until delivery 6 confirms it.
+delay: the spike's inference (arrival times, not an instrumented gate) is that `session/new` took
+~3.55 s, and a `list_changed` before the answer (2 s and 3 s after server start) produced no
+re-list, while one after it (4 s) did. The rule to verify: the tools must be listed before
+`session/new` answers; acp-dsh is the side that sees that answer, so acp-dsh tells the bridge over
+the back-channel, and the bridge holds its first announcement until then; if no `tools/list`
+follows, it re-announces on the next turn.
+`session/resume`/`session/load` was not spiked; treat it as the same ordering until delivery 6
+confirms it.
 `acp-codex` ignores `list_changed` and also ignores a new server list on `session/resume`; there
 the plugin forks the ACP session (`session/fork`), which the spike shows returns a new session id
 and starts the new bridge. The spike did not show the fork closing the source session, so the
 plugin closes it (`session/close`) and its bridge; delivery 6 proves the close and that a Session
-never holds two bridges. That the fork continues the same conversation is not evidenced by the
-spike; delivery 6 must prove it before the fork counts as a refresh.
+never holds two bridges. `acp-codex`'s support for `session/close` is unproven (the spike never
+called it), so the fork path stays behind that proof. That the fork continues the same
+conversation is not evidenced by the spike; delivery 6 must prove it before the fork counts as a
+refresh.
 
 **Live switching.** DSH keeps the record. A Session moving to an agent has its transcript replayed
 into `session/prompt` content, in order; moving back, what the agent streamed is written into the
@@ -391,11 +409,13 @@ prompt; the test is a saved secret sitting in the transcript. Each crossing writ
 provider-boundary row into the Session log ("Claude Code via acp-claude", "DSH"), so the chat
 shows who answered, not only a log file.
 
-**Setting and order.** Deliveries 6 and 7 ship behind `dshTools`, off unless set, until the owner
-tries them; off is the 2026-11-03 behaviour and the rollback. The build branches from the DSH
-0.2.2 branch (`feat/dsh-022-upgrade`) and is rebased onto `dev` once that merges; nothing of it
-is built in the docs PR that carries this amendment. This amendment is the design correction that
-unblocks Lane D's build: no Lane D code (deliveries 6-7) merges before it lands.
+**Setting and order.** Deliveries 4, 6 and 7 ship behind `dshTools`, off unless set, until the
+owner tries them; off is the 2026-11-03 behaviour and the rollback. Delivery 4 is the bridge's
+first slice, so it carries the same back-channel probes (above) before it is offered. The build
+branches from the DSH 0.2.2 branch (`feat/dsh-022-upgrade`) and is rebased onto `dev` once that
+merges; nothing of it is built in the docs PR that carries this amendment. This amendment is the
+design correction that unblocks Lane D's build: no Lane D code (deliveries 4, 6 and 7) merges
+before it lands.
 
 ## Links
 

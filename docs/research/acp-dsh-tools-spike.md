@@ -48,8 +48,8 @@ and neither session's agent saw the other's tool.
 **`tools/list_changed`: yes, once `session/new` has answered (inferred, not instrumented).**
 
 `session/new` took 3.55 s in every run here (3550 ms); the MCP handshake finished ~9 ms after the
-server started, so the first `tools/list` was already in. The boundary is the `session/new`
-answer, not a settle delay:
+server started, so the first `tools/list` was already in. The rule this spike cannot instrument,
+and delivery 6 must verify, is that the tools are listed before `session/new` answers:
 
 | Notification at | `session/new` answered? | Re-list (`tools/list`) |
 |---|---|---|
@@ -61,13 +61,14 @@ answer, not a settle delay:
 | 8003 ms | yes | 8003 ms |
 | 12004 ms | yes | 12004 ms |
 
-The 2 s and 3 s announcements landed before the answer and were dropped; the 4 s one landed after
-it and was served. The ~4 s figure is this host's `session/new` round-trip, not a timer in the
-adapter.
+The 2 s and 3 s announcements arrived before 3550 ms and produced no re-list; the 4 s one arrived
+after and produced one. Read that as the rule to verify (announce only once `session/new` has
+answered), not as proof of a gate inside the adapter. The ~4 s figure is this host's `session/new`
+round-trip, not a timer in the adapter.
 
 That boundary is inferred from arrival times, not instrumented inside the adapter: `session/new`
 took 3550 ms in every run, so an announcement before ~3.55 s is before the answer. `session/resume`
-with `list_changed` was not run; the same ordering there is unverified.
+and `session/load` with `list_changed` were not run; the same ordering there is unverified.
 
 At 5 s the late tool was then called and returned `late-ok:A` in the same session
 (`tools/call {"name":"spike_late"}`). The adapter's client sends a `server/discover` probe
@@ -135,13 +136,14 @@ from the adapter bundle, not exercised.
 - The bridge's **transport** is feasible for both adapters: one stdio MCP server per ACP session,
   decided by the session, never a port. The bridge→DSH leg is not spiked: it is planned (a
   per-session back-channel, `DSH_BRIDGE_CREDENTIAL`), and delivery 6 must prove it.
-- A tool-list refresh is **not uniform**: Claude Code re-lists from `tools/list_changed` once
-  `session/new` has answered (before that answer the notification is dropped; the ~4 s in the
-  table is that host's round-trip) and honours a new list on resume; Codex re-lists never and
-  ignores a new list on resume, so a preset or level change on `acp-codex` needs `session/fork`
-  with the new server set. The fork returns a new session id and starts the new server; the spike
-  did not exercise whether it closes the source session or its bridge (unverified), so the plugin
-  must `session/close` it. That it continues the same conversation was not exercised either
+- A tool-list refresh is **not uniform**: the spike's inference, for delivery 6 to verify, is
+  that Claude Code re-lists from `tools/list_changed` once `session/new` has answered (before
+  that answer the notification produced no re-list; the ~4 s in the table is that host's
+  round-trip) and honours a new list on resume; Codex re-lists never and ignores a new list on
+  resume, so a preset or level change on `acp-codex` needs `session/fork` with the new server
+  set. The fork returns a new session id and starts the new server; the spike did not exercise
+  whether it closes the source session or its bridge (unverified), so the plugin must
+  `session/close` it. That it continues the same conversation was not exercised either
   (unverified).
 - Turning the agent's built-in tools off is possible on `acp-claude` and not on `acp-codex`. On
   Codex the "one tool set" is therefore a DSH-tools-plus-Codex-tools session, and the approval
