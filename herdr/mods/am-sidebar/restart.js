@@ -7,6 +7,7 @@ import { agentKeyOfArgv, canResume, detectModel, effortArgs, modelArgs, resumeAr
   from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL } from "./workers.js";
+import { CONFIG_VAR, envWords } from "./logins.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
 const SESSION = "agent.session";
@@ -32,16 +33,21 @@ const ARGS = ' "$@"';
  * The command an hc pane was started with (`get.argv`, hc get's launch argv), ready to be run
  * again: { shell } for a `sh -c <command>` (an hc template, which hc runs that way, or a
  * replacement of one: its ` "$@"` and arguments dropped), else { argv } (this pack's
- * `/usr/bin/env PATH=… [NAME=value…]` prefix dropped whole: the CLI puts its own on, a
- * briefing variable included, launchArgs.js startArgs). Null when hc gave none.
+ * `/usr/bin/env [-u NAME…] PATH=… [NAME=value…]` prefix dropped whole: the CLI puts its own on,
+ * a briefing variable and the Claude login words included, launchArgs.js startArgs; logins.js).
+ * A template worker on a Claude login has `/usr/bin/env <login words> sh -c …` with no PATH,
+ * dropped the same way. Null when hc gave none.
  */
 export function paneCommand(get) {
   let argv = Array.isArray(get?.argv) && get.argv.length && get.argv.every((w) => typeof w === "string") ? [...get.argv] : null;
   if (!argv) return null;
-  if (argv[0] === ENV && argv[1]?.startsWith("PATH=")) {
-    let i = 1;
-    while (i < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i])) i += 1;
-    if (i < argv.length) argv = argv.slice(i);
+  if (argv[0] === ENV) {
+    const unset = argv[1] === "-u" && argv[2] === CONFIG_VAR;
+    let i = unset ? 3 : 1;
+    if (unset || argv[i]?.startsWith("PATH=") || argv[i]?.startsWith(`${CONFIG_VAR}=`)) {
+      while (i < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i])) i += 1;
+      if (i < argv.length) argv = argv.slice(i);
+    }
   }
   if (SHELLS.has(base(argv[0])) && argv[1] === "-c" && typeof argv[2] === "string" && argv[2].trim()) {
     const cmd = argv[2];
@@ -288,13 +294,15 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
 /**
  * `hc run` arguments for a helper Restart --tree runs again: in the background, its name (null:
  * hc picks), folder and labels, a child of the bot's new pane, its PATH as a seat's (`path`).
+ * `login`: a Claude helper's login words (logins.js chooseLogin), before its argv or its `sh -c`.
  */
-export function helperArgs({ name, cwd, labels = {}, parent, argv, path = null }) {
+export function helperArgs({ name, cwd, labels = {}, parent, argv, path = null, login = [] }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd);
   for (const [k, v] of Object.entries(labels)) if (typeof v === "string" && v) args.push("--label", `${k}=${v}`);
-  return [...args, "--parent", parent, "--", ...(path ? [ENV, `PATH=${path}`] : []), ...argv];
+  const env = envWords(path ? [`PATH=${path}`] : [], login);
+  return [...args, "--parent", parent, "--", ...(env.length ? [ENV, ...env] : []), ...argv];
 }
 
 /**

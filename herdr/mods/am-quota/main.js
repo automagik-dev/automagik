@@ -4,16 +4,18 @@
 // file or $CLIPROXY_MGMT_KEY, the base URL and optional display name from <app home>/cliproxy.json,
 // and what this panel installed from <app home>/data/am-quota/active.json. ./view.js turns that
 // into what each tool's card says; this file draws it.
-// Writes: only when the person presses Switch or Use: a credential file (Codex) or the Keychain
-// item plus .credentials.json (Claude), through ./switch.js, with a backup, 0600, temp + atomic
-// rename, and never a token in a log, a notify, shared state or an error message. After a
+// Writes: only when the person presses Switch or Use: Codex's credential file, through ./switch.js,
+// with a backup, 0600, temp + atomic rename, and never a token in a log, a notify, shared state or
+// an error message. Claude is never installed from the proxy, and nothing here reads or writes a
+// Claude Keychain item (#453, docs/local-logins.md); until the Claude card lists the logins signed
+// in on this Mac, it offers no switch. After a
 // switch, Restart runs `automagik-herdr restart <bot>` for the bots still on the old account,
 // once the person confirms.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, theme, appHome, home, readTextFile, window as appWindow, writeTextFile } from "herdr";
 import { client, QuotaSampler } from "./proxy.js";
-import { credentialTarget, keychainReadScript, keychainService, tokenIdentity, TARGETS } from "./translate.js";
+import { credentialTarget, tokenIdentity, TARGETS } from "./translate.js";
 import { install } from "./switch.js";
 import { claim, release } from "./lock.js";
 import { payloadDir, sweepScript } from "./write.js";
@@ -171,8 +173,7 @@ const platform = () => {
 };
 /**
  * Values of the named environment variables (the shell's real environment): never logged. An unset
- * variable is not a failure (the script exits 0); a read that could not run rejects, because an
- * unknown CLAUDE_CONFIG_DIR must not be mistaken for none — that would act on the default login.
+ * variable is not a failure (the script exits 0); a read that could not run rejects.
  */
 const readEnv = async (names) => {
   const out = {};
@@ -185,10 +186,10 @@ const readEnv = async (names) => {
   return out;
 };
 /**
- * What the record this panel keeps says about the login on the Mac. The record is only a claim:
- * an open session can refresh the *old* account back into the Keychain, so it is checked against
- * the installed credential. An unreadable item (no `security`, a locked Keychain) keeps the claim,
- * because a guess is worse than the record.
+ * What the record this panel keeps says about Codex's login on the Mac. The record is only a
+ * claim: an open session can refresh the *old* account back into the file, so it is checked
+ * against the installed credential. An unreadable file keeps the claim, because a guess is worse
+ * than the record.
  */
 export const badgeFor = (record, installed) => {
   if (!record) return null;
@@ -199,11 +200,14 @@ export const badgeFor = (record, installed) => {
 
 /**
  * `active.json`, tolerant of its older shapes: a bare name is a record, and a record left by the
- * saved Claude logins this panel no longer keeps (`saved:<name>`) is no proxy account's.
+ * saved Claude logins this panel no longer keeps (`saved:<name>`) is no proxy account's. A
+ * `claude` entry (the proxy login an older version installed) is ignored, and so dropped at the
+ * next write: Claude is never installed from the proxy (#453).
  */
 export const records = (raw) => {
   const out = {};
   for (const [provider, value] of Object.entries(raw ?? {})) {
+    if (provider === "claude") continue;
     const name = typeof value === "string" ? value : typeof value?.name === "string" ? value.name : null;
     if (!name || name.startsWith("saved:")) continue;
     out[provider] = { name, fingerprint: typeof value?.fingerprint === "string" ? value.fingerprint : null };
@@ -223,7 +227,7 @@ export default class AmQuota extends View {
     this.busy = null;       // the running switch, or null
     this.active = {};       // provider → { name, fingerprint } this panel installed
     this.identities = {};   // provider → { at, value }: the last read of what is installed
-    this.env = {};          // the clients' environment (CODEX_HOME, CLAUDE_CONFIG_DIR)
+    this.env = {};          // Codex's environment (CODEX_HOME)
     this.quotaError = null;
     this.switched = {};     // provider → the last switch: { at, from, to, look, result }
     this.armed = null;      // "restart:<provider>" waiting for its second click
@@ -250,7 +254,7 @@ export default class AmQuota extends View {
     let env = {};
     let envKnown = true;
     try {
-      env = await (this.envVars ??= readEnv([KEY_ENV, "CODEX_HOME", "CLAUDE_CONFIG_DIR"]));
+      env = await (this.envVars ??= readEnv([KEY_ENV, "CODEX_HOME"]));
     } catch {
       this.envVars = null;
       envKnown = false;
@@ -266,7 +270,7 @@ export default class AmQuota extends View {
         key = ((await readTextFile(expand(KEY_FILE))) ?? "").trim() || null;
       } catch {}
     }
-    const clients = { CODEX_HOME: env.CODEX_HOME, CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR };
+    const clients = { CODEX_HOME: env.CODEX_HOME };
     return { config, key, envKnown, env: clients };
   }
 
@@ -319,10 +323,9 @@ export default class AmQuota extends View {
 
   /**
    * The token identity of what is installed now, for the badge. Read when the panel opens, after a
-   * switch, and then at most every five minutes: the item holds tokens, and a fingerprint compare
-   * is not worth reading it on every 60 s poll. `known` is false when nothing can be read (no
-   * `security`, a locked Keychain): an unverifiable record keeps its badge rather than flipping on
-   * a guess. Never logged.
+   * switch, and then at most every five minutes: the file holds tokens, and a fingerprint compare
+   * is not worth reading it on every 60 s poll. Null when nothing can be read: an unverifiable
+   * record keeps its badge rather than flipping on a guess. Never logged.
    */
   async installedIdentity(provider, env) {
     if (!this.active[provider]?.fingerprint) return null;
@@ -334,20 +337,11 @@ export default class AmQuota extends View {
     return value;
   }
 
+  /** Codex's installed identity, from its file; null for a provider with no writer (Claude). */
   async readIdentity(provider, env) {
-    const plan = credentialTarget(provider, { home: home(), env, keychainWritten: true, platform: platform() });
+    const plan = credentialTarget(provider, { home: home(), env });
+    if (!plan) return null;
     try {
-      // macOS Claude reads the Keychain first — with or without a CLAUDE_CONFIG_DIR — so the item
-      // is what says which account the CLI would use; the file is the answer only where there is
-      // no `security`.
-      if (plan.keychain) {
-        const service = await keychainService(plan, { exec });
-        if (!service) return null;
-        const r = await exec("sh", ["-c", keychainReadScript(), "sh", service]);
-        if (r.code === 0) return { known: true, fingerprint: tokenIdentity(provider, r.stdout) };
-        if (r.code === 44) return { known: true, fingerprint: null };   // no item: nothing is installed
-        return null;
-      }
       return { known: true, fingerprint: tokenIdentity(provider, await readTextFile(plan.file)) };
     } catch {
       return null;
@@ -362,7 +356,8 @@ export default class AmQuota extends View {
     });
   }
 
-  // Installs one credential into the client that owns that provider. The flow lives in ./switch.js
+  // Installs one credential into the client that owns that provider (Codex only: Claude has no
+  // writer, so a Claude call stops here, before any download). The flow lives in ./switch.js
   // (tested with its shell and files injected); the panel owns the record, the banner and the lock.
   use(provider, account, cx) {
     if (!TARGETS[provider]) return;
@@ -383,8 +378,6 @@ export default class AmQuota extends View {
     cx.spawn(async (cx) => {   // one switch at a time
       wake(cx);
       try {
-        // Claude's item depends on CLAUDE_CONFIG_DIR: an unknown environment is a refusal.
-        if (provider === "claude") await this.knownEnv();
         const result = await install({ api: this.api, provider, account, ...this.io() });
         this.active[provider] = { name: account.name, fingerprint: result.fingerprint };
         await this.record(provider);
@@ -424,13 +417,6 @@ export default class AmQuota extends View {
       } catch {}
       throw new Error(`the login was written, but active.json could not record it (${message(err).slice(0, 80)}) — the panel may name the wrong account in use`);
     }
-  }
-
-  /** The clients' environment, or a refusal: an unknown CLAUDE_CONFIG_DIR names an unknown item. */
-  async knownEnv() {
-    const s = await this.settings();
-    if (!s.envKnown) throw new Error("could not read this app's environment (CLAUDE_CONFIG_DIR), so which login Claude uses is unknown; nothing was changed");
-    this.env = s.env;
   }
 
   /**
@@ -938,9 +924,6 @@ export default class AmQuota extends View {
     if (s.result?.fresh?.length) {
       hint("Started on a new conversation instead of resuming it:");
       for (const f of s.result.fresh) box.child(div().text_size(10.5).text_color(t.working).child(f));
-    }
-    if (provider === "claude") {
-      box.child(div().text_size(10.5).text_color(t.dim).child(`This Mac now shares that sign-in with ${instanceName(this.config)}: if one side refreshes it, the other may have to sign in again.`));
     }
     return box;
   }

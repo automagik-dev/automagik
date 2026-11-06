@@ -97,10 +97,14 @@ const term = (address, { bot: b, argv = ["claude"], cwd = "/x", app = "claude-co
   foreground: { argv, cwd }, status: { app, state: status, ...(msg ? { msg } : {}) },
 });
 const runCall = (calls) => calls.find((c) => c[0] === "run");
-/** What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets (#213). */
+/**
+ * What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets
+ * (#213), and a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453).
+ */
 const agentWords = (run) => {
   const w = run.slice(run.indexOf("--") + 1);
-  return w[0] === "/usr/bin/env" && w[1]?.startsWith("PATH=") ? w.slice(2) : w;
+  const at = w[1] === "-u" && w[2] === "CLAUDE_CONFIG_DIR" ? 3 : 1;
+  return w[0] === "/usr/bin/env" && w[at]?.startsWith("PATH=") ? w.slice(at + 1) : w;
 };
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
@@ -592,7 +596,9 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   // the pane would get herdr-core's PATH, which may have no node for an npm agent.
   assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
     "--", "/usr/bin/env"]);
-  assert.ok(run[run.indexOf("--") + 2].startsWith("PATH="), run.join(" "));
+  // No claude-logins.json: the default login, the variable unset before PATH (#453).
+  assert.deepEqual(run.slice(run.indexOf("--") + 2, run.indexOf("--") + 4), ["-u", "CLAUDE_CONFIG_DIR"], run.join(" "));
+  assert.ok(run[run.indexOf("--") + 4].startsWith("PATH="), run.join(" "));
   assert.deepEqual(plain(agentWords(run)), ["claude", "--model", "claude-opus-5-5"]);
   const words = agentWords(run);
   assert.equal(words[1], "--append-system-prompt-file", "the briefing in its system prompt, right after the executable");
@@ -2027,6 +2033,76 @@ test("restart --tree: a helper that is itself a bot (started under the pane, the
   assert.deepEqual(rows.slice(-2).map((x) => [x.event, x.terminal, x.by, x.reason ?? null]), [["detach", "t8", "start", "moved"], ["attach", "t101", "start", null]]);
   assert.equal(s.cli(["whois", "--bot", ID.dev, "--json"]).json().terminal, "t101");
   assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t101").map((x) => [x.kind, x.botId, x.worktree]), [["seat", ID.dev, wt]]);
+});
+
+// ---- Claude logins (#453): claude-logins.json read at each launch, start, restart and --tree ----
+
+/** After `--` in an hc run: the env words before the program, and the program on. */
+const envAndProgram = (run) => {
+  const w = run.slice(run.indexOf("--") + 1);
+  const at = w.findIndex((x, i) => i > 0 && x !== "-u" && w[i - 1] !== "-u" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+  return { env: w.slice(0, at), program: w.slice(at) };
+};
+
+test("start #453: login 2's folder by value after PATH; a bad record starts Claude on login A, warned; a codex bot never reads it", (t) => {
+  const f = team();
+  f.bots[1].agent = "codex";
+  const s = scene(t);
+  s.seed(f);
+  const two = join(s.home, ".claude-2");
+  mkdirSync(two);
+  const record = join(s.app, "claude-logins.json");
+  writeFileSync(record, JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  let { env, program } = envAndProgram(runsOf(s).at(-1));
+  assert.equal(env[0], "/usr/bin/env");
+  assert.match(env[1], /^PATH=/);
+  assert.deepEqual(env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
+  assert.equal(program[0], "claude");
+  assert.doesNotMatch(r.err, /claude-logins/);
+  assert.deepEqual(r.json().argv.slice(0, 1), ["claude"], "start's own argv is the agent's, as before");
+
+  rmSync(record);
+  mkdirSync(record); // unreadable: a folder in its place
+  const codex = s.cli(["start", "Captain", "--json"]);
+  assert.equal(codex.code, 0, codex.err);
+  ({ env, program } = envAndProgram(runsOf(s).at(-1)));
+  assert.equal(program[0], "codex");
+  assert.equal(env.length, 2, `codex: env and PATH only, no login words: ${env.join(" ")}`);
+  assert.doesNotMatch(codex.err, /claude-logins/, "a codex launch never reads or warns about the record");
+
+  const dev = s.cli(["start", "Dev", "--json"]);
+  assert.equal(dev.code, 0, dev.err);
+  ({ env, program } = envAndProgram(runsOf(s).at(-1)));
+  assert.deepEqual(env.slice(0, 3), ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR"], "login A, never a refusal");
+  assert.equal(program[0], "claude");
+  assert.match(dev.err, /claude-logins\.json: can't be read \(EISDIR\); started on the default login/);
+});
+
+test("restart --tree #453: the bot's own -u launch reused under login 2; a Claude helper gets the words, a codex helper none", (t) => {
+  const s = restartScene(t);
+  const two = join(s.home, ".claude-2");
+  mkdirSync(two);
+  writeFileSync(join(s.app, "claude-logins.json"), JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const st = s.hcState();
+  // Genie was started on login A (its launch argv has -u): Restart strips it and reuses its command.
+  st.terminals[0].argv = ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "PATH=/old", "claude", "--model", "opus"];
+  const wa = join(s.root, "wa"), wb = join(s.root, "wb");
+  mkdirSync(wa);
+  mkdirSync(wb);
+  st.terminals.push({ ...term("t8", { parent: "t5", cwd: wa }), die_with_parent: true, argv: ["claude", "--model", "m"] });
+  st.terminals.push({ ...term("t9", { parent: "t5", cwd: wb, argv: ["codex", "-m", "g"], app: "codex" }), die_with_parent: true, argv: ["codex", "-m", "g"] });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const [bot, claude, codex] = runs(s).map(envAndProgram);
+  assert.deepEqual(bot.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(plain(bot.program).slice(0, 3), ["claude", "--model", "opus"], "its own command, never env");
+  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.equal(claude.program[0], "claude");
+  assert.equal(codex.program[0], "codex");
+  assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
 });
 
 // ---- restart --tree: shared folders and failure paths (#256 review) ----

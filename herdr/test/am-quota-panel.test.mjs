@@ -102,7 +102,7 @@ test("the tool switch shows one tool at a time; Codex lists its accounts by emai
   const { view, cx, draw } = await panel();
   let root = draw();
   assert.ok(nodes.has("tool-claude") && nodes.has("tool-codex"));
-  assert.match(text(root), /No account from lab/, "Claude first: nothing recorded, so Not managed");
+  assert.match(text(root), /No switch for now/, "Claude first: no switch until it lists the logins on this Mac (#453)");
   assert.match(text(root), /Not managed/);
   assert.ok(!text(root).includes("ana@example.com"), "no Codex account on the Claude card");
   nodes.get("tool-codex").click(null, cx);
@@ -879,9 +879,40 @@ test("colours: suggestions are never red; running out is amber", async () => {
   assert.equal(colours.includes("t.blocked"), false, "no red without an error");
 });
 
+test("Claude (#453): no Use or Switch; an old claude record is ignored, never checked in the Keychain, dropped at the next write", async () => {
+  state.platform = "macos";
+  try {
+    const { view, cx, draw, asked } = await panel({ active: { codex: { name: "codex-0a-ana-pro.json" }, claude: { name: "claude-0c-cy.json", fingerprint: "fp" } } });
+    const root = draw();
+    assert.equal(view.tool, "claude");
+    assert.match(text(root), /No switch for now/);
+    assert.match(text(root), /cy@example\.com/, "the proxy's Claude account is listed, for its usage");
+    assert.equal(nodes.has("primary-claude"), false, "no Use");
+    assert.equal(all(root).some((n) => /^use-/.test(n.props?.id ?? "")), false, "no row button");
+    assert.doesNotMatch(text(root), /\bUse\b|Switch to/);
+    const before = installs.length;
+    view.use("claude", { id: "claude-0c-cy.json", name: "claude-0c-cy.json", provider: "claude", email: "cy@example.com" }, cx);
+    await cx.settle();
+    assert.equal(installs.length, before, "a Claude use installs nothing");
+    // A Codex switch writes active.json: the claude entry is gone from it.
+    view.tool = "codex";
+    draw();
+    nodes.get("primary-codex").click(null, cx);
+    await cx.settle();
+    assert.deepEqual(Object.keys(JSON.parse(state.files.get(ACTIVE))), ["codex"], "the claude entry is dropped at the next write");
+    const ran = state.calls.map((c) => c.join(" ")).join("\n");
+    assert.doesNotMatch(ran, /security|find-generic-password|Claude Code-credentials|shasum/, "no Keychain call, no item name");
+    assert.ok(!asked.some((u) => u.includes("/download")), "no credential download");
+  } finally {
+    state.platform = "linux";
+  }
+});
+
 test("active.json from before: a bare name is a record, a saved-login record is none", () => {
   assert.deepEqual(records({ codex: "codex-a.json", claude: { name: "saved:work", fingerprint: "f", saved: "work" } }),
     { codex: { name: "codex-a.json", fingerprint: null } });
+  assert.deepEqual(records({ codex: "codex-a.json", claude: { name: "claude-a.json", fingerprint: "f" } }),
+    { codex: { name: "codex-a.json", fingerprint: null } }, "a claude record is ignored (#453)");
 });
 
 test("no switch while bots restart; a switch's busy line names the account by email", async () => {

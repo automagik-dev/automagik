@@ -108,12 +108,19 @@ const templateArgv = (args) => {
   assert.equal(args.includes("--"), false, `hc's template form has no --: ${JSON.stringify(args)}`);
   return args.slice(args.indexOf("--parent") + 2);
 };
-/** The agent's argv: after `--`, past the `env PATH=…` every agent worker starts with. */
+/**
+ * The agent's argv: after `--`, past the `env PATH=…` every agent worker starts with, and a Claude
+ * worker's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453; any other agent has none).
+ */
 const after = (args) => {
   const argv = runArgv(args);
   assert.equal(argv[0], "/usr/bin/env", `an agent worker runs under /usr/bin/env PATH=…: ${JSON.stringify(argv)}`);
-  assert.match(argv[1], /^PATH=/);
-  return argv.slice(2);
+  const at = argv[1] === "-u" ? 3 : 1;
+  if (at === 3) assert.equal(argv[2], "CLAUDE_CONFIG_DIR");
+  assert.match(argv[at], /^PATH=/);
+  const rest = argv.slice(at + 1);
+  assert.equal(at === 3, rest[0] === "claude", `only a Claude worker gets the login words: ${JSON.stringify(argv)}`);
+  return rest;
 };
 const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
 
@@ -164,6 +171,63 @@ test("worker: a codex captain starts a Claude reviewer with --agent claude-code;
   assert.deepEqual(after(s.runs()[0]), ["claude", "--effort", "high", "review PR 12"]);
   assert.match(r.err, /worker model gpt-5\.5 is for codex; claude runs its own default/);
   assert.ok(labelsOf(s.runs()[0]).includes(`worker.of=${ID.cap}`));
+});
+
+// ---- Claude logins (#453): claude-logins.json read at each worker launch ----
+
+test("worker #453: a Claude worker gets login 2's folder by value; a codex worker never reads the record; a bad record: login A, warned", (t) => {
+  const s = scene(t);
+  const two = join(s.root, "home", ".claude-2");
+  mkdirSync(two);
+  const record = join(s.app, "claude-logins.json");
+  writeFileSync(record, JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const r = s.cli(["worker", "review PR 12", "--branch", "review/pr-12", "--agent", "claude-code", "--json"], { from: "t4" });
+  assert.equal(r.code, 0, r.err);
+  const words = runArgv(s.runs()[0]);
+  assert.deepEqual([words[0], words[2], words[3]], ["/usr/bin/env", `CLAUDE_CONFIG_DIR=${two}`, "claude"], words.join(" "));
+  assert.match(words[1], /^PATH=/);
+  assert.doesNotMatch(r.err, /claude-logins/);
+
+  // Unreadable (a folder in its place): a codex worker neither reads nor warns; a Claude one starts on login A, warned.
+  rmSync(record);
+  mkdirSync(record);
+  const codex = s.cli(["worker", "fix it", "--branch", "feat/codex", "--json"]);
+  assert.equal(codex.code, 0, codex.err);
+  const cw = runArgv(s.runs()[1]);
+  assert.match(cw[1], /^PATH=/);
+  assert.equal(cw[2], "codex");
+  assert.ok(!cw.includes("-u") && !cw.some((w) => w.startsWith("CLAUDE_CONFIG_DIR")), cw.join(" "));
+  assert.doesNotMatch(codex.err, /claude-logins/, "a codex launch never reads or warns about the record");
+  const bad = s.cli(["worker", "fix it too", "--branch", "feat/claude", "--agent", "claude-code", "--json"]);
+  assert.equal(bad.code, 0, bad.err);
+  assert.deepEqual(runArgv(s.runs()[2]).slice(0, 3), ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR"]);
+  assert.match(bad.err, /claude-logins\.json: can't be read \(EISDIR\); started on the default login/);
+});
+
+test("worker #453: a Claude template runs its own command under the login words, its label kept; a codex template is unchanged", (t) => {
+  const s = scene(t);
+  const two = join(s.root, "home", ".claude-2");
+  mkdirSync(two);
+  writeFileSync(join(s.app, "claude-logins.json"), JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const r = s.cli(["worker", "review it", "--branch", "feat/review", "--template", "opus-rev", "--role", "review", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  assert.ok(labelsOf(run).includes("worker.template=opus-rev"), "still a template worker");
+  assert.deepEqual(runArgv(run), ["/usr/bin/env", `CLAUDE_CONFIG_DIR=${two}`, "sh", "-c",
+    'claude --dangerously-skip-permissions --model claude-opus-5-5 "$@"', "sh", "review it"], "the task is an argument, never part of the shell line");
+  assert.equal(r.json().template, "opus-rev");
+  const codex = s.cli(["worker", "fix it", "--branch", "feat/login", "--template", "dev-sol", "--json"]);
+  assert.equal(codex.code, 0, codex.err);
+  assert.deepEqual(templateArgv(s.runs()[1]), ["dev-sol", "fix it"], "hc's own template form, no login words");
+});
+
+test("worker #453: a Claude template whose command can't take the task is refused before any worktree", (t) => {
+  const s = scene(t, { templates: [...TEMPLATES, { name: "opus-x", command: "claude --model opus; echo done;" }] });
+  const r = s.cli(["worker", "x", "--branch", "feat/x", "--template", "opus-x"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Template opus-x runs Claude, but its command ends in a separator or a comment/);
+  assert.equal(s.runs().length, 0);
+  assert.equal(existsSync(join(s.project, ".claude/worktrees/feat-x")), false);
 });
 
 // ---- the worktree ----
