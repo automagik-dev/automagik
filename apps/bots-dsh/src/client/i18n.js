@@ -5,6 +5,12 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  // A Bot's capability pills (capability-pills.js); 'Channels' is the Channels page's.
+  'Computer': '电脑',
+  'Leads the team': '带领团队',
+  'Has a computer: ask it for code, files and commands.': '有电脑：可以让它写代码、处理文件、运行命令。',
+  'Works in your Omni channels: ask it to read, send or answer messages there.': '在你的 Omni 渠道中工作：可以让它读取、发送或回复那里的消息。',
+  'Leads the team: ask it to plan work, make Bots and hand tasks to the right one.': '带领团队：可以让它规划工作、创建 Bot，并把任务交给合适的 Bot。',
   // The model menu of a Bot its plugin answers for (host-model-menu.js).
   'computer': '电脑',
   'Stays on this {device}.': '只留在这台{device}上。',

@@ -56,6 +56,42 @@ test("needed: refuse asks the shown layout and refuses before any op, naming it;
   assert.ok(!existsSync(join(h.mods, "b")) && existsSync(join(h.kept, "b")));
 });
 
+test("needed: refuse without ask (a rollback, #488): any file in layouts/ naming a mod that leaves refuses; exclude leaves one out", (t) => {
+  const h = home(t);
+  write(join(h.app, "layouts", "mine.json"), layout("a"));
+  write(join(h.app, "layouts", "work.json"), layout("a", "b"));
+  write(join(h.app, "layouts", "other.json"), layout("z"));
+  const move = (m) => ({ op: "move", from: join(h.mods, m), to: join(h.kept, m), mkdir: true });
+  const asked = [];
+  const r = change(h.app, [move("a"), move("b")], { needed: "refuse", then: "roll back", prepare: () => asked.push("prepare") });
+  assert.match(r.refused, /^a would leave mods\/, but the layouts mine, work still name it \(and a layout names b too\), .*then roll back$/);
+  assert.equal(r.done, false);
+  assert.deepEqual(asked, [], "prepare never runs on a refusal");
+  assert.ok(existsSync(join(h.mods, "a")) && existsSync(join(h.mods, "b")) && !existsSync(h.kept));
+  const one = change(h.app, [move("b")], { needed: "refuse", then: "roll back" });
+  assert.match(one.refused, /^b would leave mods\/, but the work layout still names it, .*Take b out of that layout/);
+  const ok = change(h.app, [move("b")], { needed: "refuse", exclude: (name, body) => name === "work.json" && body().includes('"b"') });
+  assert.equal(ok.refused, null);
+  assert.ok(!existsSync(join(h.mods, "b")) && existsSync(join(h.kept, "b")));
+});
+
+test("needed: refuse without ask, unknown: warn: a layout that does not read is said, and the batch goes on", (t) => {
+  const h = home(t);
+  write(join(h.app, "layouts", "mine.json"), `${layout("a").slice(0, -1)},\n`);
+  write(join(h.app, "layouts", "fine.json"), layout("z"));
+  const move = (m) => ({ op: "move", from: join(h.mods, m), to: join(h.kept, m), mkdir: true });
+  const quiet = [];
+  assert.equal(change(h.app, [move("b")], { needed: "refuse", log: (l) => quiet.push(l) }).refused, null);
+  assert.deepEqual(quiet, [], "unset: nothing said");
+  const lines = [];
+  const r = change(h.app, [move("a")], { needed: "refuse", unknown: "warn", log: (l) => lines.push(l) });
+  assert.equal(r.refused, null);
+  assert.equal(r.done, true);
+  assert.deepEqual(lines, ["going on without knowing the layout Herdr shows (Herdr is not asked here, and layouts/mine.json does not read): "
+    + "if one names a and Herdr shows it, Herdr drops it (plain Herdr instead)"]);
+  assert.deepEqual(r.notes, lines);
+});
+
 test("a mod folder put back later in the batch is not taken (a replace); one only moved out is", (t) => {
   const h = home(t);
   write(join(h.app, "layouts", "mine.json"), layout("a", "b"));

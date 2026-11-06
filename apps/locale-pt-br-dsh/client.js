@@ -2135,7 +2135,12 @@ const pack = createPack({
     "Update now": "Atualizar agora",
     "Apply plugin updates automatically": "Aplicar atualizações de plugins automaticamente",
     "A plugin update goes in once no agent is at work: DSH restarts for a few seconds and the window stays.": "Uma atualização de plugin entra assim que nenhum agente estiver trabalhando: o DSH reinicia por alguns segundos e a janela continua aberta.",
-    "Plugin updates wait until you update them here or restart Automagik.": "As atualizações de plugins esperam até você atualizá-las aqui ou reiniciar o Automagik."
+    "Plugin updates wait until you update them here or restart Automagik.": "As atualizações de plugins esperam até você atualizá-las aqui ou reiniciar o Automagik.",
+    "Computer": "Computador",
+    "Leads the team": "Lidera a equipe",
+    "Has a computer: ask it for code, files and commands.": "Tem computador: peça código, arquivos e comandos.",
+    "Works in your Omni channels: ask it to read, send or answer messages there.": "Trabalha nos seus canais do Omni: peça para ler, enviar ou responder mensagens lá.",
+    "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo."
   },
   "permission.access": {
     "mode": "Modo de acesso, atual: {name}",

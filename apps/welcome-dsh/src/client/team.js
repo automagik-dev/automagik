@@ -887,6 +887,12 @@ const genieSpeechOf = phase => ({
   failed: t('Genie could not be installed here.'),
 })[phase]
 
+// The step's opening: who leads, and the rule for code work. A Bot with Computer is one
+// whose sidebar row and profile wear that pill (bots-dsh capability-pills.js).
+export const TeamLede = ({ name }) => h('p', { className: 'oai-lede' },
+  t('{name} leads. Who comes along?', { name }), h('br'),
+  h('span', { className: 'oai-lede-rule' }, t('Code work goes to a Bot with Computer.')))
+
 export function TeamStep(props) {
   const state = useGate(props)
   const finish = useFinish(props)
@@ -969,7 +975,7 @@ export function TeamStep(props) {
     glitching,
     wide: true,
   },
-  h('p', { className: 'oai-lede' }, t('{name} leads. Who comes along?', { name })),
+  h(TeamLede, { name }),
   h('div', { className: 'oai-select' },
     ...cardsOf(state.preload).map(id => (id === 'omni'
       ? h(OmniCard, { key: 'omni', power: omniPower, onPower: () => { setLastPressed('omni'); power.toggle() }, type: omniType, abilities, onToggle: (row, on) => setAbilities(rows => ({ ...rows, [row]: on })), live })
