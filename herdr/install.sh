@@ -443,8 +443,16 @@ pack_out() {
   HERDR_APP_HOME=$APP_HOME node "$p_upd" pack-out --mods "$MODS" --to "$p_to" "$@" </dev/null 2>/dev/null
 }
 
+# A linked mods/ is the person's folder (#494): the same words as layoutSafe.mjs linkedModsLine.
+linked_mods_line() {
+  printf '%s' "mods/ ($MODS) is a link to $(readlink "$MODS"), your own folder, not one this install made: nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again"
+}
+
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
+  # Before anything (the layout, usagemeter on the linked machines, the folders, the record): with
+  # mods/ a link, nothing is done, by this script or by the updater's pack-out (#494).
+  if [ -L "$MODS" ]; then fail "$(linked_mods_line)"; fi
   mods=$(mark_get mods)
   adopted=$(mark_get adopted)
   ref=$REF
@@ -1018,7 +1026,7 @@ install() {
       rc=0
     elif [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ]; then
       why=$(printf '%s' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-      fail "could not check the installed pack: ${why:-$out $(cat "$TMP/log")}"
+      fail "the installed pack $VERSION was left as it is (not checked or repaired): ${why:-$out $(cat "$TMP/log")}"
     else
       sed -e '/^notice: /d' -e 's/^/  /' "$TMP/log"
       sed -n 's/^notice: //p' "$TMP/log" >"$TMP/notice"
