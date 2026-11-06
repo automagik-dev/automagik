@@ -453,7 +453,7 @@ test("modeOf, templateMode and the args line", () => {
 });
 
 test("the address check: terminal addresses caught, words, ids, versions, URLs and branches left alone", () => {
-  for (const [text, want] of [["ask t3q1 to merge", ["t3q1"]], ["send it to t35n.", ["t35n"]], ["on khal-labs/t9 first", ["khal-labs/t9"]],
+  for (const [text, want] of [["ask t3q1 to merge", ["t3q1"]], ["send it to t35n.", ["t35n"]], ["on build-box/t9 first", ["build-box/t9"]],
     ["(t10d)", ["t10d"]], ["t3q1 and t3q1 then t2n3", ["t3q1", "t2n3"]]]) assert.deepEqual(addressesIn(text), want, text);
   for (const text of ["the", "test the tab", "to", "b-6jrz4bmxml", "v0.11.3", "https://example.com/t3q1", "http://h/t9/x",
     "feature/t3q1-fix", "fix/herdr-498-t3", "origin/t10d-x", "t-shirt", "at3q1", "T3Q1"]) assert.deepEqual(addressesIn(text), [], text);

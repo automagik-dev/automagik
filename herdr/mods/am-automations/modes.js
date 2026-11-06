@@ -87,7 +87,7 @@ export function parseArgs(text) {
   return out;
 }
 
-// An hc terminal address, bare (t3q1) or with its machine (khal-labs/t9): a t and a digit first,
+// An hc terminal address, bare (t3q1) or with its machine (build-box/t9): a t and a digit first,
 // so English words stay out. A name given with hc --name can't be told apart; it isn't caught.
 const ADDRESS = /(?<![\w./-])(?:[a-z0-9][a-z0-9._-]*\/)?t[0-9][0-9a-z]*(?![\w-])/g;
 
