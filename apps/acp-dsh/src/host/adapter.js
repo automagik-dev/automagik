@@ -13,9 +13,7 @@ import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, URL_ENV } from './names.js'
-import {
-  boundaryNotice, lastProviderOf, replayBlocks, streamRedactor, turnStart,
-} from './switch.js'
+import { boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -50,40 +48,21 @@ const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 
 
 // The blocks of one model step: text and reasoning open as they come, close before a tool call.
 class Blocks {
-  /**
-   * @param {(text: string) => string} [redact] when given, text and reasoning are redacted as
-   *   they stream (live switching): a credential split across chunks cannot reach DSH's log.
-   */
-  constructor(redact) { this.index = 0; this.open = undefined; this.redact = redact }
-  *start(type) {
-    this.open = {
-      type,
-      index: this.index++,
-      text: '',
-      stream: this.redact === undefined ? undefined : streamRedactor(this.redact),
-    }
-    yield { type: 'block-start', index: this.open.index, blockType: type }
-  }
+  constructor() { this.index = 0; this.open = undefined }
   *add(type, text) {
     if (this.open?.type !== type) {
       yield* this.close()
-      yield* this.start(type)
+      this.open = { type, index: this.index++, text: '' }
+      yield { type: 'block-start', index: this.open.index, blockType: type }
     }
     this.open.text += text
-    const out = this.open.stream === undefined ? text : this.open.stream.push(text)
-    if (out !== '') yield deltaOf(type, this.open.index, out)
+    yield { type: type === 'text' ? 'text-delta' : 'reasoning-delta', index: this.open.index, text }
   }
   *close() {
     if (this.open === undefined) return
-    const { type, index, text, stream } = this.open
+    const { type, index, text } = this.open
     this.open = undefined
-    if (stream === undefined) {
-      yield { type: 'block-end', index, block: { type, text } }
-      return
-    }
-    const tail = stream.close()
-    if (tail !== '') yield deltaOf(type, index, tail)
-    yield { type: 'block-end', index, block: { type, text: this.redact(text) } }
+    yield { type: 'block-end', index, block: { type, text } }
   }
   *toolCall(id, name, args) {
     yield* this.close()
@@ -95,11 +74,6 @@ class Blocks {
 }
 
 const textOf = content => (typeof content === 'string' ? content : (content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n'))
-
-/** One stream chunk for an open text or reasoning block. */
-const deltaOf = (type, index, text) => ({
-  type: type === 'text' ? 'text-delta' : 'reasoning-delta', index, text,
-})
 
 /** The source kind of the row that says a new agent session does not see the chat before it. */
 export const NOTICE_KIND = 'acp-session'
@@ -205,9 +179,6 @@ export class AcpAdapter extends LlmAdapter {
     this.dshTools = dshTools
     this.backchannel = backchannel
     this.redact = redactor ?? (text => text)
-    // A Session on an agent with live switching on redacts both crossings; with no redactor
-    // wired in (a bare adapter in a test), there is nothing to redact with.
-    this.redacts = redactor !== undefined
     this.live = new Map()
     this.scoped = new WeakSet()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
@@ -379,9 +350,7 @@ export class AcpAdapter extends LlmAdapter {
     } catch (error) {
       return yield finish('error', `${agent.name} cannot show its tools here: ${error?.message ?? error}`)
     }
-    // Live switching redacts the agent's text as it streams, so what DSH logs is clean; off,
-    // the blocks stream exactly as the agent sent them (the 2026-11-03 path).
-    const blocks = new Blocks(this.bridgeOn() && this.redacts ? this.redact : undefined)
+    const blocks = new Blocks()
     let live = this.live.get(sessionId)
     const last = options.messages.at(-1)
     const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
@@ -490,9 +459,9 @@ export class AcpAdapter extends LlmAdapter {
     for (;;) {
       const event = await live.run.next(options.signal)
       if (event.type === 'end' || event.type === 'error') live.open = false
-      // With live switching on, the text was already redacted as it streamed (`Blocks`), so
-      // DSH logs a clean answer. Off is the 2026-11-03 path: the agent's answer is logged as a
-      // native model's answer would be, and the bridge's DSH tool rows stay DSH's own.
+      // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
+      // does this plugin. The redactor runs at each provider crossing instead — the replay out
+      // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).
       if (event.type === 'text') yield* blocks.add('text', event.text)
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {

@@ -20,6 +20,7 @@ import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 import { redactorFor } from './src/host/redact.js'
+import { crossed } from './src/host/switch.js'
 
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
@@ -71,10 +72,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     })
   }
   const backchannel = new Backchannel({ ctx, log })
+  const redact = redactorFor(ctx)
   const adapter = new AcpAdapter(ctx, agents, {
     dshTools: () => flagOf(config.dshTools) === true,
     backchannel,
-    redactor: redactorFor(ctx),
+    redactor: redact,
   })
   const clis = new Map()
   const signIns = new Map()
@@ -233,6 +235,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
   ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL))
+  // The other crossing: a transcript that carries an agent's turn is redacted before it is
+  // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
+  const crossing = crossed(agents, ctx, redact, () => flagOf(config.dshTools) === true)
+  ctx.on?.('llm/stream', crossing)
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())
   // A model selection that moves a Session off its agent: its boundary row, and the agent

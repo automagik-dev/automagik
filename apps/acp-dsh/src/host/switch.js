@@ -1,8 +1,8 @@
 // Live switching (RFC 0003, amendment, "Live switching"). A Session keeps the record: moving to
 // an agent replays the transcript into `session/prompt` content, in order, and moving back leaves
-// what the agent streamed in DSH's log. Text passes the redactor both ways: the replay whole,
-// and the agent's stream as it arrives, where a shape can straddle two chunks. Each crossing
-// writes a visible provider-boundary row, so the chat says who answered.
+// what the agent streamed in DSH's log. The redactor runs at each crossing only — the replay out
+// to an agent, and the transcript handed back to a native provider — never at ingest. Each
+// crossing writes a visible provider-boundary row, so the chat says who answered.
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 /** The source kind of the row that names the provider a turn came from or went to. */
@@ -41,69 +41,57 @@ export function boundaryNotice(summary) {
   })
 }
 
-// The widest shape in the credential table spans four whitespace-separated words (a quoted key,
-// its separator and a quoted value), so no match can start before the fourth word from the end
-// and still be growing. A wider table makes the stream hold more, never release early.
-const HOLD_WORDS = 4
-
-const isSpace = char => char === ' ' || char === '\t' || char === '\n' || char === '\r'
-  || char === '\f' || char === '\v'
-
 /**
- * Where the `words`th word from the end starts: the earliest point whose redaction can still
- * change when more text arrives. Zero when the text holds fewer words than asked for.
- * @param {string} text
- * @param {number} [words]
- * @returns {number}
+ * A transcript with every text-bearing part redacted, for a crossing to another provider. The
+ * messages and their content are copied, never changed: DSH keeps the record it logged.
+ * @param {any[]} messages
+ * @param {(text: string) => string} redact
+ * @returns {any[]}
  */
-export function holdStart(text, words = 1) {
-  let found = 0
-  let index = text.length
-  while (index > 0) {
-    while (index > 0 && isSpace(text[index - 1])) index--
-    if (index === 0) break
-    while (index > 0 && !isSpace(text[index - 1])) index--
-    found++
-    if (found === words) return index
-  }
-  return 0
+export function redactTranscript(messages, redact) {
+  return messages.map((message) => {
+    const content = message?.content
+    if (typeof content === 'string') return { ...message, content: redact(content) }
+    if (!Array.isArray(content)) return message
+    return {
+      ...message,
+      content: content.map((block) => {
+        if (block === null || typeof block !== 'object') return block
+        const out = { ...block }
+        if (typeof out.text === 'string') out.text = redact(out.text)
+        if (typeof out.arguments === 'string') out.arguments = redact(out.arguments)
+        return out
+      }),
+    }
+  })
+}
+
+/** Whether a transcript carries a turn an agent wrote (its answer, with its calls and results). */
+export function fromAgent(messages, providers) {
+  return (messages ?? []).some(message =>
+    message?.role === 'assistant' && providers.has(message?.source?.provider))
 }
 
 /**
- * A redactor for one streamed block. Text is released as it arrives, except a tail that could
- * still become a credential shape: a token split across two chunks must never reach DSH's log
- * in parts. What is released is final — redacting that prefix and the whole text agree — and
- * the rest goes out when the block closes.
+ * The `llm/stream` listener for the crossing back to DSH's own providers: a transcript that
+ * carries an agent's turn is redacted before a native model sees it, so a secret the agent read
+ * with its own tools never reaches that provider. `next` takes no request, so the redacted call
+ * is a nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
+ * @param {Map<string, unknown>} providers the agents' routes
+ * @param {{ llm?: { stream(options: object): AsyncIterable<object> } }} [ctx]
  * @param {(text: string) => string} redact
- * @returns {{ push(text: string): string, close(): string }}
+ * @param {() => boolean} [on] whether live switching is on (the setting); off is the old path
  */
-export function streamRedactor(redact) {
-  let raw = ''
-  let sent = ''
-  return {
-    push(text) {
-      raw += text
-      const full = redact(raw)
-      let cut = holdStart(raw)
-      let stable = cut === 0 ? '' : redact(raw.slice(0, cut))
-      // A shape that began before the cut and is completed here would change text already
-      // released: hold more of the tail until the released prefix is final. A table wider than
-      // these words holds everything until the block ends rather than stream a secret.
-      for (let words = 2; words <= HOLD_WORDS && !full.startsWith(stable); words++) {
-        cut = holdStart(raw, words)
-        stable = cut === 0 ? '' : redact(raw.slice(0, cut))
-      }
-      if (!full.startsWith(stable) || stable.length <= sent.length) return ''
-      const out = stable.slice(sent.length)
-      sent = stable
-      return out
-    },
-    close() {
-      const full = redact(raw)
-      const out = full.slice(sent.length)
-      sent = full
-      return out
-    },
+export function crossed(providers, ctx, redact, on = () => true) {
+  const rewritten = new WeakSet()
+  return (options, next) => {
+    if (on() !== true) return next()
+    if (providers.has(options.provider) || options.sessionId === undefined) return next()
+    if (rewritten.has(options) || ctx?.llm?.stream === undefined) return next()
+    if (!fromAgent(options.messages, providers)) return next()
+    const request = { ...options, messages: redactTranscript(options.messages, redact) }
+    rewritten.add(request)
+    return ctx.llm.stream(request)
   }
 }
 

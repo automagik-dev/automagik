@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  BOUNDARY_KIND, boundaryNotice, holdStart, lastProviderOf, renderMessage, replayBlocks,
-  streamRedactor, turnStart,
+  BOUNDARY_KIND, boundaryNotice, crossed, fromAgent, lastProviderOf, redactTranscript,
+  renderMessage, replayBlocks, turnStart,
 } from '../src/host/switch.js'
 import { credentialShapes } from '../src/host/redact.js'
 
@@ -68,35 +68,56 @@ test('the boundary row is a notice outside the reply, naming where the turn came
   assert.deepEqual(row.content, [{ type: 'text', text: '[Now answered by Claude Code (acp-claude).]' }])
 })
 
-test('an agent\'s text is redacted as it streams, even when a shape is split across chunks', () => {
-  const run = (parts) => {
-    const stream = streamRedactor(credentialShapes)
-    return parts.map(part => stream.push(part)).join('') + stream.close()
-  }
-  assert.equal(run(['my key sk-abcdef123456 here']), 'my key sk-[hidden] here')
-  // The provider key straddles two chunks and the npm token three: neither surfaces in parts.
-  const split = run(['my key sk-abc', 'def123456 and npm_abcdefgh', 'ijklmnopqrstuvwxyz'])
-  assert.equal(split, 'my key sk-[hidden] and [hidden]')
-  // Text that cannot become a shape streams before the block ends; only the last word waits.
-  const stream = streamRedactor(credentialShapes)
-  assert.equal(stream.push('one two three four five '), 'one two three four ')
-  assert.equal(stream.push('six'), 'five ')
-  assert.equal(stream.close(), 'six')
+test('a transcript crossing back to a native provider is redacted, its source untouched', () => {
+  const messages = [
+    user('look'),
+    {
+      role: 'assistant',
+      source: { kind: 'model', provider: 'acp-claude' },
+      content: [
+        { type: 'text', text: 'read sk-abcdef123456' },
+        { type: 'reasoning', text: 'thought sk-abcdef123456' },
+        {
+          type: 'tool-call', id: 'c1', name: 'bash',
+          arguments: '{"command":"deploy ghp_abcdefghijklmnopqrst"}',
+        },
+      ],
+    },
+    {
+      role: 'tool', toolCallId: 'c1', source: { kind: 'tool', callId: 'c1' },
+      content: [{ type: 'text', text: 'token sk-abcdef123456' }],
+    },
+  ]
+  const redacted = redactTranscript(messages, credentialShapes)
+  const json = JSON.stringify(redacted)
+  assert.doesNotMatch(json, /sk-abcdef123456|ghp_abcdefghijklmnopqrst/)
+  assert.match(json, /sk-\[hidden\]/)
+  // The record DSH logged is not rewritten; every other field survives.
+  assert.match(JSON.stringify(messages), /sk-abcdef123456/)
+  assert.equal(redacted[2].toolCallId, 'c1')
 })
 
-test('a shape whose replacement drops its prefix is held whole, never streamed in parts', () => {
-  const redact = text => text.replace(/Bearer \w+/g, '[hidden]')
-  const stream = streamRedactor(redact)
-  assert.equal(stream.push('key Bearer abcd'), 'key ')
-  assert.equal(stream.push('efgh'), '')
-  assert.equal(stream.close(), '[hidden]')
-})
-
-test('the hold starts at a word boundary, so no shape can grow back into released text', () => {
-  assert.equal(holdStart('one two three'), 8)
-  assert.equal(holdStart('one two three', 2), 4)
-  assert.equal(holdStart('one two three', 3), 0)
-  assert.equal(holdStart('one two three', 4), 0)
-  assert.equal(holdStart('one'), 0)
-  assert.equal(holdStart('   '), 0)
+test('a request carrying an agent turn is redacted before a native provider sees it', () => {
+  const sent = []
+  const ctx = { llm: { stream: options => { sent.push(options); return 'stream' } } }
+  const providers = new Map([['acp-claude', {}]])
+  const listen = crossed(providers, ctx, credentialShapes)
+  const messages = [user('look'), answer('read sk-abcdef123456', 'acp-claude')]
+  const request = { provider: 'deepseek-official', model: 'm', sessionId: 's1', messages }
+  assert.equal(fromAgent(messages, providers), true)
+  assert.equal(listen(request, () => 'next'), 'stream')
+  assert.equal(sent.length, 1)
+  assert.equal(JSON.stringify(sent[0].messages).includes('sk-abcdef123456'), false)
+  assert.match(JSON.stringify(sent[0].messages), /sk-\[hidden\]/)
+  // The original request and the messages DSH logged are untouched.
+  assert.match(JSON.stringify(messages), /sk-abcdef123456/)
+  // The nested call does not re-enter the listener.
+  assert.equal(listen(sent[0], () => 'next'), 'next')
+  // No agent turn, an agent route, no Session, or the setting off: unchanged.
+  const plain = { provider: 'deepseek-official', sessionId: 's1', messages: [user('hi')] }
+  assert.equal(listen(plain, () => 'next'), 'next')
+  assert.equal(listen({ ...request, provider: 'acp-claude' }, () => 'next'), 'next')
+  assert.equal(listen({ ...request, sessionId: undefined }, () => 'next'), 'next')
+  const off = crossed(providers, ctx, credentialShapes, () => false)
+  assert.equal(off(request, () => 'next'), 'next')
 })

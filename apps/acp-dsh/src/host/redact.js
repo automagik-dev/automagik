@@ -1,9 +1,9 @@
 // Redaction where history crosses a provider boundary (RFC 0003, amendment, "Live switching"):
-// a Session's transcript is replayed into another provider after it passes this filter, and an
-// agent's own stream passes it as it arrives, before DSH writes the answer down (both are
-// `switch.js`). The bridge's DSH tool results are DSH's own rows and do not pass through here.
-// The secret values saved for a Bot's Session go first, then the credential shapes the Bot
-// team's diagnostics mask.
+// a Session's transcript passes this filter when it is replayed into another provider — out to
+// an agent (`switch.js`, `replayBlocks`) or back to a native provider (`crossed`). Ingest is not
+// a crossing: the agent's own answer is logged as it said it, and the bridge's DSH tool results
+// are DSH's own rows. The secret values saved for a Bot's Session go first, then the credential
+// shapes the Bot team's diagnostics mask.
 //
 // The secret store belongs to the Bot team's runtime (`omniTeam`), which composes only where
 // Bots run; acp-dsh reads it when it is there and never requires it. A chat that is not a Bot's
@@ -11,8 +11,8 @@
 
 // Shapes of credentials that are not saved keys: provider keys, bearer tokens, and token or
 // key parameters in addresses. The same table as apps/bots-dsh/src/host/diagnostics.js, plus
-// npm's token shape below (the Bot team's table does not carry it yet; an agent's answer can be
-// streamed into DSH's log or replayed to another provider, so it is masked on both crossings).
+// npm's token shape below (the Bot team's table does not carry it yet; an agent's streamed
+// answer can be replayed to another provider, so it is masked on that crossing too).
 export const CREDENTIALS = Object.freeze([
   [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
   [/\bnpm_[A-Za-z0-9]{16,}/g, '[hidden]'],
