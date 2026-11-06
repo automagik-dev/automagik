@@ -115,6 +115,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(file, { force: true })", 1, "saveHeld: held.json in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(tmp, link)", 1, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
   ["herdr/mods/am-sidebar/update.mjs", "removePath(tmp, { force: true })", 2, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(keysTmp, { force: true })", 1, "writeKeys: its own temp file beside keys.json in the app home (keys.json itself goes through change()), never under mods/ or layouts/"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(dir, { recursive: true, force: true })", 1, "a staging folder or temp file it made itself (mkdtemp in tmpdir, or staging-/tgz folders in the state folder)"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(next, { recursive: true, force: true })", 2, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/update.mjs", "removePath(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
