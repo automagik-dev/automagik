@@ -2,7 +2,8 @@
 // with the rc.1 Host Remote shapes (follow, events, state, observeState). No DSH package is
 // loaded: the fake is the controller.
 import assert from 'node:assert/strict'
-import { lstatSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -11,7 +12,7 @@ import { createAdapter } from '../src/host/pocket-chat-adapter.js'
 import {
   ANSWER_ON_COMPUTER, DshChatSource, cursorOf, hasSessionApi, install, ownBots, rowIdOf, rowsOf, statusOf,
 } from '../src/host/pocket-chat.js'
-import { MAX_LINE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
+import { CLOSE_GRACE_MS, MAX_LINE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
 import { fakeContext } from './fake-ctx.js'
 
 // ---- the fake Session Controller
@@ -259,13 +260,26 @@ test('rows and status helpers keep their contract', () => {
 // ---- the socket
 
 const tempHome = () => mkdtempSync(join(tmpdir(), 'pchat-'))
+/** How long a test waits for one answer or step before it fails (never hangs). */
+const STEP_MS = 5000
+
+/** `promise`, or a rejection after `ms`; the timer is cleared either way. */
+function within(promise, ms = STEP_MS) {
+  let timer
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`not within ${ms} ms`)), ms) })
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer))
+}
 
 function client(path) {
   const socket = createConnection(path)
   let buffer = ''
+  let ended = false
   const lines = []
   const waiting = []
+  const wake = () => { for (const wait of waiting.splice(0)) wait() }
   socket.setEncoding('utf8')
+  socket.on('error', () => {})
+  socket.on('close', () => { ended = true; wake() })
   socket.on('data', (chunk) => {
     buffer += chunk
     let at
@@ -273,100 +287,246 @@ function client(path) {
       const message = JSON.parse(buffer.slice(0, at))
       buffer = buffer.slice(at + 1)
       lines.push(message)
-      for (const wait of waiting.splice(0)) wait()
     }
+    wake()
   })
+  // An answer that does not come fails the test: the socket closed, or STEP_MS went by.
   const until = async (match) => {
     for (;;) {
       const found = lines.find(match)
       if (found) return found
-      await new Promise(resolve => waiting.push(resolve))
+      if (ended) throw new Error('the socket closed before the answer')
+      await within(new Promise(resolve => waiting.push(resolve)))
     }
   }
   let next = 1
   return {
     socket, lines, until,
     ask: (method, params) => { const id = next++; socket.write(`${JSON.stringify({ id, method, params })}\n`); return until(line => line.id === id) },
-    closed: () => new Promise(resolve => socket.once('close', resolve)),
+    closed: () => within(new Promise(resolve => (ended ? resolve() : socket.once('close', resolve)))),
   }
 }
 
-test('the socket is a Unix socket under the team home, mode 0600 in a 0700 folder', async () => {
+/**
+ * One test's team home. Whatever the test opens through it (hosts, clients, child processes) is
+ * closed after the test, passed or failed, and only then is the home removed: no handle outlives
+ * a test.
+ */
+function scope(t) {
   const home = tempHome()
-  try {
-    const server = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
-    assert.equal(server.path, socketPathOf(home))
-    assert.ok(!relative(home, server.path).startsWith('..'), 'under the team home')
-    assert.ok(lstatSync(server.path).isSocket())
-    assert.equal(statSync(server.path).mode & 0o777, 0o600)
-    assert.equal(statSync(join(home, 'pocket')).mode & 0o777, 0o700)
-    await server.close()
-  } finally {
+  const opened = []
+  t.after(async () => {
+    for (const close of opened.reverse()) await close()
     rmSync(home, { recursive: true, force: true })
+  })
+  return {
+    home,
+    path: socketPathOf(home),
+    /** Run `close` after the test, before the home is removed (last opened, first closed). */
+    defer: (close) => { opened.push(close) },
+    /** A host on this home; closed after the test even if the test stopped waiting for it. */
+    start(options = {}) {
+      const started = startPocketSocket({ home, source: sourceOf(fakeController(sessions())), ...options })
+      opened.push(async () => { const host = await started.catch(() => null); await host?.close() })
+      return started
+    },
+    client(path = socketPathOf(home), options) {
+      const c = options ? null : client(path)
+      const socket = c?.socket ?? createConnection({ path, ...options })
+      if (!c) socket.on('error', () => {})
+      opened.push(() => socket.destroy())
+      return c ?? socket
+    },
+    async hello(path = socketPathOf(home)) {
+      const c = this.client(path)
+      try { return (await c.ask('hello')).result } finally { c.socket.destroy() }
+    },
+    /** A socket left by a host that died: a child binds it and is killed (a clean close unlinks it). */
+    async staleSocket() {
+      mkdirSync(join(home, 'pocket'), { recursive: true, mode: 0o700 })
+      const child = spawn(process.execPath, ['-e', "require('node:net').createServer().listen(process.env.SOCK, () => console.log('ok'))"], { env: { ...process.env, SOCK: socketPathOf(home) }, stdio: ['ignore', 'pipe', 'inherit'] })
+      const exited = new Promise(resolve => child.once('exit', resolve))
+      const kill = async () => { child.kill('SIGKILL'); await exited; child.stdout.destroy() }
+      opened.push(kill)
+      try {
+        await within(new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('exit', () => reject(new Error('the stale host exited before it bound'))) }))
+      } finally {
+        await kill()
+      }
+      return lstatSync(socketPathOf(home))
+    },
   }
+}
+
+test('the socket is a Unix socket under the team home, mode 0600 in a 0700 folder', async (t) => {
+  const s = scope(t)
+  const server = await s.start()
+  assert.equal(server.path, socketPathOf(s.home))
+  assert.ok(!relative(s.home, server.path).startsWith('..'), 'under the team home')
+  assert.ok(lstatSync(server.path).isSocket())
+  assert.equal(statSync(server.path).mode & 0o777, 0o600)
+  assert.equal(statSync(join(s.home, 'pocket')).mode & 0o777, 0o700)
+  await server.close()
 })
 
-test('over the socket: list and subscribe read; every other method is answered read-only', async () => {
-  const home = tempHome()
+test('over the socket: list and subscribe read; every other method is answered read-only', async (t) => {
+  const s = scope(t)
   const controller = fakeController(sessions())
-  const server = await startPocketSocket({ home, source: sourceOf(controller) })
-  const c = client(server.path)
-  try {
-    assert.deepEqual((await c.ask('hello')).result, { protocol: 1, readOnly: true, methods: ['hello', 'list', 'subscribe', 'unsubscribe', 'backfill'] })
-    assert.deepEqual((await c.ask('list')).result.terminals.map(row => row.terminal), ['dsh:omni', 'dsh:ada'])
-    assert.deepEqual((await c.ask('subscribe', { terminal: 'dsh:omni', channel: 3 })).result, { channel: 3 })
-    const snapshot = await c.until(line => line.channel === 3 && line.event.type === 'snapshot')
-    assert.equal(snapshot.event.rows.length, 5)
-    for (const method of ['send', 'sendHeld', 'cancelHeld', 'answer', 'interrupt', 'prompt', '$events']) {
-      assert.equal((await c.ask(method, { terminal: 'dsh:omni' })).error.kind, 'read-only', method)
-    }
-    assert.ok(!controller.calls.includes('prompt') && !controller.calls.includes('cancel'))
-    // A line past the limit ends the connection.
-    const gone = c.closed()
-    c.socket.write('x'.repeat(MAX_LINE + 2))
-    await gone
-  } finally {
-    c.socket.destroy()
-    await server.close()
-    rmSync(home, { recursive: true, force: true })
+  const server = await s.start({ source: sourceOf(controller) })
+  const c = s.client(server.path)
+  assert.deepEqual((await c.ask('hello')).result, { protocol: 1, readOnly: true, methods: ['hello', 'list', 'subscribe', 'unsubscribe', 'backfill'] })
+  assert.deepEqual((await c.ask('list')).result.terminals.map(row => row.terminal), ['dsh:omni', 'dsh:ada'])
+  assert.deepEqual((await c.ask('subscribe', { terminal: 'dsh:omni', channel: 3 })).result, { channel: 3 })
+  const snapshot = await c.until(line => line.channel === 3 && line.event.type === 'snapshot')
+  assert.equal(snapshot.event.rows.length, 5)
+  for (const method of ['send', 'sendHeld', 'cancelHeld', 'answer', 'interrupt', 'prompt', '$events']) {
+    assert.equal((await c.ask(method, { terminal: 'dsh:omni' })).error.kind, 'read-only', method)
   }
+  assert.ok(!controller.calls.includes('prompt') && !controller.calls.includes('cancel'))
+  // A line past the limit ends the connection.
+  const gone = c.closed()
+  c.socket.write('x'.repeat(MAX_LINE + 2))
+  await gone
+})
+
+// ---- the socket's start and stop (#548)
+
+/**
+ * Which file is at a path: the same tuple the stale check compares. An inode alone proves
+ * nothing, since Linux hands a freed one to the next file at once (#301).
+ */
+const identityOf = s => ({ dev: s.dev, ino: s.ino, ctimeMs: s.ctimeMs, birthtimeMs: s.birthtimeMs })
+const identity = path => identityOf(lstatSync(path))
+
+test('start refuses something that is not a socket at the path, and keeps it', async (t) => {
+  const s = scope(t)
+  mkdirSync(join(s.home, 'pocket'), { mode: 0o700 })
+  writeFileSync(s.path, 'keep me')
+  await assert.rejects(s.start(), /not a socket/)
+  assert.equal(readFileSync(s.path, 'utf8'), 'keep me')
+})
+
+test('start refuses while another host serves the team, and leaves that host serving', async (t) => {
+  const s = scope(t)
+  const first = await s.start()
+  const before = identity(first.path)
+  await assert.rejects(s.start(), /another host already serves/)
+  assert.deepEqual(identity(first.path), before, 'the live socket is kept')
+  assert.equal((await s.hello()).readOnly, true)
+})
+
+test('start removes a dead host\'s stale socket and serves in its place', async (t) => {
+  const s = scope(t)
+  const stale = await s.staleSocket()
+  assert.ok(stale.isSocket())
+  const server = await s.start()
+  assert.notDeepEqual(identity(server.path), identityOf(stale), 'another file than the stale one')
+  assert.equal(statSync(server.path).mode & 0o777, 0o600)
+  // The stale host is dead, so an answer can only come from the new one.
+  assert.equal((await s.hello()).readOnly, true)
+  await server.close()
+  assert.equal(existsSync(server.path), false, 'a clean stop leaves no socket')
+})
+
+test('start tightens a folder others could open back to 0700', async (t) => {
+  const s = scope(t)
+  mkdirSync(join(s.home, 'pocket'))
+  chmodSync(join(s.home, 'pocket'), 0o777)
+  const server = await s.start()
+  assert.equal(statSync(join(s.home, 'pocket')).mode & 0o777, 0o700)
+  assert.equal(statSync(server.path).mode & 0o777, 0o600)
+})
+
+test('two starts at once: one serves, the other is refused, and the one serving keeps its socket', async (t) => {
+  const s = scope(t)
+  await s.staleSocket()
+  const results = await Promise.allSettled([s.start(), s.start()])
+  const won = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+  const lost = results.filter(r => r.status === 'rejected').map(r => r.reason.message)
+  assert.equal(won.length, 1)
+  assert.deepEqual(lost, ['another host already serves this team to Pocket'])
+  assert.equal((await s.hello()).readOnly, true, 'the bound socket was not unlinked')
+})
+
+test('a stop cuts a reader that never ends its side, and the next start goes ahead', async (t) => {
+  const s = scope(t)
+  const first = await s.start()
+  // A half-open reader: it keeps its side open after the host ends its own.
+  const stuck = s.client(first.path, { allowHalfOpen: true })
+  stuck.setEncoding('utf8')
+  const answered = new Promise(resolve => stuck.once('data', resolve))
+  stuck.write(`${JSON.stringify({ id: 1, method: 'hello' })}\n`)
+  await within(answered)
+  await within(first.close(), CLOSE_GRACE_MS + 2000)
+  await within(s.start())
+  assert.equal((await s.hello()).readOnly, true)
+})
+
+/** lstat with one field changed, as if the file at the path had been made again. */
+const remade = field => (path) => {
+  const s = lstatSync(path)
+  return Object.assign(Object.create(Object.getPrototypeOf(s)), s, { [field]: s[field] + 1 })
+}
+
+for (const field of ['ctimeMs', 'birthtimeMs']) {
+  test(`a stale socket made again in its place (an inode reused) is not removed: ${field}`, async (t) => {
+    const s = scope(t)
+    const stale = await s.staleSocket()
+    await assert.rejects(s.start({ lstat: remade(field) }), /another host already serves/)
+    assert.deepEqual(identity(s.path), identityOf(stale), 'the file is kept')
+  })
+}
+
+test('a bind that loses the race (EADDRINUSE) is refused like a live host', async (t) => {
+  const s = scope(t)
+  const stale = await s.staleSocket()
+  // The re-check finds the path gone, as if another host had taken it: nothing is removed and
+  // the bind meets the file still there.
+  const gone = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }) }
+  await assert.rejects(s.start({ lstat: gone }), { message: 'another host already serves this team to Pocket' })
+  assert.deepEqual(identity(s.path), identityOf(stale), 'the file is kept')
+})
+
+test('a stop and a start at once: the stop finishes first and the new host keeps its socket', async (t) => {
+  const s = scope(t)
+  const old = await s.start()
+  const [, fresh] = await within(Promise.all([old.close(), s.start()]))
+  assert.equal((await s.hello()).readOnly, true)
+  await old.close()
+  assert.equal((await s.hello()).readOnly, true, 'closing the old host again removes nothing')
+  await fresh.close()
+  assert.equal(existsSync(fresh.path), false)
 })
 
 // ---- install
 
 const rtFor = (ctx, home) => ({ ...team(), ctx, home, warn() {} })
 
-test('without DSH 0.2.2\'s Session API, install registers nothing and opens no socket', async () => {
-  const home = tempHome()
-  try {
-    for (const services of [{}, { sessionController: { follow() {} } }]) {
-      const ctx = fakeContext({ services })
-      install(rtFor(ctx, home))
-      assert.deepEqual(ctx.calls, [])
-    }
-    assert.throws(() => lstatSync(socketPathOf(home)), { code: 'ENOENT' })
-  } finally {
-    rmSync(home, { recursive: true, force: true })
+test('without DSH 0.2.2\'s Session API, install registers nothing and opens no socket', async (t) => {
+  const s = scope(t)
+  for (const services of [{}, { sessionController: { follow() {} } }]) {
+    const ctx = fakeContext({ services })
+    install(rtFor(ctx, s.home))
+    assert.deepEqual(ctx.calls, [])
   }
+  assert.throws(() => lstatSync(s.path), { code: 'ENOENT' })
 })
 
-test('with the Session API, install loads the adapter lazily and serves the socket until disposed', async () => {
-  const home = tempHome()
+test('with the Session API, install loads the adapter lazily and serves the socket until disposed', async (t) => {
+  const s = scope(t)
   const ctx = fakeContext({ services: { sessionController: fakeController(sessions()) } })
-  try {
-    install(rtFor(ctx, home))
-    assert.deepEqual(ctx.calls, ['effect ds-bot: pocket chat'])
-    let found = null
-    for (let i = 0; i < 200 && !found; i++) {
-      try { found = lstatSync(socketPathOf(home)) } catch { await new Promise(resolve => setTimeout(resolve, 10)) }
-    }
-    assert.ok(found?.isSocket(), 'the socket appears')
-    const c = client(socketPathOf(home))
-    assert.deepEqual((await c.ask('list')).result.terminals.map(row => row.terminal), ['dsh:omni', 'dsh:ada'])
-    c.socket.destroy()
-    await ctx.dispose()
-    assert.throws(() => lstatSync(socketPathOf(home)), { code: 'ENOENT' })
-  } finally {
-    rmSync(home, { recursive: true, force: true })
+  // Disposed after the test whatever happens (a second dispose is a no-op), before the home goes.
+  s.defer(() => ctx.dispose())
+  install(rtFor(ctx, s.home))
+  assert.deepEqual(ctx.calls, ['effect ds-bot: pocket chat'])
+  let found = null
+  for (let i = 0; i < 200 && !found; i++) {
+    try { found = lstatSync(s.path) } catch { await new Promise(resolve => setTimeout(resolve, 10)) }
   }
+  assert.ok(found?.isSocket(), 'the socket appears')
+  const c = s.client()
+  assert.deepEqual((await c.ask('list')).result.terminals.map(row => row.terminal), ['dsh:omni', 'dsh:ada'])
+  c.socket.destroy()
+  await within(ctx.dispose())
+  assert.throws(() => lstatSync(s.path), { code: 'ENOENT' })
 })

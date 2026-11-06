@@ -7,7 +7,8 @@
 // channel the client named in its subscribe. Methods: hello, list, subscribe {terminal, channel,
 // after?}, unsubscribe {channel}, backfill {channel, before, limit?}. Every other method, every
 // write among them, is answered `read-only`: the socket accepts no writes.
-import { chmod, lstat, mkdir, unlink } from 'node:fs/promises'
+import { lstatSync, unlinkSync } from 'node:fs'
+import { chmod, lstat, mkdir } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
 import { join } from 'node:path'
 
@@ -23,6 +24,8 @@ export const MAX_CONNECTIONS = 4
 export const MAX_SUBSCRIPTIONS = 8
 /** Bytes written and not yet taken by the reader; past it the connection ends. */
 export const MAX_UNSENT = 4 * 1024 * 1024
+/** How long a stop waits for readers to finish after it ends them; then they are cut. */
+export const CLOSE_GRACE_MS = 500
 
 export const socketPathOf = home => join(home, SOCKET_DIR, SOCKET_NAME)
 
@@ -37,12 +40,41 @@ function answers(path) {
   })
 }
 
+// Starts and stops on one path run one at a time in this process (`queue`): the plugin's effect
+// can stop and start again while the last one is still closing, and two starts at once could
+// both find the same stale socket and the second unlink the socket the first had just bound.
+// Across processes (two hosts serving one team) there is no lock: a lock file left by a crash
+// would need the same stale check this is. Instead the outcome is defined: a socket that
+// answers is never removed (the newcomer is refused), a stale one is removed only while it is
+// still the same file that was probed (same dev, inode, ctime and birth time where the system has
+// one, since an inode can be reused; checked and removed in one synchronous step), and a bind
+// that loses the race is refused like a live host (EADDRINUSE). What stays open: closing a
+// server unlinks its path by name (libuv does that on close), so if another process replaced
+// the path in between, stopping this host removes that one's socket; it restarts to serve again.
+const queues = new Map()
+function queue(path, step) {
+  const run = (queues.get(path) ?? Promise.resolve()).then(step)
+  const tail = run.catch(() => {})
+  queues.set(path, tail)
+  tail.then(() => { if (queues.get(path) === tail) queues.delete(path) })
+  return run
+}
+
+const served = 'another host already serves this team to Pocket'
+
 /**
- * Serve `source` (a pocket-chat.js DshChatSource) on the team home's socket.
- * @param {{ home: string, source: any, log?: (...args: any[]) => void }} options
+ * Serve `source` (a pocket-chat.js DshChatSource) on the team home's socket. `lstat` is the
+ * synchronous lstat of the stale socket's re-check (tests stand in for it).
+ * @param {{ home: string, source: any, log?: (...args: any[]) => void, lstat?: typeof lstatSync }} options
  * @returns {Promise<{ path: string, close(): Promise<void> }>}
  */
-export async function startPocketSocket({ home, source, log = () => {} }) {
+export function startPocketSocket({ home, source, log = () => {}, lstat: lstatNow = lstatSync }) {
+  return queue(socketPathOf(home), () => start({ home, source, log, lstatNow }))
+}
+
+const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.ctimeMs === b.ctimeMs && a.birthtimeMs === b.birthtimeMs
+
+async function start({ home, source, log, lstatNow }) {
   const dir = join(home, SOCKET_DIR)
   await mkdir(dir, { recursive: true, mode: DIR_MODE })
   const folder = await lstat(dir)
@@ -52,8 +84,10 @@ export async function startPocketSocket({ home, source, log = () => {} }) {
   const existing = await lstat(path).catch(error => { if (error.code === 'ENOENT') return null; throw error })
   if (existing) {
     if (!existing.isSocket()) throw new Error('something that is not a socket is at the Pocket socket path')
-    if (await answers(path)) throw new Error('another host already serves this team to Pocket')
-    await unlink(path)
+    if (await answers(path)) throw new Error(served)
+    // Only the stale socket that was probed, and with no await before the bind below.
+    const now = (() => { try { return lstatNow(path) } catch { return null } })()
+    if (now && sameFile(now, existing)) unlinkSync(path)
   }
   const connections = new Set()
   const server = createServer(socket => {
@@ -63,17 +97,25 @@ export async function startPocketSocket({ home, source, log = () => {} }) {
     socket.once('close', () => { connections.delete(connection); connection.close() })
   })
   await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(path, () => { server.off('error', reject); resolve() })
+    server.once('error', error => reject(error?.code === 'EADDRINUSE' ? new Error(served) : error))
+    server.listen(path, () => { server.removeAllListeners('error'); resolve() })
   })
   // The folder is already 0700, so nobody else could reach the socket before this.
   await chmod(path, SOCKET_MODE)
+  let closing
   return {
     path,
-    async close() {
-      for (const connection of connections) connection.end()
-      await new Promise(resolve => server.close(() => resolve()))
-      await unlink(path).catch(() => {})
+    close() {
+      closing ??= queue(path, async () => {
+        // Readers are ended, then cut after a short grace: a stop (and the start queued behind it)
+        // never waits on a reader that does not end its side.
+        for (const connection of connections) connection.end()
+        const cut = setTimeout(() => { for (const connection of connections) connection.destroy() }, CLOSE_GRACE_MS)
+        // Closing removes the socket file too (libuv unlinks the bound path).
+        await new Promise(resolve => server.close(() => resolve()))
+        clearTimeout(cut)
+      })
+      return closing
     },
   }
 }
@@ -153,5 +195,5 @@ function serve(socket, source, log) {
     }
   })
   socket.on('error', () => close())
-  return { close, end: () => socket.end() }
+  return { close, end: () => socket.end(), destroy: () => socket.destroy() }
 }
