@@ -106,11 +106,11 @@ If a check fails, the bridge returns a named `AUTO_REVIEW_*` error to the agent 
 `'auto-review'` to the side-request purposes that may cross an agent route, beside
 `session-title`. The chosen model is the same fallback chain the title uses: DSH's
 `agentDefaultModel` selection when it is not an agent route, then an explicitly chosen
-`sideModel()`, then the first configured non-agent route, and finally the built-in DeepSeek Flash
-default. A credential or missing-route failure moves to the next candidate, so a team with only
-a Claude login reviews on the model it has; only no answer at all is refused with `UNSUPPORTED`,
-as today. The agent's `reasoningEffort` is removed; the request keeps its `system`, `messages`,
-`temperature`, `sessionId`, `purpose` and `signal`.
+`sideModel()`, then each configured non-agent route in turn (its first model, at most eight), and
+finally the built-in DeepSeek Flash default. A credential or missing-route failure moves to the next
+candidate, so a team with only a Claude login reviews on the model it has; only no answer at all is
+refused with `UNSUPPORTED`, as today. The agent's `reasoningEffort` is removed; the request keeps
+its `system`, `messages`, `temperature`, `sessionId`, `purpose` and `signal`.
 
 **Redact before the reviewer.** For `auto-review`, every text block in the review's `messages`
 (and the `system` text) passes the shared redactor (`redactorFor(ctx)`: the Bot team's saved

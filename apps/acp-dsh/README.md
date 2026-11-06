@@ -64,31 +64,29 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   without that one, or whose levels cannot be read writes a notice row saying so and runs on its
   own. A switch back before the agent has answered drops the agent's chosen level; the native
   target's own default applies.
-- **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
-  prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
-  model that answers on its own, without the agent's effort. That is the first model the team
-  can reach: DSH's default model (`agentDefaultModel`) when it is not an agent; else a
-  `sideModel` the person chose; else the first configured non-agent route; and only then the
-  built-in DeepSeek Flash fallback. A credential or missing-route failure on one candidate moves
-  to the next, so a team without a DeepSeek key reviews and titles on the model it does have;
-  only no answer at all refuses. Auto review (`purpose: auto-review`) takes the same route, with
-  its messages redacted first. Every other side request on an ACP route, a compaction summary
-  included, is refused (`UNSUPPORTED`): it would carry the agent's whole chat to another
-  provider, and the agent manages its own context. Sessions on any other route are left alone.
-- **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
-  agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
-  service below.
-- **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
-  mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
-  own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
-  and Codex's `agent`; it is the preset's identity, never just its sandbox and ask, so a custom
-  preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
-  call through, as it does DSH's own tools. An agent
-  that does not offer the strict mode fails the turn instead of running in its own default.
-- **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
-  project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
-  saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
-  dialog. This is the owner's decision (RFC 0003, Decided).
+- **Only the chat reaches the agent.** DSH's side requests on an ACP route never become   prompts.
+At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a   model that
+answers on its own, without the agent's effort. That is the first model the team   can reach: DSH's
+default model (`agentDefaultModel`) when it is not an agent; else a   `sideModel` the person chose;
+else each configured non-agent route in turn (its first model,   at most eight); and only then the
+built-in DeepSeek Flash fallback. A credential or missing-route failure on one candidate moves   to
+the next, so a team without a DeepSeek key reviews and titles on the model it does have;   only no
+answer at all refuses. Auto review (`purpose: auto-review`) takes the same route, with   its
+messages redacted first. Every other side request on an ACP route, a compaction summary   included,
+is refused (`UNSUPPORTED`): it would carry the agent's whole chat to another   provider, and the
+agent manages its own context. Sessions on any other route are left alone. - **Host only.** No
+browser half, so the plugin cannot stop the web UI from loading. With no   agent CLI installed it
+registers no route. The welcome draws its setup from the `acpAgents`   service below. - **The
+Session's level, as the agent's own mode.** Before each prompt the agent's ACP session   mode
+follows the Session: Manual is Claude Code's `default` mode, whatever default mode its   own
+settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`   and
+Codex's `agent`; it is the preset's identity, never just its sandbox and ask, so a custom   preset
+with the same knobs keeps Manual (and the bridge's own approval). Full access lets every   call
+through, as it does DSH's own tools. An agent   that does not offer the strict mode fails the turn
+instead of running in its own default. - **Claude Code keeps the person's own settings.** It loads
+their Claude Code settings (user,   project and local) and asks DSH only for what those leave as
+"ask". A call their allow rules,   saved "always allow" rules or PreToolUse/PermissionRequest hooks
+approve runs with no DSH   dialog. This is the owner's decision (RFC 0003, Decided).
 
 ## Agents
 
