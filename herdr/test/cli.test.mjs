@@ -1323,11 +1323,13 @@ const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(
 const attachOf = (s) => readRows(existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "").rows;
 
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
-function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen } = {}) {
+function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen, paneArgv = null } = {}) {
   const s = scene(t);
   s.seed(team());
   const old = term("t5", { bot: ID.main, cwd: s.project, status });
   old.foreground.cwd = s.project;
+  // A pane started with words the bot's definition may no longer name (hc get's launch argv).
+  if (paneArgv) { old.argv = paneArgv; old.foreground.argv = paneArgv; }
   old.labels = { ...old.labels, role: "main", "herdr.space": "sp9", "herdr.tab": "tb3", squad: "core", ...(session ? { "agent.session": session } : {}) };
   writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}), ...(runScreen ? { runScreen } : {}) }));
   return s;
@@ -1372,6 +1374,24 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const again = s.cli(["restart", "Genie", "--force"]);
   assert.equal(again.code, 0, again.err);
   assert.deepEqual(plain(s.calls().filter((c) => c[0] === "run")[1]).slice(-3), ["claude", "--resume", SID]);
+});
+
+test("restart rebuilds the launch from the bot's source, never the old pane's argv (#597)", (t) => {
+  // The Housekeeper repro: a pane once started with a retired proxy and -c. Its definition
+  // (agent, model) no longer names them, so restart launches from the source and says so.
+  const stale = ["claude", "--proxy=http://proxy.example:8080", "-c"];
+  const s = restartScene(t, { paneArgv: stale });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["claude", "--resume", SID], "the source's command, resumed by the session");
+  assert.match(r.err, /Genie: its pane's command \(claude --proxy=http:\/\/proxy\.example:8080\) differs from its source now \(claude\): restarting from the source/);
+  // --fresh: the source's command, and never the old pane's resume words.
+  const f = restartScene(t, { paneArgv: stale });
+  const fresh = f.cli(["restart", "Genie", "--fresh", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  const words = plain(agentWords(runCall(f.calls())));
+  assert.deepEqual(words, ["claude"], "neither the proxy nor a resume word");
+  assert.equal(words.some((w) => ["-c", "--continue", "--resume"].includes(w)), false);
 });
 
 test("restart refuses a working bot (nothing started or ended) unless --force", (t) => {
