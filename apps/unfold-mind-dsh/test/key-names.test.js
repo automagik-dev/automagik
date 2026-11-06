@@ -190,13 +190,14 @@ const REFERENCE_TEXT = (() => {
 
 // The stream runs redactText over each delta and builds its row, sentence and audit work on top,
 // so it costs a multiple of the reference: 2.55x measured here (worst of this adversarial set, Node
-// 24.13.1). STREAM_MARGIN sits 1.57x above that, and a 2x regression of the stream path fails
-// (5.1x); the absolute backstop caps how far a reference that reads high can widen the bound. A
+// 24.13.1). STREAM_MARGIN sits 1.57x above that, and a 2x regression of the stream path still
+// fails (5.1x). The backstop is on the reference, not on the bound: a shared rule gone quadratic
+// makes the reference itself exceed it, and no multiple of a reference that high may pass. A
 // quadratic rule at 80k characters is 6.4e9 steps, seconds of CPU, far past either. The text paths
 // keep the absolute ceiling: they are the plain rule pass over fixed-size inputs, with no per-path
 // constant to scale.
 const STREAM_MARGIN = 4
-const STREAM_BACKSTOP_MS = 200
+const BACKSTOP_MS = 200
 
 function journal() {
   const mind = new MindStream({ now: () => 1 })
@@ -259,7 +260,9 @@ test('80k characters of adversarial input stay fast, in the rules and in the str
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a stream that measured nothing.
   assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
-  const bound = Math.min(STREAM_MARGIN * referenceMs, STREAM_BACKSTOP_MS)
+  assert.ok(referenceMs <= BACKSTOP_MS,
+    `reference sample is ${referenceMs} ms of CPU, backstop ${BACKSTOP_MS} ms`)
+  const bound = STREAM_MARGIN * referenceMs
   const margin = `${STREAM_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   for (const [what, text] of inputs) {
     for (const [path, run] of [['redactText', redactText], ['secretsIn', secretsIn]]) {
@@ -269,7 +272,7 @@ test('80k characters of adversarial input stay fast, in the rules and in the str
     }
     const streamMs = timed(() => journal().send(text), bound)
     const detail = `${what}: the stream: ${streamMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${STREAM_BACKSTOP_MS} ms)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms on the reference)`
     assert.ok(streamMs <= bound, detail)
   }
 })
