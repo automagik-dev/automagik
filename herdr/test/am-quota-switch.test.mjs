@@ -1,14 +1,14 @@
-// The switch, tested as a flow: the shell, the files and the Keychain (a stand-in) are real, and
-// what lands — or is refused, or is put back — is observed rather than asserted about source text.
+// The switch, tested as a flow: the shell and the files are real, `security` is the recording
+// stand-in, and what lands — or is refused — is observed rather than asserted about source text.
+// Only Codex has a writer; the Claude path is proved to reach neither `security` nor the download.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { install } from "../mods/am-quota/switch.js";
+import { install, place } from "../mods/am-quota/switch.js";
 import { payloadDir } from "../mods/am-quota/write.js";
 import { fingerprint, TARGETS } from "../mods/am-quota/translate.js";
 import { keychain } from "./am-quota-keychain.mjs";
@@ -18,7 +18,6 @@ const PROXY = {
   id_token: "idt", expired: "2026-11-01T13:00:00Z", plan_type: "max",
 };
 const mode = (p) => statSync(p).mode & 0o777;
-const sha8 = (dir) => createHash("sha256").update(dir).digest("hex").slice(0, 8);
 
 /**
  * A scratch machine: a home, an app home, a Keychain stand-in, and the runtime doubles the flow
@@ -43,93 +42,26 @@ function world({ env = {}, execEnv = env, kc = keychain() } = {}) {
   };
   const run = (extra = {}) => install({
     api: { credential: async () => JSON.stringify(PROXY) },
-    provider: "claude", account: { name: "claude-a.json" },
+    provider: "codex", account: { name: "codex-a.json" },
     home, appHome, env, ...io, ...extra,
   });
   return { root, home, appHome, kc, env, io, run };
 }
 
-test("a CLAUDE_CONFIG_DIR profile gets its own Keychain item and its own file — never the default login", async () => {
-  const profile = mkdtempSync(join(tmpdir(), "am-quota-profile-"));
-  const w = world({ env: { CLAUDE_CONFIG_DIR: profile } });
-  const service = `${TARGETS.claude.keychain}-${sha8(profile)}`;
-  // What the CLI keeps in that profile's item: our blob next to a key with a non-ASCII name.
-  const oldItem = JSON.stringify({ claudeAiOauth: { accessToken: "old" }, mcpOAuth: { "café": { token: "mcp" } } });
-  w.kc.seed(service, oldItem);
-
-  const out = await w.run();
-  const item = JSON.parse(w.kc.item(service));
-  assert.equal(item.claudeAiOauth.accessToken, PROXY.access_token, "the profile's item took the new credential");
-  assert.deepEqual(item.mcpOAuth, { "café": { token: "mcp" } }, "the kept key survives — non-ASCII name and all");
-  assert.ok(w.kc.services().length > 0);
-  assert.ok(w.kc.services().every((s) => s === service), `every call named the suffixed item, saw: ${w.kc.services().join(" | ")}`);
-  assert.equal(w.kc.item(TARGETS.claude.keychain), null, "the default profile's item was never read or written");
-
-  // The profile's file is written too (a CLAUDE_CONFIG_DIR is the file route), 0600, no leftover.
-  const file = join(profile, ".credentials.json");
-  assert.equal(JSON.parse(readFileSync(file, "utf8")).claudeAiOauth.accessToken, PROXY.access_token);
-  assert.equal(mode(file), 0o600);
-  assert.deepEqual(readdirSync(payloadDir(w.appHome)), [], "the payload and the item backup are gone");
-  assert.equal(out.label, "Claude Code");
-  assert.equal(out.fingerprint, fingerprint(PROXY.refresh_token));
-
-  // The stand-in logs service names, never a value; nothing secret reached it.
-  const log = readFileSync(join(w.kc.root, "log.jsonl"), "utf8");
-  assert.ok(!log.includes(PROXY.access_token) && !log.includes(PROXY.refresh_token), "no token in the recorded calls");
-});
-
-test("macOS without a CLAUDE_CONFIG_DIR writes only the plain item, and leaves the plaintext file alone", async () => {
+test("claude: no writer. The Claude path never downloads a credential and never reaches security (#453)", async () => {
+  // The stand-in `security` is first on the shell's PATH and records every call; the proxy's
+  // download is a spy. Either one being reached turns this red.
   const w = world();
-  const file = join(w.home, ".claude", ".credentials.json");
-  mkdirSync(join(w.home, ".claude"));
-  writeFileSync(file, '{"old":true}');
-
-  const out = await w.run();
-  assert.equal(JSON.parse(w.kc.item(TARGETS.claude.keychain)).claudeAiOauth.accessToken, PROXY.access_token);
-  assert.ok(w.kc.services().length >= 2);
-  assert.ok(w.kc.services().every((s) => s === TARGETS.claude.keychain), "the default profile's own item, read and written");
-  assert.equal(readFileSync(file, "utf8"), '{"old":true}', "the plaintext file and its backups are pure exposure, and are not touched");
-  assert.equal(out.fingerprint, fingerprint(PROXY.refresh_token));
-});
-
-test("an existing item too large for the one-line add is refused in plain words, before any write", async () => {
-  const w = world();
-  const huge = JSON.stringify({ claudeAiOauth: { accessToken: "old" }, mcpOAuth: { blob: "x".repeat(2400) } });
-  w.kc.seed(TARGETS.claude.keychain, huge);
-
-  await assert.rejects(w.run(), (err) => {
-    assert.equal(err.message, "this login item is too large to switch safely");
-    assert.ok(!err.message.includes("old") && !err.message.includes("x".repeat(20)), "nothing from the item is quoted");
-    return true;
-  });
-  assert.equal(w.kc.item(TARGETS.claude.keychain), huge, "the item is untouched");
-  assert.equal(w.kc.calls().filter((c) => c.cmd === "add-generic-password").length, 0, "no add ran — so there is nothing to put back");
-  assert.equal(w.kc.calls().filter((c) => c.cmd === "delete-generic-password").length, 0);
-  assert.deepEqual(readdirSync(payloadDir(w.appHome)), [], "the payload and the backup were cleaned up");
-});
-
-test("a failure after the item was written puts the old item back", async () => {
-  const blocked = join(mkdtempSync(join(tmpdir(), "am-quota-blocked-")), "not-a-directory");
-  writeFileSync(blocked, "the profile path is a file, so the file install must fail");
-  const w = world({ env: { CLAUDE_CONFIG_DIR: blocked } });
-  const service = `${TARGETS.claude.keychain}-${sha8(blocked)}`;
-  const oldItem = JSON.stringify({ claudeAiOauth: { accessToken: "old" }, mcpOAuth: { keep: "me" } });
-  w.kc.seed(service, oldItem);
-
-  await assert.rejects(w.run(), /put back/);
-  assert.equal(w.kc.item(service), oldItem, "Claude is back on the account it was on, error and all");
-  assert.ok(w.kc.calls().some((c) => c.cmd === "add-generic-password"), "the add did run before the later step failed");
-  assert.deepEqual(readdirSync(payloadDir(w.appHome)), [], "no token-bearing file is left behind");
-});
-
-test("a profile whose item cannot be resolved is refused instead of falling back to the default item", async () => {
-  const profile = mkdtempSync(join(tmpdir(), "am-quota-profile-"));
-  // The flow is told a profile is set; the shell does not see the variable (they moved apart).
-  const w = world({ env: { CLAUDE_CONFIG_DIR: profile }, execEnv: {} });
-
-  await assert.rejects(w.run(), /could not tell which Keychain item this profile reads/);
-  assert.equal(w.kc.calls().length, 0, "security was never asked to touch anything");
-  assert.equal(existsSync(payloadDir(w.appHome)), false, "and no payload folder was made");
+  const downloads = [];
+  const api = { credential: async (name) => { downloads.push(name); return JSON.stringify(PROXY); } };
+  await assert.rejects(w.run({ api, provider: "claude", account: { name: "claude-a.json" } }), /no writer for that provider/);
+  await assert.rejects(place({ provider: "claude", body: '{"claudeAiOauth":{}}', home: w.home, appHome: w.appHome, ...w.io }),
+    /no writer for that provider/);
+  assert.deepEqual(downloads, [], "no credential download on the Claude path");
+  assert.deepEqual(w.kc.calls(), [], "no Keychain call on the Claude path");
+  assert.equal(existsSync(payloadDir(w.appHome)), false, "nothing was even prepared");
+  assert.equal(existsSync(join(w.home, ".claude")), false, "no Claude folder or file was written");
+  assert.deepEqual(Object.keys(TARGETS), ["codex"], "Codex is the only provider with a writer");
 });
 
 test("codex: $CODEX_HOME/auth.json is written 0600 with a dated backup and no Keychain call", async () => {

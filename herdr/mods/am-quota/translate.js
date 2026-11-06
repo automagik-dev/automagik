@@ -1,27 +1,15 @@
-// am-quota's translations: the proxy's credential shape → the shape each client actually reads.
+// am-quota's translations: the proxy's Codex credential shape → the shape Codex actually reads.
 //
-// Pure, so `node --test` proves them — except `keychainService`, which shells out to `shasum` for
-// the digest the CLI names a separate profile's Keychain item with (the mod has no crypto module).
-// The measured shapes (2026-11-01):
+// Pure, so `node --test` proves them. Claude has no translation and no writer: a Claude login is
+// never installed from the proxy, and this mod never reads or writes a Claude Keychain item
+// (#453, docs/local-logins.md). The measured shapes (2026-11-01):
 //   proxy codex  { access_token, account_id, id_token, refresh_token, expired, email, last_refresh, plan_type }
 //   codex auth   { OPENAI_API_KEY: null, auth_mode: "chatgpt", last_refresh, tokens: { access_token,
 //                  account_id, id_token, login_owner_id?, oauth_provenance?, refresh_token } }
-//   proxy claude { access_token, refresh_token, expired, account_uuid, organization_uuid,
-//                  organization_name, email, claude_device_ids, last_refresh }
-//   claude creds { claudeAiOauth: { accessToken, refreshToken, expiresAt, refreshTokenExpiresAt,
-//                  scopes, subscriptionType, rateLimitTier } }
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 /** A token is opaque, but it is not arbitrary text: no whitespace, and long enough to be one. */
 const isToken = (v) => { const s = str(v); return s.length >= 16 && !/\s/.test(s); };
-const epochMs = (v, fallback) => {
-  if (typeof v === "number" && Number.isFinite(v)) return v > 1e12 ? Math.round(v) : Math.round(v * 1000);
-  if (typeof v === "string" && v) {
-    const ms = Date.parse(v);
-    if (Number.isFinite(ms)) return ms;
-  }
-  return fallback;
-};
 
 /** What stops a credential from being installed at all, for people. */
 export function problems(provider, credential) {
@@ -30,7 +18,6 @@ export function problems(provider, credential) {
   if (!isToken(credential.access_token)) out.push(str(credential.access_token) ? "the access token is not a token" : "no access token");
   if (!isToken(credential.refresh_token)) out.push(str(credential.refresh_token) ? "the refresh token is not a token" : "no refresh token");
   if (provider === "codex" && !str(credential.account_id) && !str(credential.id_token)) out.push("no account id or id token");
-  if (provider === "claude" && !str(credential.refresh_token)) out.push("nothing to refresh with");
   return out;
 }
 
@@ -53,24 +40,6 @@ export function toCodex(credential, { now = new Date() } = {}) {
   };
 }
 
-/** The proxy's Claude credential, as the Keychain item / `.credentials.json` expects it. */
-export function toClaude(credential, { now = new Date(), scopes, subscriptionType = "pro" } = {}) {
-  const missing = problems("claude", credential);
-  if (missing.length) throw new Error(missing.join("; "));
-  const hour = 3600000;
-  return {
-    claudeAiOauth: {
-      accessToken: str(credential.access_token),
-      refreshToken: str(credential.refresh_token),
-      expiresAt: epochMs(credential.expired ?? credential.expires_at, now.getTime() + hour),
-      refreshTokenExpiresAt: epochMs(credential.refresh_token_expired, now.getTime() + 30 * 24 * hour),
-      scopes: Array.isArray(scopes) && scopes.length ? scopes : ["user:inference", "user:profile"],
-      subscriptionType: str(credential.plan_type) || subscriptionType,
-      rateLimitTier: str(credential.rate_limit_tier) || "default",
-    },
-  };
-}
-
 /** A directory from an environment variable, `~` expanded, no trailing slash. */
 const envDir = (value, fallback, home) => {
   const s = typeof value === "string" ? value.trim() : "";
@@ -79,87 +48,22 @@ const envDir = (value, fallback, home) => {
 };
 
 /**
- * Where a provider's credentials go, and how they are written. Used by the panel's writer.
- * `env` is the client's own environment, so `CODEX_HOME` and `CLAUDE_CONFIG_DIR` move the file the
- * way they move it for the client itself; an unset or empty variable means the default folder.
+ * Where a provider's credentials go. Used by the panel's writer, for Codex only. `env` is the
+ * client's own environment, so `CODEX_HOME` moves the file the way it moves it for Codex itself;
+ * an unset or empty variable means the default folder.
  */
 export const TARGETS = {
   codex: {
     label: "Codex",
-    keychain: null,
     file: (home, env = {}) => `${envDir(env.CODEX_HOME, `${home}/.codex`, home)}/auth.json`,
-  },
-  claude: {
-    label: "Claude Code",
-    keychain: "Claude Code-credentials",
-    file: (home, env = {}) => `${envDir(env.CLAUDE_CONFIG_DIR, `${home}/.claude`, home)}/.credentials.json`,
   },
 };
 
-/**
- * One provider's write plan: the file, the Keychain service (if any), and whether the plaintext
- * file is skipped. On macOS Claude reads the Keychain first, so a verified Keychain write is the
- * job and the file — with its backups — is left alone; elsewhere (no `security`) the file is the
- * route. A `CLAUDE_CONFIG_DIR` is a separate Claude profile: it always gets its file written, and
- * its Keychain item is the suffixed one (`keychainSuffix`), which is why `keychain` alone is never
- * the service to hand `security` — see `keychainService`.
- */
-export function credentialTarget(provider, { home, env = {}, keychainWritten = false, platform = "macos" } = {}) {
+/** One provider's write plan: its label and the file. Null for a provider with no writer (Claude). */
+export function credentialTarget(provider, { home, env = {} } = {}) {
   const target = TARGETS[provider];
   if (!target) return null;
-  const keychain = platform === "macos" ? target.keychain : null;
-  return {
-    label: target.label,
-    keychain,
-    keychainSuffix: Boolean(keychain) && Boolean(str(env.CLAUDE_CONFIG_DIR)),
-    file: target.file(home, env),
-    skipFile: Boolean(keychain) && keychainWritten && !str(env.CLAUDE_CONFIG_DIR),
-  };
-}
-
-/**
- * The service name a separate profile's item is called: `Claude Code-credentials-<sha256(dir)[:8]>`.
- * Measured on the installed CLI 2.1.316: with `CLAUDE_CONFIG_DIR=/tmp/cc-scratch` it ran
- * `find-generic-password … -s "Claude Code-credentials-bde599a8"` (then the legacy
- * `Claude Code-bde599a8`), and `sha256("/tmp/cc-scratch")[:8]` is `bde599a8`. The directory is
- * digested exactly as given — no `~` expansion, no trailing-slash trimming — because that is what
- * the CLI digests.
- *
- * The digest is computed in the shell (`shasum -a 256`), so this is a pure string; `$1` is the
- * base service name, which is not a secret. The directory is read from the environment in-shell.
- * Exit 1 when the digest cannot be computed or the variable is empty (the caller only runs this
- * when a profile is set, so an empty answer means the environment moved: never guess).
- */
-export function keychainServiceScript() {
-  return `set -eu
-dir=$(printenv CLAUDE_CONFIG_DIR) || dir=""
-[ -n "$dir" ] || exit 1
-if command -v shasum >/dev/null 2>&1; then sum=$(printf '%s' "$dir" | shasum -a 256 | cut -c1-8)
-elif command -v sha256sum >/dev/null 2>&1; then sum=$(printf '%s' "$dir" | sha256sum | cut -c1-8)
-else exit 1; fi
-printf '%s-%s' "$1" "$sum"`;
-}
-
-/**
- * The Keychain service this plan reads and writes. A separate profile's item is the suffixed one:
- * writing the unsuffixed `Claude Code-credentials` there would REPLACE the person's default-profile
- * login, so with `CLAUDE_CONFIG_DIR` set that name is never returned. Null when the service cannot
- * be resolved — a read is then "unknown" and a write refuses, rather than falling back to the
- * default item.
- */
-export async function keychainService(plan, { exec } = {}) {
-  if (!plan?.keychain) return null;
-  if (!plan.keychainSuffix) return plan.keychain;
-  const r = await exec("sh", ["-c", keychainServiceScript(), "sh", plan.keychain]);
-  const name = r?.code === 0 ? String(r.stdout ?? "").trim() : "";
-  return name.startsWith(`${plan.keychain}-`) ? name : null;
-}
-
-/** The item's value as `security` prints it (plain, or hex when it holds 0x0a). Read-only, for
- *  comparing what is installed with what this panel wrote; the caller never logs it. */
-export function keychainReadScript() {
-  return `set -eu
-security find-generic-password -w -s "$1"`;
+  return { label: target.label, file: target.file(home, env) };
 }
 
 /**
@@ -220,20 +124,6 @@ export function itemText(raw) {
   return null;
 }
 
-/**
- * The item to store: the new `claudeAiOauth` over whatever else the item holds (`mcpOAuth` and
- * anything else the CLI keeps there), one line. An item that is not a JSON object has no keys to
- * keep, so it is replaced. Neither value is ever logged.
- */
-export function mergeCredentialItem(existingText, incoming) {
-  const fresh = typeof incoming === "string" ? incoming : JSON.stringify(incoming);
-  const prev = itemText(existingText);
-  if (!prev) return JSON.stringify(JSON.parse(fresh));
-  const kept = JSON.parse(prev);
-  if (!kept || typeof kept !== "object" || Array.isArray(kept)) return JSON.stringify(JSON.parse(fresh));
-  return JSON.stringify({ ...kept, claudeAiOauth: JSON.parse(fresh)?.claudeAiOauth ?? kept.claudeAiOauth });
-}
-
 /** A stable 32-bit fingerprint (FNV-1a) of a token: an identity to compare, never the token. */
 export function fingerprint(value) {
   const s = typeof value === "string" ? value : "";
@@ -244,11 +134,11 @@ export function fingerprint(value) {
 }
 
 /**
- * The installed credential's identity, from the file or item. Codex carries `account_id`, which a
- * token refresh does not change; a Claude item holds only tokens, so its identity is the refresh
- * token — a refresh there looks like a change, which is why the panel names it rather than guessing.
+ * The installed Codex credential's identity, from its file: `account_id`, which a token refresh
+ * does not change. Null for any other provider: Claude's identity is never read from a credential.
  */
 export function tokenIdentity(provider, text) {
+  if (provider !== "codex") return null;
   const body = itemText(text);
   if (!body) return null;
   let parsed;
@@ -257,8 +147,5 @@ export function tokenIdentity(provider, text) {
   } catch {
     return null;
   }
-  const token = provider === "codex"
-    ? str(parsed?.tokens?.account_id) || str(parsed?.tokens?.refresh_token)
-    : str(parsed?.claudeAiOauth?.refreshToken);
-  return fingerprint(token);
+  return fingerprint(str(parsed?.tokens?.account_id) || str(parsed?.tokens?.refresh_token));
 }

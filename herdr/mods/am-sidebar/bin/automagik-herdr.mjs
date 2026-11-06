@@ -34,14 +34,15 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
-  claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
+  sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
+import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -138,6 +139,26 @@ const local = (address) => typeof address === "string" && !address.includes("/")
 
 function appHome(env = process.env) { return (env.HERDR_APP_HOME || `${homedir()}/.config/herdr-app`).replace(/\/+$/, ""); }
 const home = () => process.env.HOME || homedir();
+/** The agent a launch argv runs: a `sh -c <command>` (a template's) by its command, else by its program. */
+const launchAgent = (argv, agents = agentTable()) => (Array.isArray(argv) && /(^|\/)(ba|z|da)?sh$/.test(argv[0] ?? "") && argv[1] === "-c"
+  ? templateAgent(argv[2], agents) : agentKeyOfArgv(argv, agents));
+/**
+ * The Claude login words for a local launch of `argv` (#453, logins.js): read from the app home's
+ * claude-logins.json at this launch, only when `argv` runs Claude Code; [] for any other agent,
+ * which never reads the record. A record that can't be followed gives login A's words and its
+ * warning (pushed on `warnings`), never a refusal.
+ */
+function claudeLogin(argv, warnings = []) {
+  if (launchAgent(argv) !== "claude") return [];
+  let chosen;
+  try {
+    chosen = chooseLogin(appHome(), { read: (p) => readFileSync(p, "utf8"), realpath: realpathSync, isDir: (p) => statSync(p).isDirectory(), home: home() });
+  } catch (e) {
+    chosen = { words: ["-u", "CLAUDE_CONFIG_DIR"], warning: `claude-logins.json: ${e?.code ?? "error"}; started on the default login` };
+  }
+  if (chosen.warning) warnings.push(chosen.warning);
+  return chosen.words;
+}
 const modelIo = () => ({ home: home(), read: (p) => { try { return readText(p); } catch { return null; } } });
 /** The agents Herdr can start: its shipped table with the app home's programs.json applied. */
 const agentTable = () => withOverrides(readText(`${appHome()}/programs.json`));
@@ -1961,8 +1982,10 @@ async function launchSeat(project, bot, over = {}) {
     const seen = await windowSpaces();
     place = spaceOnly(await windowPlace(key, await placementOf(key, seen), seen));
   }
+  // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
+  const login = claudeLogin(argv, briefed.warnings);
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env: briefed.env });
+    env: briefed.env, login });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
@@ -2357,7 +2380,8 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  * row isn't copied by hand. { line, notes }.
  */
 function byHand(p, parent) {
-  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path });
+  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
+    login: claudeLogin(p.argv) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
@@ -2396,7 +2420,10 @@ async function rerunHelpers(plans, parent, say) {
     }
     const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
     const name = p.name && !taken.has(p.name) ? p.name : null;
-    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path }));
+    const loginWarnings = [];
+    const login = claudeLogin(p.argv, loginWarnings);
+    for (const w of loginWarnings) say(`${who}: ${w}`);
+    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path, login }));
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
@@ -3461,8 +3488,8 @@ async function workersIn(worktree, ls) {
 }
 
 /**
- * The agent an hc template runs, from its command in `hc templates`: an agent key, or
- * undefined when no known agent is in the command. A template hc doesn't list, or no list at
+ * The agent an hc template runs, from its command in `hc templates`: { runs: an agent key, or
+ * undefined when no known agent is in the command; command: that command }. A template hc doesn't list, or no list at
  * all, is refused here, before any worktree is made: `hc run` runs an unlisted name as a
  * program (`--template rm` would run rm).
  */
@@ -3479,7 +3506,7 @@ async function templateRuns(template, agents) {
     const names = list.map((x) => x?.name).filter(Boolean);
     throw new CliError(`hc has no template ${template}${names.length ? `. Its templates: ${names.join(", ")}` : ""}.`);
   }
-  return templateAgent(hit.command, agents) ?? undefined;
+  return { runs: templateAgent(hit.command, agents) ?? undefined, command: typeof hit.command === "string" ? hit.command : null };
 }
 
 /**
@@ -3585,8 +3612,20 @@ async function cmdWorker(opts, rest) {
   warnings.push(...plan.warnings);
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
   let runs = plan.agent;
-  if (plan.template) runs = await templateRuns(plan.template, agents);
-  else {
+  // A Claude template runs its own command under the login words (#453): hc's template form takes
+  // no environment. One that can't take its task as a last argument is refused, as unrunnable.
+  let templateArgv = null;
+  if (plan.template) {
+    const t = await templateRuns(plan.template, agents);
+    runs = t.runs;
+    if (runs === "claude") {
+      templateArgv = t.command?.trim() ? commandArgv({ shell: t.command }, [task]) : null;
+      if (!templateArgv) {
+        throw new CliError(`Template ${plan.template} runs Claude, but ${t.command?.trim() ? "its command ends in a separator or a comment, so it can't take the task"
+          : "hc gave no command for it"}; it can't be started on the chosen Claude login. Not started.`);
+      }
+    }
+  } else {
     if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
     const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
     if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
@@ -3641,7 +3680,8 @@ async function cmdWorker(opts, rest) {
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
-      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
+      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
+      login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
