@@ -1040,10 +1040,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's briefing with its team's live state, as it is now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
-  forget <project>              take a project's folder off the project list (ls --all and the
-                                sidebar show it); its folder, worktrees, bots and panes stay as
-                                they are. start, restart, attach and create already drop one
-                                whose folder is gone, with a note
+  forget <project>              take a project's folder off this CLI's project list; its folder,
+                                worktrees, bots and panes stay as they are. ls --all and the
+                                sidebar also show the sidebar's own remembered projects, which
+                                the sidebar forgets once the bots file is gone: forget says when
+                                it remembers this one (--json: sidebar_remembers). start,
+                                restart, attach and create already drop an entry whose folder
+                                is gone, with a note when the command succeeds
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
          [--role dev|test|review|fix] [--task ID [--lead BOT]]
@@ -1304,19 +1307,31 @@ function rememberedKeys() {
 }
 
 /**
- * `forget <project>`: takes the project's folder off this CLI's project list (the one `ls --all`
- * and the sidebar read), under the list's lock. Only that entry: no folder, worktree, bots file
- * or terminal is touched. An unknown name is refused, the file unchanged.
+ * `forget <project>`: takes the project's folder off this CLI's project list, under the list's
+ * lock. Only that entry: no folder, worktree, bots file or terminal is touched. An unknown name
+ * is refused, the file unchanged. `ls --all` and the sidebar also show the sidebar's own
+ * remembered projects (shared.json), which only the sidebar writes: when it remembers this one
+ * too, forget says so (stderr, and `sidebar_remembers` in --json).
  */
 async function cmdForget(opts, [ref]) {
   if (!ref) throw new CliError("forget needs a project: its folder, as ls --all prints it.", 2);
   if (opts.project !== undefined) throw new CliError("forget takes the project as its argument, not --project.", 2);
   const key = resolvePath(ref);
   const path = `${appHome()}/${PROJECTS_FILE}`;
+  let taken;
   // No app home (Herdr isn't set up here): there is no list, so nothing is on it.
-  if (existsSync(appHome()) && unlistProjects([key]).includes(key)) return opts.json ? { forgotten: key, list: path } : `${key} forgotten: off ${path}.`;
-  const why = sidebarRemembered().includes(key)
-    ? `${key} isn't on this CLI's project list (${path}); the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone.`
+  try { taken = existsSync(appHome()) ? unlistProjects([key]) : []; } catch (e) {
+    throw new CliError(`${key} wasn't taken off ${path}: ${String(e?.message ?? e).split("\n")[0]}`, 1, { project: key, forgotten: false });
+  }
+  const sidebar = sidebarRemembered().includes(key);
+  const sidebarLine = `the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone, so ls --all and the sidebar `
+    + "still show it until then.";
+  if (taken.includes(key)) {
+    if (sidebar) process.stderr.write(`automagik-herdr: ${key} is off this CLI's project list, but ${sidebarLine}\n`);
+    return opts.json ? { forgotten: key, list: path, sidebar_remembers: sidebar } : `${key} forgotten: off ${path}.`;
+  }
+  const why = sidebar
+    ? `${key} isn't on this CLI's project list (${path}); ${sidebarLine}`
     : `${key} isn't on the project list (${path}); automagik-herdr ls --all shows the projects there.`;
   throw new CliError(why, 1, { project: key, forgotten: false });
 }
@@ -4007,12 +4022,16 @@ async function cmdTidy(opts) {
   return opts.json ? actions : planText(actions);
 }
 
-/** After start, attach and create: the plan's non-visual fixes only; a failure only warns. */
+/**
+ * After start, attach and create: the plan's non-visual fixes only; a failure only warns. A
+ * prune's note only when the command succeeded: a failed one's last stderr line stays its own
+ * error (the sidebar shows that line, restart.js restartAnswer).
+ */
 async function tidyQuietly() {
   try {
     const io = tidyIo();
     const actions = tidyPlan(await readState(io, { window: false }), { now: Date.now(), home: io.home, appHome: io.appHome });
-    report(await fixNonVisual(actions.filter((a) => !a.visual), io));
+    report(await fixNonVisual(actions.filter((a) => !a.visual), io, { notes: exitAfter.code === 0 }));
   } catch (e) { report([`tidy: ${e?.message ?? e}`]); }
 }
 const TIDIES = new Set(["start", "restart", "attach", "create"]);

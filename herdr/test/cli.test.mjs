@@ -628,7 +628,7 @@ test("forget refuses a project that isn't on the list, the list unchanged; --jso
   writeFileSync(join(s.app, "shared.json"), shared);
   const side = s.cli(["forget", s.project]);
   assert.equal(side.code, 1);
-  assert.match(side.err, /isn't on this CLI's project list \(.*\); the sidebar remembers it on its own and forgets it once its \.herdr\/bots\.json is gone\.\n$/);
+  assert.match(side.err, /isn't on this CLI's project list \(.*\); the sidebar remembers it on its own and forgets it once its \.herdr\/bots\.json is gone, so ls --all and the sidebar still show it until then\.\n$/);
   assert.equal(readFileSync(join(s.app, "shared.json"), "utf8"), shared);
   assert.equal(readFileSync(list, "utf8"), listed);
   // Usage: a project is needed, as the argument.
@@ -639,6 +639,43 @@ test("forget refuses a project that isn't on the list, the list unchanged; --jso
   rmSync(s.app, { recursive: true, force: true });
   assert.equal(s.cli(["forget", s.project]).code, 1);
   assert.equal(existsSync(s.app), false);
+});
+
+test("forget on both lists: off this CLI's, and it says the sidebar still shows it (review Medium 2)", (t) => {
+  const s = scene(t);
+  const list = join(s.app, "am-sidebar-projects.json"), other = join(s.root, "other");
+  writeFileSync(list, JSON.stringify([s.project, other]));
+  const shared = JSON.stringify({ "am.sidebar.projects": [{ key: s.project, machine: null }, { key: other, machine: "build-box" }] });
+  writeFileSync(join(s.app, "shared.json"), shared);
+  const r = s.cli(["forget", s.project]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `${s.project} forgotten: off ${list}.\n`);
+  assert.equal(r.err, `automagik-herdr: ${s.project} is off this CLI's project list, but the sidebar remembers it on its own and forgets `
+    + "it once its .herdr/bots.json is gone, so ls --all and the sidebar still show it until then.\n");
+  assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), [other]);
+  assert.equal(readFileSync(join(s.app, "shared.json"), "utf8"), shared, "the sidebar's file is never written");
+  // --json: true here; false for one only this CLI listed (another machine's sidebar entry doesn't count).
+  writeFileSync(list, JSON.stringify([s.project, other]));
+  assert.deepEqual(s.cli(["forget", s.project, "--json"]).json(), { forgotten: s.project, list, sidebar_remembers: true });
+  const alone = s.cli(["forget", other, "--json"]);
+  assert.equal(alone.err, "");
+  assert.deepEqual(alone.json(), { forgotten: other, list, sidebar_remembers: false });
+});
+
+test("forget with the list's lock held: one refusal line, no stack, --json body; the list unchanged (review Low 3)", (t) => {
+  const s = scene(t);
+  const list = join(s.app, "am-sidebar-projects.json"), lock = `${list}.lock`;
+  const listed = JSON.stringify([s.project]);
+  writeFileSync(list, listed);
+  writeFileSync(lock, `${process.pid} someone-else`); // fresh, and its holder alive: never taken over
+  const r = s.cli(["forget", s.project, "--json"]);
+  assert.equal(r.code, 1);
+  assert.doesNotMatch(r.err, /^\s+at /m, "no stack trace");
+  const last = r.err.trim().split("\n").at(-1);
+  assert.equal(last, `automagik-herdr: ${s.project} wasn't taken off ${list}: ${lock} is held by another automagik-herdr (pid ${process.pid})`);
+  assert.deepEqual(r.json(), { error: last.slice("automagik-herdr: ".length), project: s.project, forgotten: false });
+  assert.equal(readFileSync(list, "utf8"), listed);
+  assert.equal(readFileSync(lock, "utf8"), `${process.pid} someone-else`, "another's lock is left alone");
 });
 
 test("forget takes over a stale project-list lock (a CLI killed mid-write) and leaves none", (t) => {
@@ -2268,6 +2305,22 @@ test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run agai
   assert.deepEqual(["t5", "t7", "t8", "t10", "t100", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
     ["finished", "finished", "finished", "finished", "live", "live", "live"], "the old pane always ends");
   onePanePerSession(s);
+});
+
+test("restart --tree failing with a gone folder on the project list: pruned, no note, the last stderr line stays the helper's (review Low 4)", (t) => {
+  const { s } = treeScene(t, { third: true });
+  const st = s.hcState();
+  st.failRun = ["rev-1"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const list = join(s.app, "am-sidebar-projects.json"), gone = join(s.root, "gone");
+  writeFileSync(list, JSON.stringify([gone]));
+  const r = s.cli(["restart", "Genie", "--tree"]);
+  assert.equal(r.code, 1, r.err);
+  assert.ok(!JSON.parse(readFileSync(list, "utf8")).includes(gone), "the prune still ran");
+  assert.doesNotMatch(r.err, /taken off the project list/);
+  assert.equal(restartAnswer({ code: r.code, err: r.err }).refused, r.err.trim().split("\n").at(-1).trim());
+  assert.doesNotMatch(restartAnswer({ code: r.code, err: r.err }).refused, /^automagik-herdr: tidy:/);
+  assert.match(r.err, /t8 \(rev-1\) wasn't run again: hc run failed/);
 });
 
 test("restart --tree: a helper that survives its parent's end (and its kill) is said, never run twice nor offered by hand; one never up, or that hc can't read, is reported", (t) => {

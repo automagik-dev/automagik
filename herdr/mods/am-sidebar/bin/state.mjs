@@ -112,16 +112,16 @@ export async function readState(io, { window = true } = {}) {
 /**
  * Carries out a plan's non-visual actions: the registry prune (`io.prune(keys)`, which
  * rewrites PROJECTS_FILE and returns the keys it took off) and role=/category= relabels
- * (`hc label`). Resolves with the lines to print: a note per key taken off, and the warnings;
- * nothing here fails the command it runs after.
+ * (`hc label`). Resolves with the lines to print: a note per key taken off (unless `notes` is
+ * false), and the warnings; nothing here fails the command it runs after.
  */
-export async function fixNonVisual(actions, io) {
+export async function fixNonVisual(actions, io, { notes = true } = {}) {
   const warnings = [];
   const keys = actions.filter((a) => a.kind === "prune-registry").map((a) => a.key);
   if (keys.length) {
     try {
       const taken = io.prune(keys);
-      for (const key of Array.isArray(taken) ? taken : []) warnings.push(`tidy: ${key} taken off the project list: its folder is gone.`);
+      for (const key of notes && Array.isArray(taken) ? taken : []) warnings.push(`tidy: ${key} taken off the project list: its folder is gone.`);
     } catch (e) { warnings.push(`tidy: couldn't take ${keys.join(", ")} off ${PROJECTS_FILE}: ${e?.message ?? e}`); }
   }
   for (const a of actions.filter((x) => x.kind === "relabel" && !x.visual)) {
