@@ -7,6 +7,7 @@ import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { contextPatch } from '../shared/context-policy.js'
 import { cleanPetId } from './pets.js'
+import { cleanDenyTools } from './tool-deny.js'
 
 // A Bot's role: a few words of plain text on one line, shown beside the first Main Bot's
 // name in the sidebar and under a Bot's name elsewhere. Line breaks and control
@@ -199,9 +200,11 @@ export function install(rt) {
     }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, denyTools: denyToolsInput }) {
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
+    // Checked before the Session exists, so a bad list creates no Bot and leaves no orphan.
+    const denyTools = cleanDenyTools(denyToolsInput)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
@@ -222,6 +225,9 @@ export function install(rt) {
     // A host adapter may already own a configured root Session. Adopt it without creating
     // another Session or moving its workspace; this option is internal, not a user payload.
     const id = existingSessionId ?? await createSession(cleanName, { dir })
+    // Checked against the Session's own tool surface, before the Bot record exists: a name
+    // this DSH does not serve refuses the create (the catch below archives the Session).
+    if (denyTools) await rt.assertDenyTools(id, denyTools)
     if (existingSessionId !== undefined) {
       const agent = await rt.resolveAgent(id)
       if (agent?.session?.id !== id) throw refusal('The existing Session could not be resolved')
@@ -244,6 +250,8 @@ export function install(rt) {
         ...(existingSessionId !== undefined ? { sessionPinned: true } : {}),
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
+        // The tools this Bot never gets, enforced on every Session it speaks from.
+        ...(denyTools ? { denyTools } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
@@ -274,6 +282,10 @@ export function install(rt) {
       }
       await rt.applyPermission(bot, id)
         .catch(error => rt.warn('ds-bot: permission for %s not applied: %s', cleanName, error))
+      if (denyTools) {
+        await rt.applyToolDeny(bot)
+          .catch(error => rt.warn('ds-bot: the denied tools of %s not applied: %s', cleanName, error))
+      }
       if (modelRef === undefined) {
         bot.kickoff = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
         await rt.save()
@@ -351,6 +363,10 @@ export function install(rt) {
       throw refusal(`Only the user can set what ${bot.name} may do in the browser`)
     }
     const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants)
+    // The tool deny list is checked with the rest, before anything is written: a name this
+    // DSH does not serve refuses the update, so a typo cannot quietly weaken the list.
+    const denyTools = cleanDenyTools(patch.denyTools)
+    if (denyTools !== undefined && denyTools !== null) await rt.assertDenyTools(rt.chatOf(bot.id), denyTools)
     // Checked first, so a folder, model or level that does not pass leaves the rest
     // unchanged too.
     const role = patch.role === undefined ? undefined : cleanRole(patch.role)
@@ -416,6 +432,10 @@ export function install(rt) {
       if (browserGrants === null) delete bot.browserGrants
       else bot.browserGrants = browserGrants
     }
+    if (denyTools !== undefined) {
+      if (denyTools === null) delete bot.denyTools
+      else bot.denyTools = denyTools
+    }
     const moved = moving && workDir !== bot.workDir
     if (moving) {
       if (workDir === undefined) delete bot.workDir
@@ -426,6 +446,9 @@ export function install(rt) {
       else bot[key] = value
     }
     await rt.save()
+    // The list changed: every Session of this Bot is lifted and re-set from the new one, so
+    // a name added now disappears at once and a name removed comes back.
+    if (denyTools !== undefined) await rt.applyToolDeny(bot)
     // The system prompt reads the live profile every turn, but a Session with
     // several rounds behind it follows the old kickoff's pull until a message
     // lands; notify the Bot's chat so the next turn honors the new profile.
