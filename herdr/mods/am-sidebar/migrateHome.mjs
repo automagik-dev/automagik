@@ -358,3 +358,36 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
   else renameSync(journalPath, join(backupDir, REVERTED));
   return { restored, skipped, remaining };
 }
+
+/**
+ * What `revert` would leave in each layout, writing nothing (update.mjs rollback asks it before
+ * the swap, #488): the journals in `backupDirs` undone in that order (newest first, as revertRefs
+ * runs them), each edit `due(edit)` picks put back where the layout still holds what the
+ * migration wrote. Only the layouts `revert` would write (writable: not a link, not under a linked
+ * layouts/). Returns a Map: resolved file → the layout as it would read after.
+ */
+export function revertedLayouts(backupDirs, { home, due = () => true }) {
+  home = resolve(home);
+  const view = new Map();
+  for (const backupDir of backupDirs) {
+    const journalPath = join(backupDir, JOURNAL);
+    if (isLink(dirname(resolve(backupDir))) || isLink(backupDir) || isLink(journalPath)) continue;
+    const journal = readJson(journalPath);
+    if (!journal || journal.version !== 1) continue;
+    for (const { file, edits } of Array.isArray(journal.layouts) ? journal.layouts : []) {
+      if (!writable(home, file)) continue;
+      const path = resolve(file);
+      const layout = view.has(path) ? view.get(path) : readJson(path);
+      if (!layout || typeof layout !== "object") continue;
+      for (const e of Array.isArray(edits) ? edits : []) {
+        if (typeof e?.before !== "string" || typeof e.after !== "string" || !due(e)) continue;
+        const node = nodeOf(layout, e);
+        const holder = e.field === "content.mod" ? node?.content : node;
+        const key = e.field === "content.mod" ? "mod" : "terminal_menu";
+        if (holder && typeof holder === "object" && holder[key] === e.after) holder[key] = e.before;
+      }
+      view.set(path, layout);
+    }
+  }
+  return view;
+}

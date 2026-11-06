@@ -52,11 +52,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   AUTO_FILE, CATALOG_URL, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, packOfPointer, parseAuto, parseMarker, parseSums,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
-import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, strandedLayouts } from "./migrateHome.mjs";
+import {
+  apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, revertedLayouts, strandedLayouts,
+} from "./migrateHome.mjs";
 import { change } from "./layoutSafe.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
@@ -831,6 +833,8 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   const next = freshPath(stateDirOf(modsDir), ".prev-next-");
   const moves = [];
   const out = [];
+  // Private paths carried into the kept set, once the layouts allow the rollback (change()'s prepare).
+  const carries = [];
   for (const m of set.mods) {
     const live = join(modsDir, m);
     if (!packFolder(m) || !exists(join(prev, m))) throw new Error(`the kept set lists ${m}, which is not there: nothing rolled back`);
@@ -844,12 +848,12 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
     const live = join(modsDir, m);
     const off = join(offDirOf(modsDir), m);
     if (exists(live)) {
-      carryPrivate(live, join(prev, m));
+      carries.push([live, join(prev, m)]);
       moves.push([live, join(next, m)]);
       out.push(m);
     } else if (owned.has(m) && exists(off) && !isLink(off)) {
       // Switched off: the kept copy comes back where it is, still off.
-      carryPrivate(off, join(prev, m));
+      carries.push([off, join(prev, m)]);
       moves.push([off, join(next, m)], [join(prev, m), off]);
       out.push(m);
       outOff.push(m);
@@ -862,7 +866,7 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
     } else {
       // Across the rename: the live twin's private paths go back with it (it leaves below).
       const twin = twinOf(m), twinLive = twin && join(modsDir, twin);
-      if (twin && owned.has(twin) && !set.mods.includes(twin) && exists(twinLive) && !isLink(twinLive)) carryPrivate(twinLive, join(prev, m));
+      if (twin && owned.has(twin) && !set.mods.includes(twin) && exists(twinLive) && !isLink(twinLive)) carries.push([twinLive, join(prev, m)]);
     }
     moves.push([join(prev, m), live]);
   }
@@ -877,17 +881,51 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   // The version rolled away from is never installed on its own again (auto-update waits for a
   // newer one). Recorded before the swap: a run that dies after it still leaves the skip; one
   // whose swap fails leaves that version installed, where the skip changes nothing.
-  if (/^\d+\.\d+\.\d+$/.test(record.version ?? "") && record.version !== UNRELEASED) {
+  const recordSkip = () => {
+    if (!/^\d+\.\d+\.\d+$/.test(record.version ?? "") || record.version === UNRELEASED) return;
     try { writeAutoHeld(modsDir, { skip: record.version }); } catch (error) {
       throw new Error(`the rollback could not be recorded in ${autoFileOf(modsDir)} (${error.message}): nothing rolled back`);
     }
-  }
+  };
   // The kept set's folders come back out of `prev`, which then holds only what stays behind
   // (.pack and anything unlisted): it is set aside, and removed only once the swap stands.
-  // No layout is asked here yet: a mod the rolled-to set lacks leaves mods/ whatever names it (a
-  // gap the layout-safety matrix marks; PR B).
+  // Herdr is not asked (#488): a mod the rolled-to set lacks leaves mods/ only while no file in
+  // layouts/ names it, else nothing is rolled back (the skip, the private paths: none written).
+  // The pack's own unedited layout (the reference copy) does not count: restoreLayout gives it the
+  // kept set's, or, for a set kept before v0.9 (no layout kept), leaves it as the pack's own (a gap
+  // this guard does not close). An edited one counts. A layout that does not read is said, and the
+  // rollback goes on (fail open).
+  // Each layout is judged as it reads once revertRefs (below) has undone the migration's edits
+  // whose mod leaves: its `due`, worked out from the moves before they are done (a folder put
+  // back from backup/ counted as there, so fewer edits are undone, never more).
+  const packLayout = join(dirname(resolve(modsDir)), PACK_LAYOUT);
+  const after = new Set(exists(modsDir) ? readdirSync(modsDir) : []);
+  for (const [from, to] of moves) {
+    if (dirname(resolve(from)) === resolve(modsDir)) after.delete(basename(from));
+    if (dirname(resolve(to)) === resolve(modsDir)) after.add(basename(to));
+  }
+  for (const a of record.adopted) after.add(a.mod);
+  const leaving = (mod) => out.includes(mod) && !set.mods.includes(mod);
+  const due = (edit) => { const mod = editTarget(edit); return !mod || leaving(mod) || !after.has(mod); };
+  let afterRevert = new Map();
   try {
-    swapAll(modsDir, moves, rename);
+    const journals = [...(record.migrated ?? [])].reverse().map((p) => join(stateDirOf(modsDir), p));
+    afterRevert = revertedLayouts(journals, { home: dirname(resolve(modsDir)), due });
+  } catch {}
+  const exclude = (name, body, mod) => {
+    const view = afterRevert.get(join(dirname(resolve(modsDir)), "layouts", name));
+    if (view && mod && !layoutNeeds(view).blocks.has(mod)) return true;
+    if (name !== basename(PACK_LAYOUT) || linkedLayout(packLayout) || !isFile(layoutRefOf(modsDir))) return false;
+    const had = body();
+    return !(keptLayout && had.equals(keptLayout)) && had.equals(readFileSync(layoutRefOf(modsDir)));
+  };
+  const prepare = () => {
+    recordSkip();
+    for (const [from, to] of carries) carryPrivate(from, to);
+  };
+  try {
+    const r = swapAll(modsDir, moves, rename, { needed: "refuse", unknown: "warn", then: "roll back", exclude, prepare, log });
+    if (r.refused) throw new Error(`nothing rolled back: ${r.refused}`);
   } catch (error) {
     rmSync(next, { recursive: true, force: true });
     throw error;

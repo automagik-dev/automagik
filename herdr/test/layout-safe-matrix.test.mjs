@@ -48,14 +48,12 @@ export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout
  * Today's gaps: `${route} | ${shape}` → the issue. "new" names a gap no issue tracks yet (reported
  * with this PR, not fixed in it).
  */
-const NEW_ROLLBACK = "new gap: a rollback asks no layout before a mod leaves mods/";
 const NEW_FAIL_OPEN = "new gap: with no layout from Herdr, the pack's own layout and its mods go without saying why";
 const NEW_SILENT = "new gap: with no layout readable at all, a mod leaves mods/ without a word";
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
 export const EXPECTED_FAIL = {
   ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | ${NO_ANSWER}`, NEW_FAIL_OPEN])),
   ...Object.fromEntries([...PACK_ROUTES, "one-mod uninstall", "update retire", "rename"].map((r) => [`${r} | ${NOTHING}`, NEW_SILENT])),
-  ...Object.fromEntries(SHAPES.filter((s) => s !== "symlinked mod folder").map((s) => [`rollback | ${s}`, NEW_ROLLBACK])),
 };
 
 const exe = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };
