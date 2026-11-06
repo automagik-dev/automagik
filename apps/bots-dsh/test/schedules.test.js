@@ -21,33 +21,38 @@ const TEAM = {
   questions: {},
 }
 
-// An in-memory stand-in for DSH's schedule service.
+// An in-memory stand-in for DSH 0.2.2's schedule service: typed timing, target-based
+// create, and edit({ action: 'delete' }) — the API apps/bots-dsh/src/host/schedules.js uses.
 function scheduleService() {
   const tasks = new Map()
   let next = 1
   return {
     tasks,
-    async create(sessionId, request) {
+    async create(request) {
       const id = `schedule-${next++}`
-      const kind = { every_seconds: 'every' }[Object.keys(request).find(key => !['title', 'prompt'].includes(key))]
-        ?? Object.keys(request).find(key => !['title', 'prompt'].includes(key))
-      const record = {
-        id, kind, title: request.title, prompt: request.prompt,
-        timing: request[Object.keys(request).find(key => !['title', 'prompt'].includes(key))],
-        scheduledAt: request.at ?? '2030-01-01T01:00:00.000Z',
-        everySeconds: request.every_seconds,
-        time: request.daily?.time ?? request.weekly?.time,
-        timeZone: request.daily?.time_zone ?? request.weekly?.time_zone ?? request.cron?.time_zone,
-        weekdays: request.weekly?.weekdays,
-        expression: request.cron?.expression,
+      const timing = request.timing
+      const entry = {
+        id,
+        kind: timing.kind,
+        title: request.title,
+        prompt: request.prompt,
+        scheduledAt: timing.kind === 'at' ? timing.at : '2030-01-01T01:00:00.000Z',
+        everySeconds: timing.every_seconds,
+        time: timing.daily?.time ?? timing.weekly?.time,
+        timeZone: timing.daily?.time_zone ?? timing.weekly?.time_zone ?? timing.cron?.time_zone,
+        weekdays: timing.weekly?.weekdays,
+        expression: timing.cron?.expression,
+        request,
+        target: request.target,
+        status: 'active',
       }
-      tasks.set(id, { sessionId, record })
-      return record
+      tasks.set(id, entry)
+      return entry
     },
-    async list({ sessionId }) { return [...tasks.values()].filter(task => task.sessionId === sessionId).map(task => task.record) },
-    async catalog() { return [...tasks.values()].map(task => ({ ...task.record, sessionId: task.sessionId, status: 'active' })) },
-    async delete({ sessionId, id }) {
-      if (tasks.get(id)?.sessionId !== sessionId) return { id, deleted: false, code: 'schedule_not_found' }
+    async catalog() { return [...tasks.values()].map(entry => ({ ...entry })) },
+    async edit({ id, action }) {
+      if (action !== 'delete') throw new Error(`unexpected edit ${action}`)
+      if (!tasks.has(id)) return { id, deleted: false, code: 'schedule_not_found' }
       tasks.delete(id)
       return { id, deleted: true }
     },
@@ -81,21 +86,21 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
   const daily = await call('schedule-create', { target: 'w1', title: ' Briefing ', prompt: 'Sum up the day', when: { kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' } })
   assert.equal(daily.ok, true, JSON.stringify(daily))
   const [created] = [...schedule.tasks.values()]
-  assert.equal(created.sessionId, 'w2')
-  assert.deepEqual(created.record.timing, { time: '09:00:00', time_zone: 'Asia/Shanghai' })
-  assert.equal(created.record.title, 'Briefing')
+  assert.equal(created.target.sessionId, 'w2')
+  assert.deepEqual(created.request.timing, { kind: 'daily', daily: { time: '09:00:00', time_zone: 'Asia/Shanghai' } })
+  assert.equal(created.title, 'Briefing')
 
-  await schedule.create('w1', { title: 'Old part', prompt: 'x', every_seconds: 3600 })
-  await schedule.create('outside', { title: 'Not ours', prompt: 'x', every_seconds: 3600 })
+  await schedule.create({ title: 'Old part', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w1' } })
+  await schedule.create({ title: 'Not ours', prompt: 'x', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'outside' } })
   const listed = (await call('schedules', {})).value
   assert.equal(listed.available, true)
   assert.deepEqual(listed.tasks.map(task => [task.title, task.botId]), [['Briefing', 'w1'], ['Old part', 'w1']])
 
   const weekly = await call('schedule-create', { target: 'm1', title: 'Week', prompt: 'Plan', when: { kind: 'weekly', time: '18:30', timeZone: 'UTC', weekdays: [5, 1, 1, 9] } })
   assert.equal(weekly.ok, true)
-  assert.deepEqual([...schedule.tasks.values()].at(-1).record.timing, { time: '18:30:00', time_zone: 'UTC', weekdays: [1, 5] })
+  assert.deepEqual([...schedule.tasks.values()].at(-1).request.timing, { kind: 'weekly', weekly: { time: '18:30:00', time_zone: 'UTC', weekdays: [1, 5] } })
   const every = await call('schedule-create', { target: 'm1', title: 'Ping', prompt: 'Check', when: { kind: 'every', minutes: 30 } })
-  assert.equal([...schedule.tasks.values()].at(-1).record.timing, 1800, JSON.stringify(every))
+  assert.deepEqual([...schedule.tasks.values()].at(-1).request.timing, { kind: 'every', every_seconds: 1800 }, JSON.stringify(every))
 
   for (const [when, message] of [
     [{ kind: 'at', at: '2000-01-01T00:00:00Z' }, /future/],
@@ -108,7 +113,7 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
   }
   assert.match((await call('schedule-create', { target: 'm1', title: '', prompt: 'y', when: { kind: 'every', minutes: 5 } })).error.message, /name/)
 
-  const removed = await call('schedule-delete', { sessionId: 'w2', id: created.record.id })
+  const removed = await call('schedule-delete', { sessionId: 'w2', id: created.id })
   assert.deepEqual(removed.value.tasks.map(task => task.title), ['Old part', 'Week', 'Ping'])
   assert.match((await call('schedule-delete', { sessionId: 'outside', id: 'schedule-3' })).error.message, /No such task/)
 })
@@ -119,7 +124,7 @@ test('a group chat task lives on the group Session and lists under the group', a
   t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
   const made = await call('schedule-create', { target: 'g1', title: 'Standup', prompt: 'Where are we?', when: { kind: 'daily', time: '10:00', timeZone: 'UTC' } })
   assert.equal(made.ok, true, JSON.stringify(made))
-  assert.equal([...schedule.tasks.values()][0].sessionId, 'g1')
+  assert.equal([...schedule.tasks.values()][0].target.sessionId, 'g1')
   assert.deepEqual(made.value.tasks.map(task => [task.title, task.roomId, task.botId]), [['Standup', 'g1', undefined]])
   assert.match((await call('schedule-create', { target: 'nobody', title: 'x', prompt: 'y', when: { kind: 'every', minutes: 5 } })).error.message, /No such Bot or group chat/)
 })
@@ -136,8 +141,9 @@ test('a failed task move can resume without losing identical remaining tasks', a
   const schedule = scheduleService()
   const { ctx, home, rt } = setup({ schedule })
   t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
-  await schedule.create('w2', { title: 'Ping', prompt: 'Check', every_seconds: 3600 })
-  await schedule.create('w2', { title: 'Ping', prompt: 'Check', every_seconds: 3600 })
+  const seed = { title: 'Ping', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w2' } }
+  await schedule.create(seed)
+  await schedule.create(seed)
 
   const create = schedule.create
   let attempts = 0
@@ -146,7 +152,7 @@ test('a failed task move can resume without losing identical remaining tasks', a
     return create(...args)
   }
   await assert.rejects(rt.moveSchedules('w2', 's9'), /down/)
-  const on = id => [...schedule.tasks.values()].filter(task => task.sessionId === id)
+  const on = id => [...schedule.tasks.values()].filter(task => task.target.sessionId === id)
   assert.equal(on('s9').length, 1)
   assert.equal(on('w2').length, 1)
 
