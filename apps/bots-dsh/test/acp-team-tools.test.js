@@ -1,8 +1,8 @@
 // RFC 0003 delivery 4, the Bot side: a Bot's team tools are what the ACP bridge offers, a
-// call raises the Bot's own DSH approval and posts, and on Auto the bridge call is refused by
-// auto-review instead of running. The bridge is simulated at its contract boundary (offer,
-// approval under the Session's level, then DSH's tool pipeline); the ACP half is proved in
-// apps/acp-dsh/test.
+// call raises the Bot's own DSH approval and posts, and on Auto the bridge call goes through
+// auto-review: an allowed call runs, a denied one is refused with AUTO_REVIEW_DENIED. The
+// bridge is simulated at its contract boundary (offer, approval under the Session's level,
+// then DSH's tool pipeline); the ACP half is proved in apps/acp-dsh/test.
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
