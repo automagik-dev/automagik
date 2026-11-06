@@ -293,6 +293,29 @@ test("paneLaunch and launchChange: only flag names are named, values masked, a t
     "Captain: its pane's template dev-kimi differs from its source now: restarting from the source, not the pane's command.");
 });
 
+test("launchChange never prints a flag's value, whatever form it takes or starts with (D1)", () => {
+  const secret = "s3cr3t-value";
+  const forms = [
+    ["--k=v", ["--k=" + secret], "--k=***"],
+    ["--k v", ["--k", secret], "--k=***"],
+    ["--k -v", ["--k", "-" + secret], "--k=***"],
+    ["-kV", ["-k" + secret], "-k=***"],
+    ["-k V", ["-k", secret], "-k=***"],
+    ["env NAME=v", ["/usr/bin/env", "NAME=" + secret, "claude"], "NAME=***"],
+    ["--proxy URL userinfo", ["--proxy", "http://user:token@proxy.example:8080"], "--proxy=***"],
+    ["--proxy=URL userinfo", ["--proxy=http://user:token@proxy.example:8080"], "--proxy=***"],
+  ];
+  for (const [form, words, want] of forms) {
+    const line = launchChange({ name: "Genie", launch: { argv: ["claude", ...words] }, agent: "claude", argv: ["claude"] });
+    assert.ok(line, form);
+    assert.ok(line.includes(want), `${form}: ${line}`);
+    for (const raw of [secret, "user:token", "proxy.example"]) assert.equal(line.includes(raw), false, `${form}: ${raw} in ${line}`);
+  }
+  // The names it prints still name the flags that differ.
+  assert.match(launchChange({ name: "Genie", launch: { argv: ["claude", "--k", "-" + secret] }, agent: "claude", argv: ["claude"] }), /drops --k=\*\*\*/);
+  assert.match(launchChange({ name: "Genie", launch: { argv: ["claude", "-k" + secret] }, agent: "claude", argv: ["claude"] }), /drops -k=\*\*\*/);
+});
+
 test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {
   const idle = { address: "t5", status: { state: "idle" } };
   const helper = { address: "t7", state: "live", die_with_parent: true, status: { state: "idle" } };
