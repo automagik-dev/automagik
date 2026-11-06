@@ -396,13 +396,19 @@ export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) 
 // so one CLI at a time edits the list, and a holder removes only its own lock. Waited for up
 // to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is taken over.
 // Without it, two CLIs that read the list at once each write their own copy.
-// AUTOMAGIK_HERDR_LOCK_STALE_MS sets LOCK_STALE for the tests only.
 const LOCK_WAIT = 3000;
-const LOCK_STALE = (() => {
-  const raw = process.env.AUTOMAGIK_HERDR_LOCK_STALE_MS;
+/**
+ * LOCK_STALE from AUTOMAGIK_HERDR_LOCK_STALE_MS (`raw`), for the tests only: 10 s when unset
+ * or not a number, else clamped to 100 ms..60 s. Far below, this CLI would take a lock bots-dsh
+ * holds (the same protocol on disk, its own 10 s); far above, the refresh timer breaks.
+ */
+export function staleLimit(raw) {
   const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-  return Number.isFinite(ms) && ms > 0 ? ms : 10_000;
-})();
+  return Number.isFinite(ms) ? Math.min(60_000, Math.max(100, ms)) : 10_000;
+}
+const LOCK_STALE = staleLimit(process.env.AUTOMAGIK_HERDR_LOCK_STALE_MS);
+// A wait longer than this says so on stderr, once, naming the lock and its holder.
+const LOCK_NOTE_AFTER = 3000;
 // An async holder (withLockAsync) touches its lock this often, so a hold across slow hc calls
 // (15 s each) never reads as stale; a holder that dies stops touching it (#225, #223).
 const LOCK_REFRESH = Math.max(10, Math.floor(LOCK_STALE / 3));
@@ -419,14 +425,42 @@ function takeOverStale(lock) {
   try { unlinkSync(aside); } catch { /* gone already */ }
 }
 
-function takeLock(lock, wait = LOCK_WAIT) {
+/**
+ * Who holds `lock`, from its token's pid: "pid N", "pid N, no longer running" (taken once
+ * stale), or null when the file is gone or names no pid.
+ */
+function lockHolder(lock) {
+  let pid;
+  try { pid = Number(readFileSync(lock, "utf8").split(" ")[0]); } catch { return null; }
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try { process.kill(pid, 0); } catch (e) { if (e?.code === "ESRCH") return `pid ${pid}, no longer running`; }
+  return `pid ${pid}`;
+}
+
+/**
+ * Takes `lock`, waiting up to `wait` ms. A wait past LOCK_NOTE_AFTER is said once on stderr,
+ * naming `what` (else the lock) and its holder: written with writeSync, as Atomics.wait holds
+ * the event loop and an async stderr write would only show once the lock is taken.
+ */
+function takeLock(lock, wait = LOCK_WAIT, what = null) {
   const token = `${process.pid} ${randomUUID()}`;
-  const until = Date.now() + wait;
+  const start = Date.now();
+  const until = start + wait;
+  let noted = wait <= LOCK_NOTE_AFTER;
   for (;;) {
     try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
       takeOverStale(lock);
-      if (Date.now() > until) throw new Error(`${lock} is held by another automagik-herdr`);
+      if (Date.now() > until) {
+        const who = lockHolder(lock);
+        throw new Error(`${lock} is held by another automagik-herdr${who ? ` (${who})` : ""}${noted && wait > LOCK_NOTE_AFTER ? ` after ${Math.round(wait / 1000)} s` : ""}`);
+      }
+      if (!noted && Date.now() - start >= LOCK_NOTE_AFTER) {
+        noted = true;
+        const who = lockHolder(lock) ?? "another automagik-herdr";
+        const line = `automagik-herdr: waiting for ${what ?? lock} (${lock}), held by ${who}; up to ${Math.round(wait / 1000)} s in all.\n`;
+        try { writeSync(2, line); } catch { /* stderr closed */ }
+      }
       pause(5 + Math.floor(Math.random() * 20));
     }
   }
@@ -450,9 +484,12 @@ function keepFresh(lock, token) {
   timer.unref();
   return () => clearInterval(timer);
 }
-/** withLock for an async `fn`, the lock kept fresh while fn awaits (keepFresh); waits up to `wait` ms for it. */
-async function withLockAsync(lock, fn, { wait = LOCK_WAIT } = {}) {
-  const token = takeLock(lock, wait);
+/**
+ * withLock for an async `fn`, the lock kept fresh while fn awaits (keepFresh); waits up to
+ * `wait` ms for it, a long wait named as `what` on stderr (takeLock).
+ */
+async function withLockAsync(lock, fn, { wait = LOCK_WAIT, what = null } = {}) {
+  const token = takeLock(lock, wait, what);
   const stop = keepFresh(lock, token);
   try { return await fn(); } finally { stop(); dropLock(lock, token); }
 }
@@ -544,10 +581,14 @@ function findCategory(file, ref) {
 /** The attach ledger can't be trusted or read: never mistaken for "hc unavailable". */
 export class LedgerRefusal extends CliError {}
 
-/** `hc get <t> --json`; null only when hc answers not_found (exit 3), any other failure throws. */
-async function hcLookup(terminal) {
-  const r = await hc(["get", terminal, "--json"]);
+/**
+ * `hc get <t> --json`; null only when hc answers not_found (exit 3), any other failure throws
+ * (no answer within `timeout` ms, hc's 15 s when not given, included).
+ */
+async function hcLookup(terminal, { timeout } = {}) {
+  const r = await hc(["get", terminal, "--json"], { timeout });
   if (r.code === 0) return parsed(r, ["get", terminal]);
+  if (r.killed) throw new CliError(`hc get ${terminal} gave no answer in ${(timeout ?? 15_000) / 1000} s`);
   let kind = null;
   try { kind = JSON.parse(r.stderr || r.stdout)?.error?.kind ?? null; } catch { kind = null; }
   if (r.code === 3 || kind === "not_found") return null;
@@ -3492,10 +3533,15 @@ async function excludeWorktrees(key) {
 }
 
 /**
- * How long a worker call waits for its worktree's lock: longer than another call's hold, which
- * may run a fetch and git worktree add (60 s each) and its hc calls (15 s each).
+ * How long a worker call waits for its worktree's lock (saying so after LOCK_NOTE_AFTER). A
+ * call that waited stays under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the
+ * worker check's hc gets (WORKER_GET_TIMEOUT, at once) and hc run (15 s). A hold that runs a
+ * fetch and git worktree add (60 s each) may outlast it: the waiting call is then refused, with
+ * the holder named, and nothing made.
  */
-const WORKER_LOCK_WAIT = 180_000;
+const WORKER_LOCK_WAIT = 75_000;
+/** How long the worker check waits for each `hc get` of a live terminal in the worktree. */
+const WORKER_GET_TIMEOUT = 5000;
 /**
  * The lock a worker's check and start run under: one per worktree, named by a hash of the
  * worktree's real path, in `lockDir`. Local: it orders the CLIs on this computer only.
@@ -3508,19 +3554,27 @@ export function worktreeLock(lockDir, worktree) {
 /**
  * The live workers in `worktree` (a real path), of any bot: from `ls` (`hc ls`), the live
  * terminals on this computer whose cwd is that folder as a real path and that carry a
- * worker.of label, as { address, labels }. Labels come from the row, else from `hc get`.
+ * worker.of label, as { address, labels }. Labels come from the row, else from `hc get`, all
+ * at once, each within WORKER_GET_TIMEOUT. A terminal hc says is gone is left out; one hc
+ * doesn't answer for is refused (fails closed): it may be a writer.
  * Workers on other machines aren't seen (their cwd isn't a folder here).
  */
 async function workersIn(worktree, ls) {
-  const out = [];
-  for (const r of rowsOf(ls)) {
-    if (!local(r?.address) || (r.state !== undefined && r.state !== "live") || typeof r.cwd !== "string") continue;
+  const here = nativeDir(worktree) ?? worktree;
+  const rows = rowsOf(ls).filter((r) => {
+    if (!local(r?.address) || (r.state !== undefined && r.state !== "live") || typeof r.cwd !== "string") return false;
     const cwd = r.cwd.startsWith("~/") ? `${home()}${r.cwd.slice(1)}` : r.cwd;
-    if ((nativeDir(cwd) ?? cwd) !== (nativeDir(worktree) ?? worktree)) continue;
-    const labels = r.labels && typeof r.labels === "object" ? r.labels : (await hcGet(r.address))?.labels;
-    if (labels?.[WORKER_OF_LABEL]) out.push({ address: r.address, labels });
-  }
-  return out;
+    return (nativeDir(cwd) ?? cwd) === here;
+  });
+  const found = await Promise.all(rows.map(async (r) => {
+    if (r.labels && typeof r.labels === "object") return { address: r.address, labels: r.labels };
+    try {
+      return { address: r.address, labels: (await hcLookup(r.address, { timeout: WORKER_GET_TIMEOUT }))?.labels };
+    } catch (e) {
+      throw new CliError(`${r.address} is live in ${worktree}, but whether it's a worker can't be told: ${e?.message ?? e}. Not started.`);
+    }
+  }));
+  return found.filter((w) => w.labels?.[WORKER_OF_LABEL]);
 }
 
 /**
@@ -3744,7 +3798,7 @@ async function cmdWorker(opts, rest) {
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
     return { address, name };
-  }, { wait: WORKER_LOCK_WAIT }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  }, { wait: WORKER_LOCK_WAIT, what: `the worker lock on ${place.worktree}` }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const terminal = started.address;
   // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);

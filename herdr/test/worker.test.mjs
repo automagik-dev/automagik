@@ -1422,3 +1422,63 @@ test("worker #225: the worktree lock stays fresh while held across slow hc calls
   // The second call waited for the lock, then was refused by the check, not by the lock.
   assert.match(both.find((r) => r.code === 1).err, /already has a live writer/);
 });
+
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+test("worker #536: a wait for the worktree lock past 3 s is said once on stderr, with the lock and its holder", async (t) => {
+  const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
+  const s = scene(t);
+  const wt = join(s.project, ".claude/worktrees/feat-wait");
+  git(s.project, "worktree", "add", "-q", "-b", "feat/wait", wt);
+  const lockDir = join(s.app, "automagik-herdr");
+  mkdirSync(lockDir, { recursive: true });
+  // Held by this test's process (fresh: under the 10 s stale limit), let go after 4.5 s.
+  const lock = worktreeLock(lockDir, wt);
+  writeFileSync(lock, `${process.pid} held-by-the-test`);
+  const call = s.cliAsync(["worker", "go", "--worktree", wt]);
+  const free = setTimeout(() => rmSync(lock, { force: true }), 4500);
+  t.after(() => clearTimeout(free));
+  const r = await call;
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`^automagik-herdr: waiting for the worker lock on ${reEsc(wt)} \\(${reEsc(lock)}\\), `
+    + `held by pid ${process.pid}; up to 75 s in all\\.\\n`, "m"));
+  assert.equal(r.err.split("waiting for").length, 2, "said once");
+  assert.equal(s.runs().length, 1);
+});
+
+test("worker #536: two calls on one new branch at once, a writer and a reviewer: one makes the worktree, the other finds it", async (t) => {
+  const s = scene(t);
+  assert.equal(s.cli(["worker", "warm", "--branch", "feat/warm"]).code, 0, "the attach ledger written first");
+  // The worker check's hc ls answers after 1.5 s: both calls look for the branch's worktree
+  // (none yet) before the first, holding the lock, makes it.
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = ls ] && [ "$2" = --json ]; then sleep 1.5; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  const both = await Promise.all([s.cliAsync(["worker", "w", "--branch", "feat/new", "--json"]),
+    s.cliAsync(["worker", "r", "--branch", "feat/new", "--role", "review", "--json"], { from: "t4" })]);
+  for (const r of both) assert.equal(r.code, 0, r.err);
+  const out = both.map((r) => JSON.parse(r.out));
+  const wt = join(s.project, ".claude/worktrees/feat-new");
+  assert.deepEqual(out.map((o) => o.worktree), [wt, wt]);
+  assert.deepEqual(out.map((o) => o.created).sort(), [false, true], "made once");
+  assert.equal(s.runs().filter((r) => r[r.indexOf("--cwd") + 1] === wt).length, 2);
+});
+
+test("worker #536: an hc get that fails for a live terminal in the worktree refuses (fails closed), before any hook or run", (t) => {
+  const s = scene(t);
+  const wt = join(s.project, ".claude/worktrees/feat-get");
+  git(s.project, "worktree", "add", "-q", "-b", "feat/get", wt);
+  addTerminals(s, worker("t70", wt, { "worker.of": ID.cap, "worker.role": "dev" }));
+  const st = s.hcState();
+  st.failGet = ["t70"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["worker", "go", "--worktree", wt]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /t70 is live in .*feat-get, but whether it's a worker can't be told: hc get t70 failed: hc: server error reading t70\. Not started\./);
+  assert.equal(s.runs().length, 0);
+  assert.equal(existsSync(join(wt, ".claude/settings.local.json")), false, "no hook written");
+});
+
+test("staleLimit #536: AUTOMAGIK_HERDR_LOCK_STALE_MS clamped to 100 ms..60 s; unset or not a number is 10 s", async () => {
+  const { staleLimit } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
+  assert.deepEqual([undefined, "", " ", "x", "NaN", "Infinity"].map(staleLimit), [10_000, 10_000, 10_000, 10_000, 10_000, 10_000]);
+  assert.deepEqual(["1", "0", "-5", "100", "400", "60000", "60001", "1e10"].map(staleLimit), [100, 100, 100, 100, 400, 60_000, 60_000, 60_000]);
+});

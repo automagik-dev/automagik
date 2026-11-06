@@ -2775,9 +2775,10 @@ test("import gives a seat already playing its bot its lost labels back, with no 
 test("start #225/#223: the ledger lock stays fresh across a slow hc run, so two starts at once start the bot once", async (t) => {
   const s = scene(t);
   s.seed(team());
-  // hc run answers after 1 s, past a 400 ms stale limit: a lock not kept fresh is taken over by
-  // the waiting start, which finds no binding yet and starts the bot again.
-  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = run ]; then sleep 1; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  // hc run answers after 0.6 s, past a 400 ms stale limit: a lock not kept fresh is taken over by
+  // the waiting start, which finds no binding yet and starts the bot again. Short, so the
+  // waiting start's 3 s ledger-lock wait has room under load.
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = run ]; then sleep 0.6; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   const env = { AUTOMAGIK_HERDR_LOCK_STALE_MS: "400" };
   const both = await Promise.all([s.cliAsync(["start", "Genie"], { env }), s.cliAsync(["start", "Genie"], { env })]);
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1, both.map((r) => r.err).join("\n"));
