@@ -168,10 +168,19 @@ test('#509: an unclosed no-space colon tail is masked and not remembered', () =>
     ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`],
     ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
     ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`],
+    ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`],
+    ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`],
+    ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`],
+    ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`],
+    ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`],
   ]) {
     assert.equal(redactText(input), want, what)
     const kept = secretsIn(input)
     assert.ok(!kept.includes(LEAK), `${what}: the tail is not remembered`)
     assert.ok(!kept.includes(VALUE), `${what}: the inline value is not remembered`)
   }
+})
+
+test('#509: a non-credential quoted name is not over-hidden', () => {
+  assert.equal(redactText('? "compass:north\n'), '? "compass:north\n')
 })
