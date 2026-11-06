@@ -1,7 +1,7 @@
 import { createElement as h, useEffect, useState } from 'react'
 import { BotMark } from './mark.js'
 import { workPhrase } from './cells.js'
-import { endLabel } from './task-card.js'
+import { endLabel, endOf, railEnded } from './task-card.js'
 import { t } from './i18n.js'
 
 // -------------------------------------------------------------------------
@@ -10,8 +10,6 @@ export function LiveTab({ useRoster, ...props }) {
   const roster = useRoster(value => value)
   return h(LiveRail, { ...props, roster })
 }
-const ENDED_SHOWN = 3
-const ENDED_FOR_MS = 6 * 60 * 60 * 1000
 
 /** What the rail lists, from the work snapshot and the roster: { needs, working, ended }. */
 export function liveOf(work, roster, now = Date.now()) {
@@ -43,18 +41,16 @@ export function liveOf(work, roster, now = Date.now()) {
       working.push({ key: `room:${roomId}:${doing.botId}`, bot: byId[doing.botId], phrase: workPhrase(doing), place: roomsById[roomId]?.name, open: roomId })
     }
   }
-  const ended = []
   for (const [sessionId, task] of Object.entries(tasks)) {
     const bot = byId[task.from]
-    if (!bot) continue
-    if (task.status === 'working') {
-      if (!waitingTasks.has(sessionId)) working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t('Task'), task: true, at: task.at, open: sessionId })
-    } else if (now - (task.endedAt ?? task.at ?? 0) < ENDED_FOR_MS) {
-      ended.push({ key: `end:${sessionId}`, bot, title: task.title ?? t('Task'), status: task.status, label: endLabel(task), at: task.endedAt ?? task.at ?? 0, open: sessionId })
+    if (bot && task.status === 'working' && !waitingTasks.has(sessionId)) {
+      working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t('Task'), task: true, at: task.at, open: sessionId })
     }
   }
-  ended.sort((a, b) => b.at - a.at)
-  return { needs, working, ended: ended.slice(0, ENDED_SHOWN) }
+  const ended = railEnded(roster, now).map(([sessionId, task]) => ({
+    key: `end:${sessionId}`, bot: byId[task.from], title: task.title ?? t('Task'), status: task.status, label: endLabel(task), at: endOf(task), open: sessionId,
+  }))
+  return { needs, working, ended }
 }
 
 /** The line under the rail's title: "1 needs you · 2 working", "nothing working". */

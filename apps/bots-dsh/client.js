@@ -4737,7 +4737,19 @@ var duration = (ms) => {
   return minutes < 60 ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 var runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {}).filter(([, task]) => task.from === botId && task.status === "working").map(([sessionId, task]) => ({ sessionId, ...task })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-var agentRowSessions = (agent, roster) => agent.kind !== "tasks" ? agent.sessions : agent.sessions.filter((id) => roster?.byId?.[roster.tasks?.[id]?.from] === void 0);
+var ENDED_SHOWN = 3;
+var ENDED_FOR_MS = 6 * 60 * 60 * 1e3;
+var endOf = (task) => task.endedAt ?? task.at ?? 0;
+var railEnded = (roster, now) => Object.entries(roster?.tasks ?? {}).filter(([, task]) => roster.byId?.[task.from] !== void 0 && task.status !== "working" && now - endOf(task) < ENDED_FOR_MS).sort(([, a], [, b]) => endOf(b) - endOf(a)).slice(0, ENDED_SHOWN);
+var agentRowSessions = (agent, roster, now) => {
+  if (agent.kind !== "tasks") return agent.sessions;
+  const inRail = new Set(now === void 0 ? [] : railEnded(roster, now).map(([id]) => id));
+  return agent.sessions.filter((id) => {
+    const task = roster?.tasks?.[id];
+    if (roster?.byId?.[task?.from] === void 0) return true;
+    return now !== void 0 && task.status !== "working" && !inRail.has(id);
+  });
+};
 var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
 var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
 var taskState = (task, waiting) => {
@@ -9565,8 +9577,6 @@ function LiveTab({ useRoster, ...props }) {
   const roster = useRoster((value) => value);
   return (0, import_react23.createElement)(LiveRail, { ...props, roster });
 }
-var ENDED_SHOWN = 3;
-var ENDED_FOR_MS = 6 * 60 * 60 * 1e3;
 function liveOf(work, roster, now = Date.now()) {
   const byId = roster?.byId ?? {};
   const roomsById = roster?.roomsById ?? {};
@@ -9592,18 +9602,22 @@ function liveOf(work, roster, now = Date.now()) {
       working.push({ key: `room:${roomId}:${doing.botId}`, bot: byId[doing.botId], phrase: workPhrase(doing), place: roomsById[roomId]?.name, open: roomId });
     }
   }
-  const ended = [];
   for (const [sessionId, task] of Object.entries(tasks)) {
     const bot = byId[task.from];
-    if (!bot) continue;
-    if (task.status === "working") {
-      if (!waitingTasks.has(sessionId)) working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t("Task"), task: true, at: task.at, open: sessionId });
-    } else if (now - (task.endedAt ?? task.at ?? 0) < ENDED_FOR_MS) {
-      ended.push({ key: `end:${sessionId}`, bot, title: task.title ?? t("Task"), status: task.status, label: endLabel(task), at: task.endedAt ?? task.at ?? 0, open: sessionId });
+    if (bot && task.status === "working" && !waitingTasks.has(sessionId)) {
+      working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t("Task"), task: true, at: task.at, open: sessionId });
     }
   }
-  ended.sort((a, b) => b.at - a.at);
-  return { needs, working, ended: ended.slice(0, ENDED_SHOWN) };
+  const ended = railEnded(roster, now).map(([sessionId, task]) => ({
+    key: `end:${sessionId}`,
+    bot: byId[task.from],
+    title: task.title ?? t("Task"),
+    status: task.status,
+    label: endLabel(task),
+    at: endOf(task),
+    open: sessionId
+  }));
+  return { needs, working, ended };
 }
 function liveSummary({ needs, working }) {
   const parts = [];
@@ -11945,12 +11959,12 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
       }
     },
     (0, import_react27.createElement)("span", { className: "bt-agent-sub-title" }, session.title),
-    (0, import_react27.createElement)("span", { className: "bt-agent-sub-time" }, session.at > 0 ? relativeShort(session.at) : "")
+    (0, import_react27.createElement)("span", { className: "bt-agent-sub-time" }, [session.ended, session.at > 0 ? relativeShort(session.at) : ""].filter(Boolean).join(" · "))
   );
 }
 function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  const own = agentRowSessions(agent, roster);
   const tasks = agent.kind === "tasks";
+  const own = agentRowSessions(agent, roster, useMinute(tasks));
   const name = tasks ? t("Tasks") : agent.name;
   const info = useSessions((list) => JSON.stringify(own.map((id) => {
     const row = list.byId[id];
@@ -11969,12 +11983,16 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
     unread: map.get(id)?.completionUnread === true
   }))));
   const statuses = Object.fromEntries(JSON.parse(statusInfo).map((entry) => [entry.id, entry]));
-  const sessions = JSON.parse(info).map((session) => ({
-    ...session,
-    running: statuses[session.id]?.running ?? session.running,
-    unread: statuses[session.id]?.unread ?? false,
-    title: session.title === "" ? t("New session") : session.title
-  }));
+  const sessions = JSON.parse(info).map((session) => {
+    const task = tasks ? roster.tasks?.[session.id] : void 0;
+    return {
+      ...session,
+      running: statuses[session.id]?.running ?? session.running,
+      unread: statuses[session.id]?.unread ?? false,
+      title: session.title === "" ? task?.title ?? t("New session") : session.title,
+      ended: task === void 0 || task.status === "working" ? void 0 : endLabel({ status: task.status })
+    };
+  });
   const renaming = useUi((value) => value.renameAgent);
   const active = sessions.some((session) => session.active);
   const running2 = sessions.some((session) => session.running);
@@ -16640,7 +16658,7 @@ function CommandPalette({ start: start2, token, roster, actions, useSessions }) 
     }))
   ];
   if (people.length) sections.push([t("Bots"), people]);
-  const agents = (roster.agents ?? []).filter((agent) => agent.kind === "tasks" ? agentRowSessions(agent, roster).length > 0 && matchesName(t("Tasks")) : matchesName(agent.name) || matchesName("DSH bot")).map((agent) => ({
+  const agents = (roster.agents ?? []).filter((agent) => agent.kind === "tasks" ? agentRowSessions(agent, roster, Date.now()).length > 0 && matchesName(t("Tasks")) : matchesName(agent.name) || matchesName("DSH bot")).map((agent) => ({
     key: agent.id,
     avatar: (0, import_react44.createElement)("span", { className: "bt-palette-agent" }, agent.kind === "tasks" ? (0, import_react44.createElement)(TasksIcon, { size: 18 }) : (0, import_react44.createElement)(TerminalIcon)),
     title: agent.kind === "tasks" ? t("Tasks") : agent.name,
@@ -24190,7 +24208,7 @@ function apply(ctx) {
   const agentSessions = (agentId) => {
     const snapshot = roster.getSnapshot();
     const agent = snapshot.agentsById[agentId];
-    const ids = agent === void 0 ? [] : [...agentRowSessions(agent, snapshot)];
+    const ids = agent === void 0 ? [] : [...agentRowSessions(agent, snapshot, Date.now())];
     for (const [id, owner] of pendingAdopt) if (owner === agentId && !ids.includes(id)) ids.push(id);
     return ids;
   };

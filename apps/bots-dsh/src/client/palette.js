@@ -61,9 +61,9 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
     })),
   ]
   if (people.length) sections.push([t('Bots'), people])
-  // The DSH bots by name, and the tasks whose Bot is gone while there are any.
+  // The DSH bots by name, and the Tasks row while it still lists a Session.
   const agents = (roster.agents ?? []).filter(agent => (agent.kind === 'tasks'
-    ? agentRowSessions(agent, roster).length > 0 && matchesName(t('Tasks'))
+    ? agentRowSessions(agent, roster, Date.now()).length > 0 && matchesName(t('Tasks'))
     : matchesName(agent.name) || matchesName('DSH bot'))).map(agent => ({
     key: agent.id, avatar: h('span', { className: 'bt-palette-agent' }, agent.kind === 'tasks' ? h(TasksIcon, { size: 18 }) : h(TerminalIcon)),
     title: agent.kind === 'tasks' ? t('Tasks') : agent.name,

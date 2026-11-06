@@ -31,6 +31,8 @@ const CUT_KEPT_MS = 24 * 60 * 60 * 1000
 const RESUMES_MAX = 2
 const EVENTS_SCANNED = 400
 const TASKS_CHECKED = 12
+// What a task says when a restart cut it and nothing will pick it up.
+const CUT_SUMMARY = 'A restart cut this task off and it was not picked up again.'
 
 // How DSH ends a turn a restart cut off: `interrupted` when it repairs the log of a process
 // that died, `aborted`/`disposed` when it stops the turn as it shuts down. Neither means the
@@ -387,6 +389,20 @@ export function install(rt) {
         })
       }
       rt.warn('ds-bot: %s %s was cut off by a restart and goes on', target.kind === 'run' ? 'automation run' : target.kind === 'plain' ? 'Session' : 'task', id)
+    }
+    // A cut task this pass did not set going stays cut: past TASKS_CHECKED, RESUMES_MAX or
+    // CUT_KEPT_MS nothing runs it again and no turn/end will come, so it would read Working
+    // for ever (#164). It ends as stopped, from when it was cut. Its Bot is not woken for
+    // it: at a start that could be many old tasks at once.
+    for (const [id, task] of Object.entries(state.tasks ?? {})) {
+      if (task.status !== 'working' || resumed.includes(id)) continue
+      const agent = await rt.resolveAgent(id).catch(() => undefined)
+      // Opening a Session takes time: the task may have really ended meanwhile.
+      if (agent === undefined || agent.status === 'running' || task.status !== 'working') continue
+      const last = lastTurnOf(agent)
+      if (last?.type !== 'turn/end' || !cutByRestart(last.data?.reason)) continue
+      Object.assign(task, { status: 'stopped', endedAt: last.time ?? Date.now(), summary: CUT_SUMMARY })
+      await rt.save()
     }
   }
 
