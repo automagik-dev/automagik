@@ -32,7 +32,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 |---|---|---|---|
 | [0001](0001-roadmap-and-milestones.md) | Roadmap and milestones | Accepted (delivery 3 merged: #190) | n/a (process) |
 | [0002](0002-browser-group-1-completion.md) | Browser Group 1 completion | Accepted | 1. Safe browser and everyday fixes |
-| [0003](0003-model-routes-and-acp.md) | Model routes and ACP | Accepted (deliveries 1-3 merged: #187, #189) | 2 (route descriptor), 3. Other agents in the same chat |
+| [0003](0003-model-routes-and-acp.md) | Model routes and ACP | Accepted (deliveries 1-3 merged: #187, #189; amended 2026-11-06: DSH's tool set on ACP routes and live switching, deliveries 6-7) | 2 (route descriptor), 3. Other agents in the same chat |
 | [0004](0004-composer-chat-kinds.md) | Composer and chat kinds | Accepted | 2. One message box |
 | [0005](0005-workspace-and-genie-projects.md) | Workspace and Genie projects | Accepted | 4. Projects in one place (Publish not scheduled) |
 | [0006](0006-herdr-terminal-mode.md) | Herdr terminal mode | Superseded (D27: herdr-app as the code window, RFC 0013; its Workers section, a herdr subagents provider for DSH, is not replaced) | not scheduled |
