@@ -309,7 +309,8 @@ mods_said() {
 # list), since Herdr would drop that layout and show plain Herdr. With no layout to read (no
 # herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
 # whose blocks name one ($2: the pack's own layout file when this run removes it, left out unless
-# Node finds it does not parse, #489; refused too while Herdr shows that file).
+# Node finds it does not parse, #489, or Herdr gave no answer at all, #487: then said as removed,
+# or kept in a linked layouts/; refused too while Herdr shows that file).
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 layout_guard() {
   shown=$(shown_layout)
@@ -349,9 +350,14 @@ layout_guard() {
   [ -n "$why" ] && [ -n "$on" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
     [ -f "$f" ] || continue
-    # The pack's own layout this run removes is left out, unless it does not parse (Node reads it;
-    # without Node it is left out): then no layout could be read from it, which is said (#489).
-    if [ "$f" = "$2" ] && { ! node_ok || json_reads "$f"; }; then continue; fi
+    # The pack's own layout this run removes: while Herdr gave a name (a path, no such file), not
+    # the one shown, so left out unless it does not parse (#489: Node reads it; without Node, left
+    # out). With no answer at all (#487) it may be the one shown: said either way, Node or not.
+    reads=
+    if [ "$f" = "$2" ]; then
+      if node_ok; then if json_reads "$f"; then reads=yes; else reads=no; fi; fi
+      if [ -n "$shown" ] && [ "$reads" != no ]; then continue; fi
+    fi
     has=
     set -f
     IFS=,
@@ -362,8 +368,16 @@ layout_guard() {
     set +f
     [ -n "$has" ] || continue
     name=${f##*/}
-    if [ "$f" = "$2" ]; then
+    if [ "$f" = "$2" ] && [ "$reads" = no ]; then
       say "Uninstalling the pack without knowing the layout Herdr shows ($why), and its own layout ($f) does not read: its text names $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      continue
+    fi
+    if [ "$f" = "$2" ]; then
+      if [ -L "$APP_HOME/layouts" ]; then
+        say "Keeping the pack's own layout $f without knowing the layout Herdr shows ($why): $APP_HOME/layouts is a link, your own folder, so it stays, but its text names $has, which leave mods/ with the pack. If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      else
+        say "Removing the pack's own layout $f without knowing the layout Herdr shows ($why), so it may be the one shown: its text names $has, which leave mods/ with the pack. If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      fi
       continue
     fi
     say "Uninstalling the pack without knowing the layout Herdr shows ($why): your layout ${name%.json} ($f) shows $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."

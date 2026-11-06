@@ -158,6 +158,46 @@ test("shownFile: refuse refuses a remove of the shown layout's file by its name;
   assert.equal(change(h.app, [{ op: "remove", path: join(h.app, "layouts", "other.json") }], { ask, shownFile: "refuse" }).refused, null);
 });
 
+test("#487: shownFile with no answer from Herdr: the layout file removed is said with the mods it names; a kept one too", (t) => {
+  const why = "herdr-app status gave no layout: is Herdr running?";
+  const after = "If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l), or `am install herdr.pack` puts the pack back";
+  const batch = (h) => [{ op: "remove", path: join(h.app, "layouts", "automagik.json") },
+    ...["a", "b"].map((m) => ({ op: "move", from: join(h.mods, m), to: join(h.kept, m), mkdir: true }))];
+  const opts = (ask, lines, more = {}) => ({ ask, needed: "refuse", unknown: "warn", shownFile: "refuse", links: "hold-layouts",
+    then: "uninstall the pack", pack: true, skip: ["automagik.json"], log: (l) => lines.push(l), ...more });
+  const noAnswer = () => ({ name: null, tree: null, why });
+
+  // Removed: the file, the reason and the mod its blocks name (b, not named, is left out).
+  const h = home(t);
+  write(join(h.app, "layouts", "automagik.json"), layout("a", "pane"));
+  const lines = [];
+  const r = change(h.app, batch(h), opts(noAnswer, lines));
+  assert.equal(r.done, true);
+  assert.deepEqual(lines, [`removing layouts/automagik.json without knowing the layout Herdr shows (${why}), so it may be the one shown: `
+    + `its blocks name a, which leaves mods/ too. ${after}`]);
+  assert.deepEqual(r.notes, lines);
+  assert.ok(!existsSync(join(h.app, "layouts", "automagik.json")) && !existsSync(join(h.mods, "a")));
+
+  // Kept: a linked layouts/ (the person's folder) holds it; its mods still leave.
+  const k = home(t);
+  write(join(k.root, "mine", "automagik.json"), layout("a", "b"));
+  symlinkSync(join(k.root, "mine"), join(k.app, "layouts"));
+  const kept = [];
+  const rk = change(k.app, batch(k), opts(noAnswer, kept));
+  assert.deepEqual(rk.left, [join(k.app, "layouts", "automagik.json")]);
+  assert.deepEqual(kept, [`keeping layouts/automagik.json without knowing the layout Herdr shows (${why}): layouts/ is a link, your own folder, `
+    + `so it stays, but its blocks name a, b, which leave mods/. ${after}`]);
+
+  // Not said: Herdr gave a name (a path: not this file), or no unknown: "warn" (herdr.layout's own line).
+  for (const [ask, more] of [[() => ({ name: "../elsewhere", tree: null, why: "a name with a path" }), {}], [noAnswer, { unknown: null }]]) {
+    const q = home(t);
+    write(join(q.app, "layouts", "automagik.json"), layout("a"));
+    const quiet = [];
+    change(q.app, batch(q), opts(ask, quiet, more));
+    assert.ok(!quiet.some((l) => /automagik\.json/.test(l)), quiet.join("\n"));
+  }
+});
+
 test("an op inside a linked folder of the app home is found as writing through a link", (t) => {
   const h = home(t);
   write(join(h.root, "mine", "automagik.json"), "{}");

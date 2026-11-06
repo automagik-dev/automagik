@@ -56,25 +56,56 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// One run, or the best of three when it is slow: noise only slows a run, and a quadratic rule is
-// slow every time.
+// A wall-clock sample holds the rule's own work plus the time this process waited for a CPU, and CI
+// runs this package's test files side by side. Five wall-clock runs of the same 80k text spanned
+// 8 ms to 211 ms here while their CPU time stayed within a millisecond. A rule's cost is CPU work,
+// so the sample is CPU time, and the best of five drops one that caught a background compile or a
+// collection. It cannot hide a regression: a rule slower than FAST_MS uses more than FAST_MS of
+// CPU in every run, so its best is over the ceiling too (the test below holds the harness to that).
+const FAST_MS = 50
+const FAST_TRIES = 5
 const timed = (fn) => {
   let best = Infinity
-  for (let i = 0; i < 3 && best >= FAST_MS; i++) {
-    const t0 = performance.now()
+  for (let i = 0; i < FAST_TRIES && best >= FAST_MS; i++) {
+    const t0 = process.cpuUsage()
     fn()
-    best = Math.min(best, performance.now() - t0)
+    const used = process.cpuUsage(t0)
+    best = Math.min(best, (used.user + used.system) / 1000)
   }
   return best
 }
-const FAST_MS = 50
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
 const PATHS = [['the window rules', redactText], ['the browser copy', clientRedactText], ["the browser copy's values", clientSecretsIn], ['the window', push]]
 
 test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', () => {
-  for (const [shape, text] of fuzzCases()) {
-    for (const [path, run] of PATHS) assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+  const cases = fuzzCases()
+  // Warm-up, not measured: a cold process pays to compile each rule's regular expressions, grow
+  // its buffers and climb V8's tiers once, and that setup is not a text's cost. The pass runs the
+  // same texts through the same paths, so a rule that is slow on a shape is still slow on the
+  // measured pass; only the one-time cold cost of a new process is left out.
+  for (const [, text] of cases) for (const [, run] of PATHS) run(text)
+  for (const [shape, text] of cases) {
+    for (const [path, run] of PATHS) {
+      assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+    }
   }
+})
+
+// The harness above must fail a path slower than the ceiling, or a regression could hide in the
+// sampling. This path burns 60 ms of CPU by construction, counting CPU time itself, so no amount
+// of load can cut the burn short: every run is over the ceiling and its best is too.
+test('the measurement fails a path slower than the ceiling', () => {
+  const slow = () => {
+    const start = process.cpuUsage()
+    let spin = 0
+    for (;;) {
+      spin += 1
+      if ((spin & 0x3ff) !== 0) continue
+      const used = process.cpuUsage(start)
+      if (used.user + used.system >= 60_000) return spin
+    }
+  }
+  assert.ok(timed(slow) >= FAST_MS)
 })

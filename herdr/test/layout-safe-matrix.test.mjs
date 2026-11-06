@@ -46,13 +46,11 @@ export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout
 
 /**
  * Today's gaps: `${route} | ${shape}` → the issue. "new" names a gap no issue tracks yet (reported
- * with this PR, not fixed in it).
+ * with this PR, not fixed in it). None left here (#487 closed the last); the mod manager's are in
+ * layout-safe-matrix-mods.test.mjs.
  */
-const NEW_FAIL_OPEN = "new gap: with no layout from Herdr, the pack's own layout and its mods go without saying why";
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
-export const EXPECTED_FAIL = {
-  ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | ${NO_ANSWER}`, NEW_FAIL_OPEN])),
-};
+export const EXPECTED_FAIL = {};
 
 const exe = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
