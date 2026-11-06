@@ -141,10 +141,12 @@ const MASK = "***";
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 
 /**
- * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2): a flag
- * by name with its value masked (`--model=***`), a flag's separate value folded into it, an env
- * assignment as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left
- * out, so no value can reach a line. `--` ends the options.
+ * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2, D1):
+ * a flag by name with its value masked (`--model=***`), a flag's separate value folded into it
+ * whatever it starts with (`--k v`, `--k -v`), a short flag with its value joined on cut to its
+ * first two characters (`-kV` is `-k=***`), an env assignment as `NAME=***`, and a bare word (a
+ * program, a prompt, a positional argument) left out, so no value can reach a line. `--` ends
+ * the options.
  */
 function launchTokens(words) {
   const list = Array.isArray(words) ? words.map(String) : [];
@@ -152,13 +154,15 @@ function launchTokens(words) {
   for (let i = 0; i < list.length; i += 1) {
     const w = list[i];
     if (w === "--") break;
-    if (w.startsWith("-")) {
+    if (w.startsWith("-") && w !== "-") {
       const eq = w.indexOf("=");
       if (eq > 0) { out.push({ key: w.slice(0, eq), text: `${w.slice(0, eq)}=${MASK}`, value: w.slice(eq + 1) }); continue; }
-      const next = list[i + 1];
-      const takes = next !== undefined && next !== "--" && !next.startsWith("-");
-      out.push({ key: w, text: takes ? `${w}=${MASK}` : w, value: takes ? next : "" });
-      if (takes) i += 1;
+      // A short flag with its value joined on: `-kV`, `-kSECRET`.
+      if (!w.startsWith("--") && w.length > 2) { out.push({ key: w.slice(0, 2), text: `${w.slice(0, 2)}=${MASK}`, value: w.slice(2) }); continue; }
+      // A word after a flag is its value, whatever it starts with: `--k v`, `--k -v`.
+      const next = i + 1 < list.length && list[i + 1] !== "--" ? list[i + 1] : undefined;
+      out.push({ key: w, text: next === undefined ? w : `${w}=${MASK}`, value: next ?? "" });
+      if (next !== undefined) i += 1;
       continue;
     }
     const assign = ASSIGN.exec(w);
