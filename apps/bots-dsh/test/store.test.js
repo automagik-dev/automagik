@@ -135,9 +135,11 @@ test('malformed state stays read-only when its backup cannot be copied', async (
   }
 })
 
-test('a state saved before the version stamp is read, migrated, and written with version 1', async (t) => {
-  const saved = { revision: 7, mainBotId: 'chief', bots: { chief: { id: 'chief', name: 'Omni' } }, rooms: {}, exchanges: [], exchangeTurns: {}, questions: {} }
-  const { rt, statePath } = runtime(t, saved)
+test('a real file saved before the version stamp is read, migrated, and written with version 1', async (t) => {
+  // The bytes an older Omni wrote: no version key at all.
+  const older = '{"revision":7,"mainBotId":"chief","bots":{"chief":{"id":"chief","name":"Omni"}},"rooms":{},"exchanges":[],"exchangeTurns":{},"questions":{}}'
+  const { rt, statePath } = runtime(t, older)
+  assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).version, undefined, 'the fixture predates the stamp')
   await rt.load()
   assert.equal(rt.readOnly(), undefined)
   assert.equal(rt.state.version, 1)
@@ -146,6 +148,17 @@ test('a state saved before the version stamp is read, migrated, and written with
   const written = JSON.parse(fs.readFileSync(statePath, 'utf8'))
   assert.equal(written.version, 1, 'the write stamps the current format')
   assert.equal(written.bots.chief.name, 'Omni', 'the migrated team is kept')
+})
+
+test('a stamp that is not an exact integer is refused and left byte-identical', async (t) => {
+  for (const stamp of ['"1"', 'null', '1.5']) {
+    const original = `{"version":${stamp},"revision":77,"recoveryMarker":"keep"}`
+    const { rt, statePath } = runtime(t, original)
+    await rt.load()
+    assert.match(rt.readOnly(), /cannot read \(format/, stamp)
+    await rt.save()
+    assert.equal(fs.readFileSync(statePath, 'utf8'), original, `version ${stamp} must not be rewritten`)
+  }
 })
 
 test('a version this build does not list is refused, not migrated', async (t) => {

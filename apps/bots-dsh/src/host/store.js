@@ -102,14 +102,18 @@ export function install(rt) {
       }
       return undefined
     }
-    // The file's own version decides; a missing stamp is the format before this field. A
-    // version this build is not compatible with is never migrated.
-    const version = Number.isInteger(parsed?.version) ? parsed.version : LEGACY_VERSION
-    if (COMPATIBLE_VERSIONS.includes(version)) {
+    // The file's own version decides: only a missing stamp is the format before this field,
+    // and only an exact integer in the list is compatible. Any other value or type is refused
+    // untouched — never migrated and never rewritten.
+    const raw = parsed?.version
+    const version = raw === undefined ? LEGACY_VERSION : (Number.isInteger(raw) ? raw : undefined)
+    if (version !== undefined && COMPATIBLE_VERSIONS.includes(version)) {
       stuck = undefined
       return parsed
     }
-    stuck = version > STATE_VERSION ? 'saved by a newer Omni; update Omni' : `saved by an Omni this version cannot read (format ${version})`
+    stuck = version !== undefined && version > STATE_VERSION
+      ? 'saved by a newer Omni; update Omni'
+      : `saved by an Omni this version cannot read (format ${JSON.stringify(raw)?.slice(0, 24)})`
     return undefined
   }
 
