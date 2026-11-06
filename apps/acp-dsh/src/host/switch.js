@@ -43,6 +43,109 @@ export function boundaryNotice(summary) {
   })
 }
 
+/** The source kind of the row that says a reasoning effort could not cross. */
+export const EFFORT_KIND = 'acp-effort'
+
+/**
+ * The target's own id for `effort`: the same id, or the one level with the same name.
+ * Undefined when the target cannot express it.
+ * @param {{ efforts?: { id: string, name?: string }[] } | undefined} reasoning
+ * @param {unknown} effort
+ * @returns {string | undefined}
+ */
+export function effortIdOf(reasoning, effort) {
+  if (typeof effort !== 'string' || effort === '') return undefined
+  const levels = reasoning?.efforts
+  if (!Array.isArray(levels) || levels.length === 0) return undefined
+  if (levels.some(level => level?.id === effort)) return effort
+  const wanted = effort.trim().toLowerCase()
+  const named = levels.filter(level =>
+    typeof level?.name === 'string' && level.name.trim().toLowerCase() === wanted)
+  return named.length === 1 ? named[0].id : undefined
+}
+
+/**
+ * The chat row that says the reasoning effort the Session ran on is not offered by the model
+ * it moved to, so that model runs on its own. A user-role notice, never reply text.
+ * @param {string} effort
+ * @param {string} target `provider/model`
+ */
+export function effortNotice(effort, target) {
+  const summary =
+    `Reasoning effort ${effort} is not available on ${target}; this chat runs on its own`
+  return createUserMessage({
+    content: [{ type: 'text', text: `[${summary}.]` }],
+    source: { kind: EFFORT_KIND, form: 'notice', summary: boundContextSummary(summary) },
+  })
+}
+
+/**
+ * The `session/event` listener that carries a Session's reasoning effort across a model
+ * crossing, both ways. DSH records the target model's own default effort on every model
+ * change; this replaces it with the effort the Session ran on when the target offers it. An
+ * effort-only change on the same route is the person's own pick and is left alone. When the
+ * target has no reasoning levels, or lacks that one, a notice says so. The corrected
+ * selection is marked, so the event it appends is never carried again.
+ * @param {(provider: string, model: string) => Promise<{
+ *   efforts?: { id: string, name?: string }[]
+ * } | undefined>} reasoningOf
+ * @param {() => boolean} [on] whether live switching is on (the setting)
+ * @param {(previous: any, next: any) => boolean} [crossing] whether this route change crosses
+ *   a provider boundary; without one every model change is a crossing
+ */
+export function carryEffort(reasoningOf, on = () => true, crossing = () => true) {
+  const latest = new WeakMap()
+  const expected = new WeakMap()
+  const same = (a, b) => a.provider === b.provider && a.model === b.model
+    && (a.reasoningEffort ?? undefined) === (b.reasoningEffort ?? undefined)
+  return async (session, event) => {
+    if (on() !== true || event?.type !== 'model/selection') return
+    const next = event.data
+    if (next === null || typeof next !== 'object') return
+    const key = session === null || typeof session !== 'object' ? undefined : session
+    // A newer pick always wins over a carry still reading the target's levels.
+    if (key !== undefined) latest.set(key, next)
+    const expecting = key === undefined ? undefined : expected.get(key)
+    if (expecting !== undefined && same(expecting, next)) {
+      // The selection this listener appended, read back from the log: never carried again.
+      expected.delete(key)
+      return
+    }
+    if (typeof next.provider !== 'string' || typeof next.model !== 'string') return
+    const header = session?.requestHeader?.()
+    // DSH's own projection drops an effort its adapter defaulted; it is not the person's.
+    if (header?.adapterDefaults?.reasoningEffort === true) return
+    const previous = header?.config
+    const effort = previous?.reasoningEffort
+    if (typeof effort !== 'string' || effort === '') return
+    // The same route is an effort-only pick (the person's), not a crossing.
+    if (previous.provider === next.provider && previous.model === next.model) return
+    if (crossing(previous, next) !== true) return
+    let reasoning
+    try {
+      reasoning = await reasoningOf(next.provider, next.model)
+    } catch {
+      // No answer is no level the target can express: say so, like an empty list.
+      reasoning = undefined
+    }
+    if (key !== undefined && latest.get(key) !== next) return
+    const carried = effortIdOf(reasoning, effort)
+    if (carried === undefined) {
+      const row = effortNotice(effort, `${next.provider}/${next.model}`)
+      try { session.append?.('user/message', row, { surfaceOp: 'append' }) } catch {}
+      return
+    }
+    if (next.reasoningEffort === carried) return
+    const choice = { provider: next.provider, model: next.model, reasoningEffort: carried }
+    if (key !== undefined) expected.set(key, choice)
+    try {
+      session.append?.('model/selection', choice)
+    } catch {
+      if (key !== undefined) expected.delete(key)
+    }
+  }
+}
+
 /**
  * A transcript with every text-bearing part redacted, for a crossing to another provider. The
  * messages and their content are copied, never changed: DSH keeps the record it logged.

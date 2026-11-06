@@ -61,7 +61,13 @@ function fuzzCases(seed = SEED, count = 200) {
 // same 80k text spanned 8 ms to 211 ms here while their CPU time stayed within a millisecond. The
 // best of five runs drops one that caught a background compile or a collection; noise can add CPU
 // time, never remove it, so a rule that is slow in every run stays slow in every sample.
-const FAST_MS = 50
+// The text paths are the plain rule pass over one fixed-size piece, with no window on top, so they
+// keep an absolute ceiling: 100 ms. The slowest measured was 58.9 ms of CPU on CI (#53's rule pass
+// at 80k, against the old 50 ms ceiling); the browser copy costs 1.15-1.27x the rule pass here,
+// projecting 68-75 ms under the same inflation, so 100 keeps 1.3-1.5x headroom. A machine 4x
+// slower lands at 50 ms, and planted quadratic KEY= mutants measured 125-379.6 ms, so they still
+// fail.
+const TEXT_CEILING_MS = 100
 const FAST_TRIES = 5
 const sample = (fn) => {
   const t0 = process.cpuUsage()
@@ -69,7 +75,7 @@ const sample = (fn) => {
   const used = process.cpuUsage(t0)
   return (used.user + used.system) / 1000
 }
-const timed = (fn, ceiling = FAST_MS) => {
+const timed = (fn, ceiling = TEXT_CEILING_MS) => {
   let best = Infinity
   for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
@@ -100,19 +106,22 @@ const REFERENCE_TEXT = (() => {
 })()
 
 // The window runs redactText over every delta on top of its own row work, so it costs a multiple of
-// the reference: 1.89-1.96x measured here (Node 22.23.2) and 2.32-2.50x on the Ryzen numbers (26.24
-// ms against 10.5-11.3 ms, Node 24.9.0/24.22.2). WINDOW_MARGIN sits above both, and a 2x regression
-// of the window path fails on either (3.8x here, 4.6-5.0x on Ryzen); the absolute backstop caps how
-// far a reference that reads high can widen the bound. A quadratic rule at 80k characters is 6.4e9
-// steps, seconds of CPU, far past either.
-const WINDOW_MARGIN = 3.5
-const WINDOW_BACKSTOP_MS = 200
+// the reference: 2.31-2.44x over five runs here (Node 24.13.1), 3.51x once under load, 2.32-2.50x
+// on the Ryzen numbers (26.24 ms against 10.5-11.3 ms, Node 24.9.0/24.22.2) and 2.36x on the Fixer
+// head. WINDOW_MARGIN 4.5 sits 1.8x above the 2.50x worst, and a 2x regression of the window path
+// still fails (4.9x against 4.5). The absolute backstop caps how far a slow reference may widen
+// the bound: 400 ms sits 1.7x above the worst observed runner reading (mind's stream 225.8-233.2 ms
+// at a 30.3-30.6 ms reference) and only binds when 4.5 x reference passes it. A shared rule gone
+// quadratic still fails: the text ceiling catches it on the rule pass, and the window runs past the
+// cap.
+const WINDOW_MARGIN = 4.5
+const BACKSTOP_MS = 400
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
 const PATHS = [['the window rules', redactText], ['the browser copy', clientRedactText], ["the browser copy's values", clientSecretsIn], ['the window', push]]
 
-test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', () => {
+test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', (t) => {
   const cases = fuzzCases()
   // Warm-up, not measured: a cold process pays to compile each rule's regular expressions, grow
   // its buffers and climb V8's tiers once, and that setup is not a text's cost. The pass runs the
@@ -123,18 +132,28 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   const textPaths = PATHS.slice(0, -1)
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a window that measured nothing.
-  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
-  const bound = Math.min(WINDOW_MARGIN * referenceMs, WINDOW_BACKSTOP_MS)
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(1)} ms of CPU`)
+  const bound = Math.min(WINDOW_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
+  const slowest = new Map()
+  const noteSlowest = (path, ms, shape) => {
+    if (ms > (slowest.get(path)?.ms ?? 0)) slowest.set(path, { ms, shape })
+  }
   for (const [shape, text] of cases) {
     for (const [path, run] of textPaths) {
       const ms = timed(() => run(text))
-      const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
-      assert.ok(ms < FAST_MS, detail)
+      const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${TEXT_CEILING_MS} ms`
+      assert.ok(ms < TEXT_CEILING_MS, detail)
+      noteSlowest(path, ms, shape)
     }
     const windowMs = timed(() => windowRun(text), bound)
     const detail = `${windowPath}: ${shape}: ${windowMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${WINDOW_BACKSTOP_MS} ms)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(windowMs <= bound, detail)
+    noteSlowest(windowPath, windowMs, shape)
+  }
+  for (const [path, { ms, shape }] of slowest) {
+    t.diagnostic(`${path}: slowest ${ms.toFixed(1)} ms of CPU, ` +
+      `${(ms / referenceMs).toFixed(2)} times the reference — ${shape}`)
   }
 })

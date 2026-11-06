@@ -25,22 +25,23 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
   freshSpare, shellIdle, spareTab, startArgs, startRefusal, unwrapKeep } from "../launchArgs.js";
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
-import { agentOnMachine, interpreterPath } from "../agentPath.mjs";
-import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
+import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
+import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
-  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
+  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
+  parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
-  writesWorktree } from "../workers.js";
+  workLeft, writesWorktree } from "../workers.js";
 import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
   sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
-import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
+import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, utf8Length, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
@@ -537,14 +538,21 @@ export function listProject(key, dir = appHome()) {
   return false;
 }
 
-/** Takes keys off the CLI's project list (tidy's registry prune), under listProject's lock. */
+/**
+ * Takes keys off the CLI's project list (tidy's registry prune, forget), under listProject's
+ * lock. Resolves with the keys it found there and took off (none: the file is unchanged).
+ */
 export function unlistProjects(keys, dir = appHome()) {
   const path = `${dir}/${PROJECTS_FILE}`;
-  withLock(`${path}.lock`, () => {
+  return withLock(`${path}.lock`, () => {
     let text;
-    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return; throw e; }
-    const next = `${JSON.stringify(listedProjects(text).filter((k) => !keys.includes(k)), null, 2)}\n`;
+    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    const listed = listedProjects(text);
+    const taken = listed.filter((k) => keys.includes(k));
+    if (!taken.length) return [];
+    const next = `${JSON.stringify(listed.filter((k) => !keys.includes(k)), null, 2)}\n`;
     if (next !== text) fsIo.replace(path, next);
+    return taken;
   });
 }
 
@@ -1034,6 +1042,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's briefing with its team's live state, as it is now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
+  forget <project>              take a project's folder off this CLI's project list; its folder,
+                                worktrees, bots and panes stay as they are. ls --all and the
+                                sidebar also show the sidebar's own remembered projects, which
+                                the sidebar forgets once the bots file is gone: forget says when
+                                it remembers this one (--json: sidebar_remembers). start,
+                                restart, attach and create already drop an entry whose folder
+                                is gone, with a note when the command succeeds
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
          [--role dev|test|review|fix] [--task ID [--lead BOT]]
@@ -1046,7 +1061,15 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 the worker is named <id>-<role>, a --branch must contain the
                                 id, and --lead (default: this bot; a reviewer or fixer must
                                 pass it) is the task's lead bot. A bot with a worker.swap
-                                runs it on about one task in three, by rule
+                                runs it on about one task in three, by rule. Each call then
+                                removes up to 5 worktrees this command made whose workers
+                                have all ended (reap)
+  reap                          remove every worktree a worker call made whose workers have
+                                all ended (killed or done), then git worktree prune. Kept, with
+                                one line naming the path and why: uncommitted changes, or
+                                commits on no remote unless gh lists the branch's pull
+                                requests as merged or closed. A worktree only given to a worker
+                                (--worktree, a branch's existing one) is never removed
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back;
                                 an update then runs meter install where you agreed to it
@@ -1283,18 +1306,52 @@ const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "s
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
-// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
-function rememberedKeys() {
-  let keys = [];
+// The sidebar's own remembered projects on this computer: am.* since the rename, else the old
+// key. Read only: the sidebar writes them (and forgets one whose bots file is gone).
+function sidebarRemembered() {
   try {
-    // The sidebar's remembered projects: am.* since the rename, else the old key (read only).
     const held = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}");
     const list = held?.["am.sidebar.projects"] ?? held?.[renamedFrom(SHARED_RENAMES, "am.sidebar.projects")];
-    keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
-  } catch { /* unreadable: none */ }
+    return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
+  } catch { return []; /* unreadable: none */ }
+}
+
+// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
+function rememberedKeys() {
+  const keys = sidebarRemembered();
   let listed = [];
   try { listed = listedProjects(readText(`${appHome()}/${PROJECTS_FILE}`)); } catch { /* unreadable: none */ }
   return [...new Set([...keys, ...listed])];
+}
+
+/**
+ * `forget <project>`: takes the project's folder off this CLI's project list, under the list's
+ * lock. Only that entry: no folder, worktree, bots file or terminal is touched. An unknown name
+ * is refused, the file unchanged. `ls --all` and the sidebar also show the sidebar's own
+ * remembered projects (shared.json), which only the sidebar writes: when it remembers this one
+ * too, forget says so (stderr, and `sidebar_remembers` in --json).
+ */
+async function cmdForget(opts, [ref]) {
+  if (!ref) throw new CliError("forget needs a project: its folder, as ls --all prints it.", 2);
+  if (opts.project !== undefined) throw new CliError("forget takes the project as its argument, not --project.", 2);
+  const key = resolvePath(ref);
+  const path = `${appHome()}/${PROJECTS_FILE}`;
+  let taken;
+  // No app home (Herdr isn't set up here): there is no list, so nothing is on it.
+  try { taken = existsSync(appHome()) ? unlistProjects([key]) : []; } catch (e) {
+    throw new CliError(`${key} wasn't taken off ${path}: ${String(e?.message ?? e).split("\n")[0]}`, 1, { project: key, forgotten: false });
+  }
+  const sidebar = sidebarRemembered().includes(key);
+  const sidebarLine = `the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone, so ls --all and the sidebar `
+    + "still show it until then.";
+  if (taken.includes(key)) {
+    if (sidebar) process.stderr.write(`automagik-herdr: ${key} is off this CLI's project list, but ${sidebarLine}\n`);
+    return opts.json ? { forgotten: key, list: path, sidebar_remembers: sidebar } : `${key} forgotten: off ${path}.`;
+  }
+  const why = sidebar
+    ? `${key} isn't on this CLI's project list (${path}); ${sidebarLine}`
+    : `${key} isn't on the project list (${path}); automagik-herdr ls --all shows the projects there.`;
+  throw new CliError(why, 1, { project: key, forgotten: false });
 }
 
 async function cmdLs(opts) {
@@ -1716,13 +1773,14 @@ function tooLate(bot, machine, key, need, space = null) {
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
- * and the user bin folders), so a check that passes is a launch that finds it: refused when it
+ * and the user bin folders; `prepend`'s folders first, a project's pane-env PATH_PREPEND), so a
+ * check that passes is a launch that finds it: refused when it
  * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
  * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
  */
-async function agentThere(machine, argv, name) {
+async function agentThere(machine, argv, name, prepend = null) {
   const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
-  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S });
+  const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S, prepend });
   const quiet = seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
     : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
   if (seen.state === "away") throw new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
@@ -1735,6 +1793,128 @@ async function agentThere(machine, argv, name) {
       + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
   }
   return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
+}
+
+/**
+ * A project's pane-env on `machine` (agentPath.mjs paneEnvOf: PATH_PREPEND, HERDR_APP_HOME), read
+ * there through hc: { prepend, appHome, refused, warnings }. No file: nothing, so the start is as
+ * before #582. A file it refuses, or one that can't be read, is one warning, `refused` and nothing
+ * else: the start goes on, and briefingHomeOn then uses no app home there at all.
+ */
+async function paneEnvOn(machine, key) {
+  const path = under(key, PANE_ENV_PATH);
+  const none = (why) => ({ prepend: null, appHome: null, refused: true,
+    warnings: [`${path} on ${machine} was left out (${why}): the pane starts as it would without it.`] });
+  let text;
+  try { text = await readRemoteText(remoteIo, machine, path); } catch (e) { return none(e?.message ?? String(e)); }
+  const env = paneEnvOf(text);
+  return env.error ? none(env.error) : { prepend: env.prepend, appHome: env.appHome, refused: false, warnings: [] };
+}
+
+/** That machine's default app home, ~/.config/herdr-app by its own $HOME, or null when it gives none. */
+async function appHomeOn(machine) {
+  const r = await remoteIo.exec("sh", ["-c", 'printf %s "$HOME"'], machine, { timeout: AGENT_WAIT_S });
+  const home = r.code === 0 ? r.stdout : "";
+  // eslint-disable-next-line no-control-regex
+  return home.startsWith("/") && !/[\x00-\x1f\x7f]/.test(home) ? `${home.replace(/\/+$/, "")}/.config/herdr-app` : null;
+}
+
+/**
+ * The app home on `machine` a bot's briefing file and hook go in (#582): pane-env's HERDR_APP_HOME,
+ * else that machine's ~/.config/herdr-app, and only while that folder is there already: a start
+ * never makes an app home on a linked machine (it may be a shared one). A pane-env that was left
+ * out means none at all, never the default. Resolves { dir (null: no briefing file and no hook
+ * there), warnings (one when null) }.
+ */
+async function briefingHomeOn(machine, bot, paneEnv) {
+  const none = (why) => ({ dir: null, warnings: [`${bot.name} runs on ${machine} without its briefing in its system prompt or per turn: ${why}. `
+    + `Its role and team still come from ${BOTS_PATH}.`] });
+  if (paneEnv.refused) return none(`its ${PANE_ENV_PATH} there was left out, so no app home there is used, not even the default one`);
+  const dir = paneEnv.appHome ?? await appHomeOn(machine);
+  if (!dir) return none(`${machine} gave no home folder for its app home`);
+  if ((await remoteIo.exec("test", ["-d", dir], machine, { timeout: AGENT_WAIT_S })).code !== 0) {
+    return none(`its app home there, ${dir}, isn't a folder, and a start never makes one. Install automagik-herdr on ${machine}, `
+      + `or set HERDR_APP_HOME in the project's ${PANE_ENV_PATH} there to an app home that is there`);
+  }
+  return { dir, warnings: [] };
+}
+
+// A file of the pack's own on `machine` (a briefing), private as briefedLaunch's (0600 in a 0700
+// folder). A new one is made under umask 077 with noclobber, so a file that appeared since the read
+// is never replaced; one already there is edited by remoteFile.js's compare-and-swap and set to
+// 0600 (no "--": BSD chmod reads it as a file after the mode; the path is absolute). Only ever
+// under an app home that is there (briefingHomeOn); remoteFile.js's own create is
+// left as it is for bots.json.
+const PRIVATE_CREATE_SH = 'umask 077; p=$1; mkdir -p -- "${p%/*}" || exit 1; '
+  + 'if [ -e "$p" ] || [ -L "$p" ]; then exit 17; fi; set -C; '
+  + '{ : > "$p"; } 2>/dev/null || exit 1; '
+  + 'printf "%s" "$2" >| "$p" || { rm -f -- "$p"; exit 1; }';
+async function ownFileOn(machine, path, text) {
+  if (utf8Length(text) > REMOTE_TEXT_MAX) throw new Error(`over ${REMOTE_TEXT_MAX / 1024} KiB, too large to send there`);
+  const before = await readRemoteText(remoteIo, machine, path);
+  const said = (r) => hcSaid((r.stderr || r.stdout).trim()) || `exit ${r.code}`;
+  if (before === null) {
+    const r = await remoteIo.exec("sh", ["-c", PRIVATE_CREATE_SH, "sh", path, text], machine, { timeout: AGENT_WAIT_S });
+    if (r.code === 17) throw new Error("it appeared there since it was read");
+    if (r.code !== 0) throw new Error(`couldn't create it: ${said(r)}`);
+    return;
+  }
+  if (before !== text) await writeRemoteText(remoteIo, machine, path, text, before);
+  const r = await remoteIo.exec("chmod", ["600", path], machine, { timeout: AGENT_WAIT_S });
+  if (r.code !== 0) throw new Error(`couldn't make it private (chmod 600): ${said(r)}`);
+}
+
+/**
+ * briefedLaunch on a linked machine (#582): `argv` with the bot's launch briefing put in as the
+ * agent takes it (models.js BRIEFING: its file, its text or its environment), a file written on
+ * `machine` through hc under `boxHome`, that machine's app home (briefingHomeOn's; null: no file,
+ * that warning said why). An agent whose briefing yields
+ * to its own config file (BRIEFING's ownConfig: codex, hermes) starts as it is, since only this
+ * computer's config is read. Never throws: { argv, env, warnings }.
+ */
+async function briefedOn(machine, project, bot, agentKey, argv, boxHome) {
+  const way = briefingWay(agentKey);
+  const agents = agentTable();
+  if (!way || briefingOwnConfig(agentKey) || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings: [] };
+  const text = launchBriefingText({ self: bot, file: project.file });
+  const warnings = [];
+  let launch = null;
+  if (way === "file") {
+    const path = boxHome ? briefingFilePath(boxHome, project.key, bot.id) : null;
+    try {
+      if (path) {
+        await ownFileOn(machine, path, `${text}\n`);
+        launch = briefingLaunch(agentKey, { path });
+      }
+    } catch (e) {
+      warnings.push(`${bot.name} starts on ${machine} without its briefing in its system prompt (${path}: ${e?.message ?? e}).`);
+    }
+  } else {
+    launch = briefingLaunch(agentKey, { text });
+  }
+  return { argv: withBriefing(agentKey, argv, launch, agents), env: launch?.env ?? {}, warnings };
+}
+
+// installHook's io on a linked machine: git and the files there, through hc (remoteFile.js).
+const hookIoOn = (machine) => ({
+  git: (args, cwd) => remoteIo.exec("git", args, machine, { cwd, timeout: AGENT_WAIT_S }),
+  read: (path) => readRemoteText(remoteIo, machine, path),
+  write: (path, text, before) => writeRemoteText(remoteIo, machine, path, text, before),
+  mkdir: async () => {}, // writeRemoteText's create makes the folders there (mkdir -p)
+});
+
+/**
+ * writeBriefingHook on a linked machine (#582): the per-turn hook in `folder`'s
+ * .claude/settings.local.json there, running the briefing entry under `boxHome`, that machine's
+ * app home. No entry there (the pack isn't installed on it): nothing written, and noHookThere's
+ * warning. Never throws: { written, warnings }.
+ */
+async function briefingHookOn(machine, bot, folder, boxHome) {
+  const io = hookIoOn(machine);
+  let entry = null;
+  try { entry = boxHome ? await io.read(stableBriefingPath(boxHome)) : null; } catch { entry = null; }
+  if (entry === null) return { written: false, warnings: [noHookThere(bot, machine)] };
+  return installHook(bot.name, folder, boxHome, io);
 }
 
 /**
@@ -1776,12 +1956,15 @@ async function windowPlaceOn(machine, key) {
 
 /**
  * A bot's pane on the project's linked machine: `hc run --on` with Start's labels and the PATH
- * agentThere checked the agent under, as /usr/bin/env PATH=<it> (hc run has no --env; --no-parent: no
+ * agentThere checked the agent under (the project's pane-env PATH_PREPEND first), as /usr/bin/env
+ * PATH=<it>, and HERDR_APP_HOME=<pane-env's> when it sets one (hc run has no --env; --no-parent: no
  * lead as its hc parent there yet, and never the calling terminal), placed in the window on that machine's space. `over`: argv, cwd, place (the old
  * pane's, a restart), carry (labels kept), replacing (a restart: no "already running" check
- * and no attach row here; restartOnMachine writes them once the new pane is up). A Claude bot
- * gets no briefing hook there yet (noHookThere). Never sends keys to any pane. Resolves
- * { address, terminal (bare), created_ms, machine, core, argv, labels, place, warnings }, or
+ * and no attach row here; restartOnMachine writes them once the new pane is up). The briefing is
+ * the local start's (#582): in the command (briefedOn) and, for an agent that takes it, the
+ * per-turn hook in that project there (briefingHookOn), both in that machine's app home. Never
+ * sends keys to any pane. Resolves { address, terminal (bare), created_ms, machine, core, argv,
+ * labels, place, hookWritten, warnings }, or
  * { running } when the ledger names a pane for the bot by the time its lock is taken.
  */
 async function seatOnMachine(project, bot, over = {}) {
@@ -1795,8 +1978,19 @@ async function seatOnMachine(project, bot, over = {}) {
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const argv = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
-  const there = await agentThere(machine, argv, agent.name ?? agentKey);
+  const command = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
+  const paneEnv = await paneEnvOn(machine, key);
+  const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend);
+  // The briefing there, as a local start has it (#582), in that machine's app home while it is
+  // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
+  const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
+  const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
+  const briefed = await briefedOn(machine, project, bot, agentKey, command, home.dir);
+  const argv = briefed.argv;
+  // The hook goes in before the session starts, so Claude Code reads it at startup.
+  const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
+    : { written: false, warnings: [] };
+  const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
@@ -1808,9 +2002,9 @@ async function seatOnMachine(project, bot, over = {}) {
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels, path: there.path });
+    parent: ["--no-parent"], argv, labels, path: there.path, env });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...there.warnings, ...(agentKey === "claude" ? [noHookThere(bot, machine)] : [])];
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());
@@ -1834,7 +2028,8 @@ async function seatOnMachine(project, bot, over = {}) {
       throw new CliError(`${address} started, but hc get gave no created_ms, so it could have no attach row; `
         + (killed ? "it was ended." : `it couldn't be ended: end it with hc kill ${address}.`));
     }
-    return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place, warnings };
+    return { address, terminal: address.slice(address.indexOf("/") + 1), created_ms: get.created_ms, machine, core: m.id, argv, labels, place,
+      hookWritten: hook.written, warnings };
   };
   if (over.replacing) return run();
   const seat = await underLedger(async ({ machines, heldBy, holds, write }) => {
@@ -1860,7 +2055,7 @@ async function seatOnMachine(project, bot, over = {}) {
 }
 
 const seatOnJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, machine: seat.machine, argv: seat.argv, labels: seat.labels,
-  space: seat.place?.space ?? null, tab: seat.place?.tab ?? null, hookWritten: false, warnings: seat.warnings });
+  space: seat.place?.space ?? null, tab: seat.place?.tab ?? null, hookWritten: seat.hookWritten ?? false, warnings: seat.warnings });
 
 /** start --machine: the bot's pane there (seatOnMachine); one that runs already is reported. */
 async function startOnMachine(opts, project, bot) {
@@ -3544,6 +3739,14 @@ async function makeBranchWorktree(place, base, key, warnings) {
   return { worktree: realDir(path) ?? path, branch, created: true, base: from };
 }
 
+/** `path` is still a folder and one of `key`'s worktrees (git worktree list); false when git can't say. */
+async function stillWorktree(path, key) {
+  const real = realDir(path);
+  if (!real || !isDir(real)) return false;
+  const listed = await git(["worktree", "list", "--porcelain"], key);
+  return listed !== null && parseWorktrees(listed).some((w) => (realDir(w.path) ?? w.path) === real);
+}
+
 /**
  * Keeps the task worktrees out of the main checkout's `git add -A`: WORKTREES_EXCLUDE in the
  * clone's own exclude file, as the briefing hook's settings file is. A warning, or null.
@@ -3693,6 +3896,203 @@ async function workerTabSetup(terminal, botTerminal, name) {
   return null;
 }
 
+// ---- worktree cleanup (#567) ----
+
+/** A worker call's sweep removes at most this many worktrees, and starts no new check after this long. */
+const REAP_MAX = 5;
+const REAP_BUDGET_MS = 20_000;
+/** How long the sweep waits for gh's list of a branch's pull requests. */
+const GH_TIMEOUT = 5000;
+/**
+ * How long one git worktree remove may take (a large tree). Not cut to the budget left: a remove
+ * stopped halfway leaves a half-deleted tree, which then reads as uncommitted changes. So a worker
+ * call's sweep usually takes up to about REAP_BUDGET_MS, and at worst one check's program calls
+ * (15 s each, gh 5 s) and one remove (this) past it.
+ */
+const REMOVE_TIMEOUT = 120_000;
+/**
+ * How long ago every terminal of a candidate must have finished (hc's finished_ms) before it is
+ * looked at. Restart --tree ends a bot's workers with its old pane and runs them again in the
+ * same worktrees, without the worktree lock, one at a time once the new pane is up (about 1 min
+ * at worst: hc run, agentUp's 30 s and a get). Each helper takes at worst about 2 min (helperEnded's
+ * get, hc ls, hc run, agentUp's 30 s plus a get, a kill, pidOf: 15 s calls), so the k-th is run
+ * again at worst about 1 + 2k min after it ended: 15 min covers 7 helpers at their worst (a
+ * short-limit Herdr caps --tree at 2). Longer only costs disk while it waits.
+ */
+const REAP_SETTLE_MS = 15 * 60_000;
+/** A worker call's sweep skips a kept worktree whose reason hasn't changed in this long (reap still checks it). */
+const REAP_QUIET_MS = 24 * 60 * 60 * 1000;
+
+/** The cleanup file's rows ([] when it can't be read). */
+function reapRows() {
+  try { return readLedger(readText(reapPath(appHome())) ?? ""); } catch { return []; }
+}
+/** Appends a cleanup row; a warning, or null. */
+function appendReap(row) {
+  const path = reapPath(appHome());
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const fd = openSync(path, "a", 0o600);
+    try { writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+    return null;
+  } catch (e) {
+    return `couldn't record the cleanup of ${row.worktree} in ${path}: ${e?.message ?? e}`;
+  }
+}
+/** hc's terminals from `hc ls [--all] --json`, or null when hc failed or printed no list. */
+async function hcTerminals(all) {
+  const r = await hc(["ls", ...(all ? ["--all"] : []), "--json"]);
+  if (r.code !== 0) return null;
+  try { const list = JSON.parse(r.stdout)?.terminals; return Array.isArray(list) ? list : null; } catch { return null; }
+}
+/** The local terminals among `terms` that haven't finished and whose cwd is `dir` or inside it (both as the disk spells them). */
+function liveIn(terms, dir) {
+  const here = nativeDir(dir) ?? dir;
+  return terms.filter((t) => {
+    if (!local(t?.address) || t.state === "finished" || typeof t.cwd !== "string") return false;
+    const cwd = t.cwd.startsWith("~/") ? `${home()}${t.cwd.slice(1)}` : t.cwd;
+    const real = nativeDir(cwd) ?? cwd;
+    return real === here || real.startsWith(`${here}/`);
+  });
+}
+/**
+ * Whether every terminal in `names` that `terms` (hc ls --all) still lists finished at least
+ * REAP_SETTLE_MS ago, by hc get's finished_ms. One hc no longer has counts as settled; one hc
+ * can't date doesn't (fails closed).
+ */
+async function settled(names, terms) {
+  const listed = names.filter((t) => terms.some((x) => x?.address === t));
+  const ends = await Promise.all(listed.map(async (t) => {
+    const r = await hc(["get", t, "--json"]);
+    if (r.code !== 0) return r.code === 3 || /not_found/.test(r.stderr ?? "") ? 0 : null;
+    try { const ms = JSON.parse(r.stdout)?.finished_ms; return Number.isSafeInteger(ms) ? ms : null; } catch { return null; }
+  }));
+  return ends.every((ms) => ms !== null && Date.now() - ms >= REAP_SETTLE_MS);
+}
+const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
+
+/** The branch's pull requests as gh lists them ([{ state }]), or null when gh is missing or fails. */
+async function pullRequestsOf(branch, cwd) {
+  const gh = programPath("gh");
+  if (!gh || !branch) return null;
+  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state", "--limit", "20"],
+    { cwd, timeout: GH_TIMEOUT });
+  if (r.code !== 0) return null;
+  try { const list = JSON.parse(r.stdout); return Array.isArray(list) ? list : null; } catch { return null; }
+}
+
+/**
+ * One candidate, under its worktree's lock: looked at again for a live terminal (a worker
+ * started in it since the sweep's hc ls), then checked for work (workLeft), looked at for a live
+ * terminal once more, and removed with git worktree remove (no --force), then git worktree prune. Never throws: { result, why }, result
+ * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
+ * or hc failure keeps it (fails closed).
+ */
+async function reapOne(c) {
+  const path = c.worktree;
+  const now = await hcTerminals(false);
+  if (!now) return { result: "waiting" };
+  if (liveIn(now, path).length) return { result: "waiting" };
+  const common = await runProgram("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: path });
+  if (common.code !== 0) return { result: "kept", why: `git can't read it: ${firstLine(common)}` };
+  const main = c.project && isDir(c.project) ? c.project : dirname(common.stdout.trim());
+  const status = await runProgram("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: path });
+  if (status.code !== 0) return { result: "kept", why: `git status failed: ${firstLine(status)}` };
+  const changes = status.stdout.split("\n").filter(Boolean).length;
+  let unpushed = 0;
+  let prs = null;
+  let branch = null;
+  if (!changes) {
+    const count = await runProgram("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path });
+    unpushed = Number(count.stdout.trim());
+    if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
+    branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || null;
+    if (unpushed > 0 && branch && branch === c.branch) prs = await pullRequestsOf(branch, main);
+  }
+  const why = workLeft({ changes, unpushed, prs, branch, expected: c.branch });
+  if (why) return { result: "kept", why };
+  // Looked at once more just before the remove: a pane started in it without the worktree lock
+  // (a hand-made one, hc run) since the first look. No --force: git itself refuses a tree that
+  // has gained changes since the status above.
+  const last = await hcTerminals(false);
+  if (!last || liveIn(last, path).length) return { result: "waiting" };
+  const rm = await runProgram("git", ["worktree", "remove", path], { cwd: main, timeout: REMOVE_TIMEOUT });
+  await runProgram("git", ["worktree", "prune"], { cwd: main });
+  if (rm.code !== 0) return { result: "failed", why: `git worktree remove failed: ${firstLine(rm)}` };
+  return { result: "removed", why: null };
+}
+
+/**
+ * The sweep (#567): every worktree a worker call made (reapCandidates) whose start rows'
+ * terminals have all ended, finished or gone in `hc ls --all`, killed or done alike, and in
+ * which no live local terminal works, is removed unless it holds work (reapOne), once those
+ * terminals finished REAP_SETTLE_MS ago. Newest first. A worktree only given to a worker is never
+ * a candidate. One sweep at a time (a held lock: none now); a worktree whose worker lock is held
+ * is left for later. At most `max` removals, and no new check once `budget` ms have passed.
+ * hc failing skips the sweep. Each new outcome is a row in the cleanup file and a line.
+ * `every` (reap): a line for every kept or failed one, even unchanged; without it (a worker
+ * call), a kept one whose reason hasn't changed in REAP_QUIET_MS is skipped.
+ * Never throws: { removed, kept, failed, waiting, more, lines }.
+ */
+async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
+  const out = { removed: [], kept: [], failed: [], waiting: 0, more: 0, lines: [] };
+  try {
+    const candidates = reapCandidates(workerLedgerRows(), reapRows());
+    if (!candidates.length) return out;
+    const lockDir = dirname(ledgerPath(appHome()));
+    mkdirSync(lockDir, { recursive: true });
+    let token;
+    const lock = `${lockDir}/worker-reap.lock`;
+    try { token = await takeLockAsync(lock, 0); } catch { return out; }
+    const stop = keepFresh(lock, token);
+    try {
+      const terms = await hcTerminals(true);
+      if (!terms) { out.lines.push("worktree cleanup skipped: hc ls --all failed"); return out; }
+      const start = Date.now();
+      for (const c of candidates) {
+        if (!every && c.last?.result === "kept" && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS) continue;
+        if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
+        if (out.removed.length >= max || Date.now() - start > budget) { out.more += 1; continue; }
+        const path = c.worktree;
+        let done;
+        if (!(await settled(c.terminals, terms))) {
+          done = { result: "waiting" };
+        } else if (!isDir(path)) {
+          if (c.project && isDir(c.project)) await runProgram("git", ["worktree", "prune"], { cwd: c.project });
+          done = { result: "gone", why: null };
+        } else if (liveIn(terms, path).length) {
+          done = { result: "waiting" };
+        } else {
+          try {
+            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c), { wait: 0 });
+          } catch { done = { result: "waiting" }; }
+        }
+        if (done.result === "waiting") { out.waiting += 1; continue; }
+        const changed = c.last?.result !== done.result || c.last?.why !== (done.why ?? null);
+        if (changed) { const unrecorded = appendReap(reapRow({ worktree: path, ...done })); if (unrecorded) out.lines.push(unrecorded); }
+        if (done.result === "removed") { out.removed.push(path); out.lines.push(`removed ${path}: its workers ended`); }
+        if (done.result === "kept") out.kept.push({ worktree: path, why: done.why });
+        if (done.result === "failed") out.failed.push({ worktree: path, why: done.why });
+        if ((done.result === "kept" || done.result === "failed") && (changed || every)) {
+          out.lines.push(`${done.result === "kept" ? "kept" : "couldn't remove"} ${path}: ${done.why}`);
+        }
+      }
+      if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (automagik-herdr reap)`);
+    } finally { stop(); dropLock(lock, token); }
+  } catch (e) {
+    out.lines.push(`worktree cleanup failed: ${e?.message ?? e}`);
+  }
+  return out;
+}
+
+async function cmdReap(opts, rest) {
+  if (rest.length) throw new CliError("reap takes no arguments.", 2);
+  const r = await reapWorktrees({ max: Infinity, budget: Infinity, every: true });
+  const { lines, ...out } = r;
+  if (opts.json) { report(lines.filter((l) => !l.startsWith("removed ") && !l.startsWith("kept ") && !l.startsWith("couldn't remove "))); return out; }
+  return lines.length ? lines.join("\n") : "No finished worker's worktree to remove.";
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
@@ -3828,6 +4228,15 @@ async function cmdWorker(opts, rest) {
       const now = await branchPlace(opts.branch, opts.base, project.key, found);
       if (now.pending) place = await makeBranchWorktree(now, opts.base, project.key, warnings);
       else { place = now; warnings.push(...found); }
+    } else if (!(await stillWorktree(place.worktree, project.key))) {
+      // Removed while this call waited for the lock (a sweep's cleanup, #567): never started in
+      // what is left, since a hook's folder would make it a plain folder whose git is the main
+      // checkout's. A branch's own folder is made again; anything else is refused.
+      const gone = `${place.worktree} is no longer a worktree of ${project.key}: it was removed while this call waited for its lock.`;
+      if (opts.worktree !== undefined) throw new CliError(`${gone} Not started; pass --branch ${place.branch} to make it again.`);
+      const now = await branchPlace(opts.branch, opts.base, project.key, []);
+      if (!now.pending || now.worktree !== planned) throw new CliError(`${gone} Not started; run the worker call again.`);
+      place = await makeBranchWorktree(now, opts.base, project.key, warnings);
     }
     worktree = realDir(place.worktree) ?? place.worktree;
     base = await baseCommit(place, project.key);
@@ -3872,6 +4281,9 @@ async function cmdWorker(opts, rest) {
     const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
     if (why) warnings.push(why);
   }
+  // The worktrees earlier workers made, once they have all ended (#567): after this worker
+  // started, outside its locks, capped, and never failing the call.
+  warnings.push(...(await reapWorktrees()).lines);
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv,
@@ -3983,12 +4395,16 @@ async function cmdTidy(opts) {
   return opts.json ? actions : planText(actions);
 }
 
-/** After start, attach and create: the plan's non-visual fixes only; a failure only warns. */
+/**
+ * After start, attach and create: the plan's non-visual fixes only; a failure only warns. A
+ * prune's note only when the command succeeded: a failed one's last stderr line stays its own
+ * error (the sidebar shows that line, restart.js restartAnswer).
+ */
 async function tidyQuietly() {
   try {
     const io = tidyIo();
     const actions = tidyPlan(await readState(io, { window: false }), { now: Date.now(), home: io.home, appHome: io.appHome });
-    report(await fixNonVisual(actions.filter((a) => !a.visual), io));
+    report(await fixNonVisual(actions.filter((a) => !a.visual), io, { notes: exitAfter.code === 0 }));
   } catch (e) { report([`tidy: ${e?.message ?? e}`]); }
 }
 const TIDIES = new Set(["start", "restart", "attach", "create"]);
@@ -4161,7 +4577,8 @@ export async function cmdLaunchPath(_opts, [program, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc, "launch-path": cmdLaunchPath };
+  tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc,
+  "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

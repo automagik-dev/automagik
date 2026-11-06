@@ -224,5 +224,6 @@ synthetic marker.
   out-of-band request without becoming a prompt of its own.
 - The synthetic assistant block is model-visible only to the review that asks for it; it is
   deliberately removed from the surface afterwards and filtered from replay.
-- `dshTools` defaults on (flipped 2026-11-06); an explicit false is the kill switch. With it
-off, no bridge exists and none of this runs.
+- `dshTools` defaults on for an adapter that can drop its own tools (`acp-claude`); Codex is out
+of the default bridge until it can. An explicit false is the kill switch. With it off, no bridge
+exists and none of this runs.

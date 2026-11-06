@@ -35,6 +35,13 @@ anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. I
 you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
 `herdr-app check` on each mod.
 
+On a machine where Herdr has never opened, the installer leaves `keys.json` absent so
+Herdr can create its native shortcuts, including terminal copy/paste. Open Herdr once,
+then rerun the installer to add the pack's free shortcuts. The Mods button in the footer
+works before its shortcut is added. Existing key files and personal bindings are preserved;
+a `keys.json` that is a link (your own file) is left as it is, and the installer names the
+pack's shortcuts for you to add there.
+
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
 holds nine mod folders and one layout, and nothing else:
 
@@ -301,9 +308,46 @@ machine through herdr-core (`hc file edit` with the text read, an exclusive crea
 file), so an edit made there since the form opened is refused, never overwritten. Its panes run
 there (`hc run --on`, addressed `machine/tN`) and show in this window, in a space of that
 machine on the project. The command a bot starts with is built here, from Herdr's agent table
-and your `programs.json`. What happened isn't shown for those bots yet, and a Claude bot there
-starts without its per-turn briefing until automagik-herdr is installed on that machine. A
-machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+and your `programs.json`. A bot there gets the briefing a local start gives, written on that
+machine through herdr-core, in its app home: a Claude bot's briefing file (private, 0600) and,
+once automagik-herdr is installed there, its per-turn hook in that project's
+`.claude/settings.local.json` (until then it starts with a warning and no hook); an omp, pi or grok
+bot gets the briefing as text. A start never creates an app home on another machine, which may be
+shared: when that app home isn't a folder there, a Claude bot starts with one warning and no
+briefing file or hook. Codex and Hermes bots start there without it, since their own
+config, which may hold a prompt the briefing would replace, is only read on this computer. What
+happened isn't shown for those bots yet. A machine that isn't answering shows its bots as last
+seen, dimmed, and its menu says so.
+
+A project there can carry a pane-env file, `<project>/.herdr/pane-env` on that machine, for its
+bots' panes only: other panes there never read it. It takes two keys, one per line:
+
+```text
+PATH_PREPEND=/opt/node-22/bin:/opt/tools/bin
+HERDR_APP_HOME=/srv/bots/herdr-app
+```
+
+`PATH_PREPEND` puts those folders first on the PATH the agent is checked and started with (a
+chosen Node, say). `HERDR_APP_HOME` is the app home the pane gets (`HERDR_APP_HOME=` in its
+`/usr/bin/env` words) and the one its briefing file and hook use; without it, that machine's
+`~/.config/herdr-app`, either way only while that folder is there. Every folder is absolute, with
+no space at its start or end; blank lines and `#` comments are skipped. Another key, a relative
+folder or a line that isn't `KEY=value` leaves the whole file out with one warning, and the bot
+starts as it would without it, with no briefing file or hook: a file left out never falls back to
+the default app home. With no file, nothing changes.
+
+pane-env belongs to that machine: keep it out of git (add `.herdr/pane-env` to the checkout's
+`.git/info/exclude` there), since a committed one would apply on every machine the project is
+checked out on. A start on this computer never reads it.
+
+To move a project's bots onto a shared machine:
+
+1. Write `<project>/.herdr/pane-env` there, with `HERDR_APP_HOME` naming an app home that is
+   already there (yours, not the machine user's), and `PATH_PREPEND` if your bots need their own
+   Node.
+2. Start one bot: `automagik-herdr start <bot> --machine <machine> --project <folder there> --json`.
+3. Read its `warnings`: they should be empty. A `pane-env ... was left out` or `without its
+   briefing` warning names what to fix; fix it and restart the bot.
 
 Start and Restart there can take minutes when the machine answers slowly (every question to it
 has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so
@@ -349,6 +393,7 @@ automagik-herdr import --from-hc [--squad-label L] [--apply]
 automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr history <bot>
 automagik-herdr brief <bot>
+automagik-herdr forget <project>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
@@ -357,6 +402,15 @@ automagik-herdr meter install [--machine M | --linked | --local] | meter uninsta
 automagik-herdr dsh-tui install | update | uninstall | doctor
 ```
 
+- `forget <project>` takes a project's folder off this CLI's project list (#229): only that
+  entry, under the list's lock. Its folder, worktrees, bots file and panes stay as they are; a
+  project not on the list is refused and the list left as it was. `ls --all` and the sidebar
+  also show the sidebar's own remembered projects (each one it started a bot or wrote bots in),
+  which only the sidebar changes: it forgets one once its `.herdr/bots.json` is gone. When the
+  sidebar remembers the project too, `forget` still takes it off its own list and says on stderr
+  that it stays shown until then (`--json`: `sidebar_remembers`). `start`, `restart`, `attach`
+  and `create` already take off an entry whose folder is gone (tidy's registry prune) and say
+  so in one line when the command succeeds.
 - `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
   labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
   that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
@@ -642,7 +696,32 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
   once the task merges. The bot's briefing says so. As an hc child, a worker
-  also ends when its bot's program ends; its worktree and branch stay.
+  also ends when its bot's program ends; its branch stays.
+- **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
+  (`git worktree remove`, no `--force`, then `git worktree prune`) once every worker that ran
+  in it has ended, done or killed, at least 15 minutes ago (hc's `finished_ms`: restart
+  `--tree` runs a bot's workers again one at a time, about 1 + 2k minutes at worst for the k-th),
+  and no live terminal works in it. Each `worker` call does
+  it after its own start, newest first, at most 5 worktrees, and starts no new check after
+  about 20 s; one slow check and one large remove (up to 120 s) can still run past that.
+  `automagik-herdr reap` does all of them at once.
+  - An open pull request's worktree is removed once its workers end, if it is pushed and
+    clean. The branch is always kept: only the folder goes.
+  - The first sweep after this release covers every older `created: true` row in the
+    ledger: 5 per worker call, or all of them with `reap`.
+  - Kept, with one line naming the path and why: uncommitted changes (untracked files
+    included); a tree no longer on the worker's branch; a detached HEAD with commits on no
+    remote; commits on no remote branch, unless `gh pr list --head <branch>` shows the
+    branch's pull requests all merged or closed (a squash merge). gh missing or failing keeps
+    it. Ignored files (`.env`, build output) do not keep it: they go with the folder, as
+    `git worktree remove` does.
+  - A worktree only given to a worker (`--worktree`, a branch's existing worktree) is never
+    removed. A worker call that waited for a worktree the cleanup removed meanwhile never
+    starts in what is left: `--branch` makes the worktree again, `--worktree` is refused.
+  - Outcomes go to `<app home>/automagik-herdr/worker-reap.jsonl` (`{ worktree, result:
+    "removed" | "kept" | "failed" | "gone", why, at }`), never to the workers ledger. A kept
+    worktree is looked at again on each call, and its line is said again only when its reason
+    changes; a worker call skips one whose reason is a day old (`reap` still looks).
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
   terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,

@@ -163,7 +163,11 @@ export function install(rt) {
   async function desiredEffort(bot, ref) {
     if (bot.effort === undefined || ref === undefined) return undefined
     const reasoning = await reasoningOf(ref)
-    return reasoning?.efforts?.some(effort => effort.id === bot.effort) ? bot.effort : undefined
+    const efforts = reasoning?.efforts ?? []
+    if (efforts.some(effort => effort.id === bot.effort)) return bot.effort
+    // A model may name the same level with another id, as resolveEffort already reads.
+    const named = efforts.filter(effort => normalize(effort.name) === normalize(bot.effort))
+    return named.length === 1 ? named[0].id : undefined
   }
 
   // A thinking level id, or a name only one level of the model has, like resolveModel.

@@ -147,11 +147,17 @@ on the retired Claude Code plugin and is still on the pi-ai Claude model it was 
 `acp-claude` on the same family (`opus`, `sonnet`, `haiku`), keeping its Session and history. It
 moves only when the ACP plugin's `dshTools` bridge is on (on unless explicitly false), a live bridge
 probe on this machine passes (cached per adapter version, retried after ten minutes or the next
-start), its adapter is installed, and its route lists that model; a Bot the person has changed
-since, or whose model the route does not list, stays where it is. With `dshTools` false nothing
-moves, as on 2026-11-03. The move also requires the CLI's sign-in: the team asks it before moving,
-and an installed-but-signed-out Claude moves nothing, so no Bot lands on a dead route. The team
-stays unmarked, so signing in later still moves it. On an ACP route the Bot's team tools reach it
+start), its adapter is installed, its CLI is signed in, and its route lists that model; a Bot the
+person has changed since, or whose model the route does not list, stays where it is. The sign-in is
+the CLI's own answer, asked again on every pass: an installed-but-signed-out Claude moves nothing,
+and after signing in the Bots move on the next pass (a settings or adapter change) or the next DSH
+start, with no separate action. The move records the model and thinking level the Bot had and
+carries that level onto the agent's own effort setting where the agent offers it. With `dshTools`
+off nothing moves onto the route, as on 2026-11-03: a Bot already moved goes back to exactly that
+model and level, and so does one whose route disappears (the plugin, the agent setting or its CLI).
+A Bot the person changed after the move keeps their pick, never overwritten by the rollback. When
+the agent offers no level matching the Bot's, the Bot keeps its setting in the team, the agent runs
+on its own, and the ACP plugin notes that in the chat. On an ACP route the Bot's team tools reach it
 over the same per-session bridge: `post_to_group`, `message_bot` and the rest are offered, and every
 call asks DSH's approval under the Bot's level before it runs. On **Auto**, the bridge gives
 auto-review the call: an allowed call runs, a denied one is refused with `AUTO_REVIEW_DENIED`, and a

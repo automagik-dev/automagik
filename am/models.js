@@ -408,23 +408,26 @@ export function withoutResume(agentKey, args) {
 // display.personality, else agent.system_prompt), and a codex -c replaces a developer_instructions
 // in config.toml: the CLI skips both then (ownPromptIn), so an owner's own prompt is never lost. `file` takes the briefing's
 // path, `text` its text, `env` names variables; `ours` tells this pack's own words apart from a
-// person's. An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and
-// kimi have no flag that appends).
+// person's. `hook`: it also takes the per-turn hook (Claude Code's UserPromptSubmit in the
+// project's .claude/settings.local.json); `ownConfig`: its briefing yields to a prompt its own config
+// file may set, which only this computer's is read for, so a linked machine's start leaves it out
+// (#582). An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and kimi
+// have no flag that appends).
 export const BRIEFING_MARK = "<herdr-bot>";
 /** The folder, under an app home, that holds the briefings `file` agents are started with. */
 export const BRIEFINGS_DIR = "automagik-herdr/briefings";
 const ourText = (v) => String(v).startsWith(BRIEFING_MARK);
 const ourFile = (v) => String(v).includes(`/${BRIEFINGS_DIR}/`);
 const BRIEFING = {
-  claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile },
+  claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile, hook: true },
   codex: {
     text: (t) => ["-c", `developer_instructions=${tomlString(t)}`], names: ["-c", "--config"],
-    ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK),
+    ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK), ownConfig: true,
   },
   omp: { text: (t) => [`--append-system-prompt=${t}`], names: ["--append-system-prompt"], ours: ourText },
   pi: { text: (t) => ["--append-system-prompt", t], names: ["--append-system-prompt"], ours: ourText },
   grok: { text: (t) => ["--rules", t], names: ["--rules"], ours: ourText },
-  hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }) },
+  hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }), ownConfig: true },
 };
 
 /**
@@ -470,6 +473,11 @@ export function briefingWay(agentKey) {
   const b = BRIEFING[agentKey];
   return b?.file ? "file" : b?.text ? "text" : b?.env ? "env" : null;
 }
+
+/** Whether `agentKey` takes the per-turn briefing hook (BRIEFING's `hook`). */
+export const briefingHook = (agentKey) => Boolean(BRIEFING[agentKey]?.hook);
+/** Whether `agentKey`'s briefing yields to a prompt in its own config file (BRIEFING's `ownConfig`). */
+export const briefingOwnConfig = (agentKey) => Boolean(BRIEFING[agentKey]?.ownConfig);
 
 /**
  * What starts `agentKey` with its briefing: { args, env }, `path` the briefing file (for a

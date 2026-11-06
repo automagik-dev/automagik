@@ -177,7 +177,9 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     if (answers(configured) && explicit(configured)) add(configured)
     let routes = []
     try { routes = ctx.llm?.listProviders?.() ?? [] } catch {}
+    let probed = 0
     for (const route of Array.isArray(routes) ? routes : []) {
+      if (probed >= 8) break
       if (!answers({ provider: route?.id, model: 'candidate' })) continue
       let models
       try { models = await ctx.llm?.listModels?.(route.id) } catch {}
@@ -185,10 +187,13 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
         ? models.find(model => typeof model?.id === 'string' && model.id !== '')
         : undefined
       if (first === undefined) continue
+      const before = choices.length
       add({ provider: route.id, model: first.id })
-      if (choices.length >= 8) break
+      if (choices.length > before) probed += 1
     }
-    add(configured)
+    // The built-in fallback is last, whatever the person configured: an explicit side model
+    // that cannot run must not remove it.
+    add(SIDE_MODEL)
     return choices
   }
   return (options, next) => {
@@ -289,9 +294,25 @@ export class AcpAdapter extends LlmAdapter {
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
   }
 
-  /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, on unless false). */
-  bridgeOn() {
-    return this.dshTools() === true && this.backchannel !== undefined
+  /**
+   * Whether DSH's tools reach this agent when the setting says nothing. Only an adapter that
+   * can drop its own built-in tools is in the default: today that is Claude Code's. Codex keeps
+   * its own tool set, so bridging it by default would run two tool sets; an explicit true
+   * still does it.
+   */
+  bridgeDefault(agent) {
+    return agent?.disableBuiltInTools === true
+  }
+
+  /**
+   * Whether DSH's tools reach an agent at all: an explicit true/false decides, and an absent
+   * setting takes the adapter's own switch (`bridgeDefault`).
+   */
+  bridgeOn(agent) {
+    if (this.backchannel === undefined) return false
+    const setting = this.dshTools()
+    if (setting === true || setting === false) return setting
+    return this.bridgeDefault(agent)
   }
 
   /**
@@ -385,7 +406,7 @@ export class AcpAdapter extends LlmAdapter {
    * the same trace and the record says what ran.
    */
   checkDrift(sessionId, agent, tool) {
-    if (!this.bridgeOn() || agent.drift !== true || tool.drift === true) return
+    if (!this.bridgeOn(agent) || agent.drift !== true || tool.drift === true) return
     const name = tool.structuredName
     if (name === undefined || name.startsWith('mcp__') || name === 'ToolSearch') return
     // Every drifted call stays cardless, but the record and the cancel belong to the turn: a
@@ -409,12 +430,12 @@ export class AcpAdapter extends LlmAdapter {
    * shows; the model selection itself is DSH's.
    */
   noteEvent(session, event) {
-    // Off is the old path, byte for byte: the agent session is kept across a turn on another
-    // provider, so switching back resumes the same ACP session.
-    if (!this.bridgeOn()) return
     if (event?.type !== 'model/selection') return
     const live = this.live.get(session?.id)
     if (live === undefined) return
+    // Off is the old path, byte for byte: the agent session is kept across a turn on another
+    // provider, so switching back resumes the same ACP session. The default is per agent.
+    if (!this.bridgeOn(this.agents.get(live.provider))) return
     const provider = event.data?.provider
     if (agentRoute(this.agents, provider)) return
     this.live.delete(session.id)
@@ -488,11 +509,11 @@ export class AcpAdapter extends LlmAdapter {
       let crossing = false
       const prior = lastProviderOf(options.messages)
       if (live === undefined) {
-        crossing = this.bridgeOn() && prior !== undefined && prior !== options.provider
+        crossing = this.bridgeOn(agent) && prior !== undefined && prior !== options.provider
         const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, drifted: false }
         try {
           const spec = await agent.spawn()
-          if (this.bridgeOn()) {
+          if (this.bridgeOn(agent)) {
             await this.backchannel.listen()
             state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
           }
@@ -501,8 +522,10 @@ export class AcpAdapter extends LlmAdapter {
             cwd: dshAgent?.session?.header?.cwd ?? homedir(),
             name: agent.name,
             mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
-            ...(this.bridgeOn() && agent.disableBuiltInTools === true ? { sessionMeta: { disableBuiltInTools: true } } : {}),
-            dshTools: this.bridgeOn(),
+            ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
+              ? { sessionMeta: { disableBuiltInTools: true } }
+              : {}),
+            dshTools: this.bridgeOn(agent),
             onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
             onToolCall: tool => this.checkDrift(sessionId, agent, tool),
           })
@@ -528,7 +551,7 @@ export class AcpAdapter extends LlmAdapter {
       }
       // A preset or level change since the last turn: the bridge serves the new set, and an
       // agent that ignores `tools/list_changed` gets the list through a fork instead.
-      if (live.bridge !== undefined && this.bridgeOn()) {
+      if (live.bridge !== undefined && this.bridgeOn(agent)) {
         const changed = this.backchannel.refresh(live.bridge)
         if (changed && agent.refresh === 'fork') {
           try {
@@ -545,9 +568,15 @@ export class AcpAdapter extends LlmAdapter {
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
       try {
-        await choose(live.run, options.model, options.reasoningEffort, () => agent.catalog?.ownEffort(options.model))
+        await choose(
+          live.run, options.model, options.reasoningEffort,
+          () => agent.catalog?.ownEffort(options.model),
+        )
       } catch (error) {
-        return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
+        const at = options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''
+        const reason = error?.message ?? error
+        const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
+        return yield finish('error', why)
       }
       try {
         await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))))
@@ -589,7 +618,10 @@ export class AcpAdapter extends LlmAdapter {
         // left to the bridge too; its own tools keep their cards.
         // `ToolSearch` is the adapter's own deferred-tool loader (it stays with `tools: []`); it
         // is not a DSH tool and gets no card or dialog either.
-        if (this.bridgeOn() && (tool.drift === true || tool.bridge === true || tool.structuredName === 'ToolSearch' || (agent.refresh === 'fork' && tool.mcp === true))) continue
+        const skip = tool.drift === true || tool.bridge === true
+          || tool.structuredName === 'ToolSearch'
+          || (agent.refresh === 'fork' && tool.mcp === true)
+        if (this.bridgeOn(agent) && skip) continue
         await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)

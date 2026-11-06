@@ -35,7 +35,7 @@ import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, se
   from "./workers.js";
 import { transcriptRealPath } from "./transcriptFolder.mjs";
 
-// About two seconds in all (the hook's limit is five): no hc call waits more than 1.5 s,
+// About two seconds in all (the hook's limit is ten seconds): no hc call waits more than 1.5 s,
 // none starts after the 2 s budget, a call that runs out (or fails) counts as unreachable,
 // and a last guard ends the process silently at 2.4 s. One away machine can't hold the prompt.
 // The clock starts when the script runs as the hook, not when another program imports it.

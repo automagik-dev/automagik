@@ -529,6 +529,7 @@ test("'Run Omni on this Mac' runs Omni's installer in the card and shows what it
     calls.push([endpoint, payload])
     if (endpoint === 'omni-terminal-open') return { terminal: 't1', state: 'ready', command: 'bun x --bun @automagik/omni install --sandbox --at-login' }
     if (endpoint === 'omni-terminal-read') return reads.shift()
+    if (endpoint === 'omni-terminal-write') return { ok: true }
     return {}
   }
   const shown = []
@@ -540,6 +541,84 @@ test("'Run Omni on this Mac' runs Omni's installer in the card and shows what it
   assert.deepEqual(shown.at(-2), ['sandbox', { terminal: 't1', log: 'Downloading Bun…\r\nInstalling @automagik/omni…\r\n', step: null }])
   assert.deepEqual(shown.at(-1), ['linked', { origin: 'http://127.0.0.1:8882' }])
   assert.equal(team.statusOf('sandbox', { step: 'download-bun' }), 'Downloading Bun for Omni…')
+})
+
+test('Omni waits for terminal preparation before sending Enter and never resends an accepted start', async () => {
+  const calls = []
+  const reads = [
+    { state: 'preparing', step: 'download-bun', data: '', next: 0 },
+    { state: 'ready', step: null, data: '~ $ install Omni', next: 16 },
+    { state: 'ready', step: null, data: '\r\nInstalling…', next: 29 },
+    { state: 'done', exitCode: 0, result: { status: 'paired', origin: 'http://localhost:8882' } },
+  ]
+  let ready = false
+  const shown = []
+  const omniUi = async (endpoint, payload) => {
+    calls.push([endpoint, plain(payload)])
+    if (endpoint === 'omni-terminal-open') return { terminal: 'preparing', state: 'preparing' }
+    if (endpoint === 'omni-terminal-read') {
+      const value = reads.shift()
+      assert.ok(value, 'polling must end after the install')
+      ready = value.state === 'ready'
+      return value
+    }
+    if (endpoint === 'omni-terminal-write') {
+      assert.equal(ready, true, 'Enter before ready is discarded by the host')
+      return { ok: true }
+    }
+    return {}
+  }
+  assert.equal(await team.sandboxInstall({ show: (...entry) => shown.push(plain(entry)), omniUi, wait: async () => {} }), 'linked')
+  assert.deepEqual(calls.map(([endpoint]) => endpoint), ['omni-terminal-open', 'omni-terminal-read', 'omni-terminal-read', 'omni-terminal-write', 'omni-terminal-read', 'omni-terminal-read', 'omni-terminal-close'])
+  assert.deepEqual(calls.find(([endpoint]) => endpoint === 'omni-terminal-write')[1], { terminal: 'preparing', data: '\r' })
+  assert.ok(shown.some(([phase, detail]) => phase === 'sandbox' && detail.step === 'download-bun'))
+})
+
+test('Omni retries an unaccepted Enter after readiness is reported again', async () => {
+  const reads = [
+    { state: 'preparing', step: 'download-bun' },
+    { state: 'ready' },
+    { state: 'ready' },
+    { state: 'done', exitCode: 0 },
+  ]
+  let writes = 0
+  const omniUi = async endpoint => {
+    if (endpoint === 'omni-terminal-open') return { terminal: 'retry', state: 'ready' }
+    if (endpoint === 'omni-terminal-write') return { ok: ++writes > 1 }
+    if (endpoint === 'omni-terminal-read') {
+      const value = reads.shift()
+      assert.ok(value, 'polling must end after the install')
+      return value
+    }
+    return {}
+  }
+  assert.equal(await team.sandboxInstall({ show: () => {}, omniUi, wait: async () => {} }), 'linked')
+  assert.equal(writes, 2)
+})
+
+test('failed or cancelled terminal preparation never sends Enter', async () => {
+  for (const cancelled of [false, true]) {
+    const calls = []
+    const signal = { aborted: false }
+    const shown = []
+    const omniUi = async endpoint => {
+      calls.push(endpoint)
+      if (endpoint === 'omni-terminal-open') return { terminal: 'never-start', state: 'preparing' }
+      if (endpoint === 'omni-terminal-read') {
+        if (cancelled) { signal.aborted = true; return { state: 'ready' } }
+        return { state: 'failed', error: 'Bun download failed' }
+      }
+      return { ok: true }
+    }
+    const run = team.sandboxInstall({ show: (...entry) => shown.push(plain(entry)), signal, omniUi, wait: async () => {} })
+    if (cancelled) await assert.rejects(run, { name: 'AbortError' })
+    else {
+      assert.equal(await run, 'failed')
+      assert.deepEqual(shown.at(-1), ['failed', { message: 'Bun download failed', log: '' }])
+      assert.ok(calls.includes('omni-terminal-close'))
+    }
+    assert.equal(calls.includes('omni-terminal-write'), false)
+  }
 })
 
 test("a failed install keeps what Omni's installer printed on the card", async () => {

@@ -437,17 +437,17 @@ profile patch. The flip moves Claude Bots to `acp-claude` once per team (the Bot
 below), so it lands only after #559 and #580's #585 are in a released build and the desktop trial
 passes. The one-time move requires the route's CLI to be signed in as well as ready, so an
 installed-but-signed-out Claude moves nothing and no Bot lands on a dead route; the team stays
-unmarked, so signing in later still moves it. Auto review no longer depends on a DeepSeek key: the
-reviewer resolves to a model the team can reach (DSH's default when it is not an agent, an
-explicitly chosen side model, the first configured non-agent route, then the built-in DeepSeek
-fallback) and falls through on a credential or missing-route failure, so a team with only a Claude
-login reviews on that model. It fails closed only when no candidate answers. Auto is the preset's
-identity, never its `ask` + `danger-full-access` bundle: a custom preset with the same knobs has no
-reviewer, so the bridge keeps its own approval. Flipping the setting ends the running agent sessions
-and revokes their bridges at once; the Session keeps its transcript. Codex is proposed to stay out
-of the default bridge until its adapter can drop its own tools: today `acp-codex` runs two tool sets
-(`dshTools` on keeps its built-in tools too), so a Codex Session is not part of the default's
-promise.
+unmarked, and a later sign-in moves it on the next pass (a settings or adapter change) or the next
+start. Auto review no longer depends on a DeepSeek key: the reviewer resolves to a model the team
+can reach (DSH's default when it is not an agent, an explicitly chosen side model, the first
+configured non-agent route, then the built-in DeepSeek fallback) and falls through on a credential
+or missing-route failure, so a team with only a Claude login reviews on that model. It fails closed
+only when no candidate answers. Auto is the preset's identity, never its `ask` +
+`danger-full-access` bundle: a custom preset with the same knobs has no reviewer, so the bridge
+keeps its own approval. Flipping the setting ends the running agent sessions and revokes their
+bridges at once; the Session keeps its transcript. Codex is proposed to stay out of the default
+bridge until its adapter can drop its own tools: today `acp-codex` runs two tool sets (`dshTools` on
+keeps its built-in tools too), so a Codex Session is not part of the default's promise.
 
 ## Links
 

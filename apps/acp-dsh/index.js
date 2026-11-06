@@ -23,7 +23,7 @@ import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
 import { redactorFor } from './src/host/redact.js'
-import { crossed } from './src/host/switch.js'
+import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
@@ -43,17 +43,18 @@ export const Config = z.object({
     model: z.string().required(),
   }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
-  // On unless explicitly false: the bridge, its DSH approval, the drift detector and live
-  // switching (RFC 0003, amendment, "Setting and order"). False is the kill switch and the
-  // 2026-11-03 behaviour. Hidden from settings forms (`.hidden()`): it is a rollback lever, not
-  // a preference, and stays writable through DSH's settings service and the profile patch.
+  // On by default where the adapter can drop its own built-in tools (Claude Code); Codex has
+  // no such switch and stays out of the default bridge, so it never runs two tool sets unless
+  // the person sets true. An explicit false is the kill switch and the 2026-11-03 behaviour.
+  // Hidden from settings forms (`.hidden()`): it is a rollback lever, not a preference, and
+  // stays writable through DSH's settings service and the profile patch.
   dshTools: z.boolean().default(DSH_TOOLS_DEFAULT).volatile().hidden().description([
     "Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's",
     "preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own",
     "rules say, turn the agent's built-in tools off where its adapter allows, and carry the",
-    'transcript when a Session moves between providers. On unless explicitly false; false is the',
-    'kill switch and the behaviour without it: each agent keeps its own tools and its own',
-    'approvals.',
+    'transcript when a Session moves between providers. On by default for Claude Code; an agent',
+    "whose adapter cannot drop its own tools (Codex) bridges only on an explicit true. False is",
+    'the kill switch and the behaviour without it: each agent keeps its own tools and approvals.',
   ].join(' ')),
 })
 
@@ -66,8 +67,8 @@ export const PROBE_RETRY_MS = 10 * 60 * 1000
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
 
-// `dshTools` with the schema default applied: absent means on, and only an explicit false (a
-// plain false or a live reference reading false) is the kill switch.
+// The Claude Code (and Bot-move) view of `dshTools`: absent means on, and only an explicit
+// false is the kill switch. Per-agent bridging reads the raw setting in AcpAdapter.
 export const dshToolsOn = (value) => {
   const read = flagOf(value)
   return (read === undefined ? DSH_TOOLS_DEFAULT : read) === true
@@ -96,24 +97,28 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       // Tests only: keep a test of the missing-bridge failure from waiting the real grace period.
       ...(Number(process.env.ACP_BRIDGE_READY_MS) > 0 ? { bridgeReadyMs: Number(process.env.ACP_BRIDGE_READY_MS) } : {}),
       catalog: new Catalog({ id: 'acp-fake', name: 'Fake agent', defaultName: 'Fake agent', fallback: [{ id: DEFAULT_MODEL, name: 'Fake agent' }], key: () => config.fakeAgent, spawn, log }),
+      // The fake stands in for Claude Code where the bridge default is concerned: it declares
+      // the adapter switch that drops its own built-in tool set.
+      disableBuiltInTools: true,
       spawn,
     })
   }
   const backchannel = new Backchannel({ ctx, log })
   const redact = redactorFor(ctx)
   const adapter = new AcpAdapter(ctx, agents, {
-    dshTools: () => dshToolsOn(config.dshTools),
+    // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
+    dshTools: () => flagOf(config.dshTools),
     backchannel,
     redactor: redact,
   })
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
-  let toolsOn = dshToolsOn(config.dshTools)
+  let toolsSetting = flagOf(config.dshTools)
   const syncTools = () => {
-    const next = dshToolsOn(config.dshTools)
-    if (toolsOn !== next) adapter.endSessions()
-    toolsOn = next
+    const next = flagOf(config.dshTools)
+    if (toolsSetting !== next) adapter.endSessions()
+    toolsSetting = next
   }
   const clis = new Map()
   const signIns = new Map()
@@ -411,6 +416,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // A model selection that moves a Session off its agent: its boundary row, and the agent
   // session (and bridge) belonging to the old route ends (RFC 0003, amendment, "Live switching").
   ctx.on?.('session/event', (session, event) => adapter.noteEvent(session, event))
+  // The other half of a crossing: the effort the Session ran on follows it both ways when the
+  // target offers it, and a notice says so when it cannot. Live switching's rule, so it
+  // follows `dshTools`.
+  const carry = carryEffort(
+    async (provider, model) => (await ctx.llm.resolveModelInfo?.(provider, model))?.reasoning,
+    () => dshToolsOn(config.dshTools),
+    (previous, next) => agentRoute(agents, previous.provider) || agentRoute(agents, next.provider),
+  )
+  ctx.on?.('session/event', (session, event) => { void carry(session, event) })
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
   const refresh = () => {
     for (const [id, spec] of Object.entries(AGENTS)) if (agents.has(id)) void install(spec)

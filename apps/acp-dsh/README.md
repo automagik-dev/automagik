@@ -38,8 +38,9 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (`_meta.disableBuiltInTools`); a structured call that is not an MCP name is recorded as
   `plugin:acp-dsh/toolset-drift` and its turn is cancelled — the detector runs at every session
   start, and it detects and cancels because the update arrives after the call began.
-  `acp-codex` stays a two-tool-set session (its adapter has no such switch) and, until a
-  structured name is proven in its tool calls, draws no ACP card for an MCP call. The person's
+  `acp-codex` has no such switch, so it is out of the default bridge (it would run two tool
+  sets); an explicit `dshTools: true` still bridges it. Until a structured name is proven in its
+  tool calls, it draws no ACP card for an MCP call. The person's
   own MCP servers load beside the bridge with their own tools and sign-ins: DSH hands the session
   only the `dsh` bridge, so any other `mcp__<server>__<tool>` is the CLI's own user-scope config
   (claude-agent-acp merges the person's settings MCP servers into the session), it passes the
@@ -56,18 +57,24 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
   dialog), Full access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
-  native provider — and each crossing writes a provider-boundary row the chat shows.
-- **Only the chat reaches the agent.** DSH's side requests on an ACP route never become   prompts.
-At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a   model that
-answers on its own, without the agent's effort. That is the first model the team   can reach: DSH's
-default model (`agentDefaultModel`) when it is not an agent; else a `sideModel`   the person chose;
-else the first configured non-agent route; and only then the built-in   DeepSeek Flash fallback. A
-credential or missing-route failure on one candidate moves to the   next, so a team without a
-DeepSeek key reviews and titles on the model it does have; only no   answer at all refuses. Auto
-review (`purpose: auto-review`) takes the same route, with its   messages redacted first. Every
-other side request on an ACP route, a compaction summary included, is refused   (`UNSUPPORTED`): it
-would carry the agent's whole chat to another provider, and the agent   manages its own context.
-Sessions on any other route are left alone.
+  native provider — and each crossing writes a provider-boundary row the chat shows. The
+  reasoning effort the Session ran on crosses with it, both ways, when the target model offers
+  that level (matched by id, else by name), replacing the target default DSH records on a model
+  change; an effort DSH itself defaulted is not carried. A target with no reasoning levels,
+  without that one, or whose levels cannot be read writes a notice row saying so and runs on its
+  own. A switch back before the agent has answered drops the agent's chosen level; the native
+  target's own default applies.
+- **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
+  prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
+  model that answers on its own, without the agent's effort. That is the first model the team
+  can reach: DSH's default model (`agentDefaultModel`) when it is not an agent; else a
+  `sideModel` the person chose; else the first configured non-agent route; and only then the
+  built-in DeepSeek Flash fallback. A credential or missing-route failure on one candidate moves
+  to the next, so a team without a DeepSeek key reviews and titles on the model it does have;
+  only no answer at all refuses. Auto review (`purpose: auto-review`) takes the same route, with
+  its messages redacted first. Every other side request on an ACP route, a compaction summary
+  included, is refused (`UNSUPPORTED`): it would carry the agent's whole chat to another
+  provider, and the agent manages its own context. Sessions on any other route are left alone.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
   agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
   service below.
@@ -98,9 +105,11 @@ Codex*, or the plugin's own settings form) offers or withdraws the agent at once
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
 
-`dshTools` (on unless explicitly false, live) is the bridge, its DSH approval, the drift detector
-and live switching above. An explicit `false` is the kill switch: the 2026-11-03 behaviour, where
-each agent keeps its own tools and its own approvals. The key is public and stays writable through
+`dshTools` (live) is the bridge, its DSH approval, the drift detector and live switching above.
+It is on by default for `acp-claude`, the adapter that can drop its own built-in tools;
+`acp-codex` is out of the default bridge until its adapter can, so it bridges only on an explicit
+`true`. An explicit `false` is the kill switch: the 2026-11-03 behaviour, where each agent keeps
+its own tools and its own approvals. The key is public and stays writable through
 DSH's settings service or the profile patch, but it is hidden from settings forms (`.hidden()`):
 it is a rollback lever, not a preference. Flipping it either way ends the running agent sessions
 and revokes their bridges at once; the DSH Session keeps its transcript and the next turn starts

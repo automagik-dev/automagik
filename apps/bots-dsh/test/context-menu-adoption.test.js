@@ -148,3 +148,31 @@ test('an ordinary Bot still offers the plain delete and no rollback', () => {
   assert.equal(labels.includes('Delete'), true)
   assert.equal(labels.includes('Roll back DSH adoption…'), false)
 })
+
+for (const { kind, label, action, args } of [
+  { kind: 'agent', label: 'Remove Original', action: 'removeAgent', args: ['agent-1'] },
+  { kind: 'agent-session', label: 'Archive', action: 'archiveAgentSession', args: ['agent-1', 'session-1'] },
+]) {
+  test(`a failed ${action} from the DSH menu shows the error after closing`, async () => {
+    const error = new Error('Something went wrong (WorkspaceUnknownSessionError).')
+    const calls = []
+    const reported = []
+    const actions = {
+      closeMenu: () => calls.push('close'),
+      [action]: (...received) => { calls.push(received); return Promise.reject(error) },
+      reportError: (failure, where) => reported.push([failure, where]),
+    }
+    const tree = ContextMenu({
+      menu: { kind, id: kind === 'agent' ? 'agent-1' : 'session-1', agentId: 'agent-1', x: 10, y: 10 },
+      roster: { ...roster, agentsById: { 'agent-1': { id: 'agent-1', name: 'Original' } } },
+      actions,
+    })
+    const menu = tree.type(tree.props)
+    const item = walk(menu).find(node => node.props?.role === 'menuitem' && node.children.includes(label))
+    assert.ok(item)
+    item.props.onClick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.deepEqual(calls, ['close', args])
+    assert.deepEqual(reported, [[error, 'menu']])
+  })
+}

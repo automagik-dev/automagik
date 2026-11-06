@@ -206,6 +206,15 @@ test('a Bot model applies its thinking level, and only re-selects on a change', 
   assert.equal(bot.appliedEffort, undefined)
 })
 
+test('a target level that only shares the name is carried as its own id', async () => {
+  const efforts = [{ id: 'max', name: 'High' }]
+  const { rt } = bench({ reasoning: { 'deepseek/v4-flash': { reasoning: { efforts } } } })
+  const bot = { id: 'b1', model: 'deepseek/v4-flash', effort: 'high' }
+  assert.equal(await rt.desiredEffort(bot, bot.model), 'max')
+  await rt.applyModel(bot)
+  assert.equal(bot.appliedEffort, 'max')
+})
+
 test('resolveEffort takes an id or a name, and refuses what the model has not', async () => {
   const { rt } = bench({ reasoning: {
     'deepseek/v4-flash': { reasoning: { efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }] } },

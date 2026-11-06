@@ -55,10 +55,13 @@ const readyAcp = (models = ['default', 'opus', 'sonnet', 'haiku']) => ({
   models,
 })
 
-async function start(team, { acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'], acpModels = undefined } = {}) {
+async function start(team, {
+  acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'],
+  acpModels = undefined, services = {}, resolveModelInfo = undefined,
+} = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-acp-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
-  const ctx = fakeContext({ services: { acpAgents: acp } })
+  const ctx = fakeContext({ services: { ...(acp ? { acpAgents: acp } : {}), ...services } })
   const workspaces = new Map()
   const selected = []
   const catalog = {
@@ -70,7 +73,9 @@ async function start(team, { acp = readyAcp(), providers = ['anthropic', 'deepse
     llm: {
       listProviders: () => providers.map(id => ({ id, name: id })),
       listModels: async provider => catalog[provider] ?? [],
-      resolveModelInfo: async (provider) => (provider === 'acp-claude' ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } } : {}),
+      resolveModelInfo: resolveModelInfo ?? (async provider => (provider === 'acp-claude'
+        ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }
+        : {})),
       listConfigurableProviders: () => [],
     },
     workspaceRegistry: {
@@ -127,7 +132,41 @@ test('a Bot still on the pi-ai model it was moved to goes to acp-claude once, ke
   assert.equal(state.bots.m1.claudeCodeModel, 'claude-code/opus')
   assert.equal(state.bots.m1.appliedModel, 'acp-claude/opus')
   assert.equal(state.bots.m1.appliedEffort, 'high')
+  // The move records what the Bot ran on before, thinking level included, for the rollback.
+  assert.deepEqual(state.bots.m1.acpMoved, {
+    from: { model: 'anthropic/claude-opus-5-5', effort: 'high' },
+    target: 'acp-claude/opus',
+  })
+  assert.deepEqual(state.bots.w2.acpMoved, {
+    from: { model: 'anthropic/claude-sonnet-4-5' },
+    target: 'acp-claude/sonnet',
+  })
+  // The effort reached the Session's selection, not only the Bot's record.
+  const applied = host.selected.find(request =>
+    request.sessionId === 'm1' && request.provider === 'acp-claude')
+  assert.equal(applied.reasoningEffort, 'high')
   assert.deepEqual([state.bots.m1.sessionId, state.bots.w2.sessionId], ['m1', 'w2'])
+})
+
+test('the move applies the Bot\'s level once the agent catalog can express it', async (t) => {
+  let probed = false
+  const resolveModelInfo = async provider => (provider === 'acp-claude' && probed
+    ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }
+    : {})
+  const host = await start(seed(), { resolveModelInfo })
+  t.after(host.stop)
+  await host.moved()
+  // The route answered the model but not its levels yet: the model moved, the level waits.
+  await until(() => host.saved().bots.m1.appliedModel === 'acp-claude/opus', {
+    label: 'the model moved',
+  })
+  assert.equal(host.saved().bots.m1.appliedEffort, undefined)
+  probed = true
+  host.ctx.emit('llm/adapters-updated')
+  await until(() => host.saved().bots.m1.appliedEffort === 'high', {
+    label: 'the level reached the agent once its catalog answered',
+  })
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
 })
 
 test('the move runs once per team: a model the person picks afterwards is never moved again', async (t) => {
@@ -143,6 +182,179 @@ test('the move runs once per team: a model the person picks afterwards is never 
   await until(() => again.saved().bots.m1.model === 'deepseek/deepseek-v4-flash')
   assert.equal(again.saved().bots.m1.model, 'deepseek/deepseek-v4-flash')
   assert.equal(again.saved().claudeAcpMoved, true)
+})
+
+test('turning dshTools off restores a moved Bot\'s model and thinking level', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the Bot moved back to its pi-ai model',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+  // The Bot without a level of its own comes back without one.
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
+  assert.equal(state.bots.w2.effort, undefined)
+  assert.equal(state.bots.w2.acpMoved, undefined)
+})
+
+test('a Bot the person changed since the move stays as they set it', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const changed = await host.call('update-bot', { id: 'm1', model: 'deepseek/deepseek-v4-flash' })
+  assert.equal(changed.ok, true)
+  await until(() => host.saved().bots.m1.model === 'deepseek/deepseek-v4-flash')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().claudeAcpMoved === undefined, { label: 'the rollback ran' })
+  const state = host.saved()
+  // The person's pick is not overwritten, and the record that could overwrite it is gone.
+  assert.equal(state.bots.m1.model, 'deepseek/deepseek-v4-flash')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
+})
+
+test('a moved Bot whose person picked another level stays on the route', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const picked = await host.call('update-bot', { id: 'm1', effort: 'low' })
+  assert.equal(picked.ok, true)
+  await until(() => host.saved().bots.m1.appliedEffort === 'low')
+  // A catalog pass does not drop the record: the same state must behave the same way.
+  host.ctx.emit('llm/adapters-updated')
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(host.saved().bots.m1.acpMoved.target, 'acp-claude/opus')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().claudeAcpMoved === undefined, { label: 'the rollback ran' })
+  const state = host.saved()
+  // The person's own effort pick is not overwritten by a move back.
+  assert.equal(state.bots.m1.model, 'acp-claude/opus')
+  assert.equal(state.bots.m1.effort, 'low')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+})
+
+test('a moved Bot comes back when the ACP route disappears', async (t) => {
+  let route = true
+  const ready = {
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+    signedIn: true,
+  }
+  const acp = {
+    ...readyAcp(),
+    status: async () => ({ agents: route ? [ready] : [] }),
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  route = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.model === 'anthropic/claude-opus-5-5', {
+    label: 'the route disappeared and the Bot moved back',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('an effort pick still leaves a dead ACP route for the previous model', async (t) => {
+  let route = true
+  const ready = {
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+    signedIn: true,
+  }
+  const acp = {
+    ...readyAcp(),
+    status: async () => ({ agents: route ? [ready] : [] }),
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const picked = await host.call('update-bot', { id: 'm1', effort: 'low' })
+  assert.equal(picked.ok, true)
+  await until(() => host.saved().bots.m1.appliedEffort === 'low')
+  route = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the dead route let the Bot go',
+  })
+  const state = host.saved()
+  // The person's level stays theirs; only the dead model is replaced.
+  assert.equal(state.bots.m1.effort, 'low')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+})
+
+test('a plugin that is still loading is not a route that disappeared', async (t) => {
+  const base = seed()
+  const moved = {
+    ...base,
+    claudeAcpMoved: true,
+    bots: {
+      ...base.bots,
+      m1: {
+        ...base.bots.m1, model: 'acp-claude/opus', appliedModel: 'acp-claude/opus',
+        claudeCodeModel: 'claude-code/default',
+      },
+    },
+  }
+  const loader = {
+    entries: () => [{ options: { name: '@automagik/acp-dsh' }, disabled: false }],
+  }
+  const host = await start(moved, { acp: false, services: { loader } })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'acp-claude/opus')
+  assert.equal(state.claudeAcpMoved, true)
+  // The recovered record is on disk, not rebuilt from mutable state each pass.
+  assert.equal(state.bots.m1.acpMoved.from.model, 'anthropic/claude-opus-5-5')
+})
+
+test('a team moved before the record existed rolls back to its pi-ai model', async (t) => {
+  const base = seed()
+  const moved = {
+    ...base,
+    claudeAcpMoved: true,
+    bots: {
+      ...base.bots,
+      m1: {
+        ...base.bots.m1, model: 'acp-claude/opus', appliedModel: 'acp-claude/opus',
+        claudeCodeModel: 'claude-code/default',
+      },
+    },
+  }
+  const host = await start(moved, { acp: false })
+  t.after(host.stop)
+  await until(() => host.saved().bots.m1.model === 'anthropic/claude-opus-5-5', {
+    label: 'the legacy move rolled back',
+  })
+  const state = host.saved()
+  // `claude-code/default` names no family on its own; the pi-ai model it became did.
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
 })
 
 test('a Bot the person moved off its pi-ai Claude model is left alone', async (t) => {
@@ -207,6 +419,42 @@ test('an event that lands while the route is being read runs one more pass', asy
   release()
   await until(() => host.saved().claudeAcpMoved === true, { label: 'the queued pass moved the team' })
   assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  // The first pass saw `installing` and left; the queued pass made the second read.
+  assert.equal(calls, 2)
+})
+
+test('the sign-in is asked once when the status has no answer yet', async (t) => {
+  let refreshes = 0
+  let calls = 0
+  const acp = {
+    ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
+    status: async () => {
+      calls += 1
+      return { agents: [{
+        id: 'acp-claude',
+        connector: { state: 'ready' },
+        model: { listed: true },
+        ...(calls === 1 ? {} : { signedIn: true }),
+      }] }
+    },
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(refreshes, 1)
+  assert.equal(calls, 2)
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+})
+
+test('a known signed-in route is not asked again', async (t) => {
+  let refreshes = 0
+  const acp = { ...readyAcp(), refresh: async () => { refreshes += 1 } }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(refreshes, 0)
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
 })
 
 test('dshTools off is the 2026-11-03 behaviour: no Bot moves', async (t) => {
@@ -224,8 +472,10 @@ test('dshTools off is the 2026-11-03 behaviour: no Bot moves', async (t) => {
 test('an installed but signed-out Claude moves nothing', async (t) => {
   // The route is ready and listed, but its CLI says it is not signed in. The Bots stay on the
   // pi-ai model they are on, and the team is not marked done, so signing in can still move them.
+  let refreshes = 0
   const signedOut = {
     ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
     status: async () => ({ agents: [{
       id: 'acp-claude',
       connector: { state: 'ready' },
@@ -237,14 +487,17 @@ test('an installed but signed-out Claude moves nothing', async (t) => {
   t.after(host.stop)
   await host.call('state', {})
   await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(refreshes > 0, 'the CLI was asked again on this pass')
   assert.equal(host.saved().bots.m1.model, 'anthropic/claude-opus-5-5')
   assert.equal(host.saved().claudeAcpMoved, undefined)
 })
 
 test('signing in later still moves the team: a signed-out pass marks nothing', async (t) => {
   let signedIn = false
+  let refreshes = 0
   const acp = {
     ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
     status: async () => ({ agents: [{
       id: 'acp-claude', connector: { state: 'ready' }, model: { listed: true }, signedIn,
     }] }),
@@ -255,6 +508,7 @@ test('signing in later still moves the team: a signed-out pass marks nothing', a
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(host.saved().claudeAcpMoved, undefined)
   assert.equal(host.saved().bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.ok(refreshes > 0, 'the signed-out pass asked the CLI')
   signedIn = true
   host.ctx.emit('llm/adapters-updated')
   await until(() => host.saved().claudeAcpMoved === true, { label: 'the team moved after sign-in' })

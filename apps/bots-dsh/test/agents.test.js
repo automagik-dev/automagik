@@ -1003,6 +1003,63 @@ test('remove-agent archives every Session and drops the record', async (t) => {
   assert.deepEqual([...archived].sort(), [agent.sessions[0], second.sessionId].sort())
 })
 
+test('remove-agent drops missing Session references and still archives the remaining Sessions', async (t) => {
+  const { call, stop, ctx, archived, home } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const agent = (await call('add-agent', { name: 'Notes' })).value
+  const second = (await call('agent-session', { agentId: agent.id })).value
+  const missing = agent.sessions[0]
+  const archive = ctx.workspaceRegistry.archiveSession
+  ctx.workspaceRegistry.archiveSession = async sessionId => {
+    if (sessionId === missing) throw Object.assign(new Error('Session is gone'), { name: 'WorkspaceUnknownSessionError', sessionId })
+    await archive(sessionId)
+  }
+  assert.equal((await call('remove-agent', { agentId: agent.id })).ok, true)
+  assert.deepEqual(archived, [second.sessionId])
+  assert.deepEqual((await call('state', {})).value.agents, [])
+  assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).agents[agent.id], undefined)
+})
+
+test('agent-archive drops an owned reference when DSH confirms that Session no longer exists', async (t) => {
+  const { call, stop, ctx } = start(TEAM)
+  t.after(stop)
+  await call('state', {})
+  const agent = (await call('add-agent', { name: 'Notes' })).value
+  ctx.workspaceRegistry.archiveSession = async sessionId => {
+    throw Object.assign(new Error('Session is gone'), { name: 'WorkspaceUnknownSessionError', sessionId })
+  }
+  assert.equal((await call('agent-archive', { agentId: agent.id, sessionId: agent.sessions[0] })).ok, true)
+  assert.deepEqual((await call('state', {})).value.agents[0].sessions, [])
+})
+
+test('missing Sessions do not mask archive failures or unknown errors for a different Session', async (t) => {
+  for (const failure of [
+    new Error('storage unavailable'),
+    Object.assign(new Error('Session is active'), { name: 'WorkspaceActiveSessionError' }),
+    Object.assign(new Error('another Session is gone'), { name: 'WorkspaceUnknownSessionError', sessionId: 'another' }),
+  ]) {
+    await t.test(failure.message, async (t) => {
+      const { call, stop, ctx } = start(TEAM)
+      t.after(stop)
+      await call('state', {})
+      const agent = (await call('add-agent', { name: 'Notes' })).value
+      const second = (await call('agent-session', { agentId: agent.id })).value
+      ctx.workspaceRegistry.archiveSession = async sessionId => {
+        if (sessionId === agent.sessions[0]) throw Object.assign(new Error('Session is gone'), { name: 'WorkspaceUnknownSessionError', sessionId })
+        throw failure
+      }
+      assert.equal((await call('remove-agent', { agentId: agent.id })).ok, false)
+      assert.deepEqual((await call('state', {})).value.agents[0].sessions, [second.sessionId])
+      assert.equal((await call('agent-archive', { agentId: agent.id, sessionId: second.sessionId })).ok, false)
+      assert.deepEqual((await call('state', {})).value.agents[0].sessions, [second.sessionId])
+      ctx.workspaceRegistry.archiveSession = async () => {}
+      assert.equal((await call('remove-agent', { agentId: agent.id })).ok, true)
+      assert.deepEqual((await call('state', {})).value.agents, [])
+    })
+  }
+})
+
 test('a corrupt agents field resets instead of crashing the view', async (t) => {
   const { call, stop } = start({ ...TEAM, agents: 'junk' })
   t.after(stop)
