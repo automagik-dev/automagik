@@ -248,12 +248,21 @@ function ValueEditor({ secret, onSave }) {
       : replaced ? h('div', { className: 'bt-set-hint bt-secret-ok', role: 'status' }, h(CheckIcon), t('Replaced. Bots get the new value from their next command.')) : null)
 }
 
-function SecretRow({ secret, roster, actions, run, open, onToggle }) {
+export function SecretRow({ secret, roster, actions, run, open, onToggle }) {
   const [confirm, setConfirm] = useState(false)
   useEffect(() => { if (!open) setConfirm(false) }, [open])
   const asker = secret.requestedBy ? roster.byId[secret.requestedBy]?.name ?? t('a deleted Bot') : t('you')
   const allowed = secret.scope === 'all' ? [] : secret.scope.map(id => roster.byId[id]).filter(Boolean)
-  const meta = [t('Asked by {name}', { name: asker }), t('added {time}', { time: when(secret.createdAt) }), secret.lastUsedAt ? t('last used {time}', { time: when(secret.lastUsedAt) }) : t('not used yet')].join(' · ')
+  // A held key is in the list but used nowhere (the loader holds a hand-edited value below
+  // the write floor), so the row says why instead of claiming it is merely unused.
+  const held = secret.held === true
+  const heldLine = t('Held: the saved value is shorter than {count} characters',
+    { count: MIN_VALUE })
+  const state = held ? heldLine
+    : secret.lastUsedAt ? t('last used {time}', { time: when(secret.lastUsedAt) })
+      : t('not used yet')
+  const meta = [t('Asked by {name}', { name: asker }),
+    t('added {time}', { time: when(secret.createdAt) }), state].join(' · ')
   return h('div', { className: 'bt-secret-item', 'data-open': open ? '' : undefined },
     h('button', { type: 'button', className: 'bt-set-row bt-secret-summary', 'aria-expanded': open, onClick: onToggle },
       h('span', { className: 'bt-set-copy' },
@@ -266,6 +275,9 @@ function SecretRow({ secret, roster, actions, run, open, onToggle }) {
     open ? h('div', { className: 'bt-secret-edit' },
       h(ScopeEditor, { key: JSON.stringify(secret.scope), secret, roster, onSave: scope => run(actions.secretUpdate(secret.name, { scope })) }),
       h(PurposeEditor, { key: secret.purpose ?? '', secret, onSave: purpose => run(actions.secretUpdate(secret.name, { purpose })) }),
+      held ? h('div', { className: 'bt-secret-warn', role: 'note' }, h(WarnIcon),
+        t('Held: nothing uses this key until you save a value of at least {count} characters.',
+          { count: MIN_VALUE })) : null,
       h(ValueEditor, { secret, onSave: value => run(actions.secretSet({ name: secret.name, value })) }),
       h('div', { className: 'bt-secret-row-actions' },
         confirm

@@ -269,7 +269,7 @@ export function install(rt) {
   }
   function secretFor(name, botId) {
     const value = rt.canUseSecret(name, botId) ? rt.secretValue(name) : undefined
-    if (value === undefined) throw refusal(`Secret ${name} is missing or unavailable for this Bot.`)
+    if (value === undefined) throw refusal(rt.secretHeldReason?.(name) ?? `Secret ${name} is missing or unavailable for this Bot.`)
     return value
   }
   function resolveValues(values, botId) {
@@ -293,7 +293,7 @@ export function install(rt) {
       ? Object.values(state.bots).some(bot => rt.canUseSecret(name, bot.id))
       : rt.canUseSecret(name, botId)
     const value = usable ? rt.secretValue(name) : undefined
-    if (value === undefined) throw refusal(`Secret ${name} is missing or unavailable${botId === undefined ? '' : ' for this Bot'}.`)
+    if (value === undefined) throw refusal(rt.secretHeldReason?.(name) ?? `Secret ${name} is missing or unavailable${botId === undefined ? '' : ' for this Bot'}.`)
     return value
   }
   // One initialize POST, with the headers the mount would send. Redact before truncating, so a

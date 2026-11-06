@@ -26,6 +26,15 @@ export const envName = name => `${ENV_PREFIX}${name}`
 export const canUse = (secret, botId) => secret !== undefined && botId !== undefined
   && (secret.scope === 'all' || (Array.isArray(secret.scope) && secret.scope.includes(botId)))
 
+// A value below the write floor can only reach the store by hand-editing secrets.json, and
+// nothing can use it safely: the redactor cannot match a 1-3 character value (it sits inside
+// ordinary words), so it would leak wherever it appeared. Such an entry is held instead of
+// dropped: it stays in the file and in the list (with a warning naming the floor) and no path
+// hands it out, so a hand-edited secret cannot ride along unredactable. Trimming matches the
+// write path, which stores the trimmed value.
+const held = secret => secret !== undefined && typeof secret.value === 'string' && secret.value.trim().length < MIN_VALUE
+const heldReason = name => `Secret ${name} is held: its saved value is shorter than ${MIN_VALUE} characters, so it is never used. Save a new value with at least ${MIN_VALUE} characters.`
+
 export function normalizeName(raw) {
   return String(raw ?? '').trim().replace(/^\$(env:)?/i, '').replace(/^DSH_SECRET_/i, '').replace(/[\s-]+/g, '_').toUpperCase()
 }
@@ -124,6 +133,9 @@ export function install(rt) {
   // would lose every key in it. While `blocked` holds the reason nothing is written,
   // and each load reads the file again (a busy file may only be briefly unreadable).
   let blocked
+  // A reading host reloads on every request, so a held value is reported once per change,
+  // not once per read.
+  let heldWarned = ''
   // Reads may overlap (each load of an unreadable file starts one). Only the newest may change
   // the store: an older one that lands late (it opened what was there before) would undo it,
   // clearing a key just saved or blocking a file just fixed; it waits for the newest instead.
@@ -144,6 +156,7 @@ export function install(rt) {
       if (error?.code === 'ENOENT') {
         blocked = undefined
         secrets.clear()
+        heldWarned = ''
       } else {
         blocked = reason(error)
         rt.warn('ds-bot: unreadable secrets file %s (%s)', path, blocked)
@@ -166,6 +179,7 @@ export function install(rt) {
         await copyFile(path, backup)
         blocked = undefined
         secrets.clear()
+        heldWarned = ''
         rt.warn('ds-bot: unreadable secrets file %s; backed up as %s', path, backup)
       } catch (error) {
         blocked = reason(error)
@@ -176,8 +190,12 @@ export function install(rt) {
     }
     blocked = undefined
     secrets.clear()
+    const heldNames = []
     for (const entry of parsed.secrets) {
       if (!SECRET_NAME.test(entry?.name ?? '') || typeof entry.value !== 'string') continue
+      // Named, not silently dropped: the entry stays in the map (and the file) but is used
+      // nowhere until a value of at least MIN_VALUE characters is saved.
+      if (held(entry)) heldNames.push(entry.name)
       secrets.set(entry.name, {
         name: entry.name,
         value: entry.value,
@@ -190,6 +208,11 @@ export function install(rt) {
       })
     }
     if (!loadedReadOnly) await chmod(path, 0o600).catch(() => {})
+    const heldNotice = heldNames.join(',')
+    if (heldNotice !== heldWarned) {
+      heldWarned = heldNotice
+      for (const name of heldNames) rt.warn('ds-bot: secret %s in %s is held: its saved value is shorter than the %d-character minimum; nothing uses it until a longer value is saved', name, path, MIN_VALUE)
+    }
     changed()
   }
 
@@ -278,7 +301,7 @@ export function install(rt) {
     for (const [botId, list] of Object.entries(state.secretRequests ?? {})) {
       for (const request of list) {
         if (request.status !== 'pending' || request.name !== name || request === except) continue
-        if (canUse(secret, botId)) {
+        if (canUse(secret, botId) && !held(secret)) {
           settle(botId, request, 'saved')
           notes.push([botId, savedNote(name, `The user saved ${name}, and you may use it now.`)])
         } else {
@@ -322,6 +345,7 @@ export function install(rt) {
     createdAt: secret.createdAt,
     updatedAt: secret.updatedAt,
     ...(secret.lastUsedAt !== undefined ? { lastUsedAt: secret.lastUsedAt } : {}),
+    ...(held(secret) ? { held: true } : {}),
   })
   const secretsView = () => [...secrets.values()].sort((a, b) => a.name.localeCompare(b.name)).map(secretView)
 
@@ -374,6 +398,7 @@ export function install(rt) {
       const { botId, request } = pendingRequest(body.requestId)
       const secret = secrets.get(request.name)
       if (secret === undefined) throw refusal(`${request.name} is not saved yet`)
+      if (held(secret)) throw refusal(heldReason(request.name))
       if (!canUse(secret, botId)) secret.scope = [...new Set([...secret.scope, botId])]
       secret.updatedAt = Date.now()
       settle(botId, request, 'allowed')
@@ -457,7 +482,10 @@ export function install(rt) {
       if (!SECRET_NAME.test(name)) return 'Name the key with capitals, digits, and underscores, starting with a letter (for example GITHUB_TOKEN).'
       const { work, unknown } = cleanGitHubWork(args.github)
       if (unknown.length > 0) return `Unknown GitHub work: ${unknown.join(', ')}. Pass github with ${Object.keys(GITHUB_WORK).join(', ')}.`
-      const secret = secrets.get(name)
+      const stored = secrets.get(name)
+      // A held entry is invisible to a Bot: asking again shows the fill card, so the user
+      // can replace the unredactable value.
+      const secret = held(stored) ? undefined : stored
       if (canUse(secret, bot.id)) return `${name} is already saved and you may use it: ${usage(name)}. You cannot see the value; never print it.`
       // A new GitHub token is made for declared work only (#316), so the card never asks for a
       // broader one; a saved key is only allowed or replaced.
@@ -507,7 +535,13 @@ export function install(rt) {
       if (secrets.size === 0) return 'No keys are saved yet. Ask for one with request_secret.'
       return [
         'Saved keys (values are never shown):',
-        ...secretsView().map(secret => `- ${secret.name}${secret.purpose ? ` — ${secret.purpose}` : ''} — for ${scopeText(secret.scope)} — ${canUse(secrets.get(secret.name), self) ? `you may use it as $${envName(secret.name)}` : 'you may not use it; ask with request_secret'}`),
+        ...secretsView().map((secret) => {
+          const stored = secrets.get(secret.name)
+          const use = held(stored)
+            ? `held: its saved value is shorter than ${MIN_VALUE} characters, so nothing uses it; save a new value`
+            : canUse(stored, self) ? `you may use it as $${envName(secret.name)}` : 'you may not use it; ask with request_secret'
+          return `- ${secret.name}${secret.purpose ? ` — ${secret.purpose}` : ''} — for ${scopeText(secret.scope)} — ${use}`
+        }),
       ].join('\n')
     },
   }))
@@ -554,7 +588,7 @@ export function install(rt) {
     const values = {}
     let used = false
     for (const secret of secrets.values()) {
-      if (!canUse(secret, botId)) continue
+      if (held(secret) || !canUse(secret, botId)) continue
       values[envName(secret.name)] = secret.value
       if (command.includes(envName(secret.name))) {
         secret.lastUsedAt = Date.now()
@@ -571,7 +605,7 @@ export function install(rt) {
     let unregister = null
     let declared = ''
     refreshEnv = () => {
-      const list = [...secrets.values()].sort((a, b) => a.name.localeCompare(b.name))
+      const list = [...secrets.values()].filter(secret => !held(secret)).sort((a, b) => a.name.localeCompare(b.name))
       const key = list.map(secret => `${secret.name}\u0000${secret.purpose}`).join('\n')
       if (key === declared) return
       unregister?.()
@@ -610,8 +644,9 @@ export function install(rt) {
 
   Object.assign(rt, {
     secretsView,
-    secretValue: name => secrets.get(name)?.value,
-    canUseSecret: (name, botId) => canUse(secrets.get(name), botId),
+    secretValue: name => (held(secrets.get(name)) ? undefined : secrets.get(name)?.value),
+    canUseSecret: (name, botId) => !held(secrets.get(name)) && canUse(secrets.get(name), botId),
+    secretHeldReason: name => (held(secrets.get(name)) ? heldReason(name) : undefined),
     secretEndpoint,
     forgetBotSecrets,
     loadSecrets,

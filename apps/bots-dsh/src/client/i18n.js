@@ -844,6 +844,8 @@ const ZH = {
   'added {time}': '添加于 {time}',
   'last used {time}': '上次使用 {time}',
   'not used yet': '还没用过',
+  'Held: the saved value is shorter than {count} characters': '已暂停使用：保存的值不足 {count} 个字符',
+  'Held: nothing uses this key until you save a value of at least {count} characters.': '已暂停使用：在你保存至少 {count} 个字符的值之前，没有任何地方使用这个密钥。',
   'Delete {name}? Bots lose it at once.': '删除 {name}？Bot 会立刻失去它。',
   Keep: '保留',
   'Key name': '密钥名',

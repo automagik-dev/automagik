@@ -1467,6 +1467,8 @@ const pack = createPack({
     "added {time}": "adicionada em {time}",
     "last used {time}": "último uso em {time}",
     "not used yet": "ainda não usada",
+    "Held: the saved value is shorter than {count} characters": "Retida: o valor salvo tem menos de {count} caracteres",
+    "Held: nothing uses this key until you save a value of at least {count} characters.": "Nada usa esta chave até você salvar um valor com pelo menos {count} caracteres.",
     "Delete {name}? Bots lose it at once.": "Excluir {name}? Os Bots perdem o acesso na hora.",
     "Keep": "Manter",
     "Key name": "Nome da chave",
