@@ -205,8 +205,8 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
   bridge; it is not a boundary against third-party code running as the person, which can read the
   bridge's environment (Amendments, "The bridge"). The boundary that does not depend on it is
   server-side: the credential cannot approve, and DSH's approval service owns every DSH tool call
-  for the Session. The stdio leg's transport is spiked; the credential-bearing back-channel is
-  planned, not proven; delivery 6 probes both refusals (Deliveries, 6). (`dshTools` off.) No
+  for the Session. The stdio leg's transport is spiked; the credential-bearing back-channel shipped
+  (#537), and delivery 6 probes both refusals (Deliveries, 6). (`dshTools` off.) No
   bridge exists, so neither leg does.
 - **Credentials.** Stored with mode 0600 or in the OS keychain. Never returned to the client.
 - **Supply chain (amended, D17).** Adapters are not pinned. What that costs: a second publisher,
@@ -245,10 +245,11 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    and a tool above its level is not offered. The back-channel is probed here, not only in
    delivery 6: a team-tool call raises `approval/asked` before it runs, a request without
    `DSH_BRIDGE_CREDENTIAL` is refused, one Session's credential is refused for another, and a
-   fork revokes the old one. A build that cannot pass those stays hidden (not offered under
-   `dshTools`) until it does. With it, once per team, a Bot that ran on the Claude Code plugin
+   fork revokes the old one. A build whose bridge cannot pass those is not offered under
+   `dshTools`. With it, once per team, a Bot that ran on the Claude Code plugin
    (`claudeCodeModel`) and is still on the pi-ai model it was moved to goes to `acp-claude`, only
-   where that route lists its model (adapter installed) and those probes pass.
+   where that route lists its model (adapter installed) and a live per-adapter-version bridge
+   probe (a fresh credential, MCP `initialize` and `tools/list`) passes.
    Rollback: revert; the Bot is chat-only on ACP.
 5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
@@ -332,7 +333,7 @@ own arguments, named `dsh`. Two legs, one credential story:
   own stdio pipe. "Nothing on the machine can address it" is true of this leg only — no port, no
   address. The spike proves the transport (a per-session stdio server, spawned with the
   session's own env, no port), not this leg with DSH behind it.
-- **Bridge→DSH (the back-channel: planned, not proven).** The bridge is the adapter's child, not
+- **Bridge→DSH (the back-channel, shipped #537).** The bridge is the adapter's child, not
   DSH's, so it cannot inherit a pipe from DSH. It reaches DSH over a per-session back-channel to
   acp-dsh, authenticated with `DSH_BRIDGE_CREDENTIAL`: a per-session, unguessable value minted by
   acp-dsh at spawn and passed only in that bridge's `session/new` `env`. DSH accepts a request
