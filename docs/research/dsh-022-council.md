@@ -36,7 +36,10 @@ Consensus (5/5): split the plan; version move first, deletions second, ACP parit
 
 New single-lens findings:
 - Delivery: every plugin declares engines.dsh ">=0.2.1-rc.5 <0.2.2-0"; runtime, both harness pins, engines ranges and patches must move in one release. Rollback is one-way (0.2.2 rewrites config/storage; older may not read it). Plugin indexes in 0.2.2 drop tag-pinned versions, which could cut off our market. No uninstall path exists in lane.js/main.js. teammate-models.patch must be confirmed upstream or rebased.
-- Architecture: "creator mode" = DSH's cordis agent preset (presets standard, ptc, minimal, cordis; dsh-web-app's README lists them, outside this repository, so no commit or lines — added in review); btw.js:74-78 registers a projection synchronously.
+- Architecture: "creator mode" = DSH's cordis agent preset (presets standard, ptc, minimal, cordis; dsh-web-app README:91,123); btw.js:74-78 registers a projection synchronously.
+  [added in review: the line above restores the copy's own refs; they resolve against the upstream
+  npm package's README at 0.2.1-rc.3, which lists standard/ptc/minimal/cordis at :123 and creator
+  at :91. That file is outside this repository, so no commit or lines here.]
 - Security: an "always allow" or hook rule in Claude Code would let mcp__dsh__* tools run with no DSH dialog; Full access on an ACP route would open two unprompted tool sets; web_fetch is on by default and 0.2.2 lets it reach private addresses (bots read external channels: prompt-injection path to localhost services); live switching moves history (with secrets) across providers.
 
 Dissent (dissent lens, verbatim): "oppose (the plan as one bundled decision. The upgrade itself is fine; the bundling and step 3 are the problem.)" ... "Step 3 conflicts with a recorded owner decision. RFC 0003:84-89 says 'Claude Code keeps the person's own settings... CLAUDE.md, MCP servers and hooks keep working.' A 'same tool set as vanilla DSH' agent means either two overlapping tool sets (agent Bash/Edit next to DSH bash/fs) or overriding the person's setup. This cannot be done without reopening the RFC." ... "The 'no overlaps' rule could turn against acp-dsh itself. 0.2.2 ships the experimental subagent_oar." [added in review: the dissent's RFC 0003:84-89 above is as of the council's base, `6e2dd5af^`; that section is 86-93 on this head.]
