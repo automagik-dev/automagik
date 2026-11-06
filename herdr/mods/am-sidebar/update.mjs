@@ -773,6 +773,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       swapAll(modsDir, moves, rename, {
         needed: "hold", mods: inMods.map((r) => r.mod), exclude: replacedLayout(modsDir), stranded: strandedLayouts, prepare,
         renamed: Object.fromEntries(inMods.filter((r) => r.renamed).map((r) => [r.mod, r.renamed])),
+        // A mod that leaves while a layout that does not parse names it in its text: said (#489).
+        unknown: "warn", log,
       });
     } catch (error) {
       restoreSet(modsDir, old);
