@@ -8,7 +8,7 @@
 // lags its CLI breaks first. What is checked is what npm publishes: the exact package name, the
 // registry's integrity for every tarball, no install scripts, and no bundled CLI.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { findCommand, isExecutable } from './agents.js'
@@ -17,6 +17,28 @@ import { batchSafe } from './batch-spawn.js'
 const REGISTRY = 'https://registry.npmjs.org'
 export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000
 export const INSTALL_TIMEOUT_MS = 10 * 60 * 1000
+// What a failed install keeps for the settings page: the end of the installer output.
+export const DIAGNOSTIC_MAX = 4000
+
+import { redactText } from './redact.js'
+
+/** Remove credential-shaped strings from installer output before it is stored or shown. */
+export { redactText as redactInstallerOutput }
+
+// Installer output can print absolute home paths (npm's log path, an nvm command); the stored
+// diagnostic and the log show the same "~" the Bot team report does.
+const HOME = homedir()
+function homeRelativeText(text) {
+  let out = String(text ?? '')
+  if (HOME.length > 1) {
+    out = out.split(HOME).join('~')
+    const slashes = HOME.replace(/\\/g, '/')
+    if (slashes !== HOME) out = out.split(slashes).join('~')
+  }
+  return out
+}
+
+export { homeRelativeText }
 
 export const adaptersHome = (env = process.env) => join(env.AUTOMAGIK_HOME || join(homedir(), '.automagik'), 'acp', 'adapters')
 const folderOf = pkg => pkg.replace(/^@/, '').replace(/\//g, '__')
@@ -167,9 +189,15 @@ export class AdapterStore {
     this.installing.clear()
   }
 
-  /** Why the last install of `pkg` failed, while no install has worked since. */
-  lastError(pkg) {
+  /** Why the last install of `pkg` failed, while no install has worked since: the short
+   * message, the full diagnostic, and the log file it was written to. */
+  lastFailure(pkg) {
     return this.failures.get(pkg)
+  }
+
+  /** The short message of the last failed install of `pkg`, for the connector state. */
+  lastError(pkg) {
+    return this.failures.get(pkg)?.message
   }
 
   /** Whether an install of `pkg` is running now. */
@@ -193,7 +221,22 @@ export class AdapterStore {
     if (this.quit.signal.aborted) return Promise.reject(new Error('install stopped: DSH is quitting'))
     const job = this.updateNow(pkg, bin, force).then(
       (found) => { this.failures.delete(pkg); return found },
-      (error) => { this.failures.set(pkg, String(error?.message ?? error).split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300)); throw error },
+      (error) => {
+        const full = homeRelativeText(redactText(error?.message ?? error))
+        const message = full.split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300)
+        const diagnostic = full.slice(-DIAGNOSTIC_MAX)
+        let logPath
+        try {
+          const dir = join(this.home, 'logs')
+          // Owner-only: the log can hold paths and installer output.
+          mkdirSync(dir, { recursive: true, mode: 0o700 })
+          logPath = join(dir, `${folderOf(pkg)}.log`)
+          writeFileSync(logPath, `${new Date(this.now()).toISOString()} install of ${pkg} failed\n\n${diagnostic}\n`, { encoding: 'utf8', mode: 0o600 })
+          chmodSync(logPath, 0o600)
+        } catch { /* the diagnostic still travels in the status */ }
+        this.failures.set(pkg, { message, diagnostic, ...(logPath === undefined ? {} : { logPath }) })
+        throw error
+      },
     ).finally(() => this.running.delete(pkg))
     this.running.set(pkg, job)
     return job

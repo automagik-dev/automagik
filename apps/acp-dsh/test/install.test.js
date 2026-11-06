@@ -1,12 +1,13 @@
 // Delivery 3's plumbing without the network: the CLI search, the background adapter install
 // (fake registry, fake package manager), the routes only for CLIs that are here, and full access.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import { apply, nodeCommand } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
 import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages, runInstall } from '../src/host/install.js'
@@ -168,12 +169,15 @@ test("a command's streamed output is the card's output, and the question's title
   assert.equal(tool.output, 'acp-ok\n')
 })
 
-// DSH's own presets (dsh-permission-presets): the stock catalog's two, plus Auto's fixed spec.
-// Manual is the stock workspace-write preset; Full access is danger-full-access with no prompts.
+// DSH's own presets, from its own objects: the stock catalog as its Config resolves it, and
+// Auto's fixed spec through the same specOf a live Auto integration reads. A harness that
+// moves a preset moves this fixture; a hand-copied table would stay green against it.
+const stockPresets = PermissionPresetService.Config({}).presets
+const presetService = Object.assign(Object.create(PermissionPresetService.prototype), { presets: stockPresets, autoAdmit: () => {} })
 const PRESET = Object.freeze({
-  manual: Object.freeze({ sandbox: 'workspace-write', approval: 'ask' }),
-  auto: Object.freeze({ sandbox: 'danger-full-access', approval: 'ask' }),
-  full: Object.freeze({ sandbox: 'danger-full-access', approval: 'never' }),
+  manual: presetService.resolve('workspace-write'),
+  auto: presetService.specOf('auto'),
+  full: presetService.resolve('danger-full-access'),
 })
 const levelOfPreset = ({ sandbox, approval }) => levelOf({ effectivePolicy: () => approval }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
 
@@ -196,6 +200,18 @@ test("DSH's Full access preset (danger-full-access, never) is full access, not A
   assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['bypassPermissions', 'default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent-full-access', 'workspace-write'])
+})
+
+test("a Session's Auto row beats a delegated child's never policy: not full access, and the call asks", () => {
+  const session = { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }] }
+  const never = { effectivePolicy: () => 'never' }
+  // dsh-subagent pins a child to `never`; the Session's own row still says Auto.
+  const autoRow = { current: () => 'auto' }
+  const level = levelOf(never, session, undefined, autoRow)
+  assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: false, auto: true })
+  assert.equal(fullAccess(never, session, undefined, autoRow), false)
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['auto', 'default'])
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
 })
 
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
@@ -273,6 +289,73 @@ test("adapters install with the desktop app's pnpm, never the person's; else npm
   assert.match(await install('three', { PATH: join(home, 'person'), AUTOMAGIK_PNPM: join(home, 'missing', 'pnpm') }), /^person-npm install/)
 })
 
+test('a failed install redacts credentials and writes an owner-only log', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  const token = ['ghp_', 'a'.repeat(24)].join('')
+  const npmToken = ['npm_', 'b'.repeat(24)].join('')
+  const user = ['deploy', 'bot'].join('')
+  const pass = ['secret', 'pass'].join('')
+  const auth = Buffer.from([user, pass].join(':')).toString('base64')
+  const url = ['https://', user, ':', pass, '@registry.npmjs.org/pkg'].join('')
+  const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
+  const quotedKey = 'quoted-secret-123456'
+  const quotedAuth = 'quoted-auth-secret=='
+  const envToken = 'env-token-secret'
+  const npmConfig = 'npm-config-secret'
+  const nodeToken = 'node-auth-secret'
+  const myToken = 'my-npm-secret'
+  const jsonToken = 'json-npm-secret'
+  const store = new AdapterStore({
+    home,
+    latest: async () => '1.0.0',
+    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}\n{"_authToken": "${quotedKey}"}\n{"//registry.npmjs.org/:_auth": "${quotedAuth}"}\nNPM_TOKEN=${envToken}\nnpm_config__authToken=${npmConfig}\nNODE_AUTH_TOKEN=${nodeToken}\nMY_NPM_TOKEN=${myToken}\n{"NPM_TOKEN": "${jsonToken}"}`) },
+  })
+  await assert.rejects(store.update(adapter, bin))
+  const failure = store.lastFailure(adapter)
+  for (const raw of [token, npmToken, auth, pass, homedir(), quotedKey, quotedAuth, envToken, npmConfig, nodeToken, myToken, jsonToken]) {
+    assert.ok(!failure.diagnostic.includes(raw), `the diagnostic hides ${raw}`)
+    assert.ok(!failure.message.includes(raw), `the short message hides ${raw}`)
+    assert.ok(!readFileSync(failure.logPath, 'utf8').includes(raw), `the log hides ${raw}`)
+  }
+  assert.match(failure.diagnostic, /npm_\[hidden\]/)
+  assert.match(failure.diagnostic, /_authToken=\[hidden\]/)
+  assert.match(failure.diagnostic, /https:\/\/\[hidden\]@registry\.npmjs\.org/)
+  assert.match(failure.diagnostic, /~\/\.npm\/_logs\//)
+  assert.match(failure.diagnostic, /_authToken["']?:\s*\[hidden\]/)
+  assert.match(failure.diagnostic, /_auth["']?:\s*\[hidden\]/)
+  assert.match(failure.diagnostic, /NPM_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /npm_config__authToken=\[hidden\]/)
+  assert.match(failure.diagnostic, /NODE_AUTH_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /MY_NPM_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /"NPM_TOKEN": \[hidden\]/)
+  const mode = statSync(failure.logPath).mode & 0o777
+  assert.equal(mode, 0o600)
+  assert.equal(statSync(join(home, 'logs')).mode & 0o777, 0o700)
+  // The install path's warn goes through the store's redacted message, never the raw error.
+  const warnings = []
+  let service
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: () => undefined,
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: () => {},
+    logger: { warn: message => warnings.push(message), info: () => {} },
+  }
+  apply(ctx, {}, { store, find: name => (name === 'claude' ? '/bin/claude' : undefined), signedIn: async () => undefined })
+  await service.retry('acp-claude')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const line = warnings.find(message => message.includes('not installed'))
+  assert.ok(line, 'the failed install is logged')
+  for (const raw of [token, npmToken, auth, pass, homedir(), quotedKey, quotedAuth, envToken, npmConfig, nodeToken, myToken, jsonToken]) {
+    assert.ok(!line.includes(raw), `the log line hides ${raw}`)
+  }
+  assert.match(line, /\[hidden\]/)
+})
+
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))
@@ -294,6 +377,11 @@ test('an install that pulls in a bundled CLI is refused, and the working adapter
   await assert.rejects(store.update(adapter, bin), /installed the CLIs it bundles \(@openai\/codex-darwin-arm64\); refused/)
   assert.equal(store.binOf(adapter, bin).version, '1.0.0')
   assert.match(store.lastError(adapter), /refused/)
+  // The failure also carries the full diagnostic and the log file it was written to.
+  const failure = store.lastFailure(adapter)
+  assert.match(failure.message, /refused/)
+  assert.match(failure.diagnostic, /refused/)
+  assert.ok(failure.logPath && existsSync(failure.logPath), 'the install log is written')
   const folder = join(home, 'agentclientprotocol__codex-acp')
   assert.deepEqual(readdirSync(folder).sort(), ['1.0.0', 'current.json'])
   // Nested and pnpm-store spellings are found too.

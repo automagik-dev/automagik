@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -483,7 +483,7 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   assert.equal(readlinkSync(s.link), join(s.mods, "other-mod", "bin", "cli.mjs"));
   // The pack's own command path (an earlier install's, even dangling) is ours: replaced, then removed.
   assert.equal(s.run("--uninstall").code, 0);
-  rmSync(s.link);
+  unlinkSync(s.link); // dangling here: Node 24.9's rmSync leaves a dangling link in place
   symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
   assert.equal(s.run("--yes").code, 0);
   assert.equal(readlinkSync(s.link), cliTarget(s));

@@ -311,6 +311,10 @@ and Threat model's "What it can do"), not for the person's CLAUDE.md, hooks or M
 transport was spiked before this text was written, not the bridge→DSH leg:
 [acp-dsh-tools-spike.md](../research/acp-dsh-tools-spike.md).
 
+Auto review of a bridge call — the synthetic reviewer block, the side-model route, the redaction
+and the fail-closed codes — is designed in
+[acp-dsh-auto-bridge-review.md](../research/acp-dsh-auto-bridge-review.md).
+
 **The tool set.** For DSH's tools, a Session on an ACP route is offered exactly what the same
 Session on `dsh` would be offered: the tools the Session's preset registers (`standard`;
 `cordis` when the Session is in creator mode, DSH's `cordis` agent preset), filtered by the
