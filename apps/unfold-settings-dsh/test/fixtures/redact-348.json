@@ -1014,14 +1014,55 @@
    "{parent}: &d\n  user_id: {value}"
   ]
  ],
- "chunk_split": [
+ "split_forms": [
   [
-   "a cut-padded key line, its value on the next line",
-   "{parent}: &d\n  {name}:{pad}\n    {value}\n{later}"
+   "plain",
+   [
+    [
+     "a cut-padded key line, its value on the next line",
+     "{parent}: &d\n  {name}:{pad}\n    {value}\n{later}"
+    ],
+    [
+     "a cut-padded key line completed on its own line",
+     "{parent}: &d\n  {name}:{pad}{value}\n{later}"
+    ]
+   ]
   ],
   [
-   "a cut-padded key line completed on its own line",
-   "{parent}: &d\n  {name}:{pad}{value}\n{later}"
+   "block",
+   [
+    [
+     "an explicit key padded before its block indicator line, the block under it",
+     "? {name}{pad}\n: |\n  {value}\n{later}"
+    ]
+   ]
+  ],
+  [
+   "list",
+   [
+    [
+     "an explicit key in a list item padded before its ':' line, the value under it",
+     "- ? {name}{pad}\n  :\n    {value}\n{later}"
+    ]
+   ]
+  ],
+  [
+   "explicit plain",
+   [
+    [
+     "an explicit key padded before its ':' line, the value under it",
+     "? {name}{pad}\n:\n  {value}\n{later}"
+    ]
+   ]
+  ],
+  [
+   "explicit list",
+   [
+    [
+     "an explicit key padded before its ':' line, a list item under it",
+     "? {name}{pad}\n:\n  - {value}\n{later}"
+    ]
+   ]
   ]
  ]
 }

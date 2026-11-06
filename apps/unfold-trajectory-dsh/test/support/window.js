@@ -682,6 +682,16 @@ function quotedSpans(raw) {
  * `{quote}` the rest of an open quoted value up to its closing quote, `{token}` the rest of an
  * unbroken run (never an orphaned value).
  */
+/**
+ * Where a pad's reading stops: its end, or past its line's terminator when the pad fills its line
+ * (a blank line the cut padded, read as the blank line it is, so no blank line is kept for it).
+ */
+function padLineEnd(raw, pad) {
+  const end = pad.index + pad[0].length
+  if (pad.index > 0 && !/[\r\n]/.test(raw[pad.index - 1])) return end
+  return raw.startsWith('\r\n', end) ? end + 2 : /[\r\n]/.test(raw[end] ?? '') ? end + 1 : end
+}
+
 function boundRaw(text) {
   // Names read without their invisible characters (#348), as redactText reads them, so the spans
   // and the context before a cut are found under `pass\u200bword: ` too.
@@ -689,6 +699,21 @@ function boundRaw(text) {
   if (raw.length <= RAW_MAX) return { raw, orphan: null }
   const spans = quotedSpans(raw)
   let cut = raw.length - RAW_MAX
+  // A cut before or inside a pad (a blank run as long as the keep) keeps the open key line before it
+  // and drops the pad, as a cut in the blank run that ends a key line does below (#406 Design A):
+  // a key line padded past the bound (`? name`, `- ? name`, `name:` and a pad) still names the
+  // value that arrives on the lines under it, however many lines the delta that crossed the bound
+  // completed.
+  for (const pad of raw.matchAll(/[ \t]{4096,}/g)) {
+    if (cut >= pad.index + pad[0].length) continue
+    // Only blanks after it: the cut in that run is read below, as it always was.
+    if (!/\S/.test(raw.slice(pad.index + pad[0].length))) break
+    const end = padLineEnd(raw, pad)
+    const key = openKeyLine(raw.slice(0, end), RAW_MAX)
+    const kept = key === null ? null : `${key}${raw.slice(end)}`
+    if (kept !== null && kept.length <= RAW_MAX) return { raw: kept, orphan: null }
+    break
+  }
   for (let i = 0; i < 8; i++) {
     const inside = spans.find((sp) => sp.start < cut && cut < sp.end)
     if (inside && !inside.closed) return inside.keep !== undefined ? { raw: inside.keep, orphan: null } : { raw: '', orphan: { quote: inside.quote, escaped: inside.escaped } }

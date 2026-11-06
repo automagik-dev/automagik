@@ -414,38 +414,77 @@ test('a padded line is hidden whole, the window and the browser copy', () => {
   }
 })
 
-// #406 CLASS: the split of a reply's deltas must not change what is served. A cut pads an unfinished
-// line with blanks, and the pad and the value under it arrive in as many deltas as the transport
-// chose. The rule (stated in the PR): in a growing buffer, the suffix after its last line terminator
-// is never matched, served or remembered until its terminator arrives, however many deltas it came
-// in — a padded key line's value line is hidden before the padded line itself is hidden whole, and
-// nothing is left orphaned served. One test, one table, every split the Reviewer used; the copies of
-// the rule carry the same table.
-const CHUNK = TABLE.chunk_split.map(([what, input]) => [what, input])
-const PADS = [1000, 5000, 17000]
-// The 1-char size runs on the pad at or under the keep (a redaction per delta is the cost); the
-// 10-char size already crosses the 16 KiB bound on the 17 000 pad, and the 4 KiB one four times.
-const sizesFor = (pad) => (pad <= 1000 ? [1, 10, 100] : [10, 100])
-test('served: a cut-padded key line and the value under it stay hidden however the deltas were split', () => {
-  for (const [what, input] of CHUNK) for (const pad of PADS) {
-    const payload = fill(input).replace('{pad}', ' '.repeat(pad)).replace('{later}', `later the ${FILL['{name}']} and user words stay`)
-    // Both copies read the completed text: the value hidden, and remembered as the value.
-    for (const [copy, text] of [['window', redactText], ['browser copy', clientRedactText]]) {
-      assert.ok(!text(payload).includes(SECRET), `${what}, pad ${pad}, ${copy}: the completed text hides the value`)
-      assert.ok(!text(payload, true).includes(SECRET), `${what}, pad ${pad}, ${copy}: the growing buffer hides it too`)
-    }
-    assert.ok(clientSecretsIn(payload).includes(SECRET), `${what}, pad ${pad}: the browser copy remembers the value`)
+// #406 Design A, the class rule: in a growing buffer the suffix after the last line terminator is
+// never matched, served or remembered until its terminator arrives, however many deltas it came in,
+// and no bound starts inside that open line. The table's `split_forms` (one table, byte-identical in
+// mind/events/settings): a cut-padded key line, plain, an explicit key's block, a list item's
+// explicit key, an explicit key's plain value and its list item, each with the value on the line
+// under the pad (and the plain key line completed on its own line). One deterministic test per form,
+// each cell run once: every pad (1000, under the 4096 keep; 4096, at it; 5000 and 17000, past it,
+// and 17000 past the window's 16 KiB bound too) and every split (1, 10 and 100 characters, and the
+// whole payload as one delta). From the frame that brings the value's first character on (no frame
+// before it holds the value), no served frame holds the value, and the copies that remember values
+// remember it only from the frame that ends its line on; at rest it is hidden and remembered.
+const SPLIT_PADS = [1000, 4096, 5000, 17000]
+const SPLIT_SIZES = [1, 10, 100, 'one delta']
+// One redaction per delta: 1-character deltas over a pad at or past the 4096 keep cost minutes on a
+// developer machine, so those cells run in CI only (GitHub Actions sets CI); elsewhere each one is
+// skipped with this reason, never left out.
+const SLOW_SPLIT = (pad, size) => size === 1 && pad >= 4096
+const SLOW_SKIP = process.env.CI ? false : 'CI only: 1-character deltas over a pad at or past the 4096 keep (set CI=1 to run it)'
+const splitPayload = (template, pad) => fill(template).replace('{pad}', ' '.repeat(pad)).replace('{later}', `later the ${FILL['{name}']} and user words stay`)
+// Each cell of a form: its row, pad and split, the payload, where the value starts and the
+// terminator that ends its line.
+function* splitCells(rows) {
+  for (const [what, template] of rows) for (const pad of SPLIT_PADS) for (const size of SPLIT_SIZES) {
+    const payload = splitPayload(template, pad)
     const at = payload.indexOf(SECRET)
-    const end = payload.indexOf('\n', at + SECRET.length) // the terminator that completes the value's line
-    assert.ok(at > 0 && end > at, `${what}: the value is on a line that ends`)
-    // The pad and the value in one delta, and the same text split at every size.
-    for (const size of [...sizesFor(pad), payload.length]) {
-      const r = rig()
-      for (let i = 0; i < payload.length; i += size) {
-        r.push(payload.slice(i, i + size))
-        assert.ok(!r.served().includes(SECRET), `${what}, pad ${pad}, ${size}-char deltas: no frame serves the value`)
-      }
-      assert.ok(r.text().endsWith('stay'), `${what}, pad ${pad}, ${size}-char deltas: the text after it is served as written`)
-    }
+    const end = payload.indexOf('\n', at + SECRET.length)
+    yield { name: `${what}, pad ${pad}, ${size === 'one delta' ? 'one delta' : `${size}-char deltas`}`, skip: SLOW_SPLIT(pad, size) && SLOW_SKIP, payload, at, end, step: size === 'one delta' ? payload.length : size }
   }
-})
+}
+// The value on the key's own line (the plain form's second row) is remembered once it has closed
+// on that line, as a same-line value always was: by the frame that ends its line at the latest.
+const sameLine = (cell) => !cell.payload.slice(0, cell.at).endsWith('\n') && !/\n[ \t]*-?[ \t]*$/.test(cell.payload.slice(0, cell.at))
+
+// The window's frames: each payload it emits for a delta, read as it is emitted.
+function splitRig() {
+  const w = new EventWindow(catalog, { limit: 20 })
+  let frame = []
+  w.onChange((change, payload) => frame.push(JSON.stringify(payload)))
+  const push = (text) => {
+    frame = []
+    w.push({ v: 2, id: `g:${++seq}`, producer: 'g', seq, t_ns: seq, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
+    return [...frame, JSON.stringify(w.rows)].join('\n')
+  }
+  return { push, text: () => w.rows.at(-1).text }
+}
+for (const [form, rows] of TABLE.split_forms) {
+  test(`served and remembered however the deltas were split (#406 Design A): ${form}`, async (t) => {
+    for (const cell of splitCells(rows)) {
+      await t.test(cell.name, { skip: cell.skip }, () => {
+        const { payload, at, end, step } = cell
+        const r = splitRig()
+        for (let i = 0; i < payload.length; i += step) {
+          const served = r.push(payload.slice(i, i + step))
+          if (i + step <= at) continue // the value has not arrived
+          const upto = Math.min(i + step, payload.length)
+          const frame = `${cell.name}, the frame ending at ${upto}`
+          assert.ok(!served.includes(SECRET), `${frame}: no payload the window emits holds the value`)
+          // The browser copy reads the same growing buffer.
+          assert.ok(!clientRedactText(payload.slice(0, upto), true).includes(SECRET), `${frame}: the browser copy hides it`)
+          const kept = clientSecretsIn(payload.slice(0, upto), true).includes(SECRET)
+          if (i + step > end) assert.ok(kept, `${frame}: the browser copy remembers it once its line has ended`)
+          else if (!sameLine(cell)) assert.ok(!kept, `${frame}: the browser copy does not remember it while its line is open`)
+        }
+        for (const [copy, text] of [['window', redactText], ['browser copy', clientRedactText]]) {
+          assert.ok(!text(payload).includes(SECRET), `${cell.name}, ${copy}: the completed text hides the value`)
+          assert.ok(!text(payload, true).includes(SECRET), `${cell.name}, ${copy}: the growing buffer hides it at rest`)
+        }
+        assert.ok(clientSecretsIn(payload).includes(SECRET), `${cell.name}: the browser copy remembers it at rest`)
+        assert.ok(r.text().endsWith('user words stay'), `${cell.name}: the text after it is served`)
+      })
+    }
+  })
+}
+

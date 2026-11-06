@@ -47,6 +47,10 @@ import { sentence } from './sentences.js'
 
 export const HEARTBEAT_LEASE_MS = 5_000 // agentd heartbeats every 1 s; five missed is stale (unfold-events-dsh LEASE)
 const TEXT_KEEP = 4096
+// A reply's unfinished last line is held whole, from its first character, up to this many characters
+// (#406 Design A); a longer one is hidden from its first character (see feedText).
+const PENDING_MAX = 2 * TEXT_KEEP
+const OVER_PAD = ' '.repeat(4096)
 const NOT_EPISODE = new Set(['hello', 'attach', 'ready', 'heartbeat', 'log', 'rejected', 'user_audio', 'user_audio_end', 'audio_ingress', 'journal_fault', 'context_restore'])
 const HOST_NOT_EPISODE = new Set(['started', 'link_up', 'link_down', 'local_vad_onset', 'echo_gate', 'mute_request', 'mute_applied', 'talk', 'quit', 'quit_requested', 'call_request', 'call_devices_opened', 'call_devices_released', 'call_input_closed', 'mic_mode', 'mic_modes_ui', 'outbox_fault', 'say_refused', 'control_without_link', 'stop_without_link'])
 const ENVELOPE = ['v', 'id', 'producer', 'seq', 't_ns', 'source', 'cause', 'received', 'observed', 'kind']
@@ -148,7 +152,7 @@ export class MindStream {
     row.ids_omitted = p.ids_omitted ?? row.ids_omitted
     if (p.audio) row.audio = p.audio
     // The window's joined tail, redacted as one string; cut when it no longer starts with the last one.
-    if (p.text !== undefined) setText(row, p.text, { cut: row.rawText !== undefined ? !String(p.text).startsWith(row.rawText) : tailCut(p.count, p.text) })
+    if (p.text !== undefined) setText(row, p.text, { cut: row.rawText !== undefined ? !String(p.text).startsWith(rawOf(row)) : tailCut(p.count, p.text) })
     return this.refresh(row)
   }
 
@@ -270,13 +274,19 @@ export class MindStream {
     if (chunk.id) this.index(chunk.id, row)
     row.count++
     row.last_t_ns = chunk.t_ns ?? row.last_t_ns
-    if (row.kind === 'agent_delta') setText(row, `${row.rawText ?? ''}${chunk.text ?? ''}`)
+    if (row.kind === 'agent_delta') feedText(row, chunk.text)
     else if (row.audio && chunk.audio) row.audio = { chunks: row.audio.chunks + 1, ms: row.audio.ms + chunk.audio.ms }
     return this.refresh(row)
   }
 
   closeOpen(lane, responseId) {
-    for (const k of [...this.open.keys()]) if (k.startsWith(`${lane}|`) && k.endsWith(`:${responseId}`)) this.open.delete(k)
+    for (const k of [...this.open.keys()]) {
+      if (!k.startsWith(`${lane}|`) || !k.endsWith(`:${responseId}`)) continue
+      // The reply has ended: its unfinished last line has ended with it, and is remembered now.
+      const row = this.byId.get(this.open.get(k))
+      if (row?.kind === 'agent_delta') endText(row)
+      this.open.delete(k)
+    }
   }
 
   add({ lane, source, kind, env, fields, origin, count, audio = null, text, textCut = false, last_t_ns, ids_omitted = 0, t_ms, sentenceText, status, continuation = false, hostLife = null }) {
@@ -685,25 +695,118 @@ export class MindStream {
 
 /**
  * Coalesced text: the raw join kept privately (bounded), only its redaction rendered. Credential
- * values found in the full text are remembered (privately, bounded) before anything is cut, so a
- * later tail that lost their context still masks them; a cut tail's first fragment is hidden. The
- * join is a growing reply, so a later-line value whose line is still arriving is neither hidden nor
- * remembered until it ends (#406): `open` tells the rules the text's end is not a line end.
+ * values found in the text are remembered (privately, bounded) before anything is cut, so a later
+ * tail that lost their context still masks them; a cut tail's first fragment is hidden.
+ *
+ * The join is a growing reply, held in two parts (#406 Design A): `rawText`, the committed text,
+ * which ends at a line terminator (\n, \r\n, or a \r with something after it), and `rawOpen`, the
+ * unfinished last line, held whole from its first character and carried across deltas, however
+ * many it comes in. A delta with no terminator is only appended to it. At a terminator the lines
+ * the delta completed join the committed text, the values in it are remembered, and only then does
+ * the 4 KiB bound (keptTail) cut it, so the bound never starts inside the open line and the open
+ * line's head is kept whatever the split. The open line is served and remembered as the rules read
+ * a growing buffer's last line (`open`): a value still arriving there is hidden, and one that needs
+ * a later line (a key line's continued value, an explicit key's, a padded line's) is remembered
+ * only once its terminator arrives. An open line longer than PENDING_MAX is hidden from its first
+ * character, fail-closed, and served as one placeholder until its terminator; it is then committed
+ * as its first PENDING_MAX characters, a 4 KiB blank run for what was dropped, and its last
+ * TEXT_KEEP characters, so the rules read it as a cut-padded line (hidden whole once ended, its key
+ * line still naming the value on the lines under it). Every line that long is committed that way,
+ * however it arrived, so one delta and many agree.
  */
 function setText(row, raw, { cut = false } = {}) {
-  // Names read without their invisible characters (#348), as redactText reads them, so the kept
-  // tail, its quoted spans and the remembered values all match the served text.
-  const full = nameText(String(raw ?? ''))
+  row.rawText = ''
+  row.rawOpen = ''
+  row.rawOver = null
+  row.rawFragment = false
+  feedText(row, raw, { cut })
+}
+
+/** The raw text a row holds: its committed text and its open line (not an oversize one). */
+function rawOf(row) {
+  return `${row.rawText ?? ''}${row.rawOver ? '' : (row.rawOpen ?? '')}`
+}
+
+const LINE_END = /\r\n|\n|\r(?=[\s\S])/g
+
+/** A delta: appended to the open line while it has no terminator, else committed once. */
+function feedText(row, add, { cut = false } = {}) {
+  const s = String(add ?? '')
+  if (row.rawText === undefined) row.rawText = ''
+  if (row.rawOpen === undefined) row.rawOpen = ''
+  const over = row.rawOver
+  // A \r at the end of the open line may be a CRLF's first half: it ends its line only once
+  // something other than \n follows it.
+  const crEnds = (over ? over.tail.endsWith('\r') : row.rawOpen.endsWith('\r')) && s !== '' && s[0] !== '\n'
+  LINE_END.lastIndex = 0
+  const first = crEnds ? null : LINE_END.exec(s)
+  if (!crEnds && !first) {
+    if (over) over.tail = `${over.tail}${s}`.slice(-TEXT_KEEP)
+    else {
+      row.rawOpen = `${row.rawOpen}${s}`
+      if (row.rawOpen.length > PENDING_MAX) overflow(row)
+    }
+    return renderText(row, cut)
+  }
+  // The lines this delta completes, from the open line's first character, and the new open line.
+  const stop = crEnds ? 0 : first.index + first[0].length
+  // An oversize open line: what it dropped stays dropped; the rest of it ends in this delta.
+  let committed = over ? `${over.head}${OVER_PAD}${`${over.tail}${s.slice(0, crEnds ? 0 : first.index)}`.slice(-TEXT_KEEP)}${crEnds ? '' : first[0]}` : oversize(`${row.rawOpen}${s.slice(0, stop)}`)
+  let pos = stop
+  LINE_END.lastIndex = stop
+  for (let m; (m = LINE_END.exec(s)); pos = m.index + m[0].length) committed += oversize(s.slice(pos, m.index + m[0].length))
+  row.rawOver = null
+  const full = nameText(`${row.rawText}${committed}`)
+  remember(row, secretsIn(full, true))
+  row.rawText = keptTail(full)
+  // A plain cut leaves a fragment at the head of what is kept; a key line or an open value's key
+  // kept whole (not a tail of the text) starts none.
+  row.rawFragment = row.rawText !== full && full.endsWith(row.rawText)
+  row.rawOpen = s.slice(pos)
+  if (row.rawOpen.length > PENDING_MAX) overflow(row)
+  return renderText(row, cut)
+}
+
+/** A completed line longer than PENDING_MAX, as an oversize open line is committed. */
+function oversize(line) {
+  const body = line.replace(/(?:\r\n|\n|\r)$/, '')
+  return body.length > PENDING_MAX ? `${body.slice(0, PENDING_MAX)}${OVER_PAD}${body.slice(-TEXT_KEEP)}${line.slice(body.length)}` : line
+}
+
+/** The open line passed PENDING_MAX: keep its first characters and a rolling tail of the rest. */
+function overflow(row) {
+  const line = row.rawOpen
+  row.rawOver = { head: line.slice(0, PENDING_MAX), tail: line.slice(-TEXT_KEEP) }
+  row.rawOpen = ''
+}
+
+function remember(row, values) {
+  for (const v of values) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
+}
+
+/** The reply ended: its open line has ended too, so the values on it are remembered. */
+function endText(row) {
+  const over = row.rawOver
+  const open = over ? `${over.head}${OVER_PAD}${over.tail}` : row.rawOpen
+  if (open) remember(row, secretsIn(nameText(`${row.rawText ?? ''}${open}`)))
+}
+
+/** The served text: the committed text and the open line, redacted as a growing buffer, then cut. */
+function renderText(row, cut) {
+  const full = nameText(rawOf(row))
   // A growing reply: its last line may still be arriving, so a later-line value there is neither
   // hidden nor remembered until its line ends (#406 F-B).
-  for (const v of secretsIn(full, true)) if (!row.secrets.includes(v)) row.secrets = [...row.secrets, v].slice(-SECRETS_KEPT)
-  const truncated = cut || full.length > TEXT_KEEP
-  row.rawText = keptTail(full)
-  // Redacted whole, then cut: a value whose key falls before the cut is still recognised.
-  let text = redactText(full, true).slice(-TEXT_KEEP)
+  remember(row, secretsIn(full, true))
+  // Redacted whole, then cut: a value whose key falls before the cut is still recognised. The text
+  // is cut when its head is a fragment or what is served is longer than the keep.
+  const redacted = redactText(full, true)
+  const truncated = cut || Boolean(row.rawFragment) || redacted.length > TEXT_KEEP
+  let text = redacted.slice(-TEXT_KEEP)
   if (truncated) text = hideAfterCut(text)
   text = redactText(text, true)
   for (const v of row.secrets) text = text.split(v).join(REDACTED)
+  // An oversize open line is withheld from its first character: one placeholder stands for it.
+  if (row.rawOver) text = `${text}${REDACTED}`
   row.textCut = row.textCut || truncated
   row.text = text
 }
@@ -743,15 +846,30 @@ function keptTail(full) {
     // cut's padding, not text. It is kept (its last TEXT_KEEP chars) with the rest of the line, so
     // that line still reads as the cut's and is hidden whole once it ends.
     const pad = /[ \t]{4096,}/.exec(full)
-    return pad ? `${pad[0].slice(-TEXT_KEEP)}${full.slice(pad.index + pad[0].length)}` : full.slice(at)
+    return pad ? padKept(full, pad) : full.slice(at)
   }
   // The cut is not in the run, but a pad may still reach into the keep, and is kept as it is there:
   // trimming it further would leave too little of it to read the line as the cut's.
   const pad = /[ \t]{4096,}/.exec(full)
-  if (pad && pad.index + pad[0].length > at && !span) return `${pad[0].slice(-TEXT_KEEP)}${full.slice(pad.index + pad[0].length)}`
+  if (pad && pad.index + pad[0].length > at && !span) return padKept(full, pad)
   if (!span) return full.slice(at)
   if (span.closed) return full.slice(span.end)
   return span.keep ?? `${full.slice(span.start, span.open)}${span.escaped ? '\\' : ''}`
+}
+
+/**
+ * A pad kept: its last TEXT_KEEP blanks and the rest of the text. When the text before the pad reads
+ * as an open key line (#406 Design A: an oversize line committed whole, its pad and what follows it
+ * in one piece), that key line is kept instead, the pad dropped as the cut's padding, as a pad-only
+ * open line was kept before: the value after the pad is still read under its key.
+ */
+function padKept(full, pad) {
+  // A pad that fills its line is read through its terminator: the blank line it is keeps no line.
+  const filled = pad.index === 0 || /[\r\n]/.test(full[pad.index - 1])
+  const padEnd = pad.index + pad[0].length
+  const end = !filled ? padEnd : full.startsWith('\r\n', padEnd) ? padEnd + 2 : /[\r\n]/.test(full[padEnd] ?? '') ? padEnd + 1 : padEnd
+  const key = openKeyLine(full.slice(0, end), TEXT_KEEP)
+  return key === null ? `${pad[0].slice(-TEXT_KEEP)}${full.slice(padEnd)}` : `${key}${full.slice(end)}`
 }
 
 // A key line still waiting for its value or block indicator (`password:`, `password: &a`,
