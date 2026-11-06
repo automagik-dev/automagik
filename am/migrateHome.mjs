@@ -13,6 +13,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { layoutNeeds, parseMarker } from "./release.js";
+import { change } from "./layoutSafe.mjs";
 import { ABSORBED, DROP_INS, DROP_IN_GAINS, PATH_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, own, rewriteKeys, rewriteLayout } from "./migrate.js";
 
 export { KEY_RENAMES, RENAMES } from "./migrate.js";
@@ -21,11 +22,15 @@ const lstat = (path) => { try { return lstatSync(path); } catch { return null; }
 const exists = (path) => lstat(path) !== null;
 const isLink = (path) => Boolean(lstat(path)?.isSymbolicLink());
 const readJson = (path) => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; } };
-/** Written beside `path` under a fresh name, created exclusively (never through a planted file or link), then renamed over it. */
-function writeAtomic(path, text) {
+/**
+ * Written beside `path` under a fresh name, created exclusively (never through a planted file or
+ * link), then renamed over it: a layout's rewrite is one of layoutSafe.mjs change()'s replaces
+ * (`home`, the app home), as the journal and keys.json are.
+ */
+function writeAtomic(path, text, home = null) {
   const tmp = `${path}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   writeFileSync(tmp, text, { flag: "wx" });
-  try { renameSync(tmp, path); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  try { change(home, [{ op: "replace", from: tmp, to: path }]); } catch (error) { change(home, [{ op: "remove", path: tmp, force: true }]); throw error; }
 }
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const why = (error) => String(error?.message ?? error).split("\n")[0];
@@ -234,7 +239,7 @@ export function apply(p, { backupDir, onJournal = () => {} }) {
   for (const f of files) {
     try {
       if (!writable(home, f.file)) throw new Error("it became a link");
-      writeAtomic(f.file, f.body);
+      writeAtomic(f.file, f.body, home);
       const swaps = f.edits.filter((e) => e.dropIn);
       const renames = f.edits.length - swaps.length;
       if (renames) done.push(`rewrote ${f.file} (${renames} ${renames === 1 ? "edit" : "edits"}; the original is in ${backupDir})`);
@@ -309,7 +314,7 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
         // Only content.mod values, each found once: edited in the text, so the rest of the file
         // keeps its bytes (#387); anything else is written as JSON.
         const text = undone.every((u) => u.field === "content.mod") ? inPlace(readFileSync(file, "utf8"), undone, layout) : null;
-        writeAtomic(file, text ?? json(layout));
+        writeAtomic(file, text ?? json(layout), home);
         restored.push(file);
       }
       if (stay.length) kept.layouts.push({ file, edits: stay });
@@ -340,7 +345,7 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
             keys[before.section][before.key] = before.action;
             changed += 1;
           }
-          if (changed) { writeAtomic(file, json(keys)); restored.push(file); }
+          if (changed) { writeAtomic(file, json(keys), home); restored.push(file); }
         } else skipped.push({ item: file, reason: "gone or unreadable" });
       } catch (error) {
         skipped.push({ item: file, reason: `not restored (${why(error)})` });

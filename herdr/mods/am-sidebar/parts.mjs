@@ -35,9 +35,9 @@ import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
-  HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
-  packageLayoutGuard,
+  HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
+import { change, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -243,7 +243,7 @@ export function install(ctx, part, source) {
       if (!record.mods.includes(part.mod)) throw new Error(`mods/${part.mod} is not the pack's (a folder of your own is left alone; install.sh --adopt replaces it)`);
       const live = join(ctx.modsDir, part.mod), off = join(ctx.offDir, part.mod);
       if (!exists(live) && exists(off) && !isLink(off)) {
-        renameSync(off, live);
+        change(ctx.appHome, [{ op: "move", from: off, to: live }]);
         ctx.log(`switched ${part.mod} back on (mods-disabled/ → mods/)`);
         changed = true;
       }
@@ -296,52 +296,8 @@ export function shownLayout(ctx) {
   }
 }
 
-/** The layouts in layouts/ (names, sorted) whose blocks name one of `mods`, `skip` (file names) left out. */
-function layoutsNaming(ctx, mods, skip = []) {
-  const dir = join(ctx.appHome, "layouts");
-  return (isDir(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith(".json") && !skip.includes(f)).sort().flatMap((f) => {
-    let blocks;
-    try { blocks = layoutNeeds(JSON.parse(readFileSync(join(dir, f), "utf8"))).blocks; } catch { return []; }
-    const named = mods.filter((m) => blocks.has(m));
-    return named.length ? [{ name: f.slice(0, -".json".length), mods: named }] : [];
-  });
-}
-
-/** What a refusal adds after "Switch layouts first": the command, left out while main is shown (it names main). */
-const switchCommand = (shown) => (typeof shown === "string" && shown.toLowerCase() === "main" ? ""
-  : `; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
-
-/**
- * Before pack mods leave mods/ (#414, #420), as the mod manager's off and remove (#305): refused while
- * a block of the shown layout names one, since Herdr would drop that layout and show plain Herdr; a
- * right-click menu's mod goes, with a note. When the shown layout cannot be read (shownLayout's
- * `why`), the mods go as the mod manager's do without a layout (fail open), never silently: each
- * layout in layouts/ whose blocks name one is listed, with what to do if Herdr shows it. `pack`:
- * the whole pack (`am uninstall herdr.pack`), `skip` leaving out the pack's own layout file when
- * this uninstall removes it; else the one mod switched off (`am uninstall herdr.<mod>`).
- */
-function guardLayouts(ctx, mods, { pack = false, skip = [] } = {}) {
-  if (!mods.length) return;
-  const shown = shownLayout(ctx);
-  if (shown.tree) {
-    const guards = mods.map((mod) => ({ mod, ...layoutGuard({ name: shown.name, tree: shown.tree, mod, then: pack ? "uninstall the pack" : "uninstall it" }) }));
-    const refused = guards.filter((g) => g.refuse);
-    const also = refused.slice(1).map((g) => g.mod);
-    if (refused.length) {
-      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}${switchCommand(shown.name)}`);
-    }
-    for (const g of guards) if (g.note) ctx.log(`${g.mod} was ${g.note}`);
-    return;
-  }
-  const naming = layoutsNaming(ctx, mods, skip);
-  if (!naming.length) return;
-  const what = pack ? "uninstalling the pack" : `switching ${mods[0]} off`;
-  const list = pack ? naming.map((l) => `${l.name} (${l.mods.join(", ")})`) : naming.map((l) => l.name);
-  const back = pack ? "`am install herdr.pack` puts the pack back" : `\`am install herdr.${mods[0]}\` switches it back on`;
-  ctx.log(`${what} without knowing the layout Herdr shows (${shown.why}): ${list.join(", ")} `
-    + `show${naming.length === 1 ? "s" : ""} ${pack ? "the pack's mods" : "it"}, and Herdr drops a layout whose mod is ${pack ? "gone" : "off"} (plain Herdr instead). `
-    + `Showing one? Switch layouts (ctrl-shift-l), or ${back}`);
-}
+/** The layout Herdr shows, as layoutSafe.mjs change() asks it. */
+const asking = (ctx) => () => shownLayout(ctx);
 
 /** A mod switched off: mods/<m> → mods-disabled/<m>, where Herdr never looks and an update keeps it. */
 function switchOff(ctx, part) {
@@ -353,9 +309,15 @@ function switchOff(ctx, part) {
   if (isLink(live)) return { ok: true, changed: false, detail: `mods/${part.mod} is a link (a checkout?): left alone` };
   if (exists(live)) {
     if (exists(off)) throw new Error(`${off} is in the way: move it, then uninstall again`);
-    guardLayouts(ctx, [part.mod]);
-    mkdirSync(ctx.offDir, { recursive: true });
-    renameSync(live, off);
+    // Before a pack mod leaves mods/ (#414), as the mod manager's off and remove (#305): refused while
+    // a block of the shown layout names it, since Herdr would drop that layout and show plain Herdr;
+    // a right-click menu's mod goes, with a note. With no shown layout to read (shownLayout's `why`),
+    // it goes as the mod manager's does (fail open), never silently: each layout in layouts/ whose
+    // blocks name it is listed, with what to do if Herdr shows it.
+    const r = change(ctx.appHome, [{ op: "move", from: live, to: off, mkdir: true }], {
+      ask: asking(ctx), needed: "refuse", unknown: "warn", then: "uninstall it", log: ctx.log,
+    });
+    if (r.refused) throw new Error(r.refused);
     ctx.log(`switched ${part.mod} off (mods/ → mods-disabled/): an update keeps it off; \`am install ${part.id}\` switches it back on`);
     changed = true;
   }
@@ -379,10 +341,10 @@ function removeLayout(ctx) {
     if (!isFile(ref) || !readFileSync(live).equals(readFileSync(ref))) {
       return { ok: true, changed: false, detail: `${live} differs from the pack's: it is yours, left as it is` };
     }
-    const shown = shownLayout(ctx);
-    const guard = packageLayoutGuard({ name: shown.name, layouts: [basename(PACK_LAYOUT)], then: "uninstall it" });
-    if (guard) throw new Error(`${guard.refuse}${switchCommand(shown.name)}`);
-    rmSync(live);
+    // #448 stays open here: a live file inside a linked layouts/ is removed through the link.
+    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", then: "uninstall it" });
+    if (r.refused) throw new Error(r.refused);
+    const { shown } = r;
     ctx.log(shown.name
       ? `removed ${live}`
       : `removed ${live} without knowing the layout Herdr shows (${shown.why}); if Herdr shows it, switch layouts (ctrl-shift-l)${switchCommand(null)}`);
@@ -412,29 +374,30 @@ function uninstallPack(ctx, { purge }) {
 
   const live = join(ctx.appHome, PACK_LAYOUT), ref = join(state, "automagik.json");
   const dropLayout = record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref));
-  // Before anything leaves (#420): refused while the shown layout's blocks name a pack mod in mods/.
-  guardLayouts(ctx, record.mods.filter((m) => packFolder(m) && exists(join(ctx.modsDir, m)) && !isLink(join(ctx.modsDir, m))), {
-    pack: true, skip: dropLayout ? [basename(PACK_LAYOUT)] : [],
-  });
-  if (dropLayout) {
-    rmSync(live);
-    lines.push(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
-  }
-
   // The record's folders, wherever they are (mods/, or mods-disabled/ for one switched off).
   const next = fresh(state, ".prev-next-");
-  mkdirSync(next, { recursive: true });
   const moved = [];
   const movedOff = [];
+  const ops = dropLayout ? [{ op: "remove", path: live }] : [];
   for (const m of record.mods.filter(packFolder)) {
     const on = join(ctx.modsDir, m), off = join(ctx.offDir, m);
     const at = isLink(on) ? null : exists(on) ? on : exists(off) && !isLink(off) ? off : null;
     if (isLink(on)) lines.push(`left ${on}: it is a link, not a folder this install put there`);
     if (!at) continue;
-    renameSync(at, join(next, m));
+    ops.push({ op: "move", from: at, to: join(next, m) });
     moved.push(m);
     if (at === off) movedOff.push(m);
   }
+  // Before anything leaves (#420): refused while the shown layout's blocks name a pack mod in mods/;
+  // with no shown layout, each other layout naming one is listed (fail open). Open here, for PR B:
+  // #450 (a linked mod folder is not checked, and the shown layout's own file is not refused) and
+  // #448 (the pack's layout inside a linked layouts/ is removed through the link).
+  const r = change(ctx.appHome, ops, {
+    ask: asking(ctx), needed: "refuse", unknown: "warn", then: "uninstall the pack", pack: true,
+    skip: dropLayout ? [basename(PACK_LAYOUT)] : [], log: ctx.log, prepare: () => mkdirSync(next, { recursive: true }),
+  });
+  if (r.refused) throw new Error(r.refused);
+  if (dropLayout) lines.unshift(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
   // A folder already kept (one a rollback moved out) stays kept beside them.
   if (moved.length && isFile(join(prev, ".pack"))) {
     const kept = readFileSync(join(prev, ".pack"), "utf8").match(/^mods=(.*)$/m)?.[1].split(",").map((s) => s.trim()).filter(packFolder) ?? [];
@@ -462,7 +425,10 @@ function uninstallPack(ctx, { purge }) {
   // What the person had before: each adopted folder comes back where mods/ is free.
   for (const a of record.adopted) {
     const from = join(state, a.path), to = join(ctx.modsDir, a.mod);
-    if (isDir(from) && !isLink(from) && !exists(to)) { renameSync(from, to); lines.push(`put back ${to}, the one that was there before the install`); }
+    if (isDir(from) && !isLink(from) && !exists(to)) {
+      change(ctx.appHome, [{ op: "move", from, to }]);
+      lines.push(`put back ${to}, the one that was there before the install`);
+    }
   }
 
   if (ownEntry) {
