@@ -84,8 +84,8 @@ export function effortNotice(effort, target) {
  * crossing, both ways. DSH records the target model's own default effort on every model
  * change; this replaces it with the effort the Session ran on when the target offers it. An
  * effort-only change on the same route is the person's own pick and is left alone. When the
- * target's levels are known and lack that effort, a notice says so. The corrected selection
- * is marked, so the event it appends is never carried again.
+ * target has no reasoning levels, or lacks that one, a notice says so. The corrected
+ * selection is marked, so the event it appends is never carried again.
  * @param {(provider: string, model: string) => Promise<{
  *   efforts?: { id: string, name?: string }[]
  * } | undefined>} reasoningOf
@@ -125,11 +125,10 @@ export function carryEffort(reasoningOf, on = () => true, crossing = () => true)
     try {
       reasoning = await reasoningOf(next.provider, next.model)
     } catch {
-      return
+      // No answer is no level the target can express: say so, like an empty list.
+      reasoning = undefined
     }
     if (key !== undefined && latest.get(key) !== next) return
-    // An answer that has not read the model's levels says nothing: it is not a "cannot".
-    if (!Array.isArray(reasoning?.efforts)) return
     const carried = effortIdOf(reasoning, effort)
     if (carried === undefined) {
       const row = effortNotice(effort, `${next.provider}/${next.model}`)

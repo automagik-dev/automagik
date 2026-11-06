@@ -115,11 +115,11 @@ test('a crossing carries the Session\'s effort both ways, and says where it cann
       return { seq: appended.length }
     },
   }
+  // A model with no reasoning levels resolves without `reasoning`, as real DSH does.
   const reasoning = new Map([
     ['acp-fake/fake-large', LEVELS],
     ['acp-fake/fake-small', { efforts: [{ id: 'low', name: 'Low' }] }],
     ['deepseek-official/deepseek-v4', LEVELS],
-    ['deepseek-official/plain', { efforts: [] }],
   ])
   const acpCrossing = (previous, next) =>
     previous.provider.startsWith('acp-') || next.provider.startsWith('acp-')
@@ -168,6 +168,25 @@ test('a crossing carries the Session\'s effort both ways, and says where it cann
   previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'medium' }
   await cross({ provider: 'acp-fake', model: 'fake-large' })
   assert.equal(appended.length, 0)
+})
+
+test('a resolver that cannot answer still says the effort cannot cross', async () => {
+  const appended = []
+  const session = {
+    requestHeader: () => ({
+      config: { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' },
+    }),
+    append: (type, data) => { appended.push({ type, data }) },
+  }
+  const carry = carryEffort(async () => { throw new Error('no catalog') })
+  await carry(session, {
+    type: 'model/selection',
+    data: { provider: 'deepseek-official', model: 'deepseek-v4' },
+  })
+  assert.equal(appended.length, 1)
+  assert.equal(appended[0].type, 'user/message')
+  assert.equal(appended[0].data.source.kind, EFFORT_KIND)
+  assert.match(appended[0].data.content[0].text, /Reasoning effort high is not available/)
 })
 
 test('a newer selection wins over a carry still reading the target', async () => {
