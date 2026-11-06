@@ -115,7 +115,7 @@ const failedResult = (callId, decision) => ({
   }],
 })
 
-function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = 'auto', override = 'never', tools = TOOLS, headerTools = tools, route = true, decisions = [], reviewTimeoutMs = 5000 } = {}) {
+function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = 'auto', override = 'never', tools = TOOLS, headerTools = tools, route = true, decisions = [], reviewTimeoutMs = 5000, holdBody = false } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
@@ -130,12 +130,21 @@ function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = '
   const executed = []
   const streams = []
   const levelListeners = new Set()
-  let reviewGate
+  const preExecute = []
   let level = preset
   let mode = sandbox
   let resolveStarted
   let started = new Promise(resolve => { resolveStarted = resolve })
   const restart = () => { started = new Promise(resolve => { resolveStarted = resolve }) }
+  let resolveBody
+  let releaseBody
+  let bodyGate
+  let bodyStarted
+  const resetBody = () => {
+    bodyGate = new Promise(resolve => { releaseBody = resolve })
+    bodyStarted = new Promise(resolve => { resolveBody = resolve })
+  }
+  resetBody()
   const permissionPresets = {
     current: () => level,
     registerAuto: () => () => {},
@@ -158,9 +167,14 @@ function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = '
             const call = calls[0]
             if (signal?.aborted) return abortedResult(call.id)
             const exec = { callId: call.id, rootCallId: call.id, name: call.name, arguments: JSON.parse(call.arguments || '{}'), agent: callAgent, signal }
-            const decision = await reviewGate(exec, async () => ({ kind: 'allow' }))
+            const gate = async (index) => (index >= preExecute.length ? { kind: 'allow' } : preExecute[index].listener(exec, () => gate(index + 1)))
+            const decision = await gate(0)
             if (decision.kind !== 'allow') return failedResult(call.id, decision)
             executed.push({ name: call.name, arguments: call.arguments })
+            if (holdBody) {
+              resolveBody()
+              await bodyGate
+            }
             return { results: [{ callId: call.id, result: { content: [{ type: 'text', text: `ran ${call.name}` }], isError: false } }] }
           },
         }
@@ -171,8 +185,16 @@ function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = '
       if (name === 'permissionPresets') return permissionPresets
       return undefined
     },
-    on: (name, listener) => {
-      if (name === 'tools/pre-execute') { reviewGate = listener; return () => { reviewGate = undefined } }
+    on: (name, listener, options) => {
+      if (name === 'tools/pre-execute') {
+        const entry = { listener }
+        if (options?.prepend) preExecute.unshift(entry)
+        else preExecute.push(entry)
+        return () => {
+          const index = preExecute.indexOf(entry)
+          if (index >= 0) preExecute.splice(index, 1)
+        }
+      }
       if (name === 'session/event') { levelListeners.add(listener); return () => levelListeners.delete(listener) }
       return () => {}
     },
@@ -207,7 +229,7 @@ function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = '
     for (const listener of levelListeners) listener(session, { type: 'permission/preset', data: { preset: 'manual' } })
   }
   const nextReview = () => { restart(); return started }
-  return { ctx, agent, session, asked, executed, streams, backchannel, flipLevel, nextReview }
+  return { ctx, agent, session, asked, executed, streams, backchannel, flipLevel, nextReview, bodyStarted, releaseBody }
 }
 
 test('a request without a credential, with another Session\'s, or after revocation is refused', async () => {
@@ -438,6 +460,36 @@ test('Auto review fails closed when the reviewer is unavailable or times out', a
     assert.equal(slow.executed.length, 0)
   } finally {
     slow.backchannel.dispose()
+  }
+})
+
+test('Auto review\'s timeout covers the review, not an allowed body', async () => {
+  const h = reviewHost({ decisions: [ALLOW], reviewTimeoutMs: 20, holdBody: true })
+  try {
+    const pending = autoCall(h)
+    await h.bodyStarted
+    await new Promise(resolve => setTimeout(resolve, 50))
+    h.releaseBody()
+    const { body } = await pending
+    assert.equal(body.isError, false, 'the body completed after the review deadline')
+    assert.equal(h.executed.length, 1)
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+test('a level change after dispatch does not rewrite the allowed result', async () => {
+  const h = reviewHost({ decisions: [ALLOW], holdBody: true })
+  try {
+    const pending = autoCall(h)
+    await h.bodyStarted
+    h.flipLevel()
+    h.releaseBody()
+    const { body } = await pending
+    assert.equal(body.isError, false, 'the already-dispatched body keeps its result')
+    assert.equal(h.executed.length, 1)
+  } finally {
+    h.backchannel.dispose()
   }
 })
 

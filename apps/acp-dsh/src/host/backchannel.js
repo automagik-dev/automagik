@@ -471,6 +471,7 @@ export class Backchannel {
     }
     let controller
     let unwatch
+    let unwatchPre
     let timer
     let timedOut = false
     let levelChanged = false
@@ -524,14 +525,18 @@ export class Backchannel {
         }
         if (now.auto !== true) levelChanged = true
       }
-      if (!levelChanged && level.auto) {
+      // The timeout and the level watcher cover the review and approval phase, not the body.
+      // DSH's tools/pre-execute listeners run before dispatch and auto-review prepends its own;
+      // this appended listener disarms both once the gate for this call has run. A long body and
+      // a level change after dispatch then keep their real outcome instead of a false timeout.
+      if (!levelChanged && level.auto && typeof this.ctx?.on === 'function') {
         controller = new AbortController()
         timer = setTimeout(() => {
           timedOut = true
           controller.abort(new Error('Auto review timed out'))
         }, this.reviewTimeoutMs)
         timer.unref?.()
-        unwatch = this.ctx?.on?.('session/event', (eventSession, event) => {
+        unwatch = this.ctx.on('session/event', (eventSession, event) => {
           if (eventSession !== session || !LEVEL_EVENTS.has(event?.type)) return
           let now
           try {
@@ -543,6 +548,16 @@ export class Backchannel {
             levelChanged = true
             controller.abort(new Error('the level changed during Auto review'))
           }
+        })
+        unwatchPre = this.ctx.on('tools/pre-execute', (exec, next) => {
+          if (exec?.callId !== id || exec.parent !== undefined || exec.agent !== record.agent) return next()
+          if (timer !== undefined) {
+            clearTimeout(timer)
+            timer = undefined
+          }
+          unwatch?.()
+          unwatch = undefined
+          return next()
         })
       }
       if (levelChanged) {
@@ -587,8 +602,9 @@ export class Backchannel {
       const info = result.isError === true ? (result.error?.info ?? (typeof result.error?.code === 'string' ? result.error : undefined)) : undefined
       return settle(result.content ?? [], result.isError === true, info)
     } finally {
-      if (timer !== undefined) clearTimeout(timer)
+      clearTimeout(timer)
       unwatch?.()
+      unwatchPre?.()
       hideSynthetic()
     }
   }
