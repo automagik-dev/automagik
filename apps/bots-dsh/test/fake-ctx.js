@@ -45,6 +45,8 @@ export function fakeContext({ services = {} } = {}) {
     listeners,
     sections,
     logger: { warn() {}, info() {} },
+    // dsh 0.2.2 plugins may ask the running fiber whether it is still active.
+    fiber: { assertActive() {} },
     get: name => services[name] ?? ctx.provided.get(name),
     on(name, listener, options) {
       calls.push(`on ${name}${options?.prepend ? ' (prepend)' : ''}`)

@@ -253,7 +253,8 @@ test('the projection runs in the real dsh-session-projection registry: view, cha
   assert.equal(registry.viewCheckpoint(corrupt)[PROJECTION_KEY], undefined, 'the state schema rejects a malformed row')
 
   await dispose()
-  assert.equal(registry.registrations.has(PROJECTION_KEY), false)
+  // dsh 0.2.2 keeps a released unit as a predecessor (checkpoint keeps its row), out of snapshots.
+  assert.equal(registry.registrations.get(PROJECTION_KEY)?.refs, 0, 'released, no live reference')
   assert.deepEqual(registry.snapshot(session).values, {})
 })
 
@@ -489,7 +490,9 @@ test('loads as a Cordis plugin: routes, projection, link state, patches and unlo
   assert.equal(registered.length, 0)
   assert.equal((await pane.next((e) => e.event === 'resnapshot')).data.reason, 'unloaded', 'unload ends open streams')
   assert.equal(hub.clients.size, 0)
-  assert.equal(ctx.get('sessionProjections').registrations.has(PROJECTION_KEY), false)
+  // dsh 0.2.2 keeps the released projection as a predecessor; no live reference remains and
+  // the next assertions show it is inert.
+  assert.equal(ctx.get('sessionProjections').registrations.get(PROJECTION_KEY)?.refs, 0)
   const before = pane.events.length
   service.ingest(audio(2, { response: 'rA' }))
   await tick()

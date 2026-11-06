@@ -20,7 +20,7 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, busyFileOf, dshEnv, dshRun, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh, storeLayoutOf, writeTools } from './dsh.js'
+import { ANONYMOUS_ID, appHome, automagikHome, backupSettingsOrLog, busyFileOf, dshEnv, dshRun, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh, storeLayoutOf, writeTools } from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -224,6 +224,14 @@ async function launch() {
     port: () => launchPort(portFileOf(home)),
     // The profile is in place before dsh reads it.
     profile: async () => {
+      // Before this start's dsh first reads its settings: dsh 0.2.2 moves settings.yaml into
+      // the profile and renames the file, and a section it rejects survives only there.
+      const saved = backupSettingsOrLog({
+        dshHome: join(home, 'dsh'),
+        version: readVersion(join(dirname(resources.bin), '..', 'package.json')),
+        log: reason => startLog(`${new Date().toISOString()} start: ${reason}\n`),
+      })
+      if (saved) startLog(`${new Date().toISOString()} start: settings copied to ${saved}\n`)
       const { target } = await installProfile({ dshHome: join(home, 'dsh'), source: resources.profile })
       pinProfileStore({ target, home, layout: storeLayoutOf(resources.pnpm) })
       laneProfile = target
