@@ -18,6 +18,7 @@ import {
 import { apply, plan, pending, revert } from "../mods/am-sidebar/migrateHome.mjs";
 import { CATALOG_URL, parseMarker } from "../mods/am-sidebar/release.js";
 import { migrateRefs, revertRefs, setupHome } from "../mods/am-sidebar/update.mjs";
+import { heldFrom, landedNotice } from "../mods/am-sidebar/updateCheck.js";
 import { catalogUrl } from "../mods/am-mods/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -723,4 +724,51 @@ test("#387: workspace-status becomes am-status only in a layout showing the pack
   assert.match(said("one.json")[0], /^swapped Herdr's workspace-status for am-status in .*: .*; nothing else in the file changed \(the original is in /);
   assert.equal(said("renamed.json").length, 2, "the rename's line and the swap's");
   assert.ok(said("renamed.json").every((l) => !/nothing else in the file changed/.test(l)), said("renamed.json").join("\n"));
+});
+
+// #432: an old folder update.mjs held for a layout it cannot move (the record lists both names)
+// does not stop the rest from following the rename; a person's own old folder still does.
+test("activeRenames: a held old folder beside its recorded am-* folder still renames; a person's own is kept", () => {
+  const here = new Set(["am-sidebar", "auto-tabs", "am-tabs"]);
+  const held = activeRenames(new Set(["am-sidebar", "auto-tabs", "am-tabs"]), (n) => here.has(n));
+  assert.equal(held.active["auto-tabs"], "am-tabs");
+  assert.ok(!held.kept.includes("auto-tabs"));
+  const theirs = activeRenames(new Set(["am-sidebar", "am-tabs"]), (n) => here.has(n));
+  assert.equal(theirs.active["auto-tabs"], undefined);
+  assert.ok(theirs.kept.includes("auto-tabs"));
+});
+
+test("a layout the migration cannot move off a gone old folder is said on every run, never silent", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  writeJson(join(s.home, "layouts", "odd.json"), { id: "r", children: { s: { content: { mod: "spaces-agents" } } } });
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const p = plan(s.home);
+  const held = p.held.map((h) => [h.item.split("/").at(-1), h.reason]);
+  assert.deepEqual(held.map(([f]) => f), ["mine.json", "odd.json"]);
+  assert.ok(held.every(([, why]) => /it names spaces-agents, which is gone, and this migration cannot move it to am-sidebar, so Herdr shows plain Herdr/.test(why)), held.join("\n"));
+  const lines = [];
+  migrateRefs({ modsDir: s.mods, log: (l) => lines.push(l) });
+  assert.equal(lines.filter((l) => /cannot move it to am-sidebar/.test(l)).length, 2, lines.join("\n"));
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
+});
+
+test("an install says a layout stranded on a renamed folder already gone, with the install and in held-mods.json", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  mkdirSync(join(s.home, "layouts"));
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const r = s.cli("install", "--from", amPack(s.root, "0.3.1", ["am-sidebar"]), "--version", "0.3.1");
+  assert.equal(r.code, 0, r.log);
+  const gone = { mod: "spaces-agents", renamed: "am-sidebar", gone: true, layouts: ["mine"] };
+  assert.deepEqual(r.out.installed.held, [gone]);
+  assert.match(r.log, /mods\/spaces-agents is gone \(it is am-sidebar now\), but the mine layout still names it, and 0\.3\.1 cannot rewrite it/);
+  const note = heldFrom(read(join(s.state, "held-mods.json")), "0.3.1");
+  assert.deepEqual(note, [gone]);
+  assert.match(landedNotice("0.3.1", "0.3.0", false, note).body, /mods\/spaces-agents is gone \(it is am-sidebar now\).*so Herdr shows plain Herdr instead of it/);
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
 });

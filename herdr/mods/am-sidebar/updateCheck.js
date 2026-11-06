@@ -184,7 +184,7 @@ function autoOf(value) {
   return { on: a.on, managed: a.managed, skip: typeof a.skip === "string" ? a.skip : null, why: typeof a.why === "string" ? a.why : null };
 }
 
-/** The mods an install held for a layout (update.mjs `installed.held`, #420), as far as they read. */
+/** The mods an install held for a layout (update.mjs `installed.held`, #420, #432), as far as they read. */
 const heldOf = (value) => (Array.isArray(value)
   ? value.filter((h) => typeof h?.mod === "string" && Array.isArray(h.layouts) && h.layouts.length > 0 && h.layouts.every((l) => typeof l === "string"))
   : []);

@@ -3364,7 +3364,7 @@ async function cmdWorker(opts, rest) {
 
 /** The hooks notice (migrateHooks.mjs hooksNotice) on lines of its own after the summary, or "". */
 const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.length ? `\n${lines.join("\n")}` : ""; };
-/** Each mod an install held for a layout (update.mjs `held`, #420) on a line of its own, or "". */
+/** Each mod an install held for a layout (update.mjs `held`, #420, #432) on a line of its own, or "". */
 const heldLines = (installed) => (installed.held ?? []).map((h) => `\n${heldModLine(h, installed.version)}`).join("");
 
 /**
