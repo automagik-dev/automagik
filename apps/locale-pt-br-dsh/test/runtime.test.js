@@ -1,5 +1,7 @@
 // The pack against DSH's own LocaleRuntime, from the DeepSeek Harness the tests run on:
-// DSH_HARNESS, else the install `bun run harness` makes in dev/harness.
+// DSH_HARNESS, else the install `bun run harness` makes in dev/harness. The pack supports DSH
+// 0.2.2 and later, whose locale runtime lists `pt`; these tests register that entry and DSH's
+// own pt dictionaries on a bare LocaleRuntime, as DSH's client bundles do at boot.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
@@ -57,63 +59,45 @@ const pack = loadClient().exports
 // DSH 0.2.2's own language and dictionaries, as its client bundles register them.
 function dshPortuguese(locale) {
   locale.addLanguage({ id: 'pt', label: 'Português', fallback: 'en' })
-  locale.register('pluginManager', 'pt', { panel: 'Plugins', title: 'Plugins' })
-  locale.register('question', 'pt', { 'reply.label': 'Responder a perguntas pendentes anteriores' })
+  locale.register('pluginManager', 'pt', { panel: 'Plug-ins' })
   locale.register('sidebar', 'pt', { 'session.new': 'Nova sessão' })
 }
 
-test('DSH gives the pack\'s pt-BR language to a pt-BR browser and opens in it', () => {
-  const { locale, ctx } = runtime(['pt-BR', 'pt', 'en-US'])
-  assert.equal(locale.getLocale().active, 'en')
-  pack.apply(ctx)
-  const { active, locales } = locale.getLocale()
-  assert.equal(active, 'pt-BR')
-  assert.deepEqual({ ...locales.find((entry) => entry.id === 'pt-BR') }, { id: 'pt-BR', label: 'Português', fallback: 'en' })
-})
-
-test('DSH reads omni-ui in pt-BR and falls back to en for a key the pack lacks', () => {
-  const { locale, ctx } = runtime(['pt-BR'])
-  pack.apply(ctx)
-  const t = locale.bind('omni-ui')
-  assert.equal(t('Main Bot'), 'Bot principal')
-  assert.equal(t('a key the Bot team does not have'), 'a key the Bot team does not have')
-})
-
-test('DSH keeps an English browser in English with the pack loaded', () => {
-  const { locale, ctx } = runtime(['en-US'])
-  pack.apply(ctx)
-  assert.equal(locale.getLocale().active, 'en')
-  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Main Bot')
-})
-
-test('on DSH 0.2.1 the pt-BR entry renders the four strings DSH has', () => {
+test('DSH 0.2.2 keeps one Portuguese entry and the pack adds omni-ui under it', () => {
   const { locale, ctx } = runtime(['pt-BR', 'en-US'])
-  pack.apply(ctx)
-  assert.equal(locale.getLocale().active, 'pt-BR')
-  locale.register('pluginManager', { en: { previewAlt: 'Preview of {name}', previewUnavailable: 'No preview' } })
-  locale.register('question', { en: { 'reply.open': 'Open details', 'reply.close': 'Close details' } })
-  assert.equal(locale.bind('pluginManager')('previewAlt', { name: 'Bots' }), 'Prévia do recurso de Bots')
-  assert.equal(locale.bind('question')('reply.open'), 'Abrir os detalhes da pergunta')
-})
-
-// The proof for DSH 0.2.2: one Portuguese entry, omni-ui under it, and a saved pt-BR choice
-// that still resolves to Portuguese on a browser that asks for English.
-test('a saved pt-BR choice resolves to DSH pt on 0.2.2, with one Portuguese entry', () => {
-  const host = fakeHost('pt-BR')
-  const { locale, ctx } = runtime(['en-US'], { host })
   dshPortuguese(locale)
-  assert.equal(locale.getLocale().active, 'en')
+  assert.equal(locale.getLocale().active, 'pt')
   assert.doesNotThrow(() => pack.apply(ctx))
   const { active, locales } = locale.getLocale()
   assert.equal(active, 'pt')
-  assert.equal(host.preference, 'pt')
   const portuguese = Array.from(locales).filter((entry) => entry.id.toLowerCase().startsWith('pt'))
   assert.deepEqual(Array.from(portuguese, (entry) => [entry.id, entry.label]), [['pt', 'Português']])
   assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
   assert.equal(locale.bind('sidebar')('session.new'), 'Nova sessão')
 })
 
-test('a fresh browser on 0.2.2 gets DSH pt and no second Portuguese entry', () => {
+test('the pack adds no language of its own to a 0.2.2 catalog', () => {
+  const { locale, ctx } = runtime(['en-US'])
+  dshPortuguese(locale)
+  pack.apply(ctx)
+  const ids = Array.from(locale.getLocale().locales, (entry) => entry.id).sort()
+  assert.deepEqual(ids, ['en', 'pt', 'zh'])
+})
+
+// The proof for homes that saved pt-BR under the old pack: an English browser still resolves
+// to Portuguese, and the stored choice is rewritten to DSH's id.
+test('a saved pt-BR choice resolves to DSH pt on 0.2.2', () => {
+  const host = fakeHost('pt-BR')
+  const { locale, ctx } = runtime(['en-US'], { host })
+  dshPortuguese(locale)
+  assert.equal(locale.getLocale().active, 'en')
+  assert.doesNotThrow(() => pack.apply(ctx))
+  assert.equal(locale.getLocale().active, 'pt')
+  assert.equal(host.preference, 'pt')
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
+})
+
+test('a fresh English browser on 0.2.2 gets DSH pt and no second Portuguese entry', () => {
   const host = fakeHost()
   const { locale, ctx } = runtime(['en-US'], { host })
   dshPortuguese(locale)

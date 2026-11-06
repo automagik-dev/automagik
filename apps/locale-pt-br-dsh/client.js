@@ -3,30 +3,21 @@ window.__ModuleLoader__.load({
   id: '@automagik/locale-pt-br-dsh',
   factory: () => {
 const createPack = function createPack(dictionaries) {
-  const language = { id: 'pt-BR', label: 'Português', fallback: 'en' }
   return {
     inject: ['locale'],
     apply(ctx) {
-      // DSH's own language, once DSH registers it. Dictionaries may arrive before the
-      // definition, but here the definition decides where the pack's strings go.
       const hasDshPortuguese = () => ctx.locale.getLocale().locales.some((entry) => entry.id === 'pt')
-      const adopted = hasDshPortuguese()
-      if (!adopted) ctx.effect(() => ctx.locale.addLanguage(language), 'locale-pt-br: language')
       for (const [namespace, dictionary] of Object.entries(dictionaries)) {
-        // pluginManager and question hold only strings DSH dropped. DSH owns their pt
-        // dictionary on 0.2.2, and a second registration for the same locale throws, so
-        // those strings belong to the pack's own pt-BR entry alone.
-        if (adopted && namespace !== 'omni-ui') continue
         ctx.effect(
-          () => ctx.locale.register(namespace, adopted ? 'pt' : 'pt-BR', dictionary),
+          () => ctx.locale.register(namespace, 'pt', dictionary),
           `locale-pt-br: ${namespace}`,
         )
       }
-      if (adopted) moveSavedChoice()
+      moveSavedChoice()
 
-      // A saved pt-BR choice is an exact id to DSH's locale runtime, so removing the pack's
-      // own language would silently drop it on an English browser. Rewrite it as DSH's `pt`,
-      // through the runtime's only preference write, before anything reads the choice.
+      // A saved pt-BR choice is an exact id to DSH's locale runtime. DSH's own id is `pt`, so
+      // rewrite the stored choice through the runtime's only preference write, before anything
+      // reads it; no second Portuguese entry is registered.
       function moveSavedChoice() {
         ctx.inject(['configForms'], (scope) => {
           const host = scope.configForms.get('locale')
@@ -1495,14 +1486,6 @@ const pack = createPack({
     "Has a computer: ask it for code, files and commands.": "Tem computador: peça código, arquivos e comandos.",
     "Works in your Omni channels: ask it to read, send or answer messages there.": "Trabalha nos seus canais do Omni: peça para ler, enviar ou responder mensagens lá.",
     "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo."
-  },
-  "pluginManager": {
-    "previewAlt": "Prévia do recurso de {name}",
-    "previewUnavailable": "Não foi possível mostrar a prévia do recurso"
-  },
-  "question": {
-    "reply.open": "Abrir os detalhes da pergunta",
-    "reply.close": "Fechar os detalhes da pergunta"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })
