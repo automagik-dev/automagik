@@ -22,14 +22,14 @@ import { satisfies } from '../src/lane.js'
 
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/
 
-/** The DSH range a plugin tested on `version` declares: from it up to the next patch, previews included. */
+/** The DSH range a plugin tested on `version` declares: from it to the next minor. */
 export function rangeFor(version) {
   const match = VERSION.exec(String(version ?? '')) && /^(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) throw new Error(`not a dsh version: '${version}'`)
-  return `>=${version} <${match[1]}.${match[2]}.${Number(match[3]) + 1}-0`
+  return `>=${version} <${match[1]}.${Number(match[2]) + 1}.0`
 }
 
-/** A carried plugin may use a newer compatible RC in the same patch series, never a downgrade. */
+/** A carried plugin may use a newer compatible release in the same minor series, never older. */
 export function acceptsHarness(runtime, tested, engines) {
   if (!VERSION.test(String(runtime ?? '')) || !VERSION.test(String(tested ?? ''))) return false
   return satisfies(runtime, rangeFor(tested)) && satisfies(runtime, engines)
