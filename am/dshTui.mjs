@@ -54,6 +54,19 @@ ${SHIM_MARK} (installed by \`automagik-herdr dsh-tui install\`).
 # No separator of its own: dsh starts the app's arguments at the first token it does not
 # recognize, so --resume <id>, -c, --continue, --backend <id> and -- <text> arrive the way
 # dsh-TUI's own launcher passes them.
+# Optional provider keys set outside DSH: source a readable regular file you own, not group- or
+# world-writable. Anything else is skipped with one line. This shim never contains or writes a
+# secret; the installer creates no such file.
+env_file="\${DSH_HOME:-\$HOME/.dsh}/deepseek.env"
+if [ -e "\$env_file" ] || [ -h "\$env_file" ]; then
+  if [ -n "\$(find "\$env_file" -prune -type f -user "\$(id -u)" ! -perm -022 -print 2>/dev/null)" ] && [ -r "\$env_file" ]; then
+    set -a
+    . "\$env_file"
+    set +a
+  else
+    echo "dsh-tui: skipped the provider env file: it must be a readable regular file you own, not group/world-writable." >&2
+  fi
+fi
 if ! command -v dsh >/dev/null 2>&1; then
   echo "dsh-tui: DSH (dsh) is not on PATH. Install DSH Desktop or 'npm install -g @deepseek-ai/dsh'." >&2
   exit 127

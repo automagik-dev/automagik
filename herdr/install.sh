@@ -788,7 +788,8 @@ dsh_tui_step() {
 dsh_shim_is_ours() {
   [ -f "$1" ] || return 1
   grep -Fq "# Automagik Herdr's dsh-tui shim" "$1" 2>/dev/null || return 1
-  grep -Fqx 'exec dsh --profile dsh-tui "$@"' "$1" 2>/dev/null
+  grep -Fqx 'exec dsh --profile dsh-tui "$@"' "$1" 2>/dev/null && return 0
+  grep -Fqx 'exec dsh --profile tui -- "$@"' "$1" 2>/dev/null
 }
 dsh_tui_uninstall() {
   if link_ours && [ -f "$PACK/bin/automagik-herdr.mjs" ] && grep -q 'dsh-tui install' "$PACK/bin/automagik-herdr.mjs" 2>/dev/null; then

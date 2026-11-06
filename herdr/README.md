@@ -178,6 +178,50 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   passes them. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks that the
   first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
   `programs.json`.
+- **Provider keys (optional).** The shim sources an optional `0600` env file at
+  `~/.dsh/deepseek.env` (or `$DSH_HOME/deepseek.env`) so panes and workers get provider keys set
+  outside DSH; you can still use `/auth` or the credential store. Only a readable regular file
+  you own and that is not group- or world-writable is sourced; anything else is skipped with one
+  line. The installer writes no secret.
+- **Sandbox and permissions (`cordis.patch.yml`).** The installer writes no config and no policy.
+  Settings belong in the profile's `cordis.patch.yml` (the documented user layer), never the
+  generated `cordis.yml`, which DSH rewrites on every boot. A concrete example:
+
+  ```yaml
+  - id: sandbox-policy
+    config:
+      mode: workspace-write
+      workspaceRoot: !!js process.cwd()
+      additionalWritableRoots:
+        - /mnt/ai/automagik/.git   # or the main checkout's .git
+  - id: approval
+    config:
+      policy: never
+  - id: permission
+    config:
+      defaultPreset: unattended
+      presets:
+        read-only:
+          sandbox: read-only
+          approval: ask
+        workspace-write:
+          sandbox: workspace-write
+          approval: ask
+        danger-full-access:
+          sandbox: danger-full-access
+          approval: never
+        unattended:
+          sandbox: workspace-write
+          approval: never
+  ```
+
+  A matching preset is **required**: `defaultPreset` must name a preset whose sandbox and
+  approval equal the composed defaults, or `dsh-permission-presets` refuses boot ("composed
+  sandbox and approval defaults match no preset; configure defaultPreset explicitly"). The
+  `unattended` preset is workspace-write + approval never. Interactive dsh-TUI takes no
+  permission, add-dir or approval flags (they become prompt text); the profile supplies them.
+- **Automation.** dsh-TUI's `-p`/`run` automation exits 3 `ADAPTER_UNAVAILABLE` on DSH
+  0.2.2-rc.1. Use `dsh --profile headless` for headless work.
 - **PATH.** The doctor checks `~/.local/bin` on the PATH Herdr **panes** get (an interactive login
   shell's, the way herdr-core starts a program) and names the file to edit for that shell
   (`~/.zshrc`, `~/.bash_profile`, `~/.config/fish/config.fish`, `~/.profile`). Herdr's `+` menu

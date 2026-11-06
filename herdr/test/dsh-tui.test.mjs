@@ -90,7 +90,7 @@ if (args[0] !== "plugin") {
   // onboardingPrefs: completed at the current guide revision means the wizard stays away.
   let onboarding = true;
   try { const prefs = readJson(path.join(process.env.HOME, ".dsh-tui", "onboarding.json")); onboarding = prefs.completed !== true || !(prefs.version >= 1); } catch {}
-  console.log(JSON.stringify({ profile, app, resume, backend, prompt, onboarding }));
+  console.log(JSON.stringify({ profile, dshHome, app, resume, backend, prompt, onboarding, key: process.env.AM_TEST_KEY ?? null }));
   process.exit(0);
 }
 if (args[1] !== "--profile" || args[2] !== "dsh-tui") { console.error("wrong call: " + args.join(" ")); process.exit(64); }
@@ -238,6 +238,64 @@ test("the shim runs the dsh-tui profile and the TUI parses its startup flags", a
   assert.match(missing.stderr, /DSH \(dsh\) is not on PATH/);
 });
 
+test("the shim sources only a safe provider env file, and leaves the arguments alone", async (t) => {
+  const s = scene(t);
+  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const guide = join(s.home, ".dsh", "deepseek.env");
+  const boot = (args = [], extra = {}) => {
+    const r = s.runShim(args, extra);
+    assert.equal(r.status, 0, r.stderr);
+    return { r, boot: JSON.parse(r.stdout) };
+  };
+  // Missing: silent, nothing exported, the shim still starts.
+  let run = boot();
+  assert.equal(run.boot.key, null);
+  assert.equal(run.r.stderr, "");
+  // A regular 0600 file owned by this user: every variable it sets is exported to dsh.
+  writeFileSync(guide, "AM_TEST_KEY=from-env\n");
+  chmodSync(guide, 0o600);
+  run = boot(["--resume", "abc"]);
+  assert.equal(run.boot.key, "from-env");
+  assert.deepEqual(run.boot.app, ["--resume", "abc"], "the env file does not change argv");
+  assert.equal(run.boot.resume, "abc");
+  assert.equal(run.r.stderr, "");
+  // A symlink is skipped with one line, even when its target is a safe file.
+  const target = join(s.root, "keys.env");
+  writeFileSync(target, "AM_TEST_KEY=via-link\n");
+  chmodSync(target, 0o600);
+  rmSync(guide);
+  symlinkSync(target, guide);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /^dsh-tui: skipped the provider env file/m);
+  assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  // Group- or world-writable is skipped the same way.
+  rmSync(guide);
+  writeFileSync(guide, "AM_TEST_KEY=unsafe-mode\n");
+  chmodSync(guide, 0o666);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /skipped the provider env file/);
+  // Unreadable is skipped too.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, "AM_TEST_KEY=unreadable\n");
+  chmodSync(guide, 0o000);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /skipped the provider env file/);
+  // DSH_HOME moves the file; the default under ~/.dsh is not read.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, "AM_TEST_KEY=from-default\n");
+  const alt = join(s.root, "alt-dsh");
+  mkdirSync(alt);
+  symlinkSync(join(s.home, ".dsh", "profiles"), join(alt, "profiles"));
+  writeFileSync(join(alt, "deepseek.env"), "AM_TEST_KEY=from-alt\n");
+  chmodSync(join(alt, "deepseek.env"), 0o600);
+  run = boot([], { DSH_HOME: alt });
+  assert.equal(run.boot.key, "from-alt");
+  assert.equal(run.boot.dshHome, alt);
+});
+
 test("a fresh pane with the onboarding record starts clean, and a person's record is kept", async (t) => {
   const s = scene(t);
   const guide = join(s.home, ".dsh-tui", "onboarding.json");
@@ -310,6 +368,18 @@ test("uninstall removes the plugin and the shim, and leaves a foreign shim alone
   assert.match(refused.detail, /not this installer's/);
   assert.equal(readFileSync(join(foreign.home, ".local", "bin", SHIM), "utf8"), "#!/bin/sh\nexec my-own-dsh \"$@\"\n");
   assert.deepEqual(foreign.calls(), []);
+});
+
+test("uninstall removes a shim released before the profile fix, as ours", (t) => {
+  const s = scene(t);
+  seedProfile(s, { record: true });
+  const shim = join(s.home, ".local", "bin", SHIM);
+  mkdirSync(dirname(shim), { recursive: true });
+  exe(shim, `#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`);
+  const r = uninstallDshTui({ env: s.env });
+  assert.equal(r.status, "removed", JSON.stringify(r));
+  assert.equal(existsSync(shim), false);
+  assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
 });
 
 test("no dsh: one honest line, nothing written", async (t) => {

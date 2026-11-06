@@ -2197,6 +2197,23 @@ test("--uninstall's fallback removes only this installer's dsh-tui shim, by the 
   assert.equal(existsSync(shim), false);
 });
 
+test("--uninstall's fallback removes a shim released before the dsh-tui profile fix", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  fakeDsh(s);
+  assert.equal(s.run("--dsh-tui", "--no-usagemeter").code, 0);
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  exe(shim, "#!/bin/sh\n# Automagik Herdr's dsh-tui shim (installed by `automagik-herdr dsh-tui install`).\nexec dsh --profile tui -- \"$@\"\n");
+  const other = join(s.root, "other-command");
+  writeFileSync(other, "#!/bin/sh\nexit 0\n");
+  rmSync(s.link);
+  symlinkSync(other, s.link);
+  const r = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Removed .*dsh-tui; the dsh-tui DSH profile was left as it is/);
+  assert.equal(existsSync(shim), false);
+});
+
 test("--uninstall's fallback leaves a foreign dsh-tui shim, even one naming Automagik Herdr", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
