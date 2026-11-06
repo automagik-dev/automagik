@@ -130,7 +130,7 @@ test('#509: a mid-line ? is not an explicit key', () => {
   assert.equal(redactText(input), `What? ${PASS}:${REDACTED}\n: note\n`)
 })
 
-test('#509: an unclosed no-space colon tail is masked and not remembered', () => {
+test('#509: an unclosed no-space colon tail is masked', () => {
   for (const [what, input, want] of [
     ['double quoted', `? "${PASS}:${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
     ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`],
@@ -141,10 +141,19 @@ test('#509: an unclosed no-space colon tail is masked and not remembered', () =>
     ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`],
     ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`],
     ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`],
+    ['a mismatched closing quote', `? "${PASS}:${LEAK}'\n`, `? "${PASS}:${REDACTED}\n`],
+    ['a mismatched closing quote before a comment', `? "${PASS}:${LEAK} ' # x\n`, `? "${PASS}:${REDACTED}\n`],
+    ['a mismatched closing double quote', `? '${PASS}:${LEAK}"\n`, `? '${PASS}:${REDACTED}\n`],
   ]) {
     assert.equal(redactText(input), want, what)
   }
 })
+
+test('#509: a matching closing quote with no separator is served whole', () => {
+  const input = `? "${PASS}:${LEAK}"\n`
+  assert.equal(redactText(input), input)
+})
+
 
 test('#509: a non-credential quoted name is not over-hidden', () => {
   assert.equal(redactText('? "compass:north\n'), '? "compass:north\n')

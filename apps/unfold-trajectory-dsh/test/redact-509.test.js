@@ -162,24 +162,33 @@ test('#509: a mid-line ? is not an explicit key', () => {
   assert.ok(secretsIn(input).includes(LEAK), 'the value is remembered')
 })
 
-test('#509: an unclosed no-space colon tail is masked and not remembered', () => {
-  for (const [what, input, want] of [
-    ['double quoted', `? "${PASS}:${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
-    ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`],
-    ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
-    ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`],
-    ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`],
-    ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`],
-    ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`],
-    ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`],
-    ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`],
+test('#509: an unclosed no-space colon tail is masked and its value remembered', () => {
+  for (const [what, input, want, remembered] of [
+    ['double quoted', `? "${PASS}:${LEAK}\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
+    ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`, VALUE],
+    ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`, "hun'ter2"],
+    ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
+    ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['a mismatched closing quote', `? "${PASS}:${LEAK}'\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['a mismatched closing quote before a comment', `? "${PASS}:${LEAK} ' # x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['a mismatched closing double quote', `? '${PASS}:${LEAK}"\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
   ]) {
     assert.equal(redactText(input), want, what)
     const kept = secretsIn(input)
-    assert.ok(!kept.includes(LEAK), `${what}: the tail is not remembered`)
-    assert.ok(!kept.includes(VALUE), `${what}: the inline value is not remembered`)
+    assert.ok(kept.some((v) => v.includes(remembered)), `${what}: the value is remembered`)
+    assert.ok(!kept.includes(TAIL), `${what}: the name tail is not remembered`)
   }
 })
+
+test('#509: a matching closing quote with no separator is served whole', () => {
+  const input = `? "${PASS}:${LEAK}"\n`
+  assert.equal(redactText(input), input)
+})
+
 
 test('#509: a non-credential quoted name is not over-hidden', () => {
   assert.equal(redactText('? "compass:north\n'), '? "compass:north\n')
