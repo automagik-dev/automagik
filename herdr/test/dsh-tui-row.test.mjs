@@ -37,7 +37,7 @@ test("dsh-tui is an agent Herdr starts as plain dsh-tui; no hook, no own-config 
   assert.equal(agentKeyOfArgv(["/usr/bin/env", "PATH=/bin", "dsh-tui", "--resume", SID]), "dsh-tui");
   assert.equal(briefingWay("dsh-tui"), "prompt");
   assert.deepEqual([briefingHook("dsh-tui"), briefingOwnConfig("dsh-tui")], [false, false]);
-  assert.match(modelRefusal("dsh-tui"), /^dsh-TUI takes no --model or --effort: its model and effort come from the dsh-tui profile on the machine it runs on\.$/);
+  assert.match(modelRefusal("dsh-tui"), /^dsh-TUI takes no --model or --effort: its DSH profile on the machine it runs on sets both\.$/);
   assert.equal(modelRefusal("claude"), null);
   assert.equal(modelRefusal("omp"), null);
 });
@@ -170,7 +170,7 @@ test("edit a dsh-tui bot's --model: refused with one clear line, nothing written
   const before = readFileSync(join(s.project, ".herdr/bots.json"), "utf8");
   const r = s.cli(["edit", "Genie", "--model", "deepseek-v4"]);
   assert.notEqual(r.code, 0);
-  assert.match(r.err, /dsh-TUI takes no --model or --effort: its model and effort come from the dsh-tui profile on the machine it runs on\./);
+  assert.match(r.err, /dsh-TUI takes no --model or --effort: its DSH profile on the machine it runs on sets both\./);
   assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before);
 });
 
@@ -200,6 +200,7 @@ test("restart a dsh-tui bot with no session id: -c after a finished turn; with n
     assert.equal(out.code, 0, out.err);
     const words = agentWords(s.runs().at(-1));
     assert.deepEqual(words.slice(0, 2), ["dsh-tui", "--"], `turn ${turn}: ${words.join(" ")}`);
-    assert.match(out.err, /dsh-TUI has no finished turn in t5 to continue, so Genie starts on a new conversation/, `turn ${turn}`);
+    assert.match(out.json().warnings.join("\n"), /Genie starts on a new conversation: dsh-TUI has no finished turn in t5 to continue\./, `turn ${turn}`);
+    assert.equal(out.json().note, "dsh-TUI has no finished turn in t5 to continue");
   }
 });

@@ -601,6 +601,32 @@ test("restart --machine #413: codex can't resume a thread whose model provider i
   assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one is up");
 });
 
+test("restart --machine of a dsh-tui bot (#598): -c only after a finished turn there; turn 0 or no counter, a new conversation", (t) => {
+  const restartAt = (turn, force) => {
+    const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null, labels: {},
+      ...(turn === undefined ? {} : { turn }), foreground: { argv: ["dsh-tui", "--", "<herdr-bot>\nold"], name: "dsh-tui" },
+      status: { state: "idle", app: "dsh-tui" } }] });
+    const file = join(s.project, ".herdr/bots.json");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "dsh-tui"'));
+    exe(join(s.root, "vm-bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+    assert.equal(s.cli(["attach", "Hedge", "vm/t9", ...s.on]).code, 0);
+    const r = s.cli(["restart", "Hedge", ...s.on, ...(force ? ["--force"] : []), "--json"]);
+    assert.equal(r.code, 0, r.err);
+    const run = s.calls().filter((c) => c[0] === "run").at(-1);
+    return { out: r.json(), err: r.err, words: run.slice(run.indexOf("dsh-tui")) };
+  };
+  // A finished turn: the id-less -c, which a machine still takes only with --force (continueRefusal).
+  const done = restartAt(2, true);
+  assert.deepEqual(done.words.slice(0, 3), ["dsh-tui", "-c", "--"]);
+  for (const turn of [0, undefined]) {
+    const fresh = restartAt(turn, false);
+    assert.deepEqual(fresh.words.slice(0, 2), ["dsh-tui", "--"], `turn ${turn}: ${fresh.words.join(" ")}`);
+    assert.match(fresh.words[2], /^<herdr-bot>\n/);
+    assert.equal(fresh.out.note, "dsh-TUI has no finished turn in vm/t9 to continue");
+    assert.match(fresh.err, /Hedge starts on a new conversation: dsh-TUI has no finished turn in vm\/t9 to continue\./);
+  }
+});
+
 // ---- the agent's PATH there (#425): herdr-core as a service never read ~/.profile ----
 
 /** What the pane was started with: the argv after hc run's `--`. */
