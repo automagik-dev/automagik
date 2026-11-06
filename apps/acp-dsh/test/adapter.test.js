@@ -477,7 +477,7 @@ const bridgeTools = () => [
   { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: {} } },
 ]
 
-function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write', redactor, spec: extra = {}, trace } = {}) {
+function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write', redactor, spec: extra = {}, trace, toolsOn = true } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
@@ -522,7 +522,7 @@ function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write
     ...extra,
   }
   const backchannel = new Backchannel({ ctx })
-  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]), { dshTools: () => true, backchannel, redactor })
+  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]), { dshTools: () => toolsOn, backchannel, redactor })
   const close = () => { adapter.dispose(); backchannel.dispose() }
   return { adapter, spec, ctx, agent, session, definitions, asked, executed, backchannel, close }
 }
@@ -596,7 +596,7 @@ test('a preset change on an agent that ignores list_changed refreshes by fork, c
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
     const first = await step(h.adapter, messages)
     assert.match(textIn(first), /turn 1/)
-    const oldCredential = [...h.backchannel.records.keys()][0]
+    const oldRecord = [...h.backchannel.records.values()][0]
     // The Session's preset now registers one more tool: a new signature.
     h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
     const second = await step(h.adapter, messages)
@@ -605,7 +605,9 @@ test('a preset change on an agent that ignores list_changed refreshes by fork, c
     assert.match(textIn(second), /The bridge said: ran bash/)
     // One bridge at a time: the source's credential is gone.
     assert.equal(h.backchannel.records.size, 1)
-    const old = await fetch(h.backchannel.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldCredential}` }, body: JSON.stringify({ op: 'list' }) })
+    // The OLD session's own URL, not the bare one: the path matches its Session and only the
+    // revoked credential refuses it.
+    const old = await fetch(h.backchannel.urlFor(oldRecord), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldRecord.credential}` }, body: JSON.stringify({ op: 'list' }) })
     assert.equal(old.status, 401)
     // The ACP side: fork with the server set, then close of the source.
     const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
@@ -685,6 +687,45 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
     assert.equal(asked[0].toolName, 'bash')
   } finally {
     registered['acp-fake'].dispose()
+  }
+})
+
+test('with dshTools off a turn is the old path: no bridge spawned, no bridge rows, the same card and text', async () => {
+  const offDir = mkdtempSync(join(tmpdir(), 'acp-dsh-off-'))
+  const onDir = mkdtempSync(join(tmpdir(), 'acp-dsh-on-'))
+  const off = dshHost({ toolsOn: false, trace: join(offDir, 'trace.ndjson') })
+  const on = dshHost({ toolsOn: true, trace: join(onDir, 'trace.ndjson') })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
+    const chunksOff = await step(off.adapter, messages)
+    const chunksOn = await step(on.adapter, messages)
+    // The old behaviour runs no bridge at all: the agent got no servers, the plugin minted no
+    // credential and wrote no bridge rows.
+    const offTrace = readFileSync(join(offDir, 'trace.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(offTrace.find(event => event.event === 'new-session').servers, [])
+    assert.equal(off.backchannel.records.size, 0)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'tool/result').length, 0)
+    // The on path spawned the bridge for the same turn.
+    const onTrace = readFileSync(join(onDir, 'trace.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(onTrace.find(event => event.event === 'new-session').servers, ['dsh'])
+    // The turn itself is unchanged: same text, same single card (a tool-call id is random).
+    const shape = chunks => ({
+      text: textIn(chunks),
+      blocks: chunks.filter(chunk => chunk.type === 'block-end').map(chunk => (chunk.block.type === 'tool-call'
+        ? { type: 'tool-call', name: chunk.block.name, arguments: chunk.block.arguments }
+        : chunk.block)),
+      finish: chunks.at(-1).reason.kind,
+    })
+    assert.deepEqual(shape(chunksOff), shape(chunksOn))
+    // The ask belongs to the next step, when DSH runs the card; both paths end this one first.
+    assert.equal(off.asked.length, 0)
+    assert.equal(on.asked.length, 0)
+  } finally {
+    off.close()
+    on.close()
+    rmSync(offDir, { recursive: true, force: true })
+    rmSync(onDir, { recursive: true, force: true })
   }
 })
 

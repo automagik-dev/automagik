@@ -293,6 +293,8 @@ export class Backchannel {
         arguments: body.arguments ?? {},
         callId: typeof body.callId === 'string' ? body.callId : undefined,
       })
+      // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
+      if (result?.revoked === true) return reply(401, { error: 'refused' })
       return reply(200, result)
     }
     if (op === 'wait') {
@@ -337,7 +339,8 @@ export class Backchannel {
    */
   async call(record, { name, arguments: args, callId }) {
     const error = (text) => ({ content: [{ type: 'text', text }], isError: true })
-    if (record.closed) return error('The bridge is closed.')
+    // A revoked bridge (or one whose session ended) may not even write a row.
+    if (record.closed || record.abort.signal.aborted) return { revoked: true }
     const session = record.agent?.session
     const tools = this.ctx?.get?.('tools')
     if (session === undefined || tools?.execute === undefined) return error(`DSH tools are not available to ${record.name}.`)
@@ -387,11 +390,18 @@ export class Backchannel {
         this.log(`approval for ${name} failed: ${cause?.message ?? cause}`)
       }
       if (outcome !== 'allowed-once') {
+        // A revocation during the ask wins over a late grant: the credential is gone, so the
+        // call is refused rather than answered with a dialog outcome.
+        if (record.closed || record.abort.signal.aborted) return { revoked: true }
         const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
         const text = `${why} ${name}.`
         return settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
       }
     }
+    // The ask may have been answered after the bridge was revoked (a grant that lost its
+    // session): nothing may execute then. Checked again after any await, immediately before
+    // dispatch, because the signal alone lets a tool body that ignores it run anyway.
+    if (record.closed || record.abort.signal.aborted) return { revoked: true }
     try {
       const settled = await tools.execute({
         calls: [{ id, name, arguments: JSON.stringify(args ?? {}) }],

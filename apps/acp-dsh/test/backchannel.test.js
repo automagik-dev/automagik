@@ -227,6 +227,35 @@ test('a revoked bridge wakes its long poll and ends its calls', async () => {
   h.bc.dispose()
 })
 
+test('a credential revoked while its approval is pending never runs the tool and the caller is refused', async () => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const run = host({ answer: () => gate })
+  await run.backchannel.listen()
+  const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+  run.backchannel.announce(record)
+  const pending = fetch(run.backchannel.urlFor(record), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+    body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'race-1' }),
+  })
+  // Revoke while the ask is parked, then let it resolve allowed-once: the late grant loses.
+  const deadline = Date.now() + 2_000
+  while (run.asked.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(run.asked.length, 1, 'the approval was pending')
+  run.backchannel.revoke(record)
+  release('allowed-once')
+  const response = await pending
+  assert.equal(response.status, 401)
+  assert.deepEqual(await response.json(), { error: 'refused' })
+  assert.equal(run.executed.length, 0, 'the tool body never ran after revocation')
+  // The call row was written before the ask; no result row claims a run.
+  const rows = run.session.snapshotEvents()
+  assert.equal(rows.filter(event => event.type === 'tool/call').length, 1)
+  assert.equal(rows.filter(event => event.type === 'tool/result').length, 0)
+  run.backchannel.dispose()
+})
+
 test('drift is a plugin record that replay can carry: plugin:acp-dsh/toolset-drift', () => {
   const session = Session.create('s1')
   assert.equal(recordDrift(session, { name: 'Bash', title: 'Bash: ls', provider: 'acp-claude' }), true)
