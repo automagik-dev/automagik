@@ -432,6 +432,24 @@ test("--tree refused though its JSON names a terminal is no restart: a new pane 
   assert.deepEqual(p.view.switched.codex.look.bots.map((b) => b.id), ["a"]);
 });
 
+test("a bot on a linked machine that needs --tree: the CLI's refusal (#437) keeps it on the old account, listed with why and no flag", async () => {
+  // The CLI's words for restart --machine --tree, exit 2 with nothing on stdout, as the bot's name and machine fill them in.
+  const said = "Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: A and its helpers on vm still run "
+    + "as they were, on the account they started with. By hand: wait for a helper still working to finish, end each helper's pane "
+    + "(hc kill vm/tN for one), then restart A there without --tree. A helper that still had work to do, start again yourself with hc run "
+    + "on vm once A is back.";
+  const p = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done" }, then: { code: 2, stdout: "", stderr: `automagik-herdr: ${said}\n` } });
+  assert.ok(secondRestart().includes("--tree"));
+  const shown = text(p.draw());
+  assert.ok(shown.includes("A: Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: A and its helpers on vm "
+    + "still run as they were, on the account they started with. By hand: wait for a helper still working to finish, end each helper's pane "
+    + "(hc kill vm/tN for one). A helper that still had work to do, start again yourself with hc run on vm once A is back."), shown);
+  assert.doesNotMatch(shown, /--[a-z]/);
+  assert.doesNotMatch(shown, /every Codex bot is on the new account/);
+  assert.equal(p.view.switched.codex.result.done, 0, "never counted as restarted");
+  assert.deepEqual(p.view.switched.codex.look.bots.map((b) => b.id), ["a"], "still on the old account, still listed");
+});
+
 test("helpers: blocked on a question or in error are not finished: no restart, with the reason; a pane that outlives the bot doesn't count (#413)", async () => {
   for (const [status, why] of [["blocked", "its helper t7 is waiting for an answer"], ["error", "its helper t7 is in error"]]) {
     const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: status, t8: "done" } });
