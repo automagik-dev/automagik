@@ -209,7 +209,7 @@ test("restartPlan no longer reuses a pane's command: its briefing words don't ch
   assert.deepEqual(plan.argv, ["omp", "--continue"]);
   // The pane's own flags are what launchChange names, its briefing words are no difference.
   assert.deepEqual(paneLaunch(launch, "omp"), ["omp", "--thinking=high"]);
-  assert.match(launchChange({ name: "Dev", launch, agent: "omp", argv: plan.source }), /Dev: its pane's command \(omp --thinking=high\) differs from its source now \(omp\)/);
+  assert.match(launchChange({ name: "Dev", launch, agent: "omp", argv: plan.source }), /Dev: its pane's command differs from its source now \(drops --thinking=\*\*\*\)/);
 });
 
 test("tomlString: JSON's escapes, plus U+007F escaped and lone surrogates replaced (TOML rejects both)", () => {
@@ -247,7 +247,7 @@ test("restart of a hermes bot fed the whole command Start gave it (env PATH, bri
   assert.deepEqual(launch, { argv: ["hermes", "--yolo"] }, "the whole env prefix dropped, the program found");
   const plan = restartPlan({ bot: { agent: "hermes" }, run: ["hermes"], runningAgent: "hermes", session: null, launch });
   assert.deepEqual(plan.argv, ["hermes", "--continue"]);
-  assert.match(launchChange({ name: "Dev", launch, agent: "hermes", argv: plan.source }), /Dev: its pane's command \(hermes --yolo\) differs from its source now \(hermes\)/);
+  assert.match(launchChange({ name: "Dev", launch, agent: "hermes", argv: plan.source }), /Dev: its pane's command differs from its source now \(drops --yolo\)/);
   // A person's own env line (not this pack's PATH prefix) is left as it is.
   assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "FOO=1", "hermes"] }), { argv: ["/usr/bin/env", "FOO=1", "hermes"] });
 });

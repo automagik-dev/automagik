@@ -216,14 +216,13 @@ test("paneCommand: hc's launch argv without this pack's env PATH prefix; a templ
 
 test("restartPlan rebuilds from the source, never the pane's command: flags the source doesn't name are dropped (#597)", () => {
   const omp = { agent: "omp" };
-  // A template's (shell) command doesn't survive: the agent row and its resume do.
+  // A template-less pane with a shell command: the agent row and its resume, never the shell.
   const tpl = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --auto-approve --model k" } });
   assert.deepEqual([tpl.mode, tpl.argv, tpl.source], ["resume", ["omp", "--continue"], ["omp"]]);
-  const fresh = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", fresh: true, launch: { shell: "omp --model k" } });
+  const fresh = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", fresh: true });
   assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["omp"]], "--fresh: the source, no resume words");
   // The bot's pin is the source's model, never the pane's old one or a hand-given flag.
-  const codex = restartPlan({ bot: { agent: "codex", model: "gpt-b" }, run: ["codex"], runningAgent: "codex", session: SID,
-    launch: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"] } });
+  const codex = restartPlan({ bot: { agent: "codex", model: "gpt-b" }, run: ["codex"], runningAgent: "codex", session: SID });
   assert.deepEqual(codex.argv, ["codex", "resume", SID, "--model", "gpt-b"]);
   assert.deepEqual(codex.source, ["codex", "--model", "gpt-b"]);
   assert.equal(codex.model, "gpt-b");
@@ -232,25 +231,66 @@ test("restartPlan rebuilds from the source, never the pane's command: flags the 
   // Another agent in the pane, or a swap: the definition's command, fresh.
   const other = restartPlan({ bot: omp, run: ["omp"], runningAgent: "codex", launch: { argv: ["codex", "-m", "x"] } });
   assert.deepEqual([other.mode, other.argv], ["fresh", ["omp"]]);
-  const swap = restartPlan({ bot: omp, run: ["codex"], runningAgent: "omp", agent: "codex", launch: { shell: "omp" } });
+  const swap = restartPlan({ bot: omp, run: ["codex"], runningAgent: "omp", agent: "codex" });
   assert.deepEqual([swap.mode, swap.argv], ["swap", ["codex"]]);
 });
 
-test("paneLaunch and launchChange: the pane's stale words are named, its briefing and resume words aren't (#597)", () => {
-  const stale = { argv: ["claude", "--proxy=http://proxy.example:8080", "-c"] };
-  assert.deepEqual(paneLaunch(stale, "claude"), ["claude", "--proxy=http://proxy.example:8080"]);
-  assert.equal(launchChange({ name: "Genie", launch: stale, agent: "claude", argv: ["claude"] }),
-    "Genie: its pane's command (claude --proxy=http://proxy.example:8080) differs from its source now (claude): "
+test("restartPlan runs a live template's CURRENT command with its resume words; a swap leaves it behind (#597 review F1)", () => {
+  const omp = { agent: "omp" };
+  const template = { name: "dev-kimi", command: "omp --auto-approve --model kimi/k3" };
+  const resumed = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", session: SID, template });
+  assert.deepEqual([resumed.mode, resumed.template, resumed.model], ["resume", "dev-kimi", null]);
+  assert.deepEqual(resumed.argv, ["sh", "-c", 'omp --auto-approve --model kimi/k3 "$@"', "sh", `--resume=${SID}`]);
+  const last = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", template });
+  assert.deepEqual(last.argv, ["sh", "-c", 'omp --auto-approve --model kimi/k3 "$@"', "sh", "--continue"]);
+  const fresh = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", fresh: true, template });
+  assert.deepEqual(fresh.argv, ["sh", "-c", "omp --auto-approve --model kimi/k3"], "--fresh: the template, no resume words");
+  // A command ending in a separator can't take words: fresh on the template, with the reason.
+  const blocked = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", session: SID, template: { name: "x", command: "omp --x;" } });
+  assert.deepEqual([blocked.mode, blocked.argv, blocked.note], ["fresh", ["sh", "-c", "omp --x;"],
+    "its template's command ends in a separator or a comment, so it can't take resume words"]);
+  // A swap chooses the agent row: the template doesn't cross agents.
+  const swap = restartPlan({ bot: omp, run: ["codex"], runningAgent: "omp", agent: "codex", template });
+  assert.deepEqual([swap.template, swap.argv], [null, ["codex"]]);
+});
+
+test("paneLaunch and launchChange: only flag names are named, values masked, a template by name (#597 F1/F2)", () => {
+  const stale = { argv: ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value", "-c"] };
+  assert.deepEqual(paneLaunch(stale, "claude"), ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value"]);
+  const line = launchChange({ name: "Genie", launch: stale, agent: "claude", argv: ["claude"] });
+  assert.equal(line, "Genie: its pane's command differs from its source now (drops --proxy=***, --api-key=***): "
     + "restarting from the source, not the pane's command.");
+  // No value reaches the line: no URL, host, userinfo or key.
+  for (const raw of ["http://", "proxy.example", "user:token", "sk-secret-value"]) assert.equal(line.includes(raw), false, raw);
+  // A person's own env assignment is masked by name; a flag's separate value is folded in masked.
+  assert.equal(launchChange({ name: "Genie", launch: { argv: ["/usr/bin/env", "API_TOKEN=sk-secret-value", "claude"] }, agent: "claude", argv: ["claude"] }),
+    "Genie: its pane's command differs from its source now (drops API_TOKEN=***): restarting from the source, not the pane's command.");
+  assert.equal(launchChange({ name: "Genie", launch: { argv: ["claude", "--model", "opus"] }, agent: "claude", argv: ["claude"] }),
+    "Genie: its pane's command differs from its source now (drops --model=***): restarting from the source, not the pane's command.");
+  // The same flag with another value is a change, never the value.
+  assert.equal(launchChange({ name: "Genie", launch: { argv: ["claude", "--model", "sonnet"] }, agent: "claude", argv: ["claude", "--model", "opus"] }),
+    "Genie: its pane's command differs from its source now (changes --model=***): restarting from the source, not the pane's command.");
+  assert.equal(launchChange({ name: "Genie", launch: { argv: ["hermes", "--yolo"] }, agent: "hermes", argv: ["hermes"] }),
+    "Genie: its pane's command differs from its source now (drops --yolo): restarting from the source, not the pane's command.");
   // Its own resume words, briefing and a first prompt are this restart's to set: no line.
   const own = { argv: ["claude", "--append-system-prompt-file", "/h/automagik-herdr/briefings/b.md", "--resume", SID] };
   assert.deepEqual(paneLaunch(own, "claude"), ["claude"]);
   assert.equal(launchChange({ name: "Genie", launch: own, agent: "claude", argv: ["claude"] }), null);
   assert.equal(launchChange({ name: "Genie", launch: { argv: ["claude"] }, agent: "claude", argv: ["claude"] }), null);
   assert.equal(launchChange({ name: "Genie", launch: null, agent: "claude", argv: ["claude"] }), null);
-  // A shell command (a template) can't be compared word for word: it is named whole.
-  assert.match(launchChange({ name: "Captain", launch: { shell: "omp --auto-approve" }, agent: "omp", argv: ["omp"] }),
-    /Captain: its pane's command \(omp --auto-approve\) differs from its source now \(omp\)/);
+  // A shell command without a template is named as one; its text is never printed.
+  const shell = launchChange({ name: "Captain", launch: { shell: "omp --auto-approve --model k" }, agent: "omp", argv: ["omp"] });
+  assert.equal(shell, "Captain: its pane's command (a shell command) differs from its source now: restarting from the source, not the pane's command.");
+  assert.equal(shell.includes("auto-approve"), false);
+  // A live template the pane's command already matches: no line; edited, the template is named.
+  const live = { name: "dev-kimi", command: "omp --auto-approve --model kimi/k3" };
+  assert.equal(launchChange({ name: "Captain", launch: { shell: live.command }, agent: "omp", argv: ["omp"], template: live }), null);
+  const edited = launchChange({ name: "Captain", launch: { shell: "omp --old" }, agent: "omp", argv: ["omp"], template: live });
+  assert.equal(edited, "Captain: its pane's command differs from template dev-kimi's current command: restarting through the template.");
+  assert.equal(edited.includes("kimi/k3"), false);
+  // A template hc no longer lists: its name, never its text.
+  assert.equal(launchChange({ name: "Captain", launch: { shell: "env PATH=/x omp --auto-approve" }, agent: "omp", argv: ["omp"], template: { name: "dev-kimi" } }),
+    "Captain: its pane's template dev-kimi differs from its source now: restarting from the source, not the pane's command.");
 });
 
 test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {
