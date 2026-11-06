@@ -46,9 +46,11 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
   with asks answered by auto-review, but auto-review reads the call from the model surface and a
   bridge call is out-of-band, so the bridge does not raise its own dialog there and routes the
-  call through the pipeline; auto-review does not see bridge calls on an Auto Session. Manual
-  asks (one dialog), Full access does not. A Session that moves between providers carries its
-  transcript, redacted, and each crossing writes a provider-boundary row.
+  call through the pipeline. There auto-review fails closed and refuses it with
+  `AUTO_REVIEW_FAILED`: the call does not run silently. (A later delivery designs the reviewer
+  block and side-model route that make Auto usable; until then an Auto Bot's bridge calls are
+  refused.) Manual asks (one dialog), Full access does not. A Session that moves between providers
+  carries its transcript, redacted, and each crossing writes a provider-boundary row.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
@@ -102,6 +104,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. `state` is `off`, `no-cli`, `installing`, `failed` (with the last install error) or `ready`. Spawns nothing. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Starts the connector's install again, and answers at once. |
+| `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether this build's delivery-4/6 bridge probes pass (they are the tests in `test/backchannel.test.js` and `test/adapter.test.js`). The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`; no move while it says off. |
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).

@@ -43,6 +43,19 @@ export const Config = z.object({
 export const SERVICE = 'acpAgents'
 const FIRST_CHECK_MS = 5000
 
+// The delivery-4/6 probes this build's bridge carries (RFC 0003, amendment). The Bot team's
+// one-time move onto `acp-claude` reads them through the service below; the tests that prove
+// each one are apps/acp-dsh/test/backchannel.test.js and adapter.test.js (tools listed before
+// session/new answers, credential refusals, fork/close, the shell tool, drift). A build
+// without the bridge has no `dshTools` setting and no such method.
+const BRIDGE_PROBES = Object.freeze({
+  toolsBeforeSessionNew: true,
+  credentialRefusals: true,
+  forkClose: true,
+  shellTool: true,
+  drift: true,
+})
+
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
 
@@ -228,6 +241,17 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const service = {
     settingsEntry: name,
     status,
+    /**
+     * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
+     * here (`dshTools`), and whether this build carries the probes that prove the bridge. Off
+     * is the 2026-11-03 behaviour, and no Bot moves while it is off.
+     */
+    bridge() {
+      return {
+        on: flagOf(config.dshTools) === true,
+        probesPass: Object.values(BRIDGE_PROBES).every(Boolean),
+      }
+    },
     /** Looks for the CLIs again (one installed since DSH started) and asks each whether it is signed in. */
     async refresh() {
       reconcile()

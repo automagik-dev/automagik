@@ -356,6 +356,26 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   assert.match(line, /\[hidden\]/)
 })
 
+test('the service gates the Bot team\'s Claude move on dshTools and this build\'s probes', () => {
+  const serviceWith = (config) => {
+    let service
+    const ctx = {
+      llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+      agents: { get: () => undefined },
+      get: () => undefined,
+      provide: (name, value) => { if (name === 'acpAgents') service = value },
+      on: () => {},
+      effect: () => {},
+      logger: { warn: () => {}, info: () => {} },
+    }
+    apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => undefined }, find: () => undefined, signedIn: async () => undefined })
+    return service.bridge()
+  }
+  // Off is the 2026-11-03 behaviour; on, this build carries every delivery-4/6 probe.
+  assert.deepEqual(serviceWith({}), { on: false, probesPass: true })
+  assert.deepEqual(serviceWith({ dshTools: true }), { on: true, probesPass: true })
+})
+
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))
