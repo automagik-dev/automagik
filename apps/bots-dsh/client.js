@@ -11127,7 +11127,9 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}
 [data-composer-card] button[class*="_primary"] svg{width:14px;height:14px}
 [data-composer-card] button[class*="_primary"]:disabled{display:none!important}
-body:not([data-bt-advanced]) [data-composer-dock]{display:none!important}
+/* The dock's display is one decision, so the case the show rule below covers is excluded
+   here: hiding it too left (0,2,1) against (0,2,0), both !important, and the hide won (issue 404). */
+body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:none!important}
 .bt-native-head{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-native-head .bt-head-details{position:static}
 .bt-native-note{display:flex;flex-wrap:wrap;gap:6px;font:12px/18px var(--bt-font);color:var(--bt-ink-2)}
