@@ -242,7 +242,6 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [BRIDGE_PATH], {
         env: {
-          ...process.env,
           ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           [CREDENTIAL_ENV]: record.credential,
           [URL_ENV]: backchannel.urlFor(record),
@@ -309,6 +308,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
 
   async function bridgeStatus() {
+    if (disposed) return { on: false, probesPass: false }
     const on = flagOf(config.dshTools) === true
     if (!on) return { on: false, probesPass: false }
     const spec = AGENTS['acp-claude']
