@@ -38,9 +38,9 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (`_meta.disableBuiltInTools`); a structured call that is not an MCP name is recorded as
   `plugin:acp-dsh/toolset-drift` and its turn is cancelled — the detector runs at every session
   start, and it detects and cancels because the update arrives after the call began.
-  `acp-codex` has no such switch, so it is out of the default bridge (it would run two tool
-  sets); an explicit `dshTools: true` still bridges it. Until a structured name is proven in its
-  tool calls, it draws no ACP card for an MCP call. The person's
+  `acp-codex` has no such switch, so it is bridged only with an explicit `dshTools: true`;
+  absent or `false` means no bridge and its built-ins stay its own tool set. Until a structured
+  name is proven in its tool calls, it draws no ACP card for an MCP call. The person's
   own MCP servers load beside the bridge with their own tools and sign-ins: DSH hands the session
   only the `dsh` bridge, so any other `mcp__<server>__<tool>` is the CLI's own user-scope config
   (claude-agent-acp merges the person's settings MCP servers into the session), it passes the
@@ -105,15 +105,17 @@ Codex*, or the plugin's own settings form) offers or withdraws the agent at once
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
 
-`dshTools` (live) is the bridge, its DSH approval, the drift detector and live switching above.
-It is on by default for `acp-claude`, the adapter that can drop its own built-in tools;
-`acp-codex` is out of the default bridge until its adapter can, so it bridges only on an explicit
-`true`. An explicit `false` is the kill switch: the 2026-11-03 behaviour, where each agent keeps
-its own tools and its own approvals. The key is public and stays writable through
+`dshTools` (live, no schema default) is the bridge, its DSH approval, the drift detector and live
+switching above. Absent means the per-agent default: `acp-claude` bridges because its adapter can
+drop its own built-in tools; `acp-codex` does not, because it cannot. Codex is bridged only with
+an explicit `true`; absent or `false` means no bridge, and Codex keeps its own built-in tools as
+its only tool set. An explicit `false` is the kill switch for Claude too: the 2026-11-03
+behaviour, where each agent keeps its own tools and its own approvals. The key is public and
+stays writable through
 DSH's settings service or the profile patch, but it is hidden from settings forms (`.hidden()`):
 it is a rollback lever, not a preference. Flipping it either way ends the running agent sessions
 and revokes their bridges at once; the DSH Session keeps its transcript and the next turn starts
-afresh under the new setting. Turning it on by default moves Claude Bots once per team to
+afresh under the new setting. The default moves Claude Bots once per team to
 `acp-claude` (the Bot team's README, "Claude on ACP"); the bridge probe in `bridge()` still gates
 the move.
 

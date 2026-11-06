@@ -98,7 +98,14 @@ async function acpClaudeState(ctx) {
     try {
       await acp.refresh?.()
     } catch {}
-    agent = agentOf(status = await acp.status?.().catch(() => undefined))
+    try {
+      status = await acp.status?.()
+    } catch {
+      // A read that fails after the ask is not a route that disappeared: leave everything as
+      // it is (a transient failure must not trigger the restore).
+      return { state: 'waiting' }
+    }
+    agent = agentOf(status)
     if (agent === undefined) return { state: 'gone' }
     if (agent.connector?.state !== 'ready' || agent.model?.listed !== true) {
       return { state: 'waiting' }

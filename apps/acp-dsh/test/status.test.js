@@ -67,21 +67,24 @@ test('the switches are live settings under their old keys, read through a refere
   const parsed = new Config({})
   assert.equal(flagOf(parsed.claude), true)
   assert.equal(flagOf(parsed.codex), true)
-  assert.equal(flagOf(parsed.dshTools), true)
+  assert.equal(flagOf(parsed.dshTools), undefined)
   assert.equal(flagOf(new Config({ claude: false }).claude), false)
   assert.equal(flagOf(false), false)
 })
 
-test('dshTools keeps its key, defaults on, is live, and is hidden from settings forms', () => {
+test('dshTools keeps its key, is live, hidden, and has no schema default', () => {
   // The key is public: an installed team's profile patch keeps it, and an explicit false stays
   // the kill switch.
-  assert.equal(flagOf(new Config({}).dshTools), true)
+  assert.equal(flagOf(new Config({}).dshTools), undefined)
   assert.equal(flagOf(new Config({ dshTools: false }).dshTools), false)
+  assert.equal(flagOf(new Config({ dshTools: true }).dshTools), true)
+  // No schema default: absent must stay distinguishable from an explicit true, or Codex would
+  // read the materialised true as the person's word and bridge by default.
   const { uid, refs } = Config.toJSON()
   const node = refs[refs[uid].dict.dshTools]
+  assert.equal('default' in node.meta, false)
   assert.deepEqual({ type: node.type, ...node.meta }, {
     type: 'boolean',
-    default: true,
     volatile: true,
     hidden: true,
     description: node.meta.description,

@@ -515,6 +515,36 @@ test('signing in later still moves the team: a signed-out pass marks nothing', a
   assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
 })
 
+test('a status read that fails after the sign-in ask is waiting', async (t) => {
+  // The team is already moved; a flaky second read during a signed-out pass must not restore it.
+  const first = await start(seed(), { acp: readyAcp() })
+  t.after(first.stop)
+  await first.moved()
+  assert.equal(first.saved().bots.m1.model, 'acp-claude/opus')
+  let calls = 0
+  const ready = {
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+  }
+  const flaky = {
+    ...readyAcp(),
+    status: async () => {
+      calls += 1
+      if (calls === 1) return { agents: [{ ...ready, signedIn: false }] }
+      throw new Error('the CLI did not answer')
+    },
+  }
+  const host = await start(first.saved(), { acp: flaky })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(calls > 1, 'the sign-in ask ran and its re-read failed')
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  assert.equal(host.saved().claudeAcpMoved, true)
+  assert.equal(host.saved().bots.m1.acpMoved?.target, 'acp-claude/opus')
+})
+
 test('a bridge whose probes do not pass, or an adapter that is not installed, moves nothing', async (t) => {
   for (const acp of [
     { ...readyAcp(), bridge: () => ({ on: true, probesPass: false }) },

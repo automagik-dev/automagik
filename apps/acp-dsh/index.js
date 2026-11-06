@@ -43,12 +43,13 @@ export const Config = z.object({
     model: z.string().required(),
   }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
-  // On by default where the adapter can drop its own built-in tools (Claude Code); Codex has
-  // no such switch and stays out of the default bridge, so it never runs two tool sets unless
-  // the person sets true. An explicit false is the kill switch and the 2026-11-03 behaviour.
-  // Hidden from settings forms (`.hidden()`): it is a rollback lever, not a preference, and
-  // stays writable through DSH's settings service and the profile patch.
-  dshTools: z.boolean().default(DSH_TOOLS_DEFAULT).volatile().hidden().description([
+  // No schema default: absent is the per-agent default (Claude Code on, because only its
+  // adapter can drop the built-in tool set; Codex off, so it never runs two tool sets), and an
+  // explicit true/false is the person's word. False is also the kill switch and the 2026-11-03
+  // behaviour. A schema default would materialise true and erase the difference. Hidden from
+  // settings forms (`.hidden()`): it is a rollback lever, not a preference, and stays writable
+  // through DSH's settings service and the profile patch.
+  dshTools: z.boolean().volatile().hidden().description([
     "Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's",
     "preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own",
     "rules say, turn the agent's built-in tools off where its adapter allows, and carry the",
@@ -152,6 +153,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
     name: spec.name,
     modeFor: spec.modeFor,
+    // The adapter reads these off the agent object: without them the bridge default would not
+    // find Claude's switch, the drift detector would never run and Codex would never fork.
+    ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),
+    ...(spec.drift === true ? { drift: true } : {}),
+    ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
     cli,
     // The agent's own models and efforts, read from the adapter release installed now.
     catalog: new Catalog({

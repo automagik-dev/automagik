@@ -1185,6 +1185,54 @@ test('the plugin wiring carries effort both ways on a model selection', async ()
   }
 })
 
+test('a real config with no dshTools keeps Codex out and bridges Claude', async () => {
+  // Through resolveConfig and the plugin's own agent objects, the way DSH builds them.
+  const { resolveConfig } = await import('@deepseek-ai/cordis')
+  const plugin = await import('../index.js')
+  const adapterFor = (data) => {
+    const registered = {}
+    const ctx = {
+      llm: {
+        registerAdapter: (providers, adapter) => {
+          for (const id of providers) registered[id] = adapter
+          return () => {}
+        },
+      },
+      agents: { get: () => undefined },
+      get: () => undefined,
+      provide: () => {},
+      on: () => {},
+      effect: () => {},
+      logger: { warn: () => {}, info: () => {} },
+    }
+    plugin.apply(ctx, resolveConfig(plugin, data), {
+      find: name => `/bin/${name}`,
+      signedIn: async () => true,
+      store: {
+        binOf: () => ({ path: '/adapter', version: '1' }),
+        update: async () => {},
+        home: undefined,
+      },
+    })
+    return registered['acp-claude']
+  }
+  const unset = adapterFor({})
+  const claude = unset.agents.get('acp-claude')
+  const codex = unset.agents.get('acp-codex')
+  // The registered objects carry the capabilities the adapter reads.
+  assert.equal(claude.disableBuiltInTools, true)
+  assert.equal(claude.drift, true)
+  assert.equal(codex.refresh, 'fork')
+  // No schema default: absent stays absent, so each agent's own switch decides.
+  assert.equal(unset.bridgeOn(claude), true)
+  assert.equal(unset.bridgeOn(codex), false)
+  // The person's word still wins both ways.
+  const forced = adapterFor({ dshTools: true })
+  assert.equal(forced.bridgeOn(forced.agents.get('acp-codex')), true)
+  const off = adapterFor({ dshTools: false })
+  assert.equal(off.bridgeOn(off.agents.get('acp-claude')), false)
+})
+
 test('the bridge default is per agent: Claude on, Codex off until explicitly asked', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-agent-default-'))
   const trace = name => join(dir, `${name}.ndjson`)
