@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { encodeUrlComponent } from './secrets.js'
 import { own } from './store.js'
 
@@ -10,7 +11,7 @@ const ENSURE_TIMEOUT_MS = 15_000
 export function validateCapabilityName(value) {
   const name = String(value ?? '').trim()
   if (name.length > 32 || !NAME.test(name) || name === 'github') {
-    throw new Error('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
+    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
   }
   return name
 }
@@ -19,17 +20,17 @@ export function expandCapabilityNames(capabilities, library) {
   const expanded = new Set()
   for (const name of capabilities ?? []) {
     const item = own(library, name)
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     if (item.kind === 'pack') {
       for (const childName of item.items ?? []) {
         const child = own(library, childName)
-        if (!child || !['mcp', 'skill'].includes(child.kind)) throw new Error(`Pack ${name} refers to an unavailable capability ${childName}.`)
+        if (!child || !['mcp', 'skill'].includes(child.kind)) throw refusal(`Pack ${name} refers to an unavailable capability ${childName}.`)
         expanded.add(childName)
       }
     } else if (item.kind === 'mcp' || item.kind === 'skill') {
       expanded.add(name)
     } else {
-      throw new Error(`Capability ${name} has an unknown kind.`)
+      throw refusal(`Capability ${name} has an unknown kind.`)
     }
   }
   return expanded
@@ -38,13 +39,13 @@ export function expandCapabilityNames(capabilities, library) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const strings = value => {
   if (value === undefined) return []
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error('Arguments must be a list of text values.')
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw refusal('Arguments must be a list of text values.')
   return [...value]
 }
 const stringMap = (value, label) => {
   if (value === undefined) return {}
   if (value === null || typeof value !== 'object' || Array.isArray(value)
-    || Object.values(value).some(item => typeof item !== 'string')) throw new Error(`${label} must contain text values.`)
+    || Object.values(value).some(item => typeof item !== 'string')) throw refusal(`${label} must contain text values.`)
   return Object.fromEntries(Object.entries(value))
 }
 
@@ -71,7 +72,7 @@ export function install(rt) {
   }
   const writeCheck = () => {
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(readOnly)
+    if (readOnly !== undefined) throw refusal(readOnly)
   }
   const allowedToEdit = (item, botId) => rt.isMain(botId) || item.createdBy === botId
   const usedByOthers = (name, botId) => Object.values(state.bots).some(bot => bot.id !== botId
@@ -81,17 +82,17 @@ export function install(rt) {
     }))
   // A creator that is not a Main Bot could otherwise rewrite what a Main Bot runs.
   const editCheck = (item, botId, verb) => {
-    if (!allowedToEdit(item, botId)) throw new Error(`Only ${item.createdBy ? 'its creator or a Main Bot' : 'a Main Bot'} can ${verb} ${item.name}.`)
-    if (!rt.isMain(botId) && usedByOthers(item.name, botId)) throw new Error(`Another Bot uses ${item.name}, so only a Main Bot can ${verb} it.`)
+    if (!allowedToEdit(item, botId)) throw refusal(`Only ${item.createdBy ? 'its creator or a Main Bot' : 'a Main Bot'} can ${verb} ${item.name}.`)
+    if (!rt.isMain(botId) && usedByOthers(item.name, botId)) throw refusal(`Another Bot uses ${item.name}, so only a Main Bot can ${verb} it.`)
   }
   const itemInput = (body, { botId, ui }) => {
     const name = validateCapabilityName(body.name)
     const kind = body.kind
-    if (!['mcp', 'skill', 'pack'].includes(kind)) throw new Error('Choose an MCP server, skill, or pack.')
+    if (!['mcp', 'skill', 'pack'].includes(kind)) throw refusal('Choose an MCP server, skill, or pack.')
     const items = ensureLibrary()
     const previous = own(items, name)
     if (previous && !ui) editCheck(previous, botId, 'change')
-    if (previous && previous.kind !== kind) throw new Error('A capability cannot change its kind. Delete it and save a new one.')
+    if (previous && previous.kind !== kind) throw refusal('A capability cannot change its kind. Delete it and save a new one.')
     const now = Date.now()
     const item = {
       name,
@@ -105,7 +106,7 @@ export function install(rt) {
       const transport = body.transport === 'streamable-http' ? 'streamable-http' : 'stdio'
       if (transport === 'stdio') {
         const command = String(body.command ?? '').trim()
-        if (command === '') throw new Error('Enter a command for the MCP server.')
+        if (command === '') throw refusal('Enter a command for the MCP server.')
         const args = strings(body.args)
         const env = stringMap(body.env, 'Environment variables')
         const changed = !previous || previous.kind !== 'mcp' || previous.transport !== 'stdio'
@@ -115,8 +116,8 @@ export function install(rt) {
         const url = String(body.url ?? '').trim()
         try {
           const parsed = new URL(url)
-          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error()
-        } catch { throw new Error('Enter a valid HTTP or HTTPS URL.') }
+          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw refusal()
+        } catch { throw refusal('Enter a valid HTTP or HTTPS URL.') }
         Object.assign(item, { transport, url, headers: stringMap(body.headers, 'Headers'), approved: true })
       }
     } else if (kind === 'skill') {
@@ -125,7 +126,7 @@ export function install(rt) {
       const names = [...new Set(strings(body.items))]
       for (const childName of names) {
         const child = own(items, childName)
-        if (!child || !['mcp', 'skill'].includes(child.kind)) throw new Error(`Packs can include only saved MCP servers and skills. ${childName} is not one.`)
+        if (!child || !['mcp', 'skill'].includes(child.kind)) throw refusal(`Packs can include only saved MCP servers and skills. ${childName} is not one.`)
       }
       item.items = names
     }
@@ -144,7 +145,7 @@ export function install(rt) {
     writeCheck()
     const items = ensureLibrary()
     const item = own(items, String(name ?? ''))
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     if (!ui) editCheck(item, botId, 'delete')
     delete items[item.name]
     for (const pack of Object.values(items)) if (pack.kind === 'pack') pack.items = (pack.items ?? []).filter(child => child !== item.name)
@@ -156,12 +157,12 @@ export function install(rt) {
     await rt.load()
     writeCheck()
     const caller = rt.botOf(callerId)
-    if (!caller) throw new Error('Only Bots on the team can change capabilities.')
+    if (!caller) throw refusal('Only Bots on the team can change capabilities.')
     const target = targetRef ? rt.findBot(targetRef) : caller
-    if (!target) throw new Error(`No Bot named ${targetRef}.`)
-    if (target.id !== caller.id && !rt.isMain(callerId)) throw new Error('Only a Main Bot can change another Bot’s capabilities.')
+    if (!target) throw refusal(`No Bot named ${targetRef}.`)
+    if (target.id !== caller.id && !rt.isMain(callerId)) throw refusal('Only a Main Bot can change another Bot’s capabilities.')
     const item = own(ensureLibrary(), String(name ?? ''))
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     await setAttached(target, item.name, endpoint === 'attach')
     return { bot: target.name, attached: endpoint === 'attach' }
   }
@@ -243,7 +244,7 @@ export function install(rt) {
     if (!pluginPromise) {
       pluginPromise = (async () => {
         const loader = ctx.get?.('loader')
-        if (typeof loader?.import !== 'function') throw new Error('This DSH cannot load MCP servers.')
+        if (typeof loader?.import !== 'function') throw refusal('This DSH cannot load MCP servers.')
         const exports = await loader.import(MCP_CLIENT)
         return loader.unwrapExports?.(exports) ?? exports?.default ?? exports
       })()
@@ -252,7 +253,7 @@ export function install(rt) {
   }
   function secretFor(name, botId) {
     const value = rt.canUseSecret(name, botId) ? rt.secretValue(name) : undefined
-    if (value === undefined) throw new Error(`Secret ${name} is missing or unavailable for this Bot.`)
+    if (value === undefined) throw refusal(`Secret ${name} is missing or unavailable for this Bot.`)
     return value
   }
   function resolveValues(values, botId) {
@@ -461,7 +462,7 @@ export function install(rt) {
       await rt.load()
       writeCheck()
       const item = own(library(), String(body.name ?? ''))
-      if (!item || item.kind !== 'mcp' || item.transport !== 'stdio') throw new Error(`No unapproved stdio MCP named ${body.name}.`)
+      if (!item || item.kind !== 'mcp' || item.transport !== 'stdio') throw refusal(`No unapproved stdio MCP named ${body.name}.`)
       item.approved = true
       item.updatedAt = Date.now()
       await rt.save()
@@ -471,12 +472,12 @@ export function install(rt) {
       await rt.load()
       writeCheck()
       const bot = rt.botOf(String(body.botId ?? ''))
-      if (!bot) throw new Error('Unknown Bot')
+      if (!bot) throw refusal('Unknown Bot')
       const name = String(body.name ?? '')
-      if (!own(library(), name)) throw new Error(`No capability named ${name}.`)
+      if (!own(library(), name)) throw refusal(`No capability named ${name}.`)
       return setAttached(bot, name, body.attached === true)
     }
-    throw new Error('Unknown capability operation.')
+    throw refusal('Unknown capability operation.')
   }
   const secretsChanged = rt.secretsChanged
   rt.secretsChanged = () => {

@@ -17,6 +17,7 @@
 // turn keeps running in its group Session, and what it ends with is posted to the group,
 // where the member that asked for it answers.
 import { randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -954,7 +955,7 @@ export function install(rt) {
   // round of their own, opened by the same relay a user message opens.
   async function continueRoom(roomId) {
     const room = rt.roomOf(roomId)
-    if (room === undefined) throw new Error('Unknown group chat')
+    if (room === undefined) throw refusal('Unknown group chat')
     if ((room.paused ?? []).length === 0) return
     room.relays = 0
     await rt.save()

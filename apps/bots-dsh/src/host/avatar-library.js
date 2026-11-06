@@ -3,6 +3,7 @@
 // image is named by the hash of its bytes, so the same picture is stored once, and the
 // index and the images are written whole, so a half-written file is never read.
 import { createHash, randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { avatarBytes } from './avatar.js'
@@ -69,7 +70,7 @@ export function install(rt) {
   // One photo at a time, so a photo that cannot be read does not lose the others. The
   // picture is checked as an image, and the same bytes are kept once.
   const importPhotos = (items) => serial(async () => {
-    if (root === undefined) throw new Error('This host keeps no Bot data folder, so it has no avatar library.')
+    if (root === undefined) throw refusal('This host keeps no Bot data folder, so it has no avatar library.')
     const index = await readIndex()
     const result = { imported: [], duplicates: [], failed: [] }
     for (const item of items) {
@@ -85,7 +86,7 @@ export function install(rt) {
           result.duplicates.push({ id: known.id, name: known.name })
           continue
         }
-        if (index.length >= MAX_PHOTOS) throw new Error(`The avatar library holds at most ${MAX_PHOTOS} photos.`)
+        if (index.length >= MAX_PHOTOS) throw refusal(`The avatar library holds at most ${MAX_PHOTOS} photos.`)
         const entry = { id, name: name || 'photo', mime, bytes: bytes.length, createdAt: Date.now() }
         await writeImage(entry, bytes)
         await writeIndex([...index, entry])

@@ -24,6 +24,7 @@
 // provider's prefix cache holds; a fresh part, or a checkpoint (which breaks the cache
 // anyway), freezes it anew.
 import { createHash, randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { appendFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -471,7 +472,7 @@ export function install(rt) {
       renewMemory: () => {},
       archiveBotMemory: async () => {},
       archiveGroupMemory: async () => {},
-      memoryEndpoint: async () => { throw new Error('Memory is turned off on this host') },
+      memoryEndpoint: async () => { throw refusal('Memory is turned off on this host') },
       memoryNews: () => ({}),
       memoryReviews: () => 0,
       memoryReviewStatus: () => ({ enabled: false, allowed: false, pending: false, running: false }),
@@ -1374,11 +1375,11 @@ export function install(rt) {
   function panelOf(body) {
     if (body.roomId !== undefined && body.roomId !== null) {
       const room = rt.roomOf(String(body.roomId))
-      if (room === undefined) throw new Error('Unknown group chat')
+      if (room === undefined) throw refusal('Unknown group chat')
       return { id: room.id, name: room.name, group: true, keeper: keeperOf(room), tag: { sessionId: room.id, kind: 'memory' }, scopes: { group: groupScope(room.id) } }
     }
     const bot = rt.botOf(String(body.botId ?? ''))
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
     return { id: bot.id, name: bot.name, group: false, keeper: bot, tag: { sessionId: rt.chatOf(bot.id), kind: 'memory' }, scopes: { own: ownScope(bot.id), team: TEAM } }
   }
   const panelBody = panel => (panel.group ? { roomId: panel.id } : { botId: panel.id })
@@ -1435,9 +1436,9 @@ export function install(rt) {
 
   async function memoryAsk(body) {
     const panel = panelOf(body)
-    if (panel.keeper === undefined) throw new Error('No Bot is left in this group chat')
+    if (panel.keeper === undefined) throw refusal('No Bot is left in this group chat')
     const text = String(body.text ?? '').trim().slice(0, ASK_TEXT_MAX)
-    if (text === '') throw new Error('Type a question or a change first')
+    if (text === '') throw refusal('Type a question or a change first')
     const numbered = await settled(() => Object.entries(panel.scopes).flatMap(([tag, scope]) => allEntries(loadScope(scope)).map(entry => ({ ...entry, scope: tag }))))
     const answer = parseAsk(await botShot(panel.keeper, askSystem(panel.group), askRequest({ name: panel.name, group: panel.group, numbered, language: languageNow(), text }), panel.tag))
     const meta = { source: 'memory panel', by: 'user', added: today() }
@@ -1850,7 +1851,7 @@ export function install(rt) {
     if (endpoint === 'memory-view') return memoryView(body)
     if (endpoint === 'memory-ask') return memoryAsk(body)
     if (endpoint === 'memory-forget') return memoryForget(body)
-    throw new Error(`Unknown endpoint ${endpoint}`)
+    throw refusal(`Unknown endpoint ${endpoint}`)
   }
 
   Object.assign(rt, {

@@ -3,6 +3,7 @@
 // and, when the user asks, reinstall it through DSH's plugin manager. A new version
 // runs from the next DSH start. A linked or local checkout is never offered one.
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { refusal } from './refusal.js'
 import { join } from 'node:path'
 import { inDesktopApp, inUnfoldInstance } from './constants.js'
 
@@ -233,9 +234,9 @@ export function install(rt) {
   /** Start reinstalling the newest version; the answer comes back through `check`. */
   function start() {
     if (status.phase === 'installing') return view()
-    if (!enabled || target === null) throw new Error('No Omni update is available')
+    if (!enabled || target === null) throw refusal('No Omni update is available')
     const service = manager()
-    if (typeof service?.installBundle !== 'function') throw new Error('The DSH plugin manager is not available in this profile')
+    if (typeof service?.installBundle !== 'function') throw refusal('The DSH plugin manager is not available in this profile')
     const chosen = target
     Object.assign(status, { phase: 'installing', error: null })
     const options = chosen.registry ? { registry: chosen.registry } : {}

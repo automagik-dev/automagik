@@ -27,6 +27,12 @@ export function errorCode(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('bot/')) return error.code
   return isInternal(error) ? 'bot/internal' : 'bot/refused'
 }
+// The codes whose message this code itself wrote for the user. A provider or file
+// system error carries no such code, so its message is never answered.
+const exposition = error => (typeof error?.code === 'string' && /^(?:bot|memory)\//.test(error.code) ? error.code : undefined)
+// The error's kind, for a log line and a reply: a code or a class name, never text
+// that can carry a path, a request or a key.
+const errorKind = error => [error?.code, error?.name].find(value => typeof value === 'string' && /^[\w./-]{1,40}$/.test(value)) ?? 'error'
 
 export function install(rt) {
   installBtw(rt)
@@ -672,10 +678,12 @@ export function install(rt) {
       }
     } catch (error) {
       const code = errorCode(error)
-      if (code !== 'bot/internal') return fail(error?.message ?? String(error), code)
-      // An internal error's message can name a path, a topic or a model's words, so
-      // neither the log nor the reply says it: only its kind, and the stack's frames.
-      const kind = [error?.code, error?.name].find(value => typeof value === 'string' && /^[\w./-]{1,40}$/.test(value)) ?? 'error'
+      // A message meant for the user is opt-in: this code names it with its own `bot/`
+      // or `memory/` code (memory writes `memory/*`). Any other error may be a
+      // provider's, carrying its request or endpoint text, or a file system's, carrying
+      // a path: neither the log nor the reply says its message, only its kind.
+      if (code !== 'bot/internal' && exposition(error) !== undefined) return fail(error.message, code)
+      const kind = errorKind(error)
       rt.noteFailure({ source: 'api', text: `${endpoint}: ${kind}`, code: kind, stack: error?.stack })
       return fail(`Something went wrong (${kind}).`, code)
     }
@@ -683,8 +691,14 @@ export function install(rt) {
 
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
-  // GET cannot have, so it has a route of its own.
-  const petFailure = error => Response.json({ error: error?.message ?? String(error) }, { status: error?.code === 'bot/invalid' ? 400 : 500 })
+  // GET cannot have, so it has a route of its own. A failure says its kind only: the raw
+  // message names the absolute path of the sheet or of Codex's folder, and the log gets
+  // the kind and the stack's frames, never that message.
+  const petFailure = (where, error) => {
+    const kind = errorKind(error)
+    rt.noteFailure({ source: 'api', text: `${where}: ${kind}`, code: kind, stack: error?.stack })
+    return Response.json({ error: `Something went wrong (${kind}).` }, { status: error?.code === 'bot/invalid' ? 400 : 500 })
+  }
   ctx.effect(() => ctx.connection.fetch.register({
     path: PET_ROUTE,
     methods: ['GET'],
@@ -696,7 +710,7 @@ export function install(rt) {
         if (!bytes) return new Response('Not found', { status: 404 })
         return new Response(bytes, { status: 200, headers: { 'content-type': 'image/webp', 'cache-control': 'private, max-age=3600' } })
       } catch (error) {
-        return petFailure(error)
+        return petFailure('pet route', error)
       }
     },
   }), 'ds-bot: pet route')
@@ -722,7 +736,7 @@ export function install(rt) {
         const bytes = Buffer.from(await request.arrayBuffer())
         return Response.json(await pets.toCodex(id, { name: url.searchParams.get('name') ?? id, description: url.searchParams.get('description') ?? '', bytes, part: url.searchParams.get('part') === 'sleep' ? 'sleep' : 'sheet' }))
       } catch (error) {
-        return petFailure(error)
+        return petFailure('pet to Codex route', error)
       }
     },
   }), 'ds-bot: pet to Codex route')

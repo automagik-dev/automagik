@@ -319,7 +319,7 @@ test('browser-give-back restores the hold when the Bot cannot be told', async (t
   failFlush(new Error('flush failed'))
   const failed = await call('browser-give-back', { botId: 'b2', callId: 'call-1', outcome: 'done' })
   assert.equal(failed.ok, false)
-  assert.match(failed.error.message, /flush failed/)
+  assert.equal(failed.error.message, 'Something went wrong (Error).')
   assert.deepEqual(rt.browserChannel.holdOf('b2'), BOT_HOLD)
 
   failFlush(undefined)

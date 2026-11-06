@@ -3,6 +3,7 @@
 // folder is fixed when it is made, so a change moves the conversation on to a fresh
 // part (parts.js).
 import { mkdir, realpath, stat } from 'node:fs/promises'
+import { refusal } from './refusal.js'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { unquote } from './text.js'
@@ -90,20 +91,20 @@ export function install(rt) {
     const text = unquote(input)
     if (text === '') return undefined
     const expanded = expandHome(text)
-    if (!isAbsolute(expanded)) throw new Error(`Give the full path of the folder, not ${text}`)
+    if (!isAbsolute(expanded)) throw refusal(`Give the full path of the folder, not ${text}`)
     let path
     try {
       path = await realpath(expanded)
     } catch {
-      throw new Error(`There is no folder at ${text}`)
+      throw refusal(`There is no folder at ${text}`)
     }
-    if (!(await isFolder(path))) throw new Error(`${text} is a file, not a folder`)
+    if (!(await isFolder(path))) throw refusal(`${text} is a file, not a folder`)
     return workFolder(path)
   }
 
   // A folder, as a real path, as a working folder: undefined for the team workspace.
   async function workFolder(path) {
-    if (await guarded(path)) throw new Error(`${path} holds DeepSeek Harness data, so Bots cannot work there`)
+    if (await guarded(path)) throw refusal(`${path} holds DeepSeek Harness data, so Bots cannot work there`)
     return path === await realTeam() ? undefined : path
   }
 
@@ -113,7 +114,7 @@ export function install(rt) {
   async function setTeamWorkspace(input) {
     const text = unquote(input)
     const expanded = expandHome(text)
-    if (text === '' || !isAbsolute(expanded)) throw new Error(`Give the full path of the folder, not ${text}`)
+    if (text === '' || !isAbsolute(expanded)) throw refusal(`Give the full path of the folder, not ${text}`)
     // The plugin's own default lies in DSH's data, and going back to it stays possible: that
     // folder itself, not where a link put in its place leads.
     const fallback = resolve(defaultTeamFolder())
@@ -125,11 +126,11 @@ export function install(rt) {
       return roots.some(data => within(path, data))
     }
     // A folder to be made counts where it would be made: a link above it can lead into the data.
-    if (await holdsData(await realBeyond(resolve(expanded)))) throw new Error(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
+    if (await holdsData(await realBeyond(resolve(expanded)))) throw refusal(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
     await mkdir(expanded, { recursive: true })
     const path = await realpath(expanded)
-    if (!(await isFolder(path))) throw new Error(`${text} is a file, not a folder`)
-    if (await holdsData(path)) throw new Error(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
+    if (!(await isFolder(path))) throw refusal(`${text} is a file, not a folder`)
+    if (await holdsData(path)) throw refusal(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
     if (path === await realTeam()) return path
     const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'Omni')
     state.workspaceId = workspace.id
@@ -154,7 +155,7 @@ export function install(rt) {
     if (!modes.includes('workspace-write')) return
     const approval = ctx.get?.('approval')
     const agent = exec.agent
-    if (approval === undefined || agent?.session === undefined) throw new Error(`Working in ${path} needs the user's approval, and there is no way to ask for it here, so nothing changed. The user can make this change in the settings.`)
+    if (approval === undefined || agent?.session === undefined) throw refusal(`Working in ${path} needs the user's approval, and there is no way to ask for it here, so nothing changed. The user can make this change in the settings.`)
     const outcome = await approval.request({
       agent,
       toolName: exec.name,
@@ -165,7 +166,7 @@ export function install(rt) {
     })
     if (outcome === 'allowed-once') return
     // An approval policy that never asks answers 'rejected' as well.
-    throw new Error(outcome === 'rejected' ? `Working in ${path} was not allowed, so nothing changed. The user can make this change in the settings.`
+    throw refusal(outcome === 'rejected' ? `Working in ${path} was not allowed, so nothing changed. The user can make this change in the settings.`
       : outcome === 'cancelled' ? 'The approval was cancelled, so nothing changed.'
         : `Working in ${path} needs the user's approval, and no one could answer, so nothing changed. The user can make this change in the settings.`)
   }
@@ -200,17 +201,17 @@ export function install(rt) {
       }
       case 'folder-pick': {
         const native = picker()
-        if (native?.kind !== 'native') throw new Error('This DeepSeek Harness has no folder chooser')
+        if (native?.kind !== 'native') throw refusal('This DeepSeek Harness has no folder chooser')
         return await native.pick(AbortSignal.any([signal, AbortSignal.timeout(PICK_TIMEOUT_MS)].filter(Boolean)))
       }
       case 'folder-list': {
         const browse = picker()
-        if (browse?.kind !== 'browse') throw new Error('This DeepSeek Harness cannot list folders')
+        if (browse?.kind !== 'browse') throw refusal('This DeepSeek Harness cannot list folders')
         const listing = await browse.list(typeof body.path === 'string' && body.path !== '' ? body.path : undefined, signal)
         return { path: listing.path, home: listing.home, crumbs: listing.crumbs, entries: listing.entries, truncated: listing.truncated }
       }
       default:
-        throw new Error(`Unknown endpoint ${endpoint}`)
+        throw refusal(`Unknown endpoint ${endpoint}`)
     }
   }
 

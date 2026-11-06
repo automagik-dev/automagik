@@ -24,6 +24,8 @@
 //   `level` the level picked on the current entry; `status` { kind: 'after-reply' |
 //   'switching' | 'fallback', answering? } while the pick has not taken over; `error` why the
 //   menu could not be read, for the person.
+import { refusal } from './refusal.js'
+
 const MAX_ENTRIES = 64
 const MAX_TEXT = 200
 const PRIVACY = new Set(['local', 'direct', 'relay'])
@@ -108,11 +110,19 @@ export function install(rt) {
   // person picks: a Bot's change never reaches a source.
   async function pickHostModel(bot, { id, effort, ack } = {}, actorId) {
     const source = sourceOf(bot)
-    if (source === undefined) throw new Error('Unknown Bot')
-    if (actorId !== undefined) throw new Error(`Only the user picks the model ${bot.name} answers with`)
+    if (source === undefined) throw refusal('Unknown Bot')
+    if (actorId !== undefined) throw refusal(`Only the user picks the model ${bot.name} answers with`)
     const pick = { ...some('id', text(id)), ...some('effort', text(effort)), ...(ack === true ? { ack: true } : {}) }
-    if (pick.id === undefined && pick.effort === undefined) throw new Error('Pick a model or a thinking level')
-    await source.pick(bot, pick)
+    if (pick.id === undefined && pick.effort === undefined) throw refusal('Pick a model or a thinking level')
+    // A source's pick rejects with a message meant for the person (the contract above),
+    // so it is opt-in here, at the boundary, while an error with its own bot/ code
+    // passes unchanged.
+    try {
+      await source.pick(bot, pick)
+    } catch (error) {
+      if (typeof error?.code === 'string' && error.code.startsWith('bot/')) throw error
+      throw refusal(String(error?.message ?? error))
+    }
   }
 
   // The label of the entry that answers now for a host-owned Bot, from its last menu; undefined
