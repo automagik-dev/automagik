@@ -201,7 +201,9 @@ a place in a team, and keeps that team in front of every agent and of you.
   once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
   bot's instructions reaches it at its next `automagik-herdr restart`. Claude Code's `/restart`
   refuses a session started with that briefing (`--append-system-prompt-file`), so the briefing
-  tells the bot to point you to `automagik-herdr restart <bot>` or the bot's Restart instead.
+  tells every bot, whatever its agent, to point you to `automagik-herdr restart <bot>` (run in
+  the project's folder, or with `--project`; it keeps the bot's agent and model) or the bot's
+  Restart instead of its agent's own restart command.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
 - **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr

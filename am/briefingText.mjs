@@ -127,16 +127,19 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 export const liveLine = (botId) => `Live status and latest reports of your team and lead: run \`automagik-herdr brief ${botId}\`.`;
 
 /**
- * How a bot launched with its briefing gets restarted (#428): Claude Code's /restart refuses a
- * session started with --append-system-prompt-file, so the person restarts it through Herdr.
- * Only in the launch briefing: a pane attached while running was not started that way.
+ * How a bot launched with its briefing gets restarted (#428), for every agent the briefing reaches
+ * (models.js BRIEFING): through Herdr, never the agent's own restart command (Claude Code's
+ * /restart refuses a session started with --append-system-prompt-file). A plain restart keeps
+ * the bot's agent and model (restart.js restartPlan). The CLI finds the project from the folder
+ * it runs in, or --project. Only in the launch briefing: a pane attached while running was not
+ * started with it.
  */
-export const restartLine = (botId) => "You cannot restart yourself from inside this session: Herdr started it "
-  + "with this briefing in its launch flags, and Claude Code's /restart refuses such a session, so never offer "
-  + "/restart or your agent's own restart. When the person asks you to restart (a new version, another account "
-  + `or model), tell them to run \`automagik-herdr restart ${botId}\` or use Restart in your bot's menu in the `
-  + "Herdr sidebar. In pt-BR: \"Não consigo me reiniciar de dentro desta sessão (o /restart do Claude Code "
-  + `não funciona aqui). Rode \`automagik-herdr restart ${botId}\` ou use Restart no menu do bot na barra lateral do Herdr.\"`;
+export const restartLine = (botId) => `To restart you, the person runs \`automagik-herdr restart ${botId}\` `
+  + "in this project's folder (or with --project <that folder>), which keeps your agent and model, or uses Restart "
+  + "in your bot's menu in the Herdr sidebar, not your agent's own restart command. In pt-BR: \"Para me reiniciar, "
+  + `rode \`automagik-herdr restart ${botId}\` na pasta deste projeto (ou com --project <essa pasta>), que mantém `
+  + "meu agente e modelo, ou use Restart no menu do bot na barra lateral do Herdr, não o comando de reinício do "
+  + "próprio agente.\"";
 
 /**
  * The briefing a bot starts with, its agent's system prompt (≤ BRIEFING_LIMIT): who it is, its

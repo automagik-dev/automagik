@@ -882,9 +882,16 @@ test("launch text: who, role, instructions, how it works, lead and team by id; n
   assert.match(text, /Instructions:\nReview every PR\./);
   assert.match(text, /automagik-herdr worker/);
   assert.match(text, /run `automagik-herdr brief b-bbbbbbbbbb`/, "the live state is one command away");
-  // #428: a restart goes through Herdr, never Claude Code's /restart, in English and pt-BR.
-  assert.match(text, /never offer \/restart.*run `automagik-herdr restart b-bbbbbbbbbb` or use Restart in your bot's menu/s);
-  assert.match(text, /In pt-BR: .*Rode `automagik-herdr restart b-bbbbbbbbbb` ou use Restart no menu do bot/s);
+  // #428: a restart goes through Herdr, never the agent's own restart command, in English and pt-BR.
+  const restart = /runs `automagik-herdr restart b-bbbbbbbbbb` in this project's folder \(or with --project <that folder>\), which keeps your agent and model, or uses Restart in your bot's menu in the Herdr sidebar, not your agent's own restart command\./;
+  assert.match(text, restart);
+  assert.match(text, /In pt-BR: "Para me reiniciar, rode `automagik-herdr restart b-bbbbbbbbbb` na pasta deste projeto \(ou com --project <essa pasta>\), que mantém meu agente e modelo/);
+  assert.doesNotMatch(text, /Claude|\/restart/, "the same text reaches codex, omp, pi, grok and hermes bots");
+  for (const agent of ["codex", "omp", "pi", "grok", "hermes"]) {
+    const other = launchBriefingText({ self: { ...byId(f, ID.cap), agent }, file: f });
+    assert.match(other, restart, agent);
+    assert.doesNotMatch(other, /Claude|\/restart/, agent);
+  }
   assert.doesNotMatch(briefingText({ self: byId(f, ID.cap), file: f }), /automagik-herdr restart/, "an attached pane can /restart");
   assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\).*hc ls --label bot=b-aaaaaaaaaa/s);
   assert.match(text, /- Dev \(bot b-cccccccccc/);
