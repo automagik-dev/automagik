@@ -28,9 +28,11 @@ import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
-// The bridge, its DSH approval, the drift detector and live switching are on unless the person
-// turns them off; the key is public (installed teams keep it in their profile patch). One source
-// for the schema default and for a direct `apply` without a parsed Config.
+// The bridge, its DSH approval, the drift detector and live switching: an absent key takes the
+// per-agent default (Claude on; Codex only on an explicit true), and false is the kill switch.
+// The key is public (installed teams keep it in their profile patch). DSH_TOOLS_DEFAULT is the
+// Claude/service view used for the bridge probe, crossings and effort carry; it is not a schema
+// default, so an absent key still reaches the adapter as absent.
 export const DSH_TOOLS_DEFAULT = true
 
 // claude, codex, sideModel and dshTools are live (volatile): DSH's settings service writes them

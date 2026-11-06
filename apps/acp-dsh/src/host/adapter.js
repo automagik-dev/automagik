@@ -132,8 +132,9 @@ function redactedReview(options, redact) {
  * summary) away from the agents: they would reach the agent as prompts of their own. A Session
  * title on an agent's route goes to a model that answers on its own instead, without the
  * agent's effort, which is the agent's model's: DSH's default model when that is not an agent,
- * else `sideModel()` (acp-dsh's `sideModel` setting, DeepSeek by default). DSH's default is the
- * model the person last picked, so on a team that chats with an agent it is usually an agent.
+ * else an explicitly chosen `sideModel`, each configured non-agent route in turn, and the
+ * built-in DeepSeek Flash last. DSH's default is the model the person last picked, so on a team
+ * that chats with an agent it is usually an agent.
  * Auto review is another side request: DSH's Auto preset sends it on the Session's route, and
  * it must reach a model that answers on its own just as a title does. It is redacted first:
  * the reviewer reads the Session's history, so its text passes the shared redactor.
@@ -158,9 +159,9 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
   // the team has. Anything else (a bad reply, a timeout) is that candidate's answer.
   const NEXT_MODEL = new Set(['MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'NO_ADAPTER'])
   // Every model that can answer beside the chat, in the order the team can reach it: DSH's
-  // default model when it is not an agent, a sideModel the person chose, the first configured
-  // non-agent route, and only then the built-in DeepSeek fallback. Nothing here reaches an
-  // agent: a review must never become a prompt in the chat it reviews.
+  // default model when it is not an agent, a sideModel the person chose, each configured
+  // non-agent route in turn (capped), and only then the built-in DeepSeek Flash. Nothing here
+  // reaches an agent: a review must never become a prompt in the chat it reviews.
   const choicesFor = async () => {
     const choices = []
     const add = (choice) => {

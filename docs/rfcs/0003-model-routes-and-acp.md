@@ -443,15 +443,13 @@ moves nothing and no Bot lands on a dead route; the team stays unmarked, and a l
 it on the next pass (a settings or adapter change) or the next start. Auto review no longer depends
 on a DeepSeek key: the reviewer resolves to a model the team can reach (DSH's default when it is not
 an agent, an explicitly chosen side model, each configured non-agent route in turn, then the
-built-in
-DeepSeek fallback) and falls through on a credential or missing-route failure, so a team with only a
-Claude login reviews on that model. It fails closed only when no candidate answers. Auto is the
-preset's identity, never its `ask` + `danger-full-access` bundle: a custom preset with the same
-knobs has no reviewer, so the bridge keeps its own approval. Flipping the setting ends the running
-agent sessions and revokes their bridges at once; the Session keeps its transcript. Codex is
-proposed to stay out of the default bridge until its adapter can drop its own tools: today
-`acp-codex` runs two tool sets (`dshTools` on keeps its built-in tools too), so a Codex Session is
-not part of the default's promise.
+built-in DeepSeek fallback) and falls through on a credential or missing-route failure, so a team
+with only a Claude login reviews on that model. It fails closed only when no candidate answers. Auto
+is the preset's identity, never its `ask` + `danger-full-access` bundle: a custom preset with the
+same knobs has no reviewer, so the bridge keeps its own approval. Flipping the setting ends the
+running agent sessions and revokes their bridges at once; the Session keeps its transcript. Codex is
+bridged only with an explicit `true`; absent or `false` means no bridge, and its built-ins stay its
+own tool set.
 
 ## Links
 

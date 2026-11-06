@@ -1330,19 +1330,21 @@ test('the reviewer walks the real provider list in order, capped at eight routes
   assert.deepEqual(seen, ['p1', 'p2', 'p3'])
   assert.equal(chunks.at(-1).reason.kind, 'stop')
 
-  // Past the cap the ninth route never runs; the built-in is still asked and, unregistered
-  // here, fails as NO_ADAPTER rather than the chain pretending a decision.
+  // Past the cap the ninth route is never even examined, whatever its catalog does: one
+  // model-less route and one whose listModels throws must not let the chain walk every
+  // provider on the machine. The built-in is still asked and, unregistered here, fails as
+  // NO_ADAPTER rather than the chain pretending a decision.
   const late = new Context()
   await late.plugin(LlmRuntime)
   late.llm.registerAdapter(['acp-fake'], new Route('acp-fake'))
-  const capped = []
+  const examined = []
   for (let i = 1; i <= 10; i += 1) {
     const route = new Route(`p${i}`, i === 9)
-    route.stream = async function* (options) {
-      capped.push(options.provider)
-      yield { type: 'finish', reason: { kind: 'error', failure: {
-        message: 'no key', code: 'MISSING_CREDENTIAL',
-      } } }
+    route.listModels = async (provider) => {
+      examined.push(provider)
+      if (i === 1) return []
+      if (i === 2) throw new Error('the catalog is unavailable')
+      return [{ provider, id: `m-${i}`, name: `p${i}` }]
     }
     late.llm.registerAdapter([`p${i}`], route)
   }
@@ -1352,7 +1354,7 @@ test('the reviewer walks the real provider list in order, capped at eight routes
     provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [],
   }
   for await (const chunk of late.llm.stream(lateReview)) chunks2.push(chunk)
-  assert.deepEqual(capped, ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
+  assert.deepEqual(examined, ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
   assert.equal(chunks2.at(-1).reason.failure.code, 'NO_ADAPTER')
 })
 
