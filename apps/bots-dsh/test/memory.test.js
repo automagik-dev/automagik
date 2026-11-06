@@ -49,6 +49,15 @@ test('a request names one entry by its text, or by a part only it has', () => {
   // cannot tell which one the request meant.
   const twins = parseMemory('- Likes tea\n- Likes tea\n').entries
   assert.deepEqual(matchEntries(twins, 'likes tea').map(entry => entry.line), [0, 1])
+  // A bullet an entry's text starts with is formatting on both sides: the entry
+  // matches itself, and the entry that only contains its cleaned text does not join
+  // the exact branch (#353). Two such twins still come back as both, never as the
+  // first alone.
+  const nested = parseMemory('- - - Nested note\n- - - Nested note extra\n').entries
+  assert.deepEqual(matchEntries(nested, '- - - Nested note').map(entry => entry.text), ['- - Nested note'])
+  assert.deepEqual(matchEntries(nested, '- - Nested note').map(entry => entry.text), ['- - Nested note'])
+  const nestedTwins = parseMemory('- - - Nested note\n- - - Nested note\n').entries
+  assert.deepEqual(matchEntries(nestedTwins, '- - Nested note').map(entry => entry.line), [0, 1])
 })
 
 test('keys are refused, while paths, names, and links are kept', () => {
@@ -270,6 +279,52 @@ test('duplicate entries never resolve to the first: one file is ambiguous, a top
   await assert.rejects(tool('remember', { text: 'Likes coffee', replace: 'Likes tea' }, 'b2'), ambiguous)
   await assert.rejects(tool('forget', { entry: 'Likes tea' }, 'b2'), ambiguous)
   assert.equal(read('bots', 'b2', 'MEMORY.md'), twice)
+})
+
+// #353: the bullet an entry's text starts with is formatting, not text. Cleaning only
+// the request made such an entry match every entry containing its cleaned text, so it
+// could never be edited or forgotten by its own text.
+test('an entry whose text starts with a bullet matches itself, not the entry that contains it', async (t) => {
+  const { tool, read, stop, home } = start()
+  t.after(() => stop())
+  const dir = join(home, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, 'MEMORY.md')
+  // The file line, its entry text (the file marker gone), and an entry that contains
+  // that text. Plain, nested and the other bullets the cleaner strips.
+  for (const [line, text, containing] of [
+    ['- - - Nested note', '- - Nested note', '- - - Nested note extra'],
+    ['- * * Starred', '* * Starred', '- * * Starred extra'],
+    ['- • Dotted', '• Dotted', '- • Dotted extra'],
+  ]) {
+    const longer = containing.slice(2)
+    writeFileSync(file, `# Memory\n\n${line}\n${containing}\n\n## Index\n`)
+    // Forgotten by its own text, replaced by its whole line: only it changes, and
+    // the containing entry stays.
+    assert.match(await tool('forget', { entry: text }, 'b2'), /^Removed from your memory/)
+    assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), [longer])
+    writeFileSync(file, `# Memory\n\n${line}\n${containing}\n\n## Index\n`)
+    assert.match(await tool('remember', { text: 'Changed note', replace: line }, 'b2'), /^Updated in your memory \(MEMORY\.md\): "[^"]+" is now "Changed note"\./)
+    assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['Changed note', longer])
+    // A part only the longer entry has still names it, as before.
+    assert.match(await tool('forget', { entry: 'extra' }, 'b2'), /^Removed from your memory/)
+    assert.deepEqual(parseMemory(read('bots', 'b2', 'MEMORY.md')).entries.map(entry => entry.text), ['Changed note'])
+  }
+
+  // The partial branch is unchanged: a text that is part of both entries, and no
+  // entry's whole text, matches both and the request is refused with the same message
+  // as before.
+  const pair = '# Memory\n\n- - - Nested note\n- - - Nested note extra\n\n## Index\n'
+  writeFileSync(file, pair)
+  await assert.rejects(tool('forget', { entry: 'note' }, 'b2'), /: The text given \(4 chars\) matches 2 entries in your memory; quote more of the one you mean\. recall shows what is saved\.$/)
+  assert.equal(read('bots', 'b2', 'MEMORY.md'), pair)
+
+  // Twins whose texts begin with bullets are still identical texts, never a silent
+  // pick of the first (#352).
+  const twins = '# Memory\n\n- - Same note\n- - Same note\n\n## Index\n'
+  writeFileSync(file, twins)
+  await assert.rejects(tool('forget', { entry: '- - Same note' }, 'b2'), /: The text given \(13 chars\) matches 2 entries with identical text in your memory; there is no way to tell them apart by text, so nothing changed\. recall shows what is saved\.$/)
+  assert.equal(read('bots', 'b2', 'MEMORY.md'), twins)
 })
 
 test('Main Bots and group admins write the team memory; only Main Bots touch another Bot\'s', async (t) => {

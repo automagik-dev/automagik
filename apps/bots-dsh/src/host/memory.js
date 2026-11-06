@@ -202,9 +202,13 @@ const squash = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCas
 export function matchEntries(entries, wanted) {
   const key = squash(cleanEntry(wanted))
   if (key === '') return []
-  const exact = entries.filter(entry => squash(entry.text) === key)
+  // Both sides are cleaned the same way: a bullet an entry's text starts with is
+  // formatting, so comparing the cleaned request with the stored text as it is
+  // would keep that entry from ever matching itself.
+  const text = entry => squash(cleanEntry(entry.text))
+  const exact = entries.filter(entry => text(entry) === key)
   if (exact.length > 0) return exact
-  return entries.filter(entry => squash(entry.text).includes(key))
+  return entries.filter(entry => text(entry).includes(key))
 }
 
 const KEY_PATTERNS = [
