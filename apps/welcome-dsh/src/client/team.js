@@ -162,7 +162,16 @@ export async function sandboxInstall({ show, signal, omniUi = callOmniUi, wait =
   let log = ''
   let from = 0
   show('sandbox', { terminal, log, step: null })
-  await omniUi('omni-terminal-write', { terminal, data: '\r' })
+  let started = false
+  const start = async state => {
+    if (started || state !== 'ready') return
+    check()
+    // Install terminals open before Bun and the shell are ready. Keys sent while
+    // preparing are rejected; only an accepted Enter starts this command once.
+    const written = await omniUi('omni-terminal-write', { terminal, data: '\r' })
+    started = written?.ok === true
+  }
+  await start(opened.state)
   const end = (phase, detail) => {
     void omniUi('omni-terminal-close', { terminal }).catch(() => {})
     check()
@@ -181,6 +190,7 @@ export async function sandboxInstall({ show, signal, omniUi = callOmniUi, wait =
     if (exited && read.exitCode === 0) return end('linked', { origin: null })
     if (exited) return end('failed', { message: read.error ?? (read.exitCode === 130 ? t('The install was cancelled.') : t('Omni\'s installer stopped (exit code {code}). What it printed is above.', { code: read.exitCode ?? '?' })), log })
     show('sandbox', { terminal, log, step: read.step ?? null })
+    await start(read.state)
     await wait(poll, signal)
   }
 }
