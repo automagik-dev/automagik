@@ -111,7 +111,6 @@ async function start({ home, source, log, lstatNow }) {
         // never waits on a reader that does not end its side.
         for (const connection of connections) connection.end()
         const cut = setTimeout(() => { for (const connection of connections) connection.destroy() }, CLOSE_GRACE_MS)
-        cut.unref?.()
         // Closing removes the socket file too (libuv unlinks the bound path).
         await new Promise(resolve => server.close(() => resolve()))
         clearTimeout(cut)
