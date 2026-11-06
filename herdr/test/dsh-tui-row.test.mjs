@@ -101,12 +101,14 @@ test("a dsh-tui worker: its task is the prompt after --; --model or --effort is 
   // A bot's worker defaults name a model or effort: refused for dsh-tui too, never silently dropped.
   assert.match(workerPlan({ ...bot, worker: { effort: "high" } }, {}).error, /^dsh-TUI takes no --model or --effort/);
   // Another agent's worker defaults never stop a dsh-tui worker (#600 review F4): a Claude captain
-  // with a worker effort of "high" starts one with no error and no warning; one it types is refused.
+  // with a worker effort of "high" starts one with no error, and one warning line says the effort
+  // was left out, as the model's does (#602 review); an effort it types is refused.
   const captain = { name: "Captain", agent: "claude", worker: { effort: "high", model: "opus" } };
   const fromClaude = workerPlan(captain, { agent: "dsh-tui" });
   assert.equal(fromClaude.error, undefined, fromClaude.error);
   assert.deepEqual([fromClaude.agent, fromClaude.effort, fromClaude.argv], ["dsh-tui", null, ["dsh-tui"]]);
-  assert.equal(fromClaude.warnings.some((w) => /effort/.test(w)), false, fromClaude.warnings.join());
+  assert.deepEqual(fromClaude.warnings.filter((w) => /effort/.test(w)),
+    ["Captain's worker effort high is for claude; dsh-tui runs its own default."], fromClaude.warnings.join());
   assert.match(workerPlan(captain, { agent: "dsh-tui", effort: "high" }).error, /^dsh-TUI takes no --model or --effort/);
   // Other agents keep warn-and-drop.
   const kimi = workerPlan({ name: "K", agent: "kimi" }, { effort: "high" });
