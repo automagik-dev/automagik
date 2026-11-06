@@ -420,6 +420,99 @@ test("with no CLI under the app home, Start and Attach say so and nothing runs",
   assert.equal(await liveTerminalOf(ID.main), null);
 });
 
+// ---- a linked machine: Herdr's exec limit (#444) ----
+
+// The world's hc with a linked machine `vm` (a scratch home here, claude on its PATH) holding
+// the team's project, and Herdr's answer to the timeout probe; every exec timeout is kept.
+async function linked(t, w, probe) {
+  const vm = join(w.root, "vm"), vmBin = join(w.root, "vm-bin"), project = join(vm, "proj");
+  mkdirSync(join(project, ".herdr"), { recursive: true });
+  mkdirSync(vmBin);
+  exe(join(vmBin, "claude"), "#!/bin/sh\nexit 0\n");
+  await run("git", ["init", "-q", project]);
+  writeFileSync(join(project, ".herdr", "bots.json"), JSON.stringify(team()));
+  w.setHc({ ...w.hcState(), machines: [{ name: "vm", id: "core-of-vm", state: "connected", uname: "Linux x86_64", home: vm, path: vmBin }] });
+  Object.assign(state, { timeoutProbe: probe, execTimeouts: [] });
+  t.after(() => { delete state.timeoutProbe; delete state.execTimeouts; });
+  return project;
+}
+const { MACHINE_EXEC_MS, MACHINE_WORST_MS, SHORT_EXEC_MS, machineCli } = await import("../mods/am-sidebar/launch.js");
+const { restartAnswer, restartArgs } = await import("../mods/am-sidebar/restart.js");
+
+const deadlineOf = () => state.calls.filter((c) => c.kind === "exec" && c.command === "env")
+  .map((c) => c.args.find((a) => a.startsWith("AUTOMAGIK_HERDR_DEADLINE=")) ?? null);
+
+test("a start on a linked machine: exec gets 600 s, above the CLI's worst case there, on a Herdr that takes it; the pane and its row", async (t) => {
+  const w = await world(t);
+  const project = await linked(t, w, "honours");
+  // The bound is Herdr's cap, and above the worst case computed for a start and a restart there.
+  assert.equal(MACHINE_EXEC_MS, 600_000);
+  assert.ok(MACHINE_EXEC_MS > MACHINE_WORST_MS.start && MACHINE_EXEC_MS > MACHINE_WORST_MS.restart);
+  const r = await startBot(project, ID.dev, {}, "vm");
+  assert.deepEqual(r, { terminal: "vm/t100" });
+  const cli = state.execTimeouts.filter((x) => x.command === "env");
+  assert.deepEqual(cli, [{ command: "env", timeout: MACHINE_EXEC_MS }], "the CLI ran once, with the machine bound");
+  assert.deepEqual(state.execTimeouts[0], { command: "true", timeout: "probe" }, "asked first");
+  assert.deepEqual(deadlineOf(), [null], "no deadline where Herdr takes the timeout");
+  assert.ok(w.calls().some((c) => c[0] === "run" && c[1] === "--on" && c[2] === "vm"));
+  assert.deepEqual(w.ledger().map((x) => [x.event, x.terminal, x.machine, x.by]), [["attach", "t100", "vm", "start"]]);
+  // This computer's Start passes no timeout: only a linked machine's does.
+  state.spaces = [{ id: "s1", folder: w.main, machine: null, active: true, tabs: [{ id: "a", active: true }] }];
+  state.execTimeouts = [];
+  assert.ok((await startBot(w.main, ID.dev)).terminal);
+  assert.deepEqual(state.execTimeouts.filter((x) => x.command === "env"), []);
+});
+
+for (const probe of ["ignores", "unreadable"]) {
+  test(`a Herdr whose exec timeout ${probe === "ignores" ? "is ignored" : "can't be read"} counts as 30 s: a start on a linked machine runs with that deadline, a restart is refused`, async (t) => {
+    const w = await world(t);
+    const project = await linked(t, w, probe);
+    const before = Date.now();
+    assert.deepEqual(await startBot(project, ID.dev, {}, "vm"), { terminal: "vm/t100" });
+    const after = Date.now();
+    // The deadline: 30 s from before exec, passed to the CLI beside the 600 s Herdr ignores.
+    const [word] = deadlineOf();
+    const at = Number(word?.split("=")[1]);
+    assert.ok(at >= before + SHORT_EXEC_MS && at <= after + SHORT_EXEC_MS, word);
+    assert.deepEqual(state.execTimeouts, [{ command: "true", timeout: "probe" }, { command: "env", timeout: MACHINE_EXEC_MS }]);
+    assert.ok(w.calls().some((c) => c[0] === "run" && c[2] === "vm"));
+    assert.deepEqual(w.ledger().map((x) => [x.event, x.terminal, x.machine]), [["attach", "t100", "vm"]]);
+    // Restart, plain (it resumes), as the button asks: refused before the CLI, no Force or Fresh offered.
+    const runs = w.calls().length;
+    state.execTimeouts = [];
+    const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, machine: "vm" }), "restart"));
+    assert.deepEqual([again.forceable, again.freshable], [false, false]);
+    assert.match(again.refused, /^This Herdr ends the sidebar's programs at 30 s .*a restart on vm .*that pane running beside the old one, both on one session\. Nothing was restarted\. /);
+    assert.ok(again.refused.endsWith(`Restart it from a terminal: automagik-herdr restart ${ID.dev} --project ${project} --machine vm`), again.refused);
+    assert.deepEqual(state.execTimeouts, [{ command: "true", timeout: "probe" }], "only the probe ran");
+    assert.equal(w.calls().length, runs, "no hc call");
+    assert.equal(w.ledger().length, 1);
+  });
+}
+
+test("Herdr ending the CLI (its 30 s, or the 600 s): may have stopped part-way, what to check, the terminal command; nothing offered again", async (t) => {
+  const w = await world(t);
+  const project = await linked(t, w, "honours");
+  state.execFault = (command) => (command === "env" ? new Error("env took longer than 600 s and was stopped") : null);
+  t.after(() => { delete state.execFault; });
+  const r = await startBot(project, ID.dev, {}, "vm");
+  assert.match(r.refused, /^Herdr ended automagik-herdr start on vm \(env took longer than 600 s and was stopped\), and it may have stopped part-way: a pane may run it with no attach row: /);
+  assert.match(r.refused, new RegExp(`automagik-herdr whois --bot ${ID.dev} --project ${project} --machine vm and vm's panes \\(hc ls\\)`));
+  assert.ok(r.refused.endsWith(`Then start it from a terminal if it isn't running: automagik-herdr start ${ID.dev} --project ${project} --machine vm`), r.refused);
+  const again = restartAnswer(await machineCli(restartArgs({ botId: ID.dev, projectKey: project, force: true, machine: "vm" }), "restart"));
+  assert.deepEqual([again.forceable, again.freshable], [false, false], "--force in the command offers no Restart anyway");
+  assert.match(again.refused, /its old pane and a new one may both run it/);
+  assert.ok(again.refused.endsWith(`automagik-herdr restart ${ID.dev} --project ${project} --machine vm --force`));
+});
+
+test("the terminal command quotes a folder the shell would split", async () => {
+  state.timeoutProbe = "ignores";
+  try {
+    const r = await machineCli(["restart", ID.dev, "--project", "/srv/my proj's", "--machine", "vm"], "restart");
+    assert.ok(r.err.endsWith(`automagik-herdr restart ${ID.dev} --project '/srv/my proj'\\''s' --machine vm`), r.err);
+  } finally { delete state.timeoutProbe; }
+});
+
 test("hc's keep wrapper: the program it runs is in front (lab/t8's hermes --tui); once it exits, the shell", () => {
   const kept = ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "hermes", "--tui"];
   assert.deepEqual(unwrapKeep(kept), ["hermes", "--tui"]);

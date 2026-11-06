@@ -41,8 +41,21 @@ export const home = () => homedir();
 export const shared = (key) => state.shared.get(key);
 export function setShared(key, value) { state.setSharedCalls += 1; state.shared.set(key, value); return null; }
 
-export function exec(command, args = [], { cwd, on } = {}) {
+// exec's `timeout` as Herdr takes it: each call's in state.execTimeouts ({ command, timeout }). A
+// timeout that isn't a number is answered by state.timeoutProbe: "honours" (unset; a Herdr that
+// takes a timeout refuses it before running anything), "ignores" (one that doesn't: it runs the
+// program) or "unreadable" (any other failure). state.execFault(command, args): an error exec
+// rejects with in place of running it (Herdr ending a program at its limit), or nothing.
+export function exec(command, args = [], { cwd, on, timeout } = {}) {
   state.calls.push({ kind: "exec", command, args, cwd, on: on ?? null });
+  if (timeout !== undefined) (state.execTimeouts ??= []).push({ command, timeout });
+  const fault = state.execFault?.(command, args);
+  if (fault) return Promise.reject(fault);
+  if (timeout !== undefined && typeof timeout !== "number") {
+    const probe = state.timeoutProbe ?? "honours";
+    if (probe === "honours") return Promise.reject(new Error("timeout must be a positive number of milliseconds"));
+    if (probe === "unreadable") return Promise.reject(new Error("exec failed"));
+  }
   if (on && state.offline.has(on)) return Promise.reject(new Error(`${on} is unreachable`));
   if (on && state.hung.has(on)) return new Promise(() => {});
   return new Promise((resolve, reject) => execFile(command, args, { cwd }, (err, stdout, stderr) => {

@@ -23,7 +23,7 @@ import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.j
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
 import { discoverProjects, editFolderOf, folderExists, keyOf, ownKeyOf, projectOfFolder, untrackedIn, writeBots } from "./bots.js";
-import { attachBot, startBot, liveTerminalOf, runCli, sleepOf } from "./launch.js";
+import { attachBot, startBot, liveTerminalOf, machineCli, runCli, sleepOf } from "./launch.js";
 import { historyLines, menuItems } from "./inspect.js";
 import { clickActionOf } from "./rows.js";
 import { openWorkerTab, workerClick } from "./workerTab.js";
@@ -440,8 +440,9 @@ export class BotForm {
     this.forceable = null;
     this.freshable = null;
     cx.spawn(async (cx) => {
-      let r;
-      r = restartAnswer(await runCli(restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, machine: project.machine ?? null })));
+      // On a linked machine: past Herdr's 30 s exec limit, or refused where Herdr has only that (#444).
+      const args = restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, machine: project.machine ?? null });
+      const r = restartAnswer(await (project.machine ? machineCli(args, "restart") : runCli(args)));
       this.busy = false;
       if (r.refused) {
         this.error = r.refused;
