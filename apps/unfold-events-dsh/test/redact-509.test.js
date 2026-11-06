@@ -118,3 +118,37 @@ for (const [what, input] of B_ROWS) {
     assert.ok(kept.includes(VALUE), 'the real value is remembered')
   })
 }
+
+// 5. The guard's edges over-hide, they never serve: an unquoted explicit name with a colon in it is
+// one token (the colon is not a separator), and a quote that closes past the bound, or not at all,
+// still hides the value on the `:` line, inline or under a block indicator (`: |`, whose value is
+// the block's lines). Before this fix all of them spelled the value out.
+const EDGES = [
+  ['an unquoted name with a colon', `? ${PASS}:${TAIL}\n: ${VALUE}\n`, `? ${PASS}:${TAIL}\n: ${REDACTED}\n`],
+  ['an unquoted name with a colon, then a comment', `? ${PASS}:${TAIL} # note\n: ${VALUE}\n`, `? ${PASS}:${TAIL} # note\n: ${REDACTED}\n`],
+  ['an unquoted name with a colon after an anchor and a tag', `? &a !!str ${PASS}:${TAIL} # note\n: ${VALUE}\n`, `? &a !!str ${PASS}:${TAIL} # note\n: ${REDACTED}\n`],
+  ['an unquoted name with a colon in a list item', `- ? ${PASS}:${TAIL} # note\n  : ${VALUE}\n`, `- ? ${PASS}:${TAIL} # note\n  : ${REDACTED}\n`],
+  ['an unquoted name with a colon, block', `? ${PASS}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}:${TAIL}\n: |\n  ${REDACTED}`],
+  ['a quote past the bound', `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: ${VALUE}\n`, `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: ${REDACTED}\n`],
+  ['a quote past the bound, block', `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: |\n  ${VALUE}\n`, `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: |\n  ${REDACTED}`],
+]
+for (const [what, input, want] of EDGES) {
+  test(`#509: the guard's edge over-hides, never serves (${what})`, () => {
+    assert.equal(redactText(input), want, 'the browser copy serves the name as written and hides the value')
+    assert.equal(windowText(input), want, 'the window serves the name as written and hides the value')
+    const kept = secretsIn(input)
+    assert.ok(kept.includes(VALUE), 'the value is remembered')
+    assert.ok(!kept.includes(TAIL), 'no part of the name is remembered')
+  })
+}
+
+for (const [what, valueLine] of [['an empty colon', `: ${VALUE}\n`], ['a block', `: |\n  ${VALUE}\n`]]) {
+  test(`#509: an unclosed quote over-hides, never serves (${what})`, () => {
+    const input = `? "${PASS}:${TAIL} # note\n${valueLine}`
+    for (const [copy, served] of [['the browser copy', redactText(input)], ['the window', windowText(input)]]) {
+      assert.ok(!served.includes(VALUE), `${copy}: the value on the \`:\` line is hidden`)
+      assert.ok(!served.includes(TAIL), `${copy}: the name tail is over-hidden with it`)
+    }
+    assert.ok(secretsIn(input).includes(VALUE), 'the value is remembered')
+  })
+}
