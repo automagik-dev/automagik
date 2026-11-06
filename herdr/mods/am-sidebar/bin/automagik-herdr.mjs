@@ -79,13 +79,14 @@ async function slot(fn) {
   try { return await fn(); } finally { running -= 1; waiting.shift()?.(); }
 }
 
-/** Runs a program: { code, stdout, stderr }; code 127 when it isn't there. */
+/** Runs a program: { code, stdout, stderr }; code 127 when it isn't there; killed: true when its timeout ended it. */
 export function runProgram(command, args, { cwd, timeout = 15000 } = {}) {
   return slot(() => new Promise((done) => {
     try {
       execFile(command, args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (!err) return done({ code: 0, stdout, stderr });
-        done({ code: err.code === "ENOENT" ? 127 : (typeof err.code === "number" ? err.code : 1), stdout: stdout ?? "", stderr: stderr || String(err.message) });
+        done({ code: err.code === "ENOENT" ? 127 : (typeof err.code === "number" ? err.code : 1), stdout: stdout ?? "", stderr: stderr || String(err.message),
+          ...(err.killed ? { killed: true } : {}) });
       });
     } catch (e) { done({ code: 127, stdout: "", stderr: String(e?.message ?? e) }); }
   }));
@@ -129,8 +130,8 @@ async function hcJson(args) {
   return parsed(r, args);
 }
 /** `hc get <t> --json`, or null when hc says there is no such terminal (hc itself missing still throws). */
-async function hcGet(terminal) {
-  const r = await hc(["get", terminal, "--json"]);
+async function hcGet(terminal, { timeout } = {}) {
+  const r = await hc(["get", terminal, "--json"], { timeout });
   return r.code === 0 ? parsed(r, ["get", terminal]) : null;
 }
 const local = (address) => typeof address === "string" && !address.includes("/");
@@ -1546,6 +1547,29 @@ async function cmdStart(opts, [ref]) {
 // hc's own "timed out" back: ended earlier, hc answers nothing and the machine reads as away.
 const AGENT_WAIT_S = 10;
 
+// A start from the sidebar on a Herdr that ends a mod's programs at 30 s (#444): the time that
+// limit ends this CLI, ms since the epoch (launch.js machineCli, before its exec, so it counts
+// run.sh's node search and node's own startup). Unset (a terminal, a Herdr that takes exec's
+// timeout): no deadline. hc's own bound for one call, 15 s, doesn't fit twice in that limit, so
+// the calls after the last check get DEADLINE_CALL_MS each: hc run, then at most two more (hc get
+// and, with no created_ms, hc kill; or, with no address, hc ls and hc kill), and 1 s for the row
+// and the exit: DEADLINE_MARGIN_MS. Checked before a new space is asked for (with
+// DEADLINE_PLACE_MS more for windowPlaceOn's calls) and again just before hc run.
+const DEADLINE = (() => { const n = Number(process.env.AUTOMAGIK_HERDR_DEADLINE); return Number.isSafeInteger(n) && n > 0 ? n : null; })();
+export const DEADLINE_CALL_MS = 5000;
+export const DEADLINE_MARGIN_MS = 3 * DEADLINE_CALL_MS + 1000;
+export const DEADLINE_PLACE_MS = 4000;
+const deadlineLeft = () => (DEADLINE === null ? Infinity : DEADLINE - Date.now());
+const callBound = () => (DEADLINE === null ? {} : { timeout: DEADLINE_CALL_MS });
+/** A start the deadline stops before it starts anything: why, and the command for a terminal. */
+function tooLate(bot, machine, key, need, space = null) {
+  const left = Math.max(0, Math.floor(deadlineLeft() / 1000));
+  return new CliError(`Only ${left} s of this Herdr's 30 s limit for the sidebar's programs was left, and starting ${bot.name} `
+    + `on ${machine} needs ${need / 1000} s to finish once its pane starts, so nothing was started`
+    + `${space ? ` (the space it opened, ${space}, stays, with only its shell)` : ""}. `
+    + `Start it from a terminal: automagik-herdr start ${shellWord(bot.id)} --project ${shellWord(key)} --machine ${shellWord(machine)}`);
+}
+
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
@@ -1634,6 +1658,9 @@ async function seatOnMachine(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A start: that space only, the bot in a tab of its own (as launchSeat).
+  if (over.place === undefined && deadlineLeft() < DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) {
+    throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS);
+  }
   const place = over.place !== undefined ? over.place : spaceOnly(await windowPlaceOn(machine, key));
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
@@ -1642,22 +1669,25 @@ async function seatOnMachine(project, bot, over = {}) {
   args.splice(1, 0, "--on", machine);
   const warnings = [...there.warnings, ...(agentKey === "claude" ? [noHookThere(bot, machine)] : [])];
   const run = async () => {
-    const r = await hc(args);
-    if (r.code !== 0) throw new CliError(`hc run on ${machine} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
+    if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
+    const r = await hc(args, callBound());
+    // Ended at its bound, hc run may still have started the pane there: looked for by name below.
+    if (r.code !== 0 && !r.killed) throw new CliError(`hc run on ${machine} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
     let address = null;
-    try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
+    try { address = r.killed ? null : JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (typeof address !== "string" || !address.includes("/")) {
       // It may run anyway: found by the name it was given (hc ls) and ended, never left beside the bot's pane.
       let stray = null;
-      try { stray = rowsOf(await hcJson(["ls"])).find((x) => x?.name === name && String(x.address ?? "").startsWith(`${machine}/`))?.address ?? null; } catch { stray = null; }
-      const killed = stray ? (await hc(["kill", stray])).code === 0 : false;
-      throw new CliError(`hc run on ${machine} gave no terminal address (${r.stdout.trim() || "nothing"}); `
+      try { stray = rowsOf(parsed(await hc(["ls", "--json"], callBound()), ["ls"])).find((x) => x?.name === name && String(x.address ?? "").startsWith(`${machine}/`))?.address ?? null; } catch { stray = null; }
+      const killed = stray ? (await hc(["kill", stray], callBound())).code === 0 : false;
+      const said = r.killed ? `didn't answer within ${(DEADLINE === null ? 15000 : DEADLINE_CALL_MS) / 1000} s` : `gave no terminal address (${r.stdout.trim() || "nothing"})`;
+      throw new CliError(`hc run on ${machine} ${said}; `
         + (killed ? `the pane it started (${stray}, named ${name}) was ended.` : `if a pane named ${name} started there, end it with hc kill.`));
     }
-    const get = await hcGet(address).catch(() => null);
+    const get = await hcGet(address, callBound()).catch(() => null);
     if (!Number.isSafeInteger(get?.created_ms)) {
       // No created_ms: no row can name it, so it isn't left running beside the bot's pane.
-      const killed = (await hc(["kill", address])).code === 0;
+      const killed = (await hc(["kill", address], callBound())).code === 0;
       throw new CliError(`${address} started, but hc get gave no created_ms, so it could have no attach row; `
         + (killed ? "it was ended." : `it couldn't be ended: end it with hc kill ${address}.`));
     }
@@ -1678,7 +1708,9 @@ async function seatOnMachine(project, bot, over = {}) {
   });
   // A space this start made: its spare shell's tab closed once the bot shows there (closeSpare).
   if (!seat.running && place?.spare && TAB_WAIT_MS > 0) {
-    const why = await closeSpare(place.spare, seat.terminal, machine);
+    // Under a deadline its waits (TAB_WAIT_MS, then four calls) don't fit: the tab stays, said.
+    const why = DEADLINE !== null ? `The new space's spare shell tab wasn't closed: this Herdr's 30 s limit for the sidebar's programs leaves no time for it.`
+      : await closeSpare(place.spare, seat.terminal, machine);
     if (why) seat.warnings.push(why);
   }
   return seat;

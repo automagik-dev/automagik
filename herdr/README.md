@@ -238,9 +238,14 @@ has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min f
 the sidebar runs them with Herdr's longest exec timeout, 10 min. A Herdr that doesn't take an exec
 timeout ends a mod's programs at 30 s, which could land after the new pane started: a pane with no
 attach row, or after a restart two panes on one session. On such a Herdr, or one that can't say,
-the sidebar starts nothing and names the command to run from a terminal instead
+Start still runs, with that 30 s as its deadline: just before it would ask for a new space, and
+again just before `hc run`, it checks what is left, and starts nothing when too little is left to
+finish (20 s and 16 s; the calls after `hc run` then get 5 s each). A space made for it stays.
+Restart isn't run there: after `hc run` it can still wait 30 s for the agent. Either way the
+sidebar names the command to run from a terminal instead
 (`automagik-herdr start <bot> --project <folder> --machine <machine>`, or `restart`), where
-no limit applies.
+no limit applies. When Herdr ends the CLI anyway, the sidebar says it may have stopped part-way and
+what to check (`automagik-herdr whois --bot`, `hc ls`).
 
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
