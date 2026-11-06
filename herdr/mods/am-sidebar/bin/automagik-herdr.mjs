@@ -26,7 +26,7 @@ import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords,
 import { tabSteps, workerSpace, workerTabName } from "../workerTab.js";
 import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, confirmBindings, foldAttach, heldIn, machinesById, modeProblem, placeOf as placeOfRow, readAttach } from "../attach.js";
 import { agentOnMachine, interpreterPath } from "../agentPath.mjs";
-import { briefingFilePath, installHook, launchBriefingText, withExclude } from "../briefingText.mjs";
+import { briefingFilePath, installHook, launchBriefingText, screenTail, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
@@ -47,9 +47,12 @@ import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
 
-/** A refusal or a usage mistake: printed on stderr, exit `code`. */
+/**
+ * A refusal or a usage mistake: printed on stderr, exit `code`. `detail`: fields a --json run
+ * also prints on stdout, beside `error` (the message), for a caller that shows them (#413).
+ */
 export class CliError extends Error {
-  constructor(message, code = 1) { super(message); this.code = code; }
+  constructor(message, code = 1, detail = null) { super(message); this.code = code; this.detail = detail; }
 }
 
 // ---- files and programs ----
@@ -111,8 +114,8 @@ const commandKeyOf = async (opts) => {
   return key;
 };
 
-async function hc(args) {
-  const r = await runProgram(programPath("hc") ?? "hc", args);
+async function hc(args, { timeout } = {}) {
+  const r = await runProgram(programPath("hc") ?? "hc", args, { timeout });
   if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
   return r;
 }
@@ -214,7 +217,7 @@ const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${mac
 const remoteIo = {
   hc,
   exec: async (command, args, machine, { cwd, timeout } = {}) =>
-    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), timeout ?? 60),
+    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args], { timeout: timeout ? (timeout + 10) * 1000 : undefined }), timeout ?? 60),
 };
 
 // What hc said: its error's message when it printed one as JSON.
@@ -1539,15 +1542,16 @@ async function cmdStart(opts, [ref]) {
 // ---- a bot's pane on a linked machine (automagik#206 part b): start and restart ----
 
 // How long one question to a linked machine may take, in seconds: a login shell runs the person's
-// profile, so this bounds it. Under runProgram's 15 s, which would otherwise end hc first.
+// profile, so this bounds it. remoteIo.exec gives hc 10 s over it, so a slow link still brings
+// hc's own "timed out" back: ended earlier, hc answers nothing and the machine reads as away.
 const AGENT_WAIT_S = 10;
 
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
- * (agentOnMachine: the login shell's, asked once, plus hc's and the user bin folders), so a
- * check that passes is a launch that finds it: refused when it isn't there, when the interpreter
- * its #! line names isn't, or when the machine doesn't answer. Resolves { path, warnings }:
- * the PATH seatOnMachine starts it with.
+ * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
+ * and the user bin folders), so a check that passes is a launch that finds it: refused when it
+ * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
+ * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
  */
 async function agentThere(machine, argv, name) {
   const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
@@ -1561,7 +1565,7 @@ async function agentThere(machine, argv, name) {
   }
   if (seen.state === "no-interpreter") {
     throw new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
-      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell.`);
+      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
   }
   return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
 }
@@ -1723,7 +1727,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
     const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force });
-    if (refusal) throw new CliError(refusal);
+    if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
         + `could end it mid-turn. Nothing was restarted. Look at the pane first, then pass --force to restart anyway `
@@ -1735,15 +1739,16 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (!run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
   // The old pane's agent.session label, as restartPlan reads it for the agent.
   const label = old?.labels?.[SESSION_LABEL] ?? null;
-  const plan = restartPlan({
+  const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
-  });
+  };
+  let plan = restartPlan(planned);
   let cwd = key;
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
   // A session counts only when the command really resumes it by id (--resume <id> in its argv).
-  const session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
@@ -1761,19 +1766,36 @@ async function restartOnMachine(opts, project, bot, entry) {
     const refusal = continueRefusal({ name: bot.name, old, cwd, sharers, agent: agentTable()[plan.agent]?.name ?? plan.agent });
     if (refusal) throw new CliError(refusal);
   }
-  const seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
+  let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...seat.warnings];
   report(warnings);
   if (old) {
-    const up = await agentUp(seat.address);
+    let up = await agentUp(seat.address);
+    // Codex can't resume the thread at all (#413): one new pane on a new thread, as cmdRestart does.
+    const gone = up.state === "ended" ? await endedCause(seat.address) : null;
+    if (providerGone(plan, gone)) {
+      const thread = plan.resume[0] === "resume" && plan.resume[1] && plan.resume[1] !== "--last" ? plan.resume[1] : null;
+      const note = providerGoneNote(thread, seat.address, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      session = null;
+      warnings.push(`${bot.name} starts on a new conversation: ${note}.`);
+      report([warnings.at(-1)]);
+      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: carriedLabels(old), replacing: true });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      warnings.push(...again.warnings);
+      report(again.warnings);
+      seat = again;
+      up = await agentUp(seat.address);
+    }
     if (up.state !== "live") {
-      const ended = up.state === "ended" || (await hc(["kill", seat.address])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.address} exited before its agent was up (hc read ${seat.address} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : "")
-        : `${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.address])).code === 0;
+      throw new CliError(`${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     const created = Number.isSafeInteger(up.get?.created_ms) ? up.get.created_ms : seat.created_ms;
@@ -2015,6 +2037,70 @@ async function agentUp(terminal, ms = RESTART_WAIT_MS) {
   }
 }
 
+// A line that names a failure: an error word, or a code in brackets as codex gives one
+// ("model provider example-proxy is no longer configured (modelProviderNotConfigured)").
+const FAILURE_WORD = /\b(error|fatal|failed|failure|panic|denied|invalid|unauthori[sz]ed|refused|cannot|can't|not configured|no longer)\b/i;
+const FAILURE_CODE = /\([a-z]+[A-Z][A-Za-z]*\)/; // camelCase only: never "(quit)" or "(default)"
+const failureLine = (l) => FAILURE_WORD.test(l) || FAILURE_CODE.test(l);
+// A line with nothing to say: box drawing, rules, a bare shell prompt.
+const EMPTY_LINE = /^[\s\u2500-\u257f\u2580-\u259f\-_=*•·.:>❯›$%#]*$/;
+
+/**
+ * The agent's own last word on a screen (`hc read`'s text), #413: of its last lines with
+ * something on them, the last one that names a failure, else the last one; null for none.
+ */
+export function causeLine(text) {
+  const lines = screenTail(text, 40).split("\n").map((l) => l.trim()).filter((l) => l && !EMPTY_LINE.test(l));
+  const line = lines.findLast(failureLine) ?? lines.at(-1);
+  if (!line) return null;
+  return line.length > 300 ? `${line.slice(0, 299)}…` : line;
+}
+
+/** The last line `terminal`'s agent left on its screen (causeLine), or null when it can't be read. */
+async function endedCause(terminal) {
+  try {
+    const r = await hc(["read", terminal, "--lines", "40", "--json"]);
+    if (r.code !== 0) return null;
+    let text = r.stdout;
+    try { const j = JSON.parse(r.stdout); text = typeof j?.text === "string" ? j.text : null; } catch { /* plain text */ }
+    if (text === null) return null;
+    return causeLine(text);
+  } catch { return null; }
+}
+
+/** Why `terminal` ended before its agent was up: { text, cause }, the text naming the agent's last line (endedCause) when it left one. */
+async function exitedWhy(terminal) {
+  const cause = await endedCause(terminal);
+  return { cause, text: `${terminal} exited before its agent was up${cause ? `; its agent said: "${cause}" (hc read ${terminal} shows the rest)` : ` (hc read ${terminal} says why)`}` };
+}
+
+/**
+ * restartRefusal's refusal of a busy pane: --json prints `refused` ("working": mid-turn;
+ * "helpers": helpers that end with it) and its `terminal`, so a caller can wait for it (#413).
+ */
+const busyRefusal = (refusal, old) => new CliError(refusal, 1, { refused: old?.status?.state === "working" ? "working" : "helpers", terminal: old.address });
+
+// Codex refusing a thread whose model provider is no longer in its config (#413: threads begun
+// on a provider since removed from the config): that thread can't be resumed, only left behind.
+// Its own error code only, never a bare "no longer configured" another failure might print.
+const PROVIDER_GONE = /\bmodelProviderNotConfigured\b/;
+
+/**
+ * Whether a resume that exited (its agent's last line `cause`) is codex unable to resume the
+ * thread at all (PROVIDER_GONE: codex's modelProviderNotConfigured), the one failure a restart
+ * answers by starting fresh (#413).
+ */
+const providerGone = (plan, cause) => plan.mode === "resume" && plan.agent === "codex" && PROVIDER_GONE.test(cause ?? "");
+/** The note a restart that left such a thread behind carries: the old thread and what codex said. */
+const providerGoneNote = (thread, terminal, cause) =>
+  `codex can't resume ${thread ? `thread ${thread}` : "the folder's latest thread"} (${terminal} said "${cause}"), so it starts on a new one`;
+
+/** A replacement that exited before its agent was up: the refusal; --json prints the cause beside the replacement `terminal`. */
+async function exitedBefore(terminal, rest) {
+  const { cause, text } = await exitedWhy(terminal);
+  return new CliError(`${text}; ${rest}`, 1, { terminal, cause });
+}
+
 /** The workers ledger's rows ([] when it can't be read). */
 function workerLedgerRows() {
   try { return readLedger(readText(ledgerPath(appHome())) ?? ""); } catch { return []; }
@@ -2130,7 +2216,9 @@ const TREE_TURN_WAIT_MS = Number(process.env.AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS) 
 const TREE_TURN_POLL_MS = Math.min(2000, Math.max(100, Math.floor(TREE_TURN_WAIT_MS / 10)));
 
 /**
- * --tree, before the bot's new pane starts: waits (TREE_TURN_WAIT_MS) until the old pane and every
+ * --tree, before the bot's new pane starts: refused (unless --force) while the old pane or a helper
+ * in `plans` waits for an answer, or has an agent that reports no status to hc, which may be
+ * mid-turn (#413; a plain program reports none and passes); else waits (TREE_TURN_WAIT_MS) until the old pane and every
  * helper in `plans` are idle at one look, so no turn ends (and types its note into the old pane)
  * once two panes could hold the bot's session. A helper's note can start the old pane's turn, so
  * all are looked at again each time. Refused (CliError), nothing started, when one is still
@@ -2144,7 +2232,20 @@ async function treeIdle(old, plans, say, { force = false } = {}) {
     const states = await Promise.all([old.address, ...plans.map((q) => q.replaced)].map((a) => hcState(a)));
     const unread = states.filter((x) => x.state === "unknown").map((x) => x.why);
     if (unread.length) throw new CliError(`${unread.join("; ")}: --tree can't tell whether it is mid-turn. Nothing was started.`);
-    const busy = [old.address, ...plans.map((q) => q.replaced)].filter((_, i) => states[i].state === "live" && states[i].get?.status?.state === "working");
+    const panes = [{ address: old.address, agent: agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) }, ...plans.map((q) => ({ address: q.replaced, agent: q.agent }))]
+      .map((p, i) => ({ ...p, live: states[i].state === "live", status: states[i].get?.status?.state }));
+    const asking = panes.filter((p) => p.live && p.status === "blocked").map((p) => p.address);
+    if (asking.length) {
+      const one = asking.length === 1;
+      throw new CliError(`${asking.join(", ")} ${one ? "is" : "are"} waiting for an answer. Nothing was started: answer ${one ? "it" : "them"} first, or pass --force to end ${one ? "it" : "them"}.`);
+    }
+    const silent = panes.filter((p) => p.agent && p.live && typeof p.status !== "string").map((p) => p.address);
+    if (silent.length) {
+      const one = silent.length === 1;
+      throw new CliError(`${silent.join(", ")} ${one ? "doesn't" : "don't"} tell hc whether ${one ? "it is" : "they are"} busy, so --tree can't tell whether ${one ? "it has" : "they have"} finished. `
+        + `Nothing was started. Look at ${one ? "it" : "them"} first, then pass --force to restart anyway.`);
+    }
+    const busy = panes.filter((p) => p.live && p.status === "working").map((p) => p.address);
     if (!busy.length) {
       const live = plans.filter((_, i) => states[i + 1].state === "live");
       for (const q of plans.filter((_, i) => states[i + 1].state !== "live")) say(`${q.replaced} ended by itself before the restart, so it isn't run again.`);
@@ -2213,7 +2314,7 @@ function byHand(p, parent) {
  */
 async function rerunHelpers(plans, parent, say) {
   const out = plans.map((p) => ({ name: p.name, replaced: p.replaced, terminal: null, bot: p.binding?.bot ?? null, agent: p.agent ?? null,
-    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, by_hand: null, still_running: false }));
+    mode: p.mode ?? null, session: p.session ?? null, up: false, note: p.note ?? null, error: null, cause: null, by_hand: null, still_running: false }));
   for (const [i, p] of plans.entries()) {
     const who = `${p.replaced}${p.name && p.name !== p.replaced ? ` (${p.name})` : ""}`;
     const failed = (why) => {
@@ -2238,9 +2339,14 @@ async function rerunHelpers(plans, parent, say) {
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
     const up = await agentUp(address);
     if (up.state !== "live") {
-      const killed = up.state === "ended" || (await hc(["kill", address])).code === 0;
-      failed(up.state === "ended" ? `${address} exited before its agent was up (hc read ${address} says why)`
-        : `${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
+      if (up.state === "ended") {
+        const why = await exitedWhy(address);
+        out[i].cause = why.cause;
+        failed(why.text);
+        continue;
+      }
+      const killed = (await hc(["kill", address])).code === 0;
+      failed(`${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
       continue;
     }
     out[i].terminal = address;
@@ -2390,7 +2496,7 @@ async function cmdRestart(opts, [ref]) {
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
   if (old) {
     const refusal = restartRefusal({ name: bot.name, old, helpers, force: opts.force, tree: opts.tree });
-    if (refusal) throw new CliError(refusal);
+    if (refusal) throw busyRefusal(refusal, old);
   }
   const agents = agentTable();
   const ledger = workerLedgerRows();
@@ -2426,7 +2532,7 @@ async function cmdRestart(opts, [ref]) {
       + `or pick a folder whose slug is the same.`);
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  const resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
+  let resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
@@ -2447,7 +2553,7 @@ async function cmdRestart(opts, [ref]) {
   if (tree.length) plans = await treeIdle(old, tree, (w) => early.push(w), { force: opts.force });
   // A resumed session keeps its label on the new pane, so the next restart resumes it too.
   const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
-  const seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
+  let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
@@ -2463,14 +2569,29 @@ async function cmdRestart(opts, [ref]) {
   let oldEnded = false;
   if (old) {
     // The old pane ends only once the new one has kept its agent up: the space is never left empty.
-    const up = await agentUp(seat.terminal);
+    let up = await agentUp(seat.terminal);
+    // Codex can't resume the thread at all (its model provider is gone, #413): one new pane on a
+    // new thread, the old one named in the note; any other failure stays a failure.
+    const gone = up.state === "ended" ? await endedCause(seat.terminal) : null;
+    if (providerGone(plan, gone)) {
+      const note = providerGoneNote(resumeId, seat.terminal, gone);
+      plan = { ...restartPlan({ ...planned, fresh: true }), note };
+      resumeId = null;
+      say(`${bot.name} starts on a new conversation: ${note}.`);
+      const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry: carriedLabels(old), replacing: held.binding });
+      if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
+      for (const w of again.hook.warnings) say(w);
+      seat = again;
+      up = await agentUp(seat.terminal);
+    }
     if (up.state !== "live") {
       // An abandoned replacement is ended (no seat row was written for it); the old pane stays.
-      const ended = up.state === "ended" || (await hc(["kill", seat.terminal])).code === 0;
-      throw new CliError(up.state === "ended"
-        ? `${seat.terminal} exited before its agent was up (hc read ${seat.terminal} says why); ${old.address} still runs ${bot.name}, untouched.`
-          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : "")
-        : `${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
+      if (up.state === "ended") {
+        throw await exitedBefore(seat.terminal, `${old.address} still runs ${bot.name}, untouched.`
+          + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
+      }
+      const ended = (await hc(["kill", seat.terminal])).code === 0;
+      throw new CliError(`${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
     // Up: the ledger moves the bot to the new terminal, under its lock.
@@ -3243,7 +3364,7 @@ async function cmdWorker(opts, rest) {
 
 /** The hooks notice (migrateHooks.mjs hooksNotice) on lines of its own after the summary, or "". */
 const hooksLines = (hooks) => { const lines = hooksNotice(hooks); return lines.length ? `\n${lines.join("\n")}` : ""; };
-/** Each mod an install held for a layout (update.mjs `held`, #432) on a line of its own, or "". */
+/** Each mod an install held for a layout (update.mjs `held`, #420, #432) on a line of its own, or "". */
 const heldLines = (installed) => (installed.held ?? []).map((h) => `\n${heldModLine(h, installed.version)}`).join("");
 
 /**
@@ -3514,6 +3635,7 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (e) {
     const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
     process.stderr.write(`automagik-herdr: ${message}\n`);
+    if (opts.json && e instanceof CliError && e.detail) process.stdout.write(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`);
     return e instanceof CliError ? e.code : 1;
   }
 }

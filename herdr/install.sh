@@ -72,6 +72,8 @@ main() {
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
+  # How long `herdr-app status` may take: a Herdr that does not answer never holds up a run.
+  STATUS_SECONDS=10
   # The Herdr this pack runs in is herdrdev's (D27): bundle id dev.herdr.app on macOS, herdr-app on
   # Linux, installed by its own installer. Another app named Herdr (Herdr UI, penso/herdr-gpui:
   # so.pen.herdr-gpui) is a different app and never counts.
@@ -117,7 +119,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; STATUS_SECONDS=${AUTOMAGIK_HERDR_STATUS_SECONDS:-$STATUS_SECONDS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
     esac
   fi
 
@@ -134,7 +136,8 @@ Automagik Herdr installer
 
   install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
                                        install or update the pack and the automagik-herdr command
-  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
+  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before;
+                                       refused while the layout Herdr shows names a pack mod
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
@@ -205,11 +208,29 @@ cli_target() {
 }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
-# is unavailable.
+# is unavailable, or gives no answer within $STATUS_SECONDS (macOS has no `timeout`).
 shown_layout() {
   command -v herdr-app >/dev/null 2>&1 || return 0
-  st=$(herdr-app status </dev/null 2>/dev/null) || return 0
-  printf '%s\n' "$st" | sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  st=$(mktemp) || return 0
+  herdr-app status </dev/null >"$st" 2>/dev/null &
+  asked=$!
+  # Nothing of the watchdog's stays on stdout: callers read this function through $(…), which would
+  # wait for its sleep. Stopped, it stops its sleep too, so no run leaves one behind.
+  (
+    nap=
+    trap '[ -z "$nap" ] || { kill "$nap"; wait "$nap"; }; exit 0' TERM
+    sleep "$STATUS_SECONDS" &
+    nap=$!
+    wait "$nap" || true
+    kill "$asked" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  watchdog=$!
+  rc=0
+  wait "$asked" || rc=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  if [ "$rc" = 0 ]; then sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -n 1; fi
+  rm -f "$st"
 }
 
 # The sidebar mod has place "none": it shows only in a layout that names it. While Herdr shows
@@ -283,6 +304,57 @@ mods_said() {
   printf '%s' "$said"
 }
 
+# Before --uninstall moves anything (#420), as `am uninstall herdr.pack` does: refused while a
+# block ("mod": "<m>") of the layout Herdr shows names a pack mod in mods/ ($1, the record's
+# list), since Herdr would drop that layout and show plain Herdr. With no layout to read (no
+# herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
+# whose blocks name one ($2: the pack's own layout file when this run removes it, left out).
+layout_guard() {
+  shown=$(shown_layout)
+  why=
+  case $shown in
+    '') why="no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in ${STATUS_SECONDS}s" ;;
+    */*|.|..) why="Herdr shows the layout \"$shown\", a name with a path, so no file in $APP_HOME/layouts was read" ;;
+    *) [ -f "$APP_HOME/layouts/$shown.json" ] || why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there" ;;
+  esac
+  set -f
+  IFS=,
+  on=
+  for m in $1; do
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    if [ -d "$MODS/$m" ] && [ ! -L "$MODS/$m" ]; then on="${on:+$on,}$m"; fi
+  done
+  named=
+  if [ -z "$why" ]; then
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$APP_HOME/layouts/$shown.json"; then named="${named:+$named, }$m"; fi
+    done
+  fi
+  unset IFS
+  set +f
+  if [ -n "$named" ]; then
+    # The command names main, so it does nothing while main is the layout in the way.
+    how="ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'"
+    if [ "$shown" = main ]; then how=ctrl-shift-l; fi
+    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
+  fi
+  [ -n "$why" ] && [ -n "$on" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    if [ ! -f "$f" ] || [ "$f" = "$2" ]; then continue; fi
+    has=
+    set -f
+    IFS=,
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$f"; then has="${has:+$has, }$m"; fi
+    done
+    unset IFS
+    set +f
+    [ -n "$has" ] || continue
+    name=${f##*/}
+    say "Uninstalling the pack without knowing the layout Herdr shows ($why): your layout ${name%.json} ($f) shows $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+  done
+}
+
 switch_hint() {
   [ "$HINT" = yes ] || return 0
   say "To show the Automagik sidebar, switch Herdr to the automagik layout; the sidebar appears after this:"
@@ -302,7 +374,11 @@ uninstall() {
   fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
-  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
+  drop=
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then drop=$LAYOUT; fi
+  # Nothing moves while the shown layout's blocks name a pack mod (#420).
+  layout_guard "$mods" "$drop"
+  if [ -n "$drop" ]; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi

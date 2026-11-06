@@ -226,3 +226,15 @@ test("runCheck passes `--expect <v>` through to update.mjs apply", async () => {
   await check.runCheck(exec, "/p/update.mjs", "node", { mods: "/m", command: "apply", extra: ["--expect", "0.8.1"] });
   assert.deepEqual(calls, [["/p/update.mjs", "apply", "--expect", "0.8.1", "--mods", "/m"]]);
 });
+
+test("applyPatch carries installed.held; landedNotice says each held mod and drops a malformed one", () => {
+  const out = (o) => ({ code: 0, stdout: `${JSON.stringify(o)}\n`, stderr: "" });
+  const held = [{ mod: "old-mod", layouts: ["mine"] }, { mod: 7 }, { mod: "x", layouts: [] }];
+  const patch = check.applyPatch(out({ current: "0.8.0", installed: { version: "0.8.1", held } }), {}, NOW);
+  assert.deepEqual(patch.heldMods, [held[0]]);
+  assert.deepEqual(check.applyPatch(out({ current: "0.8.0", installed: { version: "0.8.1" } }), {}, NOW).heldMods, []);
+  const { body } = check.landedNotice("0.8.1", "0.8.0", false, patch.heldMods);
+  assert.match(body, /^Your bots kept running\. Kept mods\/old-mod: 0\.8\.1 no longer ships it, but the mine layout shows it, /);
+  assert.match(body, /Take its block out of each of those layouts, or remove them.*Switching layouts does not retire it/);
+  assert.equal(check.landedNotice("0.8.1", null).body, "Your bots kept running.", "nothing held: the notice as before");
+});

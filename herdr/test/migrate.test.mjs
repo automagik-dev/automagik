@@ -18,6 +18,7 @@ import {
 import { apply, plan, pending, revert } from "../mods/am-sidebar/migrateHome.mjs";
 import { CATALOG_URL, parseMarker } from "../mods/am-sidebar/release.js";
 import { migrateRefs, revertRefs, setupHome } from "../mods/am-sidebar/update.mjs";
+import { heldFrom, landedNotice } from "../mods/am-sidebar/updateCheck.js";
 import { catalogUrl } from "../mods/am-mods/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -751,5 +752,23 @@ test("a layout the migration cannot move off a gone old folder is said on every 
   const lines = [];
   migrateRefs({ modsDir: s.mods, log: (l) => lines.push(l) });
   assert.equal(lines.filter((l) => /cannot move it to am-sidebar/.test(l)).length, 2, lines.join("\n"));
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
+});
+
+test("an install says a layout stranded on a renamed folder already gone, with the install and in held-mods.json", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  mkdirSync(join(s.home, "layouts"));
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const r = s.cli("install", "--from", amPack(s.root, "0.3.1", ["am-sidebar"]), "--version", "0.3.1");
+  assert.equal(r.code, 0, r.log);
+  const gone = { mod: "spaces-agents", renamed: "am-sidebar", gone: true, layouts: ["mine"] };
+  assert.deepEqual(r.out.installed.held, [gone]);
+  assert.match(r.log, /mods\/spaces-agents is gone \(it is am-sidebar now\), but the mine layout still names it, and 0\.3\.1 cannot rewrite it/);
+  const note = heldFrom(read(join(s.state, "held-mods.json")), "0.3.1");
+  assert.deepEqual(note, [gone]);
+  assert.match(landedNotice("0.3.1", "0.3.0", false, note).body, /mods\/spaces-agents is gone \(it is am-sidebar now\).*so Herdr shows plain Herdr instead of it/);
   assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
 });

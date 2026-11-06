@@ -51,9 +51,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
-  updatesOff,
+  AUTO_FILE, CATALOG_URL, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
+  pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, strandedLayouts } from "./migrateHome.mjs";
@@ -101,6 +101,29 @@ const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
 export function readVersion(packDir) {
   try { return readFileSync(join(packDir, "VERSION"), "utf8").trim() || UNRELEASED; } catch { return UNRELEASED; }
+}
+
+/** release.js HELD_FILE: this install's held mods, or no file when it holds none, so an old note never outlives its release. */
+function saveHeld(modsDir, version, held) {
+  const file = join(stateDirOf(modsDir), HELD_FILE);
+  if (held.length === 0) { rmSync(file, { force: true }); return; }
+  const tmp = `${file}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ version, held }));
+  renameSync(tmp, file);
+}
+
+/**
+ * After the migration of an install: each layout it found stranded on a renamed folder already gone
+ * from mods/ (migrateHome.mjs plan `stranded`, #432) joins `installed.held`, so the update command,
+ * the auto-update's notice and HELD_FILE say it as they say a held mod, then HELD_FILE is rewritten.
+ * A held old folder is in `held` already (applyUpdate). A failure to save is a warning, never a failed install.
+ */
+export function heldAfterMigration(modsDir, installed, log = () => {}) {
+  const gone = (installed.migration?.stranded ?? []).filter((s) => s.gone && !installed.held.some((h) => h.mod === s.mod));
+  if (gone.length === 0) return;
+  installed.held = [...installed.held, ...gone];
+  for (const h of gone) log(heldModLine(h, installed.version));
+  try { saveHeld(modsDir, installed.version, installed.held); } catch (error) { log(`warning: the note about held mods was not saved (${error.message})`); }
 }
 
 /** The pack's auto-update setting and rollback skip (release.js AUTO_FILE), beside the record. */
@@ -427,6 +450,9 @@ function keepLayout(modsDir, dir, warnings) {
   } catch (error) { warnings.push(`the layout was not kept for a rollback (${error.message})`); }
 }
 
+/** Why the pack's layout at `live` is the person's to change (#432): it, or layouts/, is a link; else null. */
+const linkedLayout = (live) => (isLink(live) ? "it is a link" : isLink(dirname(live)) ? "layouts/ is a link" : null);
+
 /**
  * After a rollback: the rolled-to pack's layout (`body`, from its kept set) goes back in place of
  * the rolled-out pack's when the live one is still that pack's own (byte-equal to the reference),
@@ -440,8 +466,11 @@ export function restoreLayout({ modsDir, body, log = () => {} }) {
   const had = isFile(live) ? readFileSync(live) : null;
   const lastPack = isFile(ref) ? readFileSync(ref) : null;
   let placed = "kept";
+  const link = linkedLayout(live);
   if (had && had.equals(body)) placed = "same";
-  else if (had && lastPack && had.equals(lastPack) && !isLink(live)) {
+  else if (link && had) log(`kept your automagik layout (${live}): ${link}; the rolled-back pack's is in ${ref}`);
+  else if (link) placed = "same"; // nothing behind the link: a rollback doesn't add it back
+  else if (had && lastPack && had.equals(lastPack)) {
     writeFileSync(live, body);
     log(`put back the automagik layout the rolled-back pack shipped (${live})`);
     placed = "restored";
@@ -481,9 +510,10 @@ function carryV1(modsDir, record, log) {
  * not there → installed; listed in the ownership record → replaced (the old copy into the kept
  * set, its private paths carried over); anyone else's → left alone, or with `adopt` moved to
  * backup/ and replaced. A link is never replaced. A folder the record lists that the release no
- * longer ships is retired into the kept set; a rename's old folder is held in mods/ while a layout
- * the migration cannot move names it (#432). Returns `{ version, mods, installed, replaced, left,
- * adopted, retired, held, prev }` and rewrites the record.
+ * longer ships is retired into the kept set, or held in mods/ while a layout's block names it (#420);
+ * a rename's old folder is held only while a layout the migration cannot move names it (#432).
+ * Returns `{ version, mods, installed, replaced, left, adopted, retired, held, prev }` and rewrites
+ * the record.
  */
 /**
  * Unpacks a release tarball into `staging` (an empty folder) and checks it is a plain pack: only
@@ -564,6 +594,26 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
+}
+
+/**
+ * The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js
+ * layoutNeeds); an unreadable one names none. The pack's automagik.json counts only when placeLayout
+ * would keep it: an unedited copy gets the release's.
+ */
+function layoutsShowing(modsDir, mod) {
+  const dir = join(dirname(resolve(modsDir)), "layouts");
+  const ref = layoutRefOf(modsDir);
+  const replaced = (body) => sha256(body) === V020_LAYOUT_SHA256 || (isFile(ref) && body.equals(readFileSync(ref)));
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.filter((n) => {
+    try {
+      const file = join(dir, n);
+      if (!isFile(file) || (n === basename(PACK_LAYOUT) && replaced(readFileSync(file)))) return false;
+      return layoutNeeds(JSON.parse(readFileSync(file, "utf8"))).blocks.has(mod);
+    } catch { return false; }
+  }).map((n) => n.slice(0, -".json".length));
 }
 
 export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
@@ -699,22 +749,25 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       if (adopt) adoptFolder(m);
       else plan.left.push(m);
     }
-    // A folder the record lists that this release no longer ships leaves mods/ with the set. A
-    // rename's old folder leaves on the migration moving the layouts onto the new name, so it stays
-    // while one the migration cannot move names it (#432): Herdr would drop that layout for plain
-    // Herdr, and a link's target is the person's to change. It stays the record's and its copy
-    // goes into the kept set too, so a rollback swaps it like any folder; the update after the
-    // layout changes retires it. One switched off leaves (a layout naming it shows plain Herdr
-    // already), and a repair moves none of them.
+    // A folder the record lists that this release no longer ships leaves mods/ with the set, unless
+    // a layout's block names it (#420): Herdr would drop that layout for plain Herdr on the next
+    // launch. Then it stays in mods/, still the record's, and an update after the layout changes
+    // retires it. A rename's old folder stays only while a layout the migration cannot move names
+    // it (#432: a link, whose target is the person's, or a shape rewriteLayout refuses); migrateRefs
+    // moves the rest onto the new name. One switched off leaves (a layout naming it shows plain
+    // Herdr already). A held mod's copy goes into the kept set too, so a rollback swaps it like any
+    // folder and it stays in mods/ and the record. A repair moves none of them; a held one stays the record's.
     for (const m of owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
       if (repair) { record.mods.push(m); continue; }
       const renamed = own(RENAMES, m);
-      const stranded = at === join(modsDir, m) && folders.includes(renamed) ? strandedLayouts(dirname(resolve(modsDir)), m, renamed) : [];
-      if (stranded.length) {
-        plan.held.push({ mod: m, renamed, layouts: stranded.map((f) => basename(f, ".json")) });
+      const renaming = folders.includes(renamed);
+      const showing = at !== join(modsDir, m) ? []
+        : renaming ? strandedLayouts(dirname(resolve(modsDir)), m, renamed).map((f) => basename(f, ".json")) : layoutsShowing(modsDir, m);
+      if (showing.length) {
+        plan.held.push(renaming ? { mod: m, renamed, layouts: showing } : { mod: m, layouts: showing });
         record.mods.push(m);
         continue;
       }
@@ -739,6 +792,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     let recorded = true;
     try { writeMarker(modsDir, record); } catch (error) { recorded = false; warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
+    // Only a note: failing to save it is said here, never a failed install (exit 4 reads as one).
+    if (!repair) { try { saveHeld(modsDir, version, plan.held); } catch (error) { log(`warning: the note about held mods was not saved (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
     for (const h of plan.held) log(heldModLine(h, version));
@@ -899,7 +954,7 @@ export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
     if (!pending(p)) {
       const kept = p.left.length ? `; ${p.left.length} reference(s) stay as they are (--adopt takes the mods you kept)` : "";
       log(`rename migration: nothing to migrate${kept}`);
-      return { done: [], skipped: p.left, journal: null, held: p.held };
+      return { done: [], skipped: p.left, journal: null, held: p.held, stranded: p.stranded };
     }
     if (p.shared.length) log(`shared keys move to am.* when their mod next loads: ${p.shared.map(([o]) => o).join(", ")}`);
     // The journal goes into the record before the first rewrite, so a rollback reverts whatever
@@ -912,7 +967,7 @@ export function migrateRefs({ modsDir, log = () => {}, warnings = [] }) {
     const r = applyMigration(p, { backupDir: join(backupOf(modsDir), backupName(modsDir, "layouts")), onJournal });
     for (const line of r.done) log(line);
     for (const s of r.skipped) log(`left: ${s.item} (${s.reason})`);
-    return { ...r, held: p.held };
+    return { ...r, held: p.held, stranded: p.stranded };
   } catch (error) {
     warnings.push(`layouts and keys were not migrated to the new names (${error.message}); the backups so far are in ${backupOf(modsDir)}`);
     return null;
@@ -1057,9 +1112,11 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
     const body = readFileSync(shipped);
     const had = isFile(live) ? readFileSync(live) : null;
     const lastPack = isFile(ref) ? readFileSync(ref) : null;
-    if (isLink(live)) {
+    const link = linkedLayout(live);
+    if (link) {
       // A link's target is the person's, whatever it holds (#432): kept, even byte-equal to a pack's.
-      log(`kept your automagik layout (${live}): it is a link; the pack's is in ${ref}`);
+      log(had ? `kept your automagik layout (${live}): ${link}; the pack's is in ${ref}`
+        : `left out the automagik layout (${live}): ${link}; the pack's is in ${ref}`);
       placed = "kept";
     } else if (!had && record.layout === "removed") {
       // Uninstalled on its own (the herdr.layout part): an update or a repair never adds it back.
@@ -1077,7 +1134,7 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
       log(`kept your automagik layout (${live}): it differs from the one v0.2 shipped; the pack's is in ${ref}`);
       placed = "kept";
     }
-    if (placed !== "removed") record.layout = (!had && !isLink(live)) || record.layout === "added" ? "added" : "kept";
+    if (placed !== "removed") record.layout = (!had && !link) || record.layout === "added" ? "added" : "kept";
     writeFileSync(ref, body);
     writeMarker(modsDir, record);
   }
@@ -1230,6 +1287,7 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window }) 
       installed.layout = placeLayout({ modsDir, tgzDir, record: readMarker(modsDir), log });
     } catch (error) { installed.warnings.push(`the automagik layout was not placed (${error.message})`); }
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    heldAfterMigration(modsDir, installed, log);
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before) });
     return { ...found, installed };
   } finally {
@@ -1344,6 +1402,7 @@ async function main(argv) {
   const done = () => { if (installed.warnings.length) process.exitCode = 4; };
   if (!opts.setup) {
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    heldAfterMigration(modsDir, installed, log);
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
     notice(installed.hooks?.hooks);
     done();
@@ -1355,6 +1414,7 @@ async function main(argv) {
     const failed = setupHome({ modsDir, tgzDir, record: readMarker(modsDir), log });
     // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
+    heldAfterMigration(modsDir, installed, log);
     installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
     notice(installed.hooks?.hooks);
     done();

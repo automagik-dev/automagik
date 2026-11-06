@@ -81,7 +81,7 @@ export function strandedLayouts(home, old, now) {
 
 /**
  * What the migration would do on app home `home`, from what is on disk and the ownership record:
- * `{ home, folders, layouts, keys, shared, paths, left, held }`.
+ * `{ home, folders, layouts, keys, shared, paths, left, held, stranded }`.
  * - folders: [old, new] for record-listed old folders still in mods/ (update.mjs moves them when a
  *   release ships the new name; the migration itself never moves a mod);
  * - layouts: `{file, edits, body, inPlace}` per layout naming a renamed folder, or showing the pack
@@ -94,7 +94,9 @@ export function strandedLayouts(home, old, now) {
  * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape);
  * - held: `{item, reason}` for a drop-in not swapped in because the layout places Herdr's block
  *   more than once (#387), or a layout it cannot move off a renamed folder (strandedLayouts, #432):
- *   said on every run until the person changes it.
+ *   said on every run until the person changes it;
+ * - stranded: `{mod, renamed, gone, layouts}` per renamed folder strandedLayouts finds (layouts: their
+ *   names without .json; gone: the old folder is out of mods/), for update.mjs to say with the install.
  */
 export function plan(home) {
   home = resolve(home);
@@ -106,7 +108,7 @@ export function plan(home) {
   const { active } = activeRenames(owned, present);
   // Switched off (mods-disabled/) is not present: a layout naming an off mod shows plain Herdr.
   const dropIns = Object.fromEntries(Object.entries(DROP_INS).filter(([, to]) => owned.has(to) && present(to)));
-  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [], held: [] };
+  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [], held: [], stranded: [] };
   // A reference is reported only when its folder is someone else's or gone with no successor;
   // one naming a pack folder not renamed yet is simply not due.
   const report = (file) => ({ mod, ref }) => {
@@ -154,7 +156,9 @@ export function plan(home) {
     if (!now) continue;
     const reason = present(old) ? `it names ${old}, and this migration cannot move it to ${now}, so mods/${old} stays: name ${now} in it, or take the block out, and the next update retires mods/${old}`
       : `it names ${old}, which is gone, and this migration cannot move it to ${now}, so Herdr shows plain Herdr instead of it: name ${now} in it, or take the block out`;
-    for (const file of strandedLayouts(home, old, now)) out.held.push({ item: file, reason });
+    const files = strandedLayouts(home, old, now);
+    for (const file of files) out.held.push({ item: file, reason });
+    if (files.length) out.stranded.push({ mod: old, renamed: now, gone: !present(old), layouts: files.map((f) => basename(f, ".json")) });
   }
 
   const keysFile = join(home, "keys.json");

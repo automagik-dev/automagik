@@ -84,7 +84,9 @@ their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automag
 Add options after `bash -s --`: `--yes` answers every question, `--version 3.58.0` installs that
 Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
-the installer added it and you haven't changed it.
+the installer added it and you haven't changed it. It is refused, with nothing moved, while the
+layout Herdr shows uses a pack mod: switch layouts first (ctrl-shift-l, or
+`herdr-app do layout.switch '{"name":"main"}'`).
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
@@ -296,7 +298,9 @@ automagik-herdr update [--check | --rollback]
   pane in that project, never on this computer's same-id bot, and `whois --bot <bot>` answers for
   this computer unless given `--machine M`. The pane's PATH comes from that machine's login shell,
   asked once with a 10 s bound (herdr-core may run as a service that never read `~/.profile`), plus
-  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. The agent and the interpreter on
+  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. When the PATH hc runs programs
+  with already finds the agent, that PATH goes first, so a working machine keeps the same agent and
+  interpreter; otherwise the login shell's goes first. The agent and the interpreter on
   its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A login shell
   that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
   text. A session id the pane carries is resumed by id

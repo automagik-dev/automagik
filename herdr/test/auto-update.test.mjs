@@ -317,3 +317,75 @@ test("a failed record write is not 'nothing was changed': the notice says the re
   assert.match(note.body, /0\.8\.1 was put in place, but its install record could not be saved/);
   assert.match(autoFailedNotice({ version: "0.8.1", count: 1, at: NOW, why: "network down" }).body, /Nothing was changed/);
 });
+
+test("a mod an install held for a layout reaches the new build's notice, with what retires it", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", held: [{ mod: "old-mod", layouts: ["mine", "work"] }] } });
+    h.swap(old, "0.8.1");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  const fresh = h.build();
+  fresh.u.start();
+  await h.tick(1);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /Kept mods\/old-mod: 0\.8\.1 no longer ships it, but the layouts mine, work show it/);
+  assert.match(h.notes[0].body, /Take its block out of each of those layouts, or remove them/);
+  assert.match(h.notes[0].body, /Switching layouts does not retire it/);
+  // A later build of this release, the record still there: it says nothing more.
+  h.build().u.start();
+  await h.tick(1);
+  assert.equal(h.notes.length, 1, "the note doesn't repeat");
+});
+
+const HELD = `${HOME}/automagik-herdr/held-mods.json`;
+const heldJson = (version) => JSON.stringify({ version, held: [{ mod: "old-mod", layouts: ["mine"] }] });
+
+test("the old build never answers: the new build reads the held file, says it once, and another release's file says nothing", async () => {
+  const run = async (fileVersion) => {
+    const g = herdr();
+    const gold = g.build();
+    g.answer = (args) => (args[1] === "check" ? g.check() : new Promise(() => {}));
+    gold.u.start();
+    await g.tick(FIRST_CHECK_MS);
+    g.files.set(HELD, heldJson(fileVersion));
+    g.swap(gold, "0.8.1");
+    g.build().u.start();
+    await g.tick(LANDING_WAIT_MS + 2_000);
+    return g;
+  };
+  const g = await run("0.8.1");
+  assert.equal(g.notes.length, 1);
+  assert.match(g.notes[0].body, /Your bots kept running\. Kept mods\/old-mod: 0\.8\.1 no longer ships it, but the mine layout shows it/);
+  // Later builds and later checks of this release, with the file still there: nothing more.
+  g.build().u.start();
+  await g.tick(LANDING_WAIT_MS + 2_000);
+  assert.equal(g.notes.length, 1, "the note doesn't repeat");
+  const stale = await run("0.8.0");
+  assert.equal(stale.notes.length, 1);
+  assert.doesNotMatch(stale.notes[0].body, /Kept mods/, "a release that held nothing repeats no old note");
+});
+
+test("Herdr doesn't reload: the old build's notice says what it held, and the new build says nothing more", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => (args[1] === "check" ? h.check()
+    : line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [], installed: { version: "0.8.1", held: [{ mod: "old-mod", layouts: ["mine"] }] } }));
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 0);
+  await h.tick(RELOAD_GRACE_MS + 1);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /^Herdr did not reload its mods: .* Kept mods\/old-mod: 0\.8\.1 no longer ships it, but the mine layout shows it/);
+  // Quit and opened again, as the notice says: the new build stays quiet.
+  h.files.set(HELD, heldJson("0.8.1"));
+  h.swap(old, "0.8.1");
+  h.build().u.start();
+  await h.tick(LANDING_WAIT_MS + 2_000);
+  assert.equal(h.notes.length, 1, "the note doesn't repeat");
+});

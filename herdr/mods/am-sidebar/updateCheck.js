@@ -184,10 +184,18 @@ function autoOf(value) {
   return { on: a.on, managed: a.managed, skip: typeof a.skip === "string" ? a.skip : null, why: typeof a.why === "string" ? a.why : null };
 }
 
-/** The mods an install held for a layout (update.mjs `installed.held`, #432), as far as they read. */
+/** The mods an install held for a layout (update.mjs `installed.held`, #420, #432), as far as they read. */
 const heldOf = (value) => (Array.isArray(value)
   ? value.filter((h) => typeof h?.mod === "string" && Array.isArray(h.layouts) && h.layouts.length > 0 && h.layouts.every((l) => typeof l === "string"))
   : []);
+
+/** The held list in release.js HELD_FILE's `text`, for `version` only: another release's says nothing about this one. */
+export function heldFrom(text, version) {
+  try {
+    const file = JSON.parse(text);
+    return file?.version === version ? heldOf(file.held) : [];
+  } catch { return []; }
+}
 
 /**
  * An install's answer (`node update.mjs apply`) as STATE_KEY fields over the `state` before it:
@@ -367,7 +375,8 @@ export function landedNotice(version, from, restartBots = false, held = []) {
 }
 
 /** The old build's notice when Herdr did not reload the mods within RELOAD_GRACE_MS. */
-export function noReloadNotice(version) {
+export function noReloadNotice(version, held = []) {
   return { title: `Automagik Herdr updated to ${version}`, level: "success",
-    body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version." };
+    body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version."
+      + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") };
 }

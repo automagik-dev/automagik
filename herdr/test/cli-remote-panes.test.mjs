@@ -350,6 +350,30 @@ test("restart --machine resumes by id when the pane carries a session (--resume 
   assert.equal(s2.calls().filter((c) => c[0] === "run").length, 0);
 });
 
+test("restart --machine #413: codex can't resume a thread whose model provider is gone: one new pane there on a new thread, the old id in the note", (t) => {
+  const thread = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+  const gone = "Error: model provider example-proxy is no longer configured (modelProviderNotConfigured)";
+  const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null,
+    labels: { "agent.session": thread }, foreground: { argv: ["codex", "resume", thread], name: "codex" }, status: { state: "idle", app: "codex" } }] });
+  const file = join(s.project, ".herdr/bots.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "codex"'));
+  writeFileSync(join(s.root, "vm-bin", "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  assert.equal(s.cli(["attach", "Hedge", "vm/t9", ...s.on]).code, 0);
+  s.setState((st) => { st.runQueue = [{ runAs: "exit", screen: `${gone}\n$ ` }]; });
+  const r = s.cli(["restart", "Hedge", ...s.on, "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const runs = s.calls().filter((c) => c[0] === "run");
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[0].slice(-2), ["resume", thread], "it tried the thread first");
+  assert.ok(!runs[1].includes("resume"), "then a new thread");
+  const out = r.json();
+  assert.deepEqual([out.mode, out.terminal, out.replaced], ["fresh", "t101", "t9"]);
+  assert.equal(out.note, `codex can't resume thread ${thread} (vm/t100 said "${gone}"), so it starts on a new one`);
+  assert.ok(out.warnings.some((w) => w.includes(`thread ${thread}`)));
+  assert.equal(s.hcState().terminals.find((x) => x.address === "vm/t101").labels["agent.session"], undefined);
+  assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one is up");
+});
+
 // ---- the agent's PATH there (#425): herdr-core as a service never read ~/.profile ----
 
 /** What the pane was started with: the argv after hc run's `--`. */
@@ -435,6 +459,19 @@ test("start --machine: a login shell that never answers is ended at the bound; ~
   assert.equal(pane(launched(s)).stdout, "agent ran\n");
 });
 
+test("start --machine: a stalled login shell over a slow link gets the warning and the fallback, never \"can't be reached\"", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  mkdirSync(join(s.root, "vm/.bun/bin"), { recursive: true });
+  exe(join(s.root, "vm/.bun/bin/hermes"), SAYS);
+  // hc's own 10 s plus 6 s of link: past the 15 s a plain hc call gets, inside the 20 s this one does.
+  s.setState((st) => { st.execTimedOut = ["-lc"]; st.execTimedOutAfterMs = 16000; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.json().warnings.join(), /vm's login shell didn't answer within 10 s/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
+});
+
 test("start --machine: really missing keeps the refusal, whether or not the login shell answered, and nothing runs", (t) => {
   const s = scene(t);
   rmSync(join(s.root, "vm-bin/hermes"));
@@ -469,6 +506,32 @@ test("start --machine: an agent whose interpreter a pane there couldn't find is 
   assert.equal(r.code, 1);
   assert.match(r.err, /runs under no-such-runtime, which isn't on the PATH a pane on vm gets/);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a slow login shell's interpreter refusal says the shell was quiet, as the missing refusal does", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  exe(join(s.root, "vm-bin/hermes"), "#!/usr/bin/env no-such-runtime\n");
+  s.setState((st) => { st.execTimedOut = ["-lc"]; });
+  const r = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Put no-such-runtime on the PATH of vm's login shell \(vm's login shell didn't answer within 10 s\)\./);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a working machine keeps hc's copy of the agent and its interpreter, whatever the login shell's PATH shadows", (t) => {
+  const s = scene(t);
+  const login = join(s.root, "vm/login-bin");
+  mkdirSync(login);
+  exe(join(s.root, "vm-bin/hermes"), "#!/usr/bin/env fakenode\n");
+  exe(join(s.root, "vm-bin/fakenode"), SAYS);
+  exe(join(login, "hermes"), "#!/usr/bin/env no-such-runtime\n");
+  exe(join(login, "fakenode"), "#!/bin/sh\nexit 1\n");
+  s.setState((st) => { st.machines[0].login = { path: `${login}:/usr/bin:/bin` }; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch((r.json().warnings ?? []).join(), /login shell/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
 });
 
 test("start --machine: a machine that stops answering is refused as unreachable, asked once, and nothing runs", (t) => {

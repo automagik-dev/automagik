@@ -199,7 +199,10 @@ switch (words[0]) {
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
     // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
     // same, for the run of that name only.
-    const runAs = state.runAsFor?.[name] ?? state.runAs;
+    // state.runQueue: [{ runAs, screen }], one taken per run first (a first try exits, the next stays up).
+    const queued = Array.isArray(state.runQueue) && state.runQueue.length ? state.runQueue.shift() : null;
+    const runAs = queued ? queued.runAs : state.runAsFor?.[name] ?? state.runAs;
+    const runScreen = queued ? queued.screen : state.runScreen;
     const shell = runAs === "shell";
     // state.workingOnRun: terminals whose agent starts a turn when this run happens (once).
     for (const a of state.workingOnRun ?? []) { const w = find(a); if (w) w.status = { ...(w.status ?? {}), state: "working" }; }
@@ -212,7 +215,9 @@ switch (words[0]) {
       argv: launch, template: template?.name ?? null,
       pid: 9000 + n, foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + n }, // state.noStatus: programs that report no status to hc (hermes): status null.
       status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
-      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
+      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}),
+      // state.runScreen: what the new pane's screen holds (hc read), its agent's last words, say.
+      ...(typeof runScreen === "string" ? { screen: runScreen } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
@@ -265,8 +270,9 @@ switch (words[0]) {
     // state.execUnanswered: programs whose call gets no answer (the machine dropped mid-call).
     if ((state.execUnanswered ?? []).includes(argv[0])) fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } }));
     if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
-    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers).
-    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
+    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers);
+    // state.execTimedOutAfterMs: how long that answer takes to come back over the link, really waited.
+    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { if (state.execTimedOutAfterMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.execTimedOutAfterMs); out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
     // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
     // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
     const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",

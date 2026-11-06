@@ -195,7 +195,7 @@ export const LOGIN_PATH_SH = `s=\${SHELL:-}
  * the environment, so fish's list comes back joined by colons. A shell that can't run it says
  * nothing between the markers, and that is only "no answer".
  */
-export const loginPathAsk = (marker) => `printf %s ${marker}-from; /usr/bin/printenv PATH; printf %s ${marker}-to`;
+export const loginPathAsk = (marker) => `printf %s ${marker}-from; /usr/bin/env printenv PATH; printf %s ${marker}-to`;
 
 /**
  * The PATH between this call's markers in what a login shell printed, its relative entries
@@ -217,19 +217,21 @@ export function loginPathOf(text, marker) {
 
 /**
  * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing>`. The PATH a pane there gets:
- * the login shell's, then what hc's own PATH adds (nothing that works today is lost), the user
- * bin folders that exist (a profile that didn't answer, or doesn't add them), /usr/bin and /bin,
- * and last the folders of the agent's real file (npm's <prefix>/bin holds its node). Prints that
- * PATH, the agent's absolute file and its first line; exit 3 when no such file. Both words are
- * data here: neither is ever evaluated.
+ * the login shell's, then what hc's own PATH adds (nothing that works today is lost), or the
+ * other way round when hc's own PATH finds the agent as a file, so a machine that works keeps
+ * the same agent and interpreter (#436); then the user bin folders that exist (a profile that
+ * didn't answer, or doesn't add them), /usr/bin and /bin, and last the folders of the agent's
+ * real file (npm's <prefix>/bin holds its node). Prints that PATH, the agent's absolute file and
+ * its first line; exit 3 when no such file. Both words are data here: neither is ever evaluated.
  */
-export const AGENT_PATH_SH = `agent=$1 path=$2
+export const AGENT_PATH_SH = `agent=$1 path= first=$2 rest=$PATH
+case $(command -v "$agent" 2>/dev/null) in /*) first=$PATH rest=$2 ;; esac
 add() {
   case $1 in /*) ;; *) return ;; esac
   case ":$path:" in *":$1:"*) ;; *) path=\${path:+$path:}$1 ;; esac
 }
 set -f; IFS=:
-for d in $PATH; do add "$d"; done
+for d in $first $rest; do add "$d"; done
 unset IFS; set +f
 for d in "$HOME/.local/bin" "$HOME/.bun/bin" /usr/bin /bin; do [ -d "$d" ] && add "$d"; done
 PATH=$path; export PATH
@@ -245,8 +247,8 @@ printf '%s\\n%s\\n%s\\n' "$path" "$file" "$(head -c 256 "$real" 2>/dev/null | he
  * runs one program there (hc exec) and resolves { code, stdout, stderr }, code -1 for no answer.
  * Resolves { state: "found", path, file, login } (path: the PATH to start it with; login: whether
  * the login shell answered, "timed out" when it was too slow), { state: "missing", login },
- * { state: "no-interpreter", file, interpreter } (its #!/usr/bin/env program isn't on that PATH,
- * so env would fail in the pane) or { state: "away", why }. A login shell that is slow, broken
+ * { state: "no-interpreter", file, interpreter, login } (its #!/usr/bin/env program isn't on that
+ * PATH, so env would fail in the pane) or { state: "away", why }. A login shell that is slow, broken
  * or silent is not a failure: the rest still answers. A machine that doesn't answer is.
  */
 export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
@@ -265,7 +267,7 @@ export async function agentOnMachine(exec, program, { wait = 10 } = {}) {
   if (interpreter) {
     const r = await exec("/usr/bin/env", [`PATH=${runPath}`, "sh", "-c", 'command -v "$1"', "sh", interpreter], { timeout: wait });
     if (r.code === -1) return { state: "away", why: r.stderr };
-    if (r.code !== 0) return { state: "no-interpreter", file, interpreter };
+    if (r.code !== 0) return { state: "no-interpreter", file, interpreter, login };
   }
   return { state: "found", path: runPath, file, login };
 }
