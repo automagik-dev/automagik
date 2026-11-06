@@ -7,6 +7,7 @@
 
 import { AGENTS, effortArgs, hasEffortFlag, modelArgs, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
+import { envWords } from "./logins.js";
 
 export { TEMPLATE_SHAPE };
 
@@ -195,9 +196,13 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * not herdr-core's (a bun script like omp needs ~/.bun/bin). A
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
  * with no `--` (neither starts with a dash: both are refused before): it sets its own command.
+ * `login`: a Claude worker's login words (logins.js chooseLogin), after PATH. A Claude template
+ * can't take them through hc's template form, so it runs its own command instead
+ * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
+ * `/usr/bin/env <login words>`, its template label kept.
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
-  taskId, project, lead, space }) {
+  taskId, project, lead, space, login = [], templateArgv = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -209,10 +214,14 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (role) args.push("--label", `${WORKER_ROLE_LABEL}=${role}`);
   // The bot's Herdr space and no tab: the worker opens in a tab of its own there.
   if (space) args.push("--label", `herdr.space=${space}`);
+  if (template && templateArgv) {
+    return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, "--", ENV, ...envWords([], login), ...templateArgv];
+  }
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  const env = path ? [ENV, `PATH=${path}`] : [];
+  const vars = envWords(path ? [`PATH=${path}`] : [], login);
+  const env = vars.length ? [ENV, ...vars] : [];
   return [...args, "--parent", parent, "--", ...env, ...argv, ...promptArgs(agent, task)];
 }
 

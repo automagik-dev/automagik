@@ -63,12 +63,17 @@ const INTERPRETERS = new Set(["node", "bun", "bunx", "deno", "python", "python3"
   "ruby", "bundle", "env", "sudo", "nice", "time", "watch", "nodemon"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
 
-// The index of the agent's own executable in `words`: past any interpreter and its flags.
+// The index of the agent's own executable in `words`: past any interpreter and its flags. env's
+// `-u NAME` (`--unset NAME`) takes the next word, so `env -u CLAUDE_CONFIG_DIR PATH=… claude`
+// (a launch on the default Claude login, logins.js) runs claude, not CLAUDE_CONFIG_DIR.
 function programAt(words) {
   let i = 0;
   while (i < words.length && INTERPRETERS.has(base(words[i]))) {
+    const env = base(words[i]) === "env";
     i += 1;
-    while (i < words.length && (words[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) i += 1;
+    while (i < words.length && (words[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) {
+      i += env && (words[i] === "-u" || words[i] === "--unset") ? 2 : 1;
+    }
   }
   return i;
 }

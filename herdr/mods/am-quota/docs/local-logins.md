@@ -1,6 +1,8 @@
 # Claude logins signed in on this Mac (#453): design note
 
-Status: **design only, nothing built.** Refs #453, #424. Owner decisions of 2026-11-06:
+Status: **launch side and section 9 built** (every Claude launch route reads the record, and the
+Claude download, install and Keychain paths are gone); the panel (sections 3 to 7) is next. Until
+then the Claude card offers no switch. Refs #453, #424. Owner decisions of 2026-11-06:
 - the copy test is dropped;
 - Claude reaches a machine only through that machine's own Anthropic sign-in, one per account it
   needs;
