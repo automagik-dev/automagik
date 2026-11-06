@@ -4,6 +4,7 @@
 // (with a relay URL on RELAY_PORT and TOKEN), and stands in for the relay at the far end of each
 // tunnel: a connection that says "hello <token>" hears "relay <token>" back.
 import { FrameReader, encode } from '../lib/frame.mjs'
+import { maskSecrets } from './redact.mjs'
 
 export const TOKEN = 'ab'.repeat(32)
 export const RELAY_PORT = 9222
@@ -63,7 +64,14 @@ export class FakeElectron {
       }
       const timer = setTimeout(() => {
         this.#waiters.delete(look)
-        reject(new Error(`no ${what} within ${ms} ms; frames: ${JSON.stringify(this.frames).slice(-2000)}; stderr: ${this.stderr.slice(-2000)}`))
+        // This message reaches the smoke's public log and its run summary through the FAIL line,
+        // and both parts carry the token: a `ready` frame's URL and stderr's launch line. Mask each
+        // part before its 2000-character cut: masking the cut would drop the key (`token=` or
+        // `/devtools/browser/`) and leave the value unmatched, while a cut of the masked text can
+        // only clip a `[redacted]` placeholder, never the token.
+        const frames = maskSecrets(JSON.stringify(this.frames)).slice(-2000)
+        const stderr = maskSecrets(this.stderr).slice(-2000)
+        reject(new Error(`no ${what} within ${ms} ms; frames: ${frames}; stderr: ${stderr}`))
       }, ms)
       if (!look()) this.#waiters.add(look)
     })

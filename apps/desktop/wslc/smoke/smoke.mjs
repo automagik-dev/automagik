@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FakeElectron, RELAY_PORT, TOKEN } from './driver.mjs'
+import { createLineMasker } from './redact.mjs'
 
 const IMAGE = process.argv[2]
 if (!IMAGE) throw new Error('usage: node smoke.mjs <image>')
@@ -87,7 +88,9 @@ class Guest {
     const electron = new FakeElectron(child)
     electron.done = false
     void electron.exited.then(() => { electron.done = true })
-    child.stderr.on('data', chunk => process.stderr.write(chunk.toString('utf8').replace(/^/gm, fake ? '  [fake dsh] ' : '  [dsh] ')))
+    const log = createLineMasker(fake ? '  [fake dsh] ' : '  [dsh] ')
+    child.stderr.on('data', chunk => process.stderr.write(log.push(chunk)))
+    child.once('close', () => process.stderr.write(log.flush()))
     this.launches.add(electron)
     return electron
   }
