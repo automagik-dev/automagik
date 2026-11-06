@@ -2,7 +2,8 @@
 // with the rc.1 Host Remote shapes (follow, events, state, observeState). No DSH package is
 // loaded: the fake is the controller.
 import assert from 'node:assert/strict'
-import { lstatSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -328,6 +329,112 @@ test('over the socket: list and subscribe read; every other method is answered r
   } finally {
     c.socket.destroy()
     await server.close()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// ---- the socket's start and stop (#548)
+
+/** A socket left by a host that died: a child binds it and is killed (a clean close unlinks it). */
+async function staleSocket(path) {
+  const child = spawn(process.execPath, ['-e', "require('node:net').createServer().listen(process.env.SOCK, () => console.log('ok'))"], { env: { ...process.env, SOCK: path }, stdio: ['ignore', 'pipe', 'inherit'] })
+  await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('exit', reject) })
+  const gone = new Promise(resolve => child.once('exit', resolve))
+  child.kill('SIGKILL')
+  await gone
+}
+
+const hello = async (path) => {
+  const c = client(path)
+  try { return (await c.ask('hello')).result } finally { c.socket.destroy() }
+}
+
+test('start refuses something that is not a socket at the path, and keeps it', async () => {
+  const home = tempHome()
+  try {
+    mkdirSync(join(home, 'pocket'), { mode: 0o700 })
+    writeFileSync(socketPathOf(home), 'keep me')
+    await assert.rejects(startPocketSocket({ home, source: sourceOf(fakeController(sessions())) }), /not a socket/)
+    assert.equal(readFileSync(socketPathOf(home), 'utf8'), 'keep me')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('start refuses while another host serves the team, and leaves that host serving', async () => {
+  const home = tempHome()
+  const first = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
+  try {
+    const before = lstatSync(first.path).ino
+    await assert.rejects(startPocketSocket({ home, source: sourceOf(fakeController(sessions())) }), /another host already serves/)
+    assert.equal(lstatSync(first.path).ino, before, 'the live socket is kept')
+    assert.equal((await hello(first.path)).readOnly, true)
+  } finally {
+    await first.close()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('start removes a dead host\'s stale socket and serves in its place', async () => {
+  const home = tempHome()
+  try {
+    mkdirSync(join(home, 'pocket'), { mode: 0o700 })
+    await staleSocket(socketPathOf(home))
+    const stale = lstatSync(socketPathOf(home))
+    assert.ok(stale.isSocket())
+    const server = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
+    assert.notEqual(lstatSync(server.path).ino, stale.ino)
+    assert.equal(statSync(server.path).mode & 0o777, 0o600)
+    assert.equal((await hello(server.path)).readOnly, true)
+    await server.close()
+    assert.equal(existsSync(server.path), false, 'a clean stop leaves no socket')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('start tightens a folder others could open back to 0700', async () => {
+  const home = tempHome()
+  try {
+    mkdirSync(join(home, 'pocket'))
+    chmodSync(join(home, 'pocket'), 0o777)
+    const server = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
+    assert.equal(statSync(join(home, 'pocket')).mode & 0o777, 0o700)
+    assert.equal(statSync(server.path).mode & 0o777, 0o600)
+    await server.close()
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('two starts at once: one serves, the other is refused, and the one serving keeps its socket', async () => {
+  const home = tempHome()
+  try {
+    mkdirSync(join(home, 'pocket'), { mode: 0o700 })
+    await staleSocket(socketPathOf(home))
+    const results = await Promise.allSettled([0, 1].map(() => startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })))
+    const won = results.filter(r => r.status === 'fulfilled').map(r => r.value)
+    const lost = results.filter(r => r.status === 'rejected').map(r => r.reason.message)
+    assert.equal(won.length, 1)
+    assert.deepEqual(lost, ['another host already serves this team to Pocket'])
+    assert.equal((await hello(won[0].path)).readOnly, true, 'the bound socket was not unlinked')
+    await won[0].close()
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a stop and a start at once: the stop finishes first and the new host keeps its socket', async () => {
+  const home = tempHome()
+  try {
+    const old = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
+    const [, fresh] = await Promise.all([old.close(), startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })])
+    assert.equal((await hello(fresh.path)).readOnly, true)
+    await old.close()
+    assert.equal((await hello(fresh.path)).readOnly, true, 'closing the old host again removes nothing')
+    await fresh.close()
+    assert.equal(existsSync(fresh.path), false)
+  } finally {
     rmSync(home, { recursive: true, force: true })
   }
 })
