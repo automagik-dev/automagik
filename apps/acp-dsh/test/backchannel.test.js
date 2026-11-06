@@ -1,8 +1,8 @@
 // The bridge→DSH leg and its probes (RFC 0003, amendment, deliveries 4 and 6): the credential
 // binds a request to its Session and is revoked with it; a missing or foreign one is refused; a
 // credential alone cannot approve; every DSH tool call enters DSH's approval service before it
-// runs, and an Auto Session's auto-review refuses a call it cannot see; and the offered set is
-// the preset's, filtered by the Session's level.
+// runs, and auto-review refuses an out-of-band bridge call it cannot review; and the offered set
+// is the preset's, filtered by the Session's level.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
@@ -200,11 +200,11 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Fu
   assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
 })
 
-test('Auto refuses a bridge call: auto-review cannot see it, so the body never runs', async () => {
+test('Auto refuses a bridge call: the review fails closed, so the body never runs', async () => {
   // The real stack: DSH's cordis context, its ToolsService and native executor (the pipeline
   // that fires `tools/pre-execute`), the real auto-review plugin, and this Backchannel. The
-  // bridge call is out-of-band — no assistant block on the model surface — so the review fails
-  // closed instead of allowing it.
+  // handler receives the bridge call, but a bridge call is out-of-band — no assistant block on
+  // the model surface — so the review cannot resolve it and fails closed.
   const { Context } = await import('@deepseek-ai/cordis')
   const { ToolsService } = await import('@deepseek-ai/dsh-tools')
   const native = await import('@deepseek-ai/dsh-tool-executor-native')
@@ -260,7 +260,8 @@ test('Auto refuses a bridge call: auto-review cannot see it, so the body never r
     const body = await response.json()
     assert.equal(response.status, 200)
     assert.equal(body.isError, true)
-    assert.match(body.content[0].text, /Auto review of tool "bash" failed; its body was not executed/)
+    // The one place the fail-closed reason is pinned: `failed()` puts only name and code in the
+    // row's error info, so this text is the only proof the review failed on the missing surface.
     assert.match(body.content[0].text, /the pending root call is missing from the current surface/)
     // The gate saw the call and refused it with its own code, recorded on the Session.
     const result = session.snapshotEvents().find(event => event.type === 'tool/result')
