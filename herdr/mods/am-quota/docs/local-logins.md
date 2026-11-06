@@ -182,7 +182,9 @@ The Claude card lists **the logins signed in on this Mac**, not the proxy's acco
   the folder for B) through exec, read-only. It prints JSON with `authMethod` and
   `configDirectory` and exits 1 when not signed in; no token is printed or seen. If it does not
   carry the account's email, the email comes from that folder's `.claude.json` account record,
-  which holds no token. Read on open, after a switch, and at most every five minutes.
+  as a last resort. That file can hold secrets elsewhere (an MCP server's `env`), so the panel
+  takes the one email field and never logs, shows or keeps the rest. Read on open, after a
+  switch, and at most every five minutes.
 - **Rows:** one per login, `email`, matched by email to the proxy's quota rows for the bar and the
   policy's projection (`policy.choose` runs over the local logins only). The login in use (the
   record's `use`) gets the pill; the others get **Use**. A login the proxy doesn't list reads
