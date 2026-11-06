@@ -180,6 +180,9 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
   }
   if (model && optionLike(model)) return { error: `"${model}" isn't a model: it starts with a dash, so ${agent} would read it as an option.` };
   let effort = pick.effort || (defaults.effort && (agent === fallback || !refusal) ? defaults.effort : null) || null;
+  if (!pick.effort && defaults.effort && agent !== fallback && refusal) {
+    warnings.push(`${bot.name}'s worker effort ${defaults.effort} is for ${fallback}; ${agent} runs its own default.`);
+  }
   if (effort && !EFFORT_SHAPE.test(effort)) return { error: `"${effort}" isn't an effort level (low, medium, high, …).` };
   if (model && !modelArgs(agent, model).length) {
     warnings.push(`${agents[agent].name} has no model flag this pack knows; model ${model} left out.`);
