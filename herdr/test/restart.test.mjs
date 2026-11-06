@@ -297,8 +297,8 @@ test("paneLaunch and launchChange: only flag names are named, values masked, a t
   assert.equal(shell.includes("auto-approve"), false);
   // A live template the pane's command already matches: no line; edited, the template is named.
   const live = { name: "dev-kimi", command: "omp --auto-approve --model kimi/k3" };
-  assert.equal(launchChange({ name: "Captain", launch: { shell: live.command }, agent: "omp", argv: ["omp"], template: live }), null);
-  const edited = launchChange({ name: "Captain", launch: { shell: "omp --old" }, agent: "omp", argv: ["omp"], template: live });
+  assert.equal(launchChange({ name: "Captain", launch: { shell: live.command }, agent: "omp", argv: ["omp"], template: live, usedTemplate: true }), null);
+  const edited = launchChange({ name: "Captain", launch: { shell: "omp --old" }, agent: "omp", argv: ["omp"], template: live, usedTemplate: true });
   assert.equal(edited, "Captain: its pane's command differs from template dev-kimi's current command: restarting through the template.");
   assert.equal(edited.includes("kimi/k3"), false);
   // A template hc no longer lists: its name, never its text.

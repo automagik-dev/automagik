@@ -2992,7 +2992,8 @@ async function cmdRestart(opts, [ref]) {
   // bots.json), never the pane's copy; when they differ, one line names only flag names, values
   // masked, and a template by name.
   if (oldLaunch && !swap && (runningAgent === null || runningAgent === plan.agent)) {
-    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source, template: oldTemplate });
+    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source, template: oldTemplate,
+      usedTemplate: Boolean(plan.template) });
     if (changed) say(changed);
   }
   // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too

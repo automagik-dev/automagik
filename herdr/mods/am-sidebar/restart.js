@@ -6,7 +6,7 @@
 import { agentKeyOfArgv, canResume, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutResume }
   from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
-import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL } from "./workers.js";
+import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
@@ -112,9 +112,11 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
   const pin = model !== undefined ? (model || null) : key === bot.agent ? (bot.model ?? null) : null;
   const source = [...run, ...modelArgs(key, pin)];
-  // A template owns its command, but only while the pane still runs the bot's agent: a swap or a
-  // pane on another agent starts from the agent row (the template would cross both).
-  const tpl = !swap && (!runningAgent || runningAgent === key) && typeof template?.command === "string" && template.command.trim() ? template : null;
+  // A template owns its command only when it runs the bot's own agent, whatever the pane's
+  // foreground says (unknown included): a template for another agent, a swap or a pane on
+  // another agent starts from the agent row (the template would cross them).
+  const tpl = !swap && (!runningAgent || runningAgent === key) && typeof template?.command === "string" && template.command.trim()
+    && templateAgent(template.command) === key ? template : null;
   // A template command can't take resume words (it ends in a separator or a comment): start it
   // fresh and say why, as a helper does.
   const blocked = "its template's command ends in a separator or a comment, so it can't take resume words";
@@ -208,14 +210,18 @@ export function paneLaunch(launch, agentKey) {
  * One line naming how the old pane's command (`launch`, paneCommand of its hc get) differs from
  * what the bot's source launches now, or null when they agree (#597). Only flag names are named,
  * their values masked (#597 review F2); `template` (the template the pane ran, { name, command }
- * when hc still lists it, else { name }) is named, never its command text. `argv`: the agent row
- * with no resume words, for a pane whose source isn't a template.
+ * when hc still lists it, else { name }) is named, never its command text. `usedTemplate`: the
+ * restart is running that template, so a matching command is no difference; when it isn't (the
+ * template runs another agent, say), its name is the difference (D2). `argv`: the agent row with
+ * no resume words, for a pane whose source isn't a template.
  */
-export function launchChange({ name, launch, agent, argv, template = null }) {
+export function launchChange({ name, launch, agent, argv, template = null, usedTemplate = false }) {
   if (!launch) return null;
   if (template) {
-    if (template.command && launch.shell !== undefined && launch.shell === template.command) return null;
-    if (template.command) return `${name}: its pane's command differs from template ${template.name}'s current command: restarting through the template.`;
+    if (usedTemplate && template.command && launch.shell !== undefined && launch.shell === template.command) return null;
+    if (usedTemplate && template.command) {
+      return `${name}: its pane's command differs from template ${template.name}'s current command: restarting through the template.`;
+    }
     return `${name}: its pane's template ${template.name} differs from its source now: restarting from the source, not the pane's command.`;
   }
   if (launch.shell !== undefined) {
