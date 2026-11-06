@@ -2105,6 +2105,22 @@ test("restart --tree #453: the bot's own -u launch reused under login 2; a Claud
   assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
 });
 
+test("restart --tree #453: a Claude helper's by-hand line under a bad record carries login A's words and says why (review Low 2)", (t) => {
+  const s = restartScene(t);
+  writeFileSync(join(s.app, "claude-logins.json"), "{ not json");
+  const st = s.hcState();
+  const wa = join(s.root, "wa");
+  mkdirSync(wa);
+  st.terminals.push({ ...term("t8", { parent: "t5", cwd: wa }), name: "rev-9", die_with_parent: true, argv: ["claude", "--model", "m"] });
+  st.failRun = ["rev-9"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1);
+  const line = r.json().helpers[0].by_hand;
+  assert.ok(pastedLine(t, line).join(" ").includes("/usr/bin/env -u CLAUDE_CONFIG_DIR PATH="), line);
+  assert.match(r.err, new RegExp(`  ${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n(.*\\n)*.*# claude-logins\\.json: is not valid JSON; started on the default login`));
+});
+
 // ---- restart --tree: shared folders and failure paths (#256 review) ----
 
 /** Genie's t5 with six codex helpers of one template in one folder (as t2p6's integrators), each with `labels(n)`. */

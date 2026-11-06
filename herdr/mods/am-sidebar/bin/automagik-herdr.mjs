@@ -2377,12 +2377,16 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  * How to run helper plan `p` again by hand, as a child of `parent`: the hc run line the restart
  * would have run (its name, folder, labels, the seat's PATH, its command resumed), which runs as
  * pasted into sh, bash or zsh; then comment lines: its session, and for a worker that its ledger
- * row isn't copied by hand. { line, notes }.
+ * row isn't copied by hand, and a claude-logins.json warning when the line is on the default
+ * login because the record can't be followed. { line, notes }.
  */
 function byHand(p, parent) {
+  const loginWarnings = [];
   const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
-    login: claudeLogin(p.argv) });
+    login: claudeLogin(p.argv, loginWarnings) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
+  // A record that can't be followed: the line carries the default login's words, and says so.
+  for (const w of loginWarnings) notes.push(`# ${w}`);
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
 }

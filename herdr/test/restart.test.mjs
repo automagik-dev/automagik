@@ -284,7 +284,11 @@ test("paneSession: the agent.session label, else revive.session when revive.agen
 
 test("commandArgv: no \"$@\" after a command ending in a separator or a comment (null), none twice; withoutPrompt drops a trailing first prompt only", () => {
   assert.equal(takesWords("omp --x"), true);
-  for (const c of ["omp --x;", "a && b &", "omp |", "omp --x # pinned"]) assert.equal(commandArgv({ shell: c }, ["--continue"]), null, c);
+  for (const c of ["omp --x;", "a && b &", "omp |", "omp --x # pinned", `omp "a" # b`, "omp 'x';"]) assert.equal(commandArgv({ shell: c }, ["--continue"]), null, c);
+  // Quoted text is an argument, never a comment or a separator (#453 review, Low 1).
+  for (const c of [`claude --append-system-prompt "work on issue #12"`, "omp --x 'a; b|'", `omp "it's #1"`, "omp a\\;", "omp \\#x"]) {
+    assert.deepEqual(commandArgv({ shell: c }, ["--continue"]), ["sh", "-c", `${c} "$@"`, "sh", "--continue"], c);
+  }
   assert.deepEqual(commandArgv({ shell: 'omp --x "$@"' }, ["--continue"]), ["sh", "-c", 'omp --x "$@"', "sh", "--continue"], "its own \"$@\" takes them");
   assert.deepEqual(commandArgv({ shell: "omp;" }), ["sh", "-c", "omp;"], "no words: as it was");
   assert.deepEqual(withoutPrompt(["omp", "--model=k", "fix the login bug"]), ["omp", "--model=k"]);

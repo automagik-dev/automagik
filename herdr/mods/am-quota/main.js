@@ -163,7 +163,7 @@ function liveRows(stdout) {
 }
 /** "2 min", from ms: what a wait really took. */
 const waited = (ms) => (ms < 60000 ? "under a minute" : `${Math.round(ms / 60000)} min`);
-/** The platform the panel runs on: `security` exists on macOS only. */
+/** The platform the panel runs on, for the command that opens a URL (`open` on macOS). */
 const platform = () => {
   try {
     return appWindow()?.platform ?? "macos";
@@ -396,7 +396,7 @@ export default class AmQuota extends View {
 
   /** The machine the writers act on: the runtime's files and shell, the clients' environment. */
   io() {
-    return { home: home(), appHome: appHome(), env: this.env, platform: platform(), exec, readTextFile, writeTextFile };
+    return { home: home(), appHome: appHome(), env: this.env, exec, writeTextFile };
   }
 
   /**

@@ -1,6 +1,6 @@
 // One switch at a time, apart from the panel so `node --test` can prove a second click starts
-// nothing: two interleaved switches would write the Keychain and the credential file from two
-// snapshots, and whichever finished last would leave the panel's record wrong.
+// nothing: two interleaved switches would write Codex's credential file or claude-logins.json
+// from two snapshots, and whichever finished last would leave the panel's record wrong.
 //
 // Nor while that provider's bots restart: a restart reads the login the switch would replace.
 //

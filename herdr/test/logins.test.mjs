@@ -15,6 +15,7 @@ import { helperArgs, helperPlan, paneCommand, restartPlan } from "../mods/am-sid
 import { startArgs } from "../mods/am-sidebar/launchArgs.js";
 import { AGENTS as TABLE } from "../mods/am-sidebar/models.js";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
+import { command } from "../mods/am-sidebar/argv.js";
 
 const ENV = "/usr/bin/env";
 
@@ -193,4 +194,13 @@ test("the launch builders put the login words on: start, a --tree helper, a work
   const codexTpl = workerArgs({ ...base, agent: null, argv: null, template: "dev-sol" });
   assert.deepEqual(codexTpl.slice(-2), ["dev-sol", "fix it"], "a template that doesn't run Claude: hc's own form, unchanged");
   assert.equal(codexTpl.includes("--"), false);
+});
+
+test("argv.js command(): looks through env's -i and -u NAME to the program; another option stays env (#453 review, Low 4)", () => {
+  assert.equal(command([ENV, ...DEFAULT_WORDS, "PATH=/bin", "hermes", "chat"]), "hermes");
+  assert.equal(command([ENV, "PATH=/bin", `${CONFIG_VAR}=/x/.claude-2`, "claude"]), "claude");
+  assert.equal(command([ENV, "--unset", CONFIG_VAR, "-i", "--unset=A", "-uB", "PATH=/bin", "/opt/hermes"]), "hermes");
+  assert.equal(command([ENV, "-S", "hermes"]), "env");
+  assert.equal(command([ENV, "-u"]), "env");
+  assert.equal(command(["hermes"]), "hermes");
 });
