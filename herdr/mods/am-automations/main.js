@@ -10,6 +10,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
 import { offeredAgents, RETIRED } from "./agents.js";
+import { addressWarning, argsText, autoArgs, modeOf, parseArgs, splitPermission, templateMode, withoutPermission } from "./modes.js";
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -108,6 +109,8 @@ export default class Automations extends View {
     try {
       this.list = JSON.parse(await this.cli(["ls", "--json"]));
       this.runs = JSON.parse(await this.cli(["history", "--json"]));
+      // Once, for the template modes the rows show (#498); the form asks again when it opens.
+      if (!this.templates) this.templates = await this.loadTemplates();
       this.error = null;
       this.announce();
       if (!this.watching) { this.watching = true; this.watch(cx); }
@@ -155,6 +158,16 @@ export default class Automations extends View {
     else { this.view = { kind: "detail", name: run_.automation }; cx.notify(); }
   }
 
+  // hc's templates, or null when hc gave no list: a failure is never kept as an empty list, so
+  // the next refresh asks again (template modes read "not known" until then).
+  async loadTemplates() {
+    try {
+      const r = await hc(["templates", "--json"]);
+      const list = r.code === 0 ? JSON.parse(r.stdout).templates : null;
+      return Array.isArray(list) ? list : null;
+    } catch { return null; }
+  }
+
   // ---- form ----
 
   edit(original, cx) {
@@ -172,14 +185,27 @@ export default class Automations extends View {
       name: field(a.name, "issue-triage"), cron: field(a.cron, "0 9 * * 1-5"), repo: field(tilde(a.repo), "~/Projects/myapp"),
       model: field(a.model, "agent default"), timeout: field(String(a.timeout_minutes ?? 60), "60"),
       mcp: field(tilde(a.mcp_config), "optional: path to an MCP servers JSON"),
+      // #501: what the form doesn't edit goes back to put as it came (put replaces the whole entry).
+      untouched: { catch_up_minutes: a.catch_up_minutes, disabled: a.disabled, workflow: a.workflow },
+      // #501: the entry's own agent_args, kept as they are unless the person changes them here.
+      // #498: a new entry starts on the automatic mode ("auto"); an existing one on "kept", its
+      // saved args as they are, so nothing is migrated on load (housekeeper-daily included).
+      // Kept exactly only while the agent is the saved one (savedAgent; "" for a template entry):
+      // after a switch the other agent's permission flags never carry over (agentArgsOf).
+      agentArgs: Array.isArray(a.agent_args) ? [...a.agent_args] : null,
+      savedAgent: a.template ? "" : a.agent ?? "claude",
+      mode: original ? "kept" : "auto",
       prompt: TextareaState.new({ placeholder: "What should the agent do each time?", value: a.prompt ?? "" }),
-      result: null, seq: 0,
+      result: null, warning: null, seq: 0,
     };
+    const f = this.form;
+    f.args = field(argsText(splitPermission(f.agent, f.agentArgs).rest), "optional: more words for the agent, after its flags");
+    f.argsLine = f.args.value();
     this.form.prompt.set_auto_grow(4, 12);
     this.form.prompt.on("change", (_e, cx) => this.preview(cx));
     this.view = { kind: "form" };
     cx.spawn(async (cx) => {
-      try { this.templates = JSON.parse((await hc(["templates", "--json"])).stdout).templates ?? []; } catch { this.templates = []; }
+      this.templates = (await this.loadTemplates()) ?? this.templates;
       try { this.installed = (await knownAgents()).filter((a) => a.installed).map((a) => a.key); } catch { this.installed = null; }
       cx.notify();
     });
@@ -194,8 +220,28 @@ export default class Automations extends View {
       workspace: f.workspace, workspace_id: f.workspace === "existing" ? f.workspace_id : "",
       agent: f.template ? "" : f.agent, template: f.template, model: f.template ? "" : f.model.value().trim(),
       prompt: f.prompt.value(), mcp_config: expand(f.mcp.value().trim()), timeout_minutes: Number.isFinite(num) ? num : 0,
+      ...Object.fromEntries(Object.entries(f.untouched).filter(([, v]) => v !== undefined && v !== null)),
+      ...this.agentArgsOf(f),
     };
   }
+
+  // The flags the run starts the agent with (#498, #501), as { agent_args } or {} for none.
+  // An existing entry the person did not touch here sends its own args back exactly. A template
+  // run gets no flags from the panel (its command brings its own): its saved args go back as
+  // they were. Otherwise: the chosen mode's permission flags, then the words of AGENT ARGS.
+  // After a switch away from the saved agent, every permission word is dropped from the words that
+  // carry over, and "kept" reads as Agent default.
+  agentArgsOf(f) {
+    const own = f.agentArgs, same = this.sameAgent(f);
+    const mode = f.mode === "kept" && !same ? "default" : f.mode;
+    const args = f.template || (mode === "kept" && f.args.value() === f.argsLine) ? own
+      : [...(mode === "kept" ? splitPermission(f.agent, own).perm : mode === "auto" ? autoArgs(f.agent) ?? [] : []),
+        ...(same ? parseArgs(f.args.value()) : withoutPermission(parseArgs(f.args.value())))];
+    return args?.length ? { agent_args: args } : {};
+  }
+
+  // Whether the form's agent is the one the entry was saved with (always, for a new entry).
+  sameAgent(f) { return !f.original || (!f.template && f.agent === f.savedAgent); }
 
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
@@ -207,6 +253,8 @@ export default class Automations extends View {
 
   preview(cx) {
     const f = this.form, seq = ++f.seq;
+    // #498: a prompt naming a terminal is saved all the same, with a warning beside it.
+    f.warning = addressWarning(f.prompt.value());
     cx.spawn(async (cx) => {
       let result;
       try { result = await this.put(true); } catch (e) { result = { problem: String(e.message ?? e) }; }
@@ -216,6 +264,7 @@ export default class Automations extends View {
 
   save(cx) {
     const f = this.form;
+    f.warning = addressWarning(f.prompt.value());
     cx.spawn(async (cx) => {
       try {
         const res = await this.put(false);
@@ -347,7 +396,7 @@ export default class Automations extends View {
       .child(h_flex().gap(7).items_center().child(this.dot(a, t)).child(div().flex_1().min_w(0).truncate().font_semibold().child(a.name))
         .child(this.button(`run-${a.name}`, "▶", t, (cx) => this.act(cx, ["run", a.name, "--bg"]), { px: 6, h: 22 })))
       .child(div().pl(15).text_size(11).text_color(t.muted).truncate().child(sub))
-      .child(div().pl(15).text_size(11).text_color(t.dim).truncate().child(`${a.template ? "template " + a.template : a.agent + (a.model ? " · " + a.model : "")} · ${a.workspace}`));
+      .child(div().pl(15).text_size(11).text_color(t.dim).truncate().child(`${a.template ? "template " + a.template : a.agent + (a.model ? " · " + a.model : "")} · ${a.workspace} · ${this.modeLine(a)}`));
   }
 
   renderDetail(t, cx) {
@@ -372,7 +421,8 @@ export default class Automations extends View {
         .child(kv("Next", a.disabled ? "paused" : this.list.paused ? "held: all paused" : until(a.next)))
         .child(kv("Repo", tilde(a.repo)))
         .child(kv("Runs in", WORKSPACES.find(([w]) => w === a.workspace)?.[1] ?? a.workspace))
-        .child(kv(a.template ? "Template" : "Agent", a.template || `${a.agent}${a.model ? " · " + a.model : ""}`)))
+        .child(kv(a.template ? "Template" : "Agent", a.template || `${a.agent}${a.model ? " · " + a.model : ""}`))
+        .child(kv("Permissions", this.modeLine(a))))
       .child(div().p(8).rounded(7).bg(t.raised).text_size(12).text_color(t.muted).child(a.prompt || a.workflow || ""))
       .child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("HISTORY"))
       .children(runs.length ? runs.map((r) => h_flex().id(`h-${r.run_id}`).gap(8).px(6).py(4).rounded(6).items_center().cursor_pointer()
@@ -381,6 +431,42 @@ export default class Automations extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(r.error || (r.seconds ? duration(r.seconds) : "")))
         .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(r.at))))
         : [div().text_size(12).text_color(t.dim).child("No runs yet.")]);
+  }
+
+  // The template's mode, read from its hc command (#498); the panel adds nothing to it.
+  templateModeOf(name) {
+    const tp = (this.templates ?? []).find((x) => x?.name === name);
+    return tp ? templateMode(tp.command) : "not known (hc lists no such template)";
+  }
+
+  // What the saved entry (a) runs with, in words, for the list row and the detail (#498).
+  modeLine(a) {
+    if (a.template) return `${this.templateModeOf(a.template)} (template)`;
+    return modeOf(a.agent || "claude", a.agent_args);
+  }
+
+  // PERMISSIONS (#498): the mode the run starts the agent in. A new entry starts on the agent's
+  // automatic mode, when it has one; an existing one on its saved args ("As saved"), never
+  // migrated. Picking Agent default saves no permission flag. A template brings its own.
+  modeForm(f, t, input) {
+    const note = (id, text) => div().id(id).text_size(11).text_color(t.muted).child(text);
+    if (f.template) return note("f-mode-template", `${f.template}: ${this.templateModeOf(f.template)}. `
+      + "The template's command brings its own flags; the panel adds none.");
+    const auto = autoArgs(f.agent);
+    const same = this.sameAgent(f);
+    const picked = (f.mode === "auto" && !auto) || (f.mode === "kept" && !same) ? "default" : f.mode;
+    const options = [
+      ...(f.original && same ? [["kept", `As saved: ${modeOf(f.agent, f.agentArgs)}`]] : []),
+      ...(auto ? [["auto", `Automatic (${auto.join(" ")})`]] : []),
+      ["default", "Agent default"],
+    ];
+    const args = this.agentArgsOf(f).agent_args ?? [];
+    const why = auto ? null : `${f.agent} has no known automatic mode: it runs with its own default.`;
+    return v_flex().gap(4)
+      .child(this.pills("f-mode", options, picked, t, (v, cx) => { f.mode = v; this.preview(cx); cx.notify(); }))
+      .when(Boolean(why), (el) => el.child(note("f-mode-none", why)))
+      .child(note("f-mode-now", `Runs ${modeOf(f.agent, args)}${args.length ? `: ${f.agent} ${argsText(args)}` : ""}`))
+      .child(input("f-args", f.args));
   }
 
   renderForm(t, cx) {
@@ -416,11 +502,16 @@ export default class Automations extends View {
         (v, cx) => { f.workspace_id = v; this.preview(cx); cx.notify(); })))
       .child(label("AGENT")).child(this.pills("f-agent", agents, agentValue, t, (v, cx) => {
         if (v.startsWith("template:")) { f.template = v.slice(9); f.agent = ""; } else { f.template = ""; f.agent = v; }
+        // An existing entry: its saved agent gets its saved args back; any other lands on Agent
+        // default, never on Automatic (nothing is migrated; #505).
+        if (f.original) f.mode = this.sameAgent(f) ? "kept" : "default";
         this.preview(cx); cx.notify();
       }))
       .when(!f.template, (el) => el.child(label("MODEL")).child(input("f-model", f.model)))
+      .child(label("PERMISSIONS")).child(this.modeForm(f, t, input))
       .child(label("PROMPT")).child(div().id("f-prompt").p(8).rounded(7).border_1().border_color(t.input)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Textarea.new(f.prompt).w_full().text_size(12)))
+      .when(Boolean(f.warning), (el) => el.child(div().id("f-address").pt(2).text_size(11).text_color(t.blocked).child(f.warning)))
       .child(label("TIMEOUT (MINUTES)")).child(input("f-timeout", f.timeout))
       .child(label("MCP CONFIG")).child(input("f-mcp", f.mcp))
       .child(div().pt(8).text_size(12)
