@@ -196,13 +196,14 @@ export function removeLink(lines, topic) {
 
 const squash = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
 
-// The entry a request means: the one with that exact text, else every entry that
-// contains it.
+// The entries a request means: every entry with that exact text, else every entry
+// that contains it. More than one exact match is a duplicate (a replace, an import, a
+// hand edit), which no text tells apart; findOne refuses it rather than pick the first.
 export function matchEntries(entries, wanted) {
   const key = squash(cleanEntry(wanted))
   if (key === '') return []
-  const exact = entries.find(entry => squash(entry.text) === key)
-  if (exact !== undefined) return [exact]
+  const exact = entries.filter(entry => squash(entry.text) === key)
+  if (exact.length > 0) return exact
   return entries.filter(entry => squash(entry.text).includes(key))
 }
 
@@ -817,7 +818,17 @@ export function install(rt) {
     const found = matchEntries(allEntries(pool), wanted)
     const given = `the text given (${String(wanted ?? '').length} chars)`
     if (found.length === 0) throw missing(`No entry in ${label}${topic !== undefined ? ' in that topic' : ''} matches ${given}. recall shows what is saved.`)
-    if (found.length > 1) throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
+    if (found.length > 1) {
+      // Identical text cannot be told apart by it: a topic names one only when no
+      // file holds two. Never pick the first, which may be the other.
+      if (found.every(entry => squash(entry.text) === squash(found[0].text))) {
+        const files = new Set(found.map(entry => entry.file.file))
+        throw missing(files.size === found.length
+          ? `${capital(given)} matches ${found.length} entries with identical text in ${label}; name the topic it is in (topic). recall shows what is saved.`
+          : `${capital(given)} matches ${found.length} entries with identical text in ${label}; there is no way to tell them apart by text, so nothing changed. recall shows what is saved.`)
+      }
+      throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
+    }
     return found[0]
   }
 

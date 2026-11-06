@@ -45,6 +45,10 @@ test('a request names one entry by its text, or by a part only it has', () => {
   assert.deepEqual(matchEntries(entries, 'tea').map(entry => entry.text), ['Likes tea', 'Likes green tea'])
   assert.deepEqual(matchEntries(entries, 'hangzhou').map(entry => entry.text), ['Lives in Hangzhou'])
   assert.deepEqual(matchEntries(entries, '  '), [])
+  // Two copies of one text come back as both, never as the first alone: the caller
+  // cannot tell which one the request meant.
+  const twins = parseMemory('- Likes tea\n- Likes tea\n').entries
+  assert.deepEqual(matchEntries(twins, 'likes tea').map(entry => entry.line), [0, 1])
 })
 
 test('keys are refused, while paths, names, and links are kept', () => {
@@ -237,6 +241,35 @@ test('topics hold details, linked from MEMORY.md, and go when their last entry d
   assert.match(await tool('forget', { entry: 'window', topic: 'travel' }, 'b2'), /The topic \[\[travel\]\] was empty, so it is gone too\./)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'travel.md')), false)
   assert.equal(read('bots', 'b2', 'MEMORY.md'), '# Memory\n\n## Index\n')
+})
+
+test('duplicate entries never resolve to the first: one file is ambiguous, a topic names one', async (t) => {
+  const { tool, read, stop, home } = start()
+  t.after(() => stop())
+  const dir = join(home, 'memory', 'bots', 'b2')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'MEMORY.md'), '# Memory\n\n- Likes tea\n\n## Index\n')
+  writeFileSync(join(dir, 'travel.md'), '# travel\n\n- Likes tea\n')
+
+  // The same text in two files: no text names one, but its topic does, and only that
+  // one changes.
+  await assert.rejects(tool('forget', { entry: 'Likes tea' }, 'b2'), /: The text given \(9 chars\) matches 2 entries with identical text in your memory; name the topic it is in \(topic\)\. recall shows what is saved\.$/)
+  assert.match(await tool('remember', { text: 'Likes green tea', replace: 'Likes tea', topic: 'travel' }, 'b2'), /"Likes tea" is now "Likes green tea"/)
+  assert.deepEqual(parseMemory(read('bots', 'b2', 'travel.md')).entries.map(entry => entry.text), ['Likes green tea'])
+  assert.equal(read('bots', 'b2', 'MEMORY.md'), '# Memory\n\n- Likes tea\n\n## Index\n')
+
+  // Two copies in one file: no text tells them apart, so replace and remove both
+  // refuse and nothing changes, rather than editing or removing the first one.
+  const twice = '# Memory\n\n- Likes tea\n- Likes tea\n\n## Index\n'
+  writeFileSync(join(dir, 'MEMORY.md'), twice)
+  const ambiguous = (error) => {
+    assert.equal(error.code, 'memory/no-match')
+    assert.match(error.message, /^The text given \(9 chars\) matches 2 entries with identical text in your memory; there is no way to tell them apart by text, so nothing changed\. recall shows what is saved\.$/)
+    return true
+  }
+  await assert.rejects(tool('remember', { text: 'Likes coffee', replace: 'Likes tea' }, 'b2'), ambiguous)
+  await assert.rejects(tool('forget', { entry: 'Likes tea' }, 'b2'), ambiguous)
+  assert.equal(read('bots', 'b2', 'MEMORY.md'), twice)
 })
 
 test('Main Bots and group admins write the team memory; only Main Bots touch another Bot\'s', async (t) => {
