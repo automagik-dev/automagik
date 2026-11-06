@@ -1,6 +1,6 @@
 {
   "name": "@automagik/locale-pt-br-dsh",
-  "version": "3.87.1",
+  "version": "3.87.2",
   "description": "Brazilian Portuguese for DeepSeek Harness 0.2.2 and later: the Bot team's Portuguese (omni-ui) and the DSH strings DSH's own pt gets wrong (date order, number grouping, plan hint, mistranslations), under a pt-BR entry that falls back to DSH's pt. Correctness over a single picker entry until DSH fixes its copy",
   "keywords": [
     "dsh-plugin",
