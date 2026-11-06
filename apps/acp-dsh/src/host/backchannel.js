@@ -526,9 +526,9 @@ export class Backchannel {
         if (now.auto !== true) levelChanged = true
       }
       // The timeout and the level watcher cover the review and approval phase, not the body.
-      // DSH's tools/pre-execute listeners run before dispatch and auto-review prepends its own;
-      // this appended listener disarms both once the gate for this call has run. A long body and
-      // a level change after dispatch then keep their real outcome instead of a false timeout.
+      // The pipeline reaches its tools/execute waterfall only after the pre-execute gate and any
+      // approval ask have settled; disarming there, immediately around the body, keeps a long
+      // allowed body out of the deadline and covers a level change while the ask is pending.
       if (!levelChanged && level.auto && typeof this.ctx?.on === 'function') {
         controller = new AbortController()
         timer = setTimeout(() => {
@@ -549,7 +549,7 @@ export class Backchannel {
             controller.abort(new Error('the level changed during Auto review'))
           }
         })
-        unwatchPre = this.ctx.on('tools/pre-execute', (exec, next) => {
+        unwatchPre = this.ctx.on('tools/execute', (exec, next) => {
           if (exec?.callId !== id || exec.parent !== undefined || exec.agent !== record.agent) return next()
           if (timer !== undefined) {
             clearTimeout(timer)

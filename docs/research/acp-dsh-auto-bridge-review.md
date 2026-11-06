@@ -169,10 +169,12 @@ Each row has its own test (see below). The level guard subscribes to the Session
 `permission/preset`, `sandbox/mode` and `approval/policy` events, re-evaluates the level and
 aborts the call's signal when it is no longer Auto; a re-check immediately before
 `tools.execute` covers a host without the subscription. The review timeout is a per-call timer
-(default 120 s) on the same signal. Both guards cover the review/approval phase only: an
-appended `tools/pre-execute` listener disarms them when the gate for this call has returned, so
-a long allowed body is not aborted as a timeout and a level change after dispatch keeps the
-body's real result instead of being rewritten.
+(default 120 s) on the same signal. Both guards cover the review and approval phase, not the
+body: a `tools/execute` listener disarms them at the dispatch boundary, after the pre-execute
+gate and any approval ask have settled. A long allowed body is not aborted as a timeout, and a
+level change after dispatch keeps the body's real result instead of being rewritten. A level
+change or timeout while the approval dialog is pending still refuses, because that listener has
+not run yet.
 
 ## Interaction with the level filter and the drift detector
 
