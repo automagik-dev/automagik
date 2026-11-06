@@ -78,9 +78,9 @@ function sample() {
 const locale = fakeLocale()
 const uninstall = team.installLocale(locale)
 
-test('the team step registers its copy as welcome.team, in English and in Brazilian Portuguese', () => {
+test('the team step registers its copy as welcome.team, in English, Portuguese and Brazilian Portuguese', () => {
   assert.equal(team.NAMESPACE, 'welcome.team')
-  assert.deepEqual(plain(locale.calls), [['welcome.team', ['en', 'pt-BR']]])
+  assert.deepEqual(plain(locale.calls), [['welcome.team', ['en', 'pt', 'pt-BR']]])
   assert.ok(Object.keys(team.PT_BR).length > 150)
 })
 

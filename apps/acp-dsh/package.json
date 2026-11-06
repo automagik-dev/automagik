@@ -1,6 +1,6 @@
 {
   "name": "@automagik/acp-dsh",
-  "version": "3.86.30",
+  "version": "3.87.2",
   "description": "Agents over ACP (Agent Client Protocol) as DeepSeek Harness models: a Session on one streams the agent's words, shows its tool calls as DSH tool cards and asks through DSH's approval dialog",
   "keywords": [
     "dsh-plugin",
@@ -40,7 +40,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.2-rc.1 <0.3.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0",
     "node": ">=24.9"
   },
   "peerDependencies": {
