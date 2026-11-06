@@ -45,7 +45,9 @@ function configOptions(session) {
 }
 
 // One MCP server as an agent's adapter would use it: newline-delimited JSON-RPC over its stdio.
-function connect(server) {
+// A `tools/list_changed` notification makes it re-list, as Claude Code's adapter does (Codex
+// ignores it, which is why the plugin forks there instead); the trace keeps the order observable.
+function connect(server, sessionId) {
   const env = { ...process.env, ...Object.fromEntries((server.env ?? []).map(({ name, value }) => [name, value])) }
   const child = spawn(server.command, server.args ?? [], { env, stdio: ['pipe', 'pipe', 'pipe'] })
   child.stdin.on('error', () => {})
@@ -61,6 +63,12 @@ function connect(server) {
       if (line.trim() === '') continue
       let message
       try { message = JSON.parse(line) } catch { continue }
+      if (message.method === 'notifications/tools/list_changed') {
+        void request('tools/list', {}).then((listed) => {
+          trace({ event: 'relist', sessionId, server: server.name, at: Date.now(), tools: (listed?.tools ?? []).map(tool => tool?.name) })
+        }).catch(() => {})
+        continue
+      }
       if (message.id === undefined) continue
       const waiter = pending.get(message.id)
       if (waiter === undefined) continue
@@ -83,13 +91,16 @@ function connect(server) {
   return { name: server.name, child, request, tools: ready, close: () => { try { child.stdin.end() } catch {} ; try { child.kill('SIGTERM') } catch {} } }
 }
 
-async function attach(session, servers) {
+async function attach(session, servers, sessionId) {
   session.mcp = new Map()
   if (SKIP_MCP) return
   for (const server of servers ?? []) {
-    const connection = connect(server)
+    const connection = connect(server, sessionId)
     session.mcp.set(server.name, connection)
-    await connection.tools.catch(() => [])
+    const tools = await connection.tools.catch(() => [])
+    // The adapter's first `tools/list` for this session, before its `session/new` (or fork)
+    // answer: the delivery 6 probes read this order from the trace.
+    trace({ event: 'mcp-list', sessionId, server: server.name, tools: tools.map(tool => tool?.name) })
   }
 }
 
@@ -111,7 +122,8 @@ const implementation = {
     const sessionId = `fake-${++created}`
     trace({ event: 'new-session', sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
     const session = newSession(sessionId, params.cwd)
-    await attach(session, params.mcpServers)
+    await attach(session, params.mcpServers, sessionId)
+    trace({ event: 'new-answer', sessionId, at: Date.now() })
     return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
   },
   async unstable_forkSession(params) {
@@ -127,7 +139,14 @@ const implementation = {
     session.effort = source.effort
     session.forkedFrom = params.sessionId
     trace({ event: 'fork', from: params.sessionId, sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
-    await attach(session, params.mcpServers)
+    // A fork that cannot offer the bridge: `session/fork` answers with a session whose server
+    // never started, as codex-acp does when the person's Codex config defines that name.
+    if (process.env.FAKE_ACP_FORK_SKIP_MCP !== '1') await attach(session, params.mcpServers, sessionId)
+    // The answer is held open, so a probe can land a preset change while the session does not
+    // exist yet (the ordering rule is exercised from both sides).
+    const delay = Number(process.env.FAKE_ACP_FORK_DELAY_MS ?? 0)
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
+    trace({ event: 'fork-answer', sessionId, from: params.sessionId, at: Date.now() })
     return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
   },
   async closeSession({ sessionId }) {
