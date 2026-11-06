@@ -1,14 +1,18 @@
 // The adapter against the fake agent over real stdio, driven the way DSH's agent loop drives a
 // model: stream a step, run the tool calls it ends on, stream the next step with the results.
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { isAgentLoopRequest, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import { apply } from '../index.js'
+import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
+import { Backchannel } from '../src/host/backchannel.js'
+import { credentialShapes } from '../src/host/redact.js'
+import { BOUNDARY_KIND } from '../src/host/switch.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
-import { aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 
@@ -40,9 +44,9 @@ function host({ answer = 'allowed-once' } = {}) {
   return h
 }
 
-async function step(adapter, messages, { signal, onChunk, model = 'default', effort } = {}) {
+async function step(adapter, messages, { signal, onChunk, model = 'default', effort, provider = 'acp-fake' } = {}) {
   const chunks = []
-  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model, ...(effort ? { reasoningEffort: effort } : {}), sessionId: 's1', messages, signal }))) {
+  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider, model, ...(effort ? { reasoningEffort: effort } : {}), sessionId: 's1', messages, signal }))) {
     chunks.push(chunk)
     onChunk?.(chunks)
   }
@@ -463,4 +467,434 @@ test("with no effort, the model's own is asked for only without a default row, a
   set.length = 0
   await choose(runOf(['low', 'high']), 'm', undefined, own(undefined))
   assert.deepEqual([asked, set], [2, [['model', 'm']]])
+})
+
+// --- DSH's tools over the bridge (`dshTools` on) -------------------------------------------
+// The fake agent connects the `dsh` MCP server itself, as both real adapters do, so these run
+// the real bridge and the real back-channel over stdio and loopback.
+
+const bridgeTools = () => [
+  { name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } },
+  { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: {} } },
+]
+
+function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write', redactor, spec: extra = {}, trace, toolsOn = true } = {}) {
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  const definitions = bridgeTools()
+  const asked = []
+  const executed = []
+  const agent = { session, ctx: { tools: { register: () => () => {} } } }
+  const ctx = {
+    agents: { get: () => agent, turnBoundaryOf: () => ({ lastTurn: 1 }) },
+    get: (name) => {
+      if (name === 'tools') {
+        return {
+          definitions: () => [...definitions, { name: TOOL_NAME, description: 'mirror', parameters: { type: 'object' } }],
+          executable: toolName => definitions.find(definition => definition.name === toolName),
+          execute: async ({ calls }) => {
+            executed.push(calls[0].name)
+            return { results: [{ callId: calls[0].id, result: { content: [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }
+          },
+        }
+      }
+      if (name === 'approval') {
+        return {
+          effectivePolicy: () => (sandbox === 'danger-full-access' ? 'never' : 'ask'),
+          request: async (request) => {
+            asked.push(request)
+            return typeof answer === 'function' ? answer(request) : answer
+          },
+        }
+      }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: sandbox }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    logger: { warn: () => {}, info: () => {} },
+  }
+  const catalog = { models: async () => [{ id: 'default', name: 'Fake agent' }], model: async () => undefined, ownEffort: () => undefined, dispose() {} }
+  const spec = {
+    name: 'Fake agent',
+    catalog,
+    installed: () => true,
+    spawn: () => ({ command: process.execPath, args: [FAKE], env: { ...(trace === undefined ? {} : { FAKE_ACP_TRACE: trace }), ...env } }),
+    ...extra,
+  }
+  const backchannel = new Backchannel({ ctx })
+  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]), { dshTools: () => toolsOn, backchannel, redactor })
+  const close = () => { adapter.dispose(); backchannel.dispose() }
+  return { adapter, spec, ctx, agent, session, definitions, asked, executed, backchannel, close }
+}
+
+test('with dshTools on, DSH approves a DSH tool call and the bridge writes its card, with no mirror call', async () => {
+  const h = dshHost()
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const chunks = await step(h.adapter, messages)
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.match(textIn(chunks), /The bridge said: ran bash/)
+    // No mirror tool call: the bridge's rows are the one card.
+    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, 'bash')
+    assert.deepEqual(h.executed, ['bash'])
+    const events = h.session.snapshotEvents()
+    assert.ok(events.some(event => event.type === 'tool/call' && event.data.name === 'bash'))
+    assert.ok(events.some(event => event.type === 'tool/result' && event.data.message.isError === false))
+  } finally {
+    h.close()
+  }
+})
+
+// UNPROVEN HERE: a saved always-allow rule for `mcp__*` in a real Claude Code profile can only
+// be exercised on a live CLI run, and no live turn was run here. What this test proves is the
+// mechanism that makes such a rule unable to skip DSH: acp-dsh answers the ACP permission
+// request itself (allow-once, no DSH dialog from it) and the bridge's own DSH approval still
+// runs exactly once. The saved-rule case itself is labelled unproven in the PR body.
+test('an allow-once rule answers the agent\'s own permission request and still cannot skip DSH\'s one dialog', async () => {
+  const h = dshHost()
+  try {
+    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge-permit bash' }] }])
+    assert.match(textIn(chunks), /permit yes/)
+    // Exactly one DSH dialog for the call: acp-dsh answers the ACP request itself.
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, 'bash')
+    assert.equal(h.executed.length, 1)
+  } finally {
+    h.close()
+  }
+})
+
+test('a bridge the adapter never starts fails the turn with acp_bridge_missing', async () => {
+  const h = dshHost({ env: { FAKE_ACP_SKIP_MCP: '1' }, spec: { bridgeReadyMs: 250 } })
+  try {
+    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'error')
+    assert.equal(chunks.at(-1).reason.failure.code, 'acp_bridge_missing')
+    assert.equal(h.asked.length, 0)
+  } finally {
+    h.close()
+  }
+})
+
+test('every drift turn records and cancels on its own trace, with no card on either', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-drift-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ spec: { drift: true }, trace })
+  try {
+    const ask = () => [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'drift' }] }]
+    const first = await step(h.adapter, ask())
+    const second = await step(h.adapter, ask())
+    for (const chunks of [first, second]) {
+      assert.equal(chunks.at(-1).reason.kind, 'aborted')
+      assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    }
+    assert.equal(h.asked.length, 0)
+    // A latch that survived the first turn would let the second one through unrecorded.
+    const records = h.session.snapshotEvents().filter(event => event.type.startsWith('plugin:')).map(event => pluginRecordOf(event))
+    assert.equal(records.length, 2)
+    assert.ok(records.every(record => record.type === 'plugin:acp-dsh/toolset-drift' && record.data.name === 'Bash'))
+    // Observed, not inferred: each turn's built-in call is followed by session/cancel on the
+    // same ACP session.
+    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const builtins = events.filter(event => event.event === 'builtin-tool-call')
+    const cancels = events.filter(event => event.event === 'cancel')
+    assert.equal(builtins.length, 2)
+    assert.equal(cancels.length, 2)
+    for (const [index, cancel] of cancels.entries()) {
+      assert.equal(cancel.sessionId, builtins[index].sessionId, 'each cancel names its own trace')
+      assert.ok(events.indexOf(cancel) > events.indexOf(builtins[index]), 'the cancel follows its call')
+    }
+    t.diagnostic(`builtin ${builtins.map(event => event.toolCallId).join('+')} on ${builtins[0].sessionId}; session/cancel x${cancels.length} on ${cancels[0].sessionId}`)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a preset change on an agent that ignores list_changed refreshes by fork, closes the source, and revokes its bridge', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-fork-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ trace, spec: { refresh: 'fork' } })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const first = await step(h.adapter, messages)
+    assert.match(textIn(first), /turn 1/)
+    const oldRecord = [...h.backchannel.records.values()][0]
+    // The Session's preset now registers one more tool: a new signature.
+    h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
+    const second = await step(h.adapter, messages)
+    assert.equal(second.at(-1).reason.kind, 'stop')
+    assert.match(textIn(second), /turn 2/)
+    assert.match(textIn(second), /The bridge said: ran bash/)
+    // One bridge at a time: the source's credential is gone.
+    assert.equal(h.backchannel.records.size, 1)
+    // The OLD session's own URL, not the bare one: the path matches its Session and only the
+    // revoked credential refuses it.
+    const old = await fetch(h.backchannel.urlFor(oldRecord), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldRecord.credential}` }, body: JSON.stringify({ op: 'list' }) })
+    assert.equal(old.status, 401)
+    // The ACP side: fork with the server set, then close of the source.
+    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const fork = events.find(event => event.event === 'fork')
+    assert.deepEqual(fork.servers, ['dsh'])
+    assert.ok(events.some(event => event.event === 'close' && event.sessionId === fork.from))
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a fork that fails after the session moved revokes both credentials and ends the run', async () => {
+  const h = dshHost({ env: { FAKE_ACP_FORK_FAIL: '1' }, spec: { refresh: 'fork' } })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const first = await step(h.adapter, messages)
+    assert.match(textIn(first), /turn 1/)
+    // A changed tool set triggers the fork, which the agent refuses.
+    h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
+    const second = await step(h.adapter, messages)
+    assert.equal(second.at(-1).reason.kind, 'error')
+    assert.match(second.at(-1).reason.failure.message, /would not refresh its DSH tools/)
+    // No half state: the run is gone, every credential revoked, and the next turn starts clean.
+    assert.equal(h.adapter.live.size, 0)
+    assert.equal(h.backchannel.records.size, 0)
+    const third = await step(h.adapter, messages)
+    assert.match(textIn(third), /turn 1/)
+    assert.equal(h.backchannel.records.size, 1)
+  } finally {
+    h.close()
+  }
+})
+
+test('a Session moving to an agent carries its transcript redacted, and each crossing writes a row', async () => {
+  const h = dshHost({ redactor: text => text.replaceAll('hunter2', '[secret:TOKEN]') })
+  try {
+    const messages = [
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier question' }] },
+      { role: 'assistant', source: { kind: 'model', provider: 'deepseek-official' }, content: [{ type: 'text', text: 'earlier answer hunter2' }] },
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] },
+    ]
+    const chunks = await step(h.adapter, messages)
+    const said = textIn(chunks)
+    assert.match(said, /The chat so far, moved from DSH to Fake agent/)
+    assert.match(said, /earlier answer \[secret:TOKEN\]/)
+    assert.equal(said.includes('hunter2'), false)
+    // The new-session notice is not written: this session does see the chat before it.
+    assert.equal(h.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source?.kind === NOTICE_KIND), false)
+    const boundary = () => h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+    assert.equal(boundary().length, 1)
+    assert.match(boundary()[0].data.source.summary, /Now answered by Fake agent \(acp-fake\)/)
+    // Moving back to DSH is the other crossing: a row, and the agent session (and bridge) end.
+    h.adapter.noteEvent(h.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
+    assert.equal(boundary().length, 2)
+    assert.match(boundary()[1].data.source.summary, /Now answered by DSH/)
+    assert.equal(h.adapter.live.size, 0)
+    assert.equal(h.backchannel.records.size, 0)
+  } finally {
+    h.close()
+  }
+})
+
+test('the plugin wiring hands the bridge to a Session when dshTools is set', async () => {
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  const asked = []
+  const agent = { session, ctx: { tools: { register: () => () => {} } } }
+  const definitions = bridgeTools()
+  const ctx = {
+    llm: { registerAdapter: () => () => {} },
+    agents: { get: () => agent, turnBoundaryOf: () => ({ lastTurn: 1 }) },
+    get: (name) => {
+      if (name === 'tools') {
+        return {
+          definitions: () => definitions,
+          executable: toolName => definitions.find(definition => definition.name === toolName),
+          execute: async ({ calls }) => ({ results: [{ callId: calls[0].id, result: { content: [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }),
+        }
+      }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', request: async (request) => { asked.push(request); return 'allowed-once' } }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    on: () => () => {},
+    effect: () => {},
+    logger: { warn: () => {}, info: () => {} },
+  }
+  const registered = {}
+  ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: true })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const chunks = await step(registered['acp-fake'], messages)
+    assert.match(textIn(chunks), /The bridge said: ran bash/)
+    assert.equal(asked.length, 1)
+    assert.equal(asked[0].toolName, 'bash')
+  } finally {
+    registered['acp-fake'].dispose()
+  }
+})
+
+test('switching away and back resumes the agent session with dshTools off, and starts clean with it on', async () => {
+  const off = dshHost({ toolsOn: false })
+  try {
+    const first = await step(off.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }] }])
+    assert.match(textIn(first), /turn 1/)
+    off.adapter.noteEvent(off.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
+    // Off: the agent run is kept across a turn on another provider, as on dev, so switching back
+    // resumes the same ACP session rather than starting fresh.
+    assert.equal(off.adapter.live.size, 1)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND).length, 0)
+    const second = await step(off.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain again' }] }])
+    assert.match(textIn(second), /turn 2/)
+  } finally {
+    off.close()
+  }
+  const on = dshHost()
+  try {
+    await step(on.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }] }])
+    on.adapter.noteEvent(on.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
+    // On: the crossing ends the agent session (and its bridge) and writes the row.
+    assert.equal(on.adapter.live.size, 0)
+    assert.equal(on.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND).length, 1)
+    const second = await step(on.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain again' }] }])
+    assert.match(textIn(second), /turn 1/)
+  } finally {
+    on.close()
+  }
+})
+
+test('with dshTools off a turn is the old path: no bridge spawned, no bridge rows, the same card and text', async () => {
+  const offDir = mkdtempSync(join(tmpdir(), 'acp-dsh-off-'))
+  const onDir = mkdtempSync(join(tmpdir(), 'acp-dsh-on-'))
+  const off = dshHost({ toolsOn: false, trace: join(offDir, 'trace.ndjson') })
+  const on = dshHost({ toolsOn: true, trace: join(onDir, 'trace.ndjson') })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
+    const chunksOff = await step(off.adapter, messages)
+    const chunksOn = await step(on.adapter, messages)
+    // The old behaviour runs no bridge at all: the agent got no servers, the plugin minted no
+    // credential and wrote no bridge rows.
+    const offTrace = readFileSync(join(offDir, 'trace.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(offTrace.find(event => event.event === 'new-session').servers, [])
+    assert.equal(off.backchannel.records.size, 0)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'tool/result').length, 0)
+    // The on path spawned the bridge for the same turn.
+    const onTrace = readFileSync(join(onDir, 'trace.ndjson'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(onTrace.find(event => event.event === 'new-session').servers, ['dsh'])
+    // The turn itself is unchanged: same text, same single card (a tool-call id is random).
+    const shape = chunks => ({
+      text: textIn(chunks),
+      blocks: chunks.filter(chunk => chunk.type === 'block-end').map(chunk => (chunk.block.type === 'tool-call'
+        ? { type: 'tool-call', name: chunk.block.name, arguments: chunk.block.arguments }
+        : chunk.block)),
+      finish: chunks.at(-1).reason.kind,
+    })
+    assert.deepEqual(shape(chunksOff), shape(chunksOn))
+    // The ask belongs to the next step, when DSH runs the card; both paths end this one first.
+    assert.equal(off.asked.length, 0)
+    assert.equal(on.asked.length, 0)
+  } finally {
+    off.close()
+    on.close()
+    rmSync(offDir, { recursive: true, force: true })
+    rmSync(onDir, { recursive: true, force: true })
+  }
+})
+
+test('with dshTools unset (the default), the agent runs its own tools and no bridge is spawned', async () => {
+  const session = Session.create('s1')
+  const agent = { session, ctx: { tools: { register: () => () => {} } } }
+  const ctx = {
+    llm: { registerAdapter: () => () => {} },
+    agents: { get: () => agent, turnBoundaryOf: () => ({ lastTurn: 1 }) },
+    get: () => undefined,
+    on: () => () => {},
+    effect: () => {},
+    logger: { warn: () => {}, info: () => {} },
+  }
+  const registered = {}
+  ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    const chunks = await step(registered['acp-fake'], messages)
+    // The mirror path, as on 2026-11-03: the agent's own call becomes an acp_tool card.
+    const call = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')
+    assert.ok(call, 'the step ended at the mirror call')
+    assert.equal(call.block.name, TOOL_NAME)
+    assert.equal(JSON.parse(call.block.arguments).title, 'mcp__dsh__bash')
+  } finally {
+    registered['acp-fake'].dispose()
+  }
+})
+
+test('the adapter\'s own deferred-tool loader gets no DSH card and no dialog', async () => {
+  const h = dshHost({ spec: { drift: true } })
+  try {
+    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'toolsearch' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.match(textIn(chunks), /I found it\./)
+    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    assert.equal(h.asked.length, 0)
+  } finally {
+    h.close()
+  }
+})
+
+test('a credential the agent streamed crosses to another provider redacted: inbound is not redacted, the replay is', async () => {
+  // Ingest is the agent's answer, logged as a native answer would be (asserted below), so the
+  // canary starts from that very text. What must be redacted is the history that crosses.
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-replay-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ redactor: credentialShapes, trace })
+  try {
+    h.adapter.agents.set('acp-fake-b', { ...h.spec, name: 'Fake agent B' })
+    const first = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] }])
+    const streamed = textIn(first)
+    // The agent produced these values, and DSH logs them as the assistant's words.
+    assert.match(streamed, /sk-abcdef123456/)
+    assert.match(streamed, /npm_abcdefghijklmnopqrstuvwxyz/)
+    assert.match(streamed, /Bearer abcdefgh1234/)
+    const messages = [
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] },
+      { role: 'assistant', source: { kind: 'model', provider: 'acp-fake' }, content: [{ type: 'text', text: streamed }] },
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'next' }] },
+    ]
+    await step(h.adapter, messages, { provider: 'acp-fake-b' })
+    // What the second agent received is the replayed history: read from its own prompt trace,
+    // not from its answer (an answer may itself carry whatever the person showed it).
+    const prompts = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(event => event.event === 'prompt')
+    const prompt = prompts.at(-1).text
+    assert.doesNotMatch(prompt, /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/)
+    assert.match(prompt, /sk-\[hidden\]/)
+    assert.match(prompt, /moved from Fake agent to Fake agent B/)
+    // The crossing is visible, and the agent's answer is what it got.
+    const rows = h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+    assert.equal(rows.length, 1)
+    assert.match(rows[0].data.source.summary, /Now answered by Fake agent B \(acp-fake-b\)/)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an MCP call with no structured name (codex) draws no ACP card and asks nothing', async () => {
+  // codex-acp sends `name: null` + `_meta.is_mcp_tool_call` for an MCP call: acp-dsh cannot match
+  // it, so it must leave the call entirely to the bridge/server and draw no card.
+  const h = dshHost({ spec: { refresh: 'fork' } })
+  try {
+    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'mcp-call' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.match(textIn(chunks), /The MCP tool answered\./)
+    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    assert.equal(h.asked.length, 0)
+    assert.equal(h.executed.length, 0)
+  } finally {
+    h.close()
+  }
 })
