@@ -166,11 +166,11 @@ test('#509: an unclosed no-space colon tail is masked and its value remembered',
   for (const [what, input, want, remembered] of [
     ['double quoted', `? "${PASS}:${LEAK}\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
     ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
-    ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
+    ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`, `${'y'.repeat(5000)}${LEAK}`],
     ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`, VALUE],
     ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
     ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
-    ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`, "hun'ter2"],
+    ['an apostrophe in the value', `? "${PASS}:hunt'er2\n`, `? "${PASS}:${REDACTED}\n`, "hunt'er2"],
     ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
     ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
     ['a mismatched closing quote', `? "${PASS}:${LEAK}'\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
@@ -179,7 +179,7 @@ test('#509: an unclosed no-space colon tail is masked and its value remembered',
   ]) {
     assert.equal(redactText(input), want, what)
     const kept = secretsIn(input)
-    assert.ok(kept.some((v) => v.includes(remembered)), `${what}: the value is remembered`)
+    assert.ok(kept.includes(remembered), `${what}: the value is remembered`)
     assert.ok(!kept.includes(TAIL), `${what}: the name tail is not remembered`)
   }
 })
@@ -187,6 +187,13 @@ test('#509: an unclosed no-space colon tail is masked and its value remembered',
 test('#509: a matching closing quote with no separator is served whole', () => {
   const input = `? "${PASS}:${LEAK}"\n`
   assert.equal(redactText(input), input)
+})
+
+test('#509: a glued quote still remembers the value for later text', () => {
+  const input = `? "${PASS}:${LEAK}"x\nlater note: ${LEAK}\n`
+  const kept = secretsIn(input)
+  assert.ok(kept.includes(LEAK), 'the value is remembered')
+  assert.ok(masked(`later note: ${LEAK}`, kept).includes(REDACTED), 'a later bare occurrence is masked')
 })
 
 

@@ -138,7 +138,7 @@ test('#509: an unclosed no-space colon tail is masked', () => {
     ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`],
     ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`],
     ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`],
-    ['an apostrophe in the value', `? "${PASS}:hun'ter2\n`, `? "${PASS}:${REDACTED}\n`],
+    ['an apostrophe in the value', `? "${PASS}:hunt'er2\n`, `? "${PASS}:${REDACTED}\n`],
     ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`],
     ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`],
     ['a mismatched closing quote', `? "${PASS}:${LEAK}'\n`, `? "${PASS}:${REDACTED}\n`],
