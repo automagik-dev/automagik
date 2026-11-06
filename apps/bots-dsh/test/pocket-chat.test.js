@@ -12,7 +12,7 @@ import { createAdapter } from '../src/host/pocket-chat-adapter.js'
 import {
   ANSWER_ON_COMPUTER, DshChatSource, cursorOf, hasSessionApi, install, ownBots, rowIdOf, rowsOf, statusOf,
 } from '../src/host/pocket-chat.js'
-import { MAX_LINE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
+import { CLOSE_GRACE_MS, MAX_LINE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
 import { fakeContext } from './fake-ctx.js'
 
 // ---- the fake Session Controller
@@ -419,6 +419,68 @@ test('two starts at once: one serves, the other is refused, and the one serving 
     assert.deepEqual(lost, ['another host already serves this team to Pocket'])
     assert.equal((await hello(won[0].path)).readOnly, true, 'the bound socket was not unlinked')
     await won[0].close()
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+/** `promise`, or a rejection after `ms`. */
+const within = (promise, ms) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`not within ${ms} ms`)), ms).unref())])
+
+/** lstat with one field changed, as if the file at the path had been made again. */
+const remade = field => (path) => {
+  const s = lstatSync(path)
+  return Object.assign(Object.create(Object.getPrototypeOf(s)), s, { [field]: s[field] + 1 })
+}
+
+test('a stop cuts a reader that never ends its side, and the next start goes ahead', async () => {
+  const home = tempHome()
+  let stuck
+  try {
+    const first = await startPocketSocket({ home, source: sourceOf(fakeController(sessions())) })
+    // A half-open reader: it keeps its side open after the host ends its own.
+    stuck = createConnection({ path: first.path, allowHalfOpen: true })
+    stuck.on('error', () => {})
+    stuck.setEncoding('utf8')
+    const answered = new Promise(resolve => stuck.once('data', resolve))
+    stuck.write(`${JSON.stringify({ id: 1, method: 'hello' })}\n`)
+    await answered
+    await within(first.close(), CLOSE_GRACE_MS + 2000)
+    const next = await within(startPocketSocket({ home, source: sourceOf(fakeController(sessions())) }), 2000)
+    assert.equal((await hello(next.path)).readOnly, true)
+    await next.close()
+  } finally {
+    stuck?.destroy()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a stale socket made again in its place (an inode reused) is not removed', async () => {
+  for (const field of ['ctimeMs', 'birthtimeMs']) {
+    const home = tempHome()
+    try {
+      mkdirSync(join(home, 'pocket'), { mode: 0o700 })
+      await staleSocket(socketPathOf(home))
+      const stale = lstatSync(socketPathOf(home))
+      await assert.rejects(startPocketSocket({ home, source: sourceOf(fakeController(sessions())), lstat: remade(field) }), /another host already serves/, field)
+      assert.equal(lstatSync(socketPathOf(home)).ino, stale.ino, `${field}: the file is kept`)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  }
+})
+
+test('a bind that loses the race (EADDRINUSE) is refused like a live host', async () => {
+  const home = tempHome()
+  try {
+    mkdirSync(join(home, 'pocket'), { mode: 0o700 })
+    await staleSocket(socketPathOf(home))
+    const stale = lstatSync(socketPathOf(home))
+    // The re-check finds the path gone, as if another host had taken it: nothing is removed and
+    // the bind meets the file still there.
+    const gone = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }) }
+    await assert.rejects(startPocketSocket({ home, source: sourceOf(fakeController(sessions())), lstat: gone }), { message: 'another host already serves this team to Pocket' })
+    assert.equal(lstatSync(socketPathOf(home)).ino, stale.ino)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
