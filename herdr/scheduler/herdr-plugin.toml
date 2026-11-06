@@ -1,0 +1,30 @@
+id = "dnzzl.automations"
+name = "Automations"
+version = "0.12.1"
+min_herdr_version = "0.8.0"
+description = "Cron-scheduled agent prompts for Herdr — the trigger layer: prompt + cron, agent launched in a fresh worktree or the repo root."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["sh", "scripts/install.sh"]
+
+[[startup]]
+command = ["./bin/herdr-automations", "daemon"]
+
+[[actions]]
+id = "run-now"
+title = "Automations: run now"
+contexts = ["workspace"]
+command = ["./bin/herdr-automations", "run", "--pick"]
+
+[[actions]]
+id = "install-cli"
+title = "Automations: put herdr-automations on your PATH"
+contexts = ["workspace"]
+command = ["./bin/herdr-automations", "install-cli"]
+
+[[panes]]
+id = "board"
+title = "Automations"
+placement = "overlay"
+command = ["./bin/herdr-automations", "pane"]

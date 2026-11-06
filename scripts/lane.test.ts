@@ -83,6 +83,20 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
   });
 
+  test('a scheduler-only change (herdr/scheduler/, vendored) cuts no release and never reaches the pack', () => {
+    const none = () => false;
+    const scheduler = ['herdr/scheduler/main.go', 'herdr/scheduler/internal/daemon/daemon.go', 'herdr/scheduler/go.mod',
+      'herdr/scheduler/UPSTREAM.md', 'herdr/scheduler/LICENSE-upstream'];
+    // The binary ships from its own release lane: nothing here reaches an install, so no release kind.
+    expect(ships(scheduler, none)).toBe(false);
+    expect(herdrShips(scheduler)).toBe(false);
+    // Beside a plugin change it is a plugin patch; beside an app change, a full release.
+    expect(kindOf([...scheduler, 'apps/bots-dsh/client.js'], none, none, [...scheduler, 'apps/bots-dsh/client.js'])).toBe('plugins');
+    expect(kindOf([...scheduler, 'apps/desktop/src/main.js'], none, none, [...scheduler, 'apps/desktop/src/main.js'])).toBe('full');
+    // The rule is the scheduler folder alone: anything else under herdr/ still makes a herdr patch.
+    expect(herdrShips(['herdr/scheduler/main.go', 'herdr/mods/am-sidebar/main.js'])).toBe(true);
+  });
+
   test('an am-only change is an am patch; am never makes a release more than it is otherwise', () => {
     const none = () => false;
     const am = ['am/bin/am.mjs', 'am/lib/self.mjs', 'am/am-keys.json'];
