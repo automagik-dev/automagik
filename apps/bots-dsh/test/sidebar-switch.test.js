@@ -282,12 +282,45 @@ const SHELL_PARTS = /_logoRow|_brand|_toggle|_newSession|_footArea|_collapsed|_t
 const rules = [...rulesOf(SHELL_CSS), ...rulesOf(SIDEBAR_CSS)].filter(rule => SHELL_PARTS.test(rule.selector))
 const hiding = rules.filter(rule => /display:none/.test(rule.body))
 
+// dsh-client-ui-sidebar's own rules for the toggle's two icons (class names match on their
+// stems here, as above). In a collapsed rail the rail mark shows, while the native panel
+// icon is hidden at rest and revealed on hover, or under a Windows title bar. The team
+// view's rules come after these, as its stylesheet loads later.
+const SHELL_ICON_RULES = [
+  { selector: '[class*="_railMark"]', body: 'display:inline-flex' },
+  { selector: '[class*="_collapsed"] [class*="_toggle"] [class*="_panelIcon"]', body: 'display:none' },
+  { selector: '[data-windows-titlebar] [class*="_collapsed"] [class*="_toggle"] [class*="_panelIcon"]', body: 'display:inline' },
+  { selector: '[class*="_collapsed"] [class*="_toggle"]:hover [class*="_panelIcon"]', body: 'display:inline' },
+  { selector: '[class*="_collapsed"] [class*="_toggle"]:hover [class*="_railMark"]', body: 'display:none' },
+]
+
+// The display the cascade gives a toggle icon, with the toggle hovered or at rest. An
+// !important declaration beats every normal one; otherwise the last matching rule wins.
+function iconDisplay(node, hover) {
+  let display
+  let important = false
+  for (const rule of [...SHELL_ICON_RULES, ...rules]) {
+    const onHover = rule.selector.includes(':hover')
+    if (onHover && !hover) continue
+    if (!node.matches(onHover ? rule.selector.replace(/:hover/g, '') : rule.selector)) continue
+    const declaration = rule.body.match(/(?:^|;)display:([^;!]+)(!important)?/)
+    if (!declaration) continue
+    if (declaration[2]) { display = declaration[1]; important = true }
+    else if (!important) display = declaration[1]
+  }
+  return display ?? 'inline'
+}
+
 // The shell sidebar's own markup (dsh-client-ui-sidebar SidebarRoot), reduced to what the
 // team view reshapes: the switch is in the logo row, except in a macOS desktop window,
 // where it sits in the strip by the window buttons.
 function shell({ platform, collapsed }) {
   const darwin = platform === 'mac'
-  const toggle = '<button class="x_iconButton x_toggle" aria-label="Toggle sidebar"></button>'
+  const windows = platform === 'windows'
+  // dsh-client-ui-sidebar's toggle: only a collapsed rail outside a Windows title bar
+  // carries the rail mark, and every toggle carries the native panel icon.
+  const railMark = collapsed && !windows ? '<span class="x_railMark" aria-hidden="true"><svg></svg></span>' : ''
+  const toggle = `<button class="x_iconButton x_toggle" data-sidebar-toggle aria-label="Toggle sidebar">${railMark}<svg class="x_panelIcon" aria-hidden="true"></svg></button>`
   const html = `<!doctype html><html${platform === 'windows' ? ' data-windows-titlebar' : ''}${darwin ? ' data-platform="darwin"' : ''}><body>
     <div${collapsed ? ' data-sidebar-collapsed="true"' : ''}>
       <div class="x_root${collapsed ? ' x_collapsed' : ''}">
@@ -325,6 +358,35 @@ for (const platform of ['web', 'windows', 'mac']) {
     })
   }
 }
+
+// DSH reveals its native toggle icon on hover; the team view must keep exactly that one
+// icon there, at rest and on hover, never a second glyph of its own.
+for (const platform of ['web', 'windows', 'mac']) {
+  for (const collapsed of [false, true]) {
+    test(`${collapsed ? 'a collapsed' : 'an open'} sidebar on ${platform} shows exactly one toggle icon at rest and on hover`, () => {
+      const { document, hidden } = shell({ platform, collapsed })
+      const icons = [...document.querySelectorAll('[class*="_panelIcon"], [class*="_railMark"]')]
+      const railMark = document.querySelector('[class*="_railMark"]')
+      for (const hover of [false, true]) {
+        const state = `${platform}, ${collapsed ? 'collapsed' : 'open'}, ${hover ? 'hover' : 'rest'}`
+        const shown = icons.filter(node => iconDisplay(node, hover) !== 'none')
+        assert.equal(shown.length, 1, `${state}: shown ${shown.map(node => node.getAttribute('class')).join(' | ') || 'none'}`)
+        assert.equal(shown[0].matches('[class*="_panelIcon"]'), true, `${state}: ${shown[0].getAttribute('class')}`)
+        if (railMark) {
+          assert.equal(hidden(railMark), true, `${state}: rail mark hidden by the team view`)
+          assert.equal(iconDisplay(railMark, hover), 'none', `${state}: rail mark`)
+        }
+      }
+    })
+  }
+}
+
+// The closed rail painted its own glyph in front of the shell's toggle. DSH shows its
+// native icon on hover, so the pseudo-element left two icons on screen.
+test('the sidebar styles add no pseudo-icon to the shell\'s toggle', () => {
+  const pseudo = [...rulesOf(SHELL_CSS), ...rulesOf(SIDEBAR_CSS)].filter(rule => /_toggle[^,]*::before/.test(rule.selector))
+  assert.deepEqual(pseudo.map(rule => rule.selector), [])
+})
 
 test('an open sidebar has a button that collapses it; the rail leaves that to the shell', () => {
   const calls = []
