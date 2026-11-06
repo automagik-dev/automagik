@@ -3,6 +3,13 @@
 // or group chat it belongs to.
 import { mkdirSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+
+// The saved team's format. A file may carry an older version this build still reads and
+// migrates (the formats before the stamp count as LEGACY_VERSION); any other value means a
+// newer Omni wrote it, and this one must not touch it.
+const STATE_VERSION = 1
+const LEGACY_VERSION = 0
+const COMPATIBLE_VERSIONS = [LEGACY_VERSION, STATE_VERSION]
 import { join } from 'node:path'
 import { piAiClaudeOf } from './claude-models.js'
 import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
@@ -21,7 +28,7 @@ export function install(rt) {
   const { ctx, home, statePath } = rt
 
   /** @type {{version:1, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, rooms:Record<string,any>, agents:Record<string,any>, capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
-  const state = { version: 1, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, prefs: {}, switching: {}, revision: 0 }
+  const state = { version: STATE_VERSION, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, prefs: {}, switching: {}, revision: 0 }
   let loaded = null
   let writing = Promise.resolve()
   const { warn } = rt
@@ -95,11 +102,14 @@ export function install(rt) {
       }
       return undefined
     }
-    if (parsed?.version === 1) {
+    // The file's own version decides; a missing stamp is the format before this field. A
+    // version this build is not compatible with is never migrated.
+    const version = Number.isInteger(parsed?.version) ? parsed.version : LEGACY_VERSION
+    if (COMPATIBLE_VERSIONS.includes(version)) {
       stuck = undefined
       return parsed
     }
-    stuck = 'saved by a newer Omni; update Omni'
+    stuck = version > STATE_VERSION ? 'saved by a newer Omni; update Omni' : `saved by an Omni this version cannot read (format ${version})`
     return undefined
   }
 
@@ -109,6 +119,8 @@ export function install(rt) {
     const hadCapabilities = parsed !== null && parsed !== undefined && Object.hasOwn(parsed, 'capabilities')
     for (const key of Object.keys(state)) delete state[key]
     Object.assign(state, JSON.parse(EMPTY), parsed ?? {})
+    // Every read ends in the current format; the next save writes this stamp.
+    state.version = STATE_VERSION
     state.prefs ??= {}
     // Teams saved before the DSH Agent existed carry no `agents`; corrupt values reset.
     if (state.agents === null || typeof state.agents !== 'object' || Array.isArray(state.agents)) state.agents = {}
@@ -350,6 +362,7 @@ export function install(rt) {
     // A reading host keeps the file's revision, so its window does not skip the next change.
     if (!writable()) return required ? Promise.reject(new Error(`This host cannot save the Bot team: ${readOnly()}`)) : writing
     state.revision += 1
+    state.version = STATE_VERSION
     state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
     const snapshot = JSON.stringify(state)
     const run = writing.then(async () => {

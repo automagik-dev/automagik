@@ -135,6 +135,28 @@ test('malformed state stays read-only when its backup cannot be copied', async (
   }
 })
 
+test('a state saved before the version stamp is read, migrated, and written with version 1', async (t) => {
+  const saved = { revision: 7, mainBotId: 'chief', bots: { chief: { id: 'chief', name: 'Omni' } }, rooms: {}, exchanges: [], exchangeTurns: {}, questions: {} }
+  const { rt, statePath } = runtime(t, saved)
+  await rt.load()
+  assert.equal(rt.readOnly(), undefined)
+  assert.equal(rt.state.version, 1)
+  assert.equal(rt.state.bots.chief.name, 'Omni')
+  await rt.save()
+  const written = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+  assert.equal(written.version, 1, 'the write stamps the current format')
+  assert.equal(written.bots.chief.name, 'Omni', 'the migrated team is kept')
+})
+
+test('a version this build does not list is refused, not migrated', async (t) => {
+  const original = JSON.stringify({ version: -1, revision: 77, recoveryMarker: 'keep' })
+  const { rt, statePath } = runtime(t, original)
+  await rt.load()
+  assert.match(rt.readOnly(), /cannot read \(format -1\)/)
+  await rt.save()
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original)
+})
+
 test('a state from a newer version remains untouched', async (t) => {
   const original = JSON.stringify({ version: 999, revision: 77, recoveryMarker: 'keep' })
   const { rt, statePath } = runtime(t, original)
