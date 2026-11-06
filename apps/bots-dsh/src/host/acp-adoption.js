@@ -5,10 +5,10 @@
 // delivery-4/6 probes pass, the adapter is installed, and the route lists the model. A Bot
 // the person has changed since (or whose model the route does not list) is left alone.
 //
-// The probes are the bridge's own tests (apps/acp-dsh/test/backchannel.test.js and
-// adapter.test.js): tools listed before `session/new` answers, credential refusals, the
-// fork/close refresh, the shell tool and drift. `acpAgents.bridge()` says whether the build
-// loaded here carries them; an older ACP plugin has no such method and is not migrated.
+// `acpAgents.bridge()` runs a live probe on this machine: a fresh per-session credential, the
+// bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
+// adapter version; a failure is retried after ten minutes or the next start, so one slow start
+// never blocks the move forever. An older ACP plugin has no such method and is not migrated.
 import { claudeFamilyOf, piAiClaudeOf } from './claude-models.js'
 
 const ACP_AGENT = 'acp-claude'

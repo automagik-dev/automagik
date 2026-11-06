@@ -45,6 +45,9 @@ export const Config = z.object({
 
 export const SERVICE = 'acpAgents'
 const FIRST_CHECK_MS = 5000
+// A failed probe is retried after this long in the same process; a new process starts with an
+// empty cache, so the next app start also retries. A success is kept for its adapter version.
+export const PROBE_RETRY_MS = 10 * 60 * 1000
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -312,12 +315,27 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const bin = store.binOf(spec.adapter, spec.bin)
     if (bin === undefined) return { on: true, probesPass: false }
     const key = `${bin.path}\u0000${bin.version ?? ''}`
-    let probed = bridgeProbes.get(key)
-    if (probed === undefined) {
-      probed = probeBridge().catch(() => false)
-      bridgeProbes.set(key, probed)
-    }
-    return { on: true, probesPass: await probed }
+    const cached = bridgeProbes.get(key)
+    // A success is kept for its adapter version. A running probe is shared; a failure is kept
+    // only until its backoff ends, so one transient start never blocks the move forever.
+    if (cached?.ok === true) return { on: true, probesPass: true }
+    if (cached !== undefined && cached.ok === undefined) return { on: true, probesPass: await cached.promise }
+    if (cached?.ok === false && Date.now() - cached.at < PROBE_RETRY_MS) return { on: true, probesPass: false }
+    const entry = { at: Date.now(), ok: undefined, promise: undefined }
+    entry.promise = probeBridge().then(
+      (ok) => {
+        entry.ok = ok === true
+        entry.at = Date.now()
+        return entry.ok
+      },
+      () => {
+        entry.ok = false
+        entry.at = Date.now()
+        return false
+      },
+    )
+    bridgeProbes.set(key, entry)
+    return { on: true, probesPass: await entry.promise }
   }
 
   const service = {
