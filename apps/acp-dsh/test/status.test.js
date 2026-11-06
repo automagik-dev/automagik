@@ -2,6 +2,8 @@
 // flipped in the settings, a CLI installed after DSH started, and a connector that lands all
 // reach the model picker without a restart. No CLI runs and nothing is downloaded here.
 import assert from 'node:assert/strict'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply, Config, flagOf, SERVICE } from '../index.js'
 import { AGENTS, signedInOf } from '../src/host/agents.js'
@@ -12,7 +14,7 @@ const live = (value) => {
   return { get: () => current, set: (next) => { current = next } }
 }
 
-function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} } = {}) {
+function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, failures = {} } = {}) {
   const log = []
   const listeners = new Map()
   const services = {}
@@ -44,7 +46,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     binOf: pkg => bins[pkg],
     busy: pkg => busy[pkg] === true,
     lastError: pkg => errors[pkg],
-    lastFailure: pkg => (errors[pkg] === undefined ? undefined : { message: errors[pkg] }),
+    lastFailure: pkg => failures[pkg] ?? (errors[pkg] === undefined ? undefined : { message: errors[pkg] }),
     update: async (pkg) => { installs.push(pkg) },
     dispose: () => { log.push(['store disposed']) },
   }
@@ -54,7 +56,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     find: name => clis[name],
     signedIn: async (spec, cli) => { probes.push([spec.key, cli]); return signedIn[spec.key] },
   }
-  return { ctx, deps, log, services, installs, probes, routes, store, bins, busy, errors, clis, registered }
+  return { ctx, deps, log, services, installs, probes, routes, store, bins, busy, errors, failures, clis, registered }
 }
 
 const CLAUDE = AGENTS['acp-claude']
@@ -113,6 +115,14 @@ test('flipping a switch offers or withdraws the agent at once, without a restart
   config.claude.set(true)
   h.ctx.emit('loader/volatile-update')
   assert.deepEqual(h.log.at(-1), ['register', ['acp-claude']])
+})
+
+test('a failed connector shows its log path relative to the home directory', async () => {
+  const logPath = join(homedir(), '.automagik', 'acp', 'adapters', 'logs', 'agentclientprotocol__codex-acp.log')
+  const h = harness({ clis: { codex: '/bin/codex' }, failures: { [CODEX.adapter]: { message: 'npm answered 503', logPath } } })
+  apply(h.ctx, { claude: live(true), codex: live(true) }, h.deps)
+  const status = await h.services[SERVICE].status()
+  assert.equal(byId(status, 'acp-codex').connector.logPath, '~/.automagik/acp/adapters/logs/agentclientprotocol__codex-acp.log')
 })
 
 test('connector states: installing, failed with the last error, ready and in the picker', async () => {

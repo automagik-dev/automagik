@@ -8,6 +8,8 @@
 //                           whether it is signed in (the page does this when it opens)
 //   acp-switch { id, on }   turns an agent on or off in acp-dsh's settings
 //   acp-retry { id }        starts a failed connector install again
+import { homedir } from 'node:os'
+import { sep } from 'node:path'
 import { z } from 'zod'
 import { parse } from './payloads.js'
 
@@ -25,6 +27,33 @@ const invalid = message => failure('omni-ai/invalid', message)
 const refused = message => failure('omni-ai/refused', message)
 
 // Only the fields the page draws: a newer acp-dsh may say more.
+// The same credential shapes the Bot team's diagnostics redactor removes
+// (apps/bots-dsh/src/host/diagnostics.js, CREDENTIALS), applied again to a connector's
+// installer output before it reaches the page.
+const CREDENTIALS = [
+  [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
+  [/\bAKIA[0-9A-Z]{16}\b/g, '[hidden]'],
+  [/\bxox[baprs]-[A-Za-z0-9-]{8,}/g, '[hidden]'],
+  [/\bAIza[A-Za-z0-9_-]{20,}/g, '[hidden]'],
+  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, '[hidden]'],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, '$1 [hidden]'],
+  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, '$1[hidden]'],
+  [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, '$1[hidden]'],
+]
+const redact = (text) => {
+  let out = String(text ?? '')
+  for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement)
+  return out
+}
+// A path under the person's home is shown relative to it, never as an absolute home path.
+const shownPath = (path) => {
+  if (typeof path !== 'string') return undefined
+  const home = homedir()
+  return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
+}
+
 export function agentView(agent) {
   return {
     id: agent.id,
@@ -37,8 +66,8 @@ export function agentView(agent) {
       ...(typeof agent.connector?.version === 'string' ? { version: agent.connector.version } : {}),
       ...(typeof agent.connector?.error === 'string' ? { error: agent.connector.error.slice(0, 300) } : {}),
       // The installer's own output and where it was written, for a failed connector.
-      ...(typeof agent.connector?.diagnostic === 'string' ? { diagnostic: agent.connector.diagnostic.slice(0, 4000) } : {}),
-      ...(typeof agent.connector?.logPath === 'string' ? { logPath: agent.connector.logPath } : {}),
+      ...(typeof agent.connector?.diagnostic === 'string' ? { diagnostic: redact(agent.connector.diagnostic).slice(0, 4000) } : {}),
+      ...(typeof agent.connector?.logPath === 'string' ? { logPath: shownPath(agent.connector.logPath) } : {}),
     },
     ...(typeof agent.signedIn === 'boolean' ? { signedIn: agent.signedIn } : {}),
     listed: agent.model?.listed === true,

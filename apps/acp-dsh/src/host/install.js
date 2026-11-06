@@ -8,7 +8,7 @@
 // lags its CLI breaks first. What is checked is what npm publishes: the exact package name, the
 // registry's integrity for every tarball, no install scripts, and no bundled CLI.
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { findCommand, isExecutable } from './agents.js'
@@ -19,6 +19,30 @@ export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000
 export const INSTALL_TIMEOUT_MS = 10 * 60 * 1000
 // What a failed install keeps for the settings page: the end of the installer output.
 export const DIAGNOSTIC_MAX = 4000
+
+// The same credential shapes the Bot team's diagnostics redactor removes
+// (apps/bots-dsh/src/host/diagnostics.js, CREDENTIALS), applied here because the installer's
+// output can carry a registry token or an authorization header. The packages are independent,
+// so the list is kept in step rather than imported across plugins.
+const CREDENTIALS = [
+  [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
+  [/\bAKIA[0-9A-Z]{16}\b/g, '[hidden]'],
+  [/\bxox[baprs]-[A-Za-z0-9-]{8,}/g, '[hidden]'],
+  [/\bAIza[A-Za-z0-9_-]{20,}/g, '[hidden]'],
+  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, '[hidden]'],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, '$1 [hidden]'],
+  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, '$1[hidden]'],
+  [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, '$1[hidden]'],
+]
+
+/** Remove credential-shaped strings from installer output before it is stored or shown. */
+export function redactInstallerOutput(text) {
+  let out = String(text ?? '')
+  for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement)
+  return out
+}
 
 export const adaptersHome = (env = process.env) => join(env.AUTOMAGIK_HOME || join(homedir(), '.automagik'), 'acp', 'adapters')
 const folderOf = pkg => pkg.replace(/^@/, '').replace(/\//g, '__')
@@ -202,15 +226,17 @@ export class AdapterStore {
     const job = this.updateNow(pkg, bin, force).then(
       (found) => { this.failures.delete(pkg); return found },
       (error) => {
-        const full = String(error?.message ?? error)
+        const full = redactInstallerOutput(error?.message ?? error)
         const message = full.split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300)
         const diagnostic = full.slice(-DIAGNOSTIC_MAX)
         let logPath
         try {
           const dir = join(this.home, 'logs')
-          mkdirSync(dir, { recursive: true })
+          // Owner-only: the log can hold paths and installer output.
+          mkdirSync(dir, { recursive: true, mode: 0o700 })
           logPath = join(dir, `${folderOf(pkg)}.log`)
-          writeFileSync(logPath, `${new Date(this.now()).toISOString()} install of ${pkg} failed\n\n${diagnostic}\n`, 'utf8')
+          writeFileSync(logPath, `${new Date(this.now()).toISOString()} install of ${pkg} failed\n\n${diagnostic}\n`, { encoding: 'utf8', mode: 0o600 })
+          chmodSync(logPath, 0o600)
         } catch { /* the diagnostic still travels in the status */ }
         this.failures.set(pkg, { message, diagnostic, ...(logPath === undefined ? {} : { logPath }) })
         throw error

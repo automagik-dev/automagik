@@ -2,7 +2,8 @@
 // acpAgents service (or none), and every state a row can show, in English and in pt-BR.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
@@ -246,6 +247,15 @@ test('installing: the connector is said to be on its way, with no retry', () => 
   assert.match(textOf(tree), /Installing its connector in the background/)
   assert.deepEqual(buttons(tree, 'Retry'), [])
   assert.equal(findAll(tree, node => /oai-waiting/.test(node.props?.className ?? '')).length, 1)
+})
+
+test('the row redacts a token and shows a home-relative log path', () => {
+  const home = homedir()
+  const token = 'ghp_abcdefghijklmnopqrstuvwx'
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: `token=${token}`, logPath: join(home, '.automagik', 'acp', 'adapters', 'logs', 'codex.log') } }), acpOf([]))
+  const text = textOf(tree)
+  assert.ok(!text.includes(token), 'the token is redacted in the row')
+  assert.match(text, /Log: ~\/\.automagik\/acp\/adapters\/logs\/codex\.log/)
 })
 
 test('failed with a diagnostic: Install details carries the output and the log path', () => {

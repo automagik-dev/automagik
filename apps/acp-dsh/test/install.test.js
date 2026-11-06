@@ -1,7 +1,7 @@
 // Delivery 3's plumbing without the network: the CLI search, the background adapter install
 // (fake registry, fake package manager), the routes only for CLIs that are here, and full access.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -254,6 +254,27 @@ test("adapters install with the desktop app's pnpm, never the person's; else npm
   // Without the app's pnpm (a DSH the person runs): npm, never the person's pnpm.
   assert.match(await install('two', { PATH: join(home, 'person') }), /^person-npm install --omit=optional/)
   assert.match(await install('three', { PATH: join(home, 'person'), AUTOMAGIK_PNPM: join(home, 'missing', 'pnpm') }), /^person-npm install/)
+})
+
+test('a failed install redacts credentials and writes an owner-only log', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const { adapter, bin } = AGENTS['acp-claude']
+  const token = 'ghp_abcdefghijklmnopqrstuvwx'
+  const store = new AdapterStore({
+    home,
+    latest: async () => '1.0.0',
+    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! auth: ${token}`) },
+  })
+  await assert.rejects(store.update(adapter, bin))
+  const failure = store.lastFailure(adapter)
+  assert.ok(!failure.diagnostic.includes(token), 'the diagnostic is redacted')
+  assert.ok(!failure.message.includes(token), 'the short message is redacted')
+  const logged = readFileSync(failure.logPath, 'utf8')
+  assert.ok(!logged.includes(token), 'the log file is redacted')
+  const mode = statSync(failure.logPath).mode & 0o777
+  assert.equal(mode, 0o600)
+  assert.equal(statSync(join(home, 'logs')).mode & 0o777, 0o700)
 })
 
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {

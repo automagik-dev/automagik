@@ -12,7 +12,8 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. It writes nothing: the switches are this plugin's own
 // live settings, written through DSH's settings service.
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
+import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside, SIDE_MODEL } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
@@ -157,6 +158,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
 
+  // A path under the person's home is shown relative to it, as the Bot team's report row does.
+  const shownPath = (path) => {
+    if (typeof path !== 'string') return undefined
+    const home = homedir()
+    return path === home || path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
+  }
+
   // What one agent has, without spawning anything: the CLI search ran in the last reconcile,
   // the sign-in in the last refresh (a settings page refreshes when it opens).
   const statusOf = async (id) => {
@@ -190,7 +198,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           ? {
             error: failure?.message,
             ...(failure?.diagnostic ? { diagnostic: failure.diagnostic } : {}),
-            ...(failure?.logPath ? { logPath: failure.logPath } : {}),
+            ...(failure?.logPath ? { logPath: shownPath(failure.logPath) } : {}),
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
