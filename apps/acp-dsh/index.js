@@ -250,7 +250,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
   const crossing = crossed(agents, ctx, redact, () => flagOf(config.dshTools) === true)

@@ -44,19 +44,21 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
   plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
   (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
-  with asks answered by auto-review. The bridge does not raise its own dialog there; it routes
-  the call through DSH's tool pipeline, where auto-review reads the pending call from the model
-  surface. A bridge call is out-of-band — it has no assistant block — so auto-review cannot
-  review it and fails closed: the call is refused (`AUTO_REVIEW_FAILED`) and its body never
-  runs. Manual asks (one dialog), Full access does not. A Session that moves between providers
-  carries its transcript redacted at each crossing — the replay out to an agent, and the
-  transcript handed back to a native provider — and each crossing writes a provider-boundary
-  row the chat shows.
+  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block
+  for the reviewer, removes it from the surface once the call settles, and never replays it to
+  another provider; the reviewer sees the bridge tool, its redacted arguments and its schema
+  before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
+  `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
+  runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
+  dialog), Full access does not. A Session that moves between providers carries its transcript
+  redacted at each crossing — the replay out to an agent, and the transcript handed back to a
+  native provider — and each crossing writes a provider-boundary row the chat shows.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
   (`agentDefaultModel`) when it is not an agent; else `sideModel` below, DeepSeek Flash by
-  default. Every other side request on an ACP route, a compaction summary included, is refused
+  default. Auto review (`purpose: auto-review`) takes the same route, with its messages redacted
+  first. Every other side request on an ACP route, a compaction summary included, is refused
   (`UNSUPPORTED`): it would carry the agent's whole chat to another provider, and the agent
   manages its own context. Sessions on any other route are left alone.
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no

@@ -4,6 +4,7 @@
 // to an agent, and the transcript handed back to a native provider — never at ingest. Each
 // crossing writes a visible provider-boundary row, so the chat says who answered.
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SYNTHETIC_KIND } from './names.js'
 
 /** The source kind of the row that names the provider a turn came from or went to. */
 export const BOUNDARY_KIND = 'acp-boundary'
@@ -22,6 +23,7 @@ export function lastProviderOf(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     if (message?.role !== 'assistant') continue
+    if (message.source?.synthetic === SYNTHETIC_KIND) continue
     const provider = message.source?.provider
     return typeof provider === 'string' && provider !== '' ? provider : undefined
   }
@@ -122,6 +124,8 @@ const clip = (text) => (text.length > PART_LIMIT ? `${text.slice(0, PART_LIMIT)}
  * @returns {string | undefined}
  */
 export function renderMessage(message) {
+  // A bridge's synthetic review block is not a turn: it never crosses to another provider.
+  if (message?.source?.synthetic === SYNTHETIC_KIND) return undefined
   const kind = message?.source?.kind
   if (message?.role === 'user') {
     if (kind !== 'user' && kind !== undefined) return undefined
