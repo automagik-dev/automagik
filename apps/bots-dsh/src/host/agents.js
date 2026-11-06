@@ -774,6 +774,11 @@ export function install(rt) {
     // so its session/created listener could not. Before the first turn, as the model is.
     await rt.applyTaskPermission(sessionId, live.session)
       .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // The Session existed before this task record did, so the tool deny list could not be
+    // resolved then (a task is a task only once it is written down). Apply it now, before
+    // the first turn, to the same agent the turn will use.
+    await rt.applyToolDeny?.(caller, [sessionId])
+      .catch(error => rt.warn('ds-bot: the task keeps tools %s denies: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)
