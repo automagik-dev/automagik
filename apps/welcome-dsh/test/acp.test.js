@@ -2,7 +2,9 @@
 // acpAgents service (or none), and every state a row can show, in English and in pt-BR.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { dirname } from 'node:path'
+import { homedir } from 'node:os'
+import { Buffer } from 'node:buffer'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
@@ -246,6 +248,112 @@ test('installing: the connector is said to be on its way, with no retry', () => 
   assert.match(textOf(tree), /Installing its connector in the background/)
   assert.deepEqual(buttons(tree, 'Retry'), [])
   assert.equal(findAll(tree, node => /oai-waiting/.test(node.props?.className ?? '')).length, 1)
+})
+
+test('the client redactor alone removes every shared shape', () => {
+  const user = ['deploy', 'bot'].join('')
+  const pass = ['secret', 'pass'].join('')
+  const auth = Buffer.from([user, pass].join(':')).toString('base64')
+  const url = ['https://', user, ':', pass, '@registry.npmjs.org/pkg'].join('')
+  const npmToken = ['npm_', 'a'.repeat(24)].join('')
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const ghToken = ['ghp_', 'c'.repeat(24)].join('')
+  const secrets = [
+    npmToken,
+    auth,
+    pass,
+    skToken,
+    ghToken,
+    'abcdefgh12345678',
+    'abcdef123456',
+    'quoted-secret-123456',
+    'quoted-auth-secret==',
+    'env-token-secret',
+    'npm-config-secret',
+  ]
+  const raw = [
+    npmToken,
+    `_authToken=${auth}`,
+    url,
+    skToken,
+    ghToken,
+    'Bearer abcdefgh12345678',
+    '?token=abcdef123456',
+    '"_authToken": "quoted-secret-123456"',
+    '"//registry.npmjs.org/:_auth": "quoted-auth-secret=="',
+    'NPM_TOKEN=env-token-secret',
+    'npm_config__authToken=npm-config-secret',
+  ].join(' ')
+  const text = ui.redactText(raw)
+  for (const value of secrets) assert.ok(!text.includes(value), `hides ${value}`)
+  assert.match(text, /npm_\[hidden\]/)
+  assert.match(text, /_authToken=\[hidden\]/)
+  assert.match(text, /\[hidden\]@registry\.npmjs\.org/)
+  assert.match(text, /Bearer \[hidden\]/)
+})
+
+test('the row redacts a token and shows a home-relative log path', () => {
+  const home = homedir()
+  const token = ['ghp_', 'a'.repeat(24)].join('')
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: `token=${token}`, logPath: join(home, '.automagik', 'acp', 'adapters', 'logs', 'codex.log') } }), acpOf([]))
+  const text = textOf(tree)
+  assert.ok(!text.includes(token), 'the token is redacted in the row')
+  assert.match(text, /Log: ~\/\.automagik\/acp\/adapters\/logs\/codex\.log/)
+})
+
+test('npm credentials and an absolute home are redacted in the answer and the row', async () => {
+  const npmToken = ['npm_', 'a'.repeat(24)].join('')
+  const user = ['deploy', 'bot'].join('')
+  const pass = ['secret', 'pass'].join('')
+  const auth = Buffer.from([user, pass].join(':')).toString('base64')
+  const url = ['https://', user, ':', pass, '@registry.npmjs.org/pkg'].join('')
+  const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
+  const quoted = 'quoted-secret-123456'
+  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}\n{"_authToken": "${quoted}"}\nNPM_TOKEN=env-token-secret`
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} {"_authToken": "${quoted}"} ${url}`, diagnostic } })])
+  const fake = host({ acp })
+  const { value } = await fake.handle('acp')
+  const connector = value.agents[0].connector
+  const text = textOf(rowOf(value.agents[0], acpOf([])))
+  for (const raw of [npmToken, auth, pass, homedir(), quoted, 'env-token-secret']) {
+    assert.ok(!connector.error.includes(raw), `the error hides ${raw}`)
+    assert.ok(!connector.diagnostic?.includes(raw), `the diagnostic hides ${raw}`)
+    assert.ok(!text.includes(raw), `the row hides ${raw}`)
+  }
+  assert.match(connector.diagnostic, /~\/\.npm\/_logs\//)
+})
+
+test('a connector error is redacted before it reaches the page', async () => {
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `${skToken} Bearer abcdefgh12345678` } })])
+  const fake = host({ acp })
+  const { value } = await fake.handle('acp')
+  const error = value.agents[0].connector.error
+  assert.ok(!error.includes(skToken), 'the token is not sent to the page')
+  assert.ok(!error.includes('abcdefgh12345678'), 'the bearer value is not sent to the page')
+  assert.match(error, /sk-\[hidden\]/)
+  assert.match(error, /Bearer \[hidden\]/)
+  // The row drawn from that answer carries the redacted error, not the raw one.
+  const text = textOf(rowOf(value.agents[0], acpOf([])))
+  assert.ok(!text.includes(skToken) && !text.includes('abcdefgh12345678'), 'the row drawn from the answer is redacted')
+})
+
+test('a row never prints a credential-shaped error even if one arrives unredacted', () => {
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: `${skToken} Bearer abcdefgh12345678` } }), acpOf([]))
+  const text = textOf(tree)
+  assert.ok(!text.includes(skToken), 'the token is not drawn')
+  assert.ok(!text.includes('abcdefgh12345678'), 'the bearer value is not drawn')
+  assert.match(text, /sk-\[hidden\]/)
+  assert.match(text, /Bearer \[hidden\]/)
+})
+
+test('failed with a diagnostic: Install details carries the output and the log path', () => {
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: 'npm ERR! 503 Service Unavailable\nnpm ERR! failed', logPath: '/tmp/acp/logs/codex.log' } }), acpOf([]))
+  const text = textOf(tree)
+  assert.match(text, /Install details/)
+  assert.match(text, /npm ERR! 503 Service Unavailable/)
+  assert.match(text, /Log: \/tmp\/acp\/logs\/codex\.log/)
 })
 
 test('failed: the last error and a Retry that reinstalls', () => {
