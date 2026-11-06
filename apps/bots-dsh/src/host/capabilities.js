@@ -7,6 +7,17 @@ const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client'
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const SECRET_REFERENCE = /\$DSH_SECRET_([A-Z][A-Z0-9_]*)/g
 const ENSURE_TIMEOUT_MS = 15_000
+// One initialize request, as the mount sends it. The SDK's reconnect budget is not a probe:
+// a save that retried would leave the user waiting on a server that already refused.
+const PROBE_TIMEOUT_MS = 10_000
+const PROBE_EXCERPT_CHARS = 200
+const PROBE_REASON_CHARS = 300
+const PROBE_BODY = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'automagik-bots-dsh', version: '1' } },
+})
 
 export function validateCapabilityName(value) {
   const name = String(value ?? '').trim()
@@ -130,13 +141,18 @@ export function install(rt) {
       }
       item.items = names
     }
-    items[name] = item
     return item
   }
   const capabilitySave = async (body, options = {}) => {
     await rt.load()
     writeCheck()
     const item = itemInput(body ?? {}, options)
+    if (item.kind === 'mcp' && item.transport === 'streamable-http') {
+      item.verification = options.ui && body?.unverified === true
+        ? { checkedAt: new Date().toISOString(), status: 'unverified' }
+        : await probeHttpCapability(item, options.botId)
+    }
+    ensureLibrary()[item.name] = item
     await rt.save()
     return item
   }
@@ -269,6 +285,68 @@ export function install(rt) {
     if (item.kind === 'skill') return { name: item.name, description: item.description, content: item.content }
     if (item.transport === 'stdio') return { transport: 'stdio', serverName: item.name, command: item.command, args: resolveList(item.args, botId), env: resolveValues(item.env, botId), failOnStartupError: true }
     return { transport: 'streamable-http', serverName: item.name, url: resolveUrl(item.url, botId), headers: resolveValues(item.headers, botId), failOnStartupError: true }
+  }
+  // A Bot resolves only the secrets it may use; the operator saving from Settings resolves a
+  // stored secret only when some Bot could use it, and the value only ever goes to the URL.
+  const probeSecret = (name, botId) => {
+    const usable = botId === undefined
+      ? Object.values(state.bots).some(bot => rt.canUseSecret(name, bot.id))
+      : rt.canUseSecret(name, botId)
+    const value = usable ? rt.secretValue(name) : undefined
+    if (value === undefined) throw refusal(`Secret ${name} is missing or unavailable${botId === undefined ? '' : ' for this Bot'}.`)
+    return value
+  }
+  // One initialize POST, with the headers the mount would send. Redact before truncating, so a
+  // secret cut at the excerpt edge cannot survive as a fragment.
+  const probeHttpCapability = async (item, botId) => {
+    const checkedAt = new Date().toISOString()
+    let url
+    let headers
+    let sent
+    try {
+      const resolved = resolveProbeHeaders(item.headers, botId)
+      sent = Object.values(resolved).filter(value => value !== '').sort((a, b) => b.length - a.length)
+      url = String(item.url).replace(SECRET_REFERENCE, (_match, name) => encodeUrlComponent(probeSecret(name, botId)))
+      headers = { ...resolved, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
+    } catch (error) {
+      return { checkedAt, status: 'unverified', reason: rt.redactSecrets(String(error?.message ?? error)).slice(0, PROBE_REASON_CHARS) }
+    }
+    const clean = (text) => {
+      let out = rt.redactSecrets(String(text ?? ''))
+      for (const value of sent) out = out.split(value).join('[header]')
+      return out.replace(/\s+/g, ' ').trim()
+    }
+    let response
+    try {
+      response = await fetch(url, { method: 'POST', headers, body: PROBE_BODY, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+    } catch (error) {
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+      const reason = timedOut ? `timed out after ${PROBE_TIMEOUT_MS / 1000}s` : `could not reach the server: ${clean(error?.message ?? error)}`
+      return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+    }
+    if (response.status === 401 || response.status === 403) {
+      let excerpt = ''
+      try { excerpt = clean(await response.text()).slice(0, PROBE_EXCERPT_CHARS) } catch { /* the status is the verdict */ }
+      const challenge = clean(response.headers.get('www-authenticate') ?? '') || '(none)'
+      throw refusal(`Not saved: ${item.name} answered HTTP ${response.status} (WWW-Authenticate: ${challenge}; body: ${excerpt || '(empty)'}). A capability stores headers only and has no sign-in flow. To keep it anyway, use Save unverified in Settings > Capabilities.`)
+    }
+    if (response.ok) {
+      try { await response.body?.cancel() } catch { /* the status is the verdict */ }
+      return { checkedAt, status: 'verified' }
+    }
+    let reason = `HTTP ${response.status}`
+    try {
+      const excerpt = clean(await response.text()).slice(0, PROBE_EXCERPT_CHARS)
+      if (excerpt !== '') reason += `: ${excerpt}`
+    } catch { /* the status is the verdict */ }
+    return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+  }
+  const resolveProbeHeaders = (values, botId) => {
+    const resolved = {}
+    for (const [key, raw] of Object.entries(values ?? {})) {
+      resolved[key] = String(raw).replace(SECRET_REFERENCE, (_match, name) => probeSecret(name, botId))
+    }
+    return resolved
   }
   const disposeMount = async mount => {
     if (mount?.fiber) await Promise.resolve().then(() => mount.fiber.dispose()).catch(() => {})

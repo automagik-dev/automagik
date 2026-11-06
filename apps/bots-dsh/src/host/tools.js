@@ -865,10 +865,13 @@ export function install(rt) {
       if (!rt.botOf(self)) return 'Only Bots on the team can use save_capability.'
       try {
         const item = await rt.capabilitySave(args, { botId: self })
+        const verdict = item.verification?.status === 'verified' ? ' (verified)'
+          : item.verification?.status === 'unverified' ? ` (unverified${item.verification.reason ? `: ${item.verification.reason}` : ''})`
+            : ''
         const approval = item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
           ? ` The user must allow this MCP server before it can work: in ${rt.allowPlace()} (name it in exactly these words).`
           : ''
-        return `Saved ${item.name}. Bots with it attached use the change from their next message.${approval}`
+        return `Saved ${item.name}${verdict}. Bots with it attached use the change from their next message.${approval}`
       } catch (error) { return error.message }
     },
   }))

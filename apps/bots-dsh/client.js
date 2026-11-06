@@ -215,6 +215,10 @@ var ZH = {
   Connection: "连接方式",
   "Local command": "本地命令",
   "HTTP server": "HTTP 服务",
+  Verified: "已验证",
+  Unverified: "未验证",
+  "Unverified: {reason}": "未验证：{reason}",
+  "Save unverified": "保存为未验证",
   Command: "命令",
   "Arguments (one per line)": "参数（每行一个）",
   "Environment (JSON)": "环境变量（JSON）",
@@ -14963,10 +14967,12 @@ function Field({ label, value, onChange, multiline = false, disabled = false, pl
 }
 function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
   const [error, setError] = (0, import_react36.useState)("");
+  const [unverified, setUnverified] = (0, import_react36.useState)(null);
   const set = (key, value) => setDraft((previous) => ({ ...previous, [key]: value }));
   const submit = async (event) => {
     event.preventDefault();
     setError("");
+    setUnverified(null);
     let payload;
     try {
       payload = { name: draft.name.trim(), kind: draft.kind, description: draft.description };
@@ -14987,6 +14993,17 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     }
     try {
       await actions.saveCapability(payload);
+      onClose();
+    } catch (failure) {
+      const message = failure?.message ?? String(failure);
+      setError(message);
+      if (payload.transport === "streamable-http" && /HTTP (?:401|403)/.test(message)) setUnverified(payload);
+    }
+  };
+  const saveUnverified = async () => {
+    setError("");
+    try {
+      await actions.saveCapability({ ...unverified, unverified: true });
       onClose();
     } catch (failure) {
       setError(failure?.message ?? String(failure));
@@ -15047,6 +15064,7 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     (0, import_react36.createElement)(
       "div",
       { className: "bt-connector-form-row" },
+      unverified ? (0, import_react36.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: saveUnverified }, t("Save unverified")) : null,
       (0, import_react36.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onClose }, t("Cancel")),
       (0, import_react36.createElement)("button", { type: "submit", className: "bt-soft bt-soft-sm" }, draft.originalName ? t("Save changes") : t("Add capability"))
     )
@@ -15054,7 +15072,8 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
 }
 function CapabilityRow({ item, onEdit, onDelete, onApprove, confirming }) {
   const detail = item.kind === "pack" ? `${t("Pack")}: ${(item.items ?? []).join(", ") || t("No items")}` : item.kind === "mcp" ? item.transport === "stdio" ? t("Local command") : t("HTTP server") : t("Skill");
-  const secondary = item.kind === "pack" ? [item.description, (item.items ?? []).join(", ") || t("No items")].filter(Boolean).join(" · ") : item.description || detail;
+  const verification = item.kind === "mcp" && item.transport === "streamable-http" && item.verification ? item.verification.status === "verified" ? t("Verified") : item.verification.reason ? t("Unverified: {reason}", { reason: item.verification.reason }) : t("Unverified") : void 0;
+  const secondary = item.kind === "pack" ? [item.description, (item.items ?? []).join(", ") || t("No items"), verification].filter(Boolean).join(" · ") : [item.description || detail, verification].filter(Boolean).join(" · ");
   return (0, import_react36.createElement)(
     "div",
     { className: "bt-connector" },

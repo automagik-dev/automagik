@@ -30,10 +30,12 @@ function Field({ label, value, onChange, multiline = false, disabled = false, pl
 
 function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
   const [error, setError] = useState('')
+  const [unverified, setUnverified] = useState(null)
   const set = (key, value) => setDraft(previous => ({ ...previous, [key]: value }))
   const submit = async event => {
     event.preventDefault()
     setError('')
+    setUnverified(null)
     let payload
     try {
       payload = { name: draft.name.trim(), kind: draft.kind, description: draft.description }
@@ -54,6 +56,17 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     }
     try {
       await actions.saveCapability(payload)
+      onClose()
+    } catch (failure) {
+      const message = failure?.message ?? String(failure)
+      setError(message)
+      if (payload.transport === 'streamable-http' && /HTTP (?:401|403)/.test(message)) setUnverified(payload)
+    }
+  }
+  const saveUnverified = async () => {
+    setError('')
+    try {
+      await actions.saveCapability({ ...unverified, unverified: true })
       onClose()
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -87,17 +100,24 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
           h('input', { type: 'checkbox', checked: draft.items.includes(item.name), onChange: event => set('items', event.target.checked ? [...draft.items, item.name] : draft.items.filter(name => name !== item.name)) })))) : null,
     error ? h('div', { className: 'bt-connector-error', role: 'alert' }, error) : null,
     h('div', { className: 'bt-connector-form-row' },
+      unverified ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: saveUnverified }, t('Save unverified')) : null,
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onClose }, t('Cancel')),
       h('button', { type: 'submit', className: 'bt-soft bt-soft-sm' }, draft.originalName ? t('Save changes') : t('Add capability'))))
 }
 
-function CapabilityRow({ item, onEdit, onDelete, onApprove, confirming }) {
+export function CapabilityRow({ item, onEdit, onDelete, onApprove, confirming }) {
   const detail = item.kind === 'pack' ? `${t('Pack')}: ${(item.items ?? []).join(', ') || t('No items')}`
     : item.kind === 'mcp' ? item.transport === 'stdio' ? t('Local command') : t('HTTP server')
       : t('Skill')
+  // A failed probe is never shown as configured: the row carries its verdict, reason included.
+  const verification = item.kind === 'mcp' && item.transport === 'streamable-http' && item.verification
+    ? item.verification.status === 'verified' ? t('Verified')
+      : item.verification.reason ? t('Unverified: {reason}', { reason: item.verification.reason })
+        : t('Unverified')
+    : undefined
   const secondary = item.kind === 'pack'
-    ? [item.description, (item.items ?? []).join(', ') || t('No items')].filter(Boolean).join(' · ')
-    : item.description || detail
+    ? [item.description, (item.items ?? []).join(', ') || t('No items'), verification].filter(Boolean).join(' · ')
+    : [item.description || detail, verification].filter(Boolean).join(' · ')
   return h('div', { className: 'bt-connector' },
     h('div', { className: 'bt-connector-head' },
       h('span', { className: 'bt-connector-text' },
