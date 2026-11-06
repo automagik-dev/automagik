@@ -686,10 +686,16 @@ test('a Session moving to an agent carries its transcript redacted, and each cro
     const boundary = () => h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(boundary().length, 1)
     assert.match(boundary()[0].data.source.summary, /Now answered by Fake agent \(acp-fake\)/)
+    // The row is one the chat draws: a notice, not reply text from the agent.
+    assert.equal(boundary()[0].data.role, 'user')
+    assert.equal(boundary()[0].data.source.form, 'notice')
+    assert.equal(boundary()[0].data.content[0].text, '[Now answered by Fake agent (acp-fake).]')
     // Moving back to DSH is the other crossing: a row, and the agent session (and bridge) end.
     h.adapter.noteEvent(h.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
     assert.equal(boundary().length, 2)
     assert.match(boundary()[1].data.source.summary, /Now answered by DSH/)
+    assert.equal(boundary()[1].data.source.form, 'notice')
+    assert.equal(boundary()[1].data.content[0].text, '[Now answered by DSH.]')
     assert.equal(h.adapter.live.size, 0)
     assert.equal(h.backchannel.records.size, 0)
   } finally {
@@ -806,6 +812,24 @@ test('with dshTools off a turn is the old path: no bridge spawned, no bridge row
   }
 })
 
+test('with dshTools off the agent\'s stream is logged as it arrived', async () => {
+  // Redaction belongs to live switching: off is the behaviour before it, byte for byte, even
+  // with a redactor wired in. The same turn is redacted on the path above.
+  const h = dshHost({ toolsOn: false, redactor: credentialShapes })
+  try {
+    const ask = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }],
+    }]
+    const chunks = await step(h.adapter, ask)
+    assert.match(textIn(chunks), /sk-abcdef123456/)
+    assert.match(textIn(chunks), /Bearer abcdefgh1234/)
+    assert.match(thoughtIn(chunks), /sk-abcdef123456/)
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+  } finally {
+    h.close()
+  }
+})
+
 test('with dshTools unset (the default), the agent runs its own tools and no bridge is spawned', async () => {
   const session = Session.create('s1')
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
@@ -846,35 +870,55 @@ test('the adapter\'s own deferred-tool loader gets no DSH card and no dialog', a
   }
 })
 
-test('a credential the agent streamed crosses to another provider redacted: inbound is not redacted, the replay is', async () => {
-  // Ingest is the agent's answer, logged as a native answer would be (asserted below), so the
-  // canary starts from that very text. What must be redacted is the history that crosses.
+test('the agent\'s streamed credential is redacted on both crossings', async () => {
+  // History crosses each way: the agent's answer is written into DSH's log, and the transcript
+  // is replayed into the next provider. Both crossings pass the one redactor.
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-replay-'))
   const trace = join(dir, 'trace.ndjson')
   const h = dshHost({ redactor: credentialShapes, trace })
+  const secrets = /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/
   try {
     h.adapter.agents.set('acp-fake-b', { ...h.spec, name: 'Fake agent B' })
-    const first = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] }])
+    const ask = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }],
+    }]
+    const first = await step(h.adapter, ask)
     const streamed = textIn(first)
-    // The agent produced these values, and DSH logs them as the assistant's words.
-    assert.match(streamed, /sk-abcdef123456/)
-    assert.match(streamed, /npm_abcdefghijklmnopqrstuvwxyz/)
-    assert.match(streamed, /Bearer abcdefgh1234/)
+    // The agent streamed these values, and DSH logs the answer: none of them survives ingest.
+    assert.doesNotMatch(streamed, secrets)
+    assert.match(streamed, /sk-\[hidden\]/)
+    assert.match(streamed, /Bearer \[hidden\]/)
+    // Reasoning is text DSH logs too, and the assembled block is what DSH stores.
+    assert.doesNotMatch(thoughtIn(first), secrets)
+    assert.match(thoughtIn(first), /sk-\[hidden\]/)
+    const blocks = first.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)
+    assert.equal(JSON.stringify(blocks).includes('abcdef123456'), false)
+    // An earlier DSH answer carries a secret too: the replay to another provider is redacted.
     const messages = [
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier' }] },
+      {
+        role: 'assistant', source: { kind: 'model', provider: 'deepseek-official' },
+        content: [{ type: 'text', text: 'answer ghp_abcdefghijklmnopqrst' }],
+      },
+      // The agent's answer as DSH logged it (already redacted): the replay carries that too.
+      {
+        role: 'assistant', source: { kind: 'model', provider: 'acp-fake' },
+        content: [{ type: 'text', text: streamed }],
+      },
       { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] },
-      { role: 'assistant', source: { kind: 'model', provider: 'acp-fake' }, content: [{ type: 'text', text: streamed }] },
-      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'next' }] },
     ]
     await step(h.adapter, messages, { provider: 'acp-fake-b' })
     // What the second agent received is the replayed history: read from its own prompt trace,
     // not from its answer (an answer may itself carry whatever the person showed it).
-    const prompts = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(event => event.event === 'prompt')
-    const prompt = prompts.at(-1).text
-    assert.doesNotMatch(prompt, /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/)
+    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const prompt = events.filter(event => event.event === 'prompt').at(-1).text
+    assert.doesNotMatch(prompt, secrets)
+    assert.doesNotMatch(prompt, /ghp_abcdefghijklmnopqrst/)
     assert.match(prompt, /sk-\[hidden\]/)
     assert.match(prompt, /moved from Fake agent to Fake agent B/)
     // The crossing is visible, and the agent's answer is what it got.
-    const rows = h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+    const rows = h.session.snapshotEvents()
+      .filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(rows.length, 1)
     assert.match(rows[0].data.source.summary, /Now answered by Fake agent B \(acp-fake-b\)/)
   } finally {

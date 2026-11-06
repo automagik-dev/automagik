@@ -1,7 +1,8 @@
 // Live switching (RFC 0003, amendment, "Live switching"). A Session keeps the record: moving to
 // an agent replays the transcript into `session/prompt` content, in order, and moving back leaves
-// what the agent streamed in DSH's log. Before any text crosses it passes the redactor, and each
-// crossing writes a visible provider-boundary row, so the chat says who answered.
+// what the agent streamed in DSH's log. Text passes the redactor both ways: the replay whole,
+// and the agent's stream as it arrives, where a shape can straddle two chunks. Each crossing
+// writes a visible provider-boundary row, so the chat says who answered.
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 /** The source kind of the row that names the provider a turn came from or went to. */
@@ -38,6 +39,72 @@ export function boundaryNotice(summary) {
     content: [{ type: 'text', text: `[${summary}.]` }],
     source: { kind: BOUNDARY_KIND, form: 'notice', summary: boundContextSummary(summary) },
   })
+}
+
+// The widest shape in the credential table spans four whitespace-separated words (a quoted key,
+// its separator and a quoted value), so no match can start before the fourth word from the end
+// and still be growing. A wider table makes the stream hold more, never release early.
+const HOLD_WORDS = 4
+
+const isSpace = char => char === ' ' || char === '\t' || char === '\n' || char === '\r'
+  || char === '\f' || char === '\v'
+
+/**
+ * Where the `words`th word from the end starts: the earliest point whose redaction can still
+ * change when more text arrives. Zero when the text holds fewer words than asked for.
+ * @param {string} text
+ * @param {number} [words]
+ * @returns {number}
+ */
+export function holdStart(text, words = 1) {
+  let found = 0
+  let index = text.length
+  while (index > 0) {
+    while (index > 0 && isSpace(text[index - 1])) index--
+    if (index === 0) break
+    while (index > 0 && !isSpace(text[index - 1])) index--
+    found++
+    if (found === words) return index
+  }
+  return 0
+}
+
+/**
+ * A redactor for one streamed block. Text is released as it arrives, except a tail that could
+ * still become a credential shape: a token split across two chunks must never reach DSH's log
+ * in parts. What is released is final — redacting that prefix and the whole text agree — and
+ * the rest goes out when the block closes.
+ * @param {(text: string) => string} redact
+ * @returns {{ push(text: string): string, close(): string }}
+ */
+export function streamRedactor(redact) {
+  let raw = ''
+  let sent = ''
+  return {
+    push(text) {
+      raw += text
+      const full = redact(raw)
+      let cut = holdStart(raw)
+      let stable = cut === 0 ? '' : redact(raw.slice(0, cut))
+      // A shape that began before the cut and is completed here would change text already
+      // released: hold more of the tail until the released prefix is final. A table wider than
+      // these words holds everything until the block ends rather than stream a secret.
+      for (let words = 2; words <= HOLD_WORDS && !full.startsWith(stable); words++) {
+        cut = holdStart(raw, words)
+        stable = cut === 0 ? '' : redact(raw.slice(0, cut))
+      }
+      if (!full.startsWith(stable) || stable.length <= sent.length) return ''
+      const out = stable.slice(sent.length)
+      sent = stable
+      return out
+    },
+    close() {
+      const full = redact(raw)
+      const out = full.slice(sent.length)
+      sent = full
+      return out
+    },
+  }
 }
 
 const textOf = (content) => (typeof content === 'string' ? content : (content ?? [])
