@@ -39,14 +39,16 @@ test('stops trying when the check before a new try throws, and leaves the file a
 
 test('gives up at once on an error that waiting does not fix', async (t) => {
   const dir = folder(t)
-  const started = performance.now()
-  await assert.rejects(replaceFile(join(dir, 'missing.tmp'), join(dir, 'state.json')), { code: 'ENOENT' })
-  const elapsed = performance.now() - started
-  t.diagnostic(`ENOENT rejected after ${elapsed.toFixed(2)} ms`)
-  // ENOENT must fail at once: it is not a busy error, so replaceFile never waits on it. The
-  // ceiling catches a bounded retry that waits before throwing, not a true hang: a hang never
-  // rejects, so only the runner timeout catches it. Its 2 s also keeps a slow shared runner
-  // from mattering (#324).
-  const CEILING_MS = 2000
-  assert.ok(elapsed < CEILING_MS, `ENOENT took ${elapsed.toFixed(2)} ms, over ${CEILING_MS} ms`)
+  // replaceFile tries again only on Windows, so the test makes that decision as Windows makes
+  // it and counts the new tries `check` runs before: ENOENT is not a busy error, so a new try
+  // on it is the bug. No clock is read, so a slow shared runner cannot fail this (#324).
+  const { platform } = process
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  t.after(() => { Object.defineProperty(process, 'platform', { value: platform, configurable: true }) })
+  let retries = 0
+  await assert.rejects(
+    replaceFile(join(dir, 'missing.tmp'), join(dir, 'state.json'), () => { retries += 1 }),
+    { code: 'ENOENT' },
+  )
+  assert.equal(retries, 0, 'ENOENT must not wait for a second try')
 })
