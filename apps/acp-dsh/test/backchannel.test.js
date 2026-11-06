@@ -158,7 +158,7 @@ test('a refusal or an unavailable approval never runs the tool, and the agent ge
     run.backchannel.dispose()
   }
   // Under a non-Auto `never` the service rejects without prompting: the credential alone cannot
-  // approve. (Auto routes through the pipeline instead; the per-level test covers it.)
+  // approve. (Auto routes through the pipeline instead; the Auto test below covers it.)
   const never = host({ policy: 'never', sandbox: 'read-only' })
   await never.backchannel.listen()
   const record = never.backchannel.mint({ sessionId: 's1', agent: never.agent, name: 'Fake agent' })
@@ -260,7 +260,8 @@ test('Auto refuses a bridge call: auto-review cannot see it, so the body never r
     const body = await response.json()
     assert.equal(response.status, 200)
     assert.equal(body.isError, true)
-    assert.match(body.content[0].text, /Auto review of tool "bash" failed/)
+    assert.match(body.content[0].text, /Auto review of tool "bash" failed; its body was not executed/)
+    assert.match(body.content[0].text, /the pending root call is missing from the current surface/)
     // The gate saw the call and refused it with its own code, recorded on the Session.
     const result = session.snapshotEvents().find(event => event.type === 'tool/result')
     assert.equal(result.data.message.isError, true)

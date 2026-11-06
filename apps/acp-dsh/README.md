@@ -48,8 +48,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   the call through DSH's tool pipeline, where auto-review reads the pending call from the model
   surface. A bridge call is out-of-band — it has no assistant block — so auto-review cannot
   review it and fails closed: the call is refused (`AUTO_REVIEW_FAILED`) and its body never
-  runs. Manual asks (one dialog), Full access does not. A Session that moves between providers carries its
-  transcript, redacted, and each crossing writes a provider-boundary row.
+  runs. Manual asks (one dialog), Full access does not. A Session that moves between providers
+  carries its transcript, redacted, and each crossing writes a provider-boundary row.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
