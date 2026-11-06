@@ -49,11 +49,9 @@ export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout
  * with this PR, not fixed in it).
  */
 const NEW_FAIL_OPEN = "new gap: with no layout from Herdr, the pack's own layout and its mods go without saying why";
-const NEW_SILENT = "new gap: with no layout readable at all, a mod leaves mods/ without a word";
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
 export const EXPECTED_FAIL = {
   ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | ${NO_ANSWER}`, NEW_FAIL_OPEN])),
-  ...Object.fromEntries([...PACK_ROUTES, "one-mod uninstall", "update retire", "rename"].map((r) => [`${r} | ${NOTHING}`, NEW_SILENT])),
 };
 
 const exe = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };
