@@ -36,7 +36,7 @@ export function acpClaudeTarget(bot, listed) {
 
 /**
  * Whether this host may move Bots to `acp-claude` now: the bridge is on and its probes pass,
- * the adapter is installed, and the route is in DSH's picker.
+ * the route is ready and its CLI is signed in, and the route is in DSH's picker.
  * @returns {Promise<{ listed: string[] } | undefined>}
  */
 async function acpClaudeReady(ctx) {
@@ -54,10 +54,24 @@ async function acpClaudeReady(ctx) {
   } catch {
     return undefined
   }
-  const agent = status?.agents?.find?.(row => row?.id === ACP_AGENT)
+  let agent = status?.agents?.find?.(row => row?.id === ACP_AGENT)
+  // The sign-in is the CLI's own answer, known only after a refresh. Ask only when the status
+  // has not said yet, so the events that follow a start do not spawn the CLI again.
+  if (agent?.signedIn === undefined) {
+    try { await acp.refresh?.() } catch {}
+    try {
+      status = await acp.status?.()
+    } catch {
+      return undefined
+    }
+    agent = status?.agents?.find?.((row) => row?.id === ACP_AGENT)
+  }
   // A route appears only once its CLI is here; its adapter installs behind it, and the
   // model menu is the route's own.
   if (agent?.connector?.state !== 'ready' || agent?.model?.listed !== true) return undefined
+  // No dead route: a Claude that is installed but not signed in moves nothing. The Bots stay
+  // on the pi-ai model they are on until the person signs in.
+  if (agent?.signedIn !== true) return undefined
   try {
     const models = await ctx.llm.listModels(ACP_AGENT)
     const listed = (Array.isArray(models) ? models : []).map(model => model?.id).filter(id => typeof id === 'string')

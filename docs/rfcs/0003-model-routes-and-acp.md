@@ -429,23 +429,25 @@ merges; nothing of it is built in the docs PR that carries this amendment. This 
 design correction that unblocks Lane D's build: no Lane D code (deliveries 4, 6 and 7) merges
 before it lands.
 
-**Default and kill switch (2026-11-06, later).** The owner flipped `dshTools` to on by default
-in the desktop trial (refs #516/#559/#580). The key is unchanged and stays public; an explicit
-false is the kill switch and keeps the 2026-11-03 behaviour. The field is hidden from settings
-forms: it is a rollback lever, not a preference, and remains writable through DSH's settings
-service and the profile patch. The flip moves Claude Bots to `acp-claude` once per team (the
-Bot team's move, below), so it lands only after #559 and #580's #585 are in a released build and
-the desktop trial passes. Two consequences stated for the owner: the move does not ask whether
-the Claude CLI is signed in, so an installed-but-signed-out Claude still moves the Bots and
-their turns fail until sign-in; and a Session on Auto whose reviewer route is the default side
-model (`deepseek-official/deepseek-flash`) needs a DeepSeek key, because a reviewer that cannot
-be reached fails closed (`AUTO_REVIEW_FAILED`) and the call does not run. Auto is the preset's
-identity, never its `ask` + `danger-full-access` bundle: a custom preset with the same knobs has
-no reviewer, so the bridge keeps its own approval. Flipping the setting ends the running agent
-sessions and revokes their bridges at once; the Session keeps its transcript. Codex is proposed to
-stay out of the default bridge until its adapter can drop its own tools: today `acp-codex` runs
-two tool sets (`dshTools` on keeps its built-in tools too), so a Codex Session is not part of
-the default's promise.
+**Default and kill switch (2026-11-06, later).** The owner flipped `dshTools` to on by default in
+the desktop trial (refs #516/#559/#580). The key is unchanged and stays public; an explicit false is
+the kill switch and keeps the 2026-11-03 behaviour. The field is hidden from settings forms: it is a
+rollback lever, not a preference, and remains writable through DSH's settings service and the
+profile patch. The flip moves Claude Bots to `acp-claude` once per team (the Bot team's move,
+below), so it lands only after #559 and #580's #585 are in a released build and the desktop trial
+passes. The one-time move requires the route's CLI to be signed in as well as ready, so an
+installed-but-signed-out Claude moves nothing and no Bot lands on a dead route; the team stays
+unmarked, so signing in later still moves it. Auto review no longer depends on a DeepSeek key: the
+reviewer resolves to a model the team can reach (DSH's default when it is not an agent, an
+explicitly chosen side model, the first configured non-agent route, then the built-in DeepSeek
+fallback) and falls through on a credential or missing-route failure, so a team with only a Claude
+login reviews on that model. It fails closed only when no candidate answers. Auto is the preset's
+identity, never its `ask` + `danger-full-access` bundle: a custom preset with the same knobs has no
+reviewer, so the bridge keeps its own approval. Flipping the setting ends the running agent sessions
+and revokes their bridges at once; the Session keeps its transcript. Codex is proposed to stay out
+of the default bridge until its adapter can drop its own tools: today `acp-codex` runs two tool sets
+(`dshTools` on keeps its built-in tools too), so a Codex Session is not part of the default's
+promise.
 
 ## Links
 

@@ -149,14 +149,13 @@ moves only when the ACP plugin's `dshTools` bridge is on (on unless explicitly f
 probe on this machine passes (cached per adapter version, retried after ten minutes or the next
 start), its adapter is installed, and its route lists that model; a Bot the person has changed
 since, or whose model the route does not list, stays where it is. With `dshTools` false nothing
-moves, as on 2026-11-03. The move does not check whether the Claude CLI is signed in: an
-installed-but-signed-out Claude still passes the bridge probe, so the Bots move and their next turn
-fails with Claude Code's own sign-in error until the person signs in; the team flag keeps them
-there. On an ACP route the Bot's team tools reach it over the same per-session bridge:
-`post_to_group`, `message_bot` and the rest are offered, and every call asks DSH's approval under
-the Bot's level before it runs. On **Auto**, the bridge gives auto-review the call: an allowed call
-runs, a denied one is refused with `AUTO_REVIEW_DENIED`, and a reviewer that cannot decide refuses
-with `AUTO_REVIEW_FAILED`; the call never runs silently.
+moves, as on 2026-11-03. The move also requires the CLI's sign-in: the team asks it before moving,
+and an installed-but-signed-out Claude moves nothing, so no Bot lands on a dead route. The team
+stays unmarked, so signing in later still moves it. On an ACP route the Bot's team tools reach it
+over the same per-session bridge: `post_to_group`, `message_bot` and the rest are offered, and every
+call asks DSH's approval under the Bot's level before it runs. On **Auto**, the bridge gives
+auto-review the call: an allowed call runs, a denied one is refused with `AUTO_REVIEW_DENIED`, and a
+reviewer that cannot decide refuses with `AUTO_REVIEW_FAILED`; the call never runs silently.
 
 **Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
 
