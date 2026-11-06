@@ -277,6 +277,11 @@ test('an install that pulls in a bundled CLI is refused, and the working adapter
   await assert.rejects(store.update(adapter, bin), /installed the CLIs it bundles \(@openai\/codex-darwin-arm64\); refused/)
   assert.equal(store.binOf(adapter, bin).version, '1.0.0')
   assert.match(store.lastError(adapter), /refused/)
+  // The failure also carries the full diagnostic and the log file it was written to.
+  const failure = store.lastFailure(adapter)
+  assert.match(failure.message, /refused/)
+  assert.match(failure.diagnostic, /refused/)
+  assert.ok(failure.logPath && existsSync(failure.logPath), 'the install log is written')
   const folder = join(home, 'agentclientprotocol__codex-acp')
   assert.deepEqual(readdirSync(folder).sort(), ['1.0.0', 'current.json'])
   // Nested and pnpm-store spellings are found too.

@@ -79,6 +79,7 @@ export function reportMarkdown({ facts, client = {}, entries = [], clientEntries
     row('Team', facts.team),
     row('Models', facts.models),
     row('Read-only', facts.readOnly),
+    row('Log', facts.logPath),
   ].filter(Boolean)
   const recent = entries.slice(-REPORT_ENTRIES)
   const out = [...lines, '']
@@ -213,6 +214,8 @@ export function install(rt) {
       team: `${count(bots.length, 'Bot', 'Bots')}, ${rt.state.mainBotIds.length} Main, ${count(groups, 'group chat', 'group chats')}`,
       models: models.length > 0 ? models.join(', ') : undefined,
       readOnly: rt.readOnly?.() ? 'yes, another dsh holds the team' : undefined,
+      // The host log the report's entries are appended to, so a reader can attach it.
+      logPath: cleanText(logPath),
     }
   }
 

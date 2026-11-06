@@ -44,6 +44,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {} }
     binOf: pkg => bins[pkg],
     busy: pkg => busy[pkg] === true,
     lastError: pkg => errors[pkg],
+    lastFailure: pkg => (errors[pkg] === undefined ? undefined : { message: errors[pkg] }),
     update: async (pkg) => { installs.push(pkg) },
     dispose: () => { log.push(['store disposed']) },
   }

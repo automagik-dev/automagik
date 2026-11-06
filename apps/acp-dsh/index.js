@@ -165,11 +165,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const on = enabled(spec)
     const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = store.busy?.(spec.adapter) === true
-    const error = store.lastError?.(spec.adapter)
+    const failure = store.lastFailure?.(spec.adapter)
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
         : bin !== undefined ? 'ready'
-          : busy || error === undefined ? 'installing'
+          : busy || failure === undefined ? 'installing'
             : 'failed'
     // In the picker: DSH serves the route. Read from the registry, never the model list, which may
     // wait on a first read of the agent's models (catalog.js); a settings page must not.
@@ -186,7 +186,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       connector: {
         state: connector,
         ...(bin ? { version: bin.version } : {}),
-        ...(connector === 'failed' ? { error } : {}),
+        ...(connector === 'failed'
+          ? {
+            error: failure?.message,
+            ...(failure?.diagnostic ? { diagnostic: failure.diagnostic } : {}),
+            ...(failure?.logPath ? { logPath: failure.logPath } : {}),
+          }
+          : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),

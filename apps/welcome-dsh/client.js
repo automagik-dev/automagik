@@ -9193,6 +9193,8 @@ var PT_BR = {
   "Installing its connector in the background. This takes a minute or two.": "Instalando o conector em segundo plano. Leva um ou dois minutos.",
   "The connector did not install: {error}": "O conector não foi instalado: {error}",
   "The connector did not install.": "O conector não foi instalado.",
+  "Install details": "Detalhes da instalação",
+  "Log: {path}": "Registro: {path}",
   "Connector ready (version {version}).": "Conector pronto (versão {version}).",
   "Connector ready.": "Conector pronto.",
   "Restart DSH to see {name} in the model picker.": "Reinicie o DSH para ver o {name} no seletor de modelos.",
@@ -11732,9 +11734,17 @@ function agentLines(agent) {
     lines.push({ tone: "muted", text: t("Off. Turn it on to use {name} as a model in DSH.", { name }) });
     return lines;
   }
-  const { state, version, error } = agent.connector;
+  const { state, version, error, diagnostic, logPath } = agent.connector;
   if (state === "installing") lines.push({ tone: "wait", text: t("Installing its connector in the background. This takes a minute or two.") });
-  if (state === "failed") lines.push({ tone: "bad", text: error ? t("The connector did not install: {error}", { error }) : t("The connector did not install."), action: "retry" });
+  if (state === "failed") {
+    lines.push({
+      tone: "bad",
+      text: error ? t("The connector did not install: {error}", { error }) : t("The connector did not install."),
+      action: "retry",
+      // What DSH 0.2.2 shows for a failed plugin install: the full diagnostic and its log file.
+      ...diagnostic ? { details: { diagnostic, ...logPath ? { logPath } : {} } } : {}
+    });
+  }
   if (state === "ready") {
     lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
     lines.push(agent.restartNeeded ? { tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) } : { tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
@@ -11805,12 +11815,23 @@ function useAcp(request2 = call) {
 }
 function Line({ line, agent, acp, busy }) {
   return (0, import_react7.createElement)(
-    "p",
-    { className: `oai-acp-line oai-acp-${line.tone}${line.tone === "wait" ? " oai-waiting" : ""}`, ...line.tone === "bad" ? { role: "status" } : {} },
-    line.text,
-    line.link ? [" ", (0, import_react7.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
-    line.action === "retry" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
-    line.action === "check" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
+    "div",
+    { className: "oai-acp-line-block" },
+    (0, import_react7.createElement)(
+      "p",
+      { className: `oai-acp-line oai-acp-${line.tone}${line.tone === "wait" ? " oai-waiting" : ""}`, ...line.tone === "bad" ? { role: "status" } : {} },
+      line.text,
+      line.link ? [" ", (0, import_react7.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
+      line.action === "retry" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
+      line.action === "check" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
+    ),
+    line.details ? (0, import_react7.createElement)(
+      "details",
+      { className: "oai-acp-details" },
+      (0, import_react7.createElement)("summary", null, t("Install details")),
+      (0, import_react7.createElement)("pre", { className: "oai-acp-diagnostic" }, line.details.diagnostic),
+      line.details.logPath ? (0, import_react7.createElement)("p", { className: "oai-acp-log" }, t("Log: {path}", { path: line.details.logPath })) : null
+    ) : null
   );
 }
 function AcpAgentRow({ agent, acp }) {
@@ -11867,6 +11888,11 @@ function installAcpSection(ctx) {
   });
 }
 var ACP_CSS = `
+.oai-acp-line-block{display:grid;gap:4px}
+.oai-acp-details{font-size:12.5px;color:var(--oai-ink2)}
+.oai-acp-details summary{cursor:pointer}
+.oai-acp-diagnostic{max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:color-mix(in srgb,var(--oai-ink) 6%,transparent);border-radius:8px;padding:8px;font-size:11.5px}
+.oai-acp-log{margin:0;font-size:12px;overflow-wrap:anywhere}
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}
 .oai-acp-page .oai-card{max-width:680px}
 .oai-acp-group .oai-acp-intro{margin:0 0 8px!important}

@@ -248,6 +248,14 @@ test('installing: the connector is said to be on its way, with no retry', () => 
   assert.equal(findAll(tree, node => /oai-waiting/.test(node.props?.className ?? '')).length, 1)
 })
 
+test('failed with a diagnostic: Install details carries the output and the log path', () => {
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: 'npm ERR! 503 Service Unavailable\nnpm ERR! failed', logPath: '/tmp/acp/logs/codex.log' } }), acpOf([]))
+  const text = textOf(tree)
+  assert.match(text, /Install details/)
+  assert.match(text, /npm ERR! 503 Service Unavailable/)
+  assert.match(text, /Log: \/tmp\/acp\/logs\/codex\.log/)
+})
+
 test('failed: the last error and a Retry that reinstalls', () => {
   const acp = acpOf([])
   const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503' } }), acp)

@@ -46,9 +46,17 @@ export function agentLines(agent) {
     lines.push({ tone: 'muted', text: t('Off. Turn it on to use {name} as a model in DSH.', { name }) })
     return lines
   }
-  const { state, version, error } = agent.connector
+  const { state, version, error, diagnostic, logPath } = agent.connector
   if (state === 'installing') lines.push({ tone: 'wait', text: t('Installing its connector in the background. This takes a minute or two.') })
-  if (state === 'failed') lines.push({ tone: 'bad', text: error ? t('The connector did not install: {error}', { error }) : t('The connector did not install.'), action: 'retry' })
+  if (state === 'failed') {
+    lines.push({
+      tone: 'bad',
+      text: error ? t('The connector did not install: {error}', { error }) : t('The connector did not install.'),
+      action: 'retry',
+      // What DSH 0.2.2 shows for a failed plugin install: the full diagnostic and its log file.
+      ...(diagnostic ? { details: { diagnostic, ...(logPath ? { logPath } : {}) } } : {}),
+    })
+  }
   if (state === 'ready') {
     lines.push({ tone: 'ok', text: version ? t('Connector ready (version {version}).', { version }) : t('Connector ready.') })
     lines.push(agent.restartNeeded
@@ -124,11 +132,16 @@ export function useAcp(request = call) {
 }
 
 function Line({ line, agent, acp, busy }) {
-  return h('p', { className: `oai-acp-line oai-acp-${line.tone}${line.tone === 'wait' ? ' oai-waiting' : ''}`, ...(line.tone === 'bad' ? { role: 'status' } : {}) },
-    line.text,
-    line.link ? [' ', h('a', { key: 'link', className: 'oai-link', href: line.link.href, target: '_blank', rel: 'noreferrer' }, line.link.text)] : null,
-    line.action === 'retry' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.retry(agent) }, t('Retry')) : null,
-    line.action === 'check' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.check(agent) }, t('Check again')) : null)
+  return h('div', { className: 'oai-acp-line-block' },
+    h('p', { className: `oai-acp-line oai-acp-${line.tone}${line.tone === 'wait' ? ' oai-waiting' : ''}`, ...(line.tone === 'bad' ? { role: 'status' } : {}) },
+      line.text,
+      line.link ? [' ', h('a', { key: 'link', className: 'oai-link', href: line.link.href, target: '_blank', rel: 'noreferrer' }, line.link.text)] : null,
+      line.action === 'retry' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.retry(agent) }, t('Retry')) : null,
+      line.action === 'check' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.check(agent) }, t('Check again')) : null),
+    line.details ? h('details', { className: 'oai-acp-details' },
+      h('summary', null, t('Install details')),
+      h('pre', { className: 'oai-acp-diagnostic' }, line.details.diagnostic),
+      line.details.logPath ? h('p', { className: 'oai-acp-log' }, t('Log: {path}', { path: line.details.logPath })) : null) : null)
 }
 
 export function AcpAgentRow({ agent, acp }) {
@@ -177,6 +190,11 @@ export function installAcpSection(ctx) {
 }
 
 export const ACP_CSS = `
+.oai-acp-line-block{display:grid;gap:4px}
+.oai-acp-details{font-size:12.5px;color:var(--oai-ink2)}
+.oai-acp-details summary{cursor:pointer}
+.oai-acp-diagnostic{max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:color-mix(in srgb,var(--oai-ink) 6%,transparent);border-radius:8px;padding:8px;font-size:11.5px}
+.oai-acp-log{margin:0;font-size:12px;overflow-wrap:anywhere}
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}
 .oai-acp-page .oai-card{max-width:680px}
 .oai-acp-group .oai-acp-intro{margin:0 0 8px!important}
