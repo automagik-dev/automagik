@@ -66,10 +66,22 @@ export function redactTranscript(messages, redact) {
   })
 }
 
+/**
+ * Whether a provider id is one of the agents' routes. A Session keeps it in its history after
+ * the agent is turned off or its CLI goes missing — the live map drops it — so the route's
+ * public shape (`acp-<agent>`) outlives the map entry and must still classify the turn.
+ * @param {Map<string, unknown>} providers the agents' live routes
+ * @param {unknown} provider
+ * @returns {boolean}
+ */
+export function agentRoute(providers, provider) {
+  return providers.has(provider) || String(provider).startsWith('acp-')
+}
+
 /** Whether a transcript carries a turn an agent wrote (its answer, with its calls and results). */
 export function fromAgent(messages, providers) {
   return (messages ?? []).some(message =>
-    message?.role === 'assistant' && providers.has(message?.source?.provider))
+    message?.role === 'assistant' && agentRoute(providers, message?.source?.provider))
 }
 
 /**
@@ -86,7 +98,7 @@ export function crossed(providers, ctx, redact, on = () => true) {
   const rewritten = new WeakSet()
   return (options, next) => {
     if (on() !== true) return next()
-    if (providers.has(options.provider) || options.sessionId === undefined) return next()
+    if (agentRoute(providers, options.provider) || options.sessionId === undefined) return next()
     if (rewritten.has(options) || ctx?.llm?.stream === undefined) return next()
     if (!fromAgent(options.messages, providers)) return next()
     const request = { ...options, messages: redactTranscript(options.messages, redact) }

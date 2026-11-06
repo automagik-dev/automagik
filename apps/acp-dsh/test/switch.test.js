@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  BOUNDARY_KIND, boundaryNotice, crossed, fromAgent, lastProviderOf, redactTranscript,
+  agentRoute, BOUNDARY_KIND, boundaryNotice, crossed, fromAgent, lastProviderOf, redactTranscript,
   renderMessage, replayBlocks, turnStart,
 } from '../src/host/switch.js'
 import { credentialShapes } from '../src/host/redact.js'
@@ -95,6 +95,29 @@ test('a transcript crossing back to a native provider is redacted, its source un
   // The record DSH logged is not rewritten; every other field survives.
   assert.match(JSON.stringify(messages), /sk-abcdef123456/)
   assert.equal(redacted[2].toolCallId, 'c1')
+})
+
+test('an agent turn whose route is gone still crosses to native redacted', () => {
+  // Probe G: the person turned the agent off (or its CLI went missing), so the live map no
+  // longer names the route. The turn is still an agent's: the transcript must not cross raw.
+  const sent = []
+  const ctx = { llm: { stream: options => { sent.push(options); return 'stream' } } }
+  const providers = new Map()
+  const listen = crossed(providers, ctx, credentialShapes)
+  const messages = [user('look'), answer('read sk-abcdef123456', 'acp-claude')]
+  assert.equal(agentRoute(providers, 'acp-claude'), true)
+  assert.equal(fromAgent(messages, providers), true)
+  const request = { provider: 'deepseek-official', sessionId: 's1', messages }
+  assert.equal(listen(request, () => 'next'), 'stream')
+  assert.equal(JSON.stringify(sent[0].messages).includes('sk-abcdef123456'), false)
+  assert.match(JSON.stringify(sent[0].messages), /sk-\[hidden\]/)
+  // An acp- route is an agent's even with an empty map: it is not a native call.
+  assert.equal(listen({ ...request, provider: 'acp-claude' }, () => 'next'), 'next')
+  // A native turn is not an agent turn, and passes through untouched.
+  const native = [user('hi'), answer('hello', 'deepseek-official')]
+  assert.equal(agentRoute(providers, 'deepseek-official'), false)
+  assert.equal(fromAgent(native, providers), false)
+  assert.equal(listen({ ...request, messages: native }, () => 'next'), 'next')
 })
 
 test('a request carrying an agent turn is redacted before a native provider sees it', () => {
