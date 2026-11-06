@@ -72,8 +72,16 @@ three views:
   every permission flag from the words that carry over and lands on `Agent default`, never on
   `Automatic`; switching back brings `As saved` back. A template run is given no flags (the
   scheduler passes none to a template anyway).
-- **Put replaces the whole entry** (#501), so the form sends back what it does not edit:
-  `agent_args`, `catch_up_minutes`, `disabled` (a paused entry stays paused) and `workflow`.
+- **Put changes only the keys it is sent** (v0.12.0; up to v0.11.3 it replaced the whole entry,
+  #501). A sent key with an empty value is removed, a key not sent is kept. So `agent_args` always
+  goes, `[]` for none (leaving it out would keep the old flags after `Agent default`), and the form
+  still sends back `catch_up_minutes`, `disabled` (a paused entry stays paused) and `workflow`.
+- **Closing a run's workspace** (#498): the scheduler closes a fresh run's workspace once the run
+  is `done` when its entry says `close_workspace: on-success` (v0.12.0; failed and blocked runs
+  stay open; refused with `workspace: existing`, so a workspace you already had is never closed).
+  The panel cannot set it yet: v0.12.1's `put` and `ls --json` have no such field, and a sent key
+  with no value is removed. Write it by hand in `automations.yaml`; the panel never sends the key,
+  so an edit keeps it (and `session` too).
 - **Address warning** (#498): a prompt holding an hc address (`t3q1`, `build-box/t9`: a `t`, a
   digit, then letters and digits) is warned about on every preview and on Save, "… is a terminal
   address; it changes on restart. Name the bot instead"; it is saved all the same. A name given with
