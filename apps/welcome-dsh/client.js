@@ -11719,6 +11719,18 @@ function badgeOf(agent) {
   if (state === "ready") return agent.restartNeeded ? t("Restart needed") : t("Ready");
   return null;
 }
+var CREDENTIAL_TEXT = [
+  [/\bsk-[A-Za-z0-9_*.-]{6,}/g, "sk-[hidden]"],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, "[hidden]"],
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, "[hidden]"],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, "$1 [hidden]"],
+  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, "$1[hidden]"]
+];
+var redactText = (text) => {
+  let out = String(text ?? "");
+  for (const [pattern, replacement] of CREDENTIAL_TEXT) out = out.replace(pattern, replacement);
+  return out;
+};
 function agentLines(agent) {
   const name = agent.name;
   const cli = CLI_OF[agent.id] ?? agent.key;
@@ -11739,7 +11751,7 @@ function agentLines(agent) {
   if (state === "failed") {
     lines.push({
       tone: "bad",
-      text: error ? t("The connector did not install: {error}", { error }) : t("The connector did not install."),
+      text: error ? t("The connector did not install: {error}", { error: redactText(error) }) : t("The connector did not install."),
       action: "retry",
       // What DSH 0.2.2 shows for a failed plugin install: the full diagnostic and its log file.
       ...diagnostic ? { details: { diagnostic, ...logPath ? { logPath } : {} } } : {}

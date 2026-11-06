@@ -64,7 +64,7 @@ export function agentView(agent) {
     connector: {
       state: ['off', 'no-cli', 'installing', 'failed', 'ready'].includes(agent.connector?.state) ? agent.connector.state : 'installing',
       ...(typeof agent.connector?.version === 'string' ? { version: agent.connector.version } : {}),
-      ...(typeof agent.connector?.error === 'string' ? { error: agent.connector.error.slice(0, 300) } : {}),
+      ...(typeof agent.connector?.error === 'string' ? { error: redact(agent.connector.error).slice(0, 300) } : {}),
       // The installer's own output and where it was written, for a failed connector.
       ...(typeof agent.connector?.diagnostic === 'string' ? { diagnostic: redact(agent.connector.diagnostic).slice(0, 4000) } : {}),
       ...(typeof agent.connector?.logPath === 'string' ? { logPath: shownPath(agent.connector.logPath) } : {}),

@@ -258,6 +258,26 @@ test('the row redacts a token and shows a home-relative log path', () => {
   assert.match(text, /Log: ~\/\.automagik\/acp\/adapters\/logs\/codex\.log/)
 })
 
+test('a connector error is redacted before it reaches the page', async () => {
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: 'sk-abcdef123456 Bearer abcdefgh12345678' } })])
+  const fake = host({ acp })
+  const { value } = await fake.handle('acp')
+  const error = value.agents[0].connector.error
+  assert.ok(!error.includes('sk-abcdef123456'), 'the token is not sent to the page')
+  assert.ok(!error.includes('abcdefgh12345678'), 'the bearer value is not sent to the page')
+  assert.match(error, /sk-\[hidden\]/)
+  assert.match(error, /Bearer \[hidden\]/)
+})
+
+test('a row never prints a credential-shaped error even if one arrives unredacted', () => {
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'sk-abcdef123456 Bearer abcdefgh12345678' } }), acpOf([]))
+  const text = textOf(tree)
+  assert.ok(!text.includes('sk-abcdef123456'), 'the token is not drawn')
+  assert.ok(!text.includes('abcdefgh12345678'), 'the bearer value is not drawn')
+  assert.match(text, /sk-\[hidden\]/)
+  assert.match(text, /Bearer \[hidden\]/)
+})
+
 test('failed with a diagnostic: Install details carries the output and the log path', () => {
   const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: 'npm ERR! 503 Service Unavailable\nnpm ERR! failed', logPath: '/tmp/acp/logs/codex.log' } }), acpOf([]))
   const text = textOf(tree)
