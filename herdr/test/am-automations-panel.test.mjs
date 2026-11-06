@@ -218,7 +218,7 @@ function stubScheduler(automations) {
   const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   return {
     dir, bin,
-    saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, entry: JSON.parse(c.input) })),
+    saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, raw: c.input, entry: JSON.parse(c.input) })),
     yaml: () => JSON.parse(readFileSync(yaml, "utf8")),
     done: () => rmSync(dir, { recursive: true, force: true }),
   };
@@ -469,5 +469,78 @@ test("a prompt naming a terminal warns in the form and still saves (#498)", asyn
     await saveIt(view, cx);
     assert.equal(s.saves().length, 1, "saved all the same");
     assert.equal(s.yaml()[0].prompt, "ask t35n to clean up");
+  } finally { s.done(); }
+});
+
+// ---- review fixes on #505 ----
+
+test("hand-written args with the permission flag in the middle go back byte for byte (#501)", async () => {
+  const middle = ["-c", "model_reasoning_effort=high", "--sandbox", "workspace-write", "--add-dir", "/work/a b", "-c", "x=1"];
+  const { s, view, cx } = await stubPanel([{ ...nightly("codex"), agent_args: middle }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(saved.raw.includes(`"agent_args":${JSON.stringify(middle)}`), "the same words, in the same order, byte for byte");
+    assert.equal(JSON.stringify(s.yaml()[0].agent_args), JSON.stringify(middle));
+  } finally { s.done(); }
+});
+
+test("switching an existing entry's agent drops the old agent's permission flags and lands on Agent default", async () => {
+  const own = ["--verbose", "--dangerously-skip-permissions", "--add-dir", "/work"];
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), agent_args: own }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    assert.equal(textOf(draw().get("f-mode-kept")), "As saved: automatic (skips permissions)");
+    draw().get("f-agent-codex").click({}, cx);
+    await cx.settle();
+    let n = draw();
+    assert.ok(!n.has("f-mode-kept"), "no As saved pill for another agent's args");
+    assert.equal(border(n.get("f-mode-default")), "#accent", "Agent default is picked, never Automatic");
+    assert.equal(border(n.get("f-mode-auto")), "#border");
+    assert.equal(textOf(n.get("f-mode-now")), "Runs agent default: codex --verbose --add-dir /work");
+    // Back to the saved agent: its own args, exactly, once more.
+    draw().get("f-agent-claude").click({}, cx);
+    await cx.settle();
+    n = draw();
+    assert.equal(border(n.get("f-mode-kept")), "#accent");
+    assert.deepEqual(view.entry().agent_args, own);
+    draw().get("f-agent-codex").click({}, cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.equal(saved.entry.agent, "codex");
+    assert.deepEqual(saved.entry.agent_args, ["--verbose", "--add-dir", "/work"], "no claude flag handed to codex");
+  } finally { s.done(); }
+});
+
+test("a template entry switched to an agent keeps no permission flags from its saved args", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ name: "rev", cron: "0 9 * * *", repo: "/r", workspace: "worktree",
+    template: "reviewer-opus", agent_args: ["--dangerously-skip-permissions", "--verbose"], prompt: "p", timeout_minutes: 60 }]);
+  try {
+    view.edit("rev", cx);
+    await cx.settle();
+    draw().get("f-agent-codex").click({}, cx);
+    await cx.settle();
+    assert.equal(border(draw().get("f-mode-default")), "#accent");
+    await saveIt(view, cx);
+    assert.deepEqual(s.saves()[0].entry.agent_args, ["--verbose"]);
+  } finally { s.done(); }
+});
+
+test("a template list hc could not give is not kept: the next refresh asks again", async () => {
+  const s = stubScheduler([{ name: "rev", cron: "0 9 * * *", repo: "/r", workspace: "worktree", template: "reviewer-opus", prompt: "p", timeout_minutes: 60 }]);
+  try {
+    state.agents = ALL;
+    let up = false;
+    state.hc = async () => (up ? { code: 0, stdout: JSON.stringify(TEMPLATES), stderr: "" } : { code: 1, stdout: "", stderr: "hc: no server" });
+    const { view, cx, draw } = await panel();
+    assert.match(textOf(draw().get("auto-rev")), /not known \(hc lists no such template\)/, "first read failed");
+    up = true;
+    await cx.ticks[0](cx);
+    await cx.settle();
+    assert.match(textOf(draw().get("auto-rev")), /automatic \(skips permissions\) \(template\)/, "asked again and shown");
   } finally { s.done(); }
 });
