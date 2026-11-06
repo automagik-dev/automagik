@@ -970,6 +970,56 @@
    "FB1: an explicit key, a block indicator on its ':' line, then its lines",
    "? {name}\n: |\n  {value}",
    "? {name}\n: |\n  [redacted]"
+  ],
+  [
+   "#493: a quoted explicit key with a soft hyphen in its name, the value on its ':' line",
+   "? \"{pass}\u00ad{word}\"\n: {value}\n",
+   "? \"{pass}{word}\"\n: [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a zero-width space in its name, the value on its ':' line",
+   "? \"{pass}\u200b{word}\"\n: {value}\n",
+   "? \"{pass}{word}\"\n: [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a word joiner in its name, the value on its ':' line",
+   "? \"{pass}\u2060{word}\"\n: {value}\n",
+   "? \"{pass}{word}\"\n: [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a NUL in its name, the value on its ':' line",
+   "? \"{pass}\u0000{word}\"\n: {value}\n",
+   "? \"{pass}{word}\"\n: [redacted]\n"
+  ],
+  [
+   "#493: an unquoted explicit key with a soft hyphen in its name, the value on its ':' line",
+   "? {pass}\u00ad{word}\n: {value}\n",
+   "? {pass}{word}\n: [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a soft hyphen in its name, the value on the next indented line",
+   "? \"{pass}\u00ad{word}\"\n:\n  {value}\n",
+   "? \"{pass}{word}\"\n:\n  [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a soft hyphen in its name, the value on its ':' line, CRLF",
+   "? \"{pass}\u00ad{word}\"\r\n: {value}\n",
+   "? \"{pass}{word}\"\r\n: [redacted]\n"
+  ],
+  [
+   "#493: a quoted explicit key with a soft hyphen in its name, a block indicator on its ':' line",
+   "? \"{pass}\u00ad{word}\"\n: |\n  {value}",
+   "? \"{pass}{word}\"\n: |\n  [redacted]"
+  ],
+  [
+   "#493: a list item's quoted explicit key with a soft hyphen in its name, the value below its ':' line",
+   "- ? \"{pass}\u00ad{word}\"\n  :\n    {value}\n",
+   "- ? \"{pass}{word}\"\n  :\n    [redacted]\n"
+  ],
+  [
+   "#493 near miss: an explicit key with no credential stem and an invisible name",
+   "? \"no\u200bte\"\n: {value}",
+   "? \"no\u200bte\"\n: {value}"
   ]
  ],
  "partial_key": [

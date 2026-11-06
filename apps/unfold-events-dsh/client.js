@@ -1370,11 +1370,15 @@ var INVISIBLE_GATE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\u/u;
 var INVISIBLE = /[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff])/gu;
 var INVISIBLE_NAME = /(?<![A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))(?:(?<!\\)|(?=[nrt]))((?:[A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))+)((?:\\?["'])?[ \t]*[:=][ \t]*)((?:[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))*)/gu;
 var NAME_STEM = /pass|secret|token|key|authorization/i;
+var INVISIBLE_EXPLICIT = /(^|\r\n|\r(?!\n)|\n)([ \t]*(?:-[ \t]+)?\?[ \t][^\r\n#]*?["']?)((?:[A-Za-z0-9_-]|[\0-\x08\x0e-\x1f\x7f\p{Cf}\u2065]|\\{1,2}u(?:00(?:0[0-8EFef]|1[0-9A-Fa-f])|007[Ff]|00[Aa][Dd]|061[Cc]|180[Ee]|200[B-Fb-f]|202[A-Ea-e]|206[0-9A-Fa-f]|[Ff][Ee][Ff][Ff]))+)(["']?[ \t]*(?:#[^\r\n]*)?(?=\r\n|\r(?!\n)|\n|$))/gu;
 function nameText(s) {
   if (!INVISIBLE_GATE.test(s)) return s;
   return s.replace(INVISIBLE_NAME, (m, run, sep, after) => {
     const name = run.replace(INVISIBLE, "");
     return (name !== run || after) && NAME_STEM.test(name) ? `${name}${sep}` : m;
+  }).replace(INVISIBLE_EXPLICIT, (m, nl, head, run, tail) => {
+    const name = run.replace(INVISIBLE, "");
+    return name !== run && NAME_STEM.test(name) ? `${nl}${head}${name}${tail}` : m;
   });
 }
 var OPEN_END = false;
