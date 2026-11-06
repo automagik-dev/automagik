@@ -112,7 +112,7 @@ function deferred() {
 // `gate` holds each model call open so a test can see the entry while it is
 // still answering. `scripts` are the chunk lists for successive calls; anything
 // further gets a short stop. `side` seeds chat files: { botId: [chats] }.
-async function setup({ state = team(), scripts = [], gate = false, messages, seq = 4, events, foreignLock = false, side = {} } = {}) {
+async function setup({ state = team(), scripts = [], gate = false, messages, seq = 4, events, foreignLock = false, side = {}, fail } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dsb-side-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(state))
   for (const [botId, chats] of Object.entries(side)) {
@@ -152,6 +152,7 @@ async function setup({ state = team(), scripts = [], gate = false, messages, seq
           options.signal?.removeEventListener('abort', abort)
         }
       }
+      if (fail !== undefined) throw fail
       for (const chunk of queue.shift() ?? stop('Because of the snapshot.')) yield chunk
     },
   }
@@ -522,6 +523,21 @@ test('a tool call is asked again once, then the entry fails if it calls a tool a
   assert.equal(failed.error, 'The model called a tool again after being told not to, so this aside was not answered.')
 })
 
+test('a provider failure on an aside says its kind, and neither the card nor the log keeps its text', async (t) => {
+  // Built from pieces, so no fixture holds a credential-shaped string.
+  const marker = ['aside', 'canary', String(Date.now() % 100_000)].join('-')
+  const failure = Object.assign(new Error(`401 at ${marker}: the key was rejected`), { name: 'ProviderError' })
+  const bench = await setup({ fail: failure })
+  t.after(() => bench.stop())
+  const asked = await bench.call('side-ask', { sessionId: 's-now', text: 'hello' })
+  await bench.rt.sideJoin(asked.value.entryId)
+  const entry = chatOf(bench.rt, asked.value.chatId).entries[0]
+  assert.equal(entry.status, 'failed')
+  assert.equal(entry.error, 'The side question failed (ProviderError).')
+  assert.ok(!JSON.stringify(entry).includes(marker), JSON.stringify(entry))
+  assert.ok(!JSON.stringify(await bench.rt.diagnostics.entries()).includes(marker))
+})
+
 test('an empty answer, a provider abort, and a cut-off answer fail the entry', async (t) => {
   const empty = await setup({ scripts: [[{ type: 'text-delta', index: 0, text: '  \n' }, { type: 'finish', reason: { kind: 'stop' } }]] })
   t.after(() => empty.stop())
@@ -537,7 +553,7 @@ test('an empty answer, a provider abort, and a cut-off answer fail the entry', a
   const stopped = await aborted.call('side-ask', { sessionId: 's-now', text: 'hello' })
   await aborted.rt.sideJoin(stopped.value.entryId)
   assert.equal(chatOf(aborted.rt, stopped.value.chatId).entries[0].status, 'failed')
-  assert.equal(chatOf(aborted.rt, stopped.value.chatId).entries[0].error, 'the provider stopped')
+  assert.equal(chatOf(aborted.rt, stopped.value.chatId).entries[0].error, 'The model call failed (aborted).')
 
   const cut = await setup({
     scripts: [[

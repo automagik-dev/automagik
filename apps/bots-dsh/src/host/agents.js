@@ -10,6 +10,7 @@
 // a Bot hands off (start_task), which show under that Bot; when a task's first turn ends,
 // its last words go back to the Bot. Only a task whose Bot is gone shows under it.
 import { randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { link, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -163,13 +164,13 @@ export function install(rt) {
 
   const writeCheck = () => {
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(readOnly)
+    if (readOnly !== undefined) throw refusal(readOnly)
   }
   const record = (agentId) => {
     const agent = rt.own(state.agents, agentId)
-    if (agent === undefined) throw new Error('Unknown DSH bot')
-    if (agent.pendingCreation === true && !activeCreations.has(agent.id)) throw new Error('DSH team member creation failed; cleanup is pending')
-    if (agent.adoptedBotId !== undefined) throw new Error('This DSH bot is adopted; use its Bot chat or roll back adoption first')
+    if (agent === undefined) throw refusal('Unknown DSH bot')
+    if (agent.pendingCreation === true && !activeCreations.has(agent.id)) throw refusal('DSH team member creation failed; cleanup is pending')
+    if (agent.adoptedBotId !== undefined) throw refusal('This DSH bot is adopted; use its Bot chat or roll back adoption first')
     return agent
   }
 
@@ -178,7 +179,7 @@ export function install(rt) {
     writeCheck()
     let agent = record(agentId)
     if (agent.kind === DSH_BOT) {
-      if (agent.workDir !== undefined && !(await rt.isFolder(agent.workDir))) throw new Error(`The folder ${agent.workDir} of ${agent.name} is gone. Pick another in its settings.`)
+      if (agent.workDir !== undefined && !(await rt.isFolder(agent.workDir))) throw refusal(`The folder ${agent.workDir} of ${agent.name} is gone. Pick another in its settings.`)
       options = { cwd: agent.workDir, agentPreset: agent.profile }
     }
     const { cwd, agentPreset } = options
@@ -233,7 +234,7 @@ export function install(rt) {
     await rt.resolveAgent(sessionId)
     const owned = rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
       || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
-    if (owned) throw new Error('Session already belongs to the team')
+    if (owned) throw refusal('Session already belongs to the team')
     agent.sessions.push(sessionId)
     await rt.save()
     await restrictTeamTools(await rt.resolveAgent(sessionId))
@@ -244,9 +245,9 @@ export function install(rt) {
   // (undefined: the team workspace), and a preset this DSH serves (undefined: DSH's default).
   async function dshBotFields({ name, workDir, profile } = {}, id) {
     const clean = String(name ?? '').trim().slice(0, DSH_BOT_NAME_MAX)
-    if (clean === '') throw new Error('A DSH bot needs a name')
+    if (clean === '') throw refusal('A DSH bot needs a name')
     const taken = dshBots().some(agent => agent.id !== id && agent.name.toLowerCase() === clean.toLowerCase())
-    if (taken) throw new Error(`A DSH bot named ${clean} already exists`)
+    if (taken) throw refusal(`A DSH bot named ${clean} already exists`)
     const folder = await rt.cleanWorkDir(String(workDir ?? ''))
     const preset = typeof profile === 'string' && profile !== '' ? await servedPreset(profile, { strict: true }) : undefined
     return { name: clean, workDir: folder, profile: preset }
@@ -265,7 +266,7 @@ export function install(rt) {
   const activeCreations = new Set()
   const creationOf = agent => ({ token: agent.creationToken, agentId: agent.id, reservedSessionId: agent.creationSessionId })
   const creationPath = (creation) => {
-    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(creation.token ?? '')) throw new Error('Missing or invalid creation receipt token')
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(creation.token ?? '')) throw refusal('Missing or invalid creation receipt token')
     return join(rt.home, 'agent-creations', `${creation.token}.json`)
   }
   const validReceipt = (receipt, creation) => typeof creation.agentId === 'string' && creation.agentId.length > 0
@@ -276,13 +277,13 @@ export function install(rt) {
     && (receipt.sessionId === undefined ? receipt.outcome === 'failed' : typeof receipt.sessionId === 'string' && receipt.sessionId.length > 0)
   const readCreation = async (creation) => {
     const receipt = JSON.parse(await readFile(creationPath(creation), 'utf8'))
-    if (!validReceipt(receipt, creation)) throw new Error('Creation receipt does not match this operation')
+    if (!validReceipt(receipt, creation)) throw refusal('Creation receipt does not match this operation')
     return receipt
   }
   async function publishCreation(creation, outcome, sessionId) {
     creation.publishAttempted = true
     const receipt = { version: 1, token: creation.token, agentId: creation.agentId, reservedSessionId: creation.reservedSessionId, outcome, ...(sessionId === undefined ? {} : { sessionId }) }
-    if (!validReceipt(receipt, creation)) throw new Error('Invalid terminal creation receipt')
+    if (!validReceipt(receipt, creation)) throw refusal('Invalid terminal creation receipt')
     const path = creationPath(creation)
     const temp = `${path}.${randomUUID()}.tmp`
     try {
@@ -295,10 +296,10 @@ export function install(rt) {
       } catch (error) {
         if (error?.code !== 'EEXIST') throw error
         const existing = await readCreation(creation)
-        if (existing.outcome !== outcome || existing.sessionId !== sessionId) throw new Error('Conflicting terminal creation receipt')
+        if (existing.outcome !== outcome || existing.sessionId !== sessionId) throw refusal('Conflicting terminal creation receipt')
       }
     } catch (error) {
-      throw new Error(`Terminal creation receipt could not be published: ${error?.message ?? error}`, { cause: error })
+      throw refusal(`Terminal creation receipt could not be published: ${error?.message ?? error}`, { cause: error })
     } finally {
       await unlink(temp).catch(error => { if (error?.code !== 'ENOENT') rt.warn('ds-bot: creation receipt temp cleanup failed: %s', error) })
     }
@@ -309,12 +310,12 @@ export function install(rt) {
   const currentCreation = (creation, { cleanup = false } = {}) => {
     const agent = state.agents[creation.agentId]
     if (agent?.pendingCreation !== true || agent.creationToken !== creation.token || agent.creationSessionId !== creation.reservedSessionId
-      || (!cleanup && agent.creationCleanup === true)) throw new Error('This creation operation is no longer current or its cleanup was claimed')
+      || (!cleanup && agent.creationCleanup === true)) throw refusal('This creation operation is no longer current or its cleanup was claimed')
     return agent
   }
   const checkCreationSession = (creation, sessionId) => {
     const owner = agentOf(sessionId)
-    if ((owner !== undefined && owner.id !== creation.agentId) || rt.botOf(sessionId) !== undefined || rt.selfOf(sessionId) !== undefined || rt.roomOf(sessionId) !== undefined) throw new Error('The allocated Session already belongs to another team identity')
+    if ((owner !== undefined && owner.id !== creation.agentId) || rt.botOf(sessionId) !== undefined || rt.selfOf(sessionId) !== undefined || rt.roomOf(sessionId) !== undefined) throw refusal('The allocated Session already belongs to another team identity')
   }
   async function cleanupCreation(original) {
     const creation = creationOf(original)
@@ -410,7 +411,7 @@ export function install(rt) {
           await cleanupCreation(agent)
         } catch (cleanupError) {
           rt.indexSessions()
-          throw new Error(`DSH team member creation failed: ${error?.message ?? error}. Cleanup pending for ${agent.id}: ${cleanupError?.message ?? cleanupError}; it will retry on the next load.`, { cause: error })
+          throw refusal(`DSH team member creation failed: ${error?.message ?? error}. Cleanup pending for ${agent.id}: ${cleanupError?.message ?? cleanupError}; it will retry on the next load.`, { cause: error })
         }
       } else {
         // Preserve the legacy standalone creation contract.
@@ -431,7 +432,7 @@ export function install(rt) {
   async function updateAgent(agentId, fields) {
     writeCheck()
     const agent = record(agentId)
-    if (agent.kind !== DSH_BOT) throw new Error('Unknown DSH bot')
+    if (agent.kind !== DSH_BOT) throw refusal('Unknown DSH bot')
     setFields(agent, await dshBotFields(fields, agent.id))
     await rt.save()
     return agent
@@ -440,7 +441,7 @@ export function install(rt) {
   async function archiveAgentSession(agentId, sessionId) {
     writeCheck()
     const agent = record(agentId)
-    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH bot')
+    if (!agent.sessions.includes(sessionId)) throw refusal('Session does not belong to the DSH bot')
     // Archive first: the Session leaves the Agent only once it is actually gone,
     // so a failed archive stays retryable and keeps its tool restriction.
     await ctx.workspaceRegistry.archiveSession(sessionId)
@@ -452,9 +453,9 @@ export function install(rt) {
   async function renameAgentSession(agentId, sessionId, title) {
     writeCheck()
     const agent = record(agentId)
-    if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH bot')
+    if (!agent.sessions.includes(sessionId)) throw refusal('Session does not belong to the DSH bot')
     const clean = String(title ?? '').trim()
-    if (clean === '') throw new Error('A session needs a title')
+    if (clean === '') throw refusal('A session needs a title')
     const agent_ = await rt.resolveAgent(sessionId)
     await ctx.sessionTitle.rename(agent_.session, clean.slice(0, AGENT_SESSION_TITLE_MAX))
   }
@@ -492,14 +493,14 @@ export function install(rt) {
   async function adoptAsBot(agentId) {
     writeCheck()
     const agent = record(agentId)
-    if (agent.kind !== DSH_BOT) throw new Error('Only a DSH bot can become a Bot')
+    if (agent.kind !== DSH_BOT) throw refusal('Only a DSH bot can become a Bot')
     const sessions = [...(agent.sessions ?? [])]
-    if (sessions.length === 0) throw new Error('The DSH bot has no Session to adopt first')
+    if (sessions.length === 0) throw refusal('The DSH bot has no Session to adopt first')
     const name = String(agent.name ?? '').trim().slice(0, DSH_BOT_NAME_MAX)
     const problem = nameProblem(name)
-    if (problem !== undefined) throw new Error(problem)
+    if (problem !== undefined) throw refusal(problem)
     // No Bot takes another Bot's name: the user renames the DSH bot first.
-    if (rt.findBot(name) !== undefined) throw new Error(`A Bot named ${name} already exists`)
+    if (rt.findBot(name) !== undefined) throw refusal(`A Bot named ${name} already exists`)
     const chatId = sessions.at(-1)
     // A Session DSH can no longer open is refused before anything moves; the resolved
     // agent is the one whose team-tools restriction adoption lifts below.
@@ -509,12 +510,12 @@ export function install(rt) {
       const creation = creationOf(agent)
       await readCreation(creation)
       await rt.refresh()
-      if (currentCreation(creation) !== agent) throw new Error('The creation operation changed during membership resolution')
+      if (currentCreation(creation) !== agent) throw refusal('The creation operation changed during membership resolution')
       await rt.save({ required: true })
-      if (currentCreation(creation) !== agent) throw new Error('The creation operation changed before membership persistence')
+      if (currentCreation(creation) !== agent) throw refusal('The creation operation changed before membership persistence')
     }
-    if (state.agents[agentId] !== agent || JSON.stringify(agent) !== before) throw new Error('The DSH bot changed during adoption; try again')
-    if (agent.adoptedBotId !== undefined || rt.findBot(name) !== undefined || rt.botOf(chatId) !== undefined) throw new Error('The DSH bot or name is already adopted')
+    if (state.agents[agentId] !== agent || JSON.stringify(agent) !== before) throw refusal('The DSH bot changed during adoption; try again')
+    if (agent.adoptedBotId !== undefined || rt.findBot(name) !== undefined || rt.botOf(chatId) !== undefined) throw refusal('The DSH bot or name is already adopted')
     const earlier = sessions.slice(0, -1)
     // DSH's persisted request header is also the fresh-part route source (parts.js).
     const route = live.session?.requestHeader?.()?.config
@@ -572,20 +573,20 @@ export function install(rt) {
     writeCheck()
     const bot = rt.own(state.bots, botId)
     const original = rt.own(state.agents, bot?.dshAgentId)
-    if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) throw new Error('Unknown adopted DSH Bot')
-    if (typeof sessionId !== 'string' || sessionId === '' || typeof sourceSessionId !== 'string') throw new Error('Invalid Session transition')
+    if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) throw refusal('Unknown adopted DSH Bot')
+    if (typeof sessionId !== 'string' || sessionId === '' || typeof sourceSessionId !== 'string') throw refusal('Invalid Session transition')
     if (rt.chatOf(botId) === sessionId && (bot.segments ?? []).some(part => part.sessionId === sourceSessionId)) return sessionId
-    if (associations.has(botId) || associationTargets.has(sessionId)) throw new Error('A Bot Session transition is already pending')
+    if (associations.has(botId) || associationTargets.has(sessionId)) throw refusal('A Bot Session transition is already pending')
     const before = JSON.stringify(bot)
     const registration = JSON.stringify(original)
     const validate = () => {
       writeCheck()
       if (state.bots[botId] !== bot || state.agents[bot.dshAgentId] !== original
         || JSON.stringify(bot) !== before || JSON.stringify(original) !== registration
-        || rt.chatOf(botId) !== sourceSessionId) throw new Error('The Bot changed during Session transition')
+        || rt.chatOf(botId) !== sourceSessionId) throw refusal('The Bot changed during Session transition')
       if (rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
         || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
-        || state.tasks?.[sessionId] !== undefined) throw new Error('Session already belongs to the team')
+        || state.tasks?.[sessionId] !== undefined) throw refusal('Session already belongs to the team')
     }
     associations.add(botId)
     associationTargets.add(sessionId)
@@ -598,11 +599,11 @@ export function install(rt) {
         const header = session?.header
         const parent = header?.parentSession === undefined ? undefined : ctx.agents?.get?.(header.parentSession)
         if (session?.id !== sessionId || header === undefined || header.origin === 'subagent'
-          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) throw new Error('Only a root Session can join a Bot')
+          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) throw refusal('Only a root Session can join a Bot')
         const boundary = ctx.sessionProjections.stateOf(session, 'turnBoundary')
         const blank = boundary !== undefined && boundary.openTurnStartSeq === null && boundary.lastTurn === 0
         const fork = header.parentSession === sourceSessionId && header.isSeeded === true
-        if (!blank && !fork) throw new Error('Only a blank Session or a fork of the current Bot can join')
+        if (!blank && !fork) throw refusal('Only a blank Session or a fork of the current Bot can join')
       }
       eligible()
       const preset = await servedPreset(bot.profile, { strict: true })
@@ -610,20 +611,20 @@ export function install(rt) {
       eligible()
       if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) {
         const presets = ctx.get('agentPresets')
-        if (typeof presets?.select !== 'function') throw new Error('Native preset selection is unavailable')
+        if (typeof presets?.select !== 'function') throw refusal('Native preset selection is unavailable')
         await presets.select(live, preset)
         await ctx.sessions.flush(session)
       }
       validate()
       eligible()
-      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) throw new Error('Native preset selection did not persist')
+      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) throw refusal('Native preset selection did not persist')
       const previous = { sessionId: bot.sessionId, segments: bot.segments }
       bot.segments = [...(bot.segments ?? []), { sessionId: sourceSessionId, endedAt: Date.now() }]
       bot.sessionId = sessionId
       try {
         await rt.save({ required: true })
         if (state.bots[botId] !== bot || bot.sessionId !== sessionId || state.agents[bot.dshAgentId] !== original
-          || JSON.stringify(original) !== registration) throw new Error('The Bot changed during Session persistence')
+          || JSON.stringify(original) !== registration) throw refusal('The Bot changed during Session persistence')
       } catch (error) {
         // Undo only this operation's tentative ownership; do not erase a successor.
         if (state.bots[botId] === bot && bot.sessionId === sessionId) {
@@ -661,11 +662,11 @@ export function install(rt) {
     writeCheck()
     const original = rt.own(state.agents, agentId)
     const bot = state.bots[original?.adoptedBotId]
-    if (bot?.dshAgentId !== agentId) throw new Error('No adoption to roll back')
+    if (bot?.dshAgentId !== agentId) throw refusal('No adoption to roll back')
     if (rt.isMain(bot.id) || Object.values(state.rooms).some(room => room.members.includes(bot.id))
       || !adoptionHistoryMatches(bot.id)
       || Object.values(state.tasks ?? {}).some(task => task.from === bot.id)) {
-      throw new Error('Remove Main Bot/group roles and resolve new team history before rolling back adoption')
+      throw refusal('Remove Main Bot/group roles and resolve new team history before rolling back adoption')
     }
     delete state.bots[bot.id]
     delete original.adoptedBotId
@@ -707,7 +708,7 @@ export function install(rt) {
   async function servedPreset(id, { strict = false } = {}) {
     if (typeof id !== 'string' || id === '') return undefined
     if ((await presets()).some(preset => preset.id === id)) return id
-    if (strict) throw new Error(`The preset ${id} is not available in this DSH`)
+    if (strict) throw refusal(`The preset ${id} is not available in this DSH`)
     rt.warn('ds-bot: the agent preset %s is not served here; the task takes DSH\'s default', id)
     return undefined
   }
@@ -826,7 +827,7 @@ export function install(rt) {
   async function createDshBotSession(botId, { title, firstMessage } = {}) {
     await rt.load()
     const agent = rt.own(state.agents, botId)
-    if (agent?.kind !== DSH_BOT) throw new Error('Unknown DSH bot')
+    if (agent?.kind !== DSH_BOT) throw refusal('Unknown DSH bot')
     const sessionId = await createAgentSession(agent.id)
     const clean = String(title ?? '').trim().slice(0, AGENT_SESSION_TITLE_MAX)
     if (clean !== '') await renameAgentSession(agent.id, sessionId, clean).catch(error => rt.warn('ds-bot: session title not set: %s', error?.message ?? error))

@@ -2,6 +2,7 @@
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
 import { piAiRoutes, routeOf } from '../shared/routes.js'
+import { refusal } from './refusal.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
 import { PI_AI_CLAUDE, supersededClaude } from './claude-models.js'
@@ -142,7 +143,7 @@ export function install(rt) {
     const named = entries.filter(entry => normalize(entry.id) === key || normalize(entry.name) === key)
     if (named.length === 1) return named[0].ref
     const known = entries.map(entry => entry.ref).join(', ') || 'none'
-    throw new Error(named.length > 1
+    throw refusal(named.length > 1
       ? `Model ${wanted} is served by more than one provider; use one of ${named.map(entry => entry.ref).join(', ')}`
       : `Model ${wanted} is not available. Available models: ${known}`)
   }
@@ -171,11 +172,11 @@ export function install(rt) {
     if (wanted === '') return undefined
     const reasoning = await reasoningOf(ref)
     const efforts = reasoning?.efforts ?? []
-    if (efforts.length === 0) throw new Error(`Model ${ref} has no thinking levels`)
+    if (efforts.length === 0) throw refusal(`Model ${ref} has no thinking levels`)
     const key = normalize(wanted)
     const named = efforts.filter(effort => normalize(effort.id) === key || normalize(effort.name) === key)
     if (named.length === 1) return named[0].id
-    throw new Error(`Thinking level ${wanted} is not available for ${ref}. Available: ${efforts.map(effort => effort.name).join(', ')}`)
+    throw refusal(`Thinking level ${wanted} is not available for ${ref}. Available: ${efforts.map(effort => effort.name).join(', ')}`)
   }
 
   // The profile default model's thinking level, when the model a Bot starts on

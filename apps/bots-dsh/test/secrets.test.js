@@ -343,7 +343,7 @@ test('a secrets file that cannot be read blocks every write instead of being ove
   const file = join(home, 'secrets.json')
   const denied = await bench.call('secret-set', { name: 'TEST_TOKEN', value: '12345678' })
   assert.equal(denied.ok, false)
-  assert.match(denied.error.message, /secrets\.json could not be read \(EISDIR\). Omni does not change it/)
+  assert.equal(denied.error.message, 'The secrets file could not be read (EISDIR). Omni does not change it; fix or move it and reload.')
   assert.ok(statSync(file).isDirectory())
   // While it stays unreadable, nothing is written; once it is gone, saving works.
   rmSync(file, { recursive: true })

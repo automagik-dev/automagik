@@ -1,6 +1,7 @@
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
+import { refusal } from './refusal.js'
 import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX, inUnfoldInstance } from './constants.js'
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
@@ -13,7 +14,7 @@ import { cleanPetId } from './pets.js'
 export const ROLE_MAX = 24
 export function cleanRole(value) {
   if (value === undefined || value === null) return ''
-  if (typeof value !== 'string') throw new Error('A role is a few words of text')
+  if (typeof value !== 'string') throw refusal('A role is a few words of text')
   return value.replace(/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, ROLE_MAX)
 }
 
@@ -31,25 +32,25 @@ const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:
 
 function cleanBrowserGrants(input) {
   if (input === null) return null
-  if (!Array.isArray(input) || input.length > 50) throw new Error('Browser grants must be an array of at most 50 entries')
+  if (!Array.isArray(input) || input.length > 50) throw refusal('Browser grants must be an array of at most 50 entries')
   const grants = []
   const seen = new Set()
   for (const entry of input) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error('Each browser grant must have a site and kinds')
+      throw refusal('Each browser grant must have a site and kinds')
     }
     const until = entry.until
     if (until !== undefined) {
       if (typeof until !== 'number' || !Number.isFinite(until)) {
-        throw new Error('Browser grant until must be a future epoch-millisecond timestamp')
+        throw refusal('Browser grant until must be a future epoch-millisecond timestamp')
       }
       if (until <= Date.now()) continue
     }
     const site = typeof entry.site === 'string' ? entry.site.trim().toLowerCase() : ''
-    if (site !== '*' && !HOSTNAME.test(site)) throw new Error('Browser grant site must be * or a hostname')
+    if (site !== '*' && !HOSTNAME.test(site)) throw refusal('Browser grant site must be * or a hostname')
     if (!Array.isArray(entry.kinds) || entry.kinds.length === 0
       || entry.kinds.some(kind => typeof kind !== 'string' || !BROWSER_GRANT_KINDS.has(kind))) {
-      throw new Error('Browser grant kinds must be a non-empty subset of post, upload, download, delete, *')
+      throw refusal('Browser grant kinds must be a non-empty subset of post, upload, download, delete, *')
     }
     const kinds = [...new Set(entry.kinds)].sort()
     const key = `${site}\0${kinds.join('\0')}\0${until ?? ''}`
@@ -98,7 +99,7 @@ export function install(rt) {
     const served = (await presets.list()).filter(preset => preset.broken === undefined)
     if (profile !== undefined) {
       if (profile === null) return {} // Adopted default DSH preset, not the team's standard.
-      if (!served.some(preset => preset.id === profile)) throw new Error(`The preset ${profile} is not available in this DSH`)
+      if (!served.some(preset => preset.id === profile)) throw refusal(`The preset ${profile} is not available in this DSH`)
       return { agentPreset: profile }
     }
     return served.some(preset => preset.id === 'standard') ? { agentPreset: 'standard' } : {}
@@ -110,7 +111,7 @@ export function install(rt) {
     // A Bot's tools run here too; while another dsh holds the team, a new Session would
     // belong to no saved Bot.
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(readOnly)
+    if (readOnly !== undefined) throw refusal(readOnly)
     const usable = dir !== undefined && await rt.isFolder(dir)
     if (dir !== undefined && !usable) rt.warn('ds-bot: the working folder %s is gone; %s starts in the team workspace', dir, title)
     const place = usable ? { cwd: dir } : { workspaceId: await ensureWorkspace() }
@@ -125,8 +126,8 @@ export function install(rt) {
     const avatar = {}
     if (typeof input.shape === 'string' && /^[a-z][\w-]{0,31}$/.test(input.shape)) avatar.shape = input.shape
     if (typeof input.image === 'string') {
-      if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(input.image)) throw new Error('Avatar images must be PNG, JPEG, WebP, or GIF')
-      if (input.image.length > MAX_AVATAR_IMAGE) throw new Error('Avatar image is too large')
+      if (!/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(input.image)) throw refusal('Avatar images must be PNG, JPEG, WebP, or GIF')
+      if (input.image.length > MAX_AVATAR_IMAGE) throw refusal('Avatar image is too large')
       avatar.image = input.image
     }
     // A pet (pets.js) the team keeps or ships; a photo, set after it, wins.
@@ -182,14 +183,14 @@ export function install(rt) {
   async function createBot(options) {
     const cleanName = String(options.name ?? '').trim().slice(0, 40)
     const problem = nameProblem(cleanName)
-    if (problem !== undefined) throw new Error(problem)
-    if (botNameTaken(cleanName)) throw new Error(`A Bot named ${cleanName} already exists`)
+    if (problem !== undefined) throw refusal(problem)
+    if (botNameTaken(cleanName)) throw refusal(`A Bot named ${cleanName} already exists`)
     const existing = options.existingSessionId
     if (existing === undefined) return holdName('bot', cleanName, () => buildBot(cleanName, options))
-    if (typeof existing !== 'string' || !existing.trim()) throw new Error('An existing Session needs its id')
+    if (typeof existing !== 'string' || !existing.trim()) throw refusal('An existing Session needs its id')
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(readOnly)
-    if (heldSessions.has(existing) || rt.botOf(existing) || rt.roomOf(existing) || rt.selfOf(existing) || rt.agentOf?.(existing)) throw new Error('Session already belongs to the team')
+    if (readOnly !== undefined) throw refusal(readOnly)
+    if (heldSessions.has(existing) || rt.botOf(existing) || rt.roomOf(existing) || rt.selfOf(existing) || rt.agentOf?.(existing)) throw refusal('Session already belongs to the team')
     heldSessions.add(existing)
     try {
       return await holdName('bot', cleanName, () => buildBot(cleanName, options))
@@ -205,7 +206,7 @@ export function install(rt) {
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
     // silently, so the create fails before a Session is made.
-    if (effort && modelRef === undefined) throw new Error('Pick a model before choosing a thinking level')
+    if (effort && modelRef === undefined) throw refusal('Pick a model before choosing a thinking level')
     // An explicit level wins; an explicit Default (null) picks the model's own
     // level; an untouched pick inherits the profile default's level.
     const effortId = modelRef === undefined ? undefined
@@ -223,7 +224,7 @@ export function install(rt) {
     const id = existingSessionId ?? await createSession(cleanName, { dir })
     if (existingSessionId !== undefined) {
       const agent = await rt.resolveAgent(id)
-      if (agent?.session?.id !== id) throw new Error('The existing Session could not be resolved')
+      if (agent?.session?.id !== id) throw refusal('The existing Session could not be resolved')
       await ctx.sessionTitle.rename(agent.session, cleanName)
     }
     try {
@@ -313,7 +314,7 @@ export function install(rt) {
 
   async function duplicateBot(id) {
     const bot = rt.botOf(id)
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
     const served = (await rt.catalog()).some(entry => entry.ref === bot.model)
     // A folder that went away since leaves the copy in the team workspace.
     const workDir = bot.workDir !== undefined && await rt.isFolder(bot.workDir) ? bot.workDir : undefined
@@ -335,7 +336,7 @@ export function install(rt) {
 
   async function updateBot(id, patch, actorId, fromSessionId) {
     const bot = rt.botOf(id)
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
     // A Bot whose model menu its plugin owns (host-models.js): the model and level are the
     // plugin's, picked by the person only; the rest of the patch goes on as for any Bot.
     if (rt.hostOwned?.(bot) && (patch.model !== undefined || patch.effort !== undefined)) {
@@ -347,7 +348,7 @@ export function install(rt) {
     const policyPatch = contextPatch(patch)
     const policyOnly = Object.keys(patch).every(key => key === 'id' || Object.hasOwn(policyPatch, key))
     if (patch.browserGrants !== undefined && actorId !== undefined) {
-      throw new Error(`Only the user can set what ${bot.name} may do in the browser`)
+      throw refusal(`Only the user can set what ${bot.name} may do in the browser`)
     }
     const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants)
     // Checked first, so a folder, model or level that does not pass leaves the rest
@@ -357,7 +358,7 @@ export function install(rt) {
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
     // An adopted Session works in the folder its host gave it (parts.js `pinned`).
     if (moving && workDir !== bot.workDir && bot.sessionPinned === true) {
-      throw new Error(`${bot.name} works in the folder its host gave its conversation, so its folder cannot change here`)
+      throw refusal(`${bot.name} works in the folder its host gave its conversation, so its folder cannot change here`)
     }
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
@@ -369,7 +370,7 @@ export function install(rt) {
     if (patch.effort !== undefined) {
       if (patch.effort === null || patch.effort === '') effortId = null
       else {
-        if (effortRef === undefined) throw new Error('Pick a model before choosing a thinking level')
+        if (effortRef === undefined) throw refusal('Pick a model before choosing a thinking level')
         effortId = await rt.resolveEffort(effortRef, patch.effort)
       }
     }
@@ -377,10 +378,10 @@ export function install(rt) {
       const next = String(patch.name).trim().slice(0, 40)
       const clash = rt.findBot(next)
       const pending = isHeld('bot', next) && normalize(next) !== normalize(bot.name)
-      if (next === '' || (clash && clash.id !== id) || pending) throw new Error(`Name ${next} is not available`)
+      if (next === '' || (clash && clash.id !== id) || pending) throw refusal(`Name ${next} is not available`)
       // A name saved before the rule stays usable until it changes.
       const problem = next === bot.name ? undefined : nameProblem(next)
-      if (problem !== undefined) throw new Error(problem)
+      if (problem !== undefined) throw refusal(problem)
       bot.name = next
       const agent = await rt.resolveAgent(rt.chatOf(id))
       await ctx.sessionTitle.rename(agent.session, next)
@@ -455,7 +456,7 @@ export function install(rt) {
 
   async function setFlags(id, { pinned, hidden }) {
     const entry = rt.botOf(id) ?? rt.roomOf(id) ?? rt.own(state.agents, id)
-    if (entry === undefined) throw new Error('Unknown conversation')
+    if (entry === undefined) throw refusal('Unknown conversation')
     if (typeof pinned === 'boolean') entry.pinned = pinned
     if (typeof hidden === 'boolean') entry.hidden = hidden
     await rt.save()
@@ -472,7 +473,7 @@ export function install(rt) {
 
   function cleanRoomName(text, selfId) {
     const next = unquote(text).replace(/\s+/g, ' ').slice(0, ROOM_NAME_MAX)
-    if (next !== '' && (rt.findRooms(next).some(room => room.id !== selfId) || isHeld('room', next))) throw new Error(`Another group chat is already called "${next}"`)
+    if (next !== '' && (rt.findRooms(next).some(room => room.id !== selfId) || isHeld('room', next))) throw refusal(`Another group chat is already called "${next}"`)
     return next
   }
 
@@ -497,8 +498,8 @@ export function install(rt) {
   }
 
   function checkMembers(members) {
-    if (members.length < 2) throw new Error('A group chat needs at least two Bots')
-    if (members.length > ROOM_MAX_MEMBERS) throw new Error(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
+    if (members.length < 2) throw refusal('A group chat needs at least two Bots')
+    if (members.length > ROOM_MAX_MEMBERS) throw refusal(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
   }
 
   // A Main Bot leads the groups it makes; a group the user makes is led by a Main Bot
@@ -510,8 +511,8 @@ export function install(rt) {
     checkMembers(members)
     const custom = cleanRoomName(roomName ?? '')
     const adminId = admin !== undefined ? admin : defaultAdmin(members, createdBy)
-    if (adminId !== null && !members.includes(adminId)) throw new Error('The admin must be a member of the group')
-    if (mode !== undefined && !ROOM_MODES.includes(mode)) throw new Error(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
+    if (adminId !== null && !members.includes(adminId)) throw refusal('The admin must be a member of the group')
+    if (mode !== undefined && !ROOM_MODES.includes(mode)) throw refusal(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
     return holdName('room', custom, () => buildRoom({ members, custom, notice, mode, adminId, createdBy }))
   }
 
@@ -559,7 +560,7 @@ export function install(rt) {
   function planRoomChange(room, patch, actorId) {
     const byMain = actorId === undefined || rt.isMain(actorId)
     const byAdmin = !byMain && rt.isAdminOf(room, actorId)
-    if (!byMain && !byAdmin) throw new Error(`Only the user, a Main Bot, or the admin of "${room.name}" can change it`)
+    if (!byMain && !byAdmin) throw refusal(`Only the user, a Main Bot, or the admin of "${room.name}" can change it`)
     let members = Array.isArray(patch.members) ? [...new Set(patch.members)] : [...room.members]
     for (const member of patch.add ?? []) if (!members.includes(member)) members.push(member)
     members = members.filter(member => !(patch.remove ?? []).includes(member) && isLive(member))
@@ -569,26 +570,26 @@ export function install(rt) {
     let admin = room.admin ?? null
     if (patch.admin !== undefined) {
       admin = patch.admin || null
-      if (admin === null && byAdmin) throw new Error('Hand the admin role to another member instead of leaving the group without one')
-      if (admin !== null && !members.includes(admin)) throw new Error(`${rt.botOf(admin)?.name ?? 'That Bot'} must be a member to be the admin`)
+      if (admin === null && byAdmin) throw refusal('Hand the admin role to another member instead of leaving the group without one')
+      if (admin !== null && !members.includes(admin)) throw refusal(`${rt.botOf(admin)?.name ?? 'That Bot'} must be a member to be the admin`)
     }
     if (admin !== null && !members.includes(admin)) {
-      if (byAdmin && admin === actorId) throw new Error('Hand the admin role to another member before leaving the group')
+      if (byAdmin && admin === actorId) throw refusal('Hand the admin role to another member before leaving the group')
       admin = null
     }
-    if (patch.mode !== undefined && !ROOM_MODES.includes(patch.mode)) throw new Error(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
+    if (patch.mode !== undefined && !ROOM_MODES.includes(patch.mode)) throw refusal(`Reply mode must be one of ${ROOM_MODES.join(', ')}`)
     const notice = patch.notice === undefined ? undefined : cleanNotice(patch.notice)
-    if (patch.workDir !== undefined && byAdmin) throw new Error(`Only the user or a Main Bot can set the folder of "${room.name}"`)
+    if (patch.workDir !== undefined && byAdmin) throw refusal(`Only the user or a Main Bot can set the folder of "${room.name}"`)
     // A Bot's own permissions are the user's to set, so a group's are too.
-    if (patch.permission !== undefined && actorId !== undefined) throw new Error(`Only the user can set the permissions of "${room.name}"`)
+    if (patch.permission !== undefined && actorId !== undefined) throw refusal(`Only the user can set the permissions of "${room.name}"`)
     const permission = patch.permission === undefined ? undefined : rt.cleanRoomPermission(patch.permission)
     // The relay limit is the user's guard against a group that never stops; it is
     // not a member's to move, whatever its role.
-    if (patch.relayLimit !== undefined && actorId !== undefined) throw new Error(`Only the user can set the relay limit of "${room.name}"`)
+    if (patch.relayLimit !== undefined && actorId !== undefined) throw refusal(`Only the user can set the relay limit of "${room.name}"`)
     let relayLimit
     if (patch.relayLimit === null) relayLimit = null
     else if (patch.relayLimit !== undefined) {
-      if (!Number.isInteger(patch.relayLimit) || patch.relayLimit < 1 || patch.relayLimit > 200) throw new Error('Relay limit must be a whole number from 1 to 200')
+      if (!Number.isInteger(patch.relayLimit) || patch.relayLimit < 1 || patch.relayLimit > 200) throw refusal('Relay limit must be a whole number from 1 to 200')
       relayLimit = patch.relayLimit
     }
     // The second run is the last check before the change is written, so no other change
@@ -600,13 +601,13 @@ export function install(rt) {
   // `actorId` is the Bot asking, or undefined for the user. Returns what changed, in words.
   async function updateRoom(id, patch, actorId) {
     const asked = rt.roomOf(id)
-    if (asked === undefined) throw new Error('Unknown group chat')
+    if (asked === undefined) throw refusal('Unknown group chat')
     planRoomChange(asked, patch, actorId)
     const moving = patch.workDir !== undefined
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
     // No await from here until every change is written.
     const room = rt.roomOf(id)
-    if (room === undefined) throw new Error('Unknown group chat')
+    if (room === undefined) throw refusal('Unknown group chat')
     const { members, admin, name, notice, permission, relayLimit } = planRoomChange(room, patch, actorId)
 
     const changes = []
@@ -672,7 +673,7 @@ export function install(rt) {
 
   async function deleteRoom(id) {
     const room = rt.roomOf(id)
-    if (room === undefined) throw new Error('Unknown group chat')
+    if (room === undefined) throw refusal('Unknown group chat')
     // Before the group's Sessions leave the state, which the archive reads.
     const archived = rt.archiveGroupMemory(room)
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
@@ -696,16 +697,16 @@ export function install(rt) {
   // front and keeps the others.
   async function setMain(id, main, { primary = false, replace } = {}) {
     const bot = rt.botOf(id)
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
     const others = state.mainBotIds.filter(other => other !== id)
     let next
     if (!main) {
       if (!rt.isMain(id)) return
-      if (others.length === 0) throw new Error('The team needs at least one Main Bot')
+      if (others.length === 0) throw refusal('The team needs at least one Main Bot')
       next = others
     } else if (replace !== undefined && replace !== id) {
       const at = others.indexOf(replace)
-      if (at === -1) throw new Error('Only a Main Bot can be replaced')
+      if (at === -1) throw refusal('Only a Main Bot can be replaced')
       next = others.with(at, id)
     } else if (primary) {
       next = [id, ...others]
@@ -738,9 +739,9 @@ export function install(rt) {
 
   async function deleteNow(id) {
     const bot = rt.botOf(id)
-    if (bot === undefined) throw new Error('Unknown Bot')
-    if (rt.isMain(id)) throw new Error('A Main Bot cannot be deleted; remove its Main Bot role first')
-    if (bot.dshAgentId !== undefined) throw new Error('Roll back DSH adoption before deleting the original DSH bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
+    if (rt.isMain(id)) throw refusal('A Main Bot cannot be deleted; remove its Main Bot role first')
+    if (bot.dshAgentId !== undefined) throw refusal('Roll back DSH adoption before deleting the original DSH bot')
     const current = rt.chatOf(id)
     // Questions and exchange turns are kept per Session, so every part of the chat is cleared.
     const parts = new Set([id, current, ...(bot.segments ?? []).map(segment => segment.sessionId)])

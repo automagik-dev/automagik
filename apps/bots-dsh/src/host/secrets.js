@@ -3,6 +3,7 @@
 // their shell, tool results lose it before they are saved, and every model request
 // has it replaced by [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { chmod, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -186,9 +187,9 @@ export function install(rt) {
 
   // Resolves once secrets.json holds the current map; rejects when the write failed.
   const persist = () => {
-    if (blocked !== undefined) return Promise.reject(new Error(`The secrets file ${path} could not be read (${blocked}). Omni does not change it; fix or move the file and reload.`))
+    if (blocked !== undefined) return Promise.reject(refusal(`The secrets file could not be read (${blocked}). Omni does not change it; fix or move it and reload.`))
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) return Promise.reject(new Error(readOnly))
+    if (readOnly !== undefined) return Promise.reject(refusal(readOnly))
     const snapshot = JSON.stringify({ version: 1, secrets: [...secrets.values()] }, null, 2)
     const job = writing.then(async () => {
       await mkdir(home, { recursive: true })
@@ -287,21 +288,21 @@ export function install(rt) {
   }
 
   const cleanValue = (raw) => {
-    if (typeof raw !== 'string') throw new Error('Type the key first')
+    if (typeof raw !== 'string') throw refusal('Type the key first')
     const value = raw.trim()
-    if (value.length < MIN_VALUE) throw new Error(`A key must have at least ${MIN_VALUE} characters`)
-    if (value.length > MAX_VALUE) throw new Error(`A key can have at most ${MAX_VALUE} characters`)
+    if (value.length < MIN_VALUE) throw refusal(`A key must have at least ${MIN_VALUE} characters`)
+    if (value.length > MAX_VALUE) throw refusal(`A key can have at most ${MAX_VALUE} characters`)
     return value
   }
   const cleanScope = (raw) => {
     if (raw === 'all') return 'all'
-    if (!Array.isArray(raw)) throw new Error('Choose every Bot or a list of Bots')
+    if (!Array.isArray(raw)) throw refusal('Choose every Bot or a list of Bots')
     return [...new Set(raw.filter(id => typeof id === 'string' && rt.botOf(id) !== undefined))]
   }
   const pendingRequest = (id) => {
     const found = findRequest(String(id ?? ''))
-    if (found === undefined) throw new Error('This request is gone')
-    if (found.request.status !== 'pending') throw new Error('This request was already answered')
+    if (found === undefined) throw refusal('This request is gone')
+    if (found.request.status !== 'pending') throw refusal('This request was already answered')
     return found
   }
 
@@ -345,7 +346,7 @@ export function install(rt) {
         return secretView(secrets.get(request.name))
       }
       const name = normalizeName(body.name)
-      if (!SECRET_NAME.test(name)) throw new Error('A name uses capitals, digits, and underscores, and starts with a letter')
+      if (!SECRET_NAME.test(name)) throw refusal('A name uses capitals, digits, and underscores, and starts with a letter')
       const existing = secrets.get(name)
       secrets.set(name, {
         name,
@@ -364,7 +365,7 @@ export function install(rt) {
     async 'secret-allow'(body) {
       const { botId, request } = pendingRequest(body.requestId)
       const secret = secrets.get(request.name)
-      if (secret === undefined) throw new Error(`${request.name} is not saved yet`)
+      if (secret === undefined) throw refusal(`${request.name} is not saved yet`)
       if (!canUse(secret, botId)) secret.scope = [...new Set([...secret.scope, botId])]
       secret.updatedAt = Date.now()
       settle(botId, request, 'allowed')
@@ -382,7 +383,7 @@ export function install(rt) {
     },
     async 'secret-update'(body) {
       const secret = secrets.get(normalizeName(body.name))
-      if (secret === undefined) throw new Error('No such key')
+      if (secret === undefined) throw refusal('No such key')
       if (body.scope !== undefined) secret.scope = cleanScope(body.scope)
       if (typeof body.purpose === 'string') secret.purpose = body.purpose.trim().slice(0, 300)
       secret.updatedAt = Date.now()
@@ -393,7 +394,7 @@ export function install(rt) {
     },
     async 'secret-delete'(body) {
       const name = normalizeName(body.name)
-      if (!secrets.delete(name)) throw new Error('No such key')
+      if (!secrets.delete(name)) throw refusal('No such key')
       const notes = []
       reconcile(name, notes)
       await commit(notes)

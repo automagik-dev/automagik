@@ -3,6 +3,7 @@
 // host, so images are not resized; a small square image is asked for, and every kind
 // of input is capped at what the stored format holds.
 import { readFile, realpath, stat } from 'node:fs/promises'
+import { refusal } from './refusal.js'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { MAX_AVATAR_IMAGE } from './constants.js'
@@ -30,11 +31,11 @@ const tooLarge = size => `The avatar image is too large: ${size} bytes, and the 
 const NOT_IMAGE = `The avatar must be a PNG, JPEG, WebP, or GIF image. ${HINT}`
 
 function toDataUrl(bytes) {
-  if (bytes.length > MAX_BYTES) throw new Error(tooLarge(bytes.length))
+  if (bytes.length > MAX_BYTES) throw refusal(tooLarge(bytes.length))
   const mime = mimeOf(bytes)
-  if (mime === undefined) throw new Error(NOT_IMAGE)
+  if (mime === undefined) throw refusal(NOT_IMAGE)
   const url = `data:${mime};base64,${bytes.toString('base64')}`
-  if (url.length > MAX_AVATAR_IMAGE) throw new Error(tooLarge(bytes.length))
+  if (url.length > MAX_AVATAR_IMAGE) throw refusal(tooLarge(bytes.length))
   return url
 }
 
@@ -54,32 +55,32 @@ async function readLocal(path, baseDir, isData) {
     real = await realpath(full)
     info = await stat(real)
   } catch (error) {
-    if (error?.code === 'ENOENT') throw new Error(`There is no image file at ${full}. Pass the path of an existing image file.`)
-    throw new Error(`Cannot read the image at ${full}: ${error?.code === 'EACCES' ? 'permission denied' : error.message}`)
+    if (error?.code === 'ENOENT') throw refusal(`There is no image file at ${full}. Pass the path of an existing image file.`)
+    throw refusal(`Cannot read the image at ${full}: ${error?.code === 'EACCES' ? 'permission denied' : error.message}`)
   }
-  if (!info.isFile()) throw new Error(`${full} is not an image file. Pass the path of an image file.`)
-  if (await isData?.(real)) throw new Error(`${full} is in DeepSeek Harness data, so it cannot be a Bot's photo. Pass an image from another folder.`)
-  if (info.size > MAX_BYTES) throw new Error(tooLarge(info.size))
+  if (!info.isFile()) throw refusal(`${full} is not an image file. Pass the path of an image file.`)
+  if (await isData?.(real)) throw refusal(`${full} is in DeepSeek Harness data, so it cannot be a Bot's photo. Pass an image from another folder.`)
+  if (info.size > MAX_BYTES) throw refusal(tooLarge(info.size))
   let bytes
   try {
     bytes = await readFile(real)
   } catch (error) {
-    throw new Error(`Cannot read the image at ${full}: ${error?.code === 'EACCES' ? 'permission denied' : error.message}`)
+    throw refusal(`Cannot read the image at ${full}: ${error?.code === 'EACCES' ? 'permission denied' : error.message}`)
   }
-  if (bytes.length > MAX_BYTES) throw new Error(tooLarge(bytes.length))
+  if (bytes.length > MAX_BYTES) throw refusal(tooLarge(bytes.length))
   return toDataUrl(bytes)
 }
 
 function readDataUrl(value) {
   const comma = value.indexOf(',')
-  if (comma === -1) throw new Error(`The avatar data URL has no comma before its image data. ${HINT}`)
+  if (comma === -1) throw refusal(`The avatar data URL has no comma before its image data. ${HINT}`)
   const header = value.slice('data:'.length, comma)
   const [mime = '', ...params] = header.split(';').map(part => part.trim().toLowerCase())
-  if (!MIMES.has(mime)) throw new Error(`The avatar data URL must hold a PNG, JPEG, WebP, or GIF image. ${HINT}`)
-  if (!params.includes('base64')) throw new Error('The avatar data URL must be base64 encoded, as in data:image/png;base64,...')
+  if (!MIMES.has(mime)) throw refusal(`The avatar data URL must hold a PNG, JPEG, WebP, or GIF image. ${HINT}`)
+  if (!params.includes('base64')) throw refusal('The avatar data URL must be base64 encoded, as in data:image/png;base64,...')
   const payload = value.slice(comma + 1).replace(/\s/g, '')
   if (payload === '' || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) {
-    throw new Error('The avatar data URL does not hold valid base64 image data.')
+    throw refusal('The avatar data URL does not hold valid base64 image data.')
   }
   const bytes = Buffer.from(payload, 'base64')
   return { url: toDataUrl(bytes), bytes, mime: mimeOf(bytes) }
@@ -97,11 +98,11 @@ export function avatarBytes(value) {
 // addresses, such as local services, that dsh's own web fetch refuses.
 export async function readAvatar(input, { baseDir, isData } = {}) {
   const value = typeof input === 'string' ? input.trim() : ''
-  if (value === '') throw new Error(`Give an image path or a data URL. ${HINT}`)
+  if (value === '') throw refusal(`Give an image path or a data URL. ${HINT}`)
   if (/^data:/i.test(value)) return readDataUrl(value).url
-  if (/^https?:\/\//i.test(value)) throw new Error('An http(s) link is not downloaded here. Save the image to a file and pass its path, or pass a data URL.')
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) throw new Error(`The avatar must be a local image path or a data URL. ${HINT}`)
+  if (/^https?:\/\//i.test(value)) throw refusal('An http(s) link is not downloaded here. Save the image to a file and pass its path, or pass a data URL.')
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) throw refusal(`The avatar must be a local image path or a data URL. ${HINT}`)
   // A network path (\\host\share) would make Windows connect to that host and sign in.
-  if (/^[\\/]{2}/.test(value)) throw new Error('A network path is not read here. Copy the image to this computer and pass its path, or pass a data URL.')
+  if (/^[\\/]{2}/.test(value)) throw refusal('A network path is not read here. Copy the image to this computer and pass its path, or pass a data URL.')
   return readLocal(value, baseDir, isData)
 }
