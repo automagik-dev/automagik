@@ -33,7 +33,7 @@ function fuzzCases(seed = SEED, count = 200) {
   const pick = (list) => list[Math.floor(rand() * list.length)]
   const unit = () => Array.from({ length: 1 + Math.floor(rand() * 4) }, () => pick(PIECES)).join('')
   const fill = (piece, size) => piece.repeat(Math.max(1, Math.floor(size / piece.length)))
-  return Array.from({ length: count }, (_, i) => {
+  const cases = Array.from({ length: count }, (_, i) => {
     const size = pick(SIZES)
     if (i % 3 === 2) {
       const [runs, keys, tails] = pick(SHAPES)
@@ -54,6 +54,9 @@ function fuzzCases(seed = SEED, count = 200) {
     const text = `${fill(lead, size * share)}${fill(run, size * (1 - share))}${tail}`
     return [`#${i} ${JSON.stringify(lead)} then ${JSON.stringify(run)} repeated, then ${JSON.stringify(tail)}`, text]
   })
+  // The shape that once backtracked over a whole blank run: 80k of " \t", then a name and a block.
+  cases.push(['fixed: 80000 " \\t" then accessToken: >', `${' \t'.repeat(40_000)}accessToken: >\n`])
+  return cases
 }
 
 // A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
