@@ -14,7 +14,10 @@
 import { StringDecoder } from 'node:string_decoder'
 
 const KEY = '(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|apikey|client[_-]?secret|secret|password|passwd)'
-const PAIR = new RegExp(`(\\b${KEY}\\b)(["']?\\s*[=:]\\s*)(["']?)([^\\s&"'#,;}\\)\\]]+)\\3`, 'gi')
+// The key's end is boundary-anchored (so `tokens:`/`tokenizer` stay text), its start is not: a
+// key can be the suffix of a longer word (`csrf_token=`), and a report cut can put text right
+// against it. Masking reads whole sources, so the key is always whole when it is matched.
+const PAIR = new RegExp(`(${KEY}\\b)(["']?\\s*[=:]\\s*)(["']?)([^\\s&"'#,;}\\)\\]]+)\\3`, 'gi')
 const AUTH = /(\bauthorization\b["']?\s*[:=]\s*["']?(?:bearer|basic)\s+)([^\s"',;}\]]+)/gi
 const CDP = /(\/devtools\/browser\/)([^/\s"'?#)]+)/gi
 

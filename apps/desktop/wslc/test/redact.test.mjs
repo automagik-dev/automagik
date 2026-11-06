@@ -25,6 +25,10 @@ test('other text is untouched', () => {
 test('the launcher\'s other credential shapes are masked too', () => {
   assert.equal(maskSecrets(`{"token":"${launchToken}"}`), '{"token":"[redacted]"}')
   assert.equal(maskSecrets(`api_key=${launchToken}`), 'api_key=[redacted]')
+  // A key can be the suffix of a longer word, and a report cut can leave text right against it;
+  // the key's end still ends the match, so `tokens:`/`tokenizer` stay untouched (next test).
+  assert.equal(maskSecrets(`csrf_token=${launchToken}`), 'csrf_token=[redacted]')
+  assert.equal(maskSecrets(`aaaaatoken=${launchToken}`), 'aaaaatoken=[redacted]')
   assert.equal(maskSecrets(`Authorization: Bearer ${cdpToken}`), 'Authorization: Bearer [redacted]')
   assert.equal(maskSecrets(`ws://127.0.0.1:9222/devtools/browser/${cdpToken}`), 'ws://127.0.0.1:9222/devtools/browser/[redacted]')
 })

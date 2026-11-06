@@ -65,8 +65,13 @@ export class FakeElectron {
       const timer = setTimeout(() => {
         this.#waiters.delete(look)
         // This message reaches the smoke's public log and its run summary through the FAIL line,
-        // and both parts carry the token: a `ready` frame's URL and stderr's launch line.
-        reject(new Error(maskSecrets(`no ${what} within ${ms} ms; frames: ${JSON.stringify(this.frames).slice(-2000)}; stderr: ${this.stderr.slice(-2000)}`)))
+        // and both parts carry the token: a `ready` frame's URL and stderr's launch line. Mask each
+        // part before its 2000-character cut: masking the cut would drop the key (`token=` or
+        // `/devtools/browser/`) and leave the value unmatched, while a cut of the masked text can
+        // only clip a `[redacted]` placeholder, never the token.
+        const frames = maskSecrets(JSON.stringify(this.frames)).slice(-2000)
+        const stderr = maskSecrets(this.stderr).slice(-2000)
+        reject(new Error(`no ${what} within ${ms} ms; frames: ${frames}; stderr: ${stderr}`))
       }, ms)
       if (!look()) this.#waiters.add(look)
     })
