@@ -429,10 +429,32 @@ export class Backchannel {
         return unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
       }
     }
+    // The synthetic block is for the review only. Replace it with an empty developer message:
+    // it derives to no model message, so no later request or crossing sees the fake call.
+    const hideSynthetic = () => {
+      if (syntheticSeq === undefined) return
+      const seq = syntheticSeq
+      syntheticSeq = undefined
+      try {
+        session.append('developer/message', {
+          turn,
+          step,
+          message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
+        }, { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
+      } catch (cause) {
+        this.log(`the synthetic bridge block was not removed: ${cause?.message ?? cause}`)
+      }
+    }
     let callSeq
     try {
       callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
     } catch (cause) {
+      // Auto cannot review a call that has no row: close the synthetic block and refuse. A
+      // Manual or Full call keeps the old log-and-go behaviour, where DSH has no Auto gate.
+      if (review !== undefined) {
+        hideSynthetic()
+        return unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
+      }
       this.log(`bridge call row failed: ${cause?.message ?? cause}`)
     }
     const settle = (content, isError, info) => {
@@ -451,22 +473,6 @@ export class Backchannel {
         content: [{ type: 'text', text: text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text }],
         isError,
         ...(info === undefined ? {} : { error: info }),
-      }
-    }
-    // The synthetic block is for the review only. Replace it with an empty developer message:
-    // it derives to no model message, so no later request or crossing sees the fake call.
-    const hideSynthetic = () => {
-      if (syntheticSeq === undefined) return
-      const seq = syntheticSeq
-      syntheticSeq = undefined
-      try {
-        session.append('developer/message', {
-          turn,
-          step,
-          message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
-        }, { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
-      } catch (cause) {
-        this.log(`the synthetic bridge block was not removed: ${cause?.message ?? cause}`)
       }
     }
     let controller

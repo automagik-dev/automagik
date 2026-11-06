@@ -12,7 +12,7 @@ import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest 
 import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
-import { BRIDGE_NAME, CREDENTIAL_ENV, URL_ENV } from './names.js'
+import { BRIDGE_NAME, CREDENTIAL_ENV, SYNTHETIC_KIND, URL_ENV } from './names.js'
 import { boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
@@ -151,9 +151,18 @@ function redactedReview(options, redact) {
 export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = text => text) {
   const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
   const answers = choice => typeof choice?.provider === 'string' && choice.provider !== '' && typeof choice.model === 'string' && choice.model !== '' && !agentRoute(choice.provider)
+  const synthetic = message => message?.source?.synthetic === SYNTHETIC_KIND
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
   return (options, next) => {
-    if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
+    if (!providers.has(options.provider)) {
+      // A bridge review block that outlived its call (a crash, a failed replacement) is not a
+      // turn: drop it before any native model sees it. The nested call re-enters here clean.
+      if (Array.isArray(options.messages) && options.messages.some(synthetic) && ctx?.llm !== undefined) {
+        return ctx.llm.stream({ ...options, messages: options.messages.filter(message => !synthetic(message)) })
+      }
+      return next()
+    }
+    if (isAgentLoopRequest(options)) return next()
     if (!SIDE_PURPOSES.has(options.purpose) || ctx?.llm === undefined) return refuse()
     const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
     if (chosen === undefined) return refuse()

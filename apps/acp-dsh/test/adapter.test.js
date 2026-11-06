@@ -226,6 +226,24 @@ test('a Session title or Auto review on an agent\'s chat goes to DSH\'s default 
   assert.deepEqual([passed, sent.length], [2, 0])
 })
 
+test('a leaked synthetic bridge block never reaches a native provider', async () => {
+  const sent = []
+  const ctx = { llm: { stream: options => { sent.push(options); return (async function* () {})() } } }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx, () => SIDE_MODEL, credentialShapes)
+  const synthetic = {
+    role: 'assistant',
+    source: { kind: 'model', provider: 'acp-fake', bridge: true, synthetic: SYNTHETIC_KIND },
+    content: [{ type: 'tool-call', id: 'bridge-1', name: 'bridge_synthetic', arguments: '{}' }],
+  }
+  const question = { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }
+  await drain(listen({ provider: 'deepseek-official', model: 'deepseek-v4', messages: [question, synthetic] }, () => {
+    throw new Error('the cleaned request should be re-streamed')
+  }))
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0].messages, [question])
+  assert.equal(sent[0].provider, 'deepseek-official')
+})
+
 // The same through DSH's own llm service and DSH's own default-model service, saved on an agent
 // as it is after the person picks one: the listener's nested call passes through the waterfall
 // again, sideModel's adapter answers the title, and the agent's adapter sees no side request.

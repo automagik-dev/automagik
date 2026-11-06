@@ -77,9 +77,10 @@ that surface node (`surfaceOp: { op: 'replace', startSeq, endSeq }`,
 `sourceEventSeqs: [syntheticSeq]`, source kind `SYNTHETIC_KIND`). An empty developer message
 derives to no model message, so no later request sees the block. The replay path is guarded too:
 `renderMessage()` in `switch.js` returns `undefined` for a message whose
-`source.synthetic === SYNTHETIC_KIND`, and `lastProviderOf()` skips it, so a block that survives
-a crash or a failed replacement still cannot cross to another provider. A test asserts the
-synthetic call is absent from the prompt after a crossing.
+`source.synthetic === SYNTHETIC_KIND`, and `lastProviderOf()` skips it. `aside()` also drops any
+such message from a request to a non-agent provider before the nested stream. A block that
+survives a crash or a failed replacement therefore cannot cross to another provider; tests
+assert both the replay and the native request.
 
 **Attribution.** The synthetic block uses the open step's `turn`/`step` (the same position
 `positionOf` reads) and the bridge call's own id, name and raw arguments. The `tool/call` row

@@ -115,7 +115,7 @@ const failedResult = (callId, decision) => ({
   }],
 })
 
-function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = 'auto', override = 'never', answer = 'allowed-once', tools = TOOLS, headerTools = tools, route = true, decisions = [], reviewTimeoutMs = 5000, holdBody = false, holdApproval = false } = {}) {
+function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = 'auto', override = 'never', answer = 'allowed-once', tools = TOOLS, headerTools = tools, route = true, decisions = [], reviewTimeoutMs = 5000, holdBody = false, holdApproval = false, failCallRow = false } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
@@ -124,6 +124,13 @@ function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = '
       header: { config: { provider: 'acp-fake', model: 'default' }, ...(headerTools.length > 0 ? { tools: headerTools } : {}) },
       reason: 'initial',
     })
+  }
+  if (failCallRow) {
+    const append = session.append.bind(session)
+    session.append = (type, data, options) => {
+      if (type === 'tool/call') throw new Error('call row failed')
+      return append(type, data, options)
+    }
   }
   const agent = { session }
   const asked = []
@@ -468,6 +475,23 @@ test('Auto review refuses a bridge call with a named code when its inputs are mi
     } finally {
       h.backchannel.dispose()
     }
+  }
+})
+
+test('Auto review refuses when the call row cannot be written', async () => {
+  const h = reviewHost({ decisions: [ALLOW], failCallRow: true })
+  try {
+    const { body } = await autoCall(h)
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'AUTO_REVIEW_FAILED')
+    assert.equal(h.executed.length, 0)
+    const events = h.session.snapshotEvents()
+    assert.equal(events.filter(event => event.type === 'tool/call').length, 0)
+    assert.equal(events.filter(event => event.type === 'tool/result').length, 0)
+    const synthetic = events.find(event => event.type === 'assistant/message')
+    assert.equal(h.session.surface.nodes.includes(synthetic.seq), false, 'the synthetic block is closed')
+  } finally {
+    h.backchannel.dispose()
   }
 })
 
