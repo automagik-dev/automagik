@@ -22,11 +22,13 @@ import { satisfies } from '../src/lane.js'
 
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/
 
-/** The DSH range a plugin tested on `version` declares: from it to the next minor. */
+/** The DSH range a plugin tested on `version` declares: from it to the next minor, whose
+ * prereleases are excluded too (`<0.3.0-0`): dsh resolves engines with includePrerelease, so a
+ * bare `<0.3.0` would admit 0.3.0-alpha.1. */
 export function rangeFor(version) {
   const match = VERSION.exec(String(version ?? '')) && /^(\d+)\.(\d+)\.(\d+)/.exec(version)
   if (!match) throw new Error(`not a dsh version: '${version}'`)
-  return `>=${version} <${match[1]}.${Number(match[2]) + 1}.0`
+  return `>=${version} <${match[1]}.${Number(match[2]) + 1}.0-0`
 }
 
 /** A carried plugin may use a newer compatible release in the same minor series, never older. */
