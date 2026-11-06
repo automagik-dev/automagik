@@ -52,7 +52,7 @@ export function presetOf(ctx, session) {
 export function offeredTools(ctx, agent) {
   const tools = ctx?.get?.('tools')
   if (tools?.definitions === undefined || agent === undefined) return []
-  const level = levelOf(ctx?.get?.('approval'), agent.session, ctx?.get?.('sandboxPolicy'))
+  const level = levelOf(ctx?.get?.('approval'), agent.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
   return tools.definitions(agent)
     .filter((definition) => definition.name !== TOOL_NAME)
     // A conditional tool (step admission via `when`) has no call outside a model step; DSH's
@@ -69,7 +69,7 @@ export function offeredTools(ctx, agent) {
 
 /** A stable fingerprint of what the bridge would list: preset, level and every tool's schema. */
 export function signatureOf(ctx, agent) {
-  const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'))
+  const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
   return JSON.stringify({
     preset: presetOf(ctx, agent?.session),
     sandbox: level.sandbox ?? null,
@@ -373,7 +373,7 @@ export class Backchannel {
     }
     // DSH's approval, server-side: the credential cannot approve, and no agent rule reaches it.
     const approval = this.ctx?.get?.('approval')
-    const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'))
+    const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
     // Full access never asks. Auto (DSH's `danger-full-access` sandbox with `ask`, answered by
     // auto-review) cannot review this call: auto-review reads the pending tool call from the
     // model surface, and a bridge call is out-of-band (no assistant block), so its answerer fails
