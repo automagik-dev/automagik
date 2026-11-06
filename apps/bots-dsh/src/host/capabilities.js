@@ -311,23 +311,36 @@ export function install(rt) {
     } catch (error) {
       return { checkedAt, status: 'unverified', reason: rt.redactSecrets(String(error?.message ?? error)).slice(0, PROBE_REASON_CHARS) }
     }
+    // Header values go first: a value that embeds a secret reads as [header], not as a label
+    // inside the secret. The redactor then covers everything else, before any truncation.
     const clean = (text) => {
-      let out = rt.redactSecrets(String(text ?? ''))
+      let out = String(text ?? '')
       for (const value of sent) out = out.split(value).join('[header]')
-      return out.replace(/\s+/g, ' ').trim()
+      return rt.redactSecrets(out).replace(/\s+/g, ' ').trim()
     }
     let response
     try {
-      response = await fetch(url, { method: 'POST', headers, body: PROBE_BODY, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+      // Never follow a redirect: the second origin would receive the headers, and a GET would
+      // hide a POST the capability never made. One request, and a 3xx is the verdict.
+      response = await fetch(url, {
+        method: 'POST', headers, body: PROBE_BODY, redirect: 'manual',
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      })
     } catch (error) {
       const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError'
       const reason = timedOut ? `timed out after ${PROBE_TIMEOUT_MS / 1000}s` : `could not reach the server: ${clean(error?.message ?? error)}`
       return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
     }
+    if (response.status >= 300 && response.status < 400) {
+      try { await response.body?.cancel() } catch { /* the status is the verdict */ }
+      const reason = `HTTP ${response.status} (a redirect is not followed)`
+      return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+    }
     if (response.status === 401 || response.status === 403) {
       let excerpt = ''
       try { excerpt = clean(await response.text()).slice(0, PROBE_EXCERPT_CHARS) } catch { /* the status is the verdict */ }
-      const challenge = clean(response.headers.get('www-authenticate') ?? '') || '(none)'
+      const challenge = clean(response.headers.get('www-authenticate') ?? '')
+        .slice(0, PROBE_EXCERPT_CHARS) || '(none)'
       throw refusal(`Not saved: ${item.name} answered HTTP ${response.status} (WWW-Authenticate: ${challenge}; body: ${excerpt || '(empty)'}). A capability stores headers only and has no sign-in flow. To keep it anyway, use Save unverified in Settings > Capabilities.`)
     }
     if (response.ok) {

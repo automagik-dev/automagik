@@ -307,3 +307,127 @@ test('the Shared capabilities row shows the verdict a failed probe left', () => 
   assert.doesNotMatch(unverified, /Verified/)
   assert.match(rowText({ ...base, verification: { checkedAt: new Date().toISOString(), status: 'unverified' } }), /Unverified/)
 })
+
+// A redirect must not be followed: fetch would replay the POST (307) or turn it into a GET
+// (302) at another origin, where the custom headers are still attached.
+const redirectCase = async (status, t) => {
+  const target = []
+  const destination = await serve(async (request, response) => {
+    target.push({ method: request.method, headers: request.headers })
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end('{"jsonrpc":"2.0","id":1,"result":{}}')
+  })
+  t.after(() => destination.close())
+  const origin = []
+  const source = await serve(async (request, response) => {
+    origin.push({ method: request.method, headers: request.headers, body: await readBody(request) })
+    response.writeHead(status, { Location: destination.url })
+    response.end()
+  })
+  t.after(() => source.close())
+  return { origin, target, source }
+}
+
+test('a 307 probe makes exactly one POST and never reaches the redirect target', async t => {
+  const { origin, target, source } = await redirectCase(307, t)
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('moved', source.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Api-Key': '$DSH_SECRET_TOKEN',
+  }), { botId: 'chief' })
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /HTTP 307/)
+  assert.doesNotMatch(saved.verification.reason, new RegExp(SECRET_VALUE))
+  assert.equal(live(env).moved.verification.status, 'unverified')
+
+  assert.equal(target.length, 0)
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(origin[0].headers.authorization, `Bearer ${SECRET_VALUE}`)
+  assert.equal(origin[0].headers['x-api-key'], SECRET_VALUE)
+
+  const base = { name: 'moved', kind: 'mcp', transport: 'streamable-http', description: '' }
+  const row = rowText({ ...base, verification: saved.verification })
+  assert.match(row, /Unverified: HTTP 307/)
+  assert.doesNotMatch(row, new RegExp(SECRET_VALUE))
+  assert.doesNotMatch(row, new RegExp(source.url))
+})
+
+test('a 302 probe makes exactly one POST and its answer carries no header value', async t => {
+  const { origin, target, source } = await redirectCase(302, t)
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const answer = await env.ctx.registeredTools.get('save_capability').execute(
+    capability('moved', source.url, {
+      'X-Api-Key': '$DSH_SECRET_TOKEN', 'X-Probe-Header': HEADER_VALUE,
+    }),
+    { agent: { id: 'chief' } },
+  )
+  assert.match(answer, /^Saved moved \(unverified: HTTP 302/)
+  assert.doesNotMatch(answer, new RegExp(SECRET_VALUE))
+  assert.doesNotMatch(answer, new RegExp(HEADER_VALUE))
+  assert.equal(answer.includes(source.url), false)
+
+  assert.equal(target.length, 0)
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(live(env).moved.verification.status, 'unverified')
+  assert.equal(live(env).moved.verification.reason, 'HTTP 302 (a redirect is not followed)')
+})
+
+test('a 3xx to the same origin is still one request', async t => {
+  const origin = []
+  const followed = []
+  const server = await serve(async (request, response) => {
+    if (request.url === '/moved-elsewhere') {
+      followed.push({ method: request.method, headers: request.headers })
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('{"jsonrpc":"2.0","id":1,"result":{}}')
+      return
+    }
+    origin.push({ method: request.method, headers: request.headers, body: await readBody(request) })
+    response.writeHead(301, { Location: '/moved-elsewhere' })
+    response.end()
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(
+    capability('moved', server.url, { 'X-Api-Key': '$DSH_SECRET_TOKEN' }),
+    { botId: 'chief' },
+  )
+  assert.equal(saved.verification.status, 'unverified')
+  assert.equal(saved.verification.reason, 'HTTP 301 (a redirect is not followed)')
+  assert.doesNotMatch(saved.verification.reason, new RegExp(SECRET_VALUE))
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(followed.length, 0)
+})
+
+test('a challenge value is redacted before it is capped', async t => {
+  const long = 'x'.repeat(400)
+  const server = await serve((_request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': `Bearer ${SECRET_VALUE} ${long}` })
+    response.end('no')
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('blocked', server.url, { 'X-Api-Key': '$DSH_SECRET_TOKEN' }),
+      { botId: 'chief' },
+    ),
+    error => {
+      assert.match(error.message, /WWW-Authenticate: Bearer \[header\]/)
+      assert.doesNotMatch(error.message, new RegExp(SECRET_VALUE))
+      assert.doesNotMatch(error.message, /x{200}/)
+      return true
+    },
+  )
+})
