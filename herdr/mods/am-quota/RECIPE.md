@@ -123,7 +123,10 @@ never red. Red is kept for errors (a failed read or switch).
   (`since`) before the switch. If any of them has no start time the panel can't split them
   reliably: it lists every running bot of that tool and says so. **Restart N bots** asks for a
   second press within five seconds, then runs `automagik-herdr restart <bot> --project <project>`
-  for each, one at a time (each resumes its conversation), and names any it refused, with the
+  for each, one at a time (each resumes its conversation), each in an hc terminal of its own
+  rather than through Herdr's `exec`, so Herdr's 30 s limit on a mod's programs can't end a
+  restart part-way. The panel follows that terminal to its end, reads what the CLI answered, and
+  names any bot it refused, with the
   CLI's reason: a new pane that exited before its agent was up says what its agent printed last
   (codex's `modelProviderNotConfigured`, say). A Codex thread codex refuses with
   `modelProviderNotConfigured` can't be resumed: that bot starts on a new conversation, listed with
@@ -138,10 +141,12 @@ never red. Red is kept for errors (a failed read or switch).
   helper waiting for an answer, a pane gone, one hc can't read, a helper in error or with helpers
   of its own, or a helper with an agent that reports no status: no restart, and the bot stays
   listed with why. A plain program reports no status and doesn't hold the restart up. Pressing the button while it waits cancels;
-  the panel keeps the wait in memory only, so a reload drops it. On a Herdr that ignores `exec`'s
-  `timeout` (every release so far), which ends a restart at 30 s, the panel restarts a bot by itself
-  only with two helpers or fewer, an estimate, not a measured limit. With more it restarts nothing,
-  says why, and the bot can be restarted from a terminal. The panel never names a CLI flag:
+  the panel keeps the wait in memory only, so a reload drops it. Any number of helpers restart
+  this way. A restart whose terminal ends or goes with no answer says it may have stopped part-way
+  and what to check; one still running after about 5 minutes (40 s more per helper) is named with
+  its terminal, and pressing again starts no second restart of that bot while it runs. The
+  restart's terminal (labelled `am-quota.restart=<bot>`) leaves its answer in
+  `data/am-quota/runs/` of the app home; files there older than a day go at the next restart. The panel never names a CLI flag:
   a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates
