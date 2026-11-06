@@ -1,9 +1,10 @@
 // The layout-safety matrix (refs #431, #448, #450): every route that takes a folder out of mods/ or
-// a file out of layouts/, against five shapes of the app home, with the layout Herdr shows naming
+// a file out of layouts/, against six shapes of the app home, with the layout Herdr shows naming
 // the mod. A row is safe when the shown layout keeps its bytes, every mod it names is still in
 // mods/, nothing outside the app home changed (nothing written through a link), and a refusal or a
-// hold names the layout. With no layout from Herdr (the fifth shape) a route may also go on, as
-// today, when its output gives the reason and names the layout (fail open).
+// hold names that layout in the guard's own wording. With no layout from Herdr and readable files
+// (the fifth shape) a route may also go on, as today, when its warning names the layout and why
+// (fail open); with nothing readable at all (the sixth), when it says why.
 //
 // A row that is unsafe today is marked expected-fail with its issue (EXPECTED_FAIL below): it
 // passes while the gap is there and fails once the gap is closed, so the fix (PR B) drops its mark
@@ -37,7 +38,11 @@ const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 
 /** The extra shape for #448: layouts/ linked, Herdr showing a layout of the person's that names no pack mod. */
 const LINKED_ANOTHER = "symlinked layouts folder, another layout shown";
-export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", "no readable layout"];
+/** Herdr gives no layout (not running); every file in layouts/ reads. */
+const NO_ANSWER = "Herdr does not answer, layout files readable";
+/** Herdr gives no layout, and no file in layouts/ parses (each still names its mods in its text). */
+const NOTHING = "no layout can be read";
+export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
 
 /**
  * Today's gaps: `${route} | ${shape}` → the issue. "new" names a gap no issue tracks yet (reported
@@ -45,10 +50,12 @@ export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout
  */
 const NEW_ROLLBACK = "new gap: a rollback asks no layout before a mod leaves mods/";
 const NEW_FAIL_OPEN = "new gap: with no layout from Herdr, the pack's own layout and its mods go without saying why";
+const NEW_SILENT = "new gap: with no layout readable at all, a mod leaves mods/ without a word";
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
 export const EXPECTED_FAIL = {
   ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | symlinked mod folder`, "#450"])),
-  ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | no readable layout`, NEW_FAIL_OPEN])),
+  ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | ${NO_ANSWER}`, NEW_FAIL_OPEN])),
+  ...Object.fromEntries([...PACK_ROUTES, "one-mod uninstall", "update retire", "rename"].map((r) => [`${r} | ${NOTHING}`, NEW_SILENT])),
   ...Object.fromEntries(SHAPES.filter((s) => s !== "symlinked mod folder").map((s) => [`rollback | ${s}`, NEW_ROLLBACK])),
   // #448: the pack's layout in a linked layouts/ while Herdr shows another one (with it shown, the
   // guard refuses first): the uninstall deletes the person's file through the link.
@@ -114,10 +121,13 @@ export function machine(t, shape, { shown, named = [MOD], mods = MODS, pack = tr
     } else packFolder(modsDir, m, "0.1.0");
   }
   write(join(state, "installed-by-install.sh"), formatMarker({ version: "0.1.0", mods, layout: "added" }));
-  write(join(state, "automagik.json"), json(pack));
+  // With nothing readable, each layout (and the pack's reference copy) is cut off after its last
+  // block: its text still names the mods, JSON.parse refuses it.
+  const body = (v) => (shape === NOTHING ? json(v).replace(/\}\s*$/, ",\n") : json(v));
+  write(join(state, "automagik.json"), body(pack));
   // layouts/: the pack's own copy, and the shown one when it is another; linked as the shape says.
-  const files = { "automagik.json": json(pack) };
-  if (shown !== "automagik") files[`${shown}.json`] = json(tree(...named));
+  const files = { "automagik.json": body(pack) };
+  if (shown !== "automagik") files[`${shown}.json`] = body(tree(...named));
   const layouts = join(app, "layouts");
   if (shape === "symlinked layouts folder") {
     for (const [f, body] of Object.entries(files)) write(join(ext, "layouts", f), body);
@@ -132,7 +142,7 @@ export function machine(t, shape, { shown, named = [MOD], mods = MODS, pack = tr
     }
   }
   // herdr-app: `status` names the shown layout, or fails (Herdr not running) for the fifth shape.
-  exe(join(bin, "herdr-app"), shape === "no readable layout" ? "#!/bin/sh\nexit 1\n"
+  exe(join(bin, "herdr-app"), shape === NO_ANSWER || shape === NOTHING ? "#!/bin/sh\nexit 1\n"
     : `#!/bin/sh\n[ "$1" = status ] || exit 2\nprintf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' '${herdrShows}'\n`);
   const env = {
     HOME: home, HERDR_APP_HOME: app, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
@@ -152,9 +162,39 @@ function snapshot(m) {
 }
 
 /** The verdict on one row: `{ safe, why }`. `rewrites`: the route may rewrite the layout (a rename's migration). */
+const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * A refusal or a hold in the guard's own wording, naming the layout `name`: layoutGuard's and
+ * packageLayoutGuard's (release.js), install.sh layout_guard's, and heldModLine's for one layout
+ * or several. Any other line naming it (a path, a banner) is not one.
+ */
+export const guardLine = (name) => {
+  const n = esc(name);
+  return new RegExp([
+    `stays on: the ${n} layout shows it`,
+    `the ${n} layout is this package's \\(layouts/${n}\\.json\\)`,
+    `the pack stays: the ${n} layout shows `,
+    `but the ${n} layout shows it`,
+    `the ${n} layout still names it`,
+    `the layouts (?:\\S+, )*${n}(?:, \\S+)* (?:show it|still name it)`,
+  ].join("|"));
+};
+/** A fail-open warning naming the layout `name` among the ones it lists, with why Herdr gave none. */
+export const failOpenLine = (name) => {
+  const n = esc(name);
+  return new RegExp([
+    `without knowing the layout Herdr shows \\(.+\\): (?:.+, )?${n}(?: \\([^)]*\\))?(?:, .+)? shows? `,
+    `without knowing the layout Herdr shows \\(.+\\): your layout ${n} \\(`,
+    `${n}\\.json without knowing the layout Herdr shows \\(`,
+  ].join("|"));
+};
+/** A fail-open line that says why, when no layout can be named (nothing reads). */
+const FAIL_OPEN_REASON = /without knowing the layout Herdr shows|is Herdr running\?|no layout from herdr-app status/;
+
+/** The verdict on one row: `{ safe, why }`. `rewrites`: the route may rewrite the layout (a rename's migration). */
 function judge(m, before, outcome, { rewrites = false } = {}) {
   const after = snapshot(m);
-  const said = [outcome.error ?? "", ...m.logs, outcome.out ?? ""].join("\n");
+  const lines = [outcome.error ?? "", ...m.logs, outcome.out ?? ""].join("\n").split("\n");
   const problems = [];
   let parsed = null;
   try { parsed = JSON.parse(after.body); } catch {}
@@ -167,17 +207,15 @@ function judge(m, before, outcome, { rewrites = false } = {}) {
   const stopped = Boolean(outcome.error) || outcome.held;
   // A refusal of a link (a checkout's mod folder) moves nothing the layout needs: it need not name it.
   const linkRefusal = /is a link \(a checkout\?\)/.test(outcome.error ?? "");
-  if (stopped && !linkRefusal && !said.includes(m.shown)) problems.push(`it stopped without naming the ${m.shown} layout: ${said.split("\n")[0]}`);
-  // Fail open (no layout from Herdr): going on is today's rule, given the reason and the layout.
-  if (problems.length && m.shape === "no readable layout" && !stopped && after.ext === before.ext
-    && said.split("\n").some((l) => l.includes(m.shown) && FAIL_OPEN_REASON.test(l))) {
-    return { safe: true, why: `fail open: ${said.split("\n").find((l) => l.includes(m.shown) && FAIL_OPEN_REASON.test(l))}` };
-  }
-  return { safe: problems.length === 0, why: problems.join("; ") || (stopped ? `stopped: ${said.split("\n").find((l) => l.includes(m.shown)) ?? said.trim().split("\n")[0]}` : "nothing the layout needs moved") };
+  const named = lines.find((l) => guardLine(m.shown).test(l));
+  if (stopped && !linkRefusal && !named) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${lines.find((l) => l.trim()) ?? ""}`);
+  // Fail open (no layout from Herdr): going on is today's rule, given the reason (and the layout, when one reads).
+  const open = m.shape === NO_ANSWER ? lines.find((l) => failOpenLine(m.shown).test(l))
+    : m.shape === NOTHING ? lines.find((l) => FAIL_OPEN_REASON.test(l)) : null;
+  if (problems.length && open && !stopped && after.ext === before.ext) return { safe: true, why: `fail open: ${open}` };
+  return { safe: problems.length === 0, why: problems.join("; ") || (stopped ? `stopped: ${named ?? outcome.error}` : "nothing the layout needs moved") };
 }
 
-/** A fail-open line says why the shown layout was not known (shownLayout's `why`, install.sh's layout_guard). */
-const FAIL_OPEN_REASON = /without knowing the layout Herdr shows|is Herdr running\?|no layout from herdr-app status/;
 
 const run = async (fn) => {
   try { return { ...(await fn()), error: null }; } catch (error) { return { error: error.message }; }

@@ -1,8 +1,9 @@
 // The layout-safety matrix's mod manager routes (refs #431): a package's update and its remove (x)
-// in mods/am-mods, against the five shapes of layout-safe-matrix.test.mjs, with the layout Herdr
+// in mods/am-mods, against the six shapes of layout-safe-matrix.test.mjs, with the layout Herdr
 // shows (the package's own scratchy.json) naming its mod. The same verdict: the shown layout keeps
 // its bytes, every mod it names is still in mods/, nothing outside the app home changed, and a
-// refusal names the layout; with no layout from Herdr a route may go on when it says why.
+// refusal names the layout in the guard's own wording; with no layout from Herdr a route may go
+// on when it says why (and names the layout, while its file reads).
 // Expected-fail rows pass while the gap is there and fail once it is closed. The mod manager runs
 // under the gpui and herdr stand-ins over a scratch HERDR_APP_HOME, and a package served from a
 // local git repository (file://): no network, never the real Herdr home.
@@ -22,14 +23,17 @@ const { state, ui } = await import(stubs.herdr);
 const { default: ModManager } = await import("../mods/am-mods/main.js");
 const { layoutNeeds } = await import("../mods/am-sidebar/release.js");
 
-const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", "no readable layout"];
+const NO_ANSWER = "Herdr does not answer, layout files readable";
+const NOTHING = "no layout can be read";
+const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
 const NEW_FAIL_OPEN = "new gap: the remove fails open without saying why";
 const NEW_UPDATE_MOD = "new gap: an update that stops shipping the shown layout's mod moves it aside";
 const EXPECTED_FAIL = {
   ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout | ${s}`, "#431"])),
   ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout's mod | ${s}`, NEW_UPDATE_MOD])),
-  "package remove | no readable layout": NEW_FAIL_OPEN,
+  [`package remove | ${NO_ANSWER}`]: NEW_FAIL_OPEN,
+  [`package remove | ${NOTHING}`]: NEW_FAIL_OPEN,
 };
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
@@ -57,7 +61,6 @@ function treeSum(dir) {
 }
 
 const LAYOUT = { id: "root", children: [{ id: "p", content: { mod: "scratch" } }] };
-const BODY = JSON.stringify(LAYOUT);
 
 /**
  * A scratch app home with the package scratch installed by the mod manager (its mod and its layout
@@ -65,6 +68,8 @@ const BODY = JSON.stringify(LAYOUT);
  * the mod and, with `layout`, the layout too. Links point into `ext`, outside the app home.
  */
 function machine(t, shape, { layout, mod = "scratch" }) {
+  // Nothing readable: the layout file is cut off after its last block (its text names the mod).
+  const BODY = shape === NOTHING ? `${JSON.stringify(LAYOUT)},` : JSON.stringify(LAYOUT);
   const root = realpathSync(mkdtempSync(join(tmpdir(), "am-layout-safe-mods-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const appHome = join(root, "app"), ext = join(root, "ext"), repo = join(root, "repo"), bin = join(root, "bin");
@@ -91,7 +96,7 @@ function machine(t, shape, { layout, mod = "scratch" }) {
   // The package's next commit: its mod, and its layout only with `layout`.
   write(join(repo, "mods", mod, "main.js"), "// v2\n");
   write(join(repo, "mods", mod, "mod.json"), "{}");
-  if (layout) write(join(repo, "layouts", "scratchy.json"), BODY);
+  if (layout) write(join(repo, "layouts", "scratchy.json"), JSON.stringify(LAYOUT));
   const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...args], { encoding: "utf8" }).trim();
   execFileSync("git", ["init", "-q", "-b", "main", repo]);
   git("add", "-A");
@@ -101,7 +106,7 @@ function machine(t, shape, { layout, mod = "scratch" }) {
   state.shared.clear?.();
   ui.props = {};
   state.shared.set("am.mods.installed", [{ source, prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
-  if (shape === "no readable layout") ui.layout = null;
+  if (shape === NO_ANSWER || shape === NOTHING) ui.layout = null;
   else { ui.layout = LAYOUT; state.shared.set("layout", "scratchy"); }
   return { root, appHome, ext, source, shape, shown: "scratchy" };
 }
@@ -112,6 +117,8 @@ const snapshot = (m) => {
   return { body, ext: treeSum(m.ext) };
 };
 const FAIL_OPEN_REASON = /without knowing the layout Herdr shows|no layout to read|is Herdr running\?/;
+/** A refusal in the guard's own wording naming `name` (core.js layoutGuard, packageLayoutGuard). */
+const guardLine = (name) => new RegExp(`stays on: the ${name} layout shows it|the ${name} layout is this package's \\(layouts/${name}\\.json\\)`);
 
 function judge(m, before, said, stopped) {
   const after = snapshot(m);
@@ -122,8 +129,9 @@ function judge(m, before, said, stopped) {
   const missing = needs.filter((mod) => { try { return !statSync(join(m.appHome, "mods", mod)).isDirectory(); } catch { return true; } });
   if (missing.length) problems.push(`mods/${missing.join(", mods/")} left mods/`);
   if (after.ext !== before.ext) problems.push("something outside the app home changed (written through a link)");
-  if (stopped && !said.includes(m.shown)) problems.push(`it stopped without naming the ${m.shown} layout: ${said}`);
-  if (problems.length && m.shape === "no readable layout" && !stopped && after.ext === before.ext && said.includes(m.shown) && FAIL_OPEN_REASON.test(said)) {
+  if (stopped && !guardLine(m.shown).test(said)) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${said}`);
+  // Fail open: with readable files the warning names the layout and why; with none, it says why.
+  if (problems.length && (m.shape === NO_ANSWER ? said.includes(m.shown) : m.shape === NOTHING) && !stopped && after.ext === before.ext && FAIL_OPEN_REASON.test(said)) {
     return { safe: true, why: `fail open: ${said}` };
   }
   return { safe: problems.length === 0, why: problems.join("; ") || (stopped ? `stopped: ${said}` : `went on: ${said}`) };

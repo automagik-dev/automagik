@@ -1,12 +1,13 @@
 // The one door, checked statically (refs #431, #448, #450): a folder leaves mods/ and a file leaves
 // layouts/ only through mods/am-sidebar/layoutSafe.mjs change(). Every .js and .mjs under herdr/mods
 // (Pocket Link left out: it owns its folder) and am/ (its tests left out) is scanned for rmSync,
-// renameSync, unlinkSync, cpSync, rmdirSync, fs.promises' rm, rename, unlink and cp, and a bare
-// rm/rename/unlink call (an injected one). A call outside layoutSafe.mjs fails unless ALLOWLIST
-// names it, with the reason its target is never under mods/ or layouts/; an entry nothing matches
-// fails too, so the list stays the code's. am/'s byte-equal copies (am/copies.json) share their
-// source's entries. mods/am-mods moves its folders through Herdr's io (`mv`, `rm` programs), which
-// this scan does not see: the layout-safety matrix covers those routes instead.
+// renameSync, unlinkSync, cpSync, rmdirSync, fs.promises' rm, rename, unlink and cp, a bare
+// rm/rename/unlink call (an injected one), and a program run through Herdr's io or an exec (`rm`,
+// `mv`, `cp`, a `find` that deletes: mods/am-mods moves its folders that way, inside Herdr). A call outside
+// layoutSafe.mjs fails unless ALLOWLIST names it, with its reason: its target is never under mods/
+// or layouts/, or (am-mods, which runs inside Herdr and cannot load layoutSafe.mjs) which guard
+// covers it and which matrix rows. An entry nothing matches fails too, so the list stays the
+// code's. am/'s byte-equal copies (am/copies.json) share their source's entries.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -20,6 +21,7 @@ const CALL = new RegExp([
   String.raw`\b(?:rmSync|renameSync|unlinkSync|cpSync|rmdirSync)\s*\(`,
   String.raw`\b(?:fs|fsp|promises)\s*\.\s*(?:rm|rename|unlink|cp|rmdir)\s*\(`,
   String.raw`(?<![\w.$])(?:rm|rename|unlink)\s*\(`,
+  String.raw`\b(?:run\s*\(\s*io\s*,|(?:io\.)?exec\s*\()\s*["'\`](?:rm|mv|cp|find|rmdir|unlink)["'\`]`,
 ].join("|"), "g");
 
 /** The call starting at `at` in `text`, up to its closing parenthesis, whitespace folded. */
@@ -62,7 +64,10 @@ export function scan(repo = REPO) {
       const lineStart = text.lastIndexOf("\n", m.index) + 1;
       const before = text.slice(lineStart, m.index);
       if (/^\s*(\/\/|\*|\/\*)/.test(before) || /\bfunction\s*$/.test(before)) continue;
-      found.push({ file, canonical: copies.get(file) ?? file, line: text.slice(0, m.index).split("\n").length, call: callAt(text, m.index) });
+      const call = callAt(text, m.index);
+      // A find only lists, unless it deletes or runs rm/mv on what it finds.
+      if (/^\S*\(\s*(?:io\s*,\s*)?["'`]find["'`]/.test(call) && !/"-delete"|"-exec",\s*"(?:rm|mv)"/.test(call)) continue;
+      found.push({ file, canonical: copies.get(file) ?? file, line: text.slice(0, m.index).split("\n").length, call });
     }
     return found;
   });
@@ -73,6 +78,22 @@ export function scan(repo = REPO) {
  * am/ copy shares it), `call` as scan() folds it, `count` how many times each scanned copy holds it.
  */
 export const ALLOWLIST = [
+  ["herdr/mods/am-mods/core.js", "run(io, \"mv\", [path, to])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: moveAside, a package's mods/ folder or layouts/ file moved to automagik-herdr/backup (never deleted). Remove is guarded in main.js removeGuard (layoutGuard, packageLayoutGuard); an update moving aside is not (#431, a new gap); matrix: package update and package remove rows"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [\"-RP\", `${src}/.`, `${dst}/`])", 1, "carryPrivate: a mod's private paths copied into its staged folder (automagik-herdr/staging), never into mods/"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"rm\", [\"-rf\", dst])", 1, "carryPrivate: a path inside the staged folder (automagik-herdr/staging) replaced by the person's copy"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [\"-P\", src, dst])", 1, "carryPrivate: a private file copied into the staged folder (automagik-herdr/staging)"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [\"-R\", `${plan.base}/mods/${m}`, stage])", 1, "applyInstall: a package's mod copied from its fetched checkout into automagik-herdr/staging"],
+  ["herdr/mods/am-mods/core.js", "io.exec(\"rm\", [\"-rf\", stage])", 2, "applyInstall: its own staged folders under automagik-herdr/staging, removed after a swap or a failure"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"mv\", [stage, dest])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: applyInstall places a staged mod into mods/ after moveAside took the old one (rolled back on failure); not a removal. Matrix: package update rows"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [`${plan.base}/layouts/${l}`, to])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: applyInstall writes a package's layout into layouts/ (a name LAYOUT_NAME admits, never over one it did not record). Matrix: package update rows"],
+  ["herdr/mods/am-mods/core.js", "io.exec(\"rm\", [\"-f\", to])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: applyInstall's rollback removes only the layouts/ files it placed in this run"],
+  ["herdr/mods/am-mods/core.js", "io.exec(\"mv\", [live, stage])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: applyInstall's rollback moves the mods it placed in this run back to staging"],
+  ["herdr/mods/am-mods/core.js", "io.exec(\"mv\", [to, live])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: applyInstall's rollback puts each folder or layout moveAside took back where it was"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"rm\", [where])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: removeLocal of a symlinked mod removes only the link in mods/ (the folder it points to stays); guarded by main.js removeGuard (layoutGuard). Matrix: package remove | symlinked mod folder"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"mv\", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: setEnabled moves a mod between mods/ and mods-disabled/; off is guarded by main.js (layoutGuard on the shown layout, #305)"],
+  ["herdr/mods/am-mods/main.js", "exec(\"find\", [cacheDir(), \"-mindepth\", \"1\", \"-maxdepth\", \"1\", \"-mmin\", \"+60\", \"-exec\", \"rm\", \"-rf\", \"{}\", \"+\"])", 1, "the mod manager's fetch cache (cacheDir, under data/am-mods), entries older than an hour"],
+  ["herdr/mods/am-mods/main.js", "exec(\"rm\", [\"-rf\", this.review.fetched.dir])", 2, "a fetched package checkout in the mod manager's cache (data/am-mods)"],
+  ["herdr/mods/am-mods/main.js", "exec(\"rm\", [\"-rf\", fetched.dir])", 2, "a fetched package checkout in the mod manager's cache (data/am-mods)"],
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true })", 1, "a held mod copied INTO the new kept set (.prev-next-), read from mods/ and never written there"],
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(layoutRefOf(modsDir), join(dir, KEPT_LAYOUT))", 1, "the layout reference copied into a kept set; it reads the state folder's copy, never layouts/"],
   ["herdr/mods/am-sidebar/update.mjs", "cpSync(src, dst, { recursive: true, verbatimSymlinks: true })", 1, "carryPrivate: a private path copied into a staged folder or the kept set, never into mods/"],
@@ -180,4 +201,11 @@ test("the scan sees the calls it is for", () => {
   // layoutSafe.mjs itself holds the door's renames and removes; a scan that found none would pass anything.
   const door = scan().filter((f) => f.file === DOOR).map((f) => f.call);
   assert.ok(door.some((c) => c.startsWith("renameSync(")) && door.some((c) => c.startsWith("rmSync(")) && door.some((c) => c.startsWith("rename(")), door.join("\n"));
+
+  // mods/am-mods's io: moveAside's mv and removeLocal's rm of a link, both into mods/ or layouts/.
+  const io = scan().filter((f) => f.file === "herdr/mods/am-mods/core.js").map((f) => f.call);
+  assert.ok(io.includes('run(io, "mv", [path, to])') && io.includes('run(io, "rm", [where])'), io.join("\n"));
+  // A find that only lists is not a call; one that deletes is.
+  assert.ok(!scan().some((f) => f.file === "herdr/mods/am-footer/contributions.js"));
+  assert.ok(scan().some((f) => f.file === "herdr/mods/am-mods/main.js" && f.call.startsWith('exec("find"')));
 });
