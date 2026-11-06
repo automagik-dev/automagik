@@ -30,11 +30,13 @@ const val = (x) => (x === undefined || x === null || x === '' ? U : Array.isArra
 // run back to its start, so no part of a word the rules never saw whole is shown; a field that
 // is one such token renders “…”. The raw field is redacted before its whitespace is collapsed
 // too: the YAML block-scalar rules (`password: |` then an indented value line) anchor on the
-// newlines the collapse removes. The second pass catches what only the collapsed text shows.
+// newlines the collapse removes, and so does a value on a later line. Redacting once, before the
+// collapse, keeps what the rules keep: a comment line that names a key, and a child key under a
+// parent's anchor, are still not a value (#396).
 const TOKEN = /[A-Za-z0-9_-]/
 const quote = (s, n = 90) => {
   if (typeof s !== 'string') return U
-  const t = redactText(redactText(s).replace(/\s+/g, ' ').trim())
+  const t = redactText(s).replace(/\s+/g, ' ').trim()
   if (t.length <= n) return `“${t}”`
   let head = t.slice(0, n - 1)
   if (TOKEN.test(t[n - 1])) head = head.replace(/[A-Za-z0-9_-]+$/, '')

@@ -569,3 +569,28 @@ for (const row of YAML_ROWS) {
     }
   })
 }
+
+// The sentence redacts the raw field ONCE, before its whitespace is collapsed (src/sentences.js
+// quote()): a field's line ends still separate a key line from its value while the rules read it.
+// A second pass over the collapsed sentence read the joined text as a key line instead — a
+// comment line that named a key became a key line, and a parent's anchor became its value.
+// These pin the three shapes between the two passes, through a raw-field caller, so a change to
+// either the pass order or the rules has to say what it does to them (#396).
+const ROSE = ['Qw7', 'zebra'].join('') // plain words built at run time: findable, not key-shaped
+const sentenceOf = (text) => sentence({ lane: 'agentd', kind: 'agent_delta', fields: { response_id: 'r1', text } }).sentence
+
+// G05: the key line is a comment, so nothing under it is a value: both lines are served as written.
+test('a sentence keeps a comment line that names a key, and the line under it', () => {
+  assert.equal(sentenceOf(`# db_pass:\n  ${ROSE}`), `Wrote reply text for r1: “# db_pass: ${ROSE}”`)
+})
+
+// L50: the parent's anchor is a property, the child key stays its own key; only the child's value
+// is hidden. A second pass hid the anchor and the child key with it.
+test('a sentence keeps a parent anchor and a child key, and hides only the child value', () => {
+  assert.equal(sentenceOf(`secret: &d\n  db_pass: ${ROSE}`), 'Wrote reply text for r1: “secret: &d db_pass: [redacted]”')
+})
+
+// A plain later-line value is hidden, and the lines around it are served as written.
+test('a sentence hides a plain later-line value and serves its neighbours', () => {
+  assert.equal(sentenceOf(`alpha: 1\npassword:\n  ${ROSE}\nomega: 2`), 'Wrote reply text for r1: “alpha: 1 password: [redacted] omega: 2”')
+})
