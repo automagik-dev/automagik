@@ -620,6 +620,7 @@ test("uninstall of herdr.layout while Herdr shows it is refused, naming it and b
     assert.equal(readMarker(m.mods).layout, "added");
   }
   // The same through the entry am runs: exit 1, the message on stdout.
+  showing(m, "automagik");
   const out = [];
   assert.equal(main(["uninstall", "herdr.layout"], { ctx: m.ctx({ AM_JSON: "1" }), out: (l) => out.push(l) }), 1);
   assert.match(JSON.parse(out[0]).detail, /^the automagik layout is this package's \(layouts\/automagik\.json\) and Herdr shows it/);
