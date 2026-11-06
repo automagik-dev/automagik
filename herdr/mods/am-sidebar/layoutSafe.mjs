@@ -84,6 +84,34 @@ function layoutsUnreadable(home, exclude) {
   });
 }
 
+/**
+ * The files in layouts/ (sorted) that do not parse but whose text still names one of `mods` in a
+ * block ("mod": "<m>", as install.sh's grep reads it): `[{ file, mods }]`, `exclude` leaving some
+ * out (as layoutsShowing's). No layout can be read from them, so a route that goes on says so (#489).
+ */
+function layoutsUnreadNaming(home, mods, exclude) {
+  const dir = join(home, "layouts");
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return names.flatMap((n) => {
+    const file = join(dir, n);
+    let text;
+    try {
+      if (!isFile(file) || (exclude && exclude(n, () => readFileSync(file)))) return [];
+      text = readFileSync(file, "utf8");
+      JSON.parse(text);
+      return [];
+    } catch { if (typeof text !== "string") return []; }
+    const named = mods.filter((m) => new RegExp(`"mod"\\s*:\\s*"${esc(m)}"`).test(text));
+    return named.length ? [{ file: n, mods: named }] : [];
+  });
+}
+
+/** The fail-open line of a route Herdr is not asked for, when layouts/ files `unread` do not read (#488, #489). */
+const unreadLine = (unread, mods) => `going on without knowing the layout Herdr shows (Herdr is not asked here, and layouts/${unread.join(", layouts/")} `
+  + `do${unread.length === 1 ? "es" : ""} not read): if one names ${mods.join(", ")} and Herdr shows it, Herdr drops it (plain Herdr instead)`;
+
 /** A name beside `path` nothing has, for a remove that stays undoable until the batch stands. */
 function aside(path) {
   for (;;) {
@@ -108,8 +136,14 @@ function aside(path) {
  *   renamed[mod])` instead: migrateHome's strandedLayouts, the files the migration cannot move):
  *   the op is dropped and the mod stays. Unset: not checked.
  * - `unknown`: with `ask` and no tree from it, "warn" logs each layout in layouts/ naming a checked
- *   mod (`skip`: file names left out) and goes on (fail open); with "refuse" and no `ask`, when no
- *   layout refused, it logs the files in layouts/ that do not read and goes on. Unset: nothing said.
+ *   mod (`skip`: file names left out), then each file there that does not parse but names one in
+ *   its text (`skip` not applied), and goes on (fail open); with "refuse" and no `ask`, when no
+ *   layout refused, it logs the files in layouts/ that do not read and goes on; with "hold", it
+ *   logs the files that do not parse but name a mod that still leaves in their text (`exclude`
+ *   leaving some out) and goes on (#489); with `shownFile` and no name from `ask` (Herdr did not
+ *   answer), it logs each file in layouts/ the ops remove that parses, with the checked mods its
+ *   blocks name, and each one `links` keeps whose blocks name one, and goes on (#487). Unset:
+ *   nothing said.
  * - `shownFile`: "refuse" refuses an op that removes or moves the file of the layout Herdr shows,
  *   decided on its name (`ask`'s `name`) alone, once `needed` has passed (its refusal, about a mod,
  *   comes first). Unset: not checked.
@@ -170,6 +204,21 @@ export function change(home, ops, options = {}) {
         decision.notes.push(line);
         log(line);
       }
+      // A layout that does not parse but whose text names a checked mod (#489: with nothing
+      // readable, the route said nothing): said too, the pack's own file included (`skip` is for
+      // a layout that reads), since Herdr may show it.
+      const unread = layoutsUnreadNaming(root, checked);
+      if (unread.length) {
+        const what = pack ? "uninstalling the pack" : `switching ${checked[0]} off`;
+        const list = pack ? unread.map((l) => `layouts/${l.file} (${l.mods.join(", ")})`) : unread.map((l) => `layouts/${l.file}`);
+        const back = pack ? "`am install herdr.pack` puts the pack back" : `\`am install herdr.${checked[0]}\` switches it back on`;
+        const one = unread.length === 1;
+        const line = `${what} without knowing the layout Herdr shows (${s.why}), and ${list.join(", ")} do${one ? "es" : ""} not read: `
+          + `${one ? "its" : "their"} text names ${pack ? "the pack's mods" : "it"}, and Herdr drops a layout whose mod is ${pack ? "gone" : "off"} (plain Herdr instead). `
+          + `Showing ${one ? "it" : "one"}? Switch layouts (ctrl-shift-l), or ${back}`;
+        decision.notes.push(line);
+        log(line);
+      }
     }
   } else if (needed === "refuse" && !ask && root && checked.length) {
     // Herdr not asked (a rollback, #488): any file in layouts/ could be shown, so one naming a
@@ -186,8 +235,7 @@ export function change(home, ops, options = {}) {
     }
     const unread = unknown === "warn" ? layoutsUnreadable(root, exclude) : [];
     if (unread.length) {
-      const line = `going on without knowing the layout Herdr shows (Herdr is not asked here, and layouts/${unread.join(", layouts/")} `
-        + `do${unread.length === 1 ? "es" : ""} not read): if one names ${checked.join(", ")} and Herdr shows it, Herdr drops it (plain Herdr instead)`;
+      const line = unreadLine(unread, checked);
       decision.notes.push(line);
       log(line);
     }
@@ -200,6 +248,15 @@ export function change(home, ops, options = {}) {
       if (!showing.length) continue;
       decision.held.push(Object.hasOwn(renamed, mod) ? { mod, renamed: renamed[mod], layouts: showing } : { mod, layouts: showing });
       drop.add(i);
+    }
+    // A mod that still leaves while a layout that does not parse names it in its text (#489): it
+    // goes (fail open, as a rollback's), said.
+    const leaving = taken.filter((mod, i) => mod && checked.includes(mod) && !drop.has(i));
+    const unread = unknown === "warn" && leaving.length ? layoutsUnreadNaming(root, leaving, exclude) : [];
+    if (unread.length) {
+      const line = unreadLine(unread.map((l) => l.file), [...new Set(unread.flatMap((l) => l.mods))]);
+      decision.notes.push(line);
+      log(line);
     }
   }
 
@@ -222,6 +279,27 @@ export function change(home, ops, options = {}) {
       decision.shown = shownOnce();
       const guard = packageLayoutGuard({ name: decision.shown.name, layouts: files, then });
       if (guard) return { ...decision, refused: `${guard.refuse}${switchCommand(decision.shown.name)}` };
+    }
+    // Herdr did not answer (no name at all), so no file could be refused for being the one it
+    // shows (#487): each one this removes is said, with the checked mods its blocks name (`skip`
+    // leaves it out of the list of layouts that stay), and so is one a linked layouts/ keeps while
+    // its blocks name one. One that does not parse is #489's line's.
+    const keptFiles = [...kept].map((i) => basename(leaves(ops[i])));
+    if (unknown === "warn" && (files.length || keptFiles.length) && (decision.shown = shownOnce()).name == null) {
+      const why = decision.shown.why;
+      const after = `If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)${pack ? ", or `am install herdr.pack` puts the pack back" : ""}`;
+      for (const [f, stays] of [...files.map((f) => [f, false]), ...keptFiles.map((f) => [f, true])]) {
+        let blocks;
+        try { blocks = layoutNeeds(JSON.parse(readFileSync(join(root, "layouts", f), "utf8"))).blocks; } catch { continue; }
+        const named = checked.filter((m) => blocks.has(m));
+        const leave = `${named.join(", ")}, which leave${named.length === 1 ? "s" : ""} mods/`;
+        if (stays && !named.length) continue;
+        const line = stays
+          ? `keeping layouts/${f} without knowing the layout Herdr shows (${why}): layouts/ is a link, your own folder, so it stays, but its blocks name ${leave}. ${after}`
+          : `removing layouts/${f} without knowing the layout Herdr shows (${why}), so it may be the one shown${named.length ? `: its blocks name ${leave} too` : ""}. ${after}`;
+        decision.notes.push(line);
+        log(line);
+      }
     }
   }
 
