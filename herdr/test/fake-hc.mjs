@@ -1,7 +1,7 @@
 // A stand-in for herdr-core's `hc`, for the CLI tests: every call is appended to
 // $HC_FAKE_LOG as one JSON argv line, and answers come from the terminals in
 // $HC_FAKE_STATE ({ terminals: [hc get objects], next: number }), which `label` and `run`
-// change. Only the calls automagik-herdr makes: ls [--label k=v], get, read, label, run (its
+// change. Only the calls automagik-herdr makes: ls [--all] [--label k=v], get, read, label, run (its
 // launch argv kept as `argv`, `sh -c <command>` for a template, as hc's own get shows), server
 // status (state.core), kill (the terminal finishes, and its live die_with_parent children with
 // it, as hc ends them), templates (state.templates:
@@ -98,7 +98,9 @@ switch (words[0]) {
   case "ls": {
     const want = [];
     for (let i = 1; i < words.length; i += 1) if (words[i] === "--label") want.push(words[++i]);
-    const rows = state.terminals.filter((t) => t.state !== "finished" && want.every((kv) => {
+    // --all: finished terminals too (a removed one, hc rm, is in neither list).
+    const all = words.includes("--all");
+    const rows = state.terminals.filter((t) => (all || t.state !== "finished") && want.every((kv) => {
       const [k, v] = [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)];
       return (t.labels ?? {})[k] === v;
     }));
@@ -231,6 +233,7 @@ switch (words[0]) {
     if (!t) fail(`no terminal ${words[1]}`);
     if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
     t.state = "finished";
+    t.finished_ms = Date.now();
     // state.surviveParent: children that outlive their parent's end anyway (a kill that didn't take).
     for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent && !(state.surviveParent ?? []).includes(c.address)) c.state = "finished";
     save();
