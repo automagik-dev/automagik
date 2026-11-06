@@ -85,8 +85,11 @@ Add options after `bash -s --`: `--yes` answers every question, `--version 3.58.
 Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
 the installer added it and you haven't changed it. It is refused, with nothing moved, while the
-layout Herdr shows uses a pack mod: switch layouts first (ctrl-shift-l, or
-`herdr-app do layout.switch '{"name":"main"}'`).
+layout Herdr shows uses a pack mod or is that layout: switch layouts first (ctrl-shift-l, or
+`herdr-app do layout.switch '{"name":"main"}'`). A layout inside a linked `layouts/` folder is
+yours and stays. With Node, the layout and the folders leave through the installed pack's
+updater (`update.mjs pack-out`, one move that fails undoes the others); without Node, or with an
+older pack, through the installer itself, and it says which.
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its

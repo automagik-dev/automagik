@@ -11,8 +11,8 @@
 // so a mod folder that is a link still counts. Which operations matter: one that takes a mod folder
 // out of mods/ for good (nothing later in the batch puts one back), one that removes or moves the
 // shown layout's file, and one that writes through a link inside the app home (a linked mod folder
-// or layouts/). Each caller says what each of those does to it, so today's behaviour is kept, gaps
-// included: the options that keep a gap open are named in the issue's comment where they are passed.
+// or layouts/). Each caller says what each of those does to it: the pack's uninstalls refuse the
+// shown layout's own file (#450) and leave what a link reaches (#448).
 
 import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
@@ -93,18 +93,21 @@ function aside(path) {
  * - `unknown`: with `ask` and no tree from it, "warn" logs each layout in layouts/ naming a checked
  *   mod (`skip`: file names left out) and goes on (fail open). Unset: nothing said.
  * - `shownFile`: "refuse" refuses an op that removes or moves the file of the layout Herdr shows,
- *   decided on its name (`ask`'s `name`) alone. Unset: not checked.
+ *   decided on its name (`ask`'s `name`) alone, once `needed` has passed (its refusal, about a mod,
+ *   comes first). Unset: not checked.
+ * - `links`: "hold" leaves an op reached through a link inside the home (a linked layouts/ or a
+ *   linked folder above a mod) where it is: dropped, listed in `left`. Unset: done through the link.
  * - `then`, `pack`: the refusal's and the warning's wording ("uninstall it"; the whole pack).
  * - `prepare(decision)`: runs once the decision stands, before the first op (a throw stops it all).
  * - `rename`: the rename of moves and replaces (injectable for tests; an undo uses renameSync).
  * - `log`: where notes and warnings go.
  * Writing through a link is found and returned (`throughLinks`), never refused here: each caller
- * still checks the links it checks today.
- * Returns `{ refused, held, notes, shown, throughLinks, done }`: `refused` is the reason, nothing done.
+ * still checks the links it checks today, or passes `links: "hold"`.
+ * Returns `{ refused, held, left, notes, shown, throughLinks, done }`: `refused` is the reason, nothing done.
  */
 export function change(home, ops, options = {}) {
   const {
-    ask = null, mods = null, needed = null, unknown = null, shownFile = null, then = "uninstall it", pack = false,
+    ask = null, mods = null, needed = null, unknown = null, shownFile = null, links = null, then = "uninstall it", pack = false,
     skip = [], exclude = null, renamed = {}, stranded = null, prepare = null, rename = renameSync, log = () => {},
   } = options;
   const root = home ? resolve(home) : null;
@@ -118,20 +121,10 @@ export function change(home, ops, options = {}) {
   };
   const taken = ops.map((_, i) => takes(i));
   const checked = (mods ?? taken.filter(Boolean));
-  const decision = { refused: null, held: [], notes: [], shown: null, throughLinks: [], done: false };
+  const decision = { refused: null, held: [], left: [], notes: [], shown: null, throughLinks: [], done: false };
   if (root) decision.throughLinks = [...new Set(ops.flatMap(pathsOf).filter((p) => throughLink(root, p)))];
   let shown = null;
   const shownOnce = () => (shown ??= ask ? ask() : { name: null, tree: null, why: null });
-
-  if (shownFile === "refuse" && ask) {
-    const files = ops.filter((o) => o.op !== "replace").map((o) => (o.op === "remove" ? o.path : o.from))
-      .filter((p) => root && dirname(resolve(p)) === join(root, "layouts")).map((p) => basename(p));
-    if (files.length) {
-      decision.shown = shownOnce();
-      const guard = packageLayoutGuard({ name: decision.shown.name, layouts: files, then });
-      if (guard) return { ...decision, refused: `${guard.refuse}${switchCommand(decision.shown.name)}` };
-    }
-  }
 
   const drop = new Set();
   if (needed === "refuse" && ask && checked.length) {
@@ -166,6 +159,28 @@ export function change(home, ops, options = {}) {
         : layoutsShowing(root, mod, exclude);
       if (!showing.length) continue;
       decision.held.push(Object.hasOwn(renamed, mod) ? { mod, renamed: renamed[mod], layouts: showing } : { mod, layouts: showing });
+      drop.add(i);
+    }
+  }
+
+  // After the mods (their refusal comes first, in their wording): the shown layout's own file, even
+  // when no mod it names leaves (#450: each is a link the batch leaves in place).
+  if (shownFile === "refuse" && ask) {
+    const files = ops.filter((o) => o.op !== "replace").map((o) => (o.op === "remove" ? o.path : o.from))
+      .filter((p) => root && dirname(resolve(p)) === join(root, "layouts")).map((p) => basename(p));
+    if (files.length) {
+      decision.shown = shownOnce();
+      const guard = packageLayoutGuard({ name: decision.shown.name, layouts: files, then });
+      if (guard) return { ...decision, refused: `${guard.refuse}${switchCommand(decision.shown.name)}` };
+    }
+  }
+
+  // A removal or a move reached through a link inside the home (#448: the pack's layout in a linked
+  // layouts/, the person's folder) is left where it is with `links: "hold"`.
+  if (links === "hold") {
+    for (const [i, op] of ops.entries()) {
+      if (drop.has(i) || !pathsOf(op).some((p) => decision.throughLinks.includes(p))) continue;
+      decision.left.push(op.op === "remove" ? op.path : op.from);
       drop.add(i);
     }
   }

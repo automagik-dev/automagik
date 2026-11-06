@@ -1798,3 +1798,85 @@ test("the status bound leaves no sleep behind after an answer", (t) => {
   for (const pid of left) process.kill(pid);
   assert.deepEqual(left, [], "no sleep still running");
 });
+
+// ---- #448, #450: --uninstall's removals through the installed updater (update.mjs pack-out) ----
+
+/** A node on install.sh's PATH that logs each pack-out run (what is still there, its arguments) and runs the real one; `fail` exits 1 instead. */
+function nodeShim(s, { fail = false } = {}) {
+  const log = join(s.root, "pack-out.log");
+  writeFileSync(log, "");
+  exe(join(s.bin, "node"), `#!/bin/sh
+case " $* " in *" pack-out "*)
+  { [ -L "${s.link}" ] && echo link-there; [ -f "${join(s.pack, "update.mjs")}" ] && echo updater-there; printf '%s\\n' "$*"; } >> "${log}"
+  ${fail ? 'echo \'{"error":"no room"}\'; exit 1' : ""} ;;
+esac
+exec "${process.execPath}" "$@"
+`);
+  return () => readFileSync(log, "utf8");
+}
+
+test("--uninstall with Node removes the layout and the folders through the updater, before the command link and the pack go", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  const ran = nodeShim(s);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack through its updater \(.*am-sidebar\/update\.mjs pack-out\)/);
+  const log = ran();
+  assert.match(log, /^link-there$/m, "the command link was still there");
+  assert.match(log, /^updater-there$/m, "the updater was still in mods/");
+  assert.ok(log.includes(`--layout ${layout}`) && log.includes(`--move ${s.pack}`), log);
+  assert.match(r.out, /Removed the automagik layout/);
+  assert.equal(existsSync(layout), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")), "kept in .prev");
+  assert.equal(existsSync(s.link), false);
+});
+
+test("--uninstall through the updater leaves the pack's layout in a linked layouts/ folder (#448)", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layouts = join(s.appHome, "layouts"), theirs = join(s.root, "their-layouts");
+  cpSync(layouts, theirs, { recursive: true });
+  rmSync(layouts, { recursive: true });
+  symlinkSync(theirs, layouts);
+  const before = treeSum(theirs);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack through its updater/);
+  assert.match(r.out, /Left .*layouts\/automagik\.json: .*layouts is a link, your own folder, not one this installer made; the file in it stays yours\./);
+  assert.equal(treeSum(theirs), before);
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall with an updater that has no pack-out (an older pack) takes the shell path and says so", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const upd = join(s.pack, "update.mjs");
+  writeFileSync(upd, readFileSync(upd, "utf8").replaceAll("pack-out", "pack-gone"));
+  const ran = nodeShim(s);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack with this script \(the installed updater has no pack-out \(an older pack\)\)\./);
+  assert.equal(ran(), "", "pack-out never ran");
+  assert.equal(existsSync(join(s.appHome, "layouts", "automagik.json")), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")));
+});
+
+test("--uninstall whose updater's pack-out fails falls back to the shell path and says why", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  nodeShim(s, { fail: true });
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Removing the pack with this script instead \(the updater's pack-out failed: no room\)\./);
+  assert.equal(existsSync(join(s.appHome, "layouts", "automagik.json")), false);
+  assert.equal(existsSync(s.pack), false);
+  assert.ok(existsSync(join(s.state, ".prev", "am-sidebar", "VERSION")));
+});

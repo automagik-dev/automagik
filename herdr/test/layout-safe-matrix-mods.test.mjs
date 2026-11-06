@@ -30,7 +30,6 @@ const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file",
 const NEW_FAIL_OPEN = "new gap: the remove fails open without saying why";
 const NEW_UPDATE_MOD = "new gap: an update that stops shipping the shown layout's mod moves it aside";
 const EXPECTED_FAIL = {
-  ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout | ${s}`, "#431"])),
   ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout's mod | ${s}`, NEW_UPDATE_MOD])),
   [`package remove | ${NO_ANSWER}`]: NEW_FAIL_OPEN,
   [`package remove | ${NOTHING}`]: NEW_FAIL_OPEN,

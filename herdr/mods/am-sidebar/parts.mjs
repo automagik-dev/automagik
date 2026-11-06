@@ -296,6 +296,9 @@ export function shownLayout(ctx) {
   }
 }
 
+/** What an uninstall says of the pack's layout it leaves in a linked layouts/ (#448; install.sh's line). */
+const leftLine = (live) => `left ${live}: ${dirname(live)} is a link, your own folder, not one this install made; the file in it stays yours`;
+
 /** The layout Herdr shows, as layoutSafe.mjs change() asks it. */
 const asking = (ctx) => () => shownLayout(ctx);
 
@@ -341,10 +344,14 @@ function removeLayout(ctx) {
     if (!isFile(ref) || !readFileSync(live).equals(readFileSync(ref))) {
       return { ok: true, changed: false, detail: `${live} differs from the pack's: it is yours, left as it is` };
     }
-    // #448 stays open here: a live file inside a linked layouts/ is removed through the link.
-    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", then: "uninstall it" });
+    // A live file inside a linked layouts/ is the person's folder: left there (#448).
+    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", links: "hold", then: "uninstall it" });
     if (r.refused) throw new Error(r.refused);
     const { shown } = r;
+    if (r.left.length) {
+      ctx.log(leftLine(live));
+      return { ok: true, changed: false, detail: `${live} is in a linked layouts/ folder: it is yours, left as it is` };
+    }
     ctx.log(shown.name
       ? `removed ${live}`
       : `removed ${live} without knowing the layout Herdr shows (${shown.why}); if Herdr shows it, switch layouts (ctrl-shift-l)${switchCommand(null)}`);
@@ -389,15 +396,16 @@ function uninstallPack(ctx, { purge }) {
     if (at === off) movedOff.push(m);
   }
   // Before anything leaves (#420): refused while the shown layout's blocks name a pack mod in mods/;
-  // with no shown layout, each other layout naming one is listed (fail open). Open here, for PR B:
-  // #450 (a linked mod folder is not checked, and the shown layout's own file is not refused) and
-  // #448 (the pack's layout inside a linked layouts/ is removed through the link).
+  // with no shown layout, each other layout naming one is listed (fail open). Then refused while the
+  // layout file this removes is the one Herdr shows, though each mod it names is a link that stays
+  // (#450); and the pack's layout inside a linked layouts/, the person's folder, stays there (#448).
   const r = change(ctx.appHome, ops, {
-    ask: asking(ctx), needed: "refuse", unknown: "warn", then: "uninstall the pack", pack: true,
+    ask: asking(ctx), needed: "refuse", unknown: "warn", shownFile: "refuse", links: "hold", then: "uninstall the pack", pack: true,
     skip: dropLayout ? [basename(PACK_LAYOUT)] : [], log: ctx.log, prepare: () => mkdirSync(next, { recursive: true }),
   });
   if (r.refused) throw new Error(r.refused);
-  if (dropLayout) lines.unshift(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
+  if (dropLayout && r.left.includes(live)) lines.unshift(leftLine(live));
+  else if (dropLayout) lines.unshift(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
   // A folder already kept (one a rollback moved out) stays kept beside them.
   if (moved.length && isFile(join(prev, ".pack"))) {
     const kept = readFileSync(join(prev, ".pack"), "utf8").match(/^mods=(.*)$/m)?.[1].split(",").map((s) => s.trim()).filter(packFolder) ?? [];
