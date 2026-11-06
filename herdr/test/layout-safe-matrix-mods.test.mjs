@@ -188,6 +188,8 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
         const kept = shape !== NO_ANSWER && shape !== NOTHING;
         const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
         assert.deepEqual(rec.mods, kept ? ["other", "scratch"] : ["other"], `the record's mods (${shape})`);
+        // With no answer and the files readable, the message names the layout that names the mod.
+        if (shape === NO_ANSWER) assert.match(said, /moved mods\/scratch .*; the scratchy layout names it/);
       }
     });
   }
