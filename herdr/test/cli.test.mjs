@@ -2784,3 +2784,15 @@ test("import gives a seat already playing its bot its lost labels back, with no 
   assert.match(s.cli(["import", "--from-hc"]).out, /Nothing to do: every seat already plays its bot\./);
   assert.deepEqual(paneMoves(s), []);
 });
+
+test("launch-path #453: where a launch finds a program and the PATH its pane gets; nulls when none has it", (t) => {
+  const s = scene(t);
+  const r = s.cli(["launch-path", "claude"]);
+  assert.equal(r.code, 0, r.err);
+  const { program, path } = r.json();
+  assert.equal(program, join(s.root, "bin", "claude"), "the stand-in, found by PATH as a launch finds it");
+  assert.ok(path.split(":").includes(join(s.root, "bin")) && path.split(":").includes("/usr/bin"), path);
+  assert.deepEqual(s.cli(["launch-path", "no-such-agent-453"]).json(), { program: null, path: null });
+  assert.equal(s.cli(["launch-path"]).code, 2);
+  assert.equal(s.cli(["launch-path", "-x"]).code, 2);
+});

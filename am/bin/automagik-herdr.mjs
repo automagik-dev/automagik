@@ -993,6 +993,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 every exit but 0: anything but 0 or 3 is a failure. A name is
                                 1-128 of A-Z a-z 0-9 . _ -, not . or .. (hc may refuse more).
                                 Made for mods: their exec has no stdin to speak hc connect with.
+  launch-path <program>         where a launch finds <program> (PATH, ~/.local/bin, this CLI's
+                                node folder) and the PATH its pane gets, as one line of JSON:
+                                {"program": null, "path": null} when none has it. For the
+                                Accounts panel, which runs claude auth status as a launch would.
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -3956,9 +3960,21 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
   return PRINTED;
 }
 
+/**
+ * `launch-path <program>` (#453): { program, path }: the file a launch of `program` runs
+ * (programPath) and the PATH its pane gets (launchPath), both null when it isn't found. The
+ * Accounts panel runs `claude auth status` from there, so it finds claude the way launches do.
+ */
+export async function cmdLaunchPath(_opts, [program, ...rest]) {
+  if (!program || program.startsWith("-") || rest.length) throw new CliError("launch-path takes one program name.", 2);
+  const file = programPath(program);
+  process.stdout.write(`${JSON.stringify({ program: file, path: file ? launchPath(program).path : null })}\n`);
+  return PRINTED;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

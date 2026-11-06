@@ -17,6 +17,10 @@ export const DEFAULT_WORDS = Object.freeze(["-u", CONFIG_VAR]);
 export const CREDENTIAL_VARS = Object.freeze(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
   "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]);
 
+/** How long one check (a folder, `claude auth status`, the variables) may take: well under Herdr's 30 s exec cap. */
+export const PROBE_MS = 10_000;
+const LATE = Object.freeze({ late: true });
+
 const ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const shown = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 200);
@@ -75,8 +79,8 @@ export const FOLDER_SCRIPT = [
 ].join("\n");
 const FOLDER_WORDS = { missing: "does not exist", symlink: "goes through a symlink", notdir: "is not a folder" };
 
-// `sh -c AUTH_SCRIPT sh <login words…>`: `claude auth status` as a launch on that login would run
-// it (the CLI also looks in ~/.local/bin). 127: no claude on this app's PATH.
+// `sh -c AUTH_SCRIPT sh <login words…>`: `claude auth status` when the CLI can't say where a launch
+// finds claude (no sidebar mod): this app's PATH and ~/.local/bin. 127: no claude there.
 export const AUTH_SCRIPT = 'PATH="$PATH:$HOME/.local/bin"; command -v claude >/dev/null 2>&1 || exit 127; exec /usr/bin/env "$@" claude auth status';
 // `sh -c PRESENT_SCRIPT sh <names…>`: the names set in this app's environment, never a value.
 export const PRESENT_SCRIPT = 'for n; do printenv -- "$n" >/dev/null && printf "%s\\n" "$n"; done; exit 0';
@@ -91,18 +95,55 @@ export function methodLine(method) {
 }
 
 /**
- * What `claude auth status` said, as { state: "in" | "out" | "nobin" | "unread", email,
+ * `exec` bounded by `ms`: Herdr's own `timeout`, and a race whatever Herdr does with it. The
+ * answer, LATE when none came in time, or null when exec threw.
+ */
+export async function bounded(exec, command, args, ms = PROBE_MS) {
+  let timer;
+  const late = new Promise((go) => { timer = setTimeout(() => go(LATE), ms); });
+  try {
+    return await Promise.race([Promise.resolve().then(() => exec(command, args, { timeout: ms })).catch(() => null), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * What `claude auth status` said, as { state: "in" | "out" | "nobin" | "unread" | "late", email,
  * configDirectory, authMethod }: four fields, the rest of its output dropped and never kept.
+ * Signed out only when its JSON says `loggedIn: false`; an exit 1 with no such JSON (a crash, a
+ * bad config) is unread, never signed out.
  */
 export function readStatus(r) {
+  if (r?.late) return { state: "late" };
   if (r?.code === 127) return { state: "nobin" };
   let data = null;
   try { data = JSON.parse(String(r?.stdout ?? "")); } catch {}
-  const pick = (k) => (typeof data?.[k] === "string" && data[k] ? data[k] : null);
+  if (!data || typeof data !== "object" || Array.isArray(data)) return { state: "unread" };
+  const pick = (k) => (typeof data[k] === "string" && data[k] ? data[k] : null);
   const fields = { email: pick("email"), configDirectory: pick("configDirectory"), authMethod: pick("authMethod") };
-  if (r?.code === 1 || data?.loggedIn === false) return { state: "out", ...fields };
-  if (r?.code !== 0 || !data || typeof data !== "object") return { state: "unread" };
+  if (data.loggedIn === false && (r.code === 0 || r.code === 1)) return { state: "out", ...fields };
+  if (r.code !== 0) return { state: "unread" };
   return { state: "in", ...fields };
+}
+
+/**
+ * The command that asks `claude auth status` of login `l` as a launch on it would run claude:
+ * `where` is the CLI's `launch-path claude` ({ program, path }), so claude is the file a launch
+ * runs, with the PATH its pane gets and the login's own words in env's order (options first, an
+ * assignment last). Without `where` (no sidebar mod), AUTH_SCRIPT. Null: no claude to run.
+ */
+export function authCommand(l, where) {
+  if (where === undefined || where === null) return ["sh", ["-c", AUTH_SCRIPT, "sh", ...loginWords(l)]];
+  if (!where.program) return null;
+  const words = l.id === DEFAULT_LOGIN ? [...DEFAULT_WORDS, `PATH=${where.path}`] : [`PATH=${where.path}`, `${CONFIG_VAR}=${l.dir}`];
+  return ["/usr/bin/env", [...words, where.program, "auth", "status"]];
+}
+
+/** `claude auth status` of login `l` (readStatus's shape), bounded; `where` as authCommand takes it. */
+export async function askStatus(l, { exec, where, ms = PROBE_MS }) {
+  const cmd = authCommand(l, where);
+  return cmd ? readStatus(await bounded(exec, cmd[0], cmd[1], ms)) : { state: "nobin" };
 }
 
 /** The one email field of a `.claude.json` (its account record), or null; nothing else is kept. */
@@ -147,24 +188,23 @@ export async function writeRecord(appHome, { use, logins }, before, writeTextFil
 /**
  * One login, looked at: { id, dir, problem: its folder's form problem or null, unlinked: the
  * linked files that are files of their own, status (readStatus), email }. `io`: { exec, home,
- * readTextFile }. A folder with a problem is never asked about its sign-in.
+ * readTextFile, where, ms }. A folder with a problem is never asked about its sign-in. Each
+ * check is bounded (PROBE_MS): one that doesn't answer is said, never waited on.
  */
-export async function probeLogin(login, { exec, home, readTextFile }) {
+export async function probeLogin(login, { exec, home, readTextFile, where, ms = PROBE_MS }) {
   const out = { id: login.id, dir: login.dir, problem: null, unlinked: [], status: { state: "unread" }, email: null };
   if (login.id !== DEFAULT_LOGIN) {
     const shape = shapeProblem(login.dir, home);
     if (shape) return { ...out, problem: shape };
-    let r;
-    try { r = await exec("sh", ["-c", FOLDER_SCRIPT, "sh", login.dir]); } catch { r = null; }
+    const r = await bounded(exec, "sh", ["-c", FOLDER_SCRIPT, "sh", login.dir], ms);
+    if (r?.late) return { ...out, problem: `folder ${shown(login.dir)} couldn't be checked in ${ms / 1000} s` };
     const lines = String(r?.stdout ?? "").split("\n").filter(Boolean);
     const last = lines.at(-1);
     if (r?.code !== 0 || !last) return { ...out, problem: `folder ${shown(login.dir)} couldn't be checked` };
     if (FOLDER_WORDS[last]) return { ...out, problem: `folder ${shown(login.dir)} ${FOLDER_WORDS[last]}` };
     out.unlinked = lines.filter((l) => l.startsWith("unlinked ")).map((l) => l.slice(9));
   }
-  let r;
-  try { r = await exec("sh", ["-c", AUTH_SCRIPT, "sh", ...loginWords(login)]); } catch { r = null; }
-  out.status = readStatus(r);
+  out.status = await askStatus(login, { exec, where, ms });
   out.email = out.status.email;
   if (!out.email && out.status.state === "in") {
     const file = login.id === DEFAULT_LOGIN ? `${trim(home)}/.claude.json` : `${login.dir}/.claude.json`;
@@ -174,14 +214,41 @@ export async function probeLogin(login, { exec, home, readTextFile }) {
 }
 
 /** The credential variables set in this app's environment (names), or null when that can't be read. */
-export async function presentVars(exec) {
-  try {
-    const r = await exec("sh", ["-c", PRESENT_SCRIPT, "sh", ...CREDENTIAL_VARS]);
-    if (r?.code !== 0) return null;
-    return String(r.stdout ?? "").split("\n").filter((n) => CREDENTIAL_VARS.includes(n));
-  } catch {
-    return null;
-  }
+export async function presentVars(exec, ms = PROBE_MS) {
+  const r = await bounded(exec, "sh", ["-c", PRESENT_SCRIPT, "sh", ...CREDENTIAL_VARS], ms);
+  if (r?.code !== 0) return null;
+  return String(r.stdout ?? "").split("\n").filter((n) => CREDENTIAL_VARS.includes(n));
+}
+
+/**
+ * Whether login `l` may leave the record (#453 section 7), asked at the press: { ok } only when
+ * `claude auth status` there says `loggedIn: false`, else { why }. Asked even when its folder is
+ * gone (its sign-in can outlive the folder); never for a folder the CLI could not launch with.
+ */
+export async function signedOut(l, { exec, home, where, ms = PROBE_MS }) {
+  const shape = shapeProblem(l.dir, home);
+  if (shape) return { why: `its ${shape}: fix ${LOGINS_FILE} by hand` };
+  const st = await askStatus(l, { exec, where, ms });
+  if (st.state === "out") return { ok: true };
+  if (st.state === "in") return { why: `it is still signed in: first, in a terminal, run CLAUDE_CONFIG_DIR=${typed(l.dir, home)} claude auth logout` };
+  const said = { late: `claude auth status didn't answer in ${ms / 1000} s`, nobin: "claude isn't found where launches look for it",
+    unread: "claude auth status gave no answer the panel can read" }[st.state];
+  return { why: `the panel can't tell whether ${loginName(l.id)} is signed out (${said})` };
+}
+
+// `sh -c REAL_SCRIPT sh <dir>`: the folder's real path, as the form rule compares it.
+export const REAL_SCRIPT = 'cd -- "$1" 2>/dev/null && pwd -P';
+
+/**
+ * `on` (paneLogin's answer) with an unknown folder matched by its real path, the way the form
+ * rule takes a folder: a pane started by hand through a link maps to its login.
+ */
+export async function matchReal(on, logins, exec, ms = PROBE_MS) {
+  if (!on?.unknown) return on;
+  const r = await bounded(exec, "sh", ["-c", REAL_SCRIPT, "sh", on.unknown], ms);
+  const real = r?.code === 0 ? String(r.stdout ?? "").trim() : null;
+  const l = real ? logins.find((x) => x.dir === real) : null;
+  return l ? { id: l.id } : on;
 }
 
 /**
@@ -204,6 +271,8 @@ export function paneLogin(argv, logins) {
   }
   let dir = null;
   for (; i < argv.length && ASSIGN.test(argv[i]); i += 1) if (argv[i].startsWith(`${CONFIG_VAR}=`)) dir = argv[i].slice(CONFIG_VAR.length + 1);
+  // As text the form rule would take it: no doubled or trailing slash (a link: matchReal).
+  if (dir !== null && dir.startsWith("/")) dir = dir.replace(/\/{2,}/g, "/").replace(/(.)\/+$/, "$1");
   if (dir !== null) {
     const l = logins.find((x) => x.dir === dir);
     return l ? { id: l.id } : { unknown: dir };

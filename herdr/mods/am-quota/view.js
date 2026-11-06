@@ -7,7 +7,7 @@
 // Accounts are shown by email and plan, never by the credential's file name (that stays the id).
 
 import { DEFAULTS, bindingWindow, choose, headroom, minutesToReset } from "./policy.js";
-import { DEFAULT_LOGIN, loginName, methodLine, nextSlot, paneLogin, typed } from "./logins.js";
+import { DEFAULT_LOGIN, loginName, methodLine, nextSlot, typed } from "./logins.js";
 
 export const TOOLS = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 /** What the binding window is a share of, where the window id says it. */
@@ -228,7 +228,8 @@ function loginRow(p, { home, inUse, bad, recordUse }) {
   let owned = true;   // its quota is this sign-in's
   let usable = !p.problem;
   if (p.problem) lines.push({ text: `${name}'s ${p.problem}`, tone: "bad" });
-  else if (st.state === "nobin") lines.push({ text: "claude isn't on this app's PATH, so the panel can't tell who this login is", tone: "warn" });
+  else if (st.state === "nobin") lines.push({ text: "claude isn't found where launches look for it, so the panel can't tell who this login is", tone: "warn" });
+  else if (st.state === "late") lines.push({ text: "claude auth status didn't answer in time, so the panel can't tell who this login is", tone: "warn" });
   else if (st.state === "unread") lines.push({ text: "claude auth status gave no answer the panel can read", tone: "warn" });
   if (!p.problem && st.configDirectory && st.configDirectory.replace(/\/+$/, "") !== want) {
     lines.push({ text: `settings move ${name} to another folder: switching can't choose it`, tone: "bad" });
@@ -336,16 +337,16 @@ export function staleBots(ls, provider, at) {
 }
 
 /**
- * The Claude bots not on login `chosen` (#453 section 3), by value: `gets[i]` is hc get of
- * `bots[i]`'s pane (null: gone, undefined: unreadable). Each is listed with the login its launch
- * argv names, or why that can't be told. Returns staleBots's shape, each bot with `on`.
+ * The Claude bots not on login `chosen` (#453 section 3), by value: `ons[i]` is the login
+ * `bots[i]`'s launch argv names (logins.js paneLogin, then matchReal), or null when its pane is
+ * gone. Each is listed with that login, or why it can't be told. Returns staleBots's shape, each
+ * bot with `on`.
  */
-export function offLogin(bots, gets, logins, chosen) {
+export function offLogin(bots, ons, chosen) {
   const out = [];
   bots.forEach((b, i) => {
-    if (gets[i] === null) return;
-    const on = gets[i] === undefined ? { why: "hc can't read its pane" } : paneLogin(gets[i].argv, logins);
-    if (on.id === chosen) return;
+    const on = ons[i];
+    if (on === null || on.id === chosen) return;
     out.push({ id: b.id, name: b.name, project: b.project,
       on: on.id ? loginName(on.id) : on.unknown ? `an unknown login (${on.unknown})` : on.why });
   });

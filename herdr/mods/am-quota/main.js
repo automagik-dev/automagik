@@ -21,7 +21,7 @@ import { install } from "./switch.js";
 import { claim, release } from "./lock.js";
 import { payloadDir, sweepScript } from "./write.js";
 import { TOOLS, instanceName, loginsView, offLogin, openUrl, runningBots, staleBots, toolView, who } from "./view.js";
-import { DEFAULT_LOGIN, loginName, paneLogin, presentVars, probeLogin, readRecord, typed, writeRecord } from "./logins.js";
+import { DEFAULT_LOGIN, PROBE_MS, bounded, loginName, matchReal, paneLogin, presentVars, probeLogin, readRecord, signedOut, typed, writeRecord } from "./logins.js";
 
 const POLL = 60000;
 /** How often the installed credential's identity is re-read. It is a token-bearing item; the
@@ -358,27 +358,59 @@ export default class AmQuota extends View {
    * Claude's logins on this Mac (#453): the record on every read (one small file), and each
    * login looked at (its folder, `claude auth status`, Herdr's credential variables) when the
    * panel opens, after a switch, on ↻, when the record lists other logins, and at most every five
-   * minutes. One look at a time, sequential: each runs a `claude` process.
+   * minutes. One round at a time: a round asked for while one runs is queued behind it, never
+   * started beside it, and a record read never throws a round away. Logins are looked at side by
+   * side, each check bounded (logins.js PROBE_MS), so a round always lands, a login that didn't
+   * answer saying so.
    */
   readLogins(cx, { force = false } = {}) {
-    const seq = (this.loginSeq ?? 0) + 1;
-    this.loginSeq = seq;
     cx.spawn(async (cx) => {
       const record = await readRecord(appHome(), readTextFile);
       const want = [{ id: DEFAULT_LOGIN, dir: null }, ...record.logins];
       const had = this.logins;
-      const same = had?.probes?.length === want.length && want.every((l, i) => had.probes[i].id === l.id && had.probes[i].dir === l.dir);
-      let { probes = null, vars = null, at = 0 } = had ?? {};
-      if (force || !same || Date.now() - at >= IDENTITY_EVERY) {
-        probes = [];
-        for (const l of want) probes.push(await probeLogin(l, { exec, home: home(), readTextFile }));
-        vars = await presentVars(exec);
-        at = Date.now();
+      const same = (probes) => probes?.length === want.length && want.every((l, i) => probes[i].id === l.id && probes[i].dir === l.dir);
+      if (had && same(had.probes)) this.logins = { ...had, record };
+      if (!force && had && same(had.probes) && Date.now() - had.at < IDENTITY_EVERY) return wake(cx);
+      if (this.probing) {
+        this.probeAgain = true;
+        return wake(cx);
       }
-      if (seq !== this.loginSeq) return;
-      this.logins = { record, probes, vars, at };
-      wake(cx);
+      this.probing = true;
+      try {
+        const ms = this.probeMs ?? PROBE_MS;
+        const where = await this.whereClaude(ms);
+        const io = { exec, home: home(), readTextFile, where, ms };
+        const [probes, vars] = await Promise.all([Promise.all(want.map((l) => probeLogin(l, io))), presentVars(exec, ms)]);
+        // The record read again: the probes are for `want`, so another set of logins goes round again.
+        const now = await readRecord(appHome(), readTextFile);
+        const sameNow = now.logins.length === record.logins.length && now.logins.every((l, i) => l.id === record.logins[i].id && l.dir === record.logins[i].dir);
+        this.logins = { record: sameNow ? now : record, probes, vars, at: Date.now() };
+        if (!sameNow) this.probeAgain = true;
+      } finally {
+        this.probing = false;
+        wake(cx);
+        if (this.probeAgain) {
+          this.probeAgain = false;
+          this.readLogins(cx, { force: true });
+        }
+      }
     });
+  }
+
+  /**
+   * Where a launch finds claude, from the CLI (`launch-path claude`): { program, path }, with
+   * program null when launches can't find it; undefined when the CLI can't say (no sidebar mod, or
+   * no answer), and the probes then use AUTH_SCRIPT.
+   */
+  async whereClaude(ms) {
+    const argv = await cliArgv(["launch-path", "claude"]);
+    if (!argv) return undefined;
+    const r = await bounded(exec, argv[0], argv.slice(1), ms);
+    try {
+      const out = JSON.parse(r?.stdout ?? "");
+      if (r.code === 0 && (out.program === null || (typeof out.program === "string" && typeof out.path === "string"))) return out;
+    } catch {}
+    return undefined;
   }
 
   /** The card for one tool, from the last read. */
@@ -486,7 +518,8 @@ export default class AmQuota extends View {
     cx.spawn(async (cx) => {
       wake(cx);
       try {
-        const p = await probeLogin(slot, { exec, home: home(), readTextFile });
+        const ms = this.probeMs ?? PROBE_MS;
+        const p = await probeLogin(slot, { exec, home: home(), readTextFile, where: await this.whereClaude(ms), ms });
         if (p.problem) throw new Error(`its ${p.problem}: make it first, as the steps say`);
         if (p.status.state !== "in") throw new Error("claude auth status there doesn't say signed in: sign in first, as the steps say");
         if (p.status.configDirectory && p.status.configDirectory.replace(/\/+$/, "") !== slot.dir) throw new Error(`settings move ${name} to another folder`);
@@ -531,20 +564,26 @@ export default class AmQuota extends View {
     }
     this.switchError = null;
     this.loginNote = null;
-    const { record, probes } = this.logins;
+    const { record } = this.logins;
     cx.spawn(async (cx) => {
       wake(cx);
       try {
-        if (probes.find((p) => p.id === id)?.status?.state === "in") {
-          throw new Error(`it is still signed in: first, in a terminal, run CLAUDE_CONFIG_DIR=${typed(row.dir, home())} claude auth logout`);
-        }
+        // Asked again at the press, never from the last look: only a JSON loggedIn: false lets it go.
+        const ms = this.probeMs ?? PROBE_MS;
+        const out = await signedOut({ id, dir: row.dir }, { exec, home: home(), where: await this.whereClaude(ms), ms });
+        if (!out.ok) throw new Error(out.why);
         const ls = await hc(["ls", "--json"]);
         if (ls?.code !== 0) throw new Error("hc can't list the panes, so the panel can't tell whether one still runs on it");
         const reads = await Promise.all(liveRows(ls.stdout).map((r) => this.paneGet(r.address).then((g) => ({ r, g }), () => ({ r, g: undefined }))));
         const lost = reads.find((x) => x.g === undefined);
         if (lost) throw new Error(`hc can't read ${lost.r.address}, so the panel can't tell whether it runs on ${row.name}`);
-        const on = reads.filter((x) => x.g && paneLogin(x.g.argv, record.logins).id === id).map((x) => x.r.name ?? x.r.address);
+        const ons = await Promise.all(reads.map((x) => (x.g ? matchReal(paneLogin(x.g.argv, record.logins), record.logins, exec, ms) : null)));
+        const named = (pick) => reads.filter((_x, i) => pick(ons[i])).map((x) => x.r.name ?? x.r.address);
+        const on = named((o) => o?.id === id);
         if (on.length) throw new Error(`${on.join(", ")} still ${on.length === 1 ? "runs" : "run"} on it: restart or stop ${on.length === 1 ? "it" : "them"} first`);
+        // A folder under home that no login lists may be this one by another spelling: refused too.
+        const odd = named((o) => typeof o?.unknown === "string" && o.unknown.startsWith(`${home().replace(/\/+$/, "")}/`));
+        if (odd.length) throw new Error(`${odd.join(", ")} ${odd.length === 1 ? "runs" : "run"} on a login folder the panel can't match to a login: restart or stop ${odd.length === 1 ? "it" : "them"} first`);
         await writeRecord(appHome(), { use: record.use, logins: record.logins.filter((l) => l.id !== id) }, record.text, writeTextFile);
         this.loginNote = `${row.name} removed from the panel. Its folder stays; delete it by hand if you want.`;
       } catch (err) {
@@ -728,9 +767,11 @@ export default class AmQuota extends View {
         else if (provider !== "claude") s.look = staleBots(r.out, provider, s.at);
         else {
           const bots = runningBots(r.out, "claude");
-          const gets = await Promise.all(bots.map((b) => this.paneGet(b.terminal).catch(() => undefined)));
+          const logins = this.logins?.record?.logins ?? [];
+          const ons = await Promise.all(bots.map((b) => this.paneGet(b.terminal).then(
+            (g) => (g ? matchReal(paneLogin(g.argv, logins), logins, exec) : null), () => ({ why: "hc can't read its pane" }))));
           if (this.switched[provider] !== s) return;
-          s.look = offLogin(bots, gets, this.logins?.record?.logins ?? [], s.login);
+          s.look = offLogin(bots, ons, s.login);
         }
       } catch (err) {
         if (this.switched[provider] === s) s.look = { error: message(err) };

@@ -11,8 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as cli from "../mods/am-sidebar/logins.js";
-import { AUTH_SCRIPT, CONFIG_VAR, CREDENTIAL_VARS, DEFAULT_LOGIN, DEFAULT_WORDS, FOLDER_SCRIPT, PRESENT_SCRIPT, accountEmail, loginWords,
-  methodLine, nextSlot, paneLogin, parseLogins, probeLogin, readRecord, readStatus, shapeProblem, typed, writeRecord } from "../mods/am-quota/logins.js";
+import { AUTH_SCRIPT, CONFIG_VAR, CREDENTIAL_VARS, DEFAULT_LOGIN, DEFAULT_WORDS, FOLDER_SCRIPT, PRESENT_SCRIPT, accountEmail, authCommand, bounded,
+  loginWords, matchReal, methodLine, nextSlot, paneLogin, parseLogins, probeLogin, readRecord, readStatus, shapeProblem, signedOut, typed, writeRecord }
+  from "../mods/am-quota/logins.js";
 
 const ENV = "/usr/bin/env";
 const SYSTEM_PATH = "/usr/bin:/bin";
@@ -86,6 +87,9 @@ test("a pane's login by value from its launch argv (section 3): the folder's val
     [[ENV, "-u", "OTHER", "PATH=/b", "claude"], { why: "started before logins were tracked" }, "another name unset says nothing"],
     [[ENV, "PATH=/b", "claude"], { why: "started before logins were tracked" }],
     [[ENV, "PATH=/b", "sh", "-c", `${CONFIG_VAR}=/h/.claude-2 claude`], { why: "started before logins were tracked" }, "inside a command is not env's"],
+    [[ENV, `${CONFIG_VAR}=/h/.claude-2/`, "claude"], { id: "2" }, "a trailing slash, as a hand-started pane may have"],
+    [[ENV, `${CONFIG_VAR}=/h//.claude-2//`, "claude"], { id: "2" }, "doubled slashes"],
+    [[ENV, `${CONFIG_VAR}=rel/.claude-2/`, "claude"], { unknown: "rel/.claude-2/" }, "a relative value is never rewritten"],
     [["claude", `${CONFIG_VAR}=/h/.claude-2`], { why: "started before logins were tracked" }],
     [[], { why: "hc gave no launch argv" }],
     [undefined, { why: "hc gave no launch argv" }],
@@ -123,9 +127,13 @@ test("claude auth status, run as a launch would: a stub claude on PATH sees the 
   assert.equal(sh(AUTH_SCRIPT, DEFAULT_WORDS, { HOME: home }).status, 1);
 });
 
-test("readStatus: exit 1 or loggedIn false is signed out; 127 no claude; anything unreadable is unread; the email falls back to .claude.json's one field", async () => {
+test("readStatus: only loggedIn false (exit 0 or 1) is signed out; 127 no claude; anything unreadable is unread; the email falls back to .claude.json's one field", async () => {
   assert.equal(readStatus({ code: 127 }).state, "nobin");
-  assert.equal(readStatus({ code: 1, stdout: "" }).state, "out");
+  assert.equal(readStatus({ code: 1, stdout: "" }).state, "unread", "an exit 1 with no JSON (a crash) is never signed out");
+  assert.equal(readStatus({ code: 1, stdout: '{"loggedIn":false}' }).state, "out");
+  assert.equal(readStatus({ code: 1, stdout: '{"loggedIn":true}' }).state, "unread");
+  assert.equal(readStatus({ late: true }).state, "late");
+  assert.equal(readStatus(null).state, "unread", "exec threw");
   assert.equal(readStatus({ code: 0, stdout: '{"loggedIn":false}' }).state, "out");
   assert.deepEqual(readStatus({ code: 0, stdout: "Logged in as someone" }), { state: "unread" });
   assert.deepEqual(readStatus({ code: 2, stdout: "{}" }), { state: "unread" });
@@ -169,4 +177,46 @@ test("readRecord and writeRecord: no file is login A; the write is { use, logins
   assert.deepEqual(nextSlot([{ id: "2", dir: "/h/.claude-2" }], "/h/"), { id: "3", dir: "/h/.claude-3" });
   assert.equal(typed("/h/.claude-2", "/h"), '"$HOME/.claude-2"');
   assert.equal(typed("/elsewhere/it's", "/h"), "'/elsewhere/it'\\''s'");
+});
+
+test("bounded: an exec that never answers is LATE after its bound, with exec's own timeout passed; one that throws is null", async () => {
+  const seen = [];
+  const r = await bounded((c, a, o) => { seen.push(o); return new Promise(() => {}); }, "sh", ["-c", "x"], 20);
+  assert.deepEqual(r, { late: true });
+  assert.deepEqual(seen, [{ timeout: 20 }]);
+  assert.equal(await bounded(() => { throw new Error("no"); }, "sh", [], 20), null);
+  assert.deepEqual(await bounded(async () => ({ code: 0 }), "sh", [], 20), { code: 0 });
+});
+
+test("authCommand: claude where the CLI says launches find it, with the PATH a pane gets and the login's words in env's order", () => {
+  const where = { program: "/opt/n/bin/claude", path: "/opt/n/bin:/usr/bin:/bin" };
+  assert.deepEqual(authCommand({ id: DEFAULT_LOGIN, dir: null }, where), [ENV, [...DEFAULT_WORDS, `PATH=${where.path}`, where.program, "auth", "status"]]);
+  assert.deepEqual(authCommand({ id: "2", dir: "/h/.claude-2" }, where), [ENV, [`PATH=${where.path}`, `${CONFIG_VAR}=/h/.claude-2`, where.program, "auth", "status"]]);
+  assert.equal(authCommand({ id: "2", dir: "/h/.claude-2" }, { program: null, path: null }), null, "launches can't find claude: nothing to run");
+  assert.deepEqual(authCommand({ id: "2", dir: "/h/.claude-2" }, undefined), ["sh", ["-c", AUTH_SCRIPT, "sh", `${CONFIG_VAR}=/h/.claude-2`]], "no CLI: the app's PATH");
+});
+
+test("signedOut: Remove goes ahead only on a JSON loggedIn false, asked at the press; every other answer refuses, saying why", async () => {
+  const at = (r) => async (cmd, args) => (args.at(-1) === "status" ? r : { code: 0, stdout: "" });
+  const l = { id: "2", dir: "/h/.claude-2" };
+  const io = (r, extra = {}) => ({ exec: typeof r === "function" ? r : at(r), home: "/h", where: { program: "/b/claude", path: "/b" }, ms: 20, ...extra });
+  assert.deepEqual(await signedOut(l, io({ code: 1, stdout: '{"loggedIn":false}' })), { ok: true });
+  assert.match((await signedOut(l, io({ code: 0, stdout: '{"loggedIn":true}' }))).why, /still signed in: .*CLAUDE_CONFIG_DIR="\$HOME\/\.claude-2" claude auth logout/);
+  assert.match((await signedOut(l, io({ code: 1, stdout: "" }))).why, /can't tell whether login 2 is signed out \(claude auth status gave no answer/, "a crash");
+  assert.match((await signedOut(l, io({ code: 0, stdout: "Logged in" }))).why, /can't tell/);
+  assert.match((await signedOut(l, io(() => new Promise(() => {})))).why, /didn't answer in 0\.02 s/);
+  assert.match((await signedOut(l, io(null, { where: { program: null, path: null } }))).why, /claude isn't found where launches look for it/);
+  assert.match((await signedOut({ id: "2", dir: "~/.claude-2" }, io({ code: 1, stdout: '{"loggedIn":false}' }))).why, /fix claude-logins\.json by hand/);
+});
+
+test("matchReal: a pane's folder reached through a link maps to its login by real path; anything else stays unknown", async (t) => {
+  const root = scratch(t);
+  const two = join(root, ".claude-2");
+  mkdirSync(two);
+  symlinkSync(two, join(root, "alias"));
+  const exec = realExec({ PATH: SYSTEM_PATH });
+  const logins = [{ id: "2", dir: two }];
+  assert.deepEqual(await matchReal(paneLogin([ENV, `${CONFIG_VAR}=${join(root, "alias")}/`, "claude"], logins), logins, exec), { id: "2" });
+  assert.deepEqual(await matchReal({ unknown: join(root, "gone") }, logins, exec), { unknown: join(root, "gone") });
+  assert.deepEqual(await matchReal({ id: DEFAULT_LOGIN }, logins, exec), { id: DEFAULT_LOGIN });
 });

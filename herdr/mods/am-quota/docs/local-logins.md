@@ -251,7 +251,10 @@ The choice of folder can be beaten in two ways:
   settings.
 
 **How the build detects it:** per login, the panel runs `claude auth status` in that login's own
-launch environment, through exec, with the same `-u` or assignment words a launch would get. That
+launch environment, through exec, with the same `-u` or assignment words a launch would get. It
+runs the claude a launch would run, with the PATH a launch gives its pane: the CLI says where
+(`automagik-herdr launch-path claude`). Each check is bounded at 10 s, and the logins are looked
+at side by side, one round at a time. A login whose check didn't answer says so and gets no **Use**. That
 the CLI applies every settings layer before it answers is **inferred**, not documented. The
 build's scratch-folder checks (section 4) confirm it. Its JSON carries `configDirectory` and
 `authMethod`. Only those two fields and the account's identity are read; the rest of the output
@@ -314,9 +317,13 @@ The Claude card lists **the logins signed in on this Mac**, not the proxy's acco
 1. If the login is the one in `use`, switch to another first. The panel offers no **Remove** on the
    login in use, and refuses while the login is still signed in (step 3 first).
 2. Restart or stop the bots still on it. The panel refuses while a pane's launch argv names its
-   folder by value (every live pane `hc ls` lists), because a logout ends their sign-in.
+   folder by value (every live pane `hc ls` lists; a trailing slash or a link spelling the same
+   folder counts), or names an unmatched folder under the home folder, because a logout ends their
+   sign-in.
 3. In a terminal, run `CLAUDE_CONFIG_DIR="$HOME/.claude-<n>" claude auth logout`. The CLI removes
-   its own credential; the panel does not touch the Keychain.
+   its own credential; the panel does not touch the Keychain. At the press of **Remove**, the
+   panel asks `claude auth status` of that login again and goes ahead only when its JSON says
+   `loggedIn: false`; a crash, output it can't read or no answer refuses, saying so.
 4. Press **Remove login** in the panel to drop the record.
 
 Deleting the folder is optional and done by hand. `rm` on a link removes the link, never

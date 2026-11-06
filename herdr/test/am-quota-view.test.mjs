@@ -244,9 +244,22 @@ test("loginsView (#453): policy.choose over the local logins only, by email; a p
   assert.ok(bad.rows.every((r) => !r.use && !r.remove));
 });
 
-test("offLogin (#453): the Claude bots not on the chosen login, by their launch argv's value; a gone pane drops out", () => {
-  const bots = ["a", "b", "c", "d"].map((id) => ({ id, name: id.toUpperCase(), project: "/p" }));
-  const gets = [{ argv: ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "claude"] }, { argv: ["/usr/bin/env", "CLAUDE_CONFIG_DIR=/h/.claude-2", "claude"] }, null, undefined];
-  assert.deepEqual(offLogin(bots, gets, RECORD.logins, "2"), { bots: [{ id: "a", name: "A", project: "/p", on: "the default login" },
-    { id: "d", name: "D", project: "/p", on: "hc can't read its pane" }], reliable: true });
+test("offLogin (#453): the Claude bots not on the chosen login, by what their launch argv names; a gone pane drops out", () => {
+  const bots = ["a", "b", "c", "d", "e"].map((id) => ({ id, name: id.toUpperCase(), project: "/p" }));
+  const ons = [{ id: "default" }, { id: "2" }, null, { why: "hc can't read its pane" }, { unknown: "/x" }];
+  assert.deepEqual(offLogin(bots, ons, "2"), { bots: [{ id: "a", name: "A", project: "/p", on: "the default login" },
+    { id: "d", name: "D", project: "/p", on: "hc can't read its pane" }, { id: "e", name: "E", project: "/p", on: "an unknown login (/x)" }], reliable: true });
+});
+
+test("loginsView (#453): a login whose sign-in is outranked, or that didn't answer, gets no Use and is never the pick", () => {
+  const bo = acct("bo", { provider: "claude", plan: null, win: "seven_day", used: 10, resetH: 40 });
+  const ana = acct("ana", { provider: "claude", plan: null, win: "seven_day", used: 95, prev: 80, resetH: 60 });
+  const keyed = probe("2", "bo@example.com");
+  keyed.status = { ...keyed.status, authMethod: "api_key" };
+  const v = loginsView({ record: RECORD, probes: [probe("default", "ana@example.com"), keyed, { ...probe("3", null), status: { state: "late" } }],
+    accounts: [ana, bo], now: NOW, home: "/h" });
+  assert.deepEqual(v.rows.map((r) => [r.id, r.use]), [["default", false], ["2", false], ["3", false]]);
+  assert.equal(v.primary, null, "the outranked login is not offered as the move either");
+  assert.ok(v.rows[1].lines.some((l) => l.text === "an API key outranks this sign-in"));
+  assert.ok(v.rows[2].lines.some((l) => /didn't answer in time/.test(l.text)));
 });
