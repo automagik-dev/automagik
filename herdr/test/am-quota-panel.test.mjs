@@ -1070,9 +1070,11 @@ test("Claude Use (#453): a record changed since the panel read it is never overw
 });
 
 test("Claude (#453): a bad record shows one red line naming the problem, and no Use, Add or Remove until it is fixed", async () => {
-  for (const [record, said] of [["{ not json", "is not valid JSON"], [{ use: "7", logins: [{ id: "2", dir: TWO }] }, "use names 7 that it doesn't list"],
-    [{ use: "2", logins: [{ id: "2", dir: TWO }] }, `login 2's folder ${TWO} does not exist`]]) {
-    const { view, cx, draw } = await panel({ record, claude: { ...TWO_IN, folders: { [TWO]: "missing\n" } } });
+  // Login 2 itself is fine in the first two: only the record stops Use.
+  for (const [record, said, folder] of [["{ not json", "is not valid JSON"], [{ use: "7", logins: [{ id: "2", dir: TWO }] }, "use names 7 that it doesn't list"],
+    [{ use: "2", logins: [{ id: "2", dir: TWO }] }, `login 2's folder ${TWO} does not exist`, "missing\n"]]) {
+    const { view, cx, draw } = await panel({ record, claude: { ...TWO_IN, folders: folder ? { [TWO]: folder } : {} } });
+    if (!folder) assert.match(text(draw()), /dee@example\.com · login 2|cy@example\.com/, "login 2 signed in, its folder fine");
     const root = draw();
     const red = nodes.get("logins-problem");
     assert.equal(textOf({ __node: red }), `claude-logins.json ${said}: new Claude launches start on the default login until it is fixed`);
