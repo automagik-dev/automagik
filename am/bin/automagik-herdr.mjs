@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
-  renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+  renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -396,8 +396,16 @@ export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) 
 // so one CLI at a time edits the list, and a holder removes only its own lock. Waited for up
 // to LOCK_WAIT ms; one older than LOCK_STALE ms (a CLI killed mid-write) is taken over.
 // Without it, two CLIs that read the list at once each write their own copy.
+// AUTOMAGIK_HERDR_LOCK_STALE_MS sets LOCK_STALE for the tests only.
 const LOCK_WAIT = 3000;
-const LOCK_STALE = 10_000;
+const LOCK_STALE = (() => {
+  const raw = process.env.AUTOMAGIK_HERDR_LOCK_STALE_MS;
+  const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) && ms > 0 ? ms : 10_000;
+})();
+// An async holder (withLockAsync) touches its lock this often, so a hold across slow hc calls
+// (15 s each) never reads as stale; a holder that dies stops touching it (#225, #223).
+const LOCK_REFRESH = Math.max(10, Math.floor(LOCK_STALE / 3));
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const stale = (path) => { try { return Date.now() - statSync(path).mtimeMs > LOCK_STALE; } catch { return false; } };
 
@@ -411,9 +419,9 @@ function takeOverStale(lock) {
   try { unlinkSync(aside); } catch { /* gone already */ }
 }
 
-function takeLock(lock) {
+function takeLock(lock, wait = LOCK_WAIT) {
   const token = `${process.pid} ${randomUUID()}`;
-  const until = Date.now() + LOCK_WAIT;
+  const until = Date.now() + wait;
   for (;;) {
     try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
       if (e?.code !== "EEXIST") throw e;
@@ -430,9 +438,23 @@ function withLock(lock, fn) {
   const token = takeLock(lock);
   try { return fn(); } finally { dropLock(lock, token); }
 }
-async function withLockAsync(lock, fn) {
-  const token = takeLock(lock);
-  try { return await fn(); } finally { dropLock(lock, token); }
+/**
+ * Keeps a held lock fresh: its mtime is set to now every LOCK_REFRESH ms while it still holds
+ * this holder's token (a lock taken over is never touched). Returns the stop. The timer is
+ * unref'd: it never keeps the CLI running.
+ */
+function keepFresh(lock, token) {
+  const timer = setInterval(() => {
+    try { if (readFileSync(lock, "utf8") === token) { const now = new Date(); utimesSync(lock, now, now); } } catch { /* gone */ }
+  }, LOCK_REFRESH);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+/** withLock for an async `fn`, the lock kept fresh while fn awaits (keepFresh); waits up to `wait` ms for it. */
+async function withLockAsync(lock, fn, { wait = LOCK_WAIT } = {}) {
+  const token = takeLock(lock, wait);
+  const stop = keepFresh(lock, token);
+  try { return await fn(); } finally { stop(); dropLock(lock, token); }
 }
 
 /**
@@ -3388,13 +3410,11 @@ async function givenWorktree(path, key, bot) {
 }
 
 /**
- * --branch: the worktree already on that branch, or a new one in
- * `<main checkout>/.claude/worktrees/<slug>`. A new branch starts from --base, else
- * origin's own branch of that name, else origin/HEAD's branch, else dev, else main, after a
- * fetch. Only `git worktree add` runs: the main checkout's HEAD is never touched. The new
- * branch tracks nothing unless it continues origin's branch of the same name.
+ * --branch: the worktree already on that branch, or the folder a new one gets,
+ * `<main checkout>/.claude/worktrees/<slug>`, as { pending: true } (makeBranchWorktree makes
+ * it). Makes nothing: every refusal here comes before the worktree, the hook or hc run.
  */
-async function branchWorktree(branch, base, key, warnings) {
+async function branchPlace(branch, base, key, warnings) {
   const ok = !branch.startsWith("-") && (await runProgram("git", ["check-ref-format", "--branch", branch], { cwd: key })).code === 0;
   if (!ok) throw new CliError(`--branch: "${branch}" isn't a valid branch name.`, 2);
   const listed = await git(["worktree", "list", "--porcelain"], key);
@@ -3412,6 +3432,17 @@ async function branchWorktree(branch, base, key, warnings) {
       + "Pick another branch name, or pass --worktree to work in that one.");
   }
   if (existsSync(path)) throw new CliError(`${path} is there already, but not as a worktree on ${branch}. Move it, or pass --worktree.`);
+  return { worktree: path, branch, created: false, base: null, pending: true };
+}
+
+/**
+ * Makes branchPlace's pending worktree (`place.worktree`, on `place.branch`). A new branch
+ * starts from --base, else origin's own branch of that name, else origin/HEAD's branch, else
+ * dev, else main, after a fetch. Only `git worktree add` runs: the main checkout's HEAD is
+ * never touched. The new branch tracks nothing unless it continues origin's branch of the same name.
+ */
+async function makeBranchWorktree(place, base, key, warnings) {
+  const { worktree: path, branch } = place;
   const unexcluded = await excludeWorktrees(key);
   if (unexcluded) warnings.push(unexcluded);
   const has = async (ref) => (await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], key)) !== null;
@@ -3460,6 +3491,11 @@ async function excludeWorktrees(key) {
   }
 }
 
+/**
+ * How long a worker call waits for its worktree's lock: longer than another call's hold, which
+ * may run a fetch and git worktree add (60 s each) and its hc calls (15 s each).
+ */
+const WORKER_LOCK_WAIT = 180_000;
 /**
  * The lock a worker's check and start run under: one per worktree, named by a hash of the
  * worktree's real path, in `lockDir`. Local: it orders the CLIs on this computer only.
@@ -3576,6 +3612,10 @@ async function cmdWorker(opts, rest) {
     throw new CliError(`--lead: "${opts.lead}" isn't a bot id (b- plus 10 base32 characters) or a Genie session (session-<uuid>).`, 2);
   }
   const { me, bot, project } = await callingBot(opts);
+  // The bots file's warnings about this bot (model.js names it first: a bad worker field dropped,
+  // a retired agent), on stderr at once, so a refused call shows them too; --json lists them.
+  const fileWarnings = project.warnings.filter((w) => w.startsWith(`${bot.id}: `));
+  report(fileWarnings);
   const { role, error: roleError } = workerRole(bot, opts.role);
   if (roleError) throw new CliError(roleError, 2);
   if (taskId !== undefined && opts.lead === undefined && LEAD_RANKS.includes(bot.rank)) throw new CliError("pass --lead <the task's lead bot>", 2);
@@ -3630,32 +3670,26 @@ async function cmdWorker(opts, rest) {
     const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
     if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
   }
-  // An npm agent (#!/usr/bin/env node) gets its interpreter's folder on PATH when the pane lacks it.
-  const place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
-    : await branchWorktree(opts.branch, opts.base, project.key, warnings);
-  const runPath = plan.template ? null : launchPath(plan.argv[0], place.worktree);
-  if (runPath?.note) warnings.push(runPath.note);
-  const base = await baseCommit(place, project.key);
-  // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
-  // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
-  if (runs === undefined) {
-    warnings.push(`Can't tell which agent template ${plan.template} runs, so no session hook was written in ${place.worktree}; `
-      + `if it runs Claude, the ${place.branch} worker's session won't be linked to usage.`);
-  } else if (runs === "claude") {
-    const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
-    warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
-  }
+  // Where it works: --worktree's, the branch's worktree, or the folder a new one gets (made
+  // below, once the check passes). Nothing is made yet.
+  let place = opts.worktree !== undefined ? await givenWorktree(opts.worktree, project.key, bot)
+    : await branchPlace(opts.branch, opts.base, project.key, warnings);
   // One writer (dev, test, fix) per worktree, whatever its bot; reviewers run alongside, but
   // one bot runs one reviewer per branch. A worker with no role label counts as a writer.
-  // Checked and started under one lock per worktree, so two calls at once can't both pass.
+  // Checked and started under one lock per worktree, so two calls at once can't both pass. The
+  // check comes first: a refused call (hc ls failing included) makes no worktree and no hook.
   const lockDir = ledgerPath(appHome()).replace(/\/[^/]*$/, "");
   try { mkdirSync(lockDir, { recursive: true }); } catch (e) { throw new CliError(`Can't make ${lockDir}: ${e?.message ?? e}`); }
-  const worktree = realDir(place.worktree) ?? place.worktree;
+  const planned = realDir(place.worktree) ?? place.worktree;
   // The bot's space, no tab: Herdr opens the worker in a tab of its own there, at hc run. The
   // window is asked first (workerSpace): a label naming a space it no longer has is left out.
   const window = await windowRead();
   const space = workerSpace(placementFrom([me])?.space ?? null, window, me.address);
-  const started = await withLockAsync(worktreeLock(lockDir, worktree), async () => {
+  let worktree = planned;
+  let base = null;
+  // Held across a fetch and git worktree add (60 s each) and the hc calls, so a second call on
+  // this worktree waits for the first's start rather than failing; kept fresh while held.
+  const started = await withLockAsync(worktreeLock(lockDir, planned), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
     // This computer's terminals only (hc names are unique per core), as workersIn sees them.
@@ -3677,6 +3711,27 @@ async function cmdWorker(opts, rest) {
         : `${bot.name} already has a live review worker on ${place.branch}: ${hit.address}.`;
       throw new CliError(`${what} Check it (hc read ${hit.address}) or end it (hc kill ${hit.address}) before starting another.`);
     }
+    if (place.pending) {
+      // Looked for again under the lock: a call that held it before this one may have made it.
+      const found = [];
+      const now = await branchPlace(opts.branch, opts.base, project.key, found);
+      if (now.pending) place = await makeBranchWorktree(now, opts.base, project.key, warnings);
+      else { place = now; warnings.push(...found); }
+    }
+    worktree = realDir(place.worktree) ?? place.worktree;
+    base = await baseCommit(place, project.key);
+    // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
+    // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
+    if (runs === undefined) {
+      warnings.push(`Can't tell which agent template ${plan.template} runs, so no session hook was written in ${place.worktree}; `
+        + `if it runs Claude, the ${place.branch} worker's session won't be linked to usage.`);
+    } else if (runs === "claude") {
+      const lost = `The ${place.branch} worker's Claude session won't be linked to usage`;
+      warnings.push(...(await writeBriefingHook(bot, place.worktree, appHome(), { lost })).warnings);
+    }
+    // An npm agent (#!/usr/bin/env node) gets its interpreter's folder on PATH when the pane lacks it.
+    const runPath = plan.template ? null : launchPath(plan.argv[0], place.worktree);
+    if (runPath?.note) warnings.push(runPath.note);
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
@@ -3689,7 +3744,7 @@ async function cmdWorker(opts, rest) {
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
     return { address, name };
-  }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  }, { wait: WORKER_LOCK_WAIT }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const terminal = started.address;
   // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);
@@ -3705,7 +3760,8 @@ async function cmdWorker(opts, rest) {
   }
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
-    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv, warnings,
+    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv,
+    warnings: [...fileWarnings, ...warnings],
     task: taskId ?? null, project: project.key, lead, baseCommit: base, swap, override, override_requested: overrideRequested };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
