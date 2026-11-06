@@ -52,7 +52,9 @@ All of it in English (the rest of the pack is; there is no locale mechanism to s
   them equal), reading the shown layout from `herdr-app status`; when that gives none, it switches
   the mod off anyway and names each of `layouts/` that shows it. A package whose own layout
   (its record's `layouts`) is the one shown is refused first (`core.packageLayoutGuard`, #420):
-  remove moves that layout aside. `am uninstall herdr.pack` and `install.sh --uninstall` refuse
+  remove moves that layout aside; `am uninstall herdr.layout` asks with release.js's copy, "then
+  uninstall it" (#430), and removes the layout anyway, saying why, when `herdr-app status` gives
+  none. `am uninstall herdr.pack` and `install.sh --uninstall` refuse
   while the shown layout's blocks name a pack mod; an update holds a mod it no longer ships in
   `mods/` while a layout's block names it.
 - **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
