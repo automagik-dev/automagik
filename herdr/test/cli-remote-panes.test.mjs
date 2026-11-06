@@ -253,12 +253,38 @@ test("restart --machine --tree is refused before anything is read there (#437): 
     const r = s.cli(["restart", "Atlas", ...s.on, "--tree", ...extra]);
     assert.equal(r.code, 2, extra.join(" "));
     assert.match(r.err, /Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: Atlas and its helpers on vm still run as they were, on the account they started with./);
-    assert.match(r.err, /By hand: let the helpers finish, then restart Atlas there without --tree; start again yourself, with hc run on vm, a helper that still has work to do once Atlas is back./);
+    assert.match(r.err, /By hand: wait for a helper still working to finish, end each helper's pane \(hc kill vm\/tN for one\), then restart Atlas there without --tree\. A helper that still had work to do, start again yourself with hc run on vm once Atlas is back\./);
+    assert.doesNotMatch(r.err, /--force/, "--force would drop the other checks too (a bot mid-turn)");
     assert.equal(r.out, "", "--json prints nothing, as the other flag refusals on a linked machine");
   }
   assert.deepEqual(s.calls().slice(before), [], "not one hc call: nothing read, started or ended there");
   assert.deepEqual(s.hcState().terminals.map((x) => [x.address, x.state]), [["vm/t8", "live"], ["vm/t9", "live"]]);
   assert.deepEqual(s.rows().map((x) => [x.event, x.terminal]), [["attach", "t8"]], "the ledger still has Atlas in t8");
+});
+
+test("restart --machine of a bot whose helper ends with its pane there (#437): never offers --tree or --force; ending the finished helper's pane by hand, as it says, lets the restart through", (t) => {
+  // A finished worker keeps its pane open: live, its agent done, and it ends with its parent.
+  const helper = atlasPane({ address: "vm/t9", created_ms: 1700000000009, parent: "vm/t8", die_with_parent: true, status: { state: "done", app: "claude" } });
+  const s = scene(t, { terminals: [atlasPane({ status: { state: "idle", app: "hermes" } }), helper] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  const r = s.cli(["restart", "Atlas", ...s.on, "--fresh", "--json"]);
+  assert.equal(r.code, 1);
+  const said = "vm/t8 has a helper that ends with it: vm/t9. Restarting helpers on a linked machine isn't built yet, so nothing was restarted. "
+    + "End its pane (hc kill vm/t9) and restart Atlas again.";
+  assert.deepEqual(r.json(), { error: said, refused: "helpers", terminal: "vm/t8" }, "the --json shape of a busy refusal, unchanged");
+  assert.doesNotMatch(r.err, /--tree|--force/);
+  // Still working: wait for it first.
+  s.setState((st) => { st.terminals.find((x) => x.address === "vm/t9").status = { state: "working", app: "claude" }; });
+  const busy = s.cli(["restart", "Atlas", ...s.on, "--fresh"]);
+  assert.equal(busy.code, 1);
+  assert.match(busy.err, /Wait for vm\/t9 to finish, then end its pane \(hc kill vm\/t9\) and restart Atlas again\./);
+  assert.doesNotMatch(busy.err, /--tree|--force/);
+  assert.equal(s.calls().filter((c) => c[0] === "run" || c[0] === "kill").length, 0, "nothing started or ended");
+  // Done as it says: the helper's pane ended, the same restart goes through.
+  s.setState((st) => { Object.assign(st.terminals.find((x) => x.address === "vm/t9"), { state: "finished", status: { state: "done", app: "claude" } }); });
+  const ok = s.cli(["restart", "Atlas", ...s.on, "--fresh", "--json"]);
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual([ok.json().machine, ok.json().replaced], ["vm", "t8"]);
 });
 
 test("restart --machine: --continue is refused while another bot's same agent runs in that folder there", (t) => {

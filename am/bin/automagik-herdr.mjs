@@ -958,7 +958,8 @@ folder on that machine and the file is read and written there by the same rule (
 changed since it was read is never overwritten); its panes run there (M/tN). A pane that
 reports no status to hc can't say it is waiting for an approval: restart refuses it unless
 --force, which still sends it no keys. restart --tree is this computer's only for now: with
---machine it is refused before anything is read or started there.`;
+--machine it is refused before anything is read or started there, and a bot whose helpers
+end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
 
 function readInstructions(opts) {
   if (opts.instructions !== undefined && opts["instructions-file"] !== undefined) throw new CliError("Give --instructions or --instructions-file, not both.", 2);
@@ -1727,7 +1728,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   }
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
-    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force });
+    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force, onMachine: true });
     if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
@@ -2471,8 +2472,9 @@ async function cmdRestart(opts, [ref]) {
   if (opts.tree && opts.machine !== undefined) {
     throw new CliError(`Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: `
       + `${ref} and its helpers on ${opts.machine} still run as they were, on the account they started with. `
-      + `By hand: let the helpers finish, then restart ${ref} there without --tree; start again yourself, with hc run `
-      + `on ${opts.machine}, a helper that still has work to do once ${ref} is back.`, 2);
+      + `By hand: wait for a helper still working to finish, end each helper's pane (hc kill ${opts.machine}/tN for one), `
+      + `then restart ${ref} there without --tree. A helper that still had work to do, start again yourself with hc run `
+      + `on ${opts.machine} once ${ref} is back.`, 2);
   }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
