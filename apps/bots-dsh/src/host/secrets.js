@@ -37,7 +37,10 @@ export const encodeUrlComponent = value => encodeURIComponent(value).replace(/[!
 
 // One function that replaces every known value in a string, longest first so a value
 // that contains another is replaced whole. JSON-escaped and URL-encoded forms are covered too.
-export function redactor(entries) {
+// `wholeWords: false` matches a short value inside a word as well: the global policy keeps the
+// lookarounds so a PIN does not hit ordinary words, while a caller that renders only a small,
+// already-quoted answer (the capability probe) pays over-redaction instead of leaking an edge.
+export function redactor(entries, { wholeWords = true } = {}) {
   const pairs = []
   for (const { name, value } of entries) {
     if (typeof value !== 'string' || value.length < MIN_VALUE) continue
@@ -56,7 +59,9 @@ export function redactor(entries) {
   const labels = new Map()
   for (const [value, label] of pairs) if (!labels.has(value)) labels.set(value, label)
   const quote = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(pairs.map(([value, , short]) => (short ? `(?<![\\p{L}\\p{N}])${quote(value)}(?![\\p{L}\\p{N}])` : quote(value))).join('|'), 'gu')
+  const word = value => `(?<![\\p{L}\\p{N}])${quote(value)}(?![\\p{L}\\p{N}])`
+  const parts = pairs.map(([value, , short]) => (short && wholeWords ? word(value) : quote(value)))
+  const pattern = new RegExp(parts.join('|'), 'gu')
   return (text) => {
     if (typeof text !== 'string' || !pairs.some(([value]) => text.includes(value))) return text
     return text.replace(pattern, match => labels.get(match) ?? match)
@@ -97,10 +102,13 @@ export function install(rt) {
   let loaded = null
   let writing = Promise.resolve()
   let redact = text => text
+  let redactAnywhere = text => text
   let refreshEnv = () => {}
 
   const changed = () => {
-    redact = redactor([...secrets.values()])
+    const entries = [...secrets.values()]
+    redact = redactor(entries)
+    redactAnywhere = redactor(entries, { wholeWords: false })
     refreshEnv()
     rt.secretsChanged?.()
   }
@@ -608,5 +616,6 @@ export function install(rt) {
     forgetBotSecrets,
     loadSecrets,
     redactSecrets: text => redact(text),
+    redactSecretsAnywhere: text => redactAnywhere(text),
   })
 }

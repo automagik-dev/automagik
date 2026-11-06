@@ -65,6 +65,15 @@ test('a short key (4 to 7 characters) is replaced only where it stands alone', (
   assert.equal(redact('中文4821中文'), '中文4821中文')
 })
 
+test('an anywhere redactor matches a short value inside a word, longest value first', () => {
+  const long = `pin${'z'.repeat(12)}`
+  const short = long.slice(3, 7)
+  const entries = [{ name: 'PIN', value: short }, { name: 'LONG', value: long }]
+  const redact = redactor(entries, { wholeWords: false })
+  assert.equal(redact(`x${short}y`), 'x[secret:PIN]y')
+  assert.equal(redact(`x${long}y`), 'x[secret:LONG]y')
+})
+
 const TEAM = {
   version: 1,
   mainBotIds: ['m1'],
