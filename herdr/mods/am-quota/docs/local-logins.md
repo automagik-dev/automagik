@@ -50,7 +50,8 @@ person can recognize the items in Keychain Access, and a CLI that renames them c
 measurement shows the folder is taken as given. So the sign-in and every launch pass the identical
 string: absolute, `$HOME` expanded by the shell, no `~`, no trailing slash, no symlinked parent.
 Any other spelling may name another entry, and then the CLI says "not logged in" for a login that
-exists. The record (section 2) refuses a folder that is not in that form.
+exists. A record entry whose folder is not in that form is rejected, and Claude starts on login
+A with a warning (section 2).
 
 Login A stays where it is. Nothing is migrated: moving A into a folder of its own would mean
 copying its grant (forbidden) or signing in again for no gain. A is chosen by launching with the
@@ -221,10 +222,14 @@ needs one answer in its pane".
 **To verify in the build, on scratch folders (no sign-in needed):**
 - `.claude.json` is created inside `CLAUDE_CONFIG_DIR`;
 - resume follows the `projects` link;
-- the CLI does not replace a linked `settings.json` with a real file by rename.
+- the CLI does not replace a linked `settings.json` or `CLAUDE.md` with a real file by rename;
+- `claude auth status` reports a `CLAUDE_CONFIG_DIR` set in settings `env` through
+  `configDirectory` (section 5).
 
-If the last one happens, the panel names the link that turned into a file ("settings.json in
-login 2 is no longer shared"). It never repairs the link by copying.
+The linked folders are safe from this, because a rename inside a linked folder lands in the real
+folder. Only the two linked files are exposed. The panel checks both, and names a link that
+turned into a file ("settings.json in login 2 is no longer shared", or the same for
+`CLAUDE.md`). It never repairs the link by copying.
 
 The docs' caveat about keeping Console sign-ins apart across folders applies to Console sign-ins
 without an API key. It does not apply to claude.ai logins, which is what both of these are.
@@ -240,8 +245,9 @@ The choice of folder can be beaten in two ways:
   settings.
 
 **How the build detects it:** per login, the panel runs `claude auth status` in that login's own
-launch environment, through exec, with the same `-u` or assignment words a launch would get. The
-CLI applies every settings layer before it answers. Its JSON carries `configDirectory` and
+launch environment, through exec, with the same `-u` or assignment words a launch would get. That
+the CLI applies every settings layer before it answers is **inferred**, not documented. The
+build's scratch-folder checks (section 4) confirm it. Its JSON carries `configDirectory` and
 `authMethod`. Only those two fields and the account's identity are read; the rest of the output
 is ignored and never logged.
 
@@ -362,40 +368,42 @@ says.
 
 This can happen now. It creates login B and changes nothing for login A or for running bots.
 
-> **Until the build ships, do NOT press Switch or Use on the Accounts panel's Claude card.**
-> Today's card still downloads the proxy's credential and writes it over login A's Keychain item.
-> That is exactly the copy this design removes.
+**Before anything:** do not press Switch or Use on the Accounts panel's Claude card until the build ships. Work in Terminal on the Mac's own desktop, not over ssh and not in an hc terminal. In the Mac's default browser, open claude.ai and make sure it is signed in to the second account, signing the other account out there if needed.
 
-Run these in **Terminal on the Mac itself**: the desktop session, not ssh and not an hc terminal,
-so the sign-in opens a browser on this Mac. First, in the Mac's default browser, open claude.ai
-and make sure it is signed in to **the second account**, the one this login is for. Sign out of
-the other account there if needed. The browser's account is the one the sign-in takes.
+**Step 1.** Make the folder and the links. Paste this as one block:
 
 ```sh
-# 1. The folder: absolute, no trailing slash. Check that the first line printed starts with /Users/.
-D="$HOME/.claude-2"
-printf '%s\n' "$D"
-if [ -e "$D" ]; then echo "$D already exists: stop here and check it"; else mkdir -m 700 "$D"; fi
-
-# 2. Links for what is shared (section 4). A missing target is skipped, and B keeps its own.
-for f in projects file-history settings.json CLAUDE.md agents commands; do
-  if [ -e "$HOME/.claude/$f" ]; then ln -s "$HOME/.claude/$f" "$D/$f"; fi
-done
-ls -la "$D"
-
-# 3. The sign-in. Pass the second account's address to --email; the browser finishes it.
-CLAUDE_CONFIG_DIR="$D" claude auth login --email '<the second account address>'
-
-# 4. Check both logins, read-only.
-CLAUDE_CONFIG_DIR="$D" claude auth status   # configDirectory is $D, authMethod is claude.ai
-claude auth status                          # login A, unchanged
+D="$HOME/.claude-2"; printf '%s\n' "$D"
+if [ -e "$D" ]; then echo "STOP: $D already exists"; else mkdir -m 700 "$D" && for f in projects file-history settings.json CLAUDE.md agents commands; do if [ -e "$HOME/.claude/$f" ]; then ln -s "$HOME/.claude/$f" "$D/$f"; else echo "skipped $f, not in ~/.claude"; fi; done; ls -la "$D"; fi
 ```
 
-Do not create the folder by copying `~/.claude` (`cp -R`, Finder, a backup restore): that would
-bring a `.credentials.json` if one is there, plus `skills/` and `plugins/`. Do not link
-`.claude.json`, `skills/` or `plugins/`. Do not set `CLAUDE_CONFIG_DIR` in a shell profile,
-`launchctl`, or settings. Do not write `claude-logins.json` by hand: the build's panel records the
-login with **Add login**. Until then, nothing launches on B.
+Check the output:
+- The first line must start with `/Users/` and must not end in `/`.
+- If it printed `STOP`, do not go on. Ask first.
+- Otherwise, the listing should show only links, and only to `~/.claude`.
+
+**Step 2.** Sign in. Paste this only after step 1 went well, with the second account's address in place of `SECOND_ACCOUNT_EMAIL`. Finish the sign-in in the browser.
+
+```sh
+CLAUDE_CONFIG_DIR="$HOME/.claude-2" claude auth login --email 'SECOND_ACCOUNT_EMAIL'
+```
+
+**Step 3.** Check both logins. Both commands are read-only.
+
+```sh
+CLAUDE_CONFIG_DIR="$HOME/.claude-2" claude auth status
+claude auth status
+```
+
+What to expect:
+- The first should show `configDirectory` as the new folder and `authMethod` as `claude.ai`.
+- The second is login A, unchanged.
+
+**Afterwards:**
+- Do not copy `~/.claude`.
+- Do not link `.claude.json`, `skills` or `plugins`.
+- Do not set `CLAUDE_CONFIG_DIR` in a shell profile.
+- Do not start Claude sessions under the second login until the build ships.
 
 ## Acceptance for the build (from #453)
 
