@@ -92,8 +92,8 @@ async function acpClaudeState(ctx) {
   }
   // The CLI's sign-in is cached by the ACP service until it refreshes. Ask on every pass that
   // finds the route otherwise ready, so a later sign-in moves the team at the next pass (the
-  // next start or a settings/adapter change) with no restart; not signed in is a route that
-  // must not take anyone yet.
+  // next start or a settings/adapter change) with no separate action; not signed in is a route
+  // that must not take anyone yet.
   if (agent?.signedIn !== true) {
     try {
       await acp.refresh?.()

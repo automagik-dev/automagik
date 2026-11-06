@@ -179,17 +179,18 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     try { routes = ctx.llm?.listProviders?.() ?? [] } catch {}
     let probed = 0
     for (const route of Array.isArray(routes) ? routes : []) {
+      // The cap is on routes examined, not candidates kept: one slow or model-less route must
+      // not make the chain walk every provider on the machine.
       if (probed >= 8) break
       if (!answers({ provider: route?.id, model: 'candidate' })) continue
+      probed += 1
       let models
       try { models = await ctx.llm?.listModels?.(route.id) } catch {}
       const first = Array.isArray(models)
         ? models.find(model => typeof model?.id === 'string' && model.id !== '')
         : undefined
       if (first === undefined) continue
-      const before = choices.length
       add({ provider: route.id, model: first.id })
-      if (choices.length > before) probed += 1
     }
     // The built-in fallback is last, whatever the person configured: an explicit side model
     // that cannot run must not remove it.
