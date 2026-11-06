@@ -165,3 +165,83 @@ test("a non-retired automation: no retired pill, its agent picked as before; a n
     assert.equal(view.entry().agent, "claude");
   }
 });
+
+// ---- the stub scheduler (#501, #498) ----
+// A stand-in herdr-automations in a temp home's ~/.local/bin: it records every argv and every
+// put's JSON, and keeps its entries in a fake automations.yaml (JSON, which YAML reads) in that
+// home. Its put replaces the whole entry, as v0.11.3's config.Put does (edit.go). Only the stub
+// and `sh` (the panel's stdin hand-over) really run; any other program, the real scheduler's
+// bare name included, is refused, so no test can reach a real config.
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+
+const STUB = String.raw`
+const fs = require("node:fs"), path = require("node:path");
+const home = process.env.STUB_HOME, args = process.argv.slice(2);
+const yaml = path.join(home, ".config/herdr-automations/automations.yaml");
+const read = () => JSON.parse(fs.readFileSync(yaml, "utf8"));
+const out = (x) => process.stdout.write(JSON.stringify(x));
+let input = "";
+if (args[0] === "put") input = fs.readFileSync(0, "utf8");
+fs.appendFileSync(path.join(home, "argv.jsonl"), JSON.stringify({ argv: args, input }) + "\n");
+if (args[0] === "version") process.stdout.write("0.11.3\n");
+else if (args[0] === "ls") out({ automations: read(), invalid: [], scheduler: { pid: 1 }, paused: false });
+else if (args[0] === "history") out([]);
+else if (args[0] === "put") {
+  const entry = JSON.parse(input), list = read();
+  const at = args[1] === "--original" ? list.findIndex((a) => a.name === args[2]) : -1;
+  if (!args.includes("--dry-run")) {
+    if (at >= 0) list[at] = entry; else list.push(entry);
+    fs.writeFileSync(yaml, JSON.stringify(list, null, 2));
+  }
+  out({ next: ["2026-11-09T09:00:00Z"] });
+} else { process.stderr.write("stub: not offered: " + args.join(" ")); process.exit(2); }
+`;
+
+function stubScheduler(automations) {
+  const dir = mkdtempSync(join(tmpdir(), "am-automations-"));
+  mkdirSync(join(dir, ".local/bin"), { recursive: true });
+  mkdirSync(join(dir, ".config/herdr-automations"), { recursive: true });
+  const bin = join(dir, ".local/bin/herdr-automations");
+  writeFileSync(bin, `#!${process.execPath}\n${STUB}`);
+  chmodSync(bin, 0o755);
+  const yaml = join(dir, ".config/herdr-automations/automations.yaml");
+  writeFileSync(yaml, JSON.stringify(automations, null, 2));
+  state.home = dir;
+  state.exec = (command, args) => new Promise((resolve) => {
+    if (command !== "sh" && command !== bin) { resolve({ code: 127, stdout: "", stderr: `cannot run ${command}: refused` }); return; }
+    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir } }, (err, stdout, stderr) =>
+      resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
+  });
+  const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  return {
+    dir, bin,
+    saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, entry: JSON.parse(c.input) })),
+    yaml: () => JSON.parse(readFileSync(yaml, "utf8")),
+    done: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+const handArgs = ["--sandbox", "workspace-write", "-c", "model_reasoning_effort=high"];
+
+test("an edit that changes only the prompt keeps hand-written agent_args exactly (#501)", async () => {
+  const s = stubScheduler([{ ...nightly("codex"), agent_args: handArgs }]);
+  try {
+    state.agents = [{ key: "codex", installed: true, run: ["codex"] }];
+    const { view, cx } = await panel();
+    assert.equal(view.bin, s.bin, "the stub, found in the temp home");
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    view.save(cx);
+    await cx.settle();
+    const saved = s.saves();
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0].argv, ["put", "--original", "nightly"]);
+    assert.equal(saved[0].entry.prompt, "p, said again");
+    assert.deepEqual(saved[0].entry.agent_args, handArgs, "sent to put as they were");
+    assert.deepEqual(s.yaml()[0].agent_args, handArgs, "and still in the config after the put");
+  } finally { s.done(); }
+});
