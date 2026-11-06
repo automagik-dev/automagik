@@ -49,17 +49,23 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   like any model. DSH keeps the Session, history and sidebar.
 - **DSH tool cards and approvals.** The agent's tool calls render as DSH tool cards. Every call
   the agent asks permission for goes through DSH's approval dialog under the Session's level
-  (what the agent's own settings already allow does not ask; see the Session's level below). How: the agent runs its own
-  tools, and each call it makes ends the model step with a call to `acp_tool`, a mirror tool
-  registered in that agent's scope only. DSH writes the `tool/call` and `tool/result` rows and
-  draws the card from the call's ACP kind (terminal, diff, generic). The mirror tool waits for
+  (what the agent's own settings already allow does not ask; see the Session's level below),
+  except `mcp__dsh__*` while `dshTools` is on: acp-dsh answers that ACP request itself and the
+  bridge raises the one DSH approval (Amendments, "One dialog per call"). How, for the agent's
+  own tools: each call it makes ends the model step with a call to `acp_tool`, a mirror tool
+  registered in that agent's scope only. DSH writes those `tool/call` and `tool/result` rows and
+  draws the card from the call's ACP kind (terminal, diff, generic); the mirror tool waits for
   the agent's call to finish and, when the agent asks permission, asks DSH's approval service and
-  hands the agent the answer. DSH's side requests on an ACP route (a title, a summary) are refused
+  hands the agent the answer. A DSH tool call is not a mirror call: the bridge is the MCP server,
+  so the bridge writes the `tool/call`/`tool/result` rows and DSH draws the single card from
+  them; the call never reaches the mirror, and acp-dsh draws no card for that ACP call. acp-dsh
+  matches it by the structured MCP tool name (`mcp__dsh__<tool>`, the name Claude Code sends),
+  never by the display title. DSH's side requests on an ACP route (a title, a summary) are refused
   at the `llm/stream` waterfall, so they never reach the agent as prompts.
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
   (Amended, 2026-11-06: that bridge carries the Session's whole preset tool set, the team's tools
-  included; see Amendments.)
+  included; it ships behind `dshTools`, off unless set; see Amendments.)
 - **The person's own CLI, the newest adapter.** (Amended, owner decision D17.) An agent is offered
   only when its CLI is installed (`claude`, `codex`, found on PATH or where their installers put
   them); it runs that CLI, which the person signs in to and which updates itself. Between DSH and
@@ -128,9 +134,9 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
 - An ACP agent runs the same DSH tool set as a vanilla Session, built from the Session's preset,
   over a per-session stdio MCP bridge; every DSH tool call is approved by DSH, whatever the
   agent's own rules say; the agent's built-in tools are off where its adapter has a switch
-  (owner, 2026-11-06, #516). Live switching carries history each way, redacted, with a visible
-  provider-boundary notice, behind a setting (owner, 2026-11-06, #516). The council behind this:
-  [dsh-022-council.md](../research/dsh-022-council.md).
+  (owner, 2026-11-06, #516). Both ship behind `dshTools`, off unless set; live switching carries
+  history each way, redacted, with a visible provider-boundary notice (owner, 2026-11-06, #516).
+  The council behind this: [dsh-022-council.md](../research/dsh-022-council.md).
 
 ### Per-teammate models (status note)
 
@@ -157,8 +163,11 @@ patch is removed in the release whose DSH carries the change.
   that session's `session/new` `mcpServers` as `{ name, command, args, env }`, `env` a list of
   `{ name, value }`. The bridge itself never listens on a port. It reaches DSH over a per-session
   back-channel to acp-dsh, authenticated with `DSH_BRIDGE_CREDENTIAL`: a per-session, unguessable
-  value minted by acp-dsh at spawn and passed only in that bridge's `env`; DSH refuses a request
-  without it, with another session's value, or from another process. It offers the Session's
+  value minted by acp-dsh at spawn and passed only in that bridge's `env`. It binds a request to
+  its Session and is revoked when that bridge exits; a fork mints a new one. It is not a boundary
+  against same-user code: third-party code running as the person can read the bridge's
+  environment. What holds regardless is server-side: the credential carries no approval, and
+  every DSH tool call enters DSH's approval service keyed to the Session. It offers the Session's
   preset's tools, filtered by the Session's level, and answers every DSH tool call through DSH's
   approval service. Its failure is the turn's: a bridge the adapter skipped (a same-named server
   in the person's Codex config) fails the turn instead of running with half a tool set.
@@ -186,10 +195,14 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
   2026-11-06 — the adapter spawns the bridge with the session's own arguments, the bridge holds
   no listen socket (no port, so no address another process on the machine can reach) and dies
   with the adapter. "Nothing on the machine can address it" is true of this leg only: the
-  bridge→DSH leg is a per-session back-channel that has an address by construction, and the
-  per-session credential `DSH_BRIDGE_CREDENTIAL` is what authenticates it (Amendments, "The
-  bridge"). The stdio leg's transport is spiked; the credential-bearing back-channel is planned,
-  not proven. (`dshTools` off.) No bridge exists, so neither leg does.
+  bridge→DSH leg is a per-session back-channel that has an address by construction. Its
+  credential `DSH_BRIDGE_CREDENTIAL` binds a request to its Session and is revoked with the
+  bridge; it is not a boundary against third-party code running as the person, which can read the
+  bridge's environment (Amendments, "The bridge"). The boundary that does not depend on it is
+  server-side: the credential cannot approve, and DSH's approval service owns every DSH tool call
+  for the Session. The stdio leg's transport is spiked; the credential-bearing back-channel is
+  planned, not proven; delivery 6 probes both refusals (Deliveries, 6). (`dshTools` off.) No
+  bridge exists, so neither leg does.
 - **Credentials.** Stored with mode 0600 or in the OS keychain. Never returned to the client.
 - **Supply chain (amended, D17).** Adapters are not pinned. What that costs: a second publisher,
   the `@agentclientprotocol` npm organisation, joins a boundary that already holds Anthropic's and
@@ -221,10 +234,12 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    after approval (`apps/acp-dsh/dev/dsh-check.mjs --agent claude|codex` runs the same on a real
    DSH, headless). Rollback: the next
    release drops them; the Claude Code plugin route is untouched.
-4. **Bots' tools over MCP.** Lane: plugin. Check: a Bot on `acp-claude` posts to its group
-   through a team tool, and a tool above its level is not offered. With it, once per team, a Bot
-   that ran on the Claude Code plugin (`claudeCodeModel`) and is still on the pi-ai model it was
-   moved to goes to `acp-claude`, only where that route lists its model (adapter installed).
+4. **Bots' tools over MCP.** The bridge's first slice: the team's tools reach the agent over the
+   same per-session bridge delivery 6 completes. Lane: plugin, behind `dshTools`, off unless
+   set. Check: with the setting on, a Bot on `acp-claude` posts to its group through a team tool,
+   and a tool above its level is not offered. With it, once per team, a Bot that ran on the
+   Claude Code plugin (`claudeCodeModel`) and is still on the pi-ai model it was moved to goes to
+   `acp-claude`, only where that route lists its model (adapter installed) and `dshTools` is on.
    Rollback: revert; the Bot is chat-only on ACP.
 5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
@@ -237,16 +252,19 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    tool call the agent makes, an always-allow `mcp__*` rule in the person's Claude Code settings
    cannot skip it, exactly one DSH dialog appears for that call in Manual, a tool above the level
    is not offered, and the agent's own tools are absent — probed with a **shell** tool, not only
-   a file write, because `tools: []` removes Bash as well; on `acp-codex` the same approval holds
-   for DSH tools, the old bridge is closed after `session/fork`, a preset change refreshes the
-   offered DSH tools by that fork, and the turn says the agent's own tools stay. The bridge
-   credential is probed too: a second process without `DSH_BRIDGE_CREDENTIAL` cannot reach
-   `approval/request` or a tool for the Session, and one Session's credential is refused for
-   another. Fail closed on adapter drift: if the adapter presents built-in tools that should be
-   off, or the bridge is missing or unconfirmed, the turn fails instead of running with the wrong
-   tool set. Every spike fact is tied to adapter versions that update themselves (D17), so the
-   check runs at delivery 6's start, not only in CI. Rollback: turn the setting off (the
-   2026-11-03 behaviour).
+   a file write, because `tools: []` also removes Bash in the adapter (read from its bundle); on
+   `acp-codex` the same approval holds for DSH tools, the source session is `session/close`d after
+   `session/fork`, a preset change refreshes the offered DSH tools by that fork, and the turn says
+   the agent's own tools stay. The bridge credential is probed too: a request without
+   `DSH_BRIDGE_CREDENTIAL` is refused, one Session's credential is refused for another, a fork
+   revokes the old one, and a credential alone cannot approve (the approval is server-side). The
+   runtime detector for adapter drift is the plugin's `acp_tool` handler and its bridge
+   handshake: with `dshTools` on and `acp-claude`, a call that is a built-in file or shell tool
+   (the adapter should have removed them) fails the turn with `acp_toolset_drift`, and a bridge
+   that never completes `initialize`+`tools/list` over the back-channel fails the turn with
+   `acp_bridge_missing` before the prompt runs. Every spike fact is tied to adapter versions that
+   update themselves (D17), so both checks run at delivery 6's start, not only in CI. Rollback:
+   turn the setting off (the 2026-11-03 behaviour).
 7. **Live switching** (amended, 2026-11-06). A Session moves between providers with its history,
    each way: the transcript is replayed (redacted) into the target, and what the agent streams is
    written back into the Session's log. Lane: plugin, behind `dshTools`. Check: a Session moves
@@ -300,10 +318,14 @@ own arguments, named `dsh`. Two legs, one credential story:
   DSH's, so it cannot inherit a pipe from DSH. It reaches DSH over a per-session back-channel to
   acp-dsh, authenticated with `DSH_BRIDGE_CREDENTIAL`: a per-session, unguessable value minted by
   acp-dsh at spawn and passed only in that bridge's `session/new` `env`. DSH accepts a request
-  only with that value, only from the session's own bridge process (peer check), and only for
-  that session; it refuses any other. This leg has an address by construction, and the
-  credential is what stops another process: delivery 6's check proves both (Deliveries, 6). The
-  spike's server was an echo with no DSH link, so no part of this leg ran.
+  only with the value minted for that Session; it refuses a missing or another Session's value.
+  The credential is revoked when that bridge exits, and a fork mints a new one. It is not a
+  boundary against same-user code: a process running as the person can read the bridge's
+  environment and reuse the value. The boundary that does not depend on it is server-side: the
+  credential has no approval, every DSH tool call enters DSH's approval service under the
+  Session's level, and a call waits for the person exactly as DSH's own tools do. Delivery 6
+  probes the refusal without the credential, the revocation on fork, and that a credential alone
+  cannot approve. The spike's server was an echo with no DSH link, so no part of this leg ran.
 
 Each call arrives with the ACP session it belongs to; the bridge resolves it to DSH's Session and
 refuses any other. The name is a contract, because a Claude Code allow rule reads `mcp__dsh__*`.
@@ -326,7 +348,8 @@ double it. In Manual the spike shows Claude Code asking `session/request_permiss
 `allow-once` and raises no DSH dialog from it — the bridge's `approval/request` is the one dialog
 the person sees. For any other `mcp__` tool (a person's own server), the agent's own mode and
 rules decide whether the request exists at all, and acp-dsh forwards it to DSH's dialog as it
-does today; the bridge never sees that call, so there is one dialog there too.
+does today (read from `acp.js`); the bridge never sees that call, so there is one dialog there
+too.
 
 **The agent's own tools.** `acp-claude`: off, by `session/new` `_meta.disableBuiltInTools: true`
 (the adapter's legacy shorthand for `_meta.claudeCode.options.tools: []`), which the spike shows
@@ -347,14 +370,16 @@ ACP request above).
 (`notifications/tools/list_changed`) and serves the new list. The rule is ordering, not a settle
 delay: on this host `session/new` took ~3.55 s, and a `list_changed` that arrived before
 `session/new` answered (2 s and 3 s after server start) was dropped, while one after the answer
-(4 s) was re-listed. The tools must be listed before `session/new` answers; the bridge therefore
-holds its first announcement until `session/new` has answered, and if no `tools/list` follows it
-re-announces on the next turn. `acp-codex` ignores `list_changed` and also ignores a new server
-list on `session/resume`; there the plugin forks the ACP session (`session/fork`), which the
-spike shows returns a new session id and starts the new bridge. The fork closes the old ACP
-session and its bridge, so a Session never holds two bridges. That the fork continues the same
-conversation is not evidenced by the spike; delivery 6 must prove it before the fork counts as a
-refresh.
+(4 s) was re-listed. The tools must be listed before `session/new` answers; acp-dsh is the side
+that sees that answer, so acp-dsh tells the bridge over the back-channel, and the bridge holds its
+first announcement until then; if no `tools/list` follows, it re-announces on the next turn.
+`session/resume` was not spiked; treat it as the same ordering until delivery 6 confirms it.
+`acp-codex` ignores `list_changed` and also ignores a new server list on `session/resume`; there
+the plugin forks the ACP session (`session/fork`), which the spike shows returns a new session id
+and starts the new bridge. The spike did not show the fork closing the source session, so the
+plugin closes it (`session/close`) and its bridge; delivery 6 proves the close and that a Session
+never holds two bridges. That the fork continues the same conversation is not evidenced by the
+spike; delivery 6 must prove it before the fork counts as a refresh.
 
 **Live switching.** DSH keeps the record. A Session moving to an agent has its transcript replayed
 into `session/prompt` content, in order; moving back, what the agent streamed is written into the

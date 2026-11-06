@@ -45,7 +45,7 @@ and sse carry `{ type: "http" | "sse", url, headers }` and codex-acp also accept
 started by the adapter with their own env; A's call returned `echo:alpha:A`, B's `echo:beta:B`,
 and neither session's agent saw the other's tool.
 
-**`tools/list_changed`: yes, once `session/new` has answered.**
+**`tools/list_changed`: yes, once `session/new` has answered (inferred, not instrumented).**
 
 `session/new` took 3.55 s in every run here (3550 ms); the MCP handshake finished ~9 ms after the
 server started, so the first `tools/list` was already in. The boundary is the `session/new`
@@ -65,6 +65,10 @@ The 2 s and 3 s announcements landed before the answer and were dropped; the 4 s
 it and was served. The ~4 s figure is this host's `session/new` round-trip, not a timer in the
 adapter.
 
+That boundary is inferred from arrival times, not instrumented inside the adapter: `session/new`
+took 3550 ms in every run, so an announcement before ~3.55 s is before the answer. `session/resume`
+with `list_changed` was not run; the same ordering there is unverified.
+
 At 5 s the late tool was then called and returned `late-ok:A` in the same session
 (`tools/call {"name":"spike_late"}`). The adapter's client sends a `server/discover` probe
 (MCP draft `2026-07-28`) before `initialize`; a server that answers `-32601` is served the
@@ -81,8 +85,8 @@ to a request to write a file, and no file appeared. ToolSearch stayed available,
 needs to load deferred MCP tools. The full options live at
 `_meta.claudeCode.options` (`tools`, `allowedTools`, `disallowedTools`, …); changing one of them
 on resume is in the adapter's `OPTION_REBUILDS_SESSION` set, so it tears the session down and
-recreates it. Only `disableBuiltInTools` was exercised in this spike; every other option name in
-that list is unverified here.
+recreates it (read from the adapter bundle, not exercised). Only `disableBuiltInTools` was
+exercised in this spike; every other option name in that list is unverified here.
 
 **Approval is the agent's, and its mode decides.** Started as-is, the session came up in Claude
 Code's `auto` mode (`modes.currentModeId: "auto"`) and the MCP tool call ran with **no**
@@ -104,7 +108,8 @@ server spike-A in this session".
 **Refresh with a new server list: fork only.** `session/resume` with a different `mcpServers`
 array returned the session but started **no** new MCP server (the thread keeps its config).
 `session/fork` with a different array returned a new session id and started the new server
-(`initialize` → `tools/list`).
+(`initialize` → `tools/list`). The source session stayed open; whether a fork closes it was not
+exercised.
 
 **The agent's own tools cannot be turned off.** No `tools`, `allowedTools` or
 `disableBuiltInTools` exists in the adapter's session handling (searched its bundle); its only
@@ -134,8 +139,10 @@ from the adapter bundle, not exercised.
   `session/new` has answered (before that answer the notification is dropped; the ~4 s in the
   table is that host's round-trip) and honours a new list on resume; Codex re-lists never and
   ignores a new list on resume, so a preset or level change on `acp-codex` needs `session/fork`
-  with the new server set. The fork returns a new session id and starts the new server, closing
-  the old bridge; that it continues the same conversation was not exercised (unverified).
+  with the new server set. The fork returns a new session id and starts the new server; the spike
+  did not exercise whether it closes the source session or its bridge (unverified), so the plugin
+  must `session/close` it. That it continues the same conversation was not exercised either
+  (unverified).
 - Turning the agent's built-in tools off is possible on `acp-claude` and not on `acp-codex`. On
   Codex the "one tool set" is therefore a DSH-tools-plus-Codex-tools session, and the approval
   path is still DSH's for DSH's tools only.
