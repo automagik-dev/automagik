@@ -354,6 +354,8 @@ export function restartAnswer(r) {
     return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
   }
   if (r?.code === 0 && r.out?.running) return { refused: `It is already running in ${r.out.running}.`, forceable: false, freshable: false };
+  // Not run at all (launch.js machineCli, #444): neither --force nor --fresh would change that.
+  if (r?.short) return { refused: r.err, forceable: false, freshable: false };
   // The CLI's refusal is its last stderr line (warnings come before it).
   const refused = String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
   return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };

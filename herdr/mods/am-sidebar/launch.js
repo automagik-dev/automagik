@@ -17,15 +17,65 @@ const cliPath = (dir) => `${dir.replace(/\/+$/, "")}/mods/${PACK_NAME}/bin/autom
  * Runs `automagik-herdr <args> --json` with this app home: { code, out (its JSON, or null),
  * err (stderr, the `automagik-herdr: ` prefixes dropped) }. Never rejects.
  */
-export async function runCli(args) {
+export async function runCli(args, { timeout } = {}) {
   const dir = appHome();
   let r;
-  try { r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"]); } catch (e) {
+  try {
+    r = await exec("env", [`HERDR_APP_HOME=${dir}`, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"], ...(timeout ? [{ timeout }] : []));
+  } catch (e) {
     return { code: 127, out: null, err: String(e?.message ?? e) };
   }
   let out = null;
   try { out = JSON.parse(r.stdout); } catch { out = null; }
   return { code: r.code, out, err: String(r.stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+}
+
+// ---- Start and Restart on a linked machine (#444): Herdr's exec limit ----
+//
+// Herdr ends a mod's exec at 30 s unless given a `timeout` (its cap 10 min), and its kill reaches
+// the CLI itself (run.sh execs node). Ended after `hc run`, a start leaves a pane with no attach
+// row, and a restart leaves the new pane beside the old one, both able to resume one session.
+// The CLI's own worst case there, every call at its own bound (15 s for each hc, herdr-app or
+// remote program; 20 s for each of agentThere's three questions; 3 s for each lock wait), with
+// git answering on the machine and at most 8 ledger rows, helpers and other panes there to check:
+// a start 18 x 15 s + 71.2 s = 341.2 s (agentThere 60 s, closeSpare's 5 s wait), plus 60 s for
+// each other space of that machine Herdr shows; a restart 25 x 15 s + 186.5 s = 561.5 s (two
+// seats and two agentUp waits of 30 s when codex can't resume its thread, #413). More rows,
+// helpers or spaces, or a project outside git deep in the tree there, can still pass the cap.
+export const MACHINE_WORST_MS = Object.freeze({ start: 341_200, restart: 561_500 });
+export const MACHINE_EXEC_MS = 600_000;
+
+/**
+ * Whether the running Herdr honours exec's `timeout` (am-quota's probe): one that does refuses
+ * a timeout that isn't a number, before it runs anything; one that doesn't runs the harmless
+ * program. Any other answer counts as not, the safe side. Asked on every press, never kept: an
+ * answer that couldn't be read then is asked again next time.
+ */
+export async function honoursTimeout() {
+  try {
+    await exec("true", [], { timeout: "probe" });
+    return false;
+  } catch (e) {
+    return /timeout must be/.test(String(e?.message ?? e));
+  }
+}
+
+const shellWord = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${String(w).replace(/'/g, "'\\''")}'`);
+
+/**
+ * runCli for `start` or `restart` with --machine (`what`): with MACHINE_EXEC_MS on a Herdr that
+ * honours it. On one that doesn't, or can't say, nothing is run: { code: 1, out: null, err,
+ * short: true }, err naming why and the same command for a terminal, where no limit applies.
+ */
+export async function machineCli(args, what) {
+  if (await honoursTimeout()) return runCli(args, { timeout: MACHINE_EXEC_MS });
+  const at = args.indexOf("--machine");
+  const machine = at >= 0 ? args[at + 1] : "that machine";
+  const left = what === "restart" ? "the new pane running beside the old one, both on one session" : "a pane with no attach row";
+  return { code: 1, out: null, short: true,
+    err: `This Herdr ends the sidebar's programs at 30 s (it takes no longer exec timeout, or didn't say), and a ${what} on ${machine} `
+      + `can take minutes when it answers slowly: ended after its pane started, it would leave ${left}. Nothing was ${what}ed. `
+      + `${what === "restart" ? "Restart" : "Start"} it from a terminal: automagik-herdr ${args.map(shellWord).join(" ")}` };
 }
 
 const refusedBy = (r, what) => ({ refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` });
@@ -195,7 +245,7 @@ export async function startBot(projectKey, botId, place = {}, machine = null) {
 
 // Start on a linked machine (automagik#206): the CLI finds the window place there itself.
 async function startOn(projectKey, botId, machine) {
-  const r = await runCli(["start", botId, "--project", projectKey, "--machine", machine]);
+  const r = await machineCli(["start", botId, "--project", projectKey, "--machine", machine], "start");
   if (r.code !== 0) return refusedBy(r, "start");
   if (r.out?.running) {
     run("agent.focus", { terminal: `${machine}/${r.out.running}` });

@@ -233,6 +233,15 @@ and your `programs.json`. What happened isn't shown for those bots yet, and a Cl
 starts without its per-turn briefing until automagik-herdr is installed on that machine. A
 machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
 
+Start and Restart there can take minutes when the machine answers slowly (every question to it
+has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so
+the sidebar runs them with Herdr's longest exec timeout, 10 min. A Herdr that doesn't take an exec
+timeout ends a mod's programs at 30 s, which could land after the new pane started: a pane with no
+attach row, or after a restart two panes on one session. On such a Herdr, or one that can't say,
+the sidebar starts nothing and names the command to run from a terminal instead
+(`automagik-herdr start <bot> --project <folder> --machine <machine>`, or `restart`), where
+no limit applies.
+
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
 switches it once and never again. The theme files it copies into Herdr's `themes/` folder are
@@ -298,7 +307,10 @@ automagik-herdr update [--check | --rollback]
   the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. When the PATH hc runs programs
   with already finds the agent, that PATH goes first, so a working machine keeps the same agent and
   interpreter; otherwise the login shell's goes first. The agent and the interpreter on
-  its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A login shell
+  its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A broken
+  copy on the PATH hc runs programs with (one whose interpreter isn't there) still goes first and
+  is refused by name, even when the login shell's PATH holds a working copy: remove or fix that
+  copy. A login shell
   that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
   text. A session id the pane carries is resumed by id
   (`--resume`); with none, `restart` refuses unless `--force`, as the agent's own "latest" may be a
