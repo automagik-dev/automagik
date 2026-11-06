@@ -237,6 +237,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // `tools/list`. A missing adapter, a bridge that does not answer, or an empty list fails
   // closed, so the Bot team never moves a Bot onto a route whose bridge cannot work.
   const bridgeProbes = new Map()
+  const bridgeRetryTimers = new Set()
   let probeSequence = 0
   function bridgeList(record) {
     return new Promise((resolve, reject) => {
@@ -326,16 +327,33 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       (ok) => {
         entry.ok = ok === true
         entry.at = Date.now()
+        if (!entry.ok) scheduleBridgeRetry(key)
         return entry.ok
       },
       () => {
         entry.ok = false
         entry.at = Date.now()
+        scheduleBridgeRetry(key)
         return false
       },
     )
     bridgeProbes.set(key, entry)
     return { on: true, probesPass: await entry.promise }
+  }
+
+  // A failure tries once more after the backoff, without waiting for an event: a success is
+  // announced so the Bot team's move runs now, not at the next restart.
+  function scheduleBridgeRetry(key) {
+    const timer = setTimeout(() => {
+      bridgeRetryTimers.delete(timer)
+      if (bridgeProbes.get(key)?.ok !== false) return
+      bridgeProbes.delete(key)
+      void bridgeStatus()
+        .then((status) => { if (status.probesPass) ctx.emit?.('acp-agents/bridge-ready') })
+        .catch(() => {})
+    }, PROBE_RETRY_MS)
+    timer.unref?.()
+    bridgeRetryTimers.add(timer)
   }
 
   const service = {
@@ -393,6 +411,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     disposed = true
     clearTimeout(first)
     clearInterval(daily)
+    for (const timer of bridgeRetryTimers) clearTimeout(timer)
+    bridgeRetryTimers.clear()
     // A running adapter install would otherwise outlive DSH and keep writing into its home.
     store.dispose?.()
     adapter.dispose()

@@ -1,9 +1,9 @@
 // Claude on ACP (RFC 0003, delivery 4). The Claude Code plugin left Automagik and its Bots
 // moved once to pi-ai's `anthropic` route (store.js, `claudeCodeMoved`). With dshTools on,
 // those Bots move on to `acp-claude`, once per team (`claudeAcpMoved`), when the route can
-// actually take them: the ACP plugin's per-session bridge is on and this build's
-// delivery-4/6 probes pass, the adapter is installed, and the route lists the model. A Bot
-// the person has changed since (or whose model the route does not list) is left alone.
+// actually take them: the ACP plugin's per-session bridge is on and a live probe on this
+// machine passes, the adapter is installed, and the route lists the model. A Bot the person
+// has changed since (or whose model the route does not list) is left alone.
 //
 // `acpAgents.bridge()` runs a live probe on this machine: a fresh per-session credential, the
 // bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
@@ -142,7 +142,7 @@ export function install(rt) {
   // At start, and again when the ACP route or its settings change: an adapter installed
   // later, or dshTools turned on, still moves a team that has not moved.
   void rt.load().then(migrate)
-  for (const event of ['llm/adapters-updated', 'settings/document-updated', 'loader/volatile-update']) {
+  for (const event of ['llm/adapters-updated', 'settings/document-updated', 'loader/volatile-update', 'acp-agents/bridge-ready']) {
     ctx.on?.(event, () => { void migrate() })
   }
 }
