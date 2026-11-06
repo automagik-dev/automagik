@@ -7,6 +7,19 @@
   config:
     searchProvider: auto
     fetchProvider: http
+# No local web fetch. DSH's HTTP provider has no private-address guard, and the Bot team reads
+# text from external channels: with web fetch on, a prompt injection reaches this machine's
+# localhost services. DSH exposes no "public addresses only" switch, so the provider is off
+# for every Session of this profile; web search (above), the browser tools and the app's own
+# file tools are unaffected. Omni's channel profiles turn it off for the same reason.
+- id: web-fetch-http
+  disabled: true
+# Read before write stays on: dsh 0.2.2 ships the policy row disabled, so write would overwrite
+# and edit would replace a file the model never read. apply_patch stays off (dsh 0.2.2-rc.1
+# already disables it in this profile's presets): it applies hunks on context alone, bypassing
+# the read this row requires.
+- id: fs-observation-policy
+  disabled: false
 # The Omni octopus opens this app (@automagik/welcome-dsh: Welcome, Connect Omni, Connect
 # AI), so DSH's own welcome notice and credential step stay off here; DeepSeek's sign-in is
 # one of Connect AI's tiles. DSH compares the notice version exactly: it stays a quoted string.

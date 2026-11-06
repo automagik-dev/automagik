@@ -7,8 +7,8 @@ import assert from 'node:assert/strict'
 import { omniKeys } from '../scripts/copy-check.mjs'
 import { loadDictionaries } from '../scripts/dictionaries.mjs'
 
-// What the pack translates today: 1283 keys, 48 left in English on purpose (the brand and
-// code-like strings the README lists). A release may not drop far below that.
+// What the pack translates today: 1450 keys, 1400 translated and 50 left in English on purpose
+// (the brand and code-like strings the README lists). A release may not drop far below that.
 export const MIN_TRANSLATED = 0.95
 
 test('every omni-ui key the Bot team renders has its pt-BR text', async () => {
