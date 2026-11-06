@@ -44,6 +44,7 @@ import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, write
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
+import { DSH_TUI, doctorDshTui, installDshTui, uninstallDshTui } from "../dshTui.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -1063,6 +1064,14 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 it records your yes (--local: this computer only) for updates
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
+  dsh-tui install | update      DSH as a Herdr agent: the pinned dsh-TUI ${DSH_TUI.version} in its
+                                own \`tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
+                                built-in DSH entry finds it), and dsh-TUI's first-run guide
+                                marked done. No dsh on PATH: one honest line, skipped.
+  dsh-tui uninstall             dsh-TUI out of the tui profile and the shim away (sessions,
+                                dsh-TUI's state and the profile stay)
+  dsh-tui doctor                whether dsh, the tui profile and the shim are there, and
+                                whether the profile is the pinned one (read-only)
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
                                 that linked machine's doc. Exit 0 with the JSON; 3: no such doc
@@ -4173,6 +4182,31 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
 }
 
 /**
+ * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `tui`
+ * profile, through the pinned dsh-TUI and the `dsh-tui` shim. `update` is the same idempotent
+ * install (a newer pin in a later pack replaces it). Local only: the profile is this computer's.
+ */
+export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
+  if (rest.length) throw new CliError(`dsh-tui ${verb ?? ""} takes no arguments (got ${rest.join(" ")}).`, 2);
+  if (!["install", "update", "uninstall", "doctor"].includes(verb)) throw new CliError(`dsh-tui needs install, update, uninstall or doctor${verb ? `, not "${verb}"` : ""}.`, 2);
+  const env = io.env ?? process.env;
+  if (verb === "doctor") {
+    const r = doctorDshTui({ env });
+    exitAfter.code = r.code;
+    return opts.json ? r : r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
+  }
+  // A test's own publish time: the registry is never reached for a file:// run or a unit test.
+  const published = Object.hasOwn(env, "AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED")
+    ? (env.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED || null) : undefined;
+  const r = verb === "uninstall"
+    ? uninstallDshTui({ env, exec: io.exec })
+    : await installDshTui({ env, exec: io.exec, ...(published === undefined ? {} : { publishedAt: published }) });
+  exitAfter.code = r.status === "failed" ? 1 : 0;
+  const lines = r.lines?.length ? r.lines : [r.detail];
+  return opts.json ? r : lines.join("\n");
+}
+
+/**
  * After `update` installed a pack: that pack's own `meter install` (its release.js may pin a newer
  * usagemeter than this running CLI's), as install.sh's scope says. Lines to print; never throws.
  */
@@ -4229,7 +4263,7 @@ export async function cmdLaunchPath(_opts, [program, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc, "launch-path": cmdLaunchPath };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

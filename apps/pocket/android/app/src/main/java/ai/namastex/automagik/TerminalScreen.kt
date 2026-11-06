@@ -77,6 +77,13 @@ import kotlin.math.roundToInt
     var message by remember(ref) { mutableStateOf("") }
     var showComposer by remember(ref) { mutableStateOf(false) }
     var controls by remember(ref) { mutableStateOf(false) }
+    // The Chat tab (RFC 0015 delivery 5): the same agent as a chat, over the terminal's place; Show terminal comes back.
+    val chatOffered = !state.demo && Chat.offered(terminal)
+    var chatView by remember(ref) { mutableStateOf(false) }
+    if (chatView && chatOffered) {
+        ChatPane(vm, ref, onShowTerminal = { chatView = false }, onBack = vm::backToList, modifier = Modifier.fillMaxSize().displayCutoutPadding())
+        return
+    }
     // Full screen, scrolling back slides the space's tabs in over the terminal, like a phone browser's toolbar.
     var tabsShown by remember(ref) { mutableStateOf(false) }
     var lastScroll by remember(ref) { mutableLongStateOf(0L) }
@@ -114,6 +121,7 @@ import kotlin.math.roundToInt
             }
             if (!fullscreen || controls) Row(Modifier.fillMaxWidth().background(Chrome).padding(horizontal = 10.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.terminalStatus, color = if (state.terminalStatus.startsWith("Live")) Muted else Accent, fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (chatOffered) TextButton(onClick = { controls = false; showComposer = false; chatView = true }) { Text("Chat", fontSize = 12.sp) }
                 IconButton(onClick = { showComposer = !showComposer; controls = false }) { Icon(Icons.Outlined.ChatBubbleOutline, "Toggle message composer", Modifier.size(20.dp), tint = if (showComposer) Accent else Muted) }
                 IconButton(onClick = { controls = false; if (state.nativeDisplay) showComposer = true else focusTerminal?.invoke() }) { Icon(Icons.Outlined.Keyboard, "Open terminal keyboard", Modifier.size(22.dp), tint = Accent) }
             }
@@ -133,6 +141,7 @@ import kotlin.math.roundToInt
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = vm::backToList) { Icon(Icons.Outlined.ArrowBack, "Back to agents") }
                 Text(terminal?.title ?: ref.address, modifier = Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (chatOffered) TextButton(onClick = { controls = false; showComposer = false; chatView = true }) { Text("Chat") }
                 IconButton(onClick = { controls = false; vm.setTerminalFullscreen(false) }) { Icon(Icons.Outlined.FullscreenExit, "Exit full screen") }
                 IconButton(onClick = { controls = false }) { Icon(Icons.Outlined.Close, "Hide terminal controls") }
             }

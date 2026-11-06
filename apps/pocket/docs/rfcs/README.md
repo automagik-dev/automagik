@@ -2,7 +2,7 @@
 title: "RFCs"
 type: moc
 created: 2026-11-01
-updated: 2026-11-03
+updated: 2026-11-06
 tags: [moc, rfcs]
 ---
 # RFCs
@@ -30,5 +30,12 @@ Proposals for changes that others rely on. How to write one: [RFC 0000](0000-rfc
 | [0005](0005-usage-meter.md) | Usage meter: token usage per machine as ae/1 rows, a summary doc in herdr-core | Draft | — |
 | [0007](0007-watch-after-reboot.md) | Watch in background comes back after a phone restart (RECEIVE_BOOT_COMPLETED) | Accepted | automagik-dev/automagik-pocket#38 |
 | [0008](0008-drop-ssh.md) | Drop SSH: Pocket Link (QR pairing) is the only way to connect | Accepted | automagik-dev/automagik-pocket#46 |
+
+Monorepo RFCs that change Pocket's contract, privacy or permissions (they live in the monorepo's
+[docs/rfcs](../../../../docs/rfcs/)):
+
+| RFC | Title | Status | Pocket's part |
+|---|---|---|---|
+| [0015](../../../../docs/rfcs/0015-live-chat-projection.md) | Live chat projection: an agent terminal as a chat, Pocket Link's chat route | Accepted | Delivery 5: the Chat tab; transcripts reach the phone, in memory only ([privacy](../privacy.md)) |
 
 Back to the [docs home](../_index.md).

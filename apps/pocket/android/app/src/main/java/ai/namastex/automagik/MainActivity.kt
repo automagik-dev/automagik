@@ -121,6 +121,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     LaunchedEffect(pairDesktop) { if (pairDesktop) vm.cancelRepair() }
     var editHost by remember { mutableStateOf<HostProfile?>(null) }
     var newTerminal by remember { mutableStateOf(false) }
+    /** The machine whose Automagik Bot chats are listed (read only). */
+    var botChats by remember { mutableStateOf<String?>(null) }
     val selected = state.selected
     val space = state.space?.let { (host, id) -> state.machines[host]?.spaces?.find { it.id == id } }
     val terminal = selected?.let { state.machines[it.hostId]?.terminals?.find { t -> t.address == it.address } }
@@ -223,9 +225,11 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             val rows = remember(sidebar, state.folded) { Sidebar.rows(sidebar, vm.programs, state.folded) }
             when {
+                // An Automagik Bot's chat has no terminal: the chat alone, read only.
+                selected != null && Chat.readOnly(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace)
                 space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
-                state.screen == Nav.MACHINES -> MachinesScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onEdit = { editHost = it }, onDisconnect = { vm.disconnect(it) }, onRemove = vm::removeHost)
+                state.screen == Nav.MACHINES -> MachinesScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onEdit = { editHost = it }, onDisconnect = { vm.disconnect(it) }, onRemove = vm::removeHost, onBotChats = { botChats = it.id })
                 state.screen == Nav.SETTINGS -> SettingsScreen(state, vm)
                 state.screen == Nav.PROJECTS && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
                 state.screen == Nav.PROJECTS -> ProjectsScreen(state, vm, pulse, rows, spacesTree) { spacesTree = it }
@@ -241,6 +245,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
     state.offeredPairing?.let { link -> ConfirmPairDialog(link, onPair = { vm.pair(link) }, onCancel = vm::dismissOfferedPairing) }
     editHost?.takeIf { it.paired }?.let { host -> PairedHostDialog(host, onDismiss = { editHost = null }, onSave = { vm.saveHost(it); editHost = null }) }
+    botChats?.let { id -> BotChatsDialog(vm, id) { botChats = null } }
     if (newTerminal) NewTerminalDialog(state, onDismiss = { newTerminal = false }) { host, cwd, command -> vm.startTerminal(host, cwd, command); newTerminal = false }
 }
 

@@ -39,6 +39,7 @@ import {
 } from "./release.js";
 import { change, removePath, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
+import { dshTuiPresence } from "./dshTui.mjs";
 
 export const NODE_MIN = "22.7.0";
 /** What a herdr part's id names: `herdr.pack`, `herdr.<pack mod>`, `herdr.layout`. */
@@ -522,7 +523,7 @@ export function doctor(ctx, part) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ part: part.id, check, ok, detail, fix: ok ? null : fix });
   // Healthy, with a note and the command that changes it: never a reason for am to roll an install back.
-  const note = (check, detail, fix) => checks.push({ part: part.id, check, ok: true, detail, fix });
+  const note = (check, detail, fix = null) => checks.push({ part: part.id, check, ok: true, detail, fix });
   const done = (code) => ({ code: code ?? (checks.every((c) => c.ok) ? 0 : 1), checks });
   const reinstall = `am install ${part.id}`;
   if (ctx.platform !== "darwin") { add("os", true, `not applicable: Automagik Herdr runs on macOS (Herdr is a Mac app); this is ${ctx.platform}`); return done(2); }
@@ -588,6 +589,16 @@ export function doctor(ctx, part) {
     else note("path", `${ctx.binDir} is not on PATH: run automagik-herdr by its full path, or add it`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     const nodeOk = compareVersions(ctx.nodeVersion, NODE_MIN) >= 0;
     add("node", nodeOk, `node ${ctx.nodeVersion}${nodeOk ? "" : `: the command needs ${NODE_MIN} or later`}`, "brew install node");
+    // DSH as a Herdr agent (dsh-TUI, #561) is opt-in, so its absence is a note, never a broken pack.
+    // The dedicated `automagik-herdr dsh-tui doctor` carries the fix commands.
+    const dsh = dshTuiPresence({ env: ctx.env });
+    note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
+    note("dsh-tui-profile", dsh.profile
+      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
+      : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
+    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui -- "$@")`
+      : dsh.shimExists ? `${dsh.shim} is not this installer's`
+        : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
   }
 
   if (part.kind === "layout") {
