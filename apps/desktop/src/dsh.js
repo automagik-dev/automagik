@@ -354,6 +354,20 @@ export function backupSettings({ dshHome, version }) {
 }
 
 /**
+ * `backupSettings`, with a failed copy reported and stepped over: the settings copy protects a
+ * rollback, it must never keep the app from starting. Returns what backupSettings did, or
+ * undefined after reporting.
+ */
+export function backupSettingsOrLog({ dshHome, version, log = () => {} }) {
+  try {
+    return backupSettings({ dshHome, version })
+  } catch (error) {
+    log(`settings backup failed (${error?.message ?? error})`)
+    return undefined
+  }
+}
+
+/**
  * Put the shipped profile in place under DSH_HOME/profiles/omni. It is copied, not
  * linked: dsh routes a plugin's imports to its own packages only for files inside the
  * profile. A profile already there from the same build (scripts/prepare-runtime.mjs stamps
