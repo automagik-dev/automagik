@@ -70,6 +70,8 @@ function sample() {
     tiles: plain(team.destinyOf([]).tiles.map(tile => tile.title)),
     joined: team.joinedLabel({ omni: true, genie: false, unfold: true }, 'Pip'),
     alone: team.joinedLabel({ omni: false, genie: false }, 'Pip'),
+    lede: textOf(render(team.TeamLede({ name: 'Pip' }))),
+    rule: textOf(findAll(render(team.TeamLede({ name: 'Pip' })), byClass('oai-lede-rule'))[0]),
   }
 }
 
@@ -99,6 +101,8 @@ test('in English, the team step reads as before', () => {
     tiles: ['Run Omni on this computer', 'An Omni somewhere else'],
     joined: 'Continue with Omni and Unfold',
     alone: 'Continue with just Pip',
+    lede: 'Pip leads. Who comes along?Code work goes to a Bot with Computer.',
+    rule: 'Code work goes to a Bot with Computer.',
   })
 })
 
@@ -121,6 +125,8 @@ test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () =
       tiles: ['Rodar o Omni neste computador', 'Um Omni em outro lugar'],
       joined: 'Continuar com Omni e Unfold',
       alone: 'Continuar só com Pip',
+      lede: 'Pip lidera. Quem vem junto?Trabalho de código vai para um Bot com Computador.',
+      rule: 'Trabalho de código vai para um Bot com Computador.',
     })
   } finally {
     locale.setLocale('en')

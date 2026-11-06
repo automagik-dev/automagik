@@ -864,6 +864,60 @@ test("rollback keeps a layout the person edited after the update; a set kept bef
   } finally { g.done(); }
 });
 
+/** Every file and link under `dir` (paths, link targets, bytes), for a run that must change nothing. */
+function filesOf(dir, rel = "") {
+  return readdirSync(join(dir, rel)).sort().flatMap((name) => {
+    const path = join(dir, rel, name), st = lstatSync(path), at = join(rel, name);
+    if (st.isSymbolicLink()) return [`${at} -> ${readlinkSync(path)}`];
+    if (st.isDirectory()) return [`${at}/`, ...filesOf(dir, at)];
+    return [`${at} ${sha(readFileSync(path))}`];
+  });
+}
+
+test("#488: a rollback refuses, changing nothing, while a file in layouts/ names a mod the rolled-to set lacks; the pack's own unedited layout does not count", async () => {
+  // 0.1.0 shipped am-sidebar alone, its layout naming only it; 0.2.0 adds am-tabs and its layout names it.
+  const tree = (...mods) => `${JSON.stringify({ id: "root", children: mods.map((m, i) => ({ id: `b${i}`, content: { mod: m } })) })}\n`;
+  const L1 = tree("am-sidebar"), L2 = tree("am-sidebar", "am-tabs");
+  const { home, mods } = appHome("0.1.0", ["am-sidebar"]);
+  const t = tarballWithLayout("0.2.0", L2, MODS);
+  const live = join(home, "layouts", "automagik.json");
+  try {
+    mkdirSync(join(home, "layouts"));
+    writeFileSync(live, L1);
+    writeFileSync(join(home, "automagik-herdr", "automagik.json"), L1);
+    const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+    const fetch = fakeFetch({ ...served("0.2.0", { url, body: t.buf }), [url]: t.buf });
+    assert.equal((await installUpdate({ keys, fetch, env: {}, modsDir: mods })).installed.version, "0.2.0");
+    assert.equal(readFileSync(live, "utf8"), L2);
+    writeFileSync(join(mods, "am-sidebar", ".state"), "private\n");
+
+    // Another layout naming am-tabs: refused, every byte of the app home as it was (no skip, no private path carried).
+    writeFileSync(join(home, "layouts", "mine.json"), tree("am-tabs"));
+    const before = filesOf(home);
+    assert.throws(() => rollback({ modsDir: mods }),
+      /^Error: nothing rolled back: am-tabs would leave mods\/, but the mine layout still names it, .*then roll back$/);
+    assert.deepEqual(filesOf(home), before);
+
+    // The pack's own layout edited to name it counts too.
+    rmSync(join(home, "layouts", "mine.json"));
+    writeFileSync(live, L2.replace('"root"', '"mine"'));
+    assert.throws(() => rollback({ modsDir: mods }), /but the automagik layout still names it/);
+
+    // Unedited, it is the kept set's again after the rollback: the rollback goes on.
+    writeFileSync(live, L2);
+    const back = rollback({ modsDir: mods });
+    assert.equal(back.version, "0.1.0");
+    assert.equal(back.layout, "restored");
+    assert.equal(readFileSync(live, "utf8"), L1);
+    assert.ok(!existsSync(join(mods, "am-tabs")));
+    assert.equal(readFileSync(join(kept(mods), ".state"), "utf8"), "private\n", "the private path went with the rolled-out set");
+    assert.equal(readAuto(mods).skip, "0.2.0");
+  } finally {
+    rmSync(t.src, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("installUpdate with `expect`: a newer latest than the confirmed version downloads nothing and is refused", async () => {
   const h = layoutHome();
   try {

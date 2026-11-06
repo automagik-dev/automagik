@@ -211,6 +211,7 @@ export const PT_BR = {
   'Your companion': 'Sua companhia',
   'Grow your team': 'Aumente sua equipe',
   '{name} leads. Who comes along?': '{name} lidera. Quem vem junto?',
+  'Code work goes to a Bot with Computer.': 'Trabalho de código vai para um Bot com Computador.',
   'Bringing them in…': 'Trazendo a equipe…',
   'Omni is moving in…': 'O Omni está se mudando…',
   'Omni is waking…': 'O Omni está acordando…',
