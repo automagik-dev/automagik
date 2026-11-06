@@ -267,6 +267,9 @@ test('a connector error is redacted before it reaches the page', async () => {
   assert.ok(!error.includes('abcdefgh12345678'), 'the bearer value is not sent to the page')
   assert.match(error, /sk-\[hidden\]/)
   assert.match(error, /Bearer \[hidden\]/)
+  // The row drawn from that answer carries the redacted error, not the raw one.
+  const text = textOf(rowOf(value.agents[0], acpOf([])))
+  assert.ok(!text.includes('sk-abcdef123456') && !text.includes('abcdefgh12345678'), 'the row drawn from the answer is redacted')
 })
 
 test('a row never prints a credential-shaped error even if one arrives unredacted', () => {
