@@ -106,6 +106,10 @@ const EDGES = [
   ['a colon 40 after the stem, block', `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: |\n  ${REDACTED}`],
   ['a long plain name', `? db_${PASS}_production_${TAIL}\n: ${VALUE}\n`, `? db_${PASS}_production_${TAIL}\n: ${REDACTED}\n`],
   ['a long plain name, block', `? db_${PASS}_production_${TAIL}\n: |\n  ${VALUE}\n`, `? db_${PASS}_production_${TAIL}\n: |\n  ${REDACTED}`],
+  ['an unclosed quote past 4096', `? "${PASS}${'x'.repeat(5000)}\n: ${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}\n: ${REDACTED}\n`],
+  ['an unclosed quote past 4096, block', `? "${PASS}${'x'.repeat(5000)}\n: |\n  ${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}\n: |\n  ${REDACTED}`],
+  ['41 blanks after ? then a long name', `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: ${VALUE}\n`, `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: ${REDACTED}\n`],
+  ['41 blanks after ? then a long name, block', `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: |\n  ${VALUE}\n`, `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: |\n  ${REDACTED}`],
 ]
 for (const [what, input, want] of EDGES) {
   test(`#509: the guard's edge over-hides, never serves (${what})`, () => {
@@ -114,9 +118,14 @@ for (const [what, input, want] of EDGES) {
 }
 
 for (const [what, valueLine] of [['an empty colon', `: ${VALUE}\n`], ['a block', `: |\n  ${VALUE}\n`]]) {
-  test(`#509: an unclosed quote over-hides, never serves (${what})`, () => {
+  test(`#509: an unclosed quote serves the name, never the value (${what})`, () => {
     const served = redactText(`? "${PASS}:${TAIL} # note\n${valueLine}`)
+    assert.ok(served.includes(`"${PASS}:${TAIL}`), 'the name is served whole')
     assert.ok(!served.includes(VALUE), 'the value on the `:` line is hidden')
-    assert.ok(!served.includes(TAIL), 'the name tail is over-hidden with it')
   })
 }
+
+test('#509: a mid-line ? is not an explicit key', () => {
+  const input = `What? ${PASS}:${LEAK}\n: note\n`
+  assert.equal(redactText(input), `What? ${PASS}:${REDACTED}\n: note\n`)
+})
