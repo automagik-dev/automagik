@@ -12,14 +12,16 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. It writes nothing: the switches are this plugin's own
 // live settings, written through DSH's settings service.
+import { spawn } from 'node:child_process'
 import { dirname, join, sep } from 'node:path'
 import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
-import { AcpAdapter, aside, SIDE_MODEL } from './src/host/adapter.js'
+import { AcpAdapter, aside, BRIDGE_PATH, SIDE_MODEL } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
 import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
 import { redactorFor } from './src/host/redact.js'
 import { crossed } from './src/host/switch.js'
 
@@ -43,6 +45,9 @@ export const Config = z.object({
 
 export const SERVICE = 'acpAgents'
 const FIRST_CHECK_MS = 5000
+// A failed probe is retried after this long in the same process; a new process starts with an
+// empty cache, so the next app start also retries. A success is kept for its adapter version.
+export const PROBE_RETRY_MS = 10 * 60 * 1000
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -227,9 +232,124 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const status = async () => ({ agents: await Promise.all(Object.keys(AGENTS).map(statusOf)) })
 
+  // A real probe of this machine's bridge, run once per installed adapter version and cached:
+  // a fresh per-session credential, the bridge process over stdio, MCP `initialize`, then
+  // `tools/list`. A missing adapter, a bridge that does not answer, or an empty list fails
+  // closed, so the Bot team never moves a Bot onto a route whose bridge cannot work.
+  const bridgeProbes = new Map()
+  let probeSequence = 0
+  function bridgeList(record) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [BRIDGE_PATH], {
+        env: {
+          ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+          [CREDENTIAL_ENV]: record.credential,
+          [URL_ENV]: backchannel.urlFor(record),
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      child.stdin.on('error', () => {})
+      let buffer = ''
+      let sequence = 0
+      let settled = false
+      const pending = new Map()
+      const finish = (error, tools) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try { child.stdin.end() } catch {}
+        try { child.kill('SIGTERM') } catch {}
+        if (error === undefined) resolve(tools)
+        else reject(error)
+      }
+      const timer = setTimeout(() => finish(new Error('the bridge did not answer in time')), 5000)
+      timer.unref?.()
+      child.on('error', error => finish(error))
+      child.on('exit', code => finish(new Error(`the bridge exited with ${code}`)))
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk) => {
+        buffer += chunk
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (line.trim() === '') continue
+          let message
+          try { message = JSON.parse(line) } catch { continue }
+          const waiter = pending.get(message.id)
+          if (waiter === undefined) continue
+          pending.delete(message.id)
+          if (message.error !== undefined) waiter.reject(new Error(message.error.message))
+          else waiter.resolve(message.result)
+        }
+      })
+      const request = (method, params) => new Promise((res, rej) => {
+        const id = ++sequence
+        pending.set(id, { resolve: res, reject: rej })
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      })
+      request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'acp-dsh-probe', version: '1' } })
+        .then(() => request('tools/list', {}))
+        .then(list => finish(undefined, Array.isArray(list?.tools) ? list.tools : []), error => finish(error))
+    })
+  }
+
+  async function probeBridge() {
+    await backchannel.listen()
+    const sessionId = `acp-dsh-probe-${process.pid}-${++probeSequence}`
+    // The bridge asks the back-channel for the Session's offered tools; a real DSH tools
+    // service answers. No Session is started and no agent prompt is sent.
+    const agent = { session: { id: sessionId, snapshotEvents: () => [] } }
+    const record = backchannel.mint({ sessionId, agent, name: 'acp-dsh probe' })
+    try {
+      return (await bridgeList(record)).length > 0
+    } finally {
+      backchannel.revoke(record)
+    }
+  }
+
+  async function bridgeStatus() {
+    if (disposed) return { on: false, probesPass: false }
+    const on = flagOf(config.dshTools) === true
+    if (!on) return { on: false, probesPass: false }
+    const spec = AGENTS['acp-claude']
+    const bin = store.binOf(spec.adapter, spec.bin)
+    if (bin === undefined) return { on: true, probesPass: false }
+    const key = `${bin.path}\u0000${bin.version ?? ''}`
+    const cached = bridgeProbes.get(key)
+    // A success is kept for its adapter version. A running probe is shared; a failure is kept
+    // only until its backoff ends, so one transient start never blocks the move forever.
+    if (cached?.ok === true) return { on: true, probesPass: true }
+    if (cached !== undefined && cached.ok === undefined) return { on: true, probesPass: await cached.promise }
+    if (cached?.ok === false && Date.now() - cached.at < PROBE_RETRY_MS) return { on: true, probesPass: false }
+    const entry = { at: Date.now(), ok: undefined, promise: undefined }
+    entry.promise = probeBridge().then(
+      (ok) => {
+        entry.ok = ok === true
+        entry.at = Date.now()
+        return entry.ok
+      },
+      () => {
+        entry.ok = false
+        entry.at = Date.now()
+        return false
+      },
+    )
+    bridgeProbes.set(key, entry)
+    return { on: true, probesPass: await entry.promise }
+  }
+
   const service = {
     settingsEntry: name,
     status,
+    /**
+     * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
+     * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
+     * `tools/list` for a freshly minted per-session credential. The answer is cached per
+     * installed adapter version; off, a missing adapter, or a failed probe says no.
+     */
+    async bridge() {
+      return bridgeStatus()
+    },
     /** Looks for the CLIs again (one installed since DSH started) and asks each whether it is signed in. */
     async refresh() {
       reconcile()

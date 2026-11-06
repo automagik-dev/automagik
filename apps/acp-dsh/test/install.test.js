@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
-import { apply, nodeCommand } from '../index.js'
+import { apply, nodeCommand, PROBE_RETRY_MS } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
 import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages, runInstall } from '../src/host/install.js'
 import { fullAccess, levelOf } from '../src/host/tool.js'
@@ -354,6 +354,179 @@ test('a failed install redacts credentials and writes an owner-only log', async 
     assert.ok(!line.includes(raw), `the log line hides ${raw}`)
   }
   assert.match(line, /\[hidden\]/)
+})
+
+test('the service gates the Bot team\'s Claude move on a real bridge probe, cached per adapter version', async () => {
+  const installed = { path: '/fake/adapter', version: '1.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  const serviceFor = (config, { bin = installed, mode = 'ok' } = {}) => {
+    let service
+    let toolsMode = mode
+    let toolReads = 0
+    const ctx = {
+      llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+      agents: { get: () => undefined },
+      get: (name) => {
+        if (name === 'tools') {
+          if (toolsMode === 'throw') throw new Error('the tools service is unavailable')
+          return toolsMode === 'ok' ? { definitions: () => { toolReads += 1; return tools }, executable: () => tools[0] } : undefined
+        }
+        if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+        if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+        if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+        return undefined
+      },
+      provide: (name, value) => { if (name === 'acpAgents') service = value },
+      on: () => {},
+      effect: () => {},
+      logger: { warn: () => {}, info: () => {} },
+    }
+    apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => bin ?? undefined }, find: () => undefined, signedIn: async () => undefined })
+    return { service, toolReads: () => toolReads, setMode: next => { toolsMode = next } }
+  }
+  // Off is the 2026-11-03 behaviour and never spawns the bridge.
+  assert.deepEqual(await serviceFor({}).service.bridge(), { on: false, probesPass: false })
+  // On, the bridge really answers initialize + tools/list for a minted credential.
+  const on = serviceFor({ dshTools: true })
+  assert.deepEqual(await on.service.bridge(), { on: true, probesPass: true })
+  // Success is cached: a second ask reads no tools again (no second probe).
+  const reads = on.toolReads()
+  assert.deepEqual(await on.service.bridge(), { on: true, probesPass: true })
+  assert.equal(on.toolReads(), reads)
+  // A new adapter version is a new probe.
+  installed.version = '1.0.1'
+  assert.deepEqual(await on.service.bridge(), { on: true, probesPass: true })
+  assert.ok(on.toolReads() > reads)
+  // A missing adapter, a bridge error, or no tools to list all fail closed.
+  assert.deepEqual(await serviceFor({ dshTools: true }, { bin: null }).service.bridge(), { on: true, probesPass: false })
+  assert.deepEqual(await serviceFor({ dshTools: true }, { mode: 'throw' }).service.bridge(), { on: true, probesPass: false })
+  assert.deepEqual(await serviceFor({ dshTools: true }, { mode: 'none' }).service.bridge(), { on: true, probesPass: false })
+})
+
+test('a failed probe is retried after its backoff, and a success is reused', async () => {
+  const installed = { path: '/fake/adapter', version: '2.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  let toolsMode = 'throw'
+  let service
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: (name) => {
+      if (name === 'tools') {
+        if (toolsMode === 'throw') throw new Error('the tools service is unavailable')
+        return { definitions: () => tools, executable: () => tools[0] }
+      }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: () => {},
+    logger: { warn: () => {}, info: () => {} },
+  }
+  apply(ctx, { dshTools: true }, { store: { home: undefined, update: async () => {}, binOf: () => installed }, find: () => undefined, signedIn: async () => undefined })
+  const realNow = Date.now
+  let now = 1_000_000
+  Date.now = () => now
+  try {
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: false })
+    // A transient failure is not kept forever: inside the backoff it is still false...
+    toolsMode = 'ok'
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: false })
+    // ...and after the backoff the probe runs again and succeeds.
+    now += PROBE_RETRY_MS + 1
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: true })
+    // The success is then reused: the probe does not run again.
+    now += PROBE_RETRY_MS * 10
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: true })
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('a disposed plugin does not start the probe again, even past its backoff', async () => {
+  const installed = { path: '/fake/adapter', version: '3.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  let toolsMode = 'throw'
+  let toolReads = 0
+  let service
+  let dispose
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: (name) => {
+      if (name === 'tools') {
+        if (toolsMode === 'throw') throw new Error('the tools service is unavailable')
+        return { definitions: () => { toolReads += 1; return tools }, executable: () => tools[0] }
+      }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: (fn) => { dispose = fn() },
+    logger: { warn: () => {}, info: () => {} },
+  }
+  apply(ctx, { dshTools: true }, { store: { home: undefined, update: async () => {}, binOf: () => installed }, find: () => undefined, signedIn: async () => undefined })
+  const realNow = Date.now
+  let now = 1_000_000
+  Date.now = () => now
+  try {
+    // A failed probe leaves a cache entry that a later ask would re-probe once its backoff ends.
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: false })
+    dispose()
+    toolsMode = 'ok'
+    now += PROBE_RETRY_MS + 1
+    // Stopped, the plugin has nothing left to probe for, so it neither spawns the bridge nor
+    // reads DSH's tools again.
+    assert.deepEqual(await service.bridge(), { on: false, probesPass: false })
+    assert.equal(toolReads, 0)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('the probe child gets only the bridge variables, not this process env', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const installed = { path: '/fake/adapter', version: '4.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  let service
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: (name) => {
+      if (name === 'tools') return { definitions: () => tools, executable: () => tools[0] }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: () => {},
+    logger: { warn: () => {}, info: () => {} },
+  }
+  apply(ctx, { dshTools: true }, { store: { home: undefined, update: async () => {}, binOf: () => installed }, find: () => undefined, signedIn: async () => undefined })
+  // A preload named in NODE_OPTIONS runs only in a child that inherited this process env; it
+  // records the canary so the probe either shows the leak or proves the env never crossed.
+  const marker = join(home, 'inherited.json')
+  const preload = join(home, 'preload.cjs')
+  writeFileSync(preload, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.env.ACP_PROBE_CANARY))\n`)
+  process.env.ACP_PROBE_CANARY = 'from-the-parent'
+  process.env.NODE_OPTIONS = `--require=${preload}`
+  try {
+    // The bridge still answers, so the trim drops the parent env without starving the probe.
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: true })
+  } finally {
+    delete process.env.ACP_PROBE_CANARY
+    delete process.env.NODE_OPTIONS
+  }
+  assert.equal(existsSync(marker), false, 'the bridge child must not inherit this process env')
 })
 
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {

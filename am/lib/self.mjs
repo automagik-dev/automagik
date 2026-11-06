@@ -32,6 +32,8 @@ import { chmodSync, closeSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtemp
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// removePath: rmSync that unlinks a link (live or dangling) and never follows it (#550).
+import { removePath } from "../layoutSafe.mjs";
 import { LANE_RELEASE, PART, POINTER, RELEASES, REPOSITORY, SIGNATURE, VERSION, sequenceOf, verifyPointer } from "./lane.mjs";
 
 /** This am's own folder (the extract it runs from). */
@@ -123,7 +125,7 @@ export function lockStore(store) {
       if (held && Number.isSafeInteger(held.pid) && alive(held.pid) && Date.now() - (held.at ?? 0) < LOCK_STALE_MS) {
         throw new Error(`another am (pid ${held.pid}) is installing or updating am: try again once it is done`);
       }
-      rmSync(path, { force: true });
+      removePath(path, { force: true });
     }
   }
   throw new Error("could not take am's store lock");
@@ -189,7 +191,7 @@ function placeExtract(dir, { env = process.env, sequence = null, signed = false,
     const staging = staged ? dir : mkdtempSync(join(store, ".staging-"));
     if (!staged) cpSync(dir, staging, { recursive: true, verbatimSymlinks: true });
     chmodSync(staging, 0o755);
-    rmSync(join(store, name), { recursive: true, force: true }); // a stray folder no link names
+    removePath(join(store, name), { recursive: true, force: true }); // a stray folder (or link) no link names
     renameSync(staging, join(store, name));
   }
   const seq = sequence ?? sequenceOrNull(version);
@@ -199,7 +201,7 @@ function placeExtract(dir, { env = process.env, sequence = null, signed = false,
   };
   const previous = from && from !== version ? record.current : record.previous?.version === version ? null : record.previous;
   if (previous) swapLink(store, "previous", dirOf(previous));
-  else rmSync(join(store, "previous"), { force: true });
+  else removePath(join(store, "previous"), { force: true });
   swapLink(store, "current", name);
   const seen = [record.seen, seq].filter(Number.isSafeInteger);
   writeRecord(store, { current: entry, previous, seen: seen.length ? Math.max(...seen) : null });
@@ -211,7 +213,7 @@ function placeExtract(dir, { env = process.env, sequence = null, signed = false,
 export function prune(store) {
   const keep = new Set(["record.json", "current", "previous", LOCK]);
   for (const name of ["current", "previous"]) { const to = linkOf(join(store, name)); if (to) keep.add(to); }
-  for (const name of readdirSync(store)) if (!keep.has(name)) rmSync(join(store, name), { recursive: true, force: true });
+  for (const name of readdirSync(store)) if (!keep.has(name)) removePath(join(store, name), { recursive: true, force: true });
 }
 
 /** The pack's CLI entries a ~/.local/bin/automagik-herdr link may point at (install.sh's). */
@@ -277,7 +279,7 @@ function unlinkEntry(env) {
   const to = linkOf(path);
   if (to === null || !inside(absolute(path, to), storeOf(env))) return null;
   const source = ["am-sidebar", "spaces-agents"].map((m) => join(appHomeOf(env), "mods", m, "briefingEntry.mjs")).find((p) => existsSync(p));
-  if (!source) { rmSync(path, { force: true }); return { link: path, state: "removed" }; }
+  if (!source) { removePath(path, { force: true }); return { link: path, state: "removed" }; }
   const tmp = join(dirname(path), `.briefing-${randomBytes(4).toString("hex")}.mjs`);
   writeFileSync(tmp, readFileSync(source));
   renameSync(tmp, path);
@@ -308,13 +310,13 @@ function unplace({ env, purge, bin, store }) {
       renameSync(tmp, link);
       lines.push({ link, state: "handed back", detail: back });
     } else {
-      rmSync(link, { force: true });
+      removePath(link, { force: true });
       lines.push({ link, state: "removed" });
     }
   }
   const entry = unlinkEntry(env);
   if (entry) lines.push(entry);
-  if (purge) rmSync(store, { recursive: true, force: true });
+  if (purge) removePath(store, { recursive: true, force: true });
   return { links: lines, purged: purge };
 }
 
