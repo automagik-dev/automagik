@@ -114,8 +114,8 @@ const commandKeyOf = async (opts) => {
   return key;
 };
 
-async function hc(args) {
-  const r = await runProgram(programPath("hc") ?? "hc", args);
+async function hc(args, { timeout } = {}) {
+  const r = await runProgram(programPath("hc") ?? "hc", args, { timeout });
   if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
   return r;
 }
@@ -217,7 +217,7 @@ const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${mac
 const remoteIo = {
   hc,
   exec: async (command, args, machine, { cwd, timeout } = {}) =>
-    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args]), timeout ?? 60),
+    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args], { timeout: timeout ? (timeout + 10) * 1000 : undefined }), timeout ?? 60),
 };
 
 // What hc said: its error's message when it printed one as JSON.
@@ -1542,15 +1542,16 @@ async function cmdStart(opts, [ref]) {
 // ---- a bot's pane on a linked machine (automagik#206 part b): start and restart ----
 
 // How long one question to a linked machine may take, in seconds: a login shell runs the person's
-// profile, so this bounds it. Under runProgram's 15 s, which would otherwise end hc first.
+// profile, so this bounds it. remoteIo.exec gives hc 10 s over it, so a slow link still brings
+// hc's own "timed out" back: ended earlier, hc answers nothing and the machine reads as away.
 const AGENT_WAIT_S = 10;
 
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
- * (agentOnMachine: the login shell's, asked once, plus hc's and the user bin folders), so a
- * check that passes is a launch that finds it: refused when it isn't there, when the interpreter
- * its #! line names isn't, or when the machine doesn't answer. Resolves { path, warnings }:
- * the PATH seatOnMachine starts it with.
+ * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
+ * and the user bin folders), so a check that passes is a launch that finds it: refused when it
+ * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
+ * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
  */
 async function agentThere(machine, argv, name) {
   const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
@@ -1564,7 +1565,7 @@ async function agentThere(machine, argv, name) {
   }
   if (seen.state === "no-interpreter") {
     throw new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
-      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell.`);
+      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
   }
   return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
 }

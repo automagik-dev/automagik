@@ -459,6 +459,19 @@ test("start --machine: a login shell that never answers is ended at the bound; ~
   assert.equal(pane(launched(s)).stdout, "agent ran\n");
 });
 
+test("start --machine: a stalled login shell over a slow link gets the warning and the fallback, never \"can't be reached\"", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  mkdirSync(join(s.root, "vm/.bun/bin"), { recursive: true });
+  exe(join(s.root, "vm/.bun/bin/hermes"), SAYS);
+  // hc's own 10 s plus 6 s of link: past the 15 s a plain hc call gets, inside the 20 s this one does.
+  s.setState((st) => { st.execTimedOut = ["-lc"]; st.execTimedOutAfterMs = 16000; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.json().warnings.join(), /vm's login shell didn't answer within 10 s/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
+});
+
 test("start --machine: really missing keeps the refusal, whether or not the login shell answered, and nothing runs", (t) => {
   const s = scene(t);
   rmSync(join(s.root, "vm-bin/hermes"));
@@ -493,6 +506,32 @@ test("start --machine: an agent whose interpreter a pane there couldn't find is 
   assert.equal(r.code, 1);
   assert.match(r.err, /runs under no-such-runtime, which isn't on the PATH a pane on vm gets/);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a slow login shell's interpreter refusal says the shell was quiet, as the missing refusal does", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  exe(join(s.root, "vm-bin/hermes"), "#!/usr/bin/env no-such-runtime\n");
+  s.setState((st) => { st.execTimedOut = ["-lc"]; });
+  const r = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Put no-such-runtime on the PATH of vm's login shell \(vm's login shell didn't answer within 10 s\)\./);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a working machine keeps hc's copy of the agent and its interpreter, whatever the login shell's PATH shadows", (t) => {
+  const s = scene(t);
+  const login = join(s.root, "vm/login-bin");
+  mkdirSync(login);
+  exe(join(s.root, "vm-bin/hermes"), "#!/usr/bin/env fakenode\n");
+  exe(join(s.root, "vm-bin/fakenode"), SAYS);
+  exe(join(login, "hermes"), "#!/usr/bin/env no-such-runtime\n");
+  exe(join(login, "fakenode"), "#!/bin/sh\nexit 1\n");
+  s.setState((st) => { st.machines[0].login = { path: `${login}:/usr/bin:/bin` }; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch((r.json().warnings ?? []).join(), /login shell/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
 });
 
 test("start --machine: a machine that stops answering is refused as unreachable, asked once, and nothing runs", (t) => {
