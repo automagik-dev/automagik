@@ -135,8 +135,9 @@ never red. Red is kept for errors (a failed read or switch).
   really waited. A bot with helpers that would end with its pane needs no second press: once its
   helpers are done or idle the panel restarts it with them, waiting first for any still working
   (those panes only, the same way) and reading them all again just before the restart. A pane or
-  helper waiting for an answer, gone or unreadable, or a helper in error or with helpers of its
-  own, is not restarted: the bot stays listed with why. Pressing the button while it waits cancels;
+  helper waiting for an answer, a pane gone, one hc can't read, a helper in error or with helpers
+  of its own, or a helper with an agent that reports no status: no restart, and the bot stays
+  listed with why. A plain program reports no status and doesn't hold the restart up. Pressing the button while it waits cancels;
   the panel keeps the wait in memory only, so a reload drops it. On a Herdr that ignores `exec`'s
   `timeout` (every release so far), which ends a restart at 30 s, the panel restarts a bot by itself
   only with two helpers or fewer, an estimate, not a measured limit. With more it restarts nothing,

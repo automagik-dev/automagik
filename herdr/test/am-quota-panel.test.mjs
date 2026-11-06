@@ -260,12 +260,13 @@ const HELPERS = "t5 has a helper that ends with it: t7. Let it finish, pass --tr
 const busyAnswer = (refused = "working", error = WORKING) => ({ code: 1, stdout: JSON.stringify({ error, refused, terminal: "t5" }), stderr: `automagik-herdr: ${error}\n` });
 const OK = { code: 0, stdout: JSON.stringify({ terminal: "t100", mode: "resume" }), stderr: "" };
 const ticks = async () => { for (let i = 0; i < 20; i += 1) await new Promise((go) => setImmediate(go)); };
-// The hc a busy panel sees: `panes` (address → status, or "gone", or null for a pane reporting
-// none), t5's helpers as its rows. Read each time, so a test changes them while a wait runs.
+// The hc a busy panel sees: `panes` (address → status, "gone", "broken" when hc get fails with no
+// not_found, or null for a pane reporting none), t5's helpers as its rows. Read each time, so a test changes them while a wait runs.
 const fakeHc = (panes, { outlives = [] } = {}) => (args) => {
   if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ terminals: Object.keys(panes).filter((a) => a !== "t5").map((address) => ({ address, parent: "t5", state: "live" })) }), stderr: "" };
   const st = panes[args[1]];
-  if (st === undefined || st === "gone") return { code: 1, stdout: "", stderr: "no terminal" };
+  if (st === undefined || st === "gone") return { code: 3, stdout: "", stderr: JSON.stringify({ error: { kind: "not_found", message: "no terminal" } }) };
+  if (st === "broken") return { code: 1, stdout: "", stderr: "hc: can't reach the server" };
   return { code: 0, stdout: JSON.stringify({ address: args[1], state: "live", status: st === null ? null : { state: st }, die_with_parent: !outlives.includes(args[1]) }), stderr: "" };
 };
 // A panel with A refused as `answer`. Its restart again answers `then`, and hc wait `wait(terminal)`.
@@ -333,7 +334,7 @@ test("Restart when idle: a pane done, idle or in error restarts, with no wait; o
     assert.equal(restarts().length, 2, status);
     assert.equal(waits().length, 0, status);
   }
-  for (const [status, why] of [["blocked", "its pane t5 is waiting for an answer"], ["gone", "its pane t5 is gone"], [null, "hc can't say how t5 is"]]) {
+  for (const [status, why] of [["blocked", "its pane t5 is waiting for an answer"], ["gone", "its pane t5 is gone"], [null, "hc can't say how t5 is"], ["broken", "hc can't say how t5 is"]]) {
     const { cx, draw } = await busyPanel({ panes: { t5: status } });
     nodes.get("idle-codex-a").click(null, cx);
     await cx.settle();
@@ -395,8 +396,44 @@ test("helpers: one that turns blocked during the wait stops the restart; so does
   assert.ok(secondRestart().includes("--tree"));
 });
 
-test("helpers: blocked on a question, unreadable or in error are not finished: no restart, with the reason; a pane that outlives the bot doesn't count (#413)", async () => {
-  for (const [status, why] of [["blocked", "its helper t7 is waiting for an answer"], [null, "hc can't say how its helper t7 is"], ["error", "its helper t7 is in error"]]) {
+test("a helper whose hc get fails with no not_found is not gone: no restart, with the reason, even as the sole helper (#413)", async () => {
+  const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "broken" } });
+  assert.equal(restarts().length, 1, "no plain restart that would end it with no word");
+  assert.equal(waits().length, 0);
+  assert.ok(text(draw()).includes("A is busy: hc can't say how its helper t7 is; nothing was restarted"), text(draw()));
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "gone" } });
+  assert.equal(restarts().length, 2, "truly gone (exit 3, not_found): nothing left to end");
+  assert.ok(!secondRestart().includes("--tree"));
+});
+
+test("a helper reporting no status doesn't hold the panel up: --tree runs, and the CLI's check judges it; an agent's refusal is listed without a flag (#413)", async () => {
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: null } });
+  assert.ok(secondRestart().includes("--tree"), "a plain program such as a dev server passes");
+  const said = "t7 doesn't tell hc whether it is busy, so --tree can't tell whether it has finished. Nothing was started. Look at it first, then pass --force to restart anyway.";
+  const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: null }, then: { code: 1, stdout: "", stderr: `automagik-herdr: ${said}\n` } });
+  const shown = text(draw());
+  assert.ok(shown.includes("A: t7 doesn't tell hc whether it is busy. Nothing was started. Look at it first."), shown);
+  assert.doesNotMatch(shown, /--[a-z]/);
+  assert.match(shown, /Restart 1 bot/, "it stays on the list");
+});
+
+test("--tree refused though its JSON names a terminal is no restart: a new pane that exited, a turn started again; the bot stays listed (#413)", async () => {
+  const cause = "Error: not logged in";
+  const error = `t100 exited before its agent was up; its agent said: "${cause}" (hc read t100 shows the rest); t5 still runs A, untouched.`;
+  let p = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done" }, then: { code: 1, stdout: JSON.stringify({ error, terminal: "t100", cause }), stderr: `automagik-herdr: ${error}\n` } });
+  let shown = text(p.draw());
+  assert.doesNotMatch(shown, /every Codex bot is on the new account/);
+  assert.ok(shown.includes(`A: ${error}`), shown);
+  assert.deepEqual(p.view.switched.codex.look.bots.map((b) => b.id), ["a"], "still on the old account, still listed");
+  p = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done" }, then: busyAnswer("working") });
+  shown = text(p.draw());
+  assert.doesNotMatch(shown, /every Codex bot is on the new account/);
+  assert.ok(shown.includes("A is busy: A is working in t5; restarting now would cut its turn in half. Wait until it is idle."), shown);
+  assert.deepEqual(p.view.switched.codex.look.bots.map((b) => b.id), ["a"]);
+});
+
+test("helpers: blocked on a question or in error are not finished: no restart, with the reason; a pane that outlives the bot doesn't count (#413)", async () => {
+  for (const [status, why] of [["blocked", "its helper t7 is waiting for an answer"], ["error", "its helper t7 is in error"]]) {
     const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: status, t8: "done" } });
     assert.equal(restarts().length, 1, why);
     assert.equal(waits().length, 0, why);

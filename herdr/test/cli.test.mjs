@@ -1917,7 +1917,7 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   assert.equal(text.code, 0);
 });
 
-test("restart --tree #413: refused before anything starts while a pane waits for an answer or reports no status; --force still goes", (t) => {
+test("restart --tree #413: refused before anything starts while a pane waits for an answer or an agent reports no status; --force still goes", (t) => {
   const asking = treeScene(t, { workerStatus: "blocked" }).s;
   const r = asking.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 1);
@@ -1939,6 +1939,16 @@ test("restart --tree #413: refused before anything starts while a pane waits for
   assert.match(w.err, /t8 doesn't tell hc whether it is busy, so --tree can't tell whether it has finished\. Nothing was started\. Look at it first, then pass --force to restart anyway\./);
   assert.equal(runCall(plainHelper.calls()), undefined);
   assert.equal(asking.cli(["restart", "Genie", "--tree", "--force"]).code, 0, "--force is the hand-run way past it");
+});
+
+test("restart --tree #413: a plain program reporting no status, a dev server say, passes as before and runs again", (t) => {
+  const s = treeScene(t).s;
+  const st = s.hcState();
+  st.terminals.push({ ...term("t11", { argv: ["npm", "run", "dev"], app: "x", cwd: s.project, parent: "t5" }), status: null, die_with_parent: true, name: "dev", argv: ["sh", "-c", "npm run dev"] });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.doesNotMatch(r.err, /doesn't tell hc/);
+  assert.ok(r.json().helpers.some((h) => h.replaced === "t11" && h.terminal), r.err);
 });
 
 test("restart --tree waits, before anything starts, for helpers and the old pane to be idle: a turn's note types into the old pane only then; still mid-turn after the wait refuses", (t) => {

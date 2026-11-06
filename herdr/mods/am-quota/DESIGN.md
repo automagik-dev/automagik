@@ -157,8 +157,10 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   CLI text, because the panel never offers one. Working waits for the Restart when idle press;
   helpers needs none (the owner's rule). Both go through `whenReady`: each look re-reads `hc get` of the
   pane and `hc ls` plus `hc get` of the helpers that end with it. The look decides, not how a wait
-  ended. Pane done, idle or in error and helpers done or idle: one restart, `--tree` when it has
-  helpers. Something working: `hc wait <that pane> --timeout 450` through
+  ended. Pane done, idle or in error and helpers done, idle or reporting no status: one restart,
+  `--tree` when it has helpers. A status-less helper may be a plain program or an agent mid-turn;
+  only the CLI knows, and `treeIdle` refuses the agent. Only exit 3 or not_found from `hc get` is
+  gone; any other failure stops with why, because a pane hc can't read may still run. Something working: `hc wait <that pane> --timeout 450` through
   `exec(…, { timeout: 480000 })` (`hc()` stops at 30 s; `exec` allows 10 min where Herdr has the
   option, and released Herdr ignores it, so each wait is cut at 30 s), one at a time, at most four
   plus one per helper and never past 30 minutes. Anything else: no restart, listed with why. It

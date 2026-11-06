@@ -462,7 +462,8 @@ export default class AmQuota extends View {
    * note or null, busy: { bot, why, refused, terminal } when the CLI refused it as busy (its
    * --json `refused`: "working", or "helpers" that would end with its pane), helpers: the lines of
    * helpers `tree` didn't run again }. `tree`: its helpers restart with it. Such a restart exits 1
-   * when a helper wasn't run again, though the bot did restart: its new `terminal` says so.
+   * when a helper wasn't run again, though the bot did restart: its new `terminal` with no `error`
+   * says so. A refusal can carry a `terminal` too (a new pane that exited, a turn started again).
    */
   async restartOne(bot, { tree = false } = {}) {
     try {
@@ -472,7 +473,7 @@ export default class AmQuota extends View {
       const r = await this.cli(args, tree ? { timeout: TREE_EXEC_MS, env: [`AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS=${TREE_TURN_WAIT_MS}`] } : { timeout: RESTART_EXEC_MS });
       const helpers = (Array.isArray(r?.out?.helpers) ? r.out.helpers : []).filter((h) => h?.error)
         .map((h) => `${bot.name}'s helper ${h.name ?? h.replaced}: ${plain(h.error)}`);
-      if (r?.code === 0 || (tree && typeof r?.out?.terminal === "string")) {
+      if (r?.code === 0 || (tree && typeof r?.out?.terminal === "string" && r.out.error === undefined)) {
         return { why: null, note: r.out?.mode === "fresh" && typeof r.out.note === "string" && r.out.note ? r.out.note : null, busy: null, helpers };
       }
       const why = refusal(r) || `exit ${r?.code ?? "?"}`;
@@ -600,11 +601,21 @@ export default class AmQuota extends View {
     return this.timeoutHonoured;
   }
 
-  /** `hc get` of `terminal`: { state: live, finished…, status, get }, or null when hc has no such pane. */
+  /**
+   * `hc get` of `terminal`, or null when hc says there is no such pane (exit 3, not_found). Any other
+   * failure throws: a pane hc can't read may still be running, so it is never taken for gone.
+   */
   async paneGet(terminal) {
     const r = await hc(["get", terminal, "--json"]);
-    if (r?.code !== 0) return null;
-    return JSON.parse(r.stdout);
+    if (r?.code === 0) return JSON.parse(r.stdout);
+    if (r?.code === 3 || /not_found/.test(r?.stderr ?? "")) return null;
+    throw new Error(`hc get ${terminal} failed`);
+  }
+
+  /** `hc get` of each of `rows`: { lost: the first address hc can't read, or null, gets }. */
+  async paneGets(rows) {
+    const reads = await Promise.all(rows.map((r) => this.paneGet(r.address).then((get) => ({ get }), () => ({ lost: r.address }))));
+    return { lost: reads.find((x) => x.lost)?.lost ?? null, gets: reads.map((x) => x.get) };
   }
 
   /**
@@ -624,22 +635,25 @@ export default class AmQuota extends View {
       const rows = JSON.parse(ls.stdout);
       const list = Array.isArray(rows) ? rows : rows?.terminals ?? [];
       const kids = list.filter((r) => r?.parent === terminal && r.state !== "finished" && r.address);
-      const gets = await Promise.all(kids.map((r) => this.paneGet(r.address)));
+      const { lost, gets } = await this.paneGets(kids);
+      if (lost) return none(`hc can't say how its helper ${lost} is`);
       // A member bot outlives the pane, and one gone by now has nothing left to end.
       const helpers = gets.filter((g) => g?.state === "live" && g.die_with_parent !== false);
       const working = state === "working" ? [terminal] : [];
       for (const h of helpers) {
         // A restart runs a bot's helpers again, not theirs: those would end and stay ended.
         const under = list.filter((r) => r?.parent === h.address && r.state !== "finished" && r.address);
-        const below = await Promise.all(under.map((r) => this.paneGet(r.address)));
-        if (below.some((g) => g?.state === "live" && g.die_with_parent !== false)) {
+        const nested = await this.paneGets(under);
+        if (nested.lost) return none(`hc can't say how its helper ${nested.lost} is`);
+        if (nested.gets.some((g) => g?.state === "live" && g.die_with_parent !== false)) {
           return none(`its helper ${h.address} has helpers of its own, which a restart wouldn't bring back`);
         }
         const st = h.status?.state;
         if (st === "working") working.push(h.address);
         else if (st === "blocked") return none(`its helper ${h.address} is waiting for an answer`);
-        else if (typeof st !== "string") return none(`hc can't say how its helper ${h.address} is`);
-        else if (st !== "idle" && st !== "done") return none(`its helper ${h.address} is in ${st}`);
+        // No status: a plain program, or an agent that may be mid-turn. Only the CLI knows which, and
+        // its last check refuses the agent.
+        else if (typeof st === "string" && st !== "idle" && st !== "done") return none(`its helper ${h.address} is in ${st}`);
       }
       return { stop: null, working, helpers: helpers.length };
     } catch {
