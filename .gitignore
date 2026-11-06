@@ -9,3 +9,5 @@ apps/desktop/build/
 apps/desktop/dist/
 # Fixture runs (apps/bots-dsh/dev/advanced-check.mjs writes .tools/advanced-fixture)
 .tools/
+# remote-gate.sh worktrees, locks and logs (scripts/remote-gate.sh)
+.remote-gate/
