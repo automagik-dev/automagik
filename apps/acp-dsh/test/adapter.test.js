@@ -387,13 +387,15 @@ test('Auto review uses a Claude route when the team has no DeepSeek key', async 
   assert.equal(chunks.at(-1).reason.kind, 'stop')
 })
 
-test('an Auto review with no reachable reviewer surfaces the last failure, not a verdict', async () => {
+test('an Auto review with no reachable reviewer surfaces the last failure', async () => {
   const sent = []
   const ctx = {
     llm: {
       registerAdapter: () => () => {},
       listProviders: () => [{ id: 'deepseek-official' }, { id: 'anthropic' }],
-      listModels: async provider => (provider === 'anthropic' ? [{ id: 'claude' }] : [{ id: 'deepseek-flash' }]),
+      listModels: async provider => (provider === 'anthropic'
+        ? [{ id: 'claude' }]
+        : [{ id: 'deepseek-flash' }]),
       stream: options => {
         sent.push(`${options.provider}/${options.model}`)
         return (async function* () {
