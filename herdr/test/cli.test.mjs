@@ -606,7 +606,7 @@ test("forget takes one project off the list, under its lock, and touches no fold
   // A gone folder by a relative path with a trailing slash, from its parent; --json.
   const json = s.cli(["forget", "gone/", "--json"], { cwd: s.root });
   assert.equal(json.code, 0, json.err);
-  assert.deepEqual(json.json(), { forgotten: gone, list });
+  assert.deepEqual(json.json(), { forgotten: gone, list, sidebar_remembers: false });
   assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), [other]);
 });
 
