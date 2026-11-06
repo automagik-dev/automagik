@@ -21,6 +21,19 @@ const LINE_MAX = 2 * RAW_MAX
 const LINE_TAIL = 4 * 1024
 const OVER_PAD = ' '.repeat(4096)
 const LINE_END = /\r\n|\n|\r(?=[\s\S])/g
+// A line longer than LINE_MAX: a run of characters with no line end in it. A delta without one
+// has nothing for `oversize` to cut, so `feed` keeps its lines as written. A single pass: an
+// unanchored `{LINE_MAX+1}` search is quadratic on a long line that is merely short (it retries
+// the whole run from every character), which the 80k timing rows caught.
+function longLine(s) {
+  let last = -1
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c === 10 || c === 13) last = i
+    else if (i - last > LINE_MAX) return true
+  }
+  return false
+}
 const CAUSES_PER_ROW = 4
 const PRODUCERS_MAX = 256
 const UNKNOWN_MAX = 32
@@ -252,8 +265,16 @@ export class EventWindow {
     const stop = crEnds ? 0 : first.index + first[0].length
     let done = over ? `${held.head}${OVER_PAD}${`${held.tail}${add.slice(0, crEnds ? 0 : first.index)}`.slice(-LINE_TAIL)}${crEnds ? '' : first[0]}` : oversize(`${held.open}${add.slice(0, stop)}`)
     let pos = stop
-    LINE_END.lastIndex = stop
-    for (let m; (m = LINE_END.exec(add)); pos = m.index + m[0].length) done += oversize(add.slice(pos, m.index + m[0].length))
+    // A delta of many short lines is one slice, not one per line: with the first line short and
+    // no line longer than LINE_MAX after it, every line is kept as written, so the last line end
+    // is all `feed` needs (#406's fast budget: 40k blank lines cost one scan).
+    if (!over && !crEnds && held.open.length + first.index <= LINE_MAX && !longLine(add)) {
+      pos = lastLineEnd(add, stop)
+      done += add.slice(stop, pos)
+    } else {
+      LINE_END.lastIndex = stop
+      for (let m; (m = LINE_END.exec(add)); pos = m.index + m[0].length) done += oversize(add.slice(pos, m.index + m[0].length))
+    }
     const { raw, orphan } = boundRaw(`${this.raw.get(row.key) ?? ''}${done}`)
     this.raw.set(row.key, raw)
     this.line.set(row.key, { open: '' })
@@ -749,12 +770,23 @@ function closingQuote(s, from, quote, escaped = false) {
 }
 
 /**
+ * A `:` at the start of a line (past blanks that are never a line end): the only place the last
+ * two YAML key rules can find the colon their lookahead requires, so a text without one skips
+ * them (in `[quotedSpans]`).
+ */
+const COLON_LINE = /(?:^|[\r\n])[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*:/
+// Any quote a quoted credential value can open with: the gate of the quoted-span scan.
+const QUOTE = /["'`]/
+
+/**
  * Quoted credential spans and YAML blocks in `raw`: {start, end, closed, quote, escaped}, and for a
  * block what to `keep` while it is open; an open one runs to the end.
  */
 function quotedSpans(raw) {
   const spans = []
-  for (const re of QUOTED_SECRET) {
+  // Every quoted rule's match ends at its opening quote, so a text without one skips all four:
+  // a block of plain lines has nothing for them to find, and the scan is the whole cost there.
+  if (QUOTE.test(raw)) for (const re of QUOTED_SECRET) {
     for (const m of raw.matchAll(re)) {
       const quote = m[0].slice(-1) // the match ends at its opening quote
       const { close, escaped } = closingQuote(raw, m.index + m[0].length, quote)
@@ -772,7 +804,13 @@ function quotedSpans(raw) {
       spans.push({ start: m.index, open, end: ESCAPED_END.lastIndex, closed, quote: '"', escaped: false, keep: closed ? undefined : `${raw.slice(m.index, open)}${'\\'.repeat(run % 4)}` })
     }
   }
-  if (/:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[&!>|]/.test(raw)) for (const re of YAML_KEY) {
+  if (/:[\x00-\x09\x0B\x0C\x0E-\x20\x7F-\xA0\xAD\u061C\u1680\u180E\u2000-\u200F\u2028-\u202F\u205F-\u2064\u3000\uFEFF]*[&!>|]/.test(raw)) for (const [rule, re] of YAML_KEY.entries()) {
+    // The last two rules read an explicit key (`? name`, then its `:` line): their lookahead
+    // finds a `:` at the start of a line (past blanks) or matches nothing, so a text without one
+    // skips them. Each looks ahead from every line start it can (a lone \r with text after it
+    // too), and a block key line's blank lines are what it walks, so the skip is what keeps a
+    // 40k-blank-line block's scan off the per-line cost (#406's fast budget).
+    if (rule > 1 && !COLON_LINE.test(raw)) continue
     re.lastIndex = 0
     for (let m = re.exec(raw); m; m = re.exec(raw)) {
       const start = m.index + m[1].length
@@ -812,6 +850,20 @@ function padLineEnd(raw, pad) {
 function oversize(line) {
   const body = line.replace(/(?:\r\n|\n|\r)$/, '')
   return body.length > LINE_MAX ? `${body.slice(0, LINE_MAX)}${OVER_PAD}${body.slice(-LINE_TAIL)}${line.slice(body.length)}` : line
+}
+
+/**
+ * The end of the last line terminator in `s` at or after `from`, read backwards: a \n, or a \r
+ * with something after it (a \r\n pair ends after its \n). A lone \r at the very end of `s` is a
+ * line still arriving, not one, so it is skipped.
+ */
+function lastLineEnd(s, from) {
+  for (let i = s.length - 1; i >= from; i--) {
+    const c = s.charCodeAt(i)
+    if (c === 10) return i + 1
+    if (c === 13 && i + 1 < s.length) return s.charCodeAt(i + 1) === 10 ? i + 2 : i + 1
+  }
+  return from
 }
 
 function boundRaw(text) {

@@ -16,7 +16,7 @@ const PINNED = {
   'test/support/sentences.js': ['src/sentences.js', 'b327b65802d386f0f57104f59960173057628f60ea93edaf97d071767f810641'],
   'test/support/display.js': ['src/display.js', '41aa8e7d2def996f7a1ffa1e516c7ddf814379d83ee6138740cc1015abae5c13'],
   'test/support/catalog.js': ['test/support/catalog.js', 'c3e93d3df9136234fff3649243cd5157d5731e7663f1030ce9bc0c29cdd4912e'],
-  'test/support/window.js': ['test/support/window.js', 'a743e48a8ae1a5d9283a4106c9c6f8e59104dc3f38b24ede3f5764bb425c95a4'],
+  'test/support/window.js': ['test/support/window.js', '80b2f2addfe8a5845c512f1162178b1b1c88bce9a355c2fd9c71343de5d580cc'],
   'catalog/events.v3.json': ['catalog/events.v3.json', '74daa4ab1b2555f01006850318b9e5a0484c334392f5bda84b69701692d85621'],
 }
 const sha = (url) => createHash('sha256').update(readFileSync(url)).digest('hex')
