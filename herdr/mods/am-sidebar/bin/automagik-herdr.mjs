@@ -957,7 +957,8 @@ keys to (its git main checkout), or --project's. With --machine, --project is an
 folder on that machine and the file is read and written there by the same rule (a file
 changed since it was read is never overwritten); its panes run there (M/tN). A pane that
 reports no status to hc can't say it is waiting for an approval: restart refuses it unless
---force, which still sends it no keys.`;
+--force, which still sends it no keys. restart --tree is this computer's only for now: with
+--machine it is refused before anything is read or started there.`;
 
 function readInstructions(opts) {
   if (opts.instructions !== undefined && opts["instructions-file"] !== undefined) throw new CliError("Give --instructions or --instructions-file, not both.", 2);
@@ -1708,9 +1709,9 @@ async function startOnMachine(opts, project, bot) {
 }
 
 /**
- * restart --machine: cmdRestart's rule on the project's linked machine. The old pane must say
- * whether its agent is busy: one that reports no status to hc (Hermes) is refused unless
- * --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
+ * restart --machine: cmdRestart's rule on the project's linked machine, without --tree (cmdRestart
+ * refuses it there, #437). The old pane must say whether its agent is busy: one that reports no
+ * status to hc (Hermes) is refused unless --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
  * folder, resuming as restartPlan says (an agent's own --continue resumes the folder's latest
  * conversation: refused while another bot's same agent runs in that folder there); the old
  * pane is ended (hc kill) only once the new one has kept its agent in front. No keys are sent.
@@ -2463,6 +2464,15 @@ async function cmdRestart(opts, [ref]) {
   let wanted = null;
   if (opts.cwd !== undefined && opts.machine !== undefined) {
     throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
+  }
+  // --tree on a linked machine isn't built yet (#437): refused before anything is read there, so
+  // its helpers are never left behind by a restart that looks done. Each sentence that says what
+  // happened names no flag: the Accounts panel shows a refusal without the clauses that name one.
+  if (opts.tree && opts.machine !== undefined) {
+    throw new CliError(`Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: `
+      + `${ref} and its helpers on ${opts.machine} still run as they were, on the account they started with. `
+      + `By hand: let the helpers finish, then restart ${ref} there without --tree; start again yourself, with hc run `
+      + `on ${opts.machine}, a helper that still has work to do once ${ref} is back.`, 2);
   }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;

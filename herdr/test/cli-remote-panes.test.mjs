@@ -244,6 +244,23 @@ test("restart --machine of a pane that reports no status: refused in plain words
   assert.deepEqual(keysSent(s.calls()), [], "never a key to the pane, so never an approval answered");
 });
 
+test("restart --machine --tree is refused before anything is read there (#437): the bot and its helper keep running, and what to do by hand is said", (t) => {
+  const helper = atlasPane({ address: "vm/t9", created_ms: 1700000000009, parent: "vm/t8", die_with_parent: true, status: { state: "idle", app: "claude" } });
+  const s = scene(t, { terminals: [atlasPane({ status: { state: "idle", app: "hermes" } }), helper] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  const before = s.calls().length;
+  for (const extra of [[], ["--force"], ["--fresh"], ["--fresh-shared"], ["--json"]]) {
+    const r = s.cli(["restart", "Atlas", ...s.on, "--tree", ...extra]);
+    assert.equal(r.code, 2, extra.join(" "));
+    assert.match(r.err, /Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: Atlas and its helpers on vm still run as they were, on the account they started with./);
+    assert.match(r.err, /By hand: let the helpers finish, then restart Atlas there without --tree; start again yourself, with hc run on vm, a helper that still has work to do once Atlas is back./);
+    assert.equal(r.out, "", "--json prints nothing, as the other flag refusals on a linked machine");
+  }
+  assert.deepEqual(s.calls().slice(before), [], "not one hc call: nothing read, started or ended there");
+  assert.deepEqual(s.hcState().terminals.map((x) => [x.address, x.state]), [["vm/t8", "live"], ["vm/t9", "live"]]);
+  assert.deepEqual(s.rows().map((x) => [x.event, x.terminal]), [["attach", "t8"]], "the ledger still has Atlas in t8");
+});
+
 test("restart --machine: --continue is refused while another bot's same agent runs in that folder there", (t) => {
   const s = scene(t, { terminals: [atlasPane({ status: { state: "idle", app: "hermes" } }), atlasPane({ address: "vm/t9", created_ms: 9 })] });
   assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
