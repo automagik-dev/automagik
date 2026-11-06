@@ -16,8 +16,10 @@ import { dirname, join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside, SIDE_MODEL } from './src/host/adapter.js'
 import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
+import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { redactorFor } from './src/host/redact.js'
 
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
@@ -32,6 +34,9 @@ export const Config = z.object({
     model: z.string().required(),
   }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
+  // Off unless set: the 2026-11-03 behaviour, and the rollback (RFC 0003, amendment, "Setting
+  // and order"). On: the bridge, its DSH approval, the drift detector and live switching.
+  dshTools: z.boolean().default(false).volatile().description("Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own rules say, turn the agent's built-in tools off where its adapter allows, and carry the transcript when a Session moves between providers. Off is the behaviour without it: each agent keeps its own tools and its own approvals."),
 })
 
 export const SERVICE = 'acpAgents'
@@ -59,11 +64,18 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const spawn = () => ({ command: process.execPath, args: [config.fakeAgent] })
     agents.set('acp-fake', {
       name: 'Fake agent',
+      // Tests only: keep a test of the missing-bridge failure from waiting the real grace period.
+      ...(Number(process.env.ACP_BRIDGE_READY_MS) > 0 ? { bridgeReadyMs: Number(process.env.ACP_BRIDGE_READY_MS) } : {}),
       catalog: new Catalog({ id: 'acp-fake', name: 'Fake agent', defaultName: 'Fake agent', fallback: [{ id: DEFAULT_MODEL, name: 'Fake agent' }], key: () => config.fakeAgent, spawn, log }),
       spawn,
     })
   }
-  const adapter = new AcpAdapter(ctx, agents)
+  const backchannel = new Backchannel({ ctx, log })
+  const adapter = new AcpAdapter(ctx, agents, {
+    dshTools: () => flagOf(config.dshTools) === true,
+    backchannel,
+    redactor: redactorFor(ctx),
+  })
   const clis = new Map()
   const signIns = new Map()
   let registration
@@ -223,6 +235,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL))
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())
+  // A model selection that moves a Session off its agent: its boundary row, and the agent
+  // session (and bridge) belonging to the old route ends (RFC 0003, amendment, "Live switching").
+  ctx.on?.('session/event', (session, event) => adapter.noteEvent(session, event))
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
   const refresh = () => {
     for (const [id, spec] of Object.entries(AGENTS)) if (agents.has(id)) void install(spec)
@@ -239,6 +254,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     // A running adapter install would otherwise outlive DSH and keep writing into its home.
     store.dispose?.()
     adapter.dispose()
+    backchannel.dispose()
   })
 }
 

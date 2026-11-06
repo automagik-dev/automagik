@@ -28,13 +28,19 @@ export const AGENTS = Object.freeze({
     // The adapter's own Claude Agent SDK would run the CLI it bundles; this runs the person's.
     env: cli => ({ CLAUDE_CODE_EXECUTABLE: cli }),
     // DSH's level, as the agent's own permission mode, most wanted first. Manual is Claude
-    // Code's `default` mode, whatever default mode the person's settings name. Claude Code
-    // still loads the person's own settings (user, project and local: allow rules, saved
-    // "always allow" rules, PreToolUse and PermissionRequest hooks), and asks DSH only for what
-    // those leave as "ask": a call they allow runs with no DSH dialog. DSH's Auto is Claude
+    // Code's `default` mode, whatever default mode the person's settings name. With `dshTools`
+    // off, Claude Code still loads the person's own settings (allow rules, hooks) and asks DSH
+    // only for what those leave as "ask". With it on, those rules still answer Claude Code's own
+    // permission request and can never skip the bridge's DSH approval. DSH's Auto is Claude
     // Code's own auto mode, never bypassPermissions (RFC 0003, Retired). The last mode of each
     // list is the strict one: an agent that does not offer it fails the turn (acp.js setMode).
     modeFor: level => (level.full ? ['bypassPermissions', 'default'] : level.auto ? ['auto', 'default'] : ['default']),
+    // With dshTools on: `_meta.disableBuiltInTools: true` leaves DSH's tools working and removes
+    // the built-in file tools (and Bash, read from the adapter's bundle), so a structured call
+    // that is not an MCP name is drift. A changed tool list is announced, not forked.
+    disableBuiltInTools: true,
+    drift: true,
+    refresh: 'list',
   }),
   'acp-codex': Object.freeze({
     key: 'codex',
@@ -52,6 +58,10 @@ export const AGENTS = Object.freeze({
     // DSH's sandbox, as Codex's own: it asks (through DSH's dialog) for anything beyond it.
     // DSH's Auto is Codex's auto review. Most wanted first, the strict mode last (see above).
     modeFor: level => (level.full ? ['agent-full-access', 'workspace-write'] : level.auto ? ['agent', 'workspace-write'] : level.sandbox === 'read-only' ? ['read-only'] : ['workspace-write']),
+    // codex-acp has no switch for its built-in tools, so they stay and are named in the turn;
+    // it ignores `tools/list_changed` and a new server list on resume, so a changed tool set
+    // arrives by fork (session/fork with the new servers, then session/close on the source).
+    refresh: 'fork',
   }),
 })
 
