@@ -801,16 +801,19 @@ install() {
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
   # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders, and
   # migrateHooks.mjs (with briefingText.mjs, model.js, its models.js and their retired.js) the
-  # briefing hooks onto a fixed path.
+  # briefing hooks onto a fixed path; layoutSafe.mjs is the one door update.mjs and the migration
+  # move folders and layouts through.
   mkdir "$TMP/x"
   side=${PACK##*/}
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/update.mjs" "$side/release.js" "$side/migrate.js" \
     "$side/migrateHome.mjs" "$side/migrateHooks.mjs" "$side/briefingText.mjs" "$side/model.js" "$side/models.js" \
     </dev/null 2>/dev/null || fail "$TGZ lacks $side's updater files: nothing was installed."
-  # retired.js: models.js imports it since #224. An older release (--version) neither has nor needs it.
+  # retired.js: models.js imports it since #224; layoutSafe.mjs: update.mjs and migrateHome.mjs
+  # import it since #431's PR A. An older release (--version) neither has nor needs them.
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/retired.js" </dev/null >/dev/null 2>&1 || :
-  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js; do
-    [ "$f" = retired.js ] && [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/layoutSafe.mjs" </dev/null >/dev/null 2>&1 || :
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs; do
+    case $f in retired.js|layoutSafe.mjs) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;; esac
     { [ -f "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ]; } || fail "$TGZ: $side/$f is not a plain file: nothing was installed."
   done
   rc=0
