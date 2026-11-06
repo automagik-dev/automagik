@@ -446,6 +446,89 @@ test('a failed probe is retried after its backoff, and a success is reused', asy
   }
 })
 
+test('a disposed plugin does not start the probe again, even past its backoff', async () => {
+  const installed = { path: '/fake/adapter', version: '3.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  let toolsMode = 'throw'
+  let toolReads = 0
+  let service
+  let dispose
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: (name) => {
+      if (name === 'tools') {
+        if (toolsMode === 'throw') throw new Error('the tools service is unavailable')
+        return { definitions: () => { toolReads += 1; return tools }, executable: () => tools[0] }
+      }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: (fn) => { dispose = fn() },
+    logger: { warn: () => {}, info: () => {} },
+  }
+  apply(ctx, { dshTools: true }, { store: { home: undefined, update: async () => {}, binOf: () => installed }, find: () => undefined, signedIn: async () => undefined })
+  const realNow = Date.now
+  let now = 1_000_000
+  Date.now = () => now
+  try {
+    // A failed probe leaves a cache entry that a later ask would re-probe once its backoff ends.
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: false })
+    dispose()
+    toolsMode = 'ok'
+    now += PROBE_RETRY_MS + 1
+    // Stopped, the plugin has nothing left to probe for, so it neither spawns the bridge nor
+    // reads DSH's tools again.
+    assert.deepEqual(await service.bridge(), { on: false, probesPass: false })
+    assert.equal(toolReads, 0)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('the probe child gets only the bridge variables, not this process env', async (t) => {
+  const home = scratch()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const installed = { path: '/fake/adapter', version: '4.0.0' }
+  const tools = [{ name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } }]
+  let service
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: (name) => {
+      if (name === 'tools') return { definitions: () => tools, executable: () => tools[0] }
+      if (name === 'approval') return { effectivePolicy: () => 'ask', overrideOf: () => 'never' }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'workspace-write' }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      return undefined
+    },
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: () => {},
+    logger: { warn: () => {}, info: () => {} },
+  }
+  apply(ctx, { dshTools: true }, { store: { home: undefined, update: async () => {}, binOf: () => installed }, find: () => undefined, signedIn: async () => undefined })
+  // A preload named in NODE_OPTIONS runs only in a child that inherited this process env; it
+  // records the canary so the probe either shows the leak or proves the env never crossed.
+  const marker = join(home, 'inherited.json')
+  const preload = join(home, 'preload.cjs')
+  writeFileSync(preload, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.env.ACP_PROBE_CANARY))\n`)
+  process.env.ACP_PROBE_CANARY = 'from-the-parent'
+  process.env.NODE_OPTIONS = `--require=${preload}`
+  try {
+    // The bridge still answers, so the trim drops the parent env without starving the probe.
+    assert.deepEqual(await service.bridge(), { on: true, probesPass: true })
+  } finally {
+    delete process.env.ACP_PROBE_CANARY
+    delete process.env.NODE_OPTIONS
+  }
+  assert.equal(existsSync(marker), false, 'the bridge child must not inherit this process env')
+})
+
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))

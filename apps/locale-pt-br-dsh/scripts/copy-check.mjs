@@ -1,9 +1,6 @@
 // The copy check: every pt-BR text of the pack, against its English text and the copy rules.
-// - A DSH namespace the pack carries holds only keys of its English dictionary (test/en, at the
-//   DSH release the tests run on). The pack carries corrected subsets of five DSH namespaces
-//   while DSH's own pt is wrong; every key there must still be a real DSH key.
 // - `omni-ui` is the Bot team's (apps/bots-dsh): its keys are the English text, and each key the
-//   pack translates is still one of them.
+//   pack translates is still one of them. No DSH namespace is carried: DSH's own pt serves them.
 // - A text keeps the {placeholders} of its English text.
 // - Brazilian Portuguese, gender-neutral: no article before Unfold and no gendered word after it,
 //   no gendered word for the person, "clique" and never "toque", never "sandbox", and no European
@@ -13,11 +10,9 @@
 //
 // Exits 1 with one line per finding.
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FOLDER, PLUGIN, loadDictionaries } from './dictionaries.mjs'
+import { FOLDER, loadDictionaries } from './dictionaries.mjs'
 
-export const REFERENCE = join(PLUGIN, 'test/en/0.2.2-rc.1.json')
 const OMNI_UI = 'omni-ui'
 const PLACEHOLDER = /\{(\w+)\}/g
 const ARTICLE = '(?:o|a|os|as|do|da|dos|das|no|na|nos|nas|ao|à|aos|às|pelo|pela|num|numa|dum|duma|um|uma)'
@@ -64,14 +59,14 @@ export async function omniKeys() {
 
 const placeholders = (text) => [...text.matchAll(PLACEHOLDER)].map((match) => match[1]).sort().join(',')
 
-export async function checkCopy({ folder = FOLDER, reference = REFERENCE, omni } = {}) {
+export async function checkCopy({ folder = FOLDER, reference, omni } = {}) {
   const findings = []
-  const english = JSON.parse(readFileSync(reference, 'utf8'))
+  const english = reference ? JSON.parse(readFileSync(reference, 'utf8')) : {}
   const known = omni ?? await omniKeys()
   for (const [ns, dict] of Object.entries(loadDictionaries(folder))) {
     const source = ns === OMNI_UI ? null : english[ns]
     if (ns !== OMNI_UI && !source) {
-      findings.push(`${ns}: not a DSH namespace in ${reference.split('/').at(-1)}`)
+      findings.push(`${ns}: not a DSH namespace in ${reference ?? 'the reference'}`)
       continue
     }
     for (const [key, text] of Object.entries(dict)) {

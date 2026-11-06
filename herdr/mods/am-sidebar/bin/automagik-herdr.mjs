@@ -1080,6 +1080,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 every exit but 0: anything but 0 or 3 is a failure. A name is
                                 1-128 of A-Z a-z 0-9 . _ -, not . or .. (hc may refuse more).
                                 Made for mods: their exec has no stdin to speak hc connect with.
+  launch-path <program>         where a launch finds <program> (PATH, ~/.local/bin, this CLI's
+                                node folder) and the PATH its pane gets, as one line of JSON:
+                                {"program": null, "path": null} when none has it. For the
+                                Accounts panel, which runs claude auth status as a launch would.
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -2464,12 +2468,16 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  * How to run helper plan `p` again by hand, as a child of `parent`: the hc run line the restart
  * would have run (its name, folder, labels, the seat's PATH, its command resumed), which runs as
  * pasted into sh, bash or zsh; then comment lines: its session, and for a worker that its ledger
- * row isn't copied by hand. { line, notes }.
+ * row isn't copied by hand, and a claude-logins.json warning when the line is on the default
+ * login because the record can't be followed. { line, notes }.
  */
 function byHand(p, parent) {
+  const loginWarnings = [];
   const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
-    login: claudeLogin(p.argv) });
+    login: claudeLogin(p.argv, loginWarnings) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
+  // A record that can't be followed: the line carries the default login's words, and says so.
+  for (const w of loginWarnings) notes.push(`# ${w}`);
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
 }
@@ -4272,9 +4280,21 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
   return PRINTED;
 }
 
+/**
+ * `launch-path <program>` (#453): { program, path }: the file a launch of `program` runs
+ * (programPath) and the PATH its pane gets (launchPath), both null when it isn't found. The
+ * Accounts panel runs `claude auth status` from there, so it finds claude the way launches do.
+ */
+export async function cmdLaunchPath(_opts, [program, ...rest]) {
+  if (!program || program.startsWith("-") || rest.length) throw new CliError("launch-path takes one program name.", 2);
+  const file = programPath(program);
+  process.stdout.write(`${JSON.stringify({ program: file, path: file ? launchPath(program).path : null })}\n`);
+  return PRINTED;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, doc: cmdDoc };
+  tidy: cmdTidy, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, doc: cmdDoc, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

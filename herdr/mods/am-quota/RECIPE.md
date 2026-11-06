@@ -7,9 +7,12 @@ added on the proxy (sign in there), never on this computer.
 
 **Claude is not switched from the proxy any more (#453).** Copying a proxy login into the Mac's
 Keychain made the proxy and the Mac sign each other out, and the switch would overwrite the Mac's
-own sign-in. The Claude card shows each proxy account's usage and offers **no Use or Switch** until
-it lists the Claude logins signed in on this Mac (`docs/local-logins.md`). Nothing here reads,
-writes or deletes a Claude Keychain item or downloads a Claude credential.
+own sign-in. The Claude card lists the Claude logins signed in on this Mac, each by its own
+`claude auth login` (`docs/local-logins.md`), and **Use** picks which one new Claude launches get:
+one write of `<app home>/claude-logins.json`, which this panel alone writes and the bot CLI reads at
+each Claude launch. The proxy only gives each login's usage, matched by email. Nothing here reads,
+writes or deletes a Claude Keychain item or credential, runs a sign-in, or downloads a Claude
+credential.
 
 CLIProxyAPI: <https://github.com/router-for-me/CLIProxyAPI>.
 
@@ -71,6 +74,18 @@ tracked). For the tool picked, in order:
 4. A footer: "Accounts come from your CLIProxyAPI, <name>. To add one, sign in to it there." and
    **Open <name>**, which opens the proxy's base URL (without userinfo or query) in the browser.
 
+**Claude Code** (#453, `docs/local-logins.md` sections 2 to 7) is the same card over the logins on
+this Mac instead of the proxy's accounts: the login new launches use, then one row per login by
+email, with its usage from the proxy account of that email ("usage not tracked" when there is
+none), **Use** on another signed-in login, and **Remove** on one not in use. A login that is not
+signed in shows **Sign in again** and the command, never a button that runs it. Settings or a
+variable that outranks a login, and a linked `settings.json` or `CLAUDE.md` that became a file of its
+own, are said on its row. A proxy account with no login here is listed under "On your CLIProxyAPI,
+not signed in here" with no button. **Add login <n>** records the next slot once its folder and
+sign-in, made by hand, check out. A `claude-logins.json` that launches can't follow is one red line
+naming the problem, and nothing is offered until it is fixed. After **Use**, the banner lists the
+Claude bots whose launch argv names another login, by value, with **Restart N bots**.
+
 **Not managed**: when no account is recorded for the tool, or the login on this computer changed
 since the panel installed it, or the recorded account is no longer on the proxy, the card says so
 (`No account from <name>`, `Changed outside this panel`, …) with a grey `Not managed` pill, and the
@@ -98,7 +113,8 @@ never red. Red is kept for errors (a failed read or switch).
   - Codex: `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`; `OPENAI_API_KEY: null`,
     `auth_mode: "chatgpt"`, `last_refresh`, `tokens{…}`), previous file kept as
     `auth.json.bak-<stamp>`;
-  - Claude: nothing. A Claude login is never downloaded or installed (#453).
+  - Claude: nothing. A Claude login is never downloaded or installed (#453); its **Use** writes
+    only `claude-logins.json`'s `use`, with the snapshot it replaces.
   Written through `sh`: the payload lives in a `0700` folder, is `0600`d the moment it exists, and
   becomes the real file by `mv` (atomic rename); the token is read from a file by the shell, so it
   never appears in `argv`, a log, a notify, shared state or an error message. Backups are pruned to
@@ -177,5 +193,5 @@ the sidebar's `automagik-herdr`. Never `security`.
 
 `herdr-app check mods/am-quota` passes; the panel lists both providers' accounts with their windows;
 a Codex Switch rewrites its file with a backup and a 0600 permission, and the next `codex` run is
-on the chosen account; the Claude card offers no switch and touches no Claude login; the banner names the bots still on the old one and Restart moves them; no token
+on the chosen account; the Claude card lists this Mac's logins and its Use changes only `claude-logins.json`; the banner names the bots still on the old one and Restart moves them; no token
 appears in any log, notify or state.

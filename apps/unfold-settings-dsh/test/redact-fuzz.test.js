@@ -54,23 +54,82 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// One run, or the best of three when it is slow: noise only slows a run, and a quadratic rule is
-// slow every time.
-const timed = (fn) => {
+// A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
+// wall-clock sample includes the time this process waits for a CPU. Five wall-clock runs of the
+// same 80k text spanned 8 ms to 211 ms here while their CPU time stayed within a millisecond. The
+// best of five runs drops one that caught a background compile or a collection; noise can add CPU
+// time, never remove it, so a rule that is slow in every run stays slow in every sample.
+const FAST_MS = 50
+const FAST_TRIES = 5
+const sample = (fn) => {
+  const t0 = process.cpuUsage()
+  fn()
+  const used = process.cpuUsage(t0)
+  return (used.user + used.system) / 1000
+}
+const timed = (fn, ceiling = FAST_MS) => {
   let best = Infinity
-  for (let i = 0; i < 3 && best >= FAST_MS; i++) {
-    const t0 = performance.now()
-    fn()
-    best = Math.min(best, performance.now() - t0)
-  }
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
 }
-const FAST_MS = 50
+// The reference sets a bound, so it always takes all five samples.
+const fixedWork = (fn) => Math.min(...Array.from({ length: FAST_TRIES }, () => sample(fn)))
+
+// The reference is a fixed amount of the same work: redactText over one 80k text of the fuzz's own
+// pieces, built once from a fixed seed. It runs the same code path over a fixed N pieces, never the
+// fuzz texts, so its cost is linear in that input (40k, 80k and 160k characters measured 114, 110
+// and 107 ns per character) and every run pays exactly that work. A slower machine or a slower
+// clock raises the reference and the served value's bound together: it is not a time constant.
+const REFERENCE_TEXT = (() => {
+  let state = 0x531 >>> 0
+  const rand = () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), state | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296
+  }
+  const parts = []
+  for (let n = 0; n < 80_000; ) {
+    const piece = PIECES[Math.floor(rand() * PIECES.length)]
+    parts.push(piece)
+    n += piece.length
+  }
+  return parts.join('')
+})()
+
+// `redact` walks a served value and sends its strings through redactText, so it costs a small
+// multiple of the reference: 1.00x measured here (worst of the 200 cases, Node 24.13.1).
+// SERVED_MARGIN sits 2x above it; a 2x regression lands at the bound and a 3x one fails (3.0x). The
+// absolute backstop caps how far a reference that reads high can widen the bound. A quadratic rule
+// at 80k characters is 6.4e9 steps, seconds of CPU, far past either.
+const SERVED_MARGIN = 2
+const SERVED_BACKSTOP_MS = 200
 
 const PATHS = [['redactText', redactText], ['redact', (text) => redact({ host: { note: text } })]]
 
 test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every path', () => {
-  for (const [shape, text] of fuzzCases()) {
-    for (const [path, run] of PATHS) assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+  const cases = fuzzCases()
+  // Warm-up, not measured: a cold process pays to compile each rule's regular expressions, grow
+  // its buffers and climb V8's tiers once, and that setup is not a text's cost. The pass runs the
+  // same texts through the same paths, so a rule that is slow on a shape is still slow on the
+  // measured pass; only the one-time cold cost of a new process is left out.
+  for (const [, text] of cases) for (const [, run] of PATHS) run(text)
+  const [servedPath, servedRun] = PATHS[PATHS.length - 1]
+  const textPaths = PATHS.slice(0, -1)
+  const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
+  // A zero sample would make the bound zero and pass a served value that measured nothing.
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
+  const bound = Math.min(SERVED_MARGIN * referenceMs, SERVED_BACKSTOP_MS)
+  const margin = `${SERVED_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
+  for (const [shape, text] of cases) {
+    for (const [path, run] of textPaths) {
+      const ms = timed(() => run(text))
+      const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
+      assert.ok(ms < FAST_MS, detail)
+    }
+    const servedMs = timed(() => servedRun(text), bound)
+    const detail = `${servedPath}: ${shape}: ${servedMs.toFixed(1)} ms of CPU, ` +
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${SERVED_BACKSTOP_MS} ms)`
+    assert.ok(servedMs <= bound, detail)
   }
 })

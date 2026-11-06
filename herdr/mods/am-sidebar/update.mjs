@@ -204,7 +204,7 @@ export function takeLock(modsDir, now = Date.now(), hooks = {}) {
       try { renameSync(aside, lock); } catch {}
       throw lockedError();
     }
-    rmSync(aside, { recursive: true, force: true });
+    removePath(aside, { recursive: true, force: true }); // a planted dangling lock link: unlinked (#566)
     hooks.beforeRetake?.();
     try { mkdirSync(lock); } catch (again) { if (again?.code === "EEXIST") throw lockedError(); throw again; }
   }
@@ -214,7 +214,7 @@ export function takeLock(modsDir, now = Date.now(), hooks = {}) {
     if (tokenOf(lock) !== token) return;
     const gone = freshPath(stateDirOf(modsDir), ".update.lock-free-");
     try { renameSync(lock, gone); } catch { return; }
-    if (tokenOf(gone) === token) rmSync(gone, { recursive: true, force: true });
+    if (tokenOf(gone) === token) removePath(gone, { recursive: true, force: true });
     else { try { renameSync(gone, lock); } catch {} }
   };
 }
@@ -429,7 +429,7 @@ function keepSet(modsDir, next, moved, record, old, rename, warnings, off = []) 
     }
   }
   if (!old) return;
-  try { rmSync(old, { recursive: true, force: true }); } catch (error) {
+  try { removePath(old, { recursive: true, force: true }); } catch (error) { // a dangling .prev link too (#566)
     warnings.push(`the older kept set could not be removed (${error.message}): it is in ${old}`);
   }
 }

@@ -105,8 +105,8 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(gone, lock)", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(lock, aside)", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(lock, gone)", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
-  ["herdr/mods/am-sidebar/update.mjs", "rmSync(aside, { recursive: true, force: true })", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
-  ["herdr/mods/am-sidebar/update.mjs", "rmSync(gone, { recursive: true, force: true })", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(aside, { recursive: true, force: true })", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(gone, { recursive: true, force: true })", 1, "the update lock (<app home>/automagik-herdr/update.lock) and its aside/gone names, in the state folder"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(join(state, old), join(backupOf(modsDir), name))", 1, "carryV1: v0.2's kept copies, from the state folder into its backup/"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(old, prevSetOf(modsDir))", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/update.mjs", "renameSync(prevSetOf(modsDir), old)", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
@@ -117,14 +117,14 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/update.mjs", "removePath(tmp, { force: true })", 2, "the command link in the bin folder (~/.local/bin/automagik-herdr) and its temp link"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(dir, { recursive: true, force: true })", 1, "a staging folder or temp file it made itself (mkdtemp in tmpdir, or staging-/tgz folders in the state folder)"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(next, { recursive: true, force: true })", 2, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
-  ["herdr/mods/am-sidebar/update.mjs", "rmSync(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
+  ["herdr/mods/am-sidebar/update.mjs", "removePath(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(staging, { recursive: true, force: true })", 2, "a staging folder or temp file it made itself (mkdtemp in tmpdir, or staging-/tgz folders in the state folder)"],
   ["herdr/mods/am-sidebar/update.mjs", "rmSync(tgzDir, { recursive: true, force: true })", 2, "a staging folder or temp file it made itself (mkdtemp in tmpdir, or staging-/tgz folders in the state folder)"],
   ["herdr/mods/am-sidebar/parts.mjs", "renameSync(join(prev, m), join(next, m))", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/parts.mjs", "renameSync(next, prev)", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/parts.mjs", "renameSync(prev, old)", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
-  ["herdr/mods/am-sidebar/parts.mjs", "rmSync(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
-  ["herdr/mods/am-sidebar/parts.mjs", "rmSync(prev, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
+  ["herdr/mods/am-sidebar/parts.mjs", "removePath(old, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
+  ["herdr/mods/am-sidebar/parts.mjs", "removePath(prev, { recursive: true, force: true })", 1, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(next, { recursive: true, force: true })", 2, "the pack's state folder (<app home>/automagik-herdr: the record, held.json, the kept set .prev, its .prev-next-/.prev-old- neighbours), beside mods/, never in it"],
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(join(state, f), { force: true })", 1, "--purge: the state folder's own files (hooks journal, layout reference, held.json)"],
   ["herdr/mods/am-sidebar/parts.mjs", "rmSync(markerOf(ctx.modsDir), { force: true })", 1, "the ownership record in the state folder"],
@@ -210,6 +210,11 @@ test("the scan sees the calls it is for", () => {
   // layoutSafe.mjs removePath (#550) is scanned like rmSync: relinkCli's temp link, and am's copy of it.
   assert.ok(scan().some((f) => f.file === "herdr/mods/am-sidebar/update.mjs" && f.call === "removePath(tmp, { force: true })"));
   assert.ok(scan().some((f) => f.file === "am/update.mjs" && f.call === "removePath(tmp, { force: true })"));
+  // #566: the lock's aside/gone names and the older kept set (update.mjs, am's copy too), and parts.mjs's .prev/.prev-old-.
+  for (const file of ["herdr/mods/am-sidebar/update.mjs", "am/update.mjs"]) {
+    for (const v of ["aside", "gone", "old"]) assert.ok(scan().some((f) => f.file === file && f.call === `removePath(${v}, { recursive: true, force: true })`), `${file}: ${v}`);
+  }
+  for (const v of ["old", "prev"]) assert.ok(scan().some((f) => f.file === "herdr/mods/am-sidebar/parts.mjs" && f.call === `removePath(${v}, { recursive: true, force: true })`), v);
   // A find that only lists is not a call; one that deletes is.
   assert.ok(!scan().some((f) => f.file === "herdr/mods/am-footer/contributions.js"));
   assert.ok(scan().some((f) => f.file === "herdr/mods/am-mods/main.js" && f.call.startsWith('exec("find"')));
