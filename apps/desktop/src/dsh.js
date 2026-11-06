@@ -327,6 +327,47 @@ export function migrateRenamed({ target, dshHome, shipped, renamed = RENAMED }) 
 }
 
 /**
+ * Where a pre-upgrade copy of DSH's settings.yaml is kept: DSH_HOME/profile-backups, the
+ * folder DSH itself writes profile backups into.
+ */
+export const settingsBackupsOf = dshHome => join(dshHome, 'profile-backups')
+
+/**
+ * Copy DSH's settings.yaml aside once per dsh version, before dsh starts. dsh's settings
+ * service renames the file to settings.yaml.imported on its first boot with a profile that
+ * no longer reads it, moving each section it accepts into the profile; a section it rejects
+ * stays only in that renamed file. The copy is a copy (dsh's rename then loses nothing) and
+ * one per version, so a second launch under the same runtime finds it and does nothing.
+ * Missing settings.yaml is a fresh home: nothing to keep.
+ * @returns the copy made now, or undefined when there was nothing to copy or it exists.
+ */
+export function backupSettings({ dshHome, version }) {
+  if (typeof version !== 'string' || version === '') return undefined
+  const settings = join(dshHome, 'settings.yaml')
+  if (!existsSync(settings)) return undefined
+  const dir = settingsBackupsOf(dshHome)
+  const copy = join(dir, `settings-${version.replace(/[^0-9A-Za-z.-]/g, '_')}.yaml`)
+  if (existsSync(copy)) return undefined
+  mkdirSync(dir, { recursive: true })
+  cpSync(settings, copy, { errorOnExist: true, force: false })
+  return copy
+}
+
+/**
+ * `backupSettings`, with a failed copy reported and stepped over: the settings copy protects a
+ * rollback, it must never keep the app from starting. Returns what backupSettings did, or
+ * undefined after reporting.
+ */
+export function backupSettingsOrLog({ dshHome, version, log = () => {} }) {
+  try {
+    return backupSettings({ dshHome, version })
+  } catch (error) {
+    log(`settings backup failed (${error?.message ?? error})`)
+    return undefined
+  }
+}
+
+/**
  * Put the shipped profile in place under DSH_HOME/profiles/omni. It is copied, not
  * linked: dsh routes a plugin's imports to its own packages only for files inside the
  * profile. A profile already there from the same build (scripts/prepare-runtime.mjs stamps
