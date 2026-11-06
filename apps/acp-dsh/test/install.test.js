@@ -260,8 +260,8 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   const home = scratch()
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const { adapter, bin } = AGENTS['acp-claude']
-  const token = 'ghp_abcdefghijklmnopqrstuvwx'
-  const npmToken = 'npm_abcdefghijklmnopqrstuvwx'
+  const token = ['ghp_', 'a'.repeat(24)].join('')
+  const npmToken = ['npm_', 'b'.repeat(24)].join('')
   const auth = Buffer.from('deploybot:secretpass').toString('base64')
   const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
   const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`

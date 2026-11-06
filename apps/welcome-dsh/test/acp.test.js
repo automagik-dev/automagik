@@ -252,12 +252,15 @@ test('installing: the connector is said to be on its way, with no retry', () => 
 
 test('the client redactor alone removes every shared shape', () => {
   const auth = Buffer.from('deploybot:secretpass').toString('base64')
+  const npmToken = ['npm_', 'a'.repeat(24)].join('')
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const ghToken = ['ghp_', 'c'.repeat(24)].join('')
   const secrets = [
-    'npm_abcdefghijklmnopqrstuvwx',
+    npmToken,
     auth,
     'secretpass',
-    'sk-abcdef123456',
-    'ghp_abcdefghijklmnopqrstuvwx',
+    skToken,
+    ghToken,
     'abcdefgh12345678',
     'abcdef123456',
     'quoted-secret-123456',
@@ -266,11 +269,11 @@ test('the client redactor alone removes every shared shape', () => {
     'npm-config-secret',
   ]
   const raw = [
-    `npm_${'abcdefghijklmnopqrstuvwx'}`,
+    npmToken,
     `_authToken=${auth}`,
     'https://deploybot:secretpass@registry.npmjs.org/pkg',
-    'sk-abcdef123456',
-    'ghp_abcdefghijklmnopqrstuvwx',
+    skToken,
+    ghToken,
     'Bearer abcdefgh12345678',
     '?token=abcdef123456',
     '"_authToken": "quoted-secret-123456"',
@@ -288,7 +291,7 @@ test('the client redactor alone removes every shared shape', () => {
 
 test('the row redacts a token and shows a home-relative log path', () => {
   const home = homedir()
-  const token = 'ghp_abcdefghijklmnopqrstuvwx'
+  const token = ['ghp_', 'a'.repeat(24)].join('')
   const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: `token=${token}`, logPath: join(home, '.automagik', 'acp', 'adapters', 'logs', 'codex.log') } }), acpOf([]))
   const text = textOf(tree)
   assert.ok(!text.includes(token), 'the token is redacted in the row')
@@ -296,7 +299,7 @@ test('the row redacts a token and shows a home-relative log path', () => {
 })
 
 test('npm credentials and an absolute home are redacted in the answer and the row', async () => {
-  const npmToken = 'npm_abcdefghijklmnopqrstuvwx'
+  const npmToken = ['npm_', 'a'.repeat(24)].join('')
   const auth = Buffer.from('deploybot:secretpass').toString('base64')
   const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
   const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
@@ -316,23 +319,25 @@ test('npm credentials and an absolute home are redacted in the answer and the ro
 })
 
 test('a connector error is redacted before it reaches the page', async () => {
-  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: 'sk-abcdef123456 Bearer abcdefgh12345678' } })])
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `${skToken} Bearer abcdefgh12345678` } })])
   const fake = host({ acp })
   const { value } = await fake.handle('acp')
   const error = value.agents[0].connector.error
-  assert.ok(!error.includes('sk-abcdef123456'), 'the token is not sent to the page')
+  assert.ok(!error.includes(skToken), 'the token is not sent to the page')
   assert.ok(!error.includes('abcdefgh12345678'), 'the bearer value is not sent to the page')
   assert.match(error, /sk-\[hidden\]/)
   assert.match(error, /Bearer \[hidden\]/)
   // The row drawn from that answer carries the redacted error, not the raw one.
   const text = textOf(rowOf(value.agents[0], acpOf([])))
-  assert.ok(!text.includes('sk-abcdef123456') && !text.includes('abcdefgh12345678'), 'the row drawn from the answer is redacted')
+  assert.ok(!text.includes(skToken) && !text.includes('abcdefgh12345678'), 'the row drawn from the answer is redacted')
 })
 
 test('a row never prints a credential-shaped error even if one arrives unredacted', () => {
-  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'sk-abcdef123456 Bearer abcdefgh12345678' } }), acpOf([]))
+  const skToken = ['sk-', 'b'.repeat(12)].join('')
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: `${skToken} Bearer abcdefgh12345678` } }), acpOf([]))
   const text = textOf(tree)
-  assert.ok(!text.includes('sk-abcdef123456'), 'the token is not drawn')
+  assert.ok(!text.includes(skToken), 'the token is not drawn')
   assert.ok(!text.includes('abcdefgh12345678'), 'the bearer value is not drawn')
   assert.match(text, /sk-\[hidden\]/)
   assert.match(text, /Bearer \[hidden\]/)
