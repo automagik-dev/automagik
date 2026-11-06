@@ -13,7 +13,7 @@ import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, URL_ENV } from './names.js'
-import { boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
+import { agentRoute, boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -125,8 +125,9 @@ const TITLE_PURPOSE = 'session-title'
  * @param {() => { provider?: string, model?: string } | undefined} [sideModel]
  */
 export function aside(providers, ctx, sideModel = () => SIDE_MODEL) {
-  const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
-  const answers = choice => typeof choice?.provider === 'string' && choice.provider !== '' && typeof choice.model === 'string' && choice.model !== '' && !agentRoute(choice.provider)
+  const answers = choice => typeof choice?.provider === 'string' && choice.provider !== ''
+    && typeof choice.model === 'string' && choice.model !== ''
+    && !agentRoute(providers, choice.provider)
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
   return (options, next) => {
     if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
@@ -298,7 +299,7 @@ export class AcpAdapter extends LlmAdapter {
     const live = this.live.get(session?.id)
     if (live === undefined) return
     const provider = event.data?.provider
-    if (this.agents.has(provider)) return
+    if (agentRoute(this.agents, provider)) return
     this.live.delete(session.id)
     live.run.dispose()
     if (live.bridge !== undefined && this.backchannel !== undefined) this.backchannel.revoke(live.bridge)
@@ -459,9 +460,9 @@ export class AcpAdapter extends LlmAdapter {
     for (;;) {
       const event = await live.run.next(options.signal)
       if (event.type === 'end' || event.type === 'error') live.open = false
-      // Inbound text is the agent's answer to the person, logged as a native model's answer
-      // would be: DSH does not redact at ingest, and neither does this plugin. The redactor
-      // applies where history crosses providers (the outbound replay, `replayBlocks`).
+      // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
+      // does this plugin. The redactor runs at each provider crossing instead — the replay out
+      // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).
       if (event.type === 'text') yield* blocks.add('text', event.text)
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {

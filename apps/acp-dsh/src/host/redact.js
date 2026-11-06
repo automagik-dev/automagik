@@ -1,6 +1,7 @@
 // The credential shapes removed from diagnostics, installer output and failure rows, and before
-// text crosses a provider boundary (a Session's transcript replayed into another provider, an
-// agent's answer streamed into DSH's log). This is the one edited source;
+// text crosses a provider boundary (a Session's transcript replayed into another provider, both
+// ways: out to an agent, and back to a native provider). Ingest is not a crossing: an agent's
+// own answer is logged as it said it. This is the one edited source;
 // apps/acp-dsh/src/host/redact.js, apps/welcome-dsh/src/host/redact.js and
 // apps/welcome-dsh/src/client/redact.js are byte-equal copies (each plugin installs on its own),
 // checked by scripts/redact-copies.test.ts.
