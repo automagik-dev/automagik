@@ -4,8 +4,12 @@
 // runs; and the offered set is the preset's, filtered by the Session's level.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { apply as applyAutoReview } from '@deepseek-ai/dsh-experimental-auto-review'
 import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
+import { aside } from '../src/host/adapter.js'
 import { Backchannel, offeredTools, positionOf, recordDrift, signatureOf } from '../src/host/backchannel.js'
+import { SYNTHETIC_KIND } from '../src/host/names.js'
+import { credentialShapes } from '../src/host/redact.js'
 import { TOOL_NAME } from '../src/host/tool.js'
 
 const TOOLS = [
@@ -18,6 +22,8 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
   const session = Session.create('s1')
   session.append('turn/start', { turn: 3 })
   session.append('step/start', { turn: 3, step: 1 })
+  // Auto review reads the tool schema from the request header; Manual and Full ignore it.
+  session.append('request/header', { header: { config: { provider: 'acp-fake', model: 'default' }, tools: definitions }, reason: 'initial' })
   const agent = { session }
   const asked = []
   const executed = []
@@ -70,6 +76,138 @@ async function serve() {
     return { status: response.status, body: await response.json() }
   }
   return { ...host_, bc, record, post }
+}
+
+// Auto review's real pre-execute listener, over the same Session the bridge writes to. The fake
+// tools.execute mirrors the pipeline's prepare stage: it runs the listener before the body and
+// turns a non-allow decision into an error result. The reviewer stream is the test's model.
+const ALLOW = '{"risk":"low","decision":"allow"}'
+const DENY = '{"risk":"high","decision":"deny","reason":"no"}'
+
+const reviewer = (text, signal) => (async function* () {
+  if (signal?.aborted) throw new Error('aborted')
+  yield { type: 'block-start', index: 0, blockType: 'text' }
+  yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+  yield { type: 'finish', reason: { kind: 'stop' } }
+})()
+
+const hanging = signal => ({
+  [Symbol.asyncIterator]: () => ({
+    next: () => new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(new Error('aborted'))
+      signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    }),
+  }),
+})
+
+const abortedResult = callId => ({
+  results: [{ callId, result: { content: [{ type: 'text', text: 'Error: tool call aborted before dispatch' }], isError: true, error: { message: 'tool call aborted before dispatch', info: { name: 'AbortError', code: 'TOOL_ABORTED_BEFORE_DISPATCH' } } } }],
+})
+
+const failedResult = (callId, decision) => ({
+  results: [{
+    callId,
+    result: {
+      content: [{ type: 'text', text: `Error: ${decision.reason}` }],
+      isError: true,
+      error: { message: decision.reason, ...(decision.info === undefined ? {} : { info: decision.info }) },
+    },
+  }],
+})
+
+function reviewHost({ sandbox = 'danger-full-access', policy = 'ask', preset = 'auto', override = 'never', tools = TOOLS, headerTools = tools, route = true, decisions = [], reviewTimeoutMs = 5000 } = {}) {
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 0 })
+  if (route) {
+    session.append('request/header', {
+      header: { config: { provider: 'acp-fake', model: 'default' }, ...(headerTools.length > 0 ? { tools: headerTools } : {}) },
+      reason: 'initial',
+    })
+  }
+  const agent = { session }
+  const asked = []
+  const executed = []
+  const streams = []
+  const levelListeners = new Set()
+  let reviewGate
+  let level = preset
+  let mode = sandbox
+  let resolveStarted
+  let started = new Promise(resolve => { resolveStarted = resolve })
+  const restart = () => { started = new Promise(resolve => { resolveStarted = resolve }) }
+  const permissionPresets = {
+    current: () => level,
+    registerAuto: () => () => {},
+  }
+  const ctx = {
+    approval: {
+      effectivePolicy: () => policy,
+      overrideOf: () => override,
+      request: async (request) => { asked.push(request); return 'allowed-once' },
+    },
+    permissionPresets,
+    workingDirectory: { ensure: async () => '/tmp' },
+    logger: { warn: () => {} },
+    get: (name) => {
+      if (name === 'tools') {
+        return {
+          definitions: () => tools,
+          executable: toolName => tools.find(definition => definition.name === toolName),
+          execute: async ({ calls, agent: callAgent, signal }) => {
+            const call = calls[0]
+            if (signal?.aborted) return abortedResult(call.id)
+            const exec = { callId: call.id, rootCallId: call.id, name: call.name, arguments: JSON.parse(call.arguments || '{}'), agent: callAgent, signal }
+            const decision = await reviewGate(exec, async () => ({ kind: 'allow' }))
+            if (decision.kind !== 'allow') return failedResult(call.id, decision)
+            executed.push({ name: call.name, arguments: call.arguments })
+            return { results: [{ callId: call.id, result: { content: [{ type: 'text', text: `ran ${call.name}` }], isError: false } }] }
+          },
+        }
+      }
+      if (name === 'approval') return ctx.approval
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode }) }
+      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      if (name === 'permissionPresets') return permissionPresets
+      return undefined
+    },
+    on: (name, listener) => {
+      if (name === 'tools/pre-execute') { reviewGate = listener; return () => { reviewGate = undefined } }
+      if (name === 'session/event') { levelListeners.add(listener); return () => levelListeners.delete(listener) }
+      return () => {}
+    },
+    effect: (fn) => {
+      const iterator = fn()
+      let next = iterator.next()
+      while (!next.done) next = iterator.next(next.value)
+      return next.value
+    },
+  }
+  const baseStream = (options) => {
+    streams.push(options)
+    resolveStarted()
+    const decision = decisions.shift()
+    return typeof decision === 'function' ? decision(options.signal) : reviewer(decision ?? ALLOW, options.signal)
+  }
+  ctx.llm = { stream: baseStream }
+  if (route) {
+    const routed = aside(
+      new Map([['acp-fake', {}]]),
+      { llm: { stream: baseStream }, get: () => undefined },
+      () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
+      credentialShapes,
+    )
+    ctx.llm = { stream: options => routed(options, () => baseStream(options)) }
+  }
+  applyAutoReview(ctx)
+  const backchannel = new Backchannel({ ctx, reviewTimeoutMs })
+  const flipLevel = () => {
+    level = 'manual'
+    mode = 'workspace-write'
+    for (const listener of levelListeners) listener(session, { type: 'permission/preset', data: { preset: 'manual' } })
+  }
+  const nextReview = () => { restart(); return started }
+  return { ctx, agent, session, asked, executed, streams, backchannel, flipLevel, nextReview }
 }
 
 test('a request without a credential, with another Session\'s, or after revocation is refused', async () => {
@@ -180,8 +318,13 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Au
       body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'level-1' }),
     })
     const body = await response.json()
+    const events = run.session.snapshotEvents()
     run.backchannel.dispose()
-    return { asked: run.asked, executed: run.executed, body, status: response.status }
+    return { asked: run.asked, executed: run.executed, body, status: response.status, events }
+  }
+  const oneCard = ({ events }) => {
+    assert.equal(events.filter(event => event.type === 'tool/call').length, 1, 'one card start')
+    assert.equal(events.filter(event => event.type === 'tool/result').length, 1, 'one card result')
   }
   // Manual: one DSH dialog, and the agent's answer (allow-once) lets it run.
   const manual = await runAt({ sandbox: 'workspace-write', policy: 'ask' })
@@ -189,18 +332,163 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Au
   assert.equal(manual.asked.length, 1)
   assert.equal(manual.body.isError, false)
   assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
-  // Auto as DSH's real preset defines it (danger-full-access + ask): the bridge cannot be
-  // reviewed out-of-band, so it routes the call through the pipeline without asking, and the
-  // call still runs (stated limit: auto-review does not see bridge calls).
+  oneCard(manual)
+  // Auto as DSH's real preset defines it (danger-full-access + ask). This host composes no
+  // auto-review listener, so the call reaches the pipeline and runs; the Auto review test below
+  // proves the real listener allows or refuses it. The bridge still raises no dialog of its own.
   const auto = await runAt({ sandbox: 'danger-full-access', policy: 'ask' })
   assert.equal(auto.asked.length, 0)
   assert.equal(auto.body.isError, false)
   assert.deepEqual(auto.executed.map(entry => entry.name), ['bash'])
+  oneCard(auto)
   // Full access: never asks, as DSH's own tools do not there.
   const full = await runAt({ sandbox: 'danger-full-access', policy: 'never' })
   assert.equal(full.asked.length, 0)
   assert.equal(full.body.isError, false)
   assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
+  oneCard(full)
+})
+
+// --- Auto review of a bridge call ---------------------------------------------------------
+// The real @deepseek-ai/dsh-experimental-auto-review listener reads the Session the bridge
+// writes to. A bridge call appends one synthetic assistant block, the tool/call row, and enters
+// tools.execute; the fake pipeline runs the listener before the body, as DSH does.
+
+const autoCall = async (h, { callId = 'auto-1', name = 'bash', args = { command: 'echo hi' } } = {}) => {
+  await h.backchannel.listen()
+  const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+  h.backchannel.announce(record)
+  const response = await fetch(h.backchannel.urlFor(record), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+    body: JSON.stringify({ op: 'call', name, arguments: args, callId }),
+  })
+  return { record, status: response.status, body: await response.json() }
+}
+
+test('Auto review sees a bridge call: allow runs, deny blocks with AUTO_REVIEW_DENIED, one card each', async () => {
+  for (const [label, decision, code] of [['allow', ALLOW, undefined], ['deny', DENY, 'AUTO_REVIEW_DENIED']]) {
+    const h = reviewHost({ decisions: [decision] })
+    try {
+      const { body, status } = await autoCall(h)
+      assert.equal(status, 200, label)
+      const events = h.session.snapshotEvents()
+      const calls = events.filter(event => event.type === 'tool/call')
+      const results = events.filter(event => event.type === 'tool/result')
+      assert.equal(calls.length, 1, `${label}: one card start`)
+      assert.equal(results.length, 1, `${label}: one card result`)
+      const synthetic = events.find(event => event.type === 'assistant/message')
+      assert.equal(synthetic.data.message.source.synthetic, SYNTHETIC_KIND)
+      assert.deepEqual(synthetic.data.message.content.map(block => block.type), ['tool-call'])
+      // The reviewer read it; provider history did not: the surface replaced it and the card
+      // still comes only from tool/call + tool/result.
+      assert.equal(h.session.surface.nodes.includes(synthetic.seq), false, `${label}: not on the surface`)
+      assert.equal(events.filter(event => event.type === 'developer/message').length, 1, `${label}: one replacement`)
+      if (code === undefined) {
+        assert.equal(body.isError, false)
+        assert.deepEqual(h.executed.map(entry => entry.name), ['bash'])
+      } else {
+        assert.equal(body.isError, true)
+        assert.equal(body.error.code, code)
+        assert.equal(h.executed.length, 0, `${label}: the body did not run`)
+      }
+      assert.equal(h.asked.length, 0, `${label}: no extra dialog on Auto`)
+    } finally {
+      h.backchannel.dispose()
+    }
+  }
+})
+
+test('Auto review refuses a bridge call with a named code when its inputs are missing', async () => {
+  const cases = [
+    ['no open step', (h) => h.session.append('step/end', { turn: 1, step: 0 }), 'AUTO_REVIEW_NO_STEP'],
+    ['no route', undefined, 'AUTO_REVIEW_NO_ROUTE', { route: false }],
+    ['no unique schema', undefined, 'AUTO_REVIEW_NO_SCHEMA', { headerTools: [...TOOLS, TOOLS[0]] }],
+  ]
+  for (const [label, change, code, options = {}] of cases) {
+    const h = reviewHost(options)
+    change?.(h)
+    try {
+      const { body } = await autoCall(h)
+      assert.equal(body.isError, true, label)
+      assert.equal(body.error.code, code, label)
+      assert.equal(h.executed.length, 0, `${label}: the body did not run`)
+      assert.equal(h.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0, `${label}: no card row`)
+    } finally {
+      h.backchannel.dispose()
+    }
+  }
+})
+
+test('Auto review fails closed when the reviewer is unavailable or times out', async () => {
+  const unavailable = reviewHost({ decisions: [() => { throw new Error('reviewer offline') }] })
+  try {
+    const { body } = await autoCall(unavailable)
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'AUTO_REVIEW_FAILED')
+    assert.equal(unavailable.executed.length, 0)
+  } finally {
+    unavailable.backchannel.dispose()
+  }
+  const slow = reviewHost({ decisions: [signal => hanging(signal)], reviewTimeoutMs: 40 })
+  try {
+    const { body } = await autoCall(slow)
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'AUTO_REVIEW_TIMEOUT')
+    assert.equal(slow.executed.length, 0)
+  } finally {
+    slow.backchannel.dispose()
+  }
+})
+
+test('Auto review fails closed when the candidate credential is revoked mid-review', async () => {
+  const h = reviewHost({ decisions: [signal => hanging(signal)] })
+  try {
+    const started = h.nextReview()
+    const pending = autoCall(h)
+    await started
+    const record = h.backchannel.records.values().next().value
+    h.backchannel.revoke(record)
+    const { status, body } = await pending
+    assert.equal(status, 401)
+    assert.equal(body.error, 'refused')
+    assert.equal(h.executed.length, 0)
+    const result = h.session.snapshotEvents().find(event => event.type === 'tool/result')
+    assert.equal(result.data.error.code, 'BRIDGE_REVOKED')
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+test('Auto review fails closed when the level stops being Auto during the review', async () => {
+  const h = reviewHost({ decisions: [signal => hanging(signal)] })
+  try {
+    const started = h.nextReview()
+    const pending = autoCall(h)
+    await started
+    h.flipLevel()
+    const { body } = await pending
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'AUTO_REVIEW_LEVEL_CHANGED')
+    assert.equal(h.executed.length, 0)
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+test('Auto review redacts the arguments it shows the reviewer', async () => {
+  const h = reviewHost({ decisions: [ALLOW], route: true })
+  try {
+    const { body } = await autoCall(h, { args: { command: 'echo sk-abcdef123456' } })
+    assert.equal(body.isError, false)
+    assert.equal(h.streams.length, 1)
+    assert.equal(h.streams[0].provider, 'deepseek-official')
+    const review = JSON.stringify(h.streams[0].messages)
+    assert.doesNotMatch(review, /sk-abcdef123456/)
+    assert.match(review, /sk-\[hidden\]/)
+  } finally {
+    h.backchannel.dispose()
+  }
 })
 
 test('full access runs a DSH tool call with no dialog, as it does DSH\'s own tools', async () => {

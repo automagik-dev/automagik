@@ -2,6 +2,7 @@
 // that says the conversation changed provider (RFC 0003, amendment, "Live switching").
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { SYNTHETIC_KIND } from '../src/host/names.js'
 import { BOUNDARY_KIND, boundaryNotice, lastProviderOf, renderMessage, replayBlocks, turnStart } from '../src/host/switch.js'
 
 const user = text => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
@@ -31,6 +32,18 @@ test('a message renders as the person, the model, a named call or a result; DSH 
   assert.equal(renderMessage({ role: 'tool', content: [{ type: 'text', text: 'ok' }] }), 'Tool result: ok')
   assert.equal(renderMessage(note('Current DSH file policy')), undefined)
   assert.equal(renderMessage({ role: 'user', source: { kind: BOUNDARY_KIND }, content: [{ type: 'text', text: '[Now answered by X.]' }] }), undefined)
+})
+
+test('Auto review\'s synthetic bridge call never renders and never names a crossing provider', () => {
+  const synthetic = {
+    role: 'assistant',
+    source: { kind: 'model', provider: 'acp-fake', model: 'default', bridge: true, synthetic: SYNTHETIC_KIND },
+    content: [{ type: 'tool-call', id: 'bridge-1', name: 'bridge_synthetic', arguments: '{}' }],
+  }
+  assert.equal(renderMessage(synthetic), undefined)
+  assert.equal(lastProviderOf([user('q'), synthetic]), undefined)
+  const blocks = replayBlocks([user('q'), synthetic, user('next')], { redact: text => text, to: 'Fake agent' })
+  assert.equal(JSON.stringify(blocks).includes('bridge_synthetic'), false)
 })
 
 test('a replay is one header block then the messages in order, each redacted', () => {

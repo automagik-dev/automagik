@@ -106,6 +106,26 @@ export function promptOf(messages) {
 /** Where a Session title on an agent's chat goes when DSH's default model is an agent too. */
 export const SIDE_MODEL = Object.freeze({ provider: 'deepseek-official', model: 'deepseek-flash' })
 const TITLE_PURPOSE = 'session-title'
+// Auto review is a side request DSH's Auto preset makes on the Session's route. Like a title it
+// must not reach the agent; unlike a title it reads the Session, so it gets the redactor.
+const REVIEW_PURPOSE = 'auto-review'
+const SIDE_PURPOSES = new Set([TITLE_PURPOSE, REVIEW_PURPOSE])
+
+/** Redact the fixed system prompt and every text block of a review request. */
+function redactedReview(options, redact) {
+  return {
+    ...options,
+    ...(typeof options.system === 'string' ? { system: redact(options.system) } : {}),
+    ...(Array.isArray(options.messages) ? {
+      messages: options.messages.map(message => ({
+        ...message,
+        ...(Array.isArray(message.content) ? {
+          content: message.content.map(block => (block?.type === 'text' && typeof block.text === 'string' ? { ...block, text: redact(block.text) } : block)),
+        } : {}),
+      })),
+    } : {}),
+  }
+}
 
 /**
  * The `llm/stream` listener that keeps DSH's side requests (a Session title, a compaction
@@ -114,26 +134,31 @@ const TITLE_PURPOSE = 'session-title'
  * agent's effort, which is the agent's model's: DSH's default model when that is not an agent,
  * else `sideModel()` (acp-dsh's `sideModel` setting, DeepSeek by default). DSH's default is the
  * model the person last picked, so on a team that chats with an agent it is usually an agent.
+ * Auto review is another side request: DSH's Auto preset sends it on the Session's route, and
+ * it must reach a model that answers on its own just as a title does. It is redacted first:
+ * the reviewer reads the Session's history, so its text passes the shared redactor.
  * Every other side request (a compaction summary) is turned down: it would carry the agent's
  * whole chat to another provider, and the agent manages its own context. The agent loop's own
  * requests, and every other route's, go on as they are. Only here is the agent loop's mark on
  * a request reliable; DSH rebuilds the request before the adapter sees it whenever the
- * Session's tool set changed. `next` takes no request, so the title's call is a nested
+ * Session's tool set changed. `next` takes no request, so the side call is a nested
  * `ctx.llm.stream`, which passes through this listener again as another route's.
  * @param {Map<string, unknown>} providers the agents' routes
  * @param {{ llm?: { stream(options: object): AsyncIterable<object> }, get?: (name: string) => any }} [ctx]
  * @param {() => { provider?: string, model?: string } | undefined} [sideModel]
+ * @param {(text: string) => string} [redact] the shared redactor, for Auto review
  */
-export function aside(providers, ctx, sideModel = () => SIDE_MODEL) {
+export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = text => text) {
   const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
   const answers = choice => typeof choice?.provider === 'string' && choice.provider !== '' && typeof choice.model === 'string' && choice.model !== '' && !agentRoute(choice.provider)
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
   return (options, next) => {
     if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
-    if (options.purpose !== TITLE_PURPOSE || ctx?.llm === undefined) return refuse()
+    if (!SIDE_PURPOSES.has(options.purpose) || ctx?.llm === undefined) return refuse()
     const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
     if (chosen === undefined) return refuse()
-    const { reasoningEffort: _agentEffort, ...request } = options
+    const routed = options.purpose === REVIEW_PURPOSE ? redactedReview(options, redact) : options
+    const { reasoningEffort: _agentEffort, ...request } = routed
     return ctx.llm.stream({ ...request, provider: chosen.provider, model: chosen.model })
   }
 }

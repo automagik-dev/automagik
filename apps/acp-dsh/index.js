@@ -71,10 +71,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     })
   }
   const backchannel = new Backchannel({ ctx, log })
+  const redactor = redactorFor(ctx)
   const adapter = new AcpAdapter(ctx, agents, {
     dshTools: () => flagOf(config.dshTools) === true,
     backchannel,
-    redactor: redactorFor(ctx),
+    redactor,
   })
   const clis = new Map()
   const signIns = new Map()
@@ -232,7 +233,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redactor))
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
   ctx.on?.('loader/volatile-update', () => reconcile())
   // A model selection that moves a Session off its agent: its boundary row, and the agent
