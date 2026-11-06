@@ -55,7 +55,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   native provider — and each crossing writes a provider-boundary row the chat shows. The
   reasoning effort the Session ran on crosses with it, both ways, when the target model offers
   that level (matched by id, else by name), replacing the target default DSH records on a model
-  change. A target whose known levels lack it writes a notice row saying so and runs on its own.
+  change; an effort DSH itself defaulted is not carried. A target whose known levels lack it
+  writes a notice row saying so and runs on its own.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model

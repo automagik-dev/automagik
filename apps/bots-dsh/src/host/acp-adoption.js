@@ -112,7 +112,6 @@ function priorMove(bot) {
   return {
     from: { model: from, ...(bot.effort === undefined ? {} : { effort: bot.effort }) },
     target: bot.model,
-    recovered: true,
   }
 }
 
@@ -196,11 +195,13 @@ export function install(rt) {
     for (const bot of Object.values(state.bots ?? {})) {
       const prior = bot?.acpMoved
       if (prior !== undefined) {
-        const theirs = bot.model !== prior.target
-          || (bot.effort ?? undefined) !== (prior.from.effort ?? undefined)
-        if (theirs) {
+        if (bot.model !== prior.target) {
+          // The person moved the Bot off the route this record tracks: theirs from now on.
           delete bot.acpMoved
           changed = true
+        } else if ((bot.effort ?? undefined) !== (prior.from.effort ?? undefined)) {
+          // The person changed only the level: keep the record so a dead route can still
+          // restore the model, and leave their pick exactly as it is.
         } else {
           reapply.push(bot)
         }
