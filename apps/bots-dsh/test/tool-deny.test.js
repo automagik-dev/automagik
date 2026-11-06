@@ -1,3 +1,4 @@
+import { Session, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -21,33 +22,55 @@ function bench({ served = SERVED } = {}) {
   const lifted = []
   const warnings = []
   const agents = new Map()
-  let sessions = 0
+  // The Session store: a child Session's real header names its parent and subagent origin.
+  const sessions = new Map()
+  // DSH's restrictions intersect, and the disposer lifts exactly the one that set it.
+  const inForce = new Map()
+  const hiddenNames = (agent) => {
+    const hidden = new Set()
+    for (const filter of inForce.get(agent) ?? []) for (const name of filter) hidden.add(name)
+    return hidden
+  }
+  let created = 0
   ctx.logger.warn = (...args) => warnings.push(args.map(value => String(value)).join(' '))
-  ctx.tools.schemas = () => served.map(name => ({ name }))
+  // `schemas()` is the visible surface: a restriction hides what it denies.
+  ctx.tools.schemas = agent => (agent === undefined ? served : served.filter(name => !hiddenNames(agent).has(name)))
+    .map(name => ({ name }))
+  // `view().restrictableNames` is what `restrict()` accepts: the surface before restrictions.
+  ctx.tools.view = () => ({ restrictableNames: new Set(served), knownNames: new Set(served) })
   Object.assign(ctx, {
     workspaceRegistry: {
       get: () => undefined,
       resolveByPath: async () => undefined,
-      create: async path => ({ id: `w${sessions}`, path }),
+      create: async path => ({ id: `w${created}`, path }),
       archiveSession: async () => {},
     },
     sessionController: {
-      create: async options => ({ sessionId: options.sessionId ?? `s${++sessions}` }),
+      create: async options => ({ sessionId: options.sessionId ?? `s${++created}` }),
       resolveAgent: async (sessionId) => {
         if (!agents.has(sessionId)) {
-          agents.set(sessionId, {
-            session: { id: sessionId },
+          const live = {
+            session: sessions.get(sessionId) ?? { id: sessionId },
             ctx: {
               tools: {
                 restrict: (filter) => {
                   restricted.push({ sessionId, deny: [...filter.deny] })
-                  return () => lifted.push(sessionId)
+                  const stack = inForce.get(live) ?? []
+                  const denied = new Set(filter.deny ?? [])
+                  stack.push(denied)
+                  inForce.set(live, stack)
+                  return () => {
+                    const at = stack.indexOf(denied)
+                    if (at !== -1) stack.splice(at, 1)
+                    lifted.push(sessionId)
+                  }
                 },
               },
               // Other modules' agent/created listeners (capabilities) mount effects.
               effect: execute => execute(),
             },
-          })
+          }
+          agents.set(sessionId, live)
         }
         // ds-bot's own resolveAgent unwraps `{ agent }`, as DSH's controller answers.
         return { agent: agents.get(sessionId) }
@@ -55,14 +78,14 @@ function bench({ served = SERVED } = {}) {
       selectModel: async () => {},
     },
     sessionTitle: { rename: async () => {} },
-    sessions: { flush: async () => {} },
+    sessions: { get: sessionId => sessions.get(sessionId), flush: async () => {} },
   })
   apply(ctx, { home })
   const stop = () => {
     ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { ctx, home, stop, restricted, lifted, warnings, agents }
+  return { ctx, home, stop, restricted, lifted, warnings, agents, sessions }
 }
 
 const team = (t, options) => {
@@ -222,4 +245,52 @@ test('a group keeps its earlier parts under the room, and those are re-applied t
   const part = restricted.filter(entry => entry.sessionId === 'group-part-1').at(-1)
   assert.ok(part !== undefined, 'the room part was restricted')
   assert.deepEqual(part.deny, ['bash'])
+})
+
+test('an update that adds a name the restriction already hides keeps it', async (t) => {
+  const { ctx, restricted } = team(t)
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({ name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.' })
+  // `bash` is hidden from the visible surface now; the validator must still know it is served.
+  await rt.updateBot(bot.id, { denyTools: ['bash', 'write'] })
+  assert.deepEqual(bot.denyTools, ['bash', 'write'])
+  const applied = restricted.filter(entry => entry.sessionId === bot.id).at(-1)
+  assert.deepEqual(applied.deny.sort(), ['bash', 'write'])
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  await assert.rejects(
+    () => guard({ name: 'bash', agent: { id: bot.id } }, async () => 'ran'),
+    /does not have the bash tool/,
+  )
+})
+
+test('a subagent child of a restricted Bot is restricted and refused by the guard', async (t) => {
+  const { ctx, restricted, sessions } = team(t)
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({ name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.' })
+  // Real child Sessions: DSH records the parent and the subagent origin in the header.
+  const childId = 'child-run-1'
+  const grandchildId = 'grandchild-run-1'
+  sessions.set(childId, Session.create(childId, [], {
+    version: SESSION_FORMAT_VERSION, id: childId, createdAt: Date.now(), cwd: '/tmp', parentSession: bot.id, origin: 'subagent', isSeeded: false,
+  }))
+  sessions.set(grandchildId, Session.create(grandchildId, [], {
+    version: SESSION_FORMAT_VERSION, id: grandchildId, createdAt: Date.now(), cwd: '/tmp', parentSession: childId, origin: 'subagent', isSeeded: false,
+  }))
+  for (const sessionId of [childId, grandchildId]) {
+    const { agent } = await ctx.sessionController.resolveAgent(sessionId)
+    ctx.emit('agent/created', { agent })
+  }
+  await wait(100)
+  for (const sessionId of [childId, grandchildId]) {
+    const applied = restricted.filter(entry => entry.sessionId === sessionId)
+    assert.ok(applied.length > 0, `the child Session ${sessionId} was restricted`)
+    assert.deepEqual(applied.at(-1).deny, ['bash'])
+  }
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  // The guard resolves the child by its header, even when the call carries no header itself.
+  await assert.rejects(
+    () => guard({ name: 'bash', agent: { id: grandchildId } }, async () => 'ran'),
+    /does not have the bash tool/,
+  )
+  assert.equal(await guard({ name: 'omni_messages', agent: { id: grandchildId } }, async () => 'ran'), 'ran')
 })

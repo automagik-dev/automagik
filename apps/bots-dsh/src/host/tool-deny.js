@@ -1,8 +1,11 @@
 // A Bot's tool deny list. `state.bots.<id>.denyTools` names the tools that Bot never gets,
 // and they are removed from the model's surface by DSH's own `tools.restrict` on every
-// Session of that Bot: its own chat, each group Session, an earlier part reopened, a task.
+// Session of that Bot: its own chat, each group Session, an earlier part reopened, a task,
+// and every subagent child of any of them (by its Session header's parent lineage).
 // A denied tool is absent, not forbidden by an instruction: the model cannot call what it
-// cannot see, and a call that reaches the executor anyway is refused.
+// cannot see, and a call that reaches the executor anyway is refused. A tool registered
+// after the Session started stays visible until the next resolve; the executor guard
+// refuses it in the meantime.
 //
 // A name this profile does not serve is ignored with a warning instead of failing the boot:
 // a list written for another DSH keeps working here, and a typo is reported where the user
@@ -95,21 +98,56 @@ export function install(rt) {
 
   const same = (left, right) => left.length === right.length && left.every((name, index) => name === right[index])
 
+  // The tool names this profile serves for an Agent, before any restriction. `schemas()` is the
+  // visible surface, so after a restriction it hides a name this Bot already denies: reading
+  // the served set from it would call an additive update's earlier name unknown and drop it
+  // from the new list. `view().restrictableNames` is the set `restrict()` itself accepts.
+  const servedNames = (agent) => {
+    if (typeof ctx.tools.view === 'function') {
+      const view = ctx.tools.view(agent)
+      if (view?.restrictableNames !== undefined) return new Set(view.restrictableNames)
+    }
+    return new Set(ctx.tools.schemas(agent).map(schema => schema.name))
+  }
+
   const warnOnce = (sessionId, message) => {
     if (warned.get(sessionId) === message) return
     warned.set(sessionId, message)
     rt.warn('%s', message)
   }
 
+  // A Session's creation header, while DSH still holds it: a subagent child names its parent
+  // there, and that parent may be the Bot's own chat, a part, a group Session or a task.
+  const headerOf = (sessionId) => {
+    try {
+      return ctx.sessions?.get?.(sessionId)?.header
+    } catch {
+      return undefined
+    }
+  }
+
   // The Bot a Session speaks for: its own chat (a Session keyed by the Bot's id, indexed or
   // not yet), a group Session, an earlier part of either, or a task run. `start_task` records
   // its Session in `state.tasks` only, which the store's `selfOf` does not read, so a task is
-  // resolved here from the record the task run wrote.
-  const botOfSession = (sessionId) => {
-    const direct = rt.botOf(sessionId)
-    if (direct !== undefined) return direct
-    const owner = rt.selfOf(sessionId) ?? rt.state?.tasks?.[sessionId]?.from
-    return owner === undefined ? undefined : rt.botOf(owner)
+  // resolved here from the record the task run wrote. A subagent child is in none of the
+  // team's maps: it follows its durable parent lineage, so a restricted Bot cannot reach its
+  // tools through one.
+  const botOfSession = (sessionId, agent) => {
+    let current = sessionId
+    let header = agent?.session?.header ?? headerOf(current)
+    for (let depth = 0; typeof current === 'string' && depth < 32; depth += 1) {
+      const direct = rt.botOf(current)
+      if (direct !== undefined) return direct
+      const owner = rt.selfOf(current) ?? rt.state?.tasks?.[current]?.from
+      if (owner !== undefined) {
+        const bot = rt.botOf(owner)
+        if (bot !== undefined) return bot
+      }
+      if (header?.origin !== 'subagent' || header.parentSession === undefined) return undefined
+      current = header.parentSession
+      header = headerOf(current)
+    }
+    return undefined
   }
 
   /**
@@ -117,9 +155,9 @@ export function install(rt) {
    * @param {string} sessionId - the Session being resolved.
    * @param {object} agent - its live agent, the object DSH assembles tools for.
    */
-  async function apply(sessionId, agent) {
+  async function apply(sessionId, agent, knownBot) {
     if (typeof sessionId !== 'string' || agent === undefined) return
-    const bot = botOfSession(sessionId)
+    const bot = knownBot ?? botOfSession(sessionId, agent)
     const wanted = Array.isArray(bot?.denyTools) ? [...bot.denyTools].sort() : []
     const current = held.get(sessionId)
     if (current !== undefined && current.agent === agent && same(current.names, wanted)) {
@@ -137,7 +175,7 @@ export function install(rt) {
     }
     let served
     try {
-      served = new Set(ctx.tools.schemas(agent).map(schema => schema.name))
+      served = servedNames(agent)
     } catch {
       schedule(sessionId, agent)
       return
@@ -182,7 +220,9 @@ export function install(rt) {
     await Promise.all([...sessions].map(async (sessionId) => {
       try {
         const agent = await rt.resolveAgent(sessionId)
-        await apply(sessionId, agent?.agent ?? agent)
+        // The Bot is known here, and a fresh part can be mapped before the store's own
+        // indexes see it; apply the list from this record rather than re-resolving it.
+        await apply(sessionId, agent?.agent ?? agent, bot)
       } catch (error) {
         rt.warn('ds-bot: the tool deny list of %s not applied to Session %s: %s', bot.name, sessionId, error?.message ?? error)
       }
@@ -206,7 +246,7 @@ export function install(rt) {
     const live = agent?.agent ?? agent
     let served
     try {
-      served = new Set(ctx.tools.schemas(live).map(schema => schema.name))
+      served = servedNames(live)
     } catch {
       return []
     }
@@ -235,7 +275,7 @@ export function install(rt) {
   ctx.on('tools/execute', async (exec, next) => {
     const name = typeof exec?.name === 'string' ? exec.name : ''
     if (name === '' || exec?.agent === undefined) return next()
-    const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id)
+    const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id, exec.agent)
     if (bot === undefined || !Array.isArray(bot.denyTools) || !bot.denyTools.includes(name)) return next()
     throw refusal(`${bot.name} does not have the ${name} tool`)
   })

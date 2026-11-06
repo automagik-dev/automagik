@@ -1104,6 +1104,10 @@ export function install(rt) {
         delete state.views[agent.id]
       }
     }
+    // The fresh part is the Bot's current Session now, so its Bot is known: the deny list
+    // lands before the handoff starts a turn there, not on the next resolve.
+    await rt.applyToolDeny(bot, [freshId])
+      .catch(error => rt.warn('ds-bot: tool deny for the fresh part of %s not applied: %s', bot.name, error?.message ?? error))
     await rt.save()
     // A model the user picked until now went to the earlier part, which was still the
     // Bot's; from here on a change goes to the fresh one.

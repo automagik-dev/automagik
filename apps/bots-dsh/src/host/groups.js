@@ -215,6 +215,10 @@ export function install(rt) {
     }
     room.sessions[member.id] = id
     rt.groupOwners.set(id, { botId: member.id, roomId: room.id })
+    // The Session is mapped to its member now, so its Bot is known: the deny list lands
+    // before the first turn here, not on the next resolve.
+    await rt.applyToolDeny(member, [id])
+      .catch(error => rt.warn('ds-bot: tool deny for %s in %s not applied: %s', member.name, room.name, error?.message ?? error))
     delete room.seen[member.id]
     const ref = await rt.desiredModel(member)
     if (ref !== undefined) {
