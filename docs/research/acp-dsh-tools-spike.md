@@ -36,7 +36,8 @@ The options the build will use, verbatim from the wire:
 ```
 
 stdio server objects are `{ name, command, args, env }` with `env` a list of `{name, value}`; http
-and sse carry `{ type: "http" | "sse", url, headers }` and codex-acp also accepts an `acp` type.
+and sse carry `{ type: "http" | "sse", url, headers }` and codex-acp also accepts an `acp` type
+(read from the adapter bundle, not exercised).
 
 ## claude-agent-acp 0.100.0
 
@@ -44,17 +45,30 @@ and sse carry `{ type: "http" | "sse", url, headers }` and codex-acp also accept
 started by the adapter with their own env; A's call returned `echo:alpha:A`, B's `echo:beta:B`,
 and neither session's agent saw the other's tool.
 
-**`tools/list_changed`: yes, once the adapter's MCP client has settled.**
+**`tools/list_changed`: yes, once `session/new` has answered (inferred, not instrumented).**
 
-| Notification at | Re-list (`tools/list`) |
-|---|---|
-| 2 s after the server started | none |
-| 3 s | none |
-| 4 s | `tools/list` at 4004 ms |
-| 5 s | 5005 ms |
-| 6 s | 6004 ms |
-| 8 s | 8003 ms |
-| 12 s | 12004 ms |
+`session/new` took 3.55 s in every run here (3550 ms); the MCP handshake finished ~9 ms after the
+server started, so the first `tools/list` was already in. The rule this spike cannot instrument,
+and delivery 6 must verify, is that the tools are listed before `session/new` answers:
+
+| Notification at | `session/new` answered? | Re-list (`tools/list`) |
+|---|---|---|
+| 2003 ms | no | none |
+| 3003 ms | no | none |
+| 4002 ms | yes (at 3550 ms) | `tools/list` at 4004 ms |
+| 5005 ms | yes | 5005 ms |
+| 6004 ms | yes | 6004 ms |
+| 8003 ms | yes | 8003 ms |
+| 12004 ms | yes | 12004 ms |
+
+The 2 s and 3 s announcements arrived before 3550 ms and produced no re-list; the 4 s one arrived
+after and produced one. Read that as the rule to verify (announce only once `session/new` has
+answered), not as proof of a gate inside the adapter. The ~4 s figure is this host's `session/new`
+round-trip, not a timer in the adapter.
+
+That boundary is inferred from arrival times, not instrumented inside the adapter: `session/new`
+took 3550 ms in every run, so an announcement before ~3.55 s is before the answer. `session/resume`
+and `session/load` with `list_changed` were not run; the same ordering there is unverified.
 
 At 5 s the late tool was then called and returned `late-ok:A` in the same session
 (`tools/call {"name":"spike_late"}`). The adapter's client sends a `server/discover` probe
@@ -72,8 +86,8 @@ to a request to write a file, and no file appeared. ToolSearch stayed available,
 needs to load deferred MCP tools. The full options live at
 `_meta.claudeCode.options` (`tools`, `allowedTools`, `disallowedTools`, …); changing one of them
 on resume is in the adapter's `OPTION_REBUILDS_SESSION` set, so it tears the session down and
-recreates it. Only `disableBuiltInTools` was exercised in this spike; every other option name in
-that list is unverified here.
+recreates it (read from the adapter bundle, not exercised). Only `disableBuiltInTools` was
+exercised in this spike; every other option name in that list is unverified here.
 
 **Approval is the agent's, and its mode decides.** Started as-is, the session came up in Claude
 Code's `auto` mode (`modes.currentModeId: "auto"`) and the MCP tool call ran with **no**
@@ -95,7 +109,8 @@ server spike-A in this session".
 **Refresh with a new server list: fork only.** `session/resume` with a different `mcpServers`
 array returned the session but started **no** new MCP server (the thread keeps its config).
 `session/fork` with a different array returned a new session id and started the new server
-(`initialize` → `tools/list`).
+(`initialize` → `tools/list`). The source session stayed open; whether a fork closes it was not
+exercised.
 
 **The agent's own tools cannot be turned off.** No `tools`, `allowedTools` or
 `disableBuiltInTools` exists in the adapter's session handling (searched its bundle); its only
@@ -108,22 +123,33 @@ its own "Guardian Review" tool call around it instead.
 **Name collisions are skipped, not merged.** codex-acp reads the person's own
 `mcp_servers` names and drops a requested server whose name is already defined there
 (`skippedMcpServers`); a bridge that shares a name with a person's server would silently not be
-the one the agent uses.
+the one the agent uses. (Read from the codex-acp bundle, not exercised: no run here had a name
+collision.)
 
 **Environment.** The adapters drive the person's CLI and need that path: `CLAUDE_CODE_EXECUTABLE`
 for claude-agent-acp (without it, it looks for the CLI in its own SDK and fails), `CODEX_PATH` for
-codex-acp. claude-agent-acp also reads `CLAUDE_AGENT_ACP_PROTOCOL` (`auto` | `v1` | `v2`).
+codex-acp. claude-agent-acp also reads `CLAUDE_AGENT_ACP_PROTOCOL` (`auto` | `v1` | `v2`); read
+from the adapter bundle, not exercised.
 
 ## What this means for the amendment
 
-- The bridge is feasible for both adapters: one stdio MCP server per ACP session, decided by the
-  session, never a port.
-- A tool-list refresh is **not uniform**: Claude Code re-lists from `tools/list_changed` (after a
-  ~4 s settle) and honours a new list on resume; Codex re-lists never and ignores a new list on
-  resume, so a preset or level change on `acp-codex` needs `session/fork` with the new server set
-  (a new thread that continues the same conversation).
+- The bridge's **transport** is feasible for both adapters: one stdio MCP server per ACP session,
+  decided by the session, never a port. The bridge→DSH leg is not spiked: it is planned (a
+  per-session back-channel, `DSH_BRIDGE_CREDENTIAL`), and delivery 6 must prove it.
+- A tool-list refresh is **not uniform**: the spike's inference, for delivery 6 to verify, is
+  that Claude Code re-lists from `tools/list_changed` once `session/new` has answered (before
+  that answer the notification produced no re-list; the ~4 s in the table is that host's
+  round-trip) and honours a new list on resume; Codex re-lists never and ignores a new list on
+  resume, so a preset or level change on `acp-codex` needs `session/fork` with the new server
+  set. The fork returns a new session id and starts the new server; the spike did not exercise
+  whether it closes the source session or its bridge (unverified), so the plugin must
+  `session/close` it. That it continues the same conversation was not exercised either
+  (unverified).
 - Turning the agent's built-in tools off is possible on `acp-claude` and not on `acp-codex`. On
   Codex the "one tool set" is therefore a DSH-tools-plus-Codex-tools session, and the approval
   path is still DSH's for DSH's tools only.
 - DSH's approval cannot ride on `session/request_permission`: the agent's own mode decides there.
   The approval must be asked by the bridge itself, inside the DSH Session, before the tool runs.
+  In Manual, acp-dsh answers the ACP request for `mcp__dsh__*` itself (`allow-once`), so the
+  bridge's DSH approval is the one dialog the person sees (RFC 0003, Amendment, "One dialog per
+  call").
