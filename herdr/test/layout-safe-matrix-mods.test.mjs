@@ -1,6 +1,7 @@
 // The layout-safety matrix's mod manager routes (refs #431): a package's update and its remove (x)
-// in mods/am-mods, against the six shapes of layout-safe-matrix.test.mjs, with the layout Herdr
-// shows (the package's own scratchy.json) naming its mod. The same verdict: the shown layout keeps
+// in mods/am-mods, against the shapes of layout-safe-matrix.test.mjs (and a linked mods/ with
+// another layout shown, #494), with the layout Herdr shows (the package's own scratchy.json, or
+// main for that one) naming its mod. The same verdict: the shown layout keeps
 // its bytes, every mod it names is still in mods/, nothing outside the app home changed, and a
 // refusal names the layout in the guard's own wording; with no layout from Herdr a route may go
 // on when it says why (and names the layout, while its file reads).
@@ -25,9 +26,17 @@ const { layoutNeeds } = await import("../mods/am-sidebar/release.js");
 
 const NO_ANSWER = "Herdr does not answer, layout files readable";
 const NOTHING = "no layout can be read";
-const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
+/** #494: mods/ itself a link to the person's folder, outside the app home. */
+const LINKED_MODS = "linked mods/ folder";
+/** #494, with Herdr showing another layout (main) that names no mod, so no layout guard stops a route first. */
+const LINKED_MODS_ANOTHER = "linked mods/ folder, another layout shown";
+const LINKED = [LINKED_MODS, LINKED_MODS_ANOTHER];
+const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING, ...LINKED];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
-const EXPECTED_FAIL = {};
+const EXPECTED_FAIL = Object.fromEntries(["package update dropping the shown layout", "package update dropping the shown layout's mod", "package remove"]
+  .flatMap((r) => LINKED.map((s) => [`${r} | ${s}`, "#494"])));
+/** A refusal of a linked mods/ (#494): it names the link as the person's folder and moves nothing through it. */
+const LINKED_MODS_REFUSAL = /mods\/ \(\S+\) is a link to \S+, your own folder, not one this install made: nothing is moved through it/;
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const makeCx = () => {
@@ -71,7 +80,14 @@ function machine(t, shape, { layout, mod = "scratch" }) {
     write(join(ext, "scratch", "mod.json"), "{}");
     mkdirSync(join(appHome, "mods"), { recursive: true });
     symlinkSync(join(ext, "scratch"), join(appHome, "mods", "scratch"));
+  } else if (LINKED.includes(shape)) {
+    write(join(ext, "mods", "scratch", "mod.json"), "{}");
+    mkdirSync(appHome, { recursive: true });
+    symlinkSync(join(ext, "mods"), join(appHome, "mods"));
   } else write(join(appHome, "mods", "scratch", "mod.json"), "{}");
+  // Another layout shown (#494's second shape): main, naming no mod.
+  const MAIN = { id: "root", children: [] };
+  if (shape === LINKED_MODS_ANOTHER) write(join(appHome, "layouts", "main.json"), JSON.stringify(MAIN));
   if (shape === "symlinked layouts folder") {
     write(join(ext, "layouts", "scratchy.json"), BODY);
     symlinkSync(join(ext, "layouts"), join(appHome, "layouts"));
@@ -100,13 +116,15 @@ function machine(t, shape, { layout, mod = "scratch" }) {
   ui.props = {};
   state.shared.set("am.mods.installed", [{ source, prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
   if (shape === NO_ANSWER || shape === NOTHING) ui.layout = null;
+  else if (shape === LINKED_MODS_ANOTHER) { ui.layout = MAIN; state.shared.set("layout", "main"); }
   else { ui.layout = LAYOUT; state.shared.set("layout", "scratchy"); }
-  return { root, appHome, ext, source, shape, shown: "scratchy" };
+  const [shown, tree] = shape === LINKED_MODS_ANOTHER ? ["main", MAIN] : ["scratchy", LAYOUT];
+  return { root, appHome, ext, source, shape, shown, tree };
 }
 
 const snapshot = (m) => {
   let body = null;
-  try { body = readFileSync(join(m.appHome, "layouts", "scratchy.json"), "utf8"); } catch {}
+  try { body = readFileSync(join(m.appHome, "layouts", `${m.shown}.json`), "utf8"); } catch {}
   return { body, ext: treeSum(m.ext) };
 };
 const FAIL_OPEN_REASON = /without knowing the layout Herdr shows|no layout to read|is Herdr running\?/;
@@ -116,13 +134,15 @@ const guardLine = (name) => new RegExp(`stays on: the ${name} layout shows it|th
 function judge(m, before, said, stopped) {
   const after = snapshot(m);
   const problems = [];
-  if (after.body === null) problems.push("layouts/scratchy.json is gone");
-  else if (after.body !== before.body) problems.push("layouts/scratchy.json changed");
-  const needs = [...layoutNeeds(LAYOUT).blocks];
+  if (after.body === null) problems.push(`layouts/${m.shown}.json is gone`);
+  else if (after.body !== before.body) problems.push(`layouts/${m.shown}.json changed`);
+  const needs = [...layoutNeeds(m.tree).blocks];
   const missing = needs.filter((mod) => { try { return !statSync(join(m.appHome, "mods", mod)).isDirectory(); } catch { return true; } });
   if (missing.length) problems.push(`mods/${missing.join(", mods/")} left mods/`);
   if (after.ext !== before.ext) problems.push("something outside the app home changed (written through a link)");
-  if (stopped && !guardLine(m.shown).test(said)) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${said}`);
+  // A refusal of a linked mods/ (#494) moves nothing at all: it need not name the layout.
+  const linkRefusal = LINKED.includes(m.shape) && LINKED_MODS_REFUSAL.test(said);
+  if (stopped && !linkRefusal && !guardLine(m.shown).test(said)) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${said}`);
   // Fail open: with readable files the warning names the layout and why; with none, it says why.
   if (problems.length && (m.shape === NO_ANSWER ? said.includes(m.shown) : m.shape === NOTHING) && !stopped && after.ext === before.ext && FAIL_OPEN_REASON.test(said)) {
     return { safe: true, why: `fail open: ${said}` };
@@ -173,6 +193,11 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
       t.diagnostic(`${verdict.safe ? "SAFE" : "UNSAFE"}: ${verdict.why}`);
       if (gap) assert.ok(!verdict.safe, `${route} | ${shape} is safe now: drop its expected-fail mark (${gap})`);
       else assert.ok(verdict.safe, `${route} | ${shape}: ${verdict.why}`);
+      // #494: through a linked mods/ nothing changes, so the record is as it was.
+      if (LINKED.includes(shape)) {
+        if (!gap) assert.deepEqual(state.shared.get("am.mods.installed").find((r) => r.source === m.source)?.mods, ["scratch"], `the record (${shape})`);
+        return;
+      }
       // #431: the layout it kept stays in the record, so the next update after a switch moves it aside.
       if (route === "package update dropping the shown layout") {
         const kept = shape !== NO_ANSWER && shape !== NOTHING;
