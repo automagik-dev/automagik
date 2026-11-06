@@ -11,6 +11,7 @@
       "peerDependencies": {
         "@deepseek-ai/cordis": "*",
         "@deepseek-ai/dsh-llm": "*",
+        "@deepseek-ai/dsh-session": "*",
         "@deepseek-ai/dsh-tools": "*",
         "@deepseek-ai/schemastery": "*",
       },

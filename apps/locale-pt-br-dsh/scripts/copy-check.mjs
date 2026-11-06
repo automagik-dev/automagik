@@ -1,6 +1,7 @@
 // The copy check: every pt-BR text of the pack, against its English text and the copy rules.
-// - Each DSH namespace the pack carries is whole: every key of its English dictionary (test/en,
-//   at the DSH release the tests run on) has a text, and the pack adds no other key.
+// - A DSH namespace the pack carries holds only keys of its English dictionary (test/en, at the
+//   DSH release the tests run on). The pack carries corrected subsets of five DSH namespaces
+//   while DSH's own pt is wrong; every key there must still be a real DSH key.
 // - `omni-ui` is the Bot team's (apps/bots-dsh): its keys are the English text, and each key the
 //   pack translates is still one of them.
 // - A text keeps the {placeholders} of its English text.
@@ -16,7 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FOLDER, PLUGIN, loadDictionaries } from './dictionaries.mjs'
 
-export const REFERENCE = join(PLUGIN, 'test/en/0.2.1-rc.4.json')
+export const REFERENCE = join(PLUGIN, 'test/en/0.2.2-rc.1.json')
 const OMNI_UI = 'omni-ui'
 const PLACEHOLDER = /\{(\w+)\}/g
 const ARTICLE = '(?:o|a|os|as|do|da|dos|das|no|na|nos|nas|ao|à|aos|às|pelo|pela|num|numa|dum|duma|um|uma)'
@@ -73,7 +74,6 @@ export async function checkCopy({ folder = FOLDER, reference = REFERENCE, omni }
       findings.push(`${ns}: not a DSH namespace in ${reference.split('/').at(-1)}`)
       continue
     }
-    if (source) for (const key of Object.keys(source)) if (!(key in dict)) findings.push(`${ns}:${key}: missing`)
     for (const [key, text] of Object.entries(dict)) {
       const en = source ? source[key] : (known.has(key) ? key : undefined)
       if (en === undefined) findings.push(`${ns}:${key}: not an en key`)

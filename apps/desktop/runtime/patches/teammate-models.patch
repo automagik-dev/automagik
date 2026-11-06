@@ -9,7 +9,7 @@
  //#region lib/types/error.js
  /** Typed Agent Teams failures. */
  /** Stable failure raised by the Team domain. */
-@@ -840,6 +840,8 @@
+@@ -843,6 +843,8 @@
  	journal;
  	lifecycle;
  	maxMembers;
@@ -18,7 +18,7 @@
  	/**
  	* @param ctx - Team service context with Agent, Session, persistence, and subagent services.
  	* @param journal - authoritative Lead-log transaction owner.
-@@ -914,12 +916,11 @@
+@@ -917,12 +919,11 @@
  			name: "lead",
  			role: "lead",
  			status: availability(root),
@@ -32,7 +32,7 @@
  			result.push({
  				id: member.id,
  				name: member.name,
-@@ -928,7 +929,7 @@
+@@ -931,7 +932,7 @@
  				description: member.description,
  				provider: member.provider,
  				context: member.context,
@@ -41,7 +41,7 @@
  				diagnostics: member.error === void 0 ? [] : [member.error]
  			});
  		}
-@@ -1004,6 +1005,11 @@
+@@ -1007,6 +1008,11 @@
  	async spawnAdmitted(caller, request) {
  		const membership = this.membership(caller);
  		if (membership.role !== "lead") throw new TeamError("only the Team Lead can create teammates", "TEAM_LEAD_REQUIRED");
@@ -53,7 +53,7 @@
  		const signal = AbortSignal.any([request.signal, this.lifecycle.signal]);
  		signal.throwIfAborted();
  		const root = membership.root;
-@@ -1036,7 +1042,8 @@
+@@ -1039,7 +1045,8 @@
  				label: description,
  				request: {
  					prompt: request.prompt,
@@ -63,7 +63,7 @@
  				},
  				signal
  			});
-@@ -1155,10 +1162,35 @@
+@@ -1158,10 +1165,35 @@
  			description: member.description,
  			provider: member.provider,
  			context: member.context,
@@ -100,7 +100,7 @@
  	/** Validate a never-reused model-facing teammate name. */
  	memberName(value) {
  		if (!MEMBER_NAME.test(value) || value.length > 64 || value === "lead") throw new TeamError("teammate name must be lower-kebab-case, at most 64 characters, and not \"lead\"", "TEAM_INVALID_MEMBER_NAME");
-@@ -1184,6 +1216,15 @@
+@@ -1187,6 +1219,15 @@
  		return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== void 0;
  	}
  };
@@ -116,7 +116,7 @@
  /** Turn availability is independent of whether the Agent is loaded. */
  function availability(agent) {
  	return agent?.status === "running" ? "running" : "inactive";
-@@ -1499,6 +1540,16 @@
+@@ -1497,6 +1538,16 @@
  		return this.roster.list(this.roster.membership(agent));
  	}
  	/**

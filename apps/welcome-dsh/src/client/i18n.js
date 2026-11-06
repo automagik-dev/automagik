@@ -243,6 +243,8 @@ export const PT_BR = {
   'Installing its connector in the background. This takes a minute or two.': 'Instalando o conector em segundo plano. Leva um ou dois minutos.',
   'The connector did not install: {error}': 'O conector não foi instalado: {error}',
   'The connector did not install.': 'O conector não foi instalado.',
+  'Install details': 'Detalhes da instalação',
+  'Log: {path}': 'Registro: {path}',
   'Connector ready (version {version}).': 'Conector pronto (versão {version}).',
   'Connector ready.': 'Conector pronto.',
   'Restart DSH to see {name} in the model picker.': 'Reinicie o DSH para ver o {name} no seletor de modelos.',
@@ -385,7 +387,9 @@ let bound = null
 // `locale` is the DSH locale service; without one, copy stays English.
 export function installLocale(locale) {
   if (!locale || typeof locale.register !== 'function' || typeof locale.bind !== 'function') return () => {}
-  const off = locale.register(NAMESPACE, { en: EN, 'pt-BR': PT_BR })
+  // DSH 0.2.2 lists both `pt` (its own entry) and the locale pack's `pt-BR`; the same copy
+  // must answer for either, or a reader moved onto DSH's `pt` falls back to English here.
+  const off = locale.register(NAMESPACE, { en: EN, pt: PT_BR, 'pt-BR': PT_BR })
   const mine = locale.bind(NAMESPACE)
   bound = mine
   return () => {
