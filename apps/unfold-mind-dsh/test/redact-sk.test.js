@@ -244,7 +244,16 @@ test('tail boundaries: the 240-char window tail and the 4096-char private keep n
 
 // ── the served surfaces: /api/unfold-mind and its SSE stream ───────────────────────────────────
 
-test('canary on the real /api/unfold-mind snapshot route and SSE stream: no fragment in any frame', async () => {
+test('canary on the real /api/unfold-mind snapshot route and SSE stream: no fragment in any frame', async (t) => {
+  // Every served time is this test's own: the snapshot carries epoch-ms stamps (`at`, a row's
+  // observed_at, an episode's opened_at/last_at, the link's since) and a five-character window of
+  // the canary's digit run can coincide with the digits of the wall clock of the moment the test
+  // ran (#456: `45678`). Those are not canary text, so the clock is fixed here as the lifetime
+  // nonce is (`fixed`): the same bytes are still searched, and the result no longer depends on
+  // when the suite runs. Route registration, the Context, its mind and the data dir are built
+  // fresh here, and the plugin keeps no route or mind state at module level, so no other test
+  // in this file can be seen either.
+  t.mock.method(Date, 'now', () => 1_000_000)
   const dir = mkdtempSync(join(tmpdir(), 'unfold-mind-sk-'))
   const ctx = new Context()
   const routes = []
