@@ -140,7 +140,10 @@ function aside(path) {
  *   its text (`skip` not applied), and goes on (fail open); with "refuse" and no `ask`, when no
  *   layout refused, it logs the files in layouts/ that do not read and goes on; with "hold", it
  *   logs the files that do not parse but name a mod that still leaves in their text (`exclude`
- *   leaving some out) and goes on (#489). Unset: nothing said.
+ *   leaving some out) and goes on (#489); with `shownFile` and no name from `ask` (Herdr did not
+ *   answer), it logs each file in layouts/ the ops remove that parses, with the checked mods its
+ *   blocks name, and each one `links` keeps whose blocks name one, and goes on (#487). Unset:
+ *   nothing said.
  * - `shownFile`: "refuse" refuses an op that removes or moves the file of the layout Herdr shows,
  *   decided on its name (`ask`'s `name`) alone, once `needed` has passed (its refusal, about a mod,
  *   comes first). Unset: not checked.
@@ -276,6 +279,27 @@ export function change(home, ops, options = {}) {
       decision.shown = shownOnce();
       const guard = packageLayoutGuard({ name: decision.shown.name, layouts: files, then });
       if (guard) return { ...decision, refused: `${guard.refuse}${switchCommand(decision.shown.name)}` };
+    }
+    // Herdr did not answer (no name at all), so no file could be refused for being the one it
+    // shows (#487): each one this removes is said, with the checked mods its blocks name (`skip`
+    // leaves it out of the list of layouts that stay), and so is one a linked layouts/ keeps while
+    // its blocks name one. One that does not parse is #489's line's.
+    const keptFiles = [...kept].map((i) => basename(leaves(ops[i])));
+    if (unknown === "warn" && (files.length || keptFiles.length) && (decision.shown = shownOnce()).name == null) {
+      const why = decision.shown.why;
+      const after = `If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)${pack ? ", or `am install herdr.pack` puts the pack back" : ""}`;
+      for (const [f, stays] of [...files.map((f) => [f, false]), ...keptFiles.map((f) => [f, true])]) {
+        let blocks;
+        try { blocks = layoutNeeds(JSON.parse(readFileSync(join(root, "layouts", f), "utf8"))).blocks; } catch { continue; }
+        const named = checked.filter((m) => blocks.has(m));
+        const leave = `${named.join(", ")}, which leave${named.length === 1 ? "s" : ""} mods/`;
+        if (stays && !named.length) continue;
+        const line = stays
+          ? `keeping layouts/${f} without knowing the layout Herdr shows (${why}): layouts/ is a link, your own folder, so it stays, but its blocks name ${leave}. ${after}`
+          : `removing layouts/${f} without knowing the layout Herdr shows (${why}), so it may be the one shown${named.length ? `: its blocks name ${leave} too` : ""}. ${after}`;
+        decision.notes.push(line);
+        log(line);
+      }
     }
   }
 
