@@ -2051,3 +2051,88 @@ test("a release whose update.mjs imports layoutSafe.mjs but lacks it installs no
   assert.match(r.err, /am-sidebar\/layoutSafe\.mjs is not a plain file: nothing was installed\./);
   assert.equal(existsSync(s.pack), false);
 });
+
+/**
+ * A fake `dsh` in the scratch PATH: it records every argv and, on `plugin --profile tui add`,
+ * writes the tui profile the way pnpm does; `remove` takes the dependency out. DSH's home is
+ * under the scratch HOME, so nothing reaches the real one.
+ */
+const fakeDsh = (s) => {
+  const log = join(s.root, "dsh.log");
+  writeFileSync(log, "");
+  exe(join(s.bin, "dsh"), `#!/bin/sh
+printf '%s\\n' "$*" >> "${log}"
+case "$1 $2 $3" in
+  "plugin --profile tui")
+    shift 3
+    d="$DSH_HOME/profiles/tui"
+    case $1 in
+      add)
+        mkdir -p "$d/node_modules/@deepseek-harness-tui/dsh-tui"
+        printf '{"dependencies":{"@deepseek-harness-tui/dsh-tui":"0.19.0"}}\\n' > "$d/package.json"
+        printf "minimumReleaseAgeExclude:\\n  - '@deepseek-harness-tui/dsh-tui@0.19.0'\\n" > "$d/pnpm-workspace.yaml"
+        printf "packages:\\n\\n  '@deepseek-harness-tui/dsh-tui@0.19.0':\\n    resolution: {integrity: sha512-4TAPhsTqfL+oG1H39Fbj13tfaVVGnwV9N33dV8Acn/YBoZT/YgXwF+ZnbhvRi0l55bNc6X6loKkngxrNL8NX3w==}\\n\\n" > "$d/pnpm-lock.yaml"
+        printf '{"version":"0.19.0"}\\n' > "$d/node_modules/@deepseek-harness-tui/dsh-tui/package.json"
+        ;;
+      remove)
+        printf '{"dependencies":{}}\\n' > "$d/package.json"
+        rm -rf "$d/node_modules/@deepseek-harness-tui/dsh-tui"
+        ;;
+    esac
+    ;;
+esac
+exit 0
+`);
+  s.extraEnv.DSH_LOG = log;
+  s.extraEnv.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED = "2026-11-06T03:36:00Z";
+  return { log, calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+};
+
+test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall removes the shim and plugin", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  // DSH's desktop sentinels: this install must never write them.
+  mkdirSync(join(s.home, ".dsh", "profiles", "desktop"), { recursive: true });
+  writeFileSync(join(s.home, ".dsh", "profiles", "desktop", "package.json"), "{\"name\":\"desktop\"}\n");
+  writeFileSync(join(s.home, ".dsh", ".credentials.yaml"), "keep: me\n");
+  const profile = join(s.home, ".dsh", "profiles", "tui");
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /dsh-TUI 0\.19\.0 is installed in the tui profile|installed dsh-TUI 0\.19\.0/);
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, { "@deepseek-harness-tui/dsh-tui": "0.19.0" });
+  assert.match(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8"), /'@deepseek-harness-tui\/dsh-tui@0\.19\.0'/);
+  assert.match(readFileSync(shim, "utf8"), /^exec dsh --profile tui "\$@"$/m);
+  assert.deepEqual(dsh.calls(), ["plugin --profile tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
+  assert.equal(readFileSync(join(s.home, ".dsh", "profiles", "desktop", "package.json"), "utf8"), "{\"name\":\"desktop\"}\n");
+  assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Removed .*dsh-tui shim/);
+  assert.equal(existsSync(shim), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
+  assert.ok(dsh.calls().includes("plugin --profile tui remove @deepseek-harness-tui/dsh-tui"));
+  assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+});
+
+test("no dsh: --yes installs the pack and prints one honest dsh-TUI skip line", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /DSH is not installed \(no dsh on PATH\): skipped dsh-TUI\. Install DSH Desktop or 'npm install -g @deepseek-ai\/dsh', then run 'automagik-herdr dsh-tui install'\./);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
+});
+
+test("--no-dsh-tui leaves DSH alone even when dsh is on PATH", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const r = s.run("--no-dsh-tui", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Left DSH \(dsh-TUI\) alone \(--no-dsh-tui\)\./);
+  assert.deepEqual(dsh.calls(), []);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
+});

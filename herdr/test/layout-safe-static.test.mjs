@@ -166,6 +166,9 @@ export const ALLOWLIST = [
   ["am/lib/self.mjs", "renameSync(tmp, path)", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and the briefing entry point am places)"],
   ["am/lib/self.mjs", "rmSync(join(store, name), { recursive: true, force: true })", 2, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],
   ["am/lib/self.mjs", "rmSync(path, { force: true })", 3, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home (and the briefing entry point am places)"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "renameSync(temp, path)", 1, "writeAtomic: dsh-TUI's shim in ~/.local/bin, DSH's tui profile files under ~/.dsh (or $DSH_HOME) and dsh-TUI's ~/.dsh-tui state: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "rmSync(cwd, { recursive: true, force: true })", 1, "a temp folder the dsh plugin run works in (mkdtemp in tmpdir)"],
+  ["herdr/mods/am-sidebar/dshTui.mjs", "rmSync(shim, { force: true })", 1, "the dsh-tui shim in ~/.local/bin: never mods/ or layouts/"],
 ];
 
 test("every rm, rename, unlink and cp outside layoutSafe.mjs is one the allowlist names", () => {

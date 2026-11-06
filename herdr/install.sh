@@ -8,6 +8,7 @@
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
+#   ... | bash -s -- --dsh-tui | --no-dsh-tui  install (or leave) dsh-TUI as a Herdr agent
 #
 # It checks the OS, Node and Herdr (herdrdev's, dev.herdr.app: offering its own installer from
 # releases.herdr.dev, no sudo, asking first),
@@ -28,7 +29,9 @@
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
 # over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
 # the pack's `automagik-herdr meter install --linked`: each machine downloads and checks it
-# itself); a failure there is only a warning. Safe to run again: a rerun of the installed
+# itself); a failure there is only a warning. When asked (or with --dsh-tui), it installs the
+# pinned dsh-TUI into DSH's own `tui` profile and the `dsh-tui` shim into ~/.local/bin, so Herdr's
+# built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
 # missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
 # missing automagik layout and runs `herdr-app check` again. It says "up to date" only when every
@@ -86,6 +89,8 @@ main() {
   METER_OK=1
   # Linked machines too (meterFleet.js): 0 with --usagemeter-local-only (or --no-usagemeter).
   FLEET_OK=1
+  # DSH as a Herdr agent (#561): ask, yes or no. --yes consents like it does to every question.
+  DSH_TUI=ask
 
   YES=0
   ADOPT=0
@@ -98,6 +103,8 @@ main() {
       --adopt) ADOPT=1 ;;
       --no-usagemeter) METER_OK=0; FLEET_OK=0 ;;
       --usagemeter-local-only) FLEET_OK=0 ;;
+      --dsh-tui) DSH_TUI=yes ;;
+      --no-dsh-tui) DSH_TUI=no ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -105,6 +112,8 @@ main() {
     esac
     shift
   done
+  # --yes answers the dsh-TUI question only when neither flag said which way.
+  if [ "$YES" = 1 ] && [ "$DSH_TUI" = ask ]; then DSH_TUI=yes; fi
 
   # The test hooks: a release from a file:// folder or this repository's GitHub pages only.
   if [ -n "${AUTOMAGIK_HERDR_RELEASE_URL:-}" ]; then
@@ -141,7 +150,7 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
-switching Herdr to the automagik layout). --version installs that Automagik release; it must carry the
+switching Herdr to the automagik layout, installing DSH as an agent). --version installs that Automagik release; it must carry the
 pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
@@ -149,6 +158,10 @@ pack (automagik-herdr-pack-<v>.tgz): not every release does.
 machine: install skips it, and --uninstall keeps it even where this installer put it.
 --usagemeter-local-only installs and removes it on this computer only, never on a linked machine
 (hc machine ls). Both are remembered for 'automagik-herdr update' and the sidebar's sync.
+--dsh-tui installs the pinned dsh-TUI into DSH's own `tui` profile and the dsh-tui shim into
+~/.local/bin, so Herdr's built-in DSH entry works; --no-dsh-tui leaves DSH alone. Without either,
+the installer asks, and a machine with no dsh gets one line saying how to get it. --uninstall
+removes dsh-TUI (the plugin and the shim) when this installer put it there.
 EOF
 }
 
@@ -435,6 +448,8 @@ uninstall() {
   if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then drop=$LAYOUT; fi
   # Nothing moves while the shown layout's blocks name a pack mod (#420).
   layout_guard "$mods" "$drop"
+  # dsh-TUI (the plugin and the shim) goes while its command and the pack are still in place.
+  dsh_tui_uninstall
   # How the layout and the folders leave: through the pack's updater (update.mjs pack-out, which
   # runs them through layoutSafe.mjs, journalled) when Node is here and the installed updater has
   # the command (read from its usage line: nothing runs, nothing is written); else this script's
@@ -720,6 +735,47 @@ uninstall_meter() {
   fi
 }
 
+# ---- DSH as a Herdr agent (dsh-TUI, #561) ----
+# The profile, the pin and the shim are the pack CLI's (`automagik-herdr dsh-tui install`), which
+# writes DSH's own `tui` profile and never the desktop one. This step only decides whether to ask;
+# a machine with no dsh gets the one line the CLI gives, and nothing is written.
+dsh_tui_step() {
+  [ "$DSH_TUI" = no ] && { say "Left DSH (dsh-TUI) alone (--no-dsh-tui)."; return 0; }
+  if ! command -v dsh >/dev/null 2>&1; then
+    say "DSH is not installed (no dsh on PATH): skipped dsh-TUI. Install DSH Desktop or 'npm install -g @deepseek-ai/dsh', then run 'automagik-herdr dsh-tui install'."
+    return 0
+  fi
+  if [ "$DSH_TUI" = ask ] && ! ask "Install DSH as a Herdr agent (dsh-TUI, its own tui DSH profile)?"; then
+    say "Left DSH (dsh-TUI) alone; 'automagik-herdr dsh-tui install' adds it later."
+    return 0
+  fi
+  dsh_rc=0
+  dsh_out=$("$LINK" dsh-tui install <"/dev/null" 2>&1) || dsh_rc=$?
+  if [ "$dsh_rc" != 0 ]; then
+    say "Warning: dsh-TUI was not installed: $(printf '%s\n' "$dsh_out" | sed -n '$p')"
+    return 0
+  fi
+  printf '%s\n' "$dsh_out" | sed 's/^/  /'
+}
+# --uninstall: the plugin and the shim go through the command that put them there, while the pack
+# and its link are still in place. A pack from before this command leaves DSH alone and says how.
+dsh_tui_uninstall() {
+  if link_ours && [ -f "$PACK/bin/automagik-herdr.mjs" ] && grep -q 'dsh-tui install' "$PACK/bin/automagik-herdr.mjs" 2>/dev/null; then
+    dsh_rc=0
+    dsh_out=$("$LINK" dsh-tui uninstall <"/dev/null" 2>&1) || dsh_rc=$?
+    if [ "$dsh_rc" != 0 ]; then
+      say "Warning: dsh-TUI was not removed: $(printf '%s\n' "$dsh_out" | sed -n '$p')"
+      return 0
+    fi
+    printf '%s\n' "$dsh_out" | sed 's/^/  /'
+    return 0
+  fi
+  if [ -f "$BIN_DIR/dsh-tui" ] && grep -q 'Automagik Herdr' "$BIN_DIR/dsh-tui" 2>/dev/null; then
+    rm -f "$BIN_DIR/dsh-tui" && say "Removed $BIN_DIR/dsh-tui; the tui DSH profile was left as it is (no installed dsh-tui command to run)."
+  fi
+  return 0
+}
+
 # The pack pointer: pack.json ($1) and its signature ($2), checked against TRUSTED_KEYS (ed25519, as
 # plugin-lane's lane.json.sig), then against what is installed: the marker's version ($3) and
 # sequence ($4), either may be empty. A pointer older than either is refused, so a re-posted older
@@ -994,6 +1050,7 @@ install() {
     *":$BIN_DIR:"*) ;;
     *) say "Add ~/.local/bin to your PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
   esac
+  dsh_tui_step
 
   # ---- f. next ----
   # The hooks notice after everything else the run printed and before its last lines, so it is read.

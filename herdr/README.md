@@ -124,6 +124,50 @@ prints that command instead. Either way the sidebar syncs only this computer unt
 from a linked machine only where the install record says the pack put it and it is still that
 version.
 
+### DSH as a Herdr agent (dsh-TUI)
+
+DSH, the DeepSeek Harness, is an agent in Herdr's `+` menu through
+[dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI), in its own DSH profile. The installer asks
+once; `--dsh-tui` takes it without asking and `--no-dsh-tui` leaves DSH alone. The command does
+the same later:
+
+```bash
+automagik-herdr dsh-tui install   # install, or update to the pack's pin
+automagik-herdr dsh-tui doctor    # what is there: dsh, the tui profile, the shim, the guide
+automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and state stay
+```
+
+- **DSH first.** It assumes `dsh` is on PATH (DSH Desktop, or `npm install -g @deepseek-ai/dsh`).
+  With none, install prints one line saying how to get it and changes nothing.
+- **The exact pin.** `@deepseek-harness-tui/dsh-tui` **0.19.0**, built for DSH 0.2.2-rc.1. The
+  profile's `package.json` pins the exact version and its `pnpm-lock.yaml` must record the
+  registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
+  version or integrity fails and takes back what it added.
+- **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
+  (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
+  settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints
+  after the plugin step and fails rather than claim success if DSH changed them.
+- **pnpm's release-age gate.** pnpm 11's `minimumReleaseAge` (1440 minutes by default) refuses a
+  version published hours ago, so the profile's `pnpm-workspace.yaml` carries
+  `minimumReleaseAgeExclude` for exactly `@deepseek-harness-tui/dsh-tui@0.19.0` — never the bare
+  package name. Once that version is older than the profile's threshold, install/update removes
+  that exact entry; uninstall removes it too. Other packages' entries are left alone.
+- **The shim.** `~/.local/bin/dsh-tui` is a shell script whose one command is
+  `exec dsh --profile tui "$@"`. The long form matters: dsh-TUI reads the profile name from the
+  app's arguments, and the short `dsh tui` leaves only `tui` there. Herdr's built-in `dsh-tui`
+  program entry (its `programs.json`) checks that the first word resolves on PATH, so the built-in
+  DSH menu entry works with no per-user `programs.json`. Add `~/.local/bin` to PATH if it isn't.
+- **First launch.** Sign in in dsh-TUI with `/model` → **DeepSeek Account**, or `/auth`; a key
+  already in DSH's credential store or `DEEPSEEK_API_KEY` in the environment works too. No key is
+  stored by this installer and no BWS launcher ships. The four-step first-run guide is marked
+  done once (`~/.dsh-tui/onboarding.json`); `/setup` opens it later.
+- **Sessions.** They land in `~/.dsh` and appear in DSH Desktop's history after Desktop is quit
+  and reopened: Desktop has no live refresh. One writer per session applies: don't continue the
+  same session from Desktop and dsh-TUI at once.
+- **Uninstall.** `dsh plugin --profile tui remove` takes the plugin out and the shim follows;
+  `--uninstall` of the pack does the same while its command is still in place. Sessions,
+  `~/.dsh-tui` state and the `tui` profile stay.
+
 ### From v0.2 to v0.4.x
 
 Rerun the one-liner above. Their own `automagik-herdr update` finds nothing newer, because the
@@ -293,6 +337,8 @@ automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
 automagik-herdr update [--check | --rollback]
+automagik-herdr meter install [--machine M | --linked | --local] | meter uninstall
+automagik-herdr dsh-tui install | update | uninstall | doctor
 ```
 
 - `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
