@@ -169,15 +169,17 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
   if (!agent || !agents[agent]?.run?.length) return { error: `${bot?.name ?? "This bot"} has no coding agent for its workers; pass --agent.` };
   // An agent whose model and effort its own setup decides (dsh-tui, #598): a model or effort
   // asked for, or set in the bot's worker defaults for it, is refused, never left out unsaid.
+  // Defaults count only when they are that agent's (the bot's own agent), as the model default
+  // does: a Claude captain's worker effort never stops its dsh-tui worker (#600 review F4).
   const refusal = modelRefusal(agent);
-  if (refusal && (pick.model || pick.effort || defaults.effort || (agent === fallback && defaults.model))) return { error: refusal };
+  if (refusal && (pick.model || pick.effort || (agent === fallback && (defaults.effort || defaults.model)))) return { error: refusal };
   let model = pick.model || null;
   if (!model && defaults.model) {
     if (agent === fallback) model = defaults.model;
     else warnings.push(`${bot.name}'s worker model ${defaults.model} is for ${fallback}; ${agent} runs its own default.`);
   }
   if (model && optionLike(model)) return { error: `"${model}" isn't a model: it starts with a dash, so ${agent} would read it as an option.` };
-  let effort = pick.effort || defaults.effort || null;
+  let effort = pick.effort || (defaults.effort && (agent === fallback || !refusal) ? defaults.effort : null) || null;
   if (effort && !EFFORT_SHAPE.test(effort)) return { error: `"${effort}" isn't an effort level (low, medium, high, …).` };
   if (model && !modelArgs(agent, model).length) {
     warnings.push(`${agents[agent].name} has no model flag this pack knows; model ${model} left out.`);
