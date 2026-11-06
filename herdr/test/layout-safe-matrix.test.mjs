@@ -144,9 +144,11 @@ export function machine(t, shape, { shown, named = [MOD], mods = MODS, pack = tr
   // herdr-app: `status` names the shown layout, or fails (Herdr not running) for the fifth shape.
   exe(join(bin, "herdr-app"), shape === NO_ANSWER || shape === NOTHING ? "#!/bin/sh\nexit 1\n"
     : `#!/bin/sh\n[ "$1" = status ] || exit 2\nprintf '{\\n  "layout": "%s",\\n  "zoom": false\\n}\\n' '${herdrShows}'\n`);
+  // install.sh's bound on `herdr-app status`: long, as install.test.mjs's, so a loaded machine never
+  // turns an answer into no answer (the fake answers at once, or fails at once).
   const env = {
     HOME: home, HERDR_APP_HOME: app, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
-    AUTOMAGIK_HERDR_RELEASE_URL: `file://${join(root, "no-release")}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_STATUS_SECONDS: "5",
+    AUTOMAGIK_HERDR_RELEASE_URL: `file://${join(root, "no-release")}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_STATUS_SECONDS: "60",
   };
   const logs = [];
   const ctx = () => contextOf({ env, exec: (cmd, args, opts) => runCommand(cmd, args, opts), log: (l) => logs.push(l), platform: "darwin" });
