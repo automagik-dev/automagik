@@ -38,7 +38,7 @@ import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
 import { change, linkedModsLine, removePath, switchCommand } from "./layoutSafe.mjs";
-import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
+import { appHomeOf, binDirOf, markerOf, mergePackKeys, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeKeys, writeMarker } from "./update.mjs";
 import { dshTuiPresence } from "./dshTui.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -165,18 +165,6 @@ function ensurePack(ctx, source) {
   return true;
 }
 
-/** Each free key of the pack's (release.js PACK_KEYS) into keys.json; a key the person bound stays theirs. */
-function mergeKeys(ctx) {
-  const path = join(ctx.appHome, "keys.json");
-  const keys = isFile(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-  let added = 0;
-  for (const [section, entries] of Object.entries(PACK_KEYS)) {
-    for (const [key, action] of Object.entries(entries)) if (keys[section]?.[key] === undefined) { (keys[section] ??= {})[key] = action; added += 1; }
-  }
-  if (added) writeFileSync(path, `${JSON.stringify(keys, null, 2)}\n`);
-  return added;
-}
-
 /** Each pack key (PACK_KEYS) out of keys.json while it still runs the pack's action; a rebound one stays. */
 function dropKeys(ctx) {
   const path = join(ctx.appHome, "keys.json");
@@ -186,7 +174,7 @@ function dropKeys(ctx) {
   for (const [section, entries] of Object.entries(PACK_KEYS)) {
     for (const [key, action] of Object.entries(entries)) if (keys[section]?.[key] === action) { delete keys[section][key]; dropped += 1; }
   }
-  if (dropped) writeFileSync(path, `${JSON.stringify(keys, null, 2)}\n`);
+  if (dropped) writeKeys(ctx.appHome, keys);
   return dropped;
 }
 
@@ -250,7 +238,7 @@ export function install(ctx, part, source) {
         changed = true;
       }
       if (!exists(live)) throw new Error(`mods/${part.mod} is missing: run install.sh again, which repairs the pack`);
-      if (part.mod === "am-mods" && mergeKeys(ctx)) { ctx.log("added the mod manager's key (cmd-shift-m)"); changed = true; }
+      if (part.mod === "am-mods" && mergePackKeys(ctx.appHome, ctx.log)) { ctx.log("added the mod manager's key (cmd-shift-m)"); changed = true; }
       return { ok: true, changed, detail: `${part.mod} is on (pack ${record.version})` };
     }
     if (part.kind === "layout") {
@@ -600,9 +588,12 @@ export function doctor(ctx, part) {
     const dsh = dshTuiPresence({ env: ctx.env });
     note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
     note("dsh-tui-profile", dsh.profile
-      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
+      ? `the dsh-tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
       : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
-    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui -- "$@")`
+    note("dsh-tui-shim", dsh.shimOurs
+      ? dsh.shimLegacy
+        ? `${dsh.shim} is the earlier release's shim: \`automagik-herdr dsh-tui install\` replaces it`
+        : `${dsh.shim} (exec dsh --profile dsh-tui "$@")`
       : dsh.shimExists ? `${dsh.shim} is not this installer's`
         : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
   }

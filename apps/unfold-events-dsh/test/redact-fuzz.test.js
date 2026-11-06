@@ -111,15 +111,19 @@ const REFERENCE_TEXT = (() => {
 })()
 
 // The window runs redactText over every delta on top of its own row work, so it costs a multiple of
-// the reference: 2.31-2.44x over five runs here (Node 24.13.1), 3.51x once under load, 2.32-2.50x
-// on the Ryzen numbers (26.24 ms against 10.5-11.3 ms, Node 24.9.0/24.22.2) and 2.36x on the Fixer
-// head. WINDOW_MARGIN 4.5 sits 1.8x above the 2.50x worst, and a 2x regression of the window path
-// still fails (4.9x against 4.5). The absolute backstop caps how far a slow reference may widen
-// the bound: 400 ms sits 1.7x above the worst observed runner reading (mind's stream 225.8-233.2 ms
-// at a 30.3-30.6 ms reference) and only binds when 4.5 x reference passes it. A shared rule gone
+// the reference: 2.31-2.54x across runs here (Node 24.13.1), 3.51x once under load, 2.32-2.50x on
+// the Ryzen numbers (26.24 ms against 10.5-11.3 ms, Node 24.9.0/24.22.2), 2.36x on the Fixer head
+// and 2.06x, 2.32x, 2.39x, 2.57x, 3.58x and 3.66x on CI (the 3.66x from the #513 head b6e7041e).
+// WINDOW_MARGIN 5.5 sits 1.50x above that 3.66x worst. The trade: a 2x regression of the window
+// path on a quiet machine (5.1x) now stays inside the bound, while the text ceiling catches a
+// shared quadratic key rule and a window-only O(n^2) mutant (measured 308.4 ms against the 48.3 ms
+// bound here) still fails. The absolute backstop caps how far a slow reference may widen the bound:
+// 400 ms sits 1.7x above the worst observed runner reading (mind's stream 235.2 ms at a 33.5 ms
+// reference) and binds when 5.5 x reference passes it, a reference above 72.7 ms; every observed
+// reference (worst 29.8 ms here) stays below that, so the margin sets the bound. A shared rule gone
 // quadratic still fails: the text ceiling catches it on the rule pass, and the window runs past the
 // cap.
-const WINDOW_MARGIN = 4.5
+const WINDOW_MARGIN = 5.5
 const BACKSTOP_MS = 400
 
 const catalog = loadCatalog()

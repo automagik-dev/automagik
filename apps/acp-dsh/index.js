@@ -23,7 +23,7 @@ import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
 import { redactorFor } from './src/host/redact.js'
-import { crossed } from './src/host/switch.js'
+import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
@@ -380,6 +380,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // A model selection that moves a Session off its agent: its boundary row, and the agent
   // session (and bridge) belonging to the old route ends (RFC 0003, amendment, "Live switching").
   ctx.on?.('session/event', (session, event) => adapter.noteEvent(session, event))
+  // The other half of a crossing: the effort the Session ran on follows it both ways when the
+  // target offers it, and a notice says so when it cannot. Live switching's rule, so it
+  // follows `dshTools`.
+  const carry = carryEffort(
+    async (provider, model) => (await ctx.llm.resolveModelInfo?.(provider, model))?.reasoning,
+    () => flagOf(config.dshTools) === true,
+    (previous, next) => agentRoute(agents, previous.provider) || agentRoute(agents, next.provider),
+  )
+  ctx.on?.('session/event', (session, event) => { void carry(session, event) })
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
   const refresh = () => {
     for (const [id, spec] of Object.entries(AGENTS)) if (agents.has(id)) void install(spec)

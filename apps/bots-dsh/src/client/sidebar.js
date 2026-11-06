@@ -824,10 +824,10 @@ html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
 [class*="_collapsed"]>:is([class*="_logoRow"],[class*="_regionArea"]){width:100%;display:flex;justify-content:center}
 [class*="_collapsed"]>[class*="_footArea"]{width:100%;justify-items:center;padding-left:0!important;padding-right:0!important}
 .bt-rail{width:100%}
-/* The rail's open button is the sidebar switch, as everywhere else: the brand already sits
-   at the rail's foot, in the settings seat. */
-[class*="_collapsed"] [class*="_toggle"] [class*="_railMark"]{display:none}
-[class*="_collapsed"] [class*="_toggle"]::before{content:"";width:18px;height:18px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6'%3E%3Crect x='3' y='4' width='14' height='12' rx='2.5'/%3E%3Cpath d='M8 4v12'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6'%3E%3Crect x='3' y='4' width='14' height='12' rx='2.5'/%3E%3Cpath d='M8 4v12'/%3E%3C/svg%3E") center/contain no-repeat}
+/* Keep the shell's native sidebar icon visible at rest and on hover. A separate
+   pseudo-element would appear beside the native icon when DSH reveals it on hover. */
+[class*="_collapsed"] [data-sidebar-toggle] [class*="_railMark"]{display:none}
+[class*="_collapsed"] [data-sidebar-toggle] [class*="_panelIcon"]{display:inline!important}
 /* macOS, collapsed: the rail starts below the traffic lights, and the chat's header leaves
    them room where they reach past the rail. */
 html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) [class*="_root"][class*="_collapsed"]{padding-top:52px!important}

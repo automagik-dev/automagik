@@ -35,6 +35,13 @@ anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. I
 you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
 `herdr-app check` on each mod.
 
+On a machine where Herdr has never opened, the installer leaves `keys.json` absent so
+Herdr can create its native shortcuts, including terminal copy/paste. Open Herdr once,
+then rerun the installer to add the pack's free shortcuts. The Mods button in the footer
+works before its shortcut is added. Existing key files and personal bindings are preserved;
+a `keys.json` that is a link (your own file) is left as it is, and the installer names the
+pack's shortcuts for you to add there.
+
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
 holds nine mod folders and one layout, and nothing else:
 
@@ -134,7 +141,7 @@ the same later:
 
 ```bash
 automagik-herdr dsh-tui install   # install, or update to the pack's pin
-automagik-herdr dsh-tui doctor    # what is there: dsh, the tui profile, the shim, the guide
+automagik-herdr dsh-tui doctor    # what is there: dsh, the dsh-tui profile, the shim, the guide
 automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and state stay
 ```
 
@@ -145,15 +152,25 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   profile's `package.json` pins the exact version and its `pnpm-lock.yaml` must record the
   registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
   version or integrity fails and takes back what it added. The install records that *it* added
-  the pin in `~/.dsh/profiles/tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
+  the pin in `~/.dsh/profiles/dsh-tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
   person's, and uninstall leaves it. A pin the pack did not record is never written over—not even
   at the pinned version—because `dsh plugin add` rewrites the person's lockfile: the install skips
   it and says how to remove it or hand it over. The record names the package and the version it
   set, so a pack-owned older pin is still the pack's after a bump.
-- **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
-  (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
-  settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints
-  after the plugin step and fails rather than claim success if DSH changed them.
+- **Its own profile, `dsh-tui`.** `dsh plugin --profile dsh-tui add …` writes
+  `<DSH_HOME>/profiles/dsh-tui` only (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise).
+  That is the profile dsh-TUI creates for itself (`bin/dsh-tui.js`'s `PROFILE`, where
+  `dsh-tui` and `dsh --profile dsh-tui` are equivalent), mounted as base + the TUI bundle.
+  Never `tui`: a profile with that name can have been initialized from the web template, which
+  boots the web app, and the web app rejects `--resume`, `-c` and `-p`. A `tui` profile an
+  earlier pack release created is left alone (nothing uses it now): remove its pin with
+  `dsh plugin --profile tui remove @deepseek-harness-tui/dsh-tui` if you want it gone. The
+  reserved `desktop` profile, its settings and `~/.dsh/.credentials.yaml` are never written; the
+  install checks their fingerprints after the plugin step and fails rather than claim success if
+  DSH changed them. The install writes `package.json`, the lockfile and the pnpm workspace file;
+  it never writes the profile's generated `cordis.yml` (DSH rewrites that root on every boot).
+  Machine or sandbox settings belong in the profile's `cordis.patch.yml`, the documented user
+  layer.
 - **pnpm's release-age gate.** pnpm 11's `minimumReleaseAge` (1440 minutes by default) refuses a
   version published hours ago, so the profile's `pnpm-workspace.yaml` carries
   `minimumReleaseAgeExclude` for exactly `@deepseek-harness-tui/dsh-tui@0.19.0` — never the bare
@@ -161,12 +178,74 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   that exact entry; uninstall removes it only for a pin this installer added. Other packages'
   entries are left alone.
 - **The shim.** `~/.local/bin/dsh-tui` is a shell script that checks `dsh` is on PATH (a clear
-  line and exit 127 when it isn't) and then runs `exec dsh --profile tui -- "$@"`. The long form
-  matters: dsh-TUI reads the profile name from the app's arguments, and the short `dsh tui` leaves
-  only `tui` there; `--` keeps an app argument that looks like a launcher flag (`--resume`,
-  `--help`) away from `dsh`. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks
-  that the first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
-  `programs.json`.
+  line and exit 127 when it isn't) and then runs `exec dsh --profile dsh-tui "$@"`, with the env
+  it was started in. No separator of its own: DSH's launcher takes its own flags first and the
+  first token it does not recognize starts the app's arguments, so `--resume <id>`, `-c` and
+  `--continue` reach dsh-TUI. `--backend` is **not supported through the shim**: the package's
+  own launcher maps it to `DSH_TUI_BACKEND`, but dsh passes it to the app, which reads it as
+  prompt text. A literal `-- <text>` is not a safe escape for text that starts with a flag: DSH
+  drops the bare `--`, so `-- --resume=<id>` resumes that session instead of sending text.
+  Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks that the first word
+  resolves on its PATH, so the built-in DSH menu entry works with no per-user `programs.json`.
+- **Provider keys (optional).** The shim sources an optional `0600` env file at
+  `~/.dsh/deepseek.env` (or `$DSH_HOME/deepseek.env`) so panes and workers get provider keys set
+  outside DSH; you can still use `/auth` or the credential store. Quote values so a space cannot
+  change the assignment:
+
+  ```sh
+  # ~/.dsh/deepseek.env, mode 0600
+  DEEPSEEK_API_KEY="your-key"
+  OTHER_KEY='your-value'
+  ```
+
+  Only a readable regular file you own with **mode 0600 or stricter** (no group or other
+  read/write), in a folder you own that is not group- or world-writable, with valid shell, is
+  sourced; anything else is skipped with one fixed line.
+  The shell's own syntax error (which can quote the offending line) is discarded, so the file's
+  content or values never reach stderr. Checking and sourcing are separate opens, which is why
+  the parent folder is checked too (another user who can write it could swap the file between
+  them). The installer writes no secret.
+- **Sandbox and permissions (`cordis.patch.yml`).** The installer writes no config and no policy.
+  Settings belong in the profile's `cordis.patch.yml` (the documented user layer), never the
+  generated `cordis.yml`, which DSH rewrites on every boot. A concrete example:
+
+  ```yaml
+  - id: sandbox-policy
+    config:
+      mode: workspace-write
+      workspaceRoot: !!js process.cwd()
+      additionalWritableRoots:
+        - /path/to/main-checkout/.git   # replace with your checkout's .git
+  - id: approval
+    config:
+      policy: never
+  - id: permission
+    config:
+      defaultPreset: unattended
+      presets:
+        read-only:
+          sandbox: read-only
+          approval: ask
+        workspace-write:
+          sandbox: workspace-write
+          approval: ask
+        danger-full-access:
+          sandbox: danger-full-access
+          approval: never
+        unattended:
+          sandbox: workspace-write
+          approval: never
+  ```
+
+  `defaultPreset` is only inferred when it is **unset**: the composed sandbox/approval defaults
+  must then match one of `presets`; if they match none, `dsh-permission-presets` refuses boot
+  ("composed sandbox and approval defaults match no preset; configure defaultPreset
+  explicitly"). Setting `defaultPreset` names a configured preset instead (an unknown name also
+  refuses boot). The `unattended` preset is workspace-write + approval never. Interactive
+  dsh-TUI takes no permission, add-dir or approval flags (they become prompt text); the profile
+  supplies them.
+- **Automation.** dsh-TUI's `-p`/`run` automation exits 3 `ADAPTER_UNAVAILABLE` on DSH
+  0.2.2-rc.1. Use `dsh --profile headless` for headless work.
 - **PATH.** The doctor checks `~/.local/bin` on the PATH Herdr **panes** get (an interactive login
   shell's, the way herdr-core starts a program) and names the file to edit for that shell
   (`~/.zshrc`, `~/.bash_profile`, `~/.config/fish/config.fish`, `~/.profile`). Herdr's `+` menu
@@ -174,15 +253,19 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 - **First launch.** Sign in in dsh-TUI with `/model` → **DeepSeek Account**, or `/auth`; a key
   already in DSH's credential store or `DEEPSEEK_API_KEY` in the environment works too. No key is
   stored by this installer and no BWS launcher ships. The four-step first-run guide is marked
-  done once (`~/.dsh-tui/onboarding.json`); `/setup` opens it later.
+  done before the first pane: the install writes dsh-TUI's own record
+  `~/.dsh-tui/onboarding.json` with `{"completed": true, "version": 1}` (its `DATA_DIR`,
+  `ONBOARDING_VERSION` in `lib/types/onboardingPrefs.js`) only when that file is absent, so a
+  fresh pane starts clean and never blocks. A person completing the guide writes the same file;
+  an existing one is left byte for byte, and `/setup` opens it later.
 - **Sessions.** They land in DSH's home (usually `~/.dsh`) and appear in DSH Desktop's history
   after Desktop is quit and reopened: Desktop has no live refresh. One writer per session applies:
   don't continue the same session from Desktop and dsh-TUI at once.
-- **Uninstall.** `dsh plugin --profile tui remove` takes out the pin this installer added, the
+- **Uninstall.** `dsh plugin --profile dsh-tui remove` takes out the pin this installer added, the
   release-age entry that came with it, and the shim (only when it is the pack's). A pin the person
   added, a foreign shim, a dangling link and DSH's sessions are left alone. `--uninstall` of the
-  pack does the same while its command is still in place. `~/.dsh-tui` state and the `tui` profile
-  stay.
+  pack does the same while its command is still in place. `~/.dsh-tui` state and the `dsh-tui`
+  profile stay.
 
 ### From v0.2 to v0.4.x
 
@@ -301,9 +384,46 @@ machine through herdr-core (`hc file edit` with the text read, an exclusive crea
 file), so an edit made there since the form opened is refused, never overwritten. Its panes run
 there (`hc run --on`, addressed `machine/tN`) and show in this window, in a space of that
 machine on the project. The command a bot starts with is built here, from Herdr's agent table
-and your `programs.json`. What happened isn't shown for those bots yet, and a Claude bot there
-starts without its per-turn briefing until automagik-herdr is installed on that machine. A
-machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+and your `programs.json`. A bot there gets the briefing a local start gives, written on that
+machine through herdr-core, in its app home: a Claude bot's briefing file (private, 0600) and,
+once automagik-herdr is installed there, its per-turn hook in that project's
+`.claude/settings.local.json` (until then it starts with a warning and no hook); an omp, pi or grok
+bot gets the briefing as text. A start never creates an app home on another machine, which may be
+shared: when that app home isn't a folder there, a Claude bot starts with one warning and no
+briefing file or hook. Codex and Hermes bots start there without it, since their own
+config, which may hold a prompt the briefing would replace, is only read on this computer. What
+happened isn't shown for those bots yet. A machine that isn't answering shows its bots as last
+seen, dimmed, and its menu says so.
+
+A project there can carry a pane-env file, `<project>/.herdr/pane-env` on that machine, for its
+bots' panes only: other panes there never read it. It takes two keys, one per line:
+
+```text
+PATH_PREPEND=/opt/node-22/bin:/opt/tools/bin
+HERDR_APP_HOME=/srv/bots/herdr-app
+```
+
+`PATH_PREPEND` puts those folders first on the PATH the agent is checked and started with (a
+chosen Node, say). `HERDR_APP_HOME` is the app home the pane gets (`HERDR_APP_HOME=` in its
+`/usr/bin/env` words) and the one its briefing file and hook use; without it, that machine's
+`~/.config/herdr-app`, either way only while that folder is there. Every folder is absolute, with
+no space at its start or end; blank lines and `#` comments are skipped. Another key, a relative
+folder or a line that isn't `KEY=value` leaves the whole file out with one warning, and the bot
+starts as it would without it, with no briefing file or hook: a file left out never falls back to
+the default app home. With no file, nothing changes.
+
+pane-env belongs to that machine: keep it out of git (add `.herdr/pane-env` to the checkout's
+`.git/info/exclude` there), since a committed one would apply on every machine the project is
+checked out on. A start on this computer never reads it.
+
+To move a project's bots onto a shared machine:
+
+1. Write `<project>/.herdr/pane-env` there, with `HERDR_APP_HOME` naming an app home that is
+   already there (yours, not the machine user's), and `PATH_PREPEND` if your bots need their own
+   Node.
+2. Start one bot: `automagik-herdr start <bot> --machine <machine> --project <folder there> --json`.
+3. Read its `warnings`: they should be empty. A `pane-env ... was left out` or `without its
+   briefing` warning names what to fix; fix it and restart the bot.
 
 Start and Restart there can take minutes when the machine answers slowly (every question to it
 has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so
@@ -652,7 +772,32 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
   once the task merges. The bot's briefing says so. As an hc child, a worker
-  also ends when its bot's program ends; its worktree and branch stay.
+  also ends when its bot's program ends; its branch stays.
+- **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
+  (`git worktree remove`, no `--force`, then `git worktree prune`) once every worker that ran
+  in it has ended, done or killed, at least 15 minutes ago (hc's `finished_ms`: restart
+  `--tree` runs a bot's workers again one at a time, about 1 + 2k minutes at worst for the k-th),
+  and no live terminal works in it. Each `worker` call does
+  it after its own start, newest first, at most 5 worktrees, and starts no new check after
+  about 20 s; one slow check and one large remove (up to 120 s) can still run past that.
+  `automagik-herdr reap` does all of them at once.
+  - An open pull request's worktree is removed once its workers end, if it is pushed and
+    clean. The branch is always kept: only the folder goes.
+  - The first sweep after this release covers every older `created: true` row in the
+    ledger: 5 per worker call, or all of them with `reap`.
+  - Kept, with one line naming the path and why: uncommitted changes (untracked files
+    included); a tree no longer on the worker's branch; a detached HEAD with commits on no
+    remote; commits on no remote branch, unless `gh pr list --head <branch>` shows the
+    branch's pull requests all merged or closed (a squash merge). gh missing or failing keeps
+    it. Ignored files (`.env`, build output) do not keep it: they go with the folder, as
+    `git worktree remove` does.
+  - A worktree only given to a worker (`--worktree`, a branch's existing worktree) is never
+    removed. A worker call that waited for a worktree the cleanup removed meanwhile never
+    starts in what is left: `--branch` makes the worktree again, `--worktree` is refused.
+  - Outcomes go to `<app home>/automagik-herdr/worker-reap.jsonl` (`{ worktree, result:
+    "removed" | "kept" | "failed" | "gone", why, at }`), never to the workers ledger. A kept
+    worktree is looked at again on each call, and its line is said again only when its reason
+    changes; a worker call skips one whose reason is a day old (`reap` still looks).
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
   terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,

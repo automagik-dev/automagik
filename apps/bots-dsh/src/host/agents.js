@@ -438,13 +438,24 @@ export function install(rt) {
     return agent
   }
 
+  async function archiveRecordedSession(sessionId) {
+    try {
+      await ctx.workspaceRegistry.archiveSession(sessionId)
+    } catch (error) {
+      // An owned reference can outlive its DSH Session. Only DSH's explicit absence
+      // error for this exact Session permits dropping it; storage and active-Session
+      // failures must keep the reference and its restriction for a later retry.
+      if (error?.name !== 'WorkspaceUnknownSessionError' || error.sessionId !== sessionId) throw error
+    }
+  }
+
   async function archiveAgentSession(agentId, sessionId) {
     writeCheck()
     const agent = record(agentId)
     if (!agent.sessions.includes(sessionId)) throw refusal('Session does not belong to the DSH bot')
     // Archive first: the Session leaves the Agent only once it is actually gone,
     // so a failed archive stays retryable and keeps its tool restriction.
-    await ctx.workspaceRegistry.archiveSession(sessionId)
+    await archiveRecordedSession(sessionId)
     agent.sessions = agent.sessions.filter(id => id !== sessionId)
     restrictionLifts.delete(sessionId)
     await rt.save()
@@ -468,7 +479,7 @@ export function install(rt) {
     let failure
     for (const sessionId of sessions) {
       try {
-        await ctx.workspaceRegistry.archiveSession(sessionId)
+        await archiveRecordedSession(sessionId)
         restrictionLifts.delete(sessionId)
       } catch (error) {
         failure ??= error
