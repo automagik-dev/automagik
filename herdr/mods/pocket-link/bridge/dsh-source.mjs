@@ -50,23 +50,29 @@ export const socketPaths = (env = process.env, home = homedir()) => teamHomes(en
  * A socket only this account reaches (#523, #548):
  * - the socket and its folder: ours, with no group or other bits at all;
  * - every folder above them, up to the root, both as written and on the real path: owned by us or
- *   by root, and not writable by group or others unless it is sticky (like /tmp, where nobody else
- *   can rename or remove what is ours); a link on the way must be ours or root's.
+ *   by root; a link on the way must be ours or root's;
+ * - none of those folders writable by others, nor by its group, unless it is sticky (like /tmp,
+ *   where nobody else can rename or remove what is ours). One exception for the group: on Linux,
+ *   a folder whose group is our primary group may be group-writable. Distributions there give
+ *   each account its own group, and the umask 002 that comes with it makes ~/.automagik 0775.
+ *   Caveat: a Linux host whose primary group is shared trusts that group too. macOS stays strict,
+ *   since its primary group (staff) is shared by every account.
  * Another account that could rename a folder above could swap the socket after this check.
  * Without uids (Windows, where there is no socket anyway) only the modes are checked.
  */
-export function ownerOnly(path, uid = process.getuid?.(), { lstat = lstatSync, realpath = realpathSync } = {}) {
+export function ownerOnly(path, uid = process.getuid?.(), { lstat = lstatSync, realpath = realpathSync, platform = process.platform, gid = process.getgid?.() } = {}) {
   try {
     const socket = lstat(path)
     const folder = lstat(dirname(path))
     const ours = (s) => uid === undefined || s.uid === uid
     if (!(socket.isSocket() && folder.isDirectory() && (socket.mode & 0o077) === 0 && (folder.mode & 0o077) === 0 && ours(socket) && ours(folder))) return false
     if (uid === undefined) return true
+    const othersWrite = (s) => (s.mode & 0o1000) === 0 && ((s.mode & 0o002) !== 0 || ((s.mode & 0o020) !== 0 && !(platform === 'linux' && s.gid === gid)))
     const safe = (dir) => {
       for (;; dir = dirname(dir)) {
         const s = lstat(dir)
         if (s.uid !== uid && s.uid !== 0) return false
-        if (!s.isSymbolicLink() && (!s.isDirectory() || ((s.mode & 0o022) !== 0 && (s.mode & 0o1000) === 0))) return false
+        if (!s.isSymbolicLink() && (!s.isDirectory() || othersWrite(s))) return false
         if (dirname(dir) === dir) return true
       }
     }

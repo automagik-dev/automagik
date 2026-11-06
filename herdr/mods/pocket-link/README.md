@@ -152,9 +152,12 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
   `HERDR_APP_HOME` does not move the team home. It never searches elsewhere: a team kept
   anywhere else is not seen. The check: the socket and its folder are this account's alone (no
   group or other access), every folder above them belongs to this account or root and nobody
-  else can write it (a sticky folder like `/tmp` is fine), and the socket says it is read-only;
-  otherwise nothing is listed and the bridge log says so once. These chats only read: their rows come from the Bot's DSH Session log (a cursor is
-  `dsh:<session>:<seq>`), and `chat.send`, `chat.sendHeld`, `chat.cancelHeld`, `chat.answer` and
+  else can write it (a sticky folder like `/tmp` is fine; on Linux a folder writable by your own
+  primary group is fine too, as umask 002 makes it, so a shared primary group there is trusted;
+  on macOS, where that group is the shared `staff`, it is not), and the socket says it is
+  read-only; otherwise nothing is listed and the bridge log says so once. These chats only read:
+  their rows come from the Bot's DSH Session log (a cursor is `dsh:<session>:<seq>`), and
+  `chat.send`, `chat.sendHeld`, `chat.cancelHeld`, `chat.answer` and
   `chat.interrupt` on them are `refused` (`read-only`). An approval or a question shows as a row
   without buttons that says "Answer on the computer". Terminal chats are unchanged.
 

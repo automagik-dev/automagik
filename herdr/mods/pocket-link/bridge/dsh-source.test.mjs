@@ -306,15 +306,23 @@ test('a folder above the socket that another account owns or could write fails c
   const sock = await fakeSocket({ at: team })
   try {
     assert.equal(ownerOnly(sock.path), true)
-    for (const mode of [0o775, 0o757]) {
+    const uid = process.getuid()
+    for (const mode of [0o757, 0o777]) {
       chmodSync(team, mode)
       assert.equal(ownerOnly(sock.path), false, mode.toString(8))
+      assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: lstatSync(team).gid }), false, `${mode.toString(8)}: others, even in our group`)
       assert.deepEqual(await new DshSource({ path: sock.path }).list(), [], mode.toString(8))
     }
+    // Group-writable: only on Linux, and only when the group is our own primary group.
+    chmodSync(team, 0o775)
+    const group = lstatSync(team).gid
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: group }), true, 'Linux, our own group')
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: group + 1 }), false, 'Linux, another group')
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'darwin', gid: group }), false, 'macOS: staff is shared')
+    assert.deepEqual(await new DshSource({ path: sock.path, check: (p) => ownerOnly(p, uid, { platform: 'darwin', gid: group }) }).list(), [])
     chmodSync(team, 0o1777)
     assert.equal(ownerOnly(sock.path), true, 'sticky: nobody else can rename what is ours in it')
     chmodSync(team, 0o755)
-    const uid = process.getuid()
     assert.equal(ownerOnly(sock.path, uid, { lstat: ownedBy(both(c.root, uid + 1)) }), false, 'another account')
     assert.equal(ownerOnly(sock.path, uid, { lstat: ownedBy(both(c.root, 0)) }), true, 'root')
     // A link on the way: ours is fine, another account's is not (it could point it elsewhere).
