@@ -72,7 +72,8 @@ to a request to write a file, and no file appeared. ToolSearch stayed available,
 needs to load deferred MCP tools. The full options live at
 `_meta.claudeCode.options` (`tools`, `allowedTools`, `disallowedTools`, …); changing one of them
 on resume is in the adapter's `OPTION_REBUILDS_SESSION` set, so it tears the session down and
-recreates it.
+recreates it. Only `disableBuiltInTools` was exercised in this spike; every other option name in
+that list is unverified here.
 
 **Approval is the agent's, and its mode decides.** Started as-is, the session came up in Claude
 Code's `auto` mode (`modes.currentModeId: "auto"`) and the MCP tool call ran with **no**
