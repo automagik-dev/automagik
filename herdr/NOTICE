@@ -24,14 +24,21 @@ sidebar-chrome, md-menu, auto-tabs, new-menu-tui, mod-manager and automations, i
   mods/am-new-menu      from Herdr's `new-menu` 0.1.7 — changed: main.js, mod.json; added: target.js,
                         agents.js
 
-Vendored from other people's repositories (each ships under Apache-2.0 as a derived work; the
-upstream MIT copyright and permission notice are verbatim in mods/<mod>/LICENSE-upstream and
-repeated here, as MIT requires — that file, not the mod's Apache LICENSE, is the upstream one):
+Vendored from other people's repositories (each mod ships under Apache-2.0 as a derived work; the
+scheduler keeps upstream's MIT. Each upstream MIT copyright and permission notice is verbatim in
+its folder's LICENSE-upstream — mods/<mod>/LICENSE-upstream, herdr/scheduler/LICENSE-upstream — and
+repeated here, as MIT requires; that file, not the mod's Apache LICENSE, is the upstream one):
   mods/am-mods          from jacksonpires/herdr-app-mod-manager — changed: main.js, core.js,
                         mod.json; added: RECIPE.md
   mods/am-automations   from DnzzL/herdr-automations — changed: main.js (fork header; agent list
                         in agents.js), mod.json (title "Automagik Automations"); added: RECIPE.md,
                         agents.js (retired agents hidden). Code otherwise upstream.
+  herdr/scheduler       from DnzzL/herdr-automations v0.12.1 (commit 900b4f25, 2026-11-04): the
+                        scheduler the automations run on, a Go binary of its own, not a mod and
+                        never in the pack. Copied byte for byte except the paths its UPSTREAM.md
+                        lists (upstream's app/ mod, its committed root binary, docs/*.gif and
+                        docs/*.png, .github/). Its MIT notice is LICENSE-upstream (and LICENSE, as
+                        upstream ships it), repeated below.
   mods/pocket-link/chat Pocket Link's live chat projection (RFC 0015), ported from stablyai/orca at
                         e1dfc022 (TypeScript to JavaScript, behaviour unchanged except as noted in
                         chat/UPSTREAM.md): decode-claude.js, decode-codex.js, decode-omp.js,

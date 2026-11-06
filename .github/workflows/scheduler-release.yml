@@ -1,0 +1,103 @@
+name: Scheduler release
+
+# The vendored scheduler's own release lane. herdr/scheduler/ is DnzzL/herdr-automations v0.12.1
+# (MIT; its UPSTREAM.md names the tag and the exclusions), and its binary is not part of the
+# monorepo's releases: the pack never carries it, and a scheduler change cuts nothing here or there
+# (scripts/lane.ts NEVER_SHIPPED). One dispatch builds herdr-automations for the four targets and
+# publishes herdr-automations-v<version> with the four binaries and checksums.txt.
+#
+#   gh workflow run scheduler-release.yml --ref dev --field version=0.12.1-am.1
+#
+# Dispatch only: no push and no pull request ever starts it. The version is the fork's,
+# <upstream>-am.<n>, and is refused unless it matches ^[0-9]+\.[0-9]+\.[0-9]+-am\.[0-9]+$. The run
+# releases the dev commit it was dispatched on. --latest=false keeps the monorepo's v3 release as
+# the repository's Latest; nothing in this repository reads releases/latest for it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The fork version to build and release, e.g. 0.12.1-am.1 (the tag is herdr-automations-v<version>)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduler-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and release herdr-automations v${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      SHA: ${{ github.sha }}
+    steps:
+      # Before anything is built: the version, the branch and the tag. A tag that exists is a
+      # refused run, never a moved release.
+      - name: Refuse a bad version, another branch, or a tag that exists
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-am\.[0-9]+$ ]]; then
+            echo "::error::version '${VERSION}' is not <upstream>-am.<n>, e.g. 0.12.1-am.1"
+            exit 1
+          fi
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "::error::dispatch this on dev, not ${GITHUB_REF}: it releases the commit it ran on"
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/herdr-automations-v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::the tag herdr-automations-v${VERSION} already exists"
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: herdr/scheduler/go.sum
+
+      - name: Build the four targets
+        working-directory: herdr/scheduler
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/assets"
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            echo "building herdr-automations_${goos}_${goarch} (v${VERSION})"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+              go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+              -o "${RUNNER_TEMP}/assets/herdr-automations_${goos}_${goarch}" .
+          done
+
+      - name: Checksums
+        working-directory: ${{ runner.temp }}/assets
+        run: sha256sum herdr-automations_* > checksums.txt
+
+      - name: Publish the release
+        working-directory: ${{ runner.temp }}/assets
+        run: |
+          set -euo pipefail
+          gh release create "herdr-automations-v${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${SHA}" \
+            --title "herdr-automations v${VERSION}" \
+            --latest=false \
+            --notes "The Automagik fork of [DnzzL/herdr-automations](https://github.com/DnzzL/herdr-automations) v0.12.1 (MIT, commit 900b4f25), the scheduler the automations run on. Built from herdr/scheduler at ${SHA} with Go 1.26.10, CGO off, for darwin/arm64, darwin/amd64, linux/amd64 and linux/arm64; \`checksums.txt\` holds their sha256. This release is never the repository's Latest." \
+            herdr-automations_darwin_arm64 \
+            herdr-automations_darwin_amd64 \
+            herdr-automations_linux_amd64 \
+            herdr-automations_linux_arm64 \
+            checksums.txt
