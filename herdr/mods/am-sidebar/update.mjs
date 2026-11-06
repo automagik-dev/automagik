@@ -51,9 +51,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
-  updatesOff,
+  AUTO_FILE, CATALOG_URL, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
+  pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
@@ -101,6 +101,15 @@ const twinOf = (name) => (Object.hasOwn(RENAMES, name) ? RENAMES[name] : Object.
 /** The version a pack folder carries in its VERSION file (UNRELEASED when it has none). */
 export function readVersion(packDir) {
   try { return readFileSync(join(packDir, "VERSION"), "utf8").trim() || UNRELEASED; } catch { return UNRELEASED; }
+}
+
+/** release.js HELD_FILE: this install's held mods, or no file when it holds none, so an old note never outlives its release. */
+function saveHeld(modsDir, version, held) {
+  const file = join(stateDirOf(modsDir), HELD_FILE);
+  if (held.length === 0) { rmSync(file, { force: true }); return; }
+  const tmp = `${file}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify({ version, held }));
+  renameSync(tmp, file);
 }
 
 /** The pack's auto-update setting and rollback skip (release.js AUTO_FILE), beside the record. */
@@ -480,8 +489,10 @@ function carryV1(modsDir, record, log) {
  * and mod.json, plain files and folders only, and its VERSION must be `version`. Per folder:
  * not there → installed; listed in the ownership record → replaced (the old copy into the kept
  * set, its private paths carried over); anyone else's → left alone, or with `adopt` moved to
- * backup/ and replaced. A link is never replaced. Returns `{ version, mods, installed, replaced,
- * left, adopted, retired, prev }` and rewrites the record.
+ * backup/ and replaced. A link is never replaced. A folder the record lists that the release no
+ * longer ships is retired into the kept set, or held in mods/ while a layout's block names it (#420).
+ * Returns `{ version, mods, installed, replaced, left, adopted, retired, held, prev }` and rewrites
+ * the record.
  */
 /**
  * Unpacks a release tarball into `staging` (an empty folder) and checks it is a plain pack: only
@@ -564,6 +575,26 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
+/**
+ * The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js
+ * layoutNeeds); an unreadable one names none. The pack's automagik.json counts only when placeLayout
+ * would keep it: an unedited copy gets the release's.
+ */
+function layoutsShowing(modsDir, mod) {
+  const dir = join(dirname(resolve(modsDir)), "layouts");
+  const ref = layoutRefOf(modsDir);
+  const replaced = (body) => sha256(body) === V020_LAYOUT_SHA256 || (isFile(ref) && body.equals(readFileSync(ref)));
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.filter((n) => {
+    try {
+      const file = join(dir, n);
+      if (!isFile(file) || (n === basename(PACK_LAYOUT) && replaced(readFileSync(file)))) return false;
+      return layoutNeeds(JSON.parse(readFileSync(file, "utf8"))).blocks.has(mod);
+    } catch { return false; }
+  }).map((n) => n.slice(0, -".json".length));
+}
+
 export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
   if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
   const state = stateDirOf(modsDir);
@@ -587,7 +618,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], held: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
     const leftOff = [];       // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
     const keptBackOff = [];   // a kept copy that was off when kept, put back off
@@ -697,17 +728,31 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       if (adopt) adoptFolder(m);
       else plan.left.push(m);
     }
-    // A folder the record lists that this release no longer ships leaves mods/ with the set.
-    for (const m of repair ? [] : owned) {
+    // A folder the record lists that this release no longer ships leaves mods/ with the set, unless
+    // a layout's block names it (#420): Herdr would drop that layout for plain Herdr on the next
+    // launch. Then it stays in mods/, still the record's, and an update after the layout changes
+    // retires it. A rename's old folder leaves anyway (migrateRefs moves the layout onto the new
+    // name), and so does one switched off (a layout naming it shows plain Herdr already). A held
+    // mod's copy goes into the kept set too, so a rollback swaps it like any folder and it stays in
+    // mods/ and the record. A repair moves none of them; a held one stays the record's.
+    for (const m of owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
+      if (repair) { record.mods.push(m); continue; }
+      const showing = at === join(modsDir, m) && !folders.includes(own(RENAMES, m)) ? layoutsShowing(modsDir, m) : [];
+      if (showing.length) {
+        plan.held.push({ mod: m, layouts: showing });
+        record.mods.push(m);
+        continue;
+      }
       moves.push([at, join(next, m)]);
       plan.retired.push(m);
       if (at !== join(modsDir, m)) keptOff.push(m);
     }
     mkdirSync(modsDir, { recursive: true });
-    const keep = [...plan.replaced, ...plan.retired];
+    for (const h of plan.held) cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true });
+    const keep = [...plan.replaced, ...plan.retired, ...plan.held.map((h) => h.mod)];
     const old = keep.length ? setAside(modsDir) : null;
     try {
       swapAll(moves, rename);
@@ -722,8 +767,11 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     let recorded = true;
     try { writeMarker(modsDir, record); } catch (error) { recorded = false; warnings.push(`the ownership record could not be written (${error.message})`); }
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
+    // Only a note: failing to save it is said here, never a failed install (exit 4 reads as one).
+    if (!repair) { try { saveHeld(modsDir, version, plan.held); } catch (error) { log(`warning: the note about held mods was not saved (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
+    for (const h of plan.held) log(heldModLine(h, version));
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
     for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);

@@ -179,3 +179,11 @@ test("layoutGuard: `then` names what follows the switch; off is the default", ()
     assert.equal(g.refuse, off.replace(/turn it off$/, then));
   }
 });
+
+test("packageLayoutGuard: the package's own layout that Herdr shows is refused; any other passes", () => {
+  const g = core.packageLayoutGuard({ name: "Mine", layouts: ["other.json", "mine.json"] });
+  assert.match(g.refuse, /^the Mine layout is this package's \(layouts\/mine\.json\) and Herdr shows it: .*then remove it$/);
+  assert.equal(core.packageLayoutGuard({ name: "automagik", layouts: ["mine.json"] }), null);
+  assert.equal(core.packageLayoutGuard({ name: null, layouts: ["mine.json"] }), null, "no layout shown: nothing to guard");
+  assert.equal(core.packageLayoutGuard({ name: "mine", layouts: undefined }), null, "a record with no layouts");
+});

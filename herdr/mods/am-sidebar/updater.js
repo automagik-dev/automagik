@@ -5,10 +5,10 @@
 // new build posts after Herdr reloads the mods. The plain-data rules are updateCheck.js's.
 // Apache-2.0.
 
-import { AUTO_FILE, formatAuto, parseAuto } from "./release.js";
+import { AUTO_FILE, HELD_FILE, formatAuto, parseAuto } from "./release.js";
 import {
   FIRST_CHECK_MS, LANDING_WAIT_MS, REQUEST_KEY, RELOAD_GRACE_MS, RETRY_MS, SHOWN_KEY, STATE_KEY, announce, applyNotice, applyPatch,
-  applyRefusal, autoFailedNotice, autoFailure, autoPlan, busyOf, checkPatch, claim, coolingDown, finish, heldNotice, landedNotice,
+  applyRefusal, autoFailedNotice, autoFailure, autoPlan, busyOf, checkPatch, claim, coolingDown, finish, heldFrom, heldNotice, landedNotice,
   landing, nextCheckIn, noReloadNotice, requestDue, runCheck, shownFrom, stateFrom,
 } from "./updateCheck.js";
 
@@ -24,6 +24,7 @@ export class Updater {
     this.script = `${appHome}/mods/am-sidebar/update.mjs`;
     this.mods = `${appHome}/mods`;
     this.autoFile = `${appHome}/automagik-herdr/${AUTO_FILE}`;
+    this.heldFile = `${appHome}/automagik-herdr/${HELD_FILE}`;
     this.version = `${appHome}/mods/am-sidebar/VERSION`;
     this.node = null;
     // A request saved before this load was someone else's to answer.
@@ -97,11 +98,11 @@ export class Updater {
         patch = applyPatch(result, before, this.now());
       } catch (e) { patch = { applyError: String(e?.message ?? e), at: this.now() }; }
       if (patch.kind === "installed") {
-        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, at: this.now() };
+        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, held: patch.heldMods ?? [], at: this.now() };
         try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed }); } catch {}
         // Herdr reloads the mods as the folders swap, and the new build announces it (arrive).
         // Still here after the grace: no reload happened, so say what to do.
-        try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current)); } catch {}
+        try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current, patch.heldMods)); } catch {}
         return;
       }
       if (auto && patch.refused) {
@@ -125,10 +126,10 @@ export class Updater {
     return true;
   }
 
-  unreloaded(version) {
+  unreloaded(version, held = []) {
     if (this.state().announced === version) return;
     this.patch({ announced: version });
-    try { this.notify(noReloadNotice(version)); } catch {}
+    try { this.notify(noReloadNotice(version, held)); } catch {}
   }
 
   // At load: when this build is the release an install just put in, say so once. The old build
@@ -150,7 +151,10 @@ export class Updater {
         why: null, applyError: null, at: this.now() });
     }
     this.patch({ announced: version });
-    try { this.notify(landedNotice(version, step.from, step.restartBots === true)); } catch {}
+    // The old build usually stopped before it could record what the install held: the file says.
+    let held = step.held ?? [];
+    if (held.length === 0) { try { held = heldFrom(await this.readText(this.heldFile), version); } catch {} }
+    try { this.notify(landedNotice(version, step.from, step.restartBots === true, held)); } catch {}
   }
 
   // "Install updates automatically", switched from the status bar: written to the pack's own

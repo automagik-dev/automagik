@@ -50,7 +50,11 @@ All of it in English (the rest of the pack is; there is no locale mechanism to s
   refused, "then remove it", for a block's mod; the menu's goes, with the note. `am uninstall
   herdr.<mod>` asks too (`am-sidebar/release.js` carries a copy of both functions, a test keeps
   them equal), reading the shown layout from `herdr-app status`; when that gives none, it switches
-  the mod off anyway and names each of `layouts/` that shows it.
+  the mod off anyway and names each of `layouts/` that shows it. A package whose own layout
+  (its record's `layouts`) is the one shown is refused first (`core.packageLayoutGuard`, #420):
+  remove moves that layout aside. `am uninstall herdr.pack` and `install.sh --uninstall` refuse
+  while the shown layout's blocks name a pack mod; an update holds a mod it no longer ships in
+  `mods/` while a layout's block names it.
 - **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
   name before the rename, `migrate.js` SHARED_RENAMES; source,
   prefix, commit, mods, layouts, keys added, risks seen). Update and remove work off them.

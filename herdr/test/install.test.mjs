@@ -1706,3 +1706,95 @@ test("usagemeter: --uninstall removes a pack-installed binary and leaves one the
   assert.equal(meterSays(pocket), "usagemeter 0.3.0");
   assert.equal(treeSum(join(pocket.mods, "pocket-link")), pl);
 });
+
+// ---- #420: --uninstall asks the shown layout first, as `am uninstall herdr.pack` does ----
+
+test("--uninstall is refused while the shown layout's blocks name a pack mod; nothing moves", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  s.addHerdrApp();
+  s.show("automagik");
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /the pack stays: the automagik layout shows am-\S+(, am-\S+)+, and Herdr drops a layout whose mod is gone \(plain Herdr instead\)\. Switch layouts first \(ctrl-shift-l, or herdr-app do layout\.switch '\{"name":"main"\}'\), then uninstall the pack\./);
+  assert.ok(existsSync(join(s.pack, "VERSION")) && existsSync(layout) && existsSync(join(s.state, "installed-by-install.sh")), "the pack, its layout and its record stay");
+  // The person's own layout that shows the sidebar: refused too.
+  writeFileSync(join(s.appHome, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.show("main-agents");
+  const own = s.run("--uninstall");
+  assert.equal(own.code, 1);
+  assert.match(own.err, /the main-agents layout shows am-sidebar, and Herdr drops/);
+  assert.ok(existsSync(join(s.pack, "VERSION")));
+  // One that names none of the pack: it goes, as before.
+  writeFileSync(join(s.appHome, "layouts", "mine.json"), "{\"id\":\"root\"}\n");
+  s.show("mine");
+  const gone = s.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall with no layout to read goes on, naming the person's layouts that show a pack mod", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "main-agents.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.addHerdrApp();
+  s.show("../elsewhere");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Uninstalling the pack without knowing the layout Herdr shows \(Herdr shows the layout "\.\.\/elsewhere", a name with a path, so no file in .*layouts was read\): your layout main-agents \(.*main-agents\.json\) shows am-sidebar, and Herdr drops/);
+  assert.doesNotMatch(r.out, /your layout automagik /, "the pack's own copy, removed with it, is not listed");
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("--uninstall doesn't wait for a herdr-app status that never answers", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.bin, "herdr-app"), "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(join(s.bin, "herdr-app"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "1";
+  const began = Date.now();
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.ok(Date.now() - began < 20_000, "well under the fake's 30 s");
+  assert.equal(existsSync(s.pack), false);
+});
+
+test("the --uninstall refusal leaves out the layout.switch command while main is the layout in the way", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "main.json"), JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }, null, 2));
+  s.addHerdrApp();
+  s.show("main");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Switch layouts first \(ctrl-shift-l\), then uninstall the pack\./);
+  assert.doesNotMatch(r.err, /layout\.switch/);
+});
+
+test("the status bound leaves no sleep behind after an answer", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  writeFileSync(join(s.appHome, "layouts", "mine.json"), "{\"id\":\"root\"}\n");
+  s.addHerdrApp();
+  s.show("mine");
+  // An answer slow enough that the watchdog's sleep has started.
+  const app = join(s.bin, "herdr-app");
+  writeFileSync(app, readFileSync(app, "utf8").replace("#!/bin/sh\n", "#!/bin/sh\n/bin/sleep 0.5\n"));
+  // A sleep that logs its pid, and a bound long enough that a left one is still running below.
+  const pids = join(s.root, "sleep-pids");
+  writeFileSync(join(s.bin, "sleep"), `#!/bin/sh\necho $$ >> "${pids}"\nexec /bin/sleep "$@"\n`);
+  chmodSync(join(s.bin, "sleep"), 0o755);
+  s.extraEnv.AUTOMAGIK_HERDR_STATUS_SECONDS = "60";
+  assert.equal(s.run("--uninstall").code, 0);
+  const left = readFileSync(pids, "utf8").split("\n").filter(Boolean).map(Number).filter((pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  });
+  for (const pid of left) process.kill(pid);
+  assert.deepEqual(left, [], "no sleep still running");
+});
