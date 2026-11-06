@@ -95,14 +95,16 @@ function aside(path) {
  * - `shownFile`: "refuse" refuses an op that removes or moves the file of the layout Herdr shows,
  *   decided on its name (`ask`'s `name`) alone, once `needed` has passed (its refusal, about a mod,
  *   comes first). Unset: not checked.
- * - `links`: "hold" leaves an op reached through a link inside the home (a linked layouts/ or a
- *   linked folder above a mod) where it is: dropped, listed in `left`. Unset: done through the link.
+ * - `links`: "hold-layouts" leaves a removal or a move of a file in layouts/ where it is while
+ *   <home>/layouts is a link (the person's folder, #448): dropped, listed in `left`, and never
+ *   refused by `shownFile` (it stays). Only layouts/: a mod folder below a linked mods/ moves as
+ *   before. Unset: done through the link.
  * - `then`, `pack`: the refusal's and the warning's wording ("uninstall it"; the whole pack).
  * - `prepare(decision)`: runs once the decision stands, before the first op (a throw stops it all).
  * - `rename`: the rename of moves and replaces (injectable for tests; an undo uses renameSync).
  * - `log`: where notes and warnings go.
  * Writing through a link is found and returned (`throughLinks`), never refused here: each caller
- * still checks the links it checks today, or passes `links: "hold"`.
+ * still checks the links it checks today, or passes `links: "hold-layouts"`.
  * Returns `{ refused, held, left, notes, shown, throughLinks, done }`: `refused` is the reason, nothing done.
  */
 export function change(home, ops, options = {}) {
@@ -163,11 +165,21 @@ export function change(home, ops, options = {}) {
     }
   }
 
+  // A file in a linked layouts/ (#448: the person's folder) is left where it is with
+  // `links: "hold-layouts"`; nothing else is held for a link.
+  const inLayouts = (p) => Boolean(root) && dirname(resolve(p)) === join(root, "layouts");
+  const leaves = (op) => (op.op === "remove" ? op.path : op.from);
+  const kept = new Set();
+  if (links === "hold-layouts" && root && isLink(join(root, "layouts"))) {
+    for (const [i, op] of ops.entries()) if (!drop.has(i) && op.op !== "replace" && inLayouts(leaves(op))) kept.add(i);
+  }
+
   // After the mods (their refusal comes first, in their wording): the shown layout's own file, even
-  // when no mod it names leaves (#450: each is a link the batch leaves in place).
+  // when no mod it names leaves (#450: each is a link the batch leaves in place). A file kept above
+  // is not taken away, so it is not refused.
   if (shownFile === "refuse" && ask) {
-    const files = ops.filter((o) => o.op !== "replace").map((o) => (o.op === "remove" ? o.path : o.from))
-      .filter((p) => root && dirname(resolve(p)) === join(root, "layouts")).map((p) => basename(p));
+    const files = ops.filter((o, i) => o.op !== "replace" && !kept.has(i)).map(leaves)
+      .filter(inLayouts).map((p) => basename(p));
     if (files.length) {
       decision.shown = shownOnce();
       const guard = packageLayoutGuard({ name: decision.shown.name, layouts: files, then });
@@ -175,15 +187,7 @@ export function change(home, ops, options = {}) {
     }
   }
 
-  // A removal or a move reached through a link inside the home (#448: the pack's layout in a linked
-  // layouts/, the person's folder) is left where it is with `links: "hold"`.
-  if (links === "hold") {
-    for (const [i, op] of ops.entries()) {
-      if (drop.has(i) || !pathsOf(op).some((p) => decision.throughLinks.includes(p))) continue;
-      decision.left.push(op.op === "remove" ? op.path : op.from);
-      drop.add(i);
-    }
-  }
+  for (const i of kept) { decision.left.push(leaves(ops[i])); drop.add(i); }
 
   prepare?.(decision);
   const done = [];

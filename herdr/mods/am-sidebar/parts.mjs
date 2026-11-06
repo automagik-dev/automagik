@@ -345,7 +345,7 @@ function removeLayout(ctx) {
       return { ok: true, changed: false, detail: `${live} differs from the pack's: it is yours, left as it is` };
     }
     // A live file inside a linked layouts/ is the person's folder: left there (#448).
-    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", links: "hold", then: "uninstall it" });
+    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", links: "hold-layouts", then: "uninstall it" });
     if (r.refused) throw new Error(r.refused);
     const { shown } = r;
     if (r.left.length) {
@@ -400,7 +400,7 @@ function uninstallPack(ctx, { purge }) {
   // layout file this removes is the one Herdr shows, though each mod it names is a link that stays
   // (#450); and the pack's layout inside a linked layouts/, the person's folder, stays there (#448).
   const r = change(ctx.appHome, ops, {
-    ask: asking(ctx), needed: "refuse", unknown: "warn", shownFile: "refuse", links: "hold", then: "uninstall the pack", pack: true,
+    ask: asking(ctx), needed: "refuse", unknown: "warn", shownFile: "refuse", links: "hold-layouts", then: "uninstall the pack", pack: true,
     skip: dropLayout ? [basename(PACK_LAYOUT)] : [], log: ctx.log, prepare: () => mkdirSync(next, { recursive: true }),
   });
   if (r.refused) throw new Error(r.refused);

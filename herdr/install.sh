@@ -310,6 +310,7 @@ mods_said() {
 # herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
 # whose blocks name one ($2: the pack's own layout file when this run removes it, left out; refused
 # too while Herdr shows that file).
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 layout_guard() {
   shown=$(shown_layout)
   why=
@@ -340,9 +341,10 @@ layout_guard() {
     fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
   fi
   # The layout Herdr shows is the file this run removes, though no pack mod it names leaves (each
-  # is a link, which stays: #450): refused as well, as the mod manager's package remove words it.
-  if [ -z "$why" ] && [ -n "$2" ] && [ "$APP_HOME/layouts/$shown.json" = "$2" ]; then
-    fail "the $shown layout is this package's (layouts/$shown.json) and Herdr shows it: removing the package takes it away (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
+  # is a link, which stays: #450): refused as well, as the mod manager's package remove words it
+  # (its name case-insensitive, as macOS's disk). Not inside a linked layouts/: that file stays (#448).
+  if [ -z "$why" ] && [ -n "$2" ] && [ ! -L "$APP_HOME/layouts" ] && [ "$(lower "$shown.json")" = "$(lower "${2##*/}")" ]; then
+    fail "the $shown layout is this package's (layouts/${2##*/}) and Herdr shows it: removing the package takes it away (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
   fi
   [ -n "$why" ] && [ -n "$on" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
@@ -457,26 +459,28 @@ uninstall() {
     say "Removing the pack through its updater ($upd pack-out): a move that fails undoes the others."
     rc=0
     out=$(pack_out "$upd" "$next" "$drop" "$@") || rc=$?
-    if [ "$rc" = 0 ]; then
+    # What it did, read from the disk: a folder is out once it is in $next.
+    gone=
+    still=
+    for f; do
+      if [ -e "$next/${f##*/}" ] || [ -L "$next/${f##*/}" ]; then gone=${gone:+$gone, }${f##*/}; else still=${still:+$still, }${f##*/}; fi
+    done
+    layout_gone=no
+    if [ -n "$drop" ] && [ ! -e "$drop" ] && [ ! -L "$drop" ]; then layout_gone=yes; fi
+    err=$(printf '%s\n' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+    if [ "$rc" = 0 ] && [ -z "$still" ]; then
       if [ -n "$drop" ] && printf '%s\n' "$out" | grep -Fqx "left $drop"; then say_left_layout
-      elif [ -n "$drop" ] && printf '%s\n' "$out" | grep -Fqx "removed $drop"; then say_removed_layout; fi
-      # What did leave: a folder reached through a link stays where it is.
-      now=$(printf '%s\n' "$out" | sed -n 's/^moved //p' | tr '\n' , | sed 's/,$//')
-      kept_off=
-      set -f
-      IFS=,
-      for m in $moved; do case ",$now," in *",$m,"*) ;; *) say "Left $m where it is: it is reached through a link." ;; esac; done
-      for m in $off; do case ",$now," in *",$m,"*) kept_off=${kept_off:+$kept_off,}$m ;; esac; done
-      unset IFS
-      set +f
-      moved=$now
-      off=$kept_off
-    else
-      # pack-out undid what it did: this script does it all instead.
-      err=$(printf '%s\n' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
-      say "Removing the pack with this script instead (the updater's pack-out failed${err:+: $err})."
+      elif [ "$layout_gone" = yes ]; then say_removed_layout
+      elif [ -n "$drop" ]; then say "Left $LAYOUT: the updater's pack-out did not remove it."; fi
+    elif [ -z "$gone" ] && [ "$layout_gone" = no ]; then
+      # pack-out changed nothing: this script does it all instead.
+      say "Removing the pack with this script instead (the updater's pack-out failed${err:+: $err}; it changed nothing)."
       [ -z "$drop" ] || drop_layout
       via=shell
+    else
+      # Part done: nothing more moves, the record stays, and where each folder is gets said.
+      lay=; [ -z "$drop" ] || { if [ "$layout_gone" = yes ]; then lay=" The automagik layout ($LAYOUT) is gone."; else lay=" The automagik layout ($LAYOUT) is in place."; fi; }
+      fail "the updater's pack-out stopped partway${err:+ ($err)}. Already out, in $next: ${gone:-none}. Still in place: ${still:-none}.$lay The record ($MARK) stays: move the folders in $next back (mods/, or mods-disabled/ for ${off:-none}), then run --uninstall again."
     fi
   fi
   if [ "$via" = shell ]; then for f; do mv "$f" "$next/${f##*/}"; done; fi

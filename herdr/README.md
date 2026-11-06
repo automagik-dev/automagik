@@ -89,7 +89,9 @@ layout Herdr shows uses a pack mod or is that layout: switch layouts first (ctrl
 `herdr-app do layout.switch '{"name":"main"}'`). A layout inside a linked `layouts/` folder is
 yours and stays. With Node, the layout and the folders leave through the installed pack's
 updater (`update.mjs pack-out`, one move that fails undoes the others); without Node, or with an
-older pack, through the installer itself, and it says which.
+older pack, through the installer itself, and it says which. If the updater stops partway, nothing
+more moves and the record stays: it says which folders are already in the kept set and which are
+still in place.
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its

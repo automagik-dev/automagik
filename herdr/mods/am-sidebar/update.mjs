@@ -1360,8 +1360,8 @@ export function parseArgs(argv) {
 /**
  * install.sh --uninstall's removals, when Node is there (#448, #450): the pack's layout file
  * (`layout`, in layouts/) and its folders (`move`, each in mods/ or mods-disabled/) leave together
- * through layoutSafe.mjs change(), journalled: one that fails undoes the rest, and one reached
- * through a link (a linked layouts/, the person's folder) stays (`links: "hold"`). Each folder goes
+ * through layoutSafe.mjs change(), journalled: one that fails undoes the rest, and a layout file
+ * in a linked layouts/ (the person's folder) stays (`links: "hold-layouts"`). Each folder goes
  * to `to`/<its name>, in the pack's state folder. install.sh asked the shown layout first, in its
  * own words. Its lines: `removed <path>`, `moved <name>`, `left <path>`.
  */
@@ -1375,7 +1375,7 @@ export function packOut({ modsDir, to, layout = null, move = [] }) {
     if (![mods, off].includes(dirname(resolve(m))) || !/^[a-z0-9-]+$/.test(basename(m))) throw bad(`--move must be a pack folder in ${mods} or ${off}`);
   }
   const ops = [...(layout ? [{ op: "remove", path: resolve(layout) }] : []), ...move.map((m) => ({ op: "move", from: resolve(m), to: join(dest, basename(m)) }))];
-  const r = change(home, ops, { modsDir: mods, links: "hold" });
+  const r = change(home, ops, { modsDir: mods, links: "hold-layouts" });
   const lines = [...r.left.map((p) => `left ${p}`)];
   if (layout && !r.left.includes(resolve(layout))) lines.push(`removed ${resolve(layout)}`);
   for (const m of move) if (!r.left.includes(resolve(m))) lines.push(`moved ${basename(m)}`);
