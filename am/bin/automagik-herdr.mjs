@@ -438,32 +438,46 @@ function lockHolder(lock) {
 }
 
 /**
- * Takes `lock`, waiting up to `wait` ms. A wait past LOCK_NOTE_AFTER is said once on stderr,
- * naming `what` (else the lock) and its holder: written with writeSync, as Atomics.wait holds
- * the event loop and an async stderr write would only show once the lock is taken.
+ * One try at `lock` for a waiter (`w`: its token, start, wait, what, noted): true once taken.
+ * A wait past LOCK_NOTE_AFTER is said once on stderr, naming `what` (else the lock) and its
+ * holder: written with writeSync, so a sync waiter's Atomics.wait never holds the line back.
+ * Past the wait it throws, naming `what` beside the lock.
  */
-function takeLock(lock, wait = LOCK_WAIT, what = null) {
-  const token = `${process.pid} ${randomUUID()}`;
-  const start = Date.now();
-  const until = start + wait;
-  let noted = wait <= LOCK_NOTE_AFTER;
-  for (;;) {
-    try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
-      if (e?.code !== "EEXIST") throw e;
-      takeOverStale(lock);
-      if (Date.now() > until) {
-        const who = lockHolder(lock);
-        throw new Error(`${lock} is held by another automagik-herdr${who ? ` (${who})` : ""}${noted && wait > LOCK_NOTE_AFTER ? ` after ${Math.round(wait / 1000)} s` : ""}`);
-      }
-      if (!noted && Date.now() - start >= LOCK_NOTE_AFTER) {
-        noted = true;
-        const who = lockHolder(lock) ?? "another automagik-herdr";
-        const line = `automagik-herdr: waiting for ${what ?? lock} (${lock}), held by ${who}; up to ${Math.round(wait / 1000)} s in all.\n`;
-        try { writeSync(2, line); } catch { /* stderr closed */ }
-      }
-      pause(5 + Math.floor(Math.random() * 20));
-    }
+function tryLock(lock, w) {
+  try { writeFileSync(lock, w.token, { flag: "wx" }); return true; } catch (e) {
+    if (e?.code !== "EEXIST") throw e;
   }
+  takeOverStale(lock);
+  if (Date.now() > w.start + w.wait) {
+    const who = lockHolder(lock);
+    throw new Error(`${w.what ? `${w.what} (${lock})` : lock} is held by another automagik-herdr${who ? ` (${who})` : ""}`
+      + `${w.noted && w.wait > LOCK_NOTE_AFTER ? ` after ${Math.round(w.wait / 1000)} s` : ""}`);
+  }
+  if (!w.noted && Date.now() - w.start >= LOCK_NOTE_AFTER) {
+    w.noted = true;
+    const who = lockHolder(lock) ?? "another automagik-herdr";
+    const line = `automagik-herdr: waiting for ${w.what ?? lock} (${lock}), held by ${who}; up to ${Math.round(w.wait / 1000)} s in all.\n`;
+    try { writeSync(2, line); } catch { /* stderr closed */ }
+  }
+  return false;
+}
+const waiter = (wait, what) => ({ token: `${process.pid} ${randomUUID()}`, start: Date.now(), wait, what, noted: wait <= LOCK_NOTE_AFTER });
+const retryIn = () => 5 + Math.floor(Math.random() * 20);
+/** Takes `lock`, waiting up to `wait` ms with Atomics.wait: for sync holders only (withLock). */
+function takeLock(lock, wait = LOCK_WAIT, what = null) {
+  const w = waiter(wait, what);
+  while (!tryLock(lock, w)) pause(retryIn());
+  return w.token;
+}
+/**
+ * takeLock with timers in place of Atomics.wait, so the event loop runs while it waits: a lock
+ * this CLI already holds (a task's name lock while it waits for its worktree's, #552) keeps
+ * being refreshed and never goes stale under a long wait.
+ */
+async function takeLockAsync(lock, wait = LOCK_WAIT, what = null) {
+  const w = waiter(wait, what);
+  while (!tryLock(lock, w)) await new Promise((resolve) => setTimeout(resolve, retryIn()));
+  return w.token;
 }
 function dropLock(lock, token) {
   try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
@@ -486,10 +500,11 @@ function keepFresh(lock, token) {
 }
 /**
  * withLock for an async `fn`, the lock kept fresh while fn awaits (keepFresh); waits up to
- * `wait` ms for it, a long wait named as `what` on stderr (takeLock).
+ * `wait` ms for it without holding the event loop (takeLockAsync), a long wait named as
+ * `what` on stderr.
  */
 async function withLockAsync(lock, fn, { wait = LOCK_WAIT, what = null } = {}) {
-  const token = takeLock(lock, wait, what);
+  const token = await takeLockAsync(lock, wait, what);
   const stop = keepFresh(lock, token);
   try { return await fn(); } finally { stop(); dropLock(lock, token); }
 }
@@ -3533,6 +3548,14 @@ async function excludeWorktrees(key) {
 }
 
 /**
+ * WORKER_LOCK_WAIT from AUTOMAGIK_HERDR_WORKER_WAIT_MS (`raw`), for the tests only: 75 s when
+ * unset or not a number, else clamped to 100 ms..75 s, so it never lengthens a real call's wait.
+ */
+export function workerWait(raw) {
+  const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) ? Math.min(75_000, Math.max(100, ms)) : 75_000;
+}
+/**
  * How long a worker call waits for its locks in all (saying so after LOCK_NOTE_AFTER): a task's
  * name lock, then its worktree's, from one deadline. On the common path a call that waited stays
  * under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the worker check's hc gets
@@ -3542,7 +3565,7 @@ async function excludeWorktrees(key) {
  * their own timeouts. A hold that outlasts the wait refuses the waiting call, with the holder
  * named, and nothing made.
  */
-const WORKER_LOCK_WAIT = 75_000;
+const WORKER_LOCK_WAIT = workerWait(process.env.AUTOMAGIK_HERDR_WORKER_WAIT_MS);
 /** How long the worker check waits for each `hc get` of a live terminal in the worktree. */
 const WORKER_GET_TIMEOUT = 5000;
 /**

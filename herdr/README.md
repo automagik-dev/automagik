@@ -531,7 +531,9 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   to 75 s for it, saying on stderr after 3 s which lock it waits for and its holder's pid.
   A `--task` worker first takes a lock for its name (`task-<hash of its name>.lock`, the
   same 75 s in all): a second call for that task on another branch waits for the first's
-  start, then is refused by the name check before it makes a worktree or a hook.
+  start, then is refused by the name check before it makes a worktree or a hook. A call
+  waiting for a lock keeps refreshing the one it holds, and a refusal for a wait that ran out
+  names the task or worktree it waited for.
 - **Warnings:** `worker` prints the bots file's warnings about the calling bot on stderr
   first (a bad `worker` field is dropped, and its defaults with it); `--json` lists them.
 - **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`
