@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import { apply, nodeCommand } from '../index.js'
 import { AGENTS, findCommand } from '../src/host/agents.js'
 import { AdapterStore, CHECK_EVERY_MS, defaultInstall, INSTALL_TIMEOUT_MS, platformPackages, runInstall } from '../src/host/install.js'
@@ -168,12 +169,15 @@ test("a command's streamed output is the card's output, and the question's title
   assert.equal(tool.output, 'acp-ok\n')
 })
 
-// DSH's own presets (dsh-permission-presets): the stock catalog's two, plus Auto's fixed spec.
-// Manual is the stock workspace-write preset; Full access is danger-full-access with no prompts.
+// DSH's own presets, from its own objects: the stock catalog as its Config resolves it, and
+// Auto's fixed spec through the same specOf a live Auto integration reads. A harness that
+// moves a preset moves this fixture; a hand-copied table would stay green against it.
+const stockPresets = PermissionPresetService.Config({}).presets
+const presetService = Object.assign(Object.create(PermissionPresetService.prototype), { presets: stockPresets, autoAdmit: () => {} })
 const PRESET = Object.freeze({
-  manual: Object.freeze({ sandbox: 'workspace-write', approval: 'ask' }),
-  auto: Object.freeze({ sandbox: 'danger-full-access', approval: 'ask' }),
-  full: Object.freeze({ sandbox: 'danger-full-access', approval: 'never' }),
+  manual: presetService.resolve('workspace-write'),
+  auto: presetService.specOf('auto'),
+  full: presetService.resolve('danger-full-access'),
 })
 const levelOfPreset = ({ sandbox, approval }) => levelOf({ effectivePolicy: () => approval }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
 
@@ -196,6 +200,18 @@ test("DSH's Full access preset (danger-full-access, never) is full access, not A
   assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['bypassPermissions', 'default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent-full-access', 'workspace-write'])
+})
+
+test("a Session's Auto row beats a delegated child's never policy: not full access, and the call asks", () => {
+  const session = { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }] }
+  const never = { effectivePolicy: () => 'never' }
+  // dsh-subagent pins a child to `never`; the Session's own row still says Auto.
+  const autoRow = { current: () => 'auto' }
+  const level = levelOf(never, session, undefined, autoRow)
+  assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: false, auto: true })
+  assert.equal(fullAccess(never, session, undefined, autoRow), false)
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['auto', 'default'])
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
 })
 
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
