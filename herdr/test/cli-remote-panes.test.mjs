@@ -349,3 +349,135 @@ test("restart --machine resumes by id when the pane carries a session (--resume 
   assert.match(forced.err, /Hedge \(vm\/t9\) also runs Hermes/);
   assert.equal(s2.calls().filter((c) => c[0] === "run").length, 0);
 });
+
+// ---- the agent's PATH there (#425): herdr-core as a service never read ~/.profile ----
+
+/** What the pane was started with: the argv after hc run's `--`. */
+const launched = (s) => { const run = s.calls().find((c) => c[0] === "run"); return run.slice(run.indexOf("--") + 1); };
+/** Runs that argv with nothing in its environment, as a pane there would: proof the launch works. */
+const pane = (argv) => spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
+const execs = (s) => s.calls().filter((c) => c[0] === "exec");
+const SAYS = "#!/bin/sh\necho agent ran\n";
+
+/** An agent only the login shell reaches, under an interpreter only it reaches too (codex under node). */
+function loginOnly(s, { noise } = {}) {
+  rmSync(join(s.root, "vm-bin/hermes"));
+  const dir = join(s.root, "vm/.nvm-like/bin");
+  mkdirSync(dir, { recursive: true });
+  exe(join(dir, "hermes"), "#!/usr/bin/env fakenode\n");
+  exe(join(dir, "fakenode"), SAYS);
+  s.setState((st) => { st.machines[0].login = { path: `${dir}:/usr/bin:/bin`, noise }; });
+  return dir;
+}
+
+test("start --machine: an agent only the login shell finds passes the check and the pane gets that PATH, so it really runs", (t) => {
+  const s = scene(t);
+  const dir = loginOnly(s);
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings, []);
+  assert.deepEqual(r.json().argv, ["hermes", "--tui"], "the agent's own words, never rewritten");
+  const argv = launched(s);
+  assert.equal(argv[0], "/usr/bin/env");
+  assert.ok(argv[1].startsWith(`PATH=${dir}:`), argv[1]);
+  assert.deepEqual(argv.slice(2), ["hermes", "--tui"]);
+  assert.ok(argv[1].includes(join(s.root, "vm-bin")), "what hc's own PATH reached stays reachable");
+  assert.equal(pane(argv).stdout, "agent ran\n");
+  // Bounded, and only ever on the machine: the login shell's call and the check both.
+  for (const c of execs(s).slice(-3)) assert.deepEqual([c[c.indexOf("--timeout") + 1], c[c.indexOf("--on") + 1]], ["10", "vm"]);
+});
+
+test("restart --machine: the same check and the same PATH, and the old pane ends only after", (t) => {
+  const s = scene(t, { terminals: [atlasPane()] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  const dir = loginOnly(s);
+  const r = s.cli(["restart", "Atlas", ...s.on, "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().argv, ["hermes", "--tui", "--continue"]);
+  const argv = launched(s);
+  assert.ok(argv[1].startsWith(`PATH=${dir}:`), argv[1]);
+  assert.deepEqual(argv.slice(2), ["hermes", "--tui", "--continue"]);
+  assert.equal(pane(argv).stdout, "agent ran\n");
+  assert.deepEqual(s.calls().map((c) => c[0]).filter((c) => c === "run" || c === "kill"), ["run", "kill"]);
+});
+
+test("restart --machine: an agent really missing there is refused and the old pane is left running", (t) => {
+  const s = scene(t, { terminals: [atlasPane()] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  const r = s.cli(["restart", "Atlas", ...s.on, "--force"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Hermes[^\n]* \(hermes\) isn't installed on vm/);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run" || c[0] === "kill"), []);
+});
+
+test("start --machine: a broken login shell falls back to the user bin folders, for the check and the pane, and says so", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  mkdirSync(join(s.root, "vm/.local/bin"), { recursive: true });
+  exe(join(s.root, "vm/.local/bin/hermes"), SAYS);
+  s.setState((st) => { st.machines[0].login = { exit: "1" }; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.json().warnings.join(), /vm's login shell gave no PATH, so Hermes starts with the PATH hc runs programs with there/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
+});
+
+test("start --machine: a login shell that never answers is ended at the bound; ~/.bun/bin still finds the agent", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  mkdirSync(join(s.root, "vm/.bun/bin"), { recursive: true });
+  exe(join(s.root, "vm/.bun/bin/hermes"), SAYS);
+  s.setState((st) => { st.execTimedOut = ["-lc"]; });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.json().warnings.join(), /vm's login shell didn't answer within 10 s/);
+  assert.equal(pane(launched(s)).stdout, "agent ran\n");
+});
+
+test("start --machine: really missing keeps the refusal, whether or not the login shell answered, and nothing runs", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  const r = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /\(hermes\) isn't installed on vm, or isn't on the PATH hc runs programs with there, its login shell's PATH, ~\/\.local\/bin or ~\/\.bun\/bin\./);
+  s.setState((st) => { st.execTimedOut = ["-lc"]; });
+  const slow = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(slow.code, 1);
+  assert.match(slow.err, /isn't installed on vm.*\(vm's login shell didn't answer within 10 s\)\./);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a profile that prints to stdout is only text: its lines are never run, and never reach the PATH", (t) => {
+  const s = scene(t);
+  const canary = join(s.root, "ran-profile-output");
+  const dir = loginOnly(s, { noise: `Welcome to vm!\nPATH=/evil:/bin\n$(touch ${canary})\n\`touch ${canary}\`\ntouch ${canary}; am-path-0-from/evil\n` });
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().warnings, [], "the marker's line was found past the noise");
+  const argv = launched(s);
+  assert.ok(argv[1].startsWith(`PATH=${dir}:`), argv[1]);
+  assert.ok(!argv[1].includes("evil") && !argv[1].includes("Welcome"), argv[1]);
+  assert.equal(existsSync(canary), false);
+});
+
+test("start --machine: an agent whose interpreter a pane there couldn't find is refused, never a dead pane", (t) => {
+  const s = scene(t);
+  rmSync(join(s.root, "vm-bin/hermes"));
+  exe(join(s.root, "vm-bin/hermes"), "#!/usr/bin/env no-such-runtime\n");
+  const r = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /runs under no-such-runtime, which isn't on the PATH a pane on vm gets/);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine: a machine that stops answering is refused as unreachable, asked once, and nothing runs", (t) => {
+  const s = scene(t);
+  s.setState((st) => { st.execUnanswered = ["sh"]; });
+  const r = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /vm can't be reached: vm stopped answering/);
+  assert.doesNotMatch(r.err, /isn't installed/);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+  assert.equal(execs(s).filter((c) => c.includes("sh")).length, 1, "no second wait on a machine that is away");
+});

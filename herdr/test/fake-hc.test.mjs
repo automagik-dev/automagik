@@ -58,7 +58,7 @@ test("fake logs: a read leaves out a last line not yet ended by its newline; the
   const root = mkdtempSync(join(tmpdir(), "hb-fakelog-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const log = join(root, "hc.log");
-  // The log as CI run 42117078205 read it: the last line cut 3 characters in.
+  // The log as CI run 42117078205 read it: the last line cut 4 characters in.
   writeFileSync(log, '["get","t0"]\n["ge');
   assert.throws(() => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)), SyntaxError,
     "the old reader parsed the cut line");
