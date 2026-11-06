@@ -1,8 +1,10 @@
 # Claude logins signed in on this Mac (#453): design note
 
-Status: **launch side and section 9 built** (every Claude launch route reads the record, and the
-Claude download, install and Keychain paths are gone); the panel (sections 3 to 7) is next. Until
-then the Claude card offers no switch. Refs #453, #424. Owner decisions of 2026-11-06:
+Status: **built.** The launch side and section 9 (#499): every Claude launch route reads the record,
+and the Claude download, install and Keychain paths are gone. The panel (sections 3 to 7, this
+build): `logins.js` and the Claude card. The checks marked **UNVERIFIED** below need the real
+`claude` binary, which the build never ran; they are the owner checklist of the panel's PR. #453,
+#424. Owner decisions of 2026-11-06:
 - the copy test is dropped;
 - Claude reaches a machine only through that machine's own Anthropic sign-in, one per account it
   needs;
@@ -217,15 +219,17 @@ in the repository's `.mcp.json`, which both logins read.
 
 **Known cost of B's fresh `.claude.json`:** the first `claude` run under B can show onboarding,
 and the first launch in each project folder can ask whether to trust it. A bot pane stopped on
-that question looks stuck. The build checks this on a scratch config folder, then either
-pre-answers it the documented way or has the panel say "first launch under login 2 in <folder>
-needs one answer in its pane".
+that question looks stuck. The build pre-answers nothing: the panel says, on each other login's
+row, "The first launch under login 2 needs one answer in its pane". **UNVERIFIED:** that the
+question appears, and that one answer per folder is all it takes.
 
-**To verify in the build, on scratch folders (no sign-in needed):**
-- `.claude.json` is created inside `CLAUDE_CONFIG_DIR`;
-- resume follows the `projects` link;
-- the CLI does not replace a linked `settings.json` or `CLAUDE.md` with a real file by rename;
-- `claude auth status` reports a `CLAUDE_CONFIG_DIR` set in settings `env` through
+**To verify, on scratch folders (no sign-in needed).** The build ran no real `claude`, so each is
+still open; the panel's PR carries the commands:
+- **UNVERIFIED:** `.claude.json` is created inside `CLAUDE_CONFIG_DIR`;
+- **UNVERIFIED:** resume follows the `projects` link;
+- **UNVERIFIED:** the CLI does not replace a linked `settings.json` or `CLAUDE.md` with a real file by
+  rename (the panel names one that did, below);
+- **UNVERIFIED:** `claude auth status` reports a `CLAUDE_CONFIG_DIR` set in settings `env` through
   `configDirectory` (section 5).
 
 The linked folders are safe from this, because a rename inside a linked folder lands in the real
@@ -252,6 +256,13 @@ the CLI applies every settings layer before it answers is **inferred**, not docu
 build's scratch-folder checks (section 4) confirm it. Its JSON carries `configDirectory` and
 `authMethod`. Only those two fields and the account's identity are read; the rest of the output
 is ignored and never logged.
+- **UNVERIFIED:** the CLI applies every settings layer before it answers (the scratch check above).
+- **UNVERIFIED:** `claude auth status` prints JSON with `loggedIn`, `email`, `authMethod` and
+  `configDirectory`, and exits 1 when not signed in. Output the panel can't read gives "claude auth
+  status gave no answer the panel can read" and no **Use**, never a guess.
+- **UNVERIFIED:** what `authMethod` says for an API key, a token variable or a third-party provider.
+  The panel reads its words (`key`, `token`, a provider's name); anything else but `claude.ai` is
+  named as it is, and the login gets no **Use**.
 
 **What the panel shows:**
 - `configDirectory` differs from the login's folder: one red line, "settings move login 2 to
@@ -274,7 +285,8 @@ The Claude card lists **the logins signed in on this Mac**, not the proxy's acco
   login is not signed in, and no token is printed or seen. If its JSON carries no email, the
   email comes from that folder's `.claude.json` account record, as a last resort. That file can
   hold secrets elsewhere (an MCP server's `env`), so the panel takes the one email field and never
-  logs, shows or keeps the rest. Read on open, after a switch, and at most every five minutes.
+  logs, shows or keeps the rest. Read on open, after a switch, on ↻, and at most every five
+  minutes. **UNVERIFIED:** the field is `oauthAccount.emailAddress`.
 - **Rows:** one per login, shown by email.
   - Each row is matched by email to the proxy's quota rows, for the bar and the policy's
     projection. `policy.choose` runs over the local logins only.
@@ -295,14 +307,14 @@ The Claude card lists **the logins signed in on this Mac**, not the proxy's acco
 1. Make the next slot's folder and its links, as in "The second sign-in" below.
 2. Sign in from a terminal.
 3. Press **Add login** in the panel. It records `{id, dir}` after checking the form rule and that
-   `claude auth status` says signed in.
+   `claude auth status` says signed in. The panel offers the next free slot, `$HOME/.claude-<n>`.
 
 **Remove:**
 
-1. If the login is the one in `use`, switch to another first. The panel refuses to remove the
-   login in use.
+1. If the login is the one in `use`, switch to another first. The panel offers no **Remove** on the
+   login in use, and refuses while the login is still signed in (step 3 first).
 2. Restart or stop the bots still on it. The panel refuses while a pane's launch argv names its
-   folder by value, because a logout ends their sign-in.
+   folder by value (every live pane `hc ls` lists), because a logout ends their sign-in.
 3. In a terminal, run `CLAUDE_CONFIG_DIR="$HOME/.claude-<n>" claude auth logout`. The CLI removes
    its own credential; the panel does not touch the Keychain.
 4. Press **Remove login** in the panel to drop the record.
