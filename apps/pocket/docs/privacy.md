@@ -2,12 +2,12 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-04
+updated: 2026-11-06
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
 
-Effective 2026-11-04. Applies to the Android app **Automagik Pocket** (app ID
+Effective 2026-11-06. Applies to the Android app **Automagik Pocket** (app ID
 `ai.namastex.automagik`), published from
 [automagik-dev/automagik](https://github.com/automagik-dev/automagik/tree/dev/apps/pocket) (`apps/pocket/`;
 before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket)).
@@ -28,6 +28,7 @@ before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-de
 | Data | Where it goes | Why |
 |---|---|---|
 | Terminal screens, agent status, messages and replies you type or speak | Only between the phone and your machine | This is what the app is for |
+| Chat: an agent's transcript (its messages, tool calls with their input and output, approvals, questions and token counts) and the Automagik Bots' chats, sent by Pocket Link's chat route ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md)) | Only between the phone and your machine. Kept in memory while the chat is open, dropped when you leave it; never written to the phone's storage, never logged, never sent anywhere else | To show an agent as a chat beside its terminal. Tool output can hold secrets such as tokens; it is the same text the terminal already shows the phone, and it is not redacted |
 | Paired machine details: name, session name, the desktop's Pocket Link ticket | Stays on the phone | To reconnect |
 | Machines saved over SSH by an older version: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone and is never used to connect; deleted when you pair that computer with QR or remove it | So the card can ask you to pair it again ([RFC 0008](rfcs/0008-drop-ssh.md)) |
 | The phone's make and model (for example "Pixel 8") | Sent once to the desktop you pair with | So the desktop can name the paired phone. The desktop lists it beside a fingerprint of the phone's Pocket Link public key, which it already has, so two phones with the same name can be told apart |
@@ -54,7 +55,9 @@ Nothing else is collected. We, the developers, receive none of this data.
    the APK from GitHub too: on its own on Wi-Fi with **Install updates automatically** on, otherwise
    when you tap **Install**. GitHub sees your IP address and a User-Agent with the app version. The
    check itself can't be turned off in the current version.
-3. **Web links.** A link you tap in a terminal opens in your browser.
+3. **Web links.** A link you tap in a terminal opens in your browser. In a chat, a link shows its
+   address and opens only after you tap it and confirm; a chat loads no image or other web content
+   by itself, and shows HTML as plain text.
 
 ## What is stored on the phone
 

@@ -2,7 +2,7 @@
 title: "Using Automagik Pocket"
 type: guide
 created: 2026-11-01
-updated: 2026-11-04
+updated: 2026-11-06
 tags: [guide, users]
 ---
 # Using Automagik Pocket
@@ -107,6 +107,25 @@ What the numbers mean:
   Settings, draws the core's screen as plain text: no colours, up to 500 lines of shell history. The
   app switches to it on its own if the colour view fails.
 - Web links in a terminal open in your browser.
+
+## Chat
+
+- On a Claude, Codex or omp terminal, tap **Chat** (in **…**, or in the bar under the terminal) to see
+  the agent as a chat: its messages, tool calls (tap one to see its input or output) and status.
+  **Show terminal** goes back. It needs a Pocket Link with the chat route; an older one says
+  "Update Pocket Link on this computer for chat" and the terminal works as before.
+- **Approvals** show **Allow** (and **Always allow** where the agent has it) and **Deny** only when
+  the dialog is really open in the terminal; anything else says "Answer in the terminal".
+- **Messages** you send are typed into the terminal. If the terminal has a half-typed message, yours
+  waits with **Send now** (it sends your half-typed text with it) and **Cancel**; it also goes on its
+  own once the input line is empty. A message the phone never heard back about shows **Maybe not
+  sent** with **Retry**, which never types it twice.
+- **Interrupt** stops the agent's turn, once, as Esc or Ctrl+C would.
+- **Bot chats** (Machines, on a connected computer) lists the Automagik Bots' chats. They are read
+  only on the phone: approvals and questions say "Answer on the computer", and there is no message box
+  or Interrupt.
+- Chat text is plain text: HTML shows as the characters it is, nothing loads by itself, and a link
+  opens only when you tap it and confirm. Rows stay in memory and are dropped when you leave the chat.
 
 ## Alerts
 
