@@ -127,6 +127,21 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
 export const liveLine = (botId) => `Live status and latest reports of your team and lead: run \`automagik-herdr brief ${botId}\`.`;
 
 /**
+ * How a bot launched with its briefing gets restarted (#428), for every agent the briefing reaches
+ * (models.js BRIEFING): through Herdr, never the agent's own restart command (Claude Code's
+ * /restart refuses a session started with --append-system-prompt-file). A plain restart keeps
+ * the bot's agent and model (restart.js restartPlan). The CLI finds the project from the folder
+ * it runs in, or --project. Only in the launch briefing: a pane attached while running was not
+ * started with it.
+ */
+export const restartLine = (botId) => `To restart you, the person runs \`automagik-herdr restart ${botId}\` `
+  + "in this project's folder (or with --project <that folder>), which keeps your agent and model, or uses Restart "
+  + "in your bot's menu in the Herdr sidebar, not your agent's own restart command. In pt-BR: \"Para me reiniciar, "
+  + `rode \`automagik-herdr restart ${botId}\` na pasta deste projeto (ou com --project <essa pasta>), que mantém `
+  + "meu agente e modelo, ou use Restart no menu do bot na barra lateral do Herdr, não o comando de reinício do "
+  + "próprio agente.\"";
+
+/**
  * The briefing a bot starts with, its agent's system prompt (≤ BRIEFING_LIMIT): who it is, its
  * role and instructions, how it works, its lead and its team as .herdr/bots.json names them.
  * Nothing that changes while it runs (a status, an address, a report): for those it runs
@@ -144,7 +159,7 @@ export function launchBriefingText({ self, file }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) lines.push("Instructions:", shown.trim());
-  lines.push(WORKER_LINE, liveLine(self.id));
+  lines.push(WORKER_LINE, liveLine(self.id), restartLine(self.id));
   const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
   const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
   if (lead) {
