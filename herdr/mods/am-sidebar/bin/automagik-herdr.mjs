@@ -1088,12 +1088,12 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
   dsh-tui install | update      DSH as a Herdr agent: the pinned dsh-TUI ${DSH_TUI.version} in its
-                                own \`tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
+                                own \`dsh-tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
                                 built-in DSH entry finds it), and dsh-TUI's first-run guide
                                 marked done. No dsh on PATH: one honest line, skipped.
-  dsh-tui uninstall             dsh-TUI out of the tui profile and the shim away (sessions,
+  dsh-tui uninstall             dsh-TUI out of the dsh-tui profile and the shim away (sessions,
                                 dsh-TUI's state and the profile stay)
-  dsh-tui doctor                whether dsh, the tui profile and the shim are there, and
+  dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
                                 whether the profile is the pinned one (read-only)
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
@@ -4517,7 +4517,7 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
 }
 
 /**
- * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `tui`
+ * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `dsh-tui`
  * profile, through the pinned dsh-TUI and the `dsh-tui` shim. `update` is the same idempotent
  * install (a newer pin in a later pack replaces it). Local only: the profile is this computer's.
  */

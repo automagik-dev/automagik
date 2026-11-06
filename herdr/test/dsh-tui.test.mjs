@@ -1,7 +1,7 @@
-// dsh-TUI as a Herdr agent (#561): the pin and its integrity, the `tui`-only profile, the
-// `dsh-tui` shim's long --profile form, the opt-in doctor, uninstall, and the release-age
-// exception. A fake `dsh` in a temp PATH and a temp HOME: the real DSH, Herdr and ~/.dsh are
-// never touched.
+// dsh-TUI as a Herdr agent (#561): the pin and its integrity, the package's own `dsh-tui` profile,
+// the `dsh-tui` shim's launcher rule (no literal `--`), the onboarding pre-write, the opt-in
+// doctor, uninstall, and the release-age exception. A fake `dsh` in a temp PATH and a temp HOME
+// that boots the way DSH 0.2.2 does: the real DSH, Herdr and ~/.dsh are never touched.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
-  DSH_TUI, PIN, RECORD_FILE, SHIM, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
+  DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
   ownershipOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, scopeReleaseAge, shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
 
@@ -19,8 +19,10 @@ const PUBLISHED = "2026-11-06T03:36:00Z";
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 /**
- * A scratch home with a fake `dsh`: it records every argv, and on `plugin --profile tui add`
- * writes the profile the way pnpm does (package.json, lockfile, workspace yaml, node_modules).
+ * A scratch home with a fake `dsh`: it records every argv; on `plugin --profile dsh-tui add` it
+ * initializes the profile the way real DSH 0.2.2 does (no shipped template for this name: the
+ * base bundle only) and adds dsh-TUI, so the profile is the one dsh-TUI itself creates; without
+ * `plugin`, it boots like the launcher and parses the app argv like dsh-TUI's resume grammar.
  * `cfg.add.integrity`, `.pin`, `.installed`, `.workspace` and `.fail` change what it writes.
  */
 function scene(t, { dsh = true, config = {} } = {}) {
@@ -42,16 +44,73 @@ function scene(t, { dsh = true, config = {} } = {}) {
   const helper = join(root, "fake-dsh.cjs");
   writeFileSync(helper, `const fs = require("fs"), path = require("path");
 const args = process.argv.slice(2), cfg = JSON.parse(fs.readFileSync(process.env.DSH_FAKE, "utf8"));
-if (args[0] !== "plugin") process.exit(0);
-if (args[1] !== "--profile" || args[2] !== "tui") { console.error("wrong call: " + args.join(" ")); process.exit(64); }
-const dir = path.join(process.env.DSH_HOME, "profiles", "tui");
+const dshHome = process.env.DSH_HOME || path.join(process.env.HOME, ".dsh");
+const TUI = "@deepseek-harness-tui/dsh-tui", BASE = "@deepseek-ai/dsh-base", WEB = "@deepseek-ai/dsh-web-app";
+const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+
+// Boot, the launcher rule: dsh [--profile] <name> [own flags] [app args]. The first token it does
+// not recognize starts the app's argv; DSH 0.2.2 drops a bare \`--\` that follows only launcher
+// options (Commander), so the shim sends no \`--\` at all. A web-template profile rejects
+// --resume/-c/-p; the dsh-tui profile parses them.
+if (args[0] !== "plugin") {
+  const named = args[0] === "--profile";
+  const profile = named ? args[1] : args[0], raw = args.slice(named ? 2 : 1);
+  const app = [];
+  let unknown = false;
+  for (const arg of raw) {
+    if (!unknown && arg === "--") continue;
+    unknown = true;
+    app.push(arg);
+  }
+  const dir = path.join(dshHome, "profiles", profile);
+  const bundles = readJson(path.join(dir, "package.json"))?.dsh?.profile?.bundles ?? [];
+  if (bundles.includes(WEB)) {
+    const bad = app.find((a) => a === "--resume" || a === "-c" || a === "--continue" || a === "-p" || a.startsWith("--resume="));
+    if (bad) { console.error("web app: unknown option " + bad); process.exit(2); }
+  }
+  if (!bundles.includes(TUI)) { console.error("profile " + profile + " does not mount dsh-TUI"); process.exit(3); }
+  // dsh-TUI's resume grammar (lib/types/sessionHistory.js): \`--\` ends parsing (it starts literal
+  // prompt text), so the shim sends none and these flags are read as flags.
+  const cut = app.indexOf("--"), head = cut < 0 ? app : app.slice(0, cut);
+  let resume = null;
+  const promptArgs = [];
+  for (let i = 0; i < head.length; i++) {
+    const a = head[i];
+    if (a === "--resume" || a === "-c" || a === "--continue" || a.startsWith("--resume=")) {
+      if (a.startsWith("--resume=")) resume = resume ?? a.slice(9);
+      else if (a === "--resume" && head[i + 1] !== undefined && !head[i + 1].startsWith("-")) resume = resume ?? head[++i];
+      else resume = resume ?? "last";
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    promptArgs.push(a);
+  }
+  const prompt = promptArgs.join(" ").trim() || null;
+  // onboardingPrefs: completed at the current guide revision means the wizard stays away.
+  let onboarding = true;
+  try { const prefs = readJson(path.join(process.env.HOME, ".dsh-tui", "onboarding.json")); onboarding = prefs.completed !== true || !(prefs.version >= 1); } catch {}
+  console.log(JSON.stringify({ profile, dshHome, app, resume, prompt, onboarding, key: process.env.AM_TEST_KEY ?? null }));
+  process.exit(0);
+}
+if (args[1] !== "--profile" || args[2] !== "dsh-tui") { console.error("wrong call: " + args.join(" ")); process.exit(64); }
+const dir = path.join(dshHome, "profiles", "dsh-tui");
 if (args[3] === "add") {
   if (cfg.add && cfg.add.fail) { console.error("ERR_PNPM a fake add failure"); process.exit(1); }
   const spec = args[4] || "", version = spec.slice(spec.lastIndexOf("@") + 1);
   const add = cfg.add || {};
   const pkg = path.join(dir, "node_modules", "@deepseek-harness-tui", "dsh-tui");
   fs.mkdirSync(pkg, { recursive: true });
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { "@deepseek-harness-tui/dsh-tui": add.pin || version } }) + "\\n");
+  // The real command initializes a missing custom profile from DEFAULT_PROFILE_BUNDLES (base
+  // only; no shipped template is named dsh-tui) and appends the package to dsh.profile.bundles.
+  const manifest = fs.existsSync(path.join(dir, "package.json"))
+    ? readJson(path.join(dir, "package.json"))
+    : { name: "dsh-profile-dsh-tui", private: true, dependencies: {}, dsh: { profile: { bundles: [BASE] } } };
+  manifest.dependencies = { ...manifest.dependencies, [TUI]: add.pin || version };
+  const bundles = manifest.dsh?.profile?.bundles ?? [BASE];
+  manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: bundles.includes(TUI) ? bundles : [...bundles, TUI] } };
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(manifest) + "\\n");
+  fs.writeFileSync(path.join(dir, "cordis.yml"), "[]\\n");
+  fs.writeFileSync(path.join(dir, "cordis.patch.yml"), "# dsh profile root\\n");
   fs.writeFileSync(path.join(dir, "pnpm-workspace.yaml"), add.workspace || "minimumReleaseAgeExclude:\\n  - '@deepseek-harness-tui/dsh-tui@0.19.0'\\n");
   fs.writeFileSync(path.join(dir, "pnpm-lock.yaml"), "packages:\\n\\n  '@deepseek-harness-tui/dsh-tui@0.19.0':\\n    resolution: {integrity: " + (add.integrity || "sha512-4TAPhsTqfL+oG1H39Fbj13tfaVVGnwV9N33dV8Acn/YBoZT/YgXwF+ZnbhvRi0l55bNc6X6loKkngxrNL8NX3w==") + "}\\n\\n");
   fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ version: add.installed || version }) + "\\n");
@@ -59,7 +118,10 @@ if (args[3] === "add") {
 }
 if (args[3] === "remove") {
   if (cfg.remove && cfg.remove.fail) { console.error("ERR_PNPM a fake remove failure"); process.exit(1); }
-  fs.writeFileSync(path.join(dir, "package.json"), "{\\"dependencies\\":{}}\\n");
+  const manifest = readJson(path.join(dir, "package.json"));
+  delete manifest.dependencies?.[TUI];
+  if (manifest.dsh?.profile) manifest.dsh.profile.bundles = (manifest.dsh.profile.bundles ?? []).filter((name) => name !== TUI);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(manifest) + "\\n");
   fs.rmSync(path.join(dir, "node_modules", "@deepseek-harness-tui", "dsh-tui"), { recursive: true, force: true });
   process.exit(0);
 }
@@ -78,15 +140,15 @@ exec "${process.execPath}" "${helper}" "$@"
   const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
   const runShim = (args, extra = {}) => spawnSync("sh", [join(home, ".local", "bin", SHIM), ...args], { env: { ...env, ...extra }, encoding: "utf8" });
   const cli = (args, extra = {}) => spawnSync(process.execPath, [CLI, ...args], { cwd: root, env: { ...env, ...extra }, encoding: "utf8" });
-  return { root, home, bin, env, calls, runShim, cli, dsh: join(bin, "dsh") };
+  return { root, home, bin, env, calls, runShim, cli, dsh: join(bin, "dsh"), profile: join(home, ".dsh", "profiles", PROFILE) };
 }
 
-/** A tui profile as an earlier install (or the person) left it; `record` marks it the pack's. */
+/** A dsh-tui profile as an earlier install (or the person) left it; `record` marks it the pack's. */
 function seedProfile(s, { version = DSH_TUI.version, record = false } = {}) {
-  const profile = join(s.home, ".dsh", "profiles", "tui");
+  const profile = join(s.home, ".dsh", "profiles", PROFILE);
   const dir = join(profile, "node_modules", "@deepseek-harness-tui", "dsh-tui");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: version } }) + "\n");
+  writeFileSync(join(profile, "package.json"), JSON.stringify({ name: "dsh-profile-dsh-tui", private: true, dependencies: { [DSH_TUI.package]: version }, dsh: { profile: { bundles: ["@deepseek-ai/dsh-base", DSH_TUI.package] } } }) + "\n");
   writeFileSync(join(profile, "pnpm-workspace.yaml"), `minimumReleaseAgeExclude:\n  - '${DSH_TUI.package}@${version}'\n`);
   writeFileSync(join(profile, "pnpm-lock.yaml"), `packages:\n\n  '${DSH_TUI.package}@${version}':\n    resolution: {integrity: ${DSH_TUI.integrity}}\n\n`);
   writeFileSync(join(dir, "package.json"), `{"version":"${version}"}\n`);
@@ -96,7 +158,7 @@ function seedProfile(s, { version = DSH_TUI.version, record = false } = {}) {
   return profile;
 }
 
-test("install pins exactly 0.19.0 with its integrity into the tui profile only", async (t) => {
+test("install pins exactly 0.19.0 with its integrity into the dsh-tui profile only", async (t) => {
   const s = scene(t);
   const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-06T10:00:00Z") });
   assert.equal(r.status, "installed", r.detail);
@@ -105,7 +167,7 @@ test("install pins exactly 0.19.0 with its integrity into the tui profile only",
   assert.equal(state.installed, DSH_TUI.version);
   assert.equal(state.integrity, DSH_TUI.integrity);
   assert.equal(lockIntegrity(readFileSync(join(state.dir, "pnpm-lock.yaml"), "utf8")), DSH_TUI.integrity);
-  assert.deepEqual(s.calls(), [`plugin --profile tui add ${PIN} --save-exact`]);
+  assert.deepEqual(s.calls(), [`plugin --profile dsh-tui add ${PIN} --save-exact`]);
   assert.equal(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), SHIM_TEXT);
   assert.ok(statSync(join(s.home, ".local", "bin", SHIM)).mode & 0o111, "the shim is executable");
   assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh-tui", "onboarding.json"), "utf8")), { completed: true, version: 1 });
@@ -118,8 +180,8 @@ test("a lockfile integrity that is not the pin fails, removes what it added, and
   assert.equal(r.status, "failed");
   assert.match(r.detail, /lockfile records .*not the pinned/);
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
-  assert.deepEqual(s.calls(), [`plugin --profile tui add ${PIN} --save-exact`, `plugin --profile tui remove ${DSH_TUI.package}`]);
-  assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh", "profiles", "tui", "package.json"), "utf8")).dependencies, {});
+  assert.deepEqual(s.calls(), [`plugin --profile dsh-tui add ${PIN} --save-exact`, `plugin --profile dsh-tui remove ${DSH_TUI.package}`]);
+  assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "package.json"), "utf8")).dependencies, {});
 });
 
 test("the desktop profile, its settings and DSH's credentials are untouched", async (t) => {
@@ -133,25 +195,144 @@ test("the desktop profile, its settings and DSH's credentials are untouched", as
   assert.equal(desktop("package.json"), pkg);
   assert.equal(desktop("cordis.patch.yml"), patch);
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), creds);
-  assert.ok(s.calls().every((line) => line.includes("--profile tui") && !line.includes("desktop")), "every dsh call is the tui profile");
+  assert.ok(s.calls().every((line) => line.includes(`--profile ${PROFILE}`) && !line.includes("desktop")), "every dsh call is the dsh-tui profile");
 });
 
-test("the shim runs the long --profile tui form and forwards the app's arguments", async (t) => {
+test("the shim runs the dsh-tui profile and the TUI parses its startup flags", async (t) => {
   const s = scene(t);
   await installDshTui({ env: s.env, publishedAt: PUBLISHED });
   const shimLog = join(s.root, "shim.log");
   writeFileSync(shimLog, "");
-  const r = s.runShim(["--resume", "abc"], { DSH_LOG: shimLog });
-  assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(readFileSync(shimLog, "utf8").split("\n").filter(Boolean), ["--profile tui -- --resume abc"]);
+  // The profile is the one dsh-TUI itself creates: base + the TUI bundle, never a web template.
+  const manifest = JSON.parse(readFileSync(join(s.profile, "package.json"), "utf8"));
+  assert.deepEqual(manifest.dsh.profile.bundles, ["@deepseek-ai/dsh-base", DSH_TUI.package]);
+  assert.equal(existsSync(join(s.home, ".dsh", "profiles", "tui")), false, "no web-template tui profile is created");
+  // Every argument reaches the app as the TUI's own grammar reads it; no literal `--` in between.
+  // dsh-TUI's startup grammar on the pinned DSH: resume flags, a backend, and `-- <text>` for a
+  // literal prompt. `-p`/run is not asserted here: on DSH 0.2.2-rc.1 its automation adapter is
+  // unavailable (headless work uses `dsh --profile headless`).
+  for (const [args, expected] of [
+    [["--resume", "abc"], { resume: "abc", prompt: null }],
+    [["-c"], { resume: "last", prompt: null }],
+    [["--continue"], { resume: "last", prompt: null }],
+    [["--", "hello", "world"], { prompt: "hello world" }],
+  ]) {
+    const r = s.runShim(args, { DSH_LOG: shimLog });
+    assert.equal(r.status, 0, r.stderr);
+    const boot = JSON.parse(r.stdout);
+    assert.equal(boot.profile, PROFILE);
+    if (expected.resume !== undefined) assert.equal(boot.resume, expected.resume);
+    assert.equal(boot.prompt, expected.prompt);
+  }
+  // The shim's own launcher call has no added separator; a user's `-- <text>` travels verbatim.
+  assert.deepEqual(readFileSync(shimLog, "utf8").split("\n").filter(Boolean),
+    ["--profile dsh-tui --resume abc", "--profile dsh-tui -c", "--profile dsh-tui --continue",
+      "--profile dsh-tui -- hello world"]);
   assert.equal(spawnSync("sh", ["-n", join(s.home, ".local", "bin", SHIM)], { encoding: "utf8" }).status, 0);
-  assert.match(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), /^exec dsh --profile tui -- "\$@"$/m);
+  assert.match(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), /^exec dsh --profile dsh-tui "\$@"$/m);
   const missing = s.runShim([], { PATH: "/usr/bin:/bin" });
   assert.equal(missing.status, 127);
   assert.match(missing.stderr, /DSH \(dsh\) is not on PATH/);
 });
 
-test("doctor states dsh, the tui profile and the shim honestly, before and after install", async (t) => {
+test("the shim sources only a safe provider env file, and leaves the arguments alone", async (t) => {
+  const s = scene(t);
+  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const guide = join(s.home, ".dsh", "deepseek.env");
+  const boot = (args = [], extra = {}) => {
+    const r = s.runShim(args, extra);
+    assert.equal(r.status, 0, r.stderr);
+    return { r, boot: JSON.parse(r.stdout) };
+  };
+  // Missing: silent, nothing exported, the shim still starts.
+  let run = boot();
+  assert.equal(run.boot.key, null);
+  assert.equal(run.r.stderr, "");
+  // A regular 0600 file owned by this user: every variable it sets is exported to dsh.
+  writeFileSync(guide, "AM_TEST_KEY=from-env\n");
+  chmodSync(guide, 0o600);
+  run = boot(["--resume", "abc"]);
+  assert.equal(run.boot.key, "from-env");
+  assert.deepEqual(run.boot.app, ["--resume", "abc"], "the env file does not change argv");
+  assert.equal(run.boot.resume, "abc");
+  assert.equal(run.r.stderr, "");
+  // A symlink is skipped with one line, even when its target is a safe file.
+  const target = join(s.root, "keys.env");
+  writeFileSync(target, "AM_TEST_KEY=via-link\n");
+  chmodSync(target, 0o600);
+  rmSync(guide);
+  symlinkSync(target, guide);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /^dsh-tui: skipped the provider env file/m);
+  assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  // Any group/other read or write bit is refused, one bit at a time.
+  for (const mode of [0o620, 0o602, 0o660, 0o606, 0o666, 0o644, 0o604]) {
+    if (existsSync(guide)) rmSync(guide);
+    writeFileSync(guide, "AM_TEST_KEY=unsafe-mode\n");
+    chmodSync(guide, mode);
+    run = boot();
+    assert.equal(run.boot.key, null, `mode ${mode.toString(8)} must not be sourced`);
+    assert.match(run.r.stderr, /skipped the provider env file/);
+    assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  }
+  // Unreadable is skipped too.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, "AM_TEST_KEY=unreadable\n");
+  chmodSync(guide, 0o000);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /skipped the provider env file/);
+  // Malformed shell is refused without echoing the offending line or its value.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, 'AM_TEST_KEY="unterminated\n');
+  chmodSync(guide, 0o600);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /^dsh-tui: skipped the provider env file/m);
+  assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  assert.ok(!run.r.stderr.includes("AM_TEST_KEY"), "the shell's syntax error is discarded");
+  assert.ok(!run.r.stderr.includes("unterminated"));
+  // The parent folder matters too: check and source are separate opens.
+  writeFileSync(guide, "AM_TEST_KEY=parent-unsafe\n");
+  chmodSync(guide, 0o600);
+  for (const mode of [0o730, 0o702, 0o777]) {
+    chmodSync(join(s.home, ".dsh"), mode);
+    run = boot();
+    assert.equal(run.boot.key, null, `parent mode ${mode.toString(8)} must not trust the file`);
+    assert.match(run.r.stderr, /skipped the provider env file/);
+  }
+  chmodSync(join(s.home, ".dsh"), 0o700);
+  // DSH_HOME moves the file; the default under ~/.dsh is not read.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, "AM_TEST_KEY=from-default\n");
+  const alt = join(s.root, "alt-dsh");
+  mkdirSync(alt);
+  symlinkSync(join(s.home, ".dsh", "profiles"), join(alt, "profiles"));
+  writeFileSync(join(alt, "deepseek.env"), "AM_TEST_KEY=from-alt\n");
+  chmodSync(join(alt, "deepseek.env"), 0o600);
+  run = boot([], { DSH_HOME: alt });
+  assert.equal(run.boot.key, "from-alt");
+  assert.equal(run.boot.dshHome, alt);
+});
+
+test("a fresh pane with the onboarding record starts clean, and a person's record is kept", async (t) => {
+  const s = scene(t);
+  const guide = join(s.home, ".dsh-tui", "onboarding.json");
+  assert.equal((await installDshTui({ env: s.env, publishedAt: PUBLISHED })).status, "installed");
+  assert.equal(readFileSync(guide, "utf8"), "{\n  \"completed\": true,\n  \"version\": 1\n}\n");
+  const boot = JSON.parse(s.runShim([]).stdout);
+  assert.equal(boot.onboarding, false, "the wizard does not offer itself on a fresh pane");
+  // A person completing the guide writes this file; install keeps their copy byte for byte.
+  const theirs = "{\"completed\":true,\"version\":1,\"note\":\"walked it myself\"}\n";
+  writeFileSync(guide, theirs);
+  const again = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(again.status, "installed");
+  assert.match(again.lines.join("\n"), /Kept dsh-TUI's first-run guide state/);
+  assert.equal(readFileSync(guide, "utf8"), theirs);
+});
+
+test("doctor states dsh, the dsh-tui profile and the shim honestly, before and after install", async (t) => {
   const missing = scene(t, { dsh: false });
   const none = doctorDshTui({ env: missing.env });
   assert.equal(none.code, 2, "no dsh: not applicable");
@@ -192,11 +373,11 @@ test("uninstall removes the plugin and the shim, and leaves a foreign shim alone
   await installDshTui({ env: s.env, publishedAt: PUBLISHED });
   const r = uninstallDshTui({ env: s.env });
   assert.equal(r.status, "removed", JSON.stringify(r));
-  assert.ok(s.calls().includes(`plugin --profile tui remove ${DSH_TUI.package}`));
+  assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
-  assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh", "profiles", "tui", "package.json"), "utf8")).dependencies, {});
-  assert.deepEqual(releaseAgeEntries(readFileSync(join(s.home, ".dsh", "profiles", "tui", "pnpm-workspace.yaml"), "utf8")), []);
-  assert.equal(existsSync(join(s.home, ".dsh", "profiles", "tui", RECORD_FILE)), false, "the ownership record goes too");
+  assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "package.json"), "utf8")).dependencies, {});
+  assert.deepEqual(releaseAgeEntries(readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "pnpm-workspace.yaml"), "utf8")), []);
+  assert.equal(existsSync(join(s.home, ".dsh", "profiles", PROFILE, RECORD_FILE)), false, "the ownership record goes too");
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n", "credentials stay");
 
   const foreign = scene(t);
@@ -207,6 +388,18 @@ test("uninstall removes the plugin and the shim, and leaves a foreign shim alone
   assert.match(refused.detail, /not this installer's/);
   assert.equal(readFileSync(join(foreign.home, ".local", "bin", SHIM), "utf8"), "#!/bin/sh\nexec my-own-dsh \"$@\"\n");
   assert.deepEqual(foreign.calls(), []);
+});
+
+test("uninstall removes a shim released before the profile fix, as ours", (t) => {
+  const s = scene(t);
+  seedProfile(s, { record: true });
+  const shim = join(s.home, ".local", "bin", SHIM);
+  mkdirSync(dirname(shim), { recursive: true });
+  exe(shim, `#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`);
+  const r = uninstallDshTui({ env: s.env });
+  assert.equal(r.status, "removed", JSON.stringify(r));
+  assert.equal(existsSync(shim), false);
+  assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
 });
 
 test("no dsh: one honest line, nothing written", async (t) => {
@@ -225,7 +418,7 @@ test("no dsh: one honest line, nothing written", async (t) => {
 
 test("the release-age exception is exact, leaves other packages alone, and is pruned once aged", async (t) => {
   const s = scene(t);
-  const workspace = join(s.home, ".dsh", "profiles", "tui", "pnpm-workspace.yaml");
+  const workspace = join(s.home, ".dsh", "profiles", PROFILE, "pnpm-workspace.yaml");
   const young = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-06T10:00:00Z") });
   assert.equal(young.status, "installed", young.detail);
   assert.deepEqual(releaseAgeEntries(readFileSync(workspace, "utf8")), [PIN]);
@@ -268,7 +461,7 @@ test("a pack-owned pin from an earlier release is still the pack's after a pin b
   assert.equal(JSON.parse(readFileSync(join(profile, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the record follows the version the install set");
   const r = uninstallDshTui({ env: s.env });
   assert.equal(r.status, "removed");
-  assert.ok(s.calls().includes(`plugin --profile tui remove ${DSH_TUI.package}`));
+  assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
   assert.equal(existsSync(join(profile, RECORD_FILE)), false);
 });
@@ -278,7 +471,7 @@ test("a pack-owned old pin uninstalls even when the current pin has moved on", (
   const profile = seedProfile(s, { version: "0.18.0", record: true });
   const r = uninstallDshTui({ env: s.env });
   assert.equal(r.status, "removed");
-  assert.ok(s.calls().includes(`plugin --profile tui remove ${DSH_TUI.package}`));
+  assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
 });
 
@@ -351,8 +544,25 @@ test("a dangling shim is present but broken; install refuses and uninstall leave
   assert.ok(lstatSync(shim).isSymbolicLink());
 });
 
-test("shimIsOurs accepts only the marked long-form shim", () => {
+test("a shim released before the profile fix is still ours and install replaces it", async (t) => {
+  const s = scene(t);
+  const shim = join(s.home, ".local", "bin", SHIM);
+  mkdirSync(dirname(shim), { recursive: true });
+  exe(shim, `#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`);
+  const stale = doctorDshTui({ env: s.env }).checks.find((c) => c.check === "dsh-tui-shim");
+  assert.equal(stale.ok, false, "the released shim is not healthy: it still boots the tui profile");
+  assert.match(stale.detail, /earlier release's shim/);
+  assert.equal(stale.fix, "automagik-herdr dsh-tui install");
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "installed", r.detail);
+  assert.equal(readFileSync(shim, "utf8"), SHIM_TEXT, "the old tui/no-profile shim is replaced");
+  assert.equal(doctorDshTui({ env: s.env }).checks.find((c) => c.check === "dsh-tui-shim").ok, true);
+});
+
+test("shimIsOurs accepts only the marker and a known exec line", () => {
   assert.equal(shimIsOurs(SHIM_TEXT), true);
-  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh --profile tui \"$@\"\n"), false, "no -- separator");
-  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh-tui --profile tui -- \"$@\"\n"), false);
+  assert.equal(shimIsOurs(`#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`), true, "the released shim is still ours, so install can replace it");
+  assert.equal(shimIsOurs("#!/bin/sh\nexec dsh --profile dsh-tui -- \"$@\"\n"), false, "no marker");
+  assert.equal(shimIsOurs(`#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile dsh-tui -- "$@"\n`), false, "a literal -- is not ours");
+  assert.equal(shimIsOurs(`#!/bin/sh\n${SHIM_MARK}\nexec my-own-dsh --profile dsh-tui "$@"\n`), false, "another command is not ours");
 });
