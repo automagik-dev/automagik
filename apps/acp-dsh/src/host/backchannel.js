@@ -374,7 +374,11 @@ export class Backchannel {
     // DSH's approval, server-side: the credential cannot approve, and no agent rule reaches it.
     const approval = this.ctx?.get?.('approval')
     const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'))
-    if (!level.full) {
+    // Full access never asks. Auto (DSH's `never` policy over a workspace sandbox) forbids asking
+    // and rejects any ask without prompting, so the bridge must not ask there either: the call
+    // goes straight to the pipeline, whose pre-execute waterfall is where Auto review gates it,
+    // and the sandbox still bounds the body. Every other level asks here (Manual included).
+    if (!level.full && !level.auto) {
       let outcome = 'unavailable'
       try {
         outcome = await approval.request({
@@ -391,8 +395,12 @@ export class Backchannel {
       }
       if (outcome !== 'allowed-once') {
         // A revocation during the ask wins over a late grant: the credential is gone, so the
-        // call is refused rather than answered with a dialog outcome.
-        if (record.closed || record.abort.signal.aborted) return { revoked: true }
+        // call is refused rather than answered with a dialog outcome. Its `tool/call` row was
+        // already written, so the row is closed as an error (never left unanswered).
+        if (record.closed || record.abort.signal.aborted) {
+          settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+          return { revoked: true }
+        }
         const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
         const text = `${why} ${name}.`
         return settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
@@ -401,7 +409,10 @@ export class Backchannel {
     // The ask may have been answered after the bridge was revoked (a grant that lost its
     // session): nothing may execute then. Checked again after any await, immediately before
     // dispatch, because the signal alone lets a tool body that ignores it run anyway.
-    if (record.closed || record.abort.signal.aborted) return { revoked: true }
+    if (record.closed || record.abort.signal.aborted) {
+      settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+      return { revoked: true }
+    }
     try {
       const settled = await tools.execute({
         calls: [{ id, name, arguments: JSON.stringify(args ?? {}) }],

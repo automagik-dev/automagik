@@ -156,15 +156,50 @@ test('a refusal or an unavailable approval never runs the tool, and the agent ge
     assert.equal(result.data.message.isError, true)
     run.backchannel.dispose()
   }
-  // Under `never` (Auto) the service rejects without prompting: the credential alone cannot approve.
-  const auto = host({ policy: 'never' })
-  await auto.backchannel.listen()
-  const record = auto.backchannel.mint({ sessionId: 's1', agent: auto.agent, name: 'Fake agent' })
-  const response = await fetch(auto.backchannel.urlFor(record), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` }, body: JSON.stringify({ op: 'call', name: 'bash' }) })
+  // Under a non-Auto `never` the service rejects without prompting: the credential alone cannot
+  // approve. (Auto routes through the pipeline instead; the per-level test covers it.)
+  const never = host({ policy: 'never', sandbox: 'read-only' })
+  await never.backchannel.listen()
+  const record = never.backchannel.mint({ sessionId: 's1', agent: never.agent, name: 'Fake agent' })
+  const response = await fetch(never.backchannel.urlFor(record), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` }, body: JSON.stringify({ op: 'call', name: 'bash' }) })
   assert.equal((await response.json()).isError, true)
-  assert.equal(auto.asked.length, 1)
-  assert.equal(auto.executed.length, 0)
-  auto.backchannel.dispose()
+  assert.equal(never.asked.length, 1)
+  assert.equal(never.executed.length, 0)
+  never.backchannel.dispose()
+})
+
+test('each level gates a bridge call as DSH gates its own tools: Manual asks, Auto and Full do not', async () => {
+  const runAt = async ({ sandbox, policy, answer = 'allowed-once' }) => {
+    const run = host({ sandbox, policy, answer })
+    await run.backchannel.listen()
+    const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+    run.backchannel.announce(record)
+    const response = await fetch(run.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'level-1' }),
+    })
+    const body = await response.json()
+    run.backchannel.dispose()
+    return { asked: run.asked, executed: run.executed, body, status: response.status }
+  }
+  // Manual: one DSH dialog, and the agent's answer (allow-once) lets it run.
+  const manual = await runAt({ sandbox: 'workspace-write', policy: 'ask' })
+  assert.equal(manual.status, 200)
+  assert.equal(manual.asked.length, 1)
+  assert.equal(manual.body.isError, false)
+  assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
+  // Auto: asking is forbidden, so the call goes to the pipeline (the pre-execute waterfall is
+  // where auto-review gates) and still runs under the workspace sandbox.
+  const auto = await runAt({ sandbox: 'workspace-write', policy: 'never' })
+  assert.equal(auto.asked.length, 0)
+  assert.equal(auto.body.isError, false)
+  assert.deepEqual(auto.executed.map(entry => entry.name), ['bash'])
+  // Full access: never asks, as DSH's own tools do not there.
+  const full = await runAt({ sandbox: 'danger-full-access', policy: 'never' })
+  assert.equal(full.asked.length, 0)
+  assert.equal(full.body.isError, false)
+  assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
 })
 
 test('full access runs a DSH tool call with no dialog, as it does DSH\'s own tools', async () => {
@@ -249,10 +284,13 @@ test('a credential revoked while its approval is pending never runs the tool and
   assert.equal(response.status, 401)
   assert.deepEqual(await response.json(), { error: 'refused' })
   assert.equal(run.executed.length, 0, 'the tool body never ran after revocation')
-  // The call row was written before the ask; no result row claims a run.
+  // The call row was written before the ask; it is closed as an error, never left unanswered.
   const rows = run.session.snapshotEvents()
   assert.equal(rows.filter(event => event.type === 'tool/call').length, 1)
-  assert.equal(rows.filter(event => event.type === 'tool/result').length, 0)
+  const result = rows.find(event => event.type === 'tool/result')
+  assert.ok(result, 'the revoked call has a result row')
+  assert.equal(result.data.message.isError, true)
+  assert.match(result.data.message.content[0].text, /revoked before bash ran/)
   run.backchannel.dispose()
 })
 

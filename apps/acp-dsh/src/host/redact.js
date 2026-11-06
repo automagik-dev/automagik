@@ -1,7 +1,9 @@
-// Redaction before text crosses a provider boundary: a Session's transcript is replayed into
-// an agent (and the agent's words land in DSH's log) only after it passes this filter. It is
-// the Bot team's own rule (RFC 0003, amendment, "Live switching"): the secret values saved for
-// a Bot's Session go first, then the credential shapes the Bot team's diagnostics mask.
+// Redaction before history crosses a provider boundary: a Session's transcript is replayed into
+// another provider (the outbound replay, `switch.js`) only after it passes this filter. Scope is
+// exactly that crossing (RFC 0003, amendment, "Live switching"): the agent's own streamed answer
+// is logged as a native model's answer is, and the bridge's DSH tool results are DSH's, so
+// neither passes through this module. The secret values saved for a Bot's Session go first in the
+// replay, then the credential shapes the Bot team's diagnostics mask.
 //
 // The secret store belongs to the Bot team's runtime (`omniTeam`), which composes only where
 // Bots run; acp-dsh reads it when it is there and never requires it. A chat that is not a Bot's

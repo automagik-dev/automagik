@@ -181,7 +181,6 @@ export class AcpAdapter extends LlmAdapter {
     this.redact = redactor ?? (text => text)
     this.live = new Map()
     this.scoped = new WeakSet()
-    this.drifted = new Set()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy') })
   }
 
@@ -244,8 +243,14 @@ export class AcpAdapter extends LlmAdapter {
         mcpServers: [this.bridgeServer(next)],
       })
     } catch (error) {
+      // The fork may already have moved the run to a new ACP session (a bridge that never
+      // listed). Nothing can resume that half state: revoke both credentials, end the run and
+      // let the next turn start clean.
       live.bridge = previous
       this.backchannel.revoke(next)
+      live.run.dispose()
+      this.live.delete(dshAgent?.session?.id ?? '')
+      if (previous !== undefined) this.backchannel.revoke(previous)
       throw error
     }
     this.backchannel.revoke(previous)
@@ -265,10 +270,13 @@ export class AcpAdapter extends LlmAdapter {
     if (!this.bridgeOn() || agent.drift !== true || tool.drift === true) return
     const name = tool.structuredName
     if (name === undefined || name.startsWith('mcp__') || name === 'ToolSearch') return
-    if (this.drifted.has(sessionId)) return
-    this.drifted.add(sessionId)
+    // Every drifted call stays cardless, but the record and the cancel belong to the turn: a
+    // latch that outlived the turn would let a later turn's built-in call through unrecorded
+    // (and would draw it as a mirror card).
     tool.drift = true
     const live = this.live.get(sessionId)
+    if (live?.drifted === true) return
+    if (live !== undefined) live.drifted = true
     const session = live?.dshAgent?.session ?? this.ctx.agents?.get?.(sessionId)?.session
     const recorded = session === undefined ? false : recordDrift(session, { name, title: tool.title, provider: live?.provider })
     try {
@@ -283,16 +291,17 @@ export class AcpAdapter extends LlmAdapter {
    * shows; the model selection itself is DSH's.
    */
   noteEvent(session, event) {
+    // Off is the old path, byte for byte: the agent session is kept across a turn on another
+    // provider, so switching back resumes the same ACP session.
+    if (!this.bridgeOn()) return
     if (event?.type !== 'model/selection') return
     const live = this.live.get(session?.id)
     if (live === undefined) return
     const provider = event.data?.provider
     if (this.agents.has(provider)) return
     this.live.delete(session.id)
-    this.drifted.delete(session.id)
     live.run.dispose()
     if (live.bridge !== undefined && this.backchannel !== undefined) this.backchannel.revoke(live.bridge)
-    if (!this.bridgeOn()) return
     try {
       session.append?.('user/message', boundaryNotice('Now answered by DSH'), { surfaceOp: 'append' })
     } catch (error) {
@@ -362,7 +371,7 @@ export class AcpAdapter extends LlmAdapter {
       const prior = lastProviderOf(options.messages)
       if (live === undefined) {
         crossing = this.bridgeOn() && prior !== undefined && prior !== options.provider
-        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined }
+        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, drifted: false }
         try {
           const spec = await agent.spawn()
           if (this.bridgeOn()) {
@@ -441,6 +450,7 @@ export class AcpAdapter extends LlmAdapter {
         ? [...live.replay, ...promptOf(options.messages)]
         : promptOf(options.messages)
       live.replay = undefined
+      live.drifted = false
       live.open = true
       live.run.prompt(prompt).catch(() => {})
     }

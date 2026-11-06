@@ -579,29 +579,35 @@ test('a bridge the adapter never starts fails the turn with acp_bridge_missing',
   }
 })
 
-test('a built-in tool call with dshTools on is recorded as acp_toolset_drift and cancelled on the same trace', async (t) => {
+test('every drift turn records and cancels on its own trace, with no card on either', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-drift-'))
   const trace = join(dir, 'trace.ndjson')
   const h = dshHost({ spec: { drift: true }, trace })
   try {
-    const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'drift' }] }])
-    assert.equal(chunks.at(-1).reason.kind, 'aborted')
-    const record = pluginRecordOf(h.session.snapshotEvents().find(event => event.type.startsWith('plugin:')))
-    assert.equal(record.type, 'plugin:acp-dsh/toolset-drift')
-    assert.equal(record.data.name, 'Bash')
+    const ask = () => [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'drift' }] }]
+    const first = await step(h.adapter, ask())
+    const second = await step(h.adapter, ask())
+    for (const chunks of [first, second]) {
+      assert.equal(chunks.at(-1).reason.kind, 'aborted')
+      assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    }
     assert.equal(h.asked.length, 0)
-    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
-    // Observed, not inferred: the agent saw the built-in call and then session/cancel for the
-    // same ACP session, in that order, exactly once.
+    // A latch that survived the first turn would let the second one through unrecorded.
+    const records = h.session.snapshotEvents().filter(event => event.type.startsWith('plugin:')).map(event => pluginRecordOf(event))
+    assert.equal(records.length, 2)
+    assert.ok(records.every(record => record.type === 'plugin:acp-dsh/toolset-drift' && record.data.name === 'Bash'))
+    // Observed, not inferred: each turn's built-in call is followed by session/cancel on the
+    // same ACP session.
     const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
-    const builtin = events.find(event => event.event === 'builtin-tool-call')
-    const cancel = events.find(event => event.event === 'cancel')
-    assert.ok(builtin, 'the agent made the built-in call')
-    assert.ok(cancel, 'the agent received session/cancel')
-    assert.equal(cancel.sessionId, builtin.sessionId, 'the cancel names the same trace')
-    assert.ok(events.indexOf(cancel) > events.indexOf(builtin), 'the cancel follows the call')
-    assert.equal(events.filter(event => event.event === 'cancel').length, 1)
-    t.diagnostic(`builtin ${builtin.name} ${builtin.toolCallId} on ${builtin.sessionId}; session/cancel on ${cancel.sessionId}`)
+    const builtins = events.filter(event => event.event === 'builtin-tool-call')
+    const cancels = events.filter(event => event.event === 'cancel')
+    assert.equal(builtins.length, 2)
+    assert.equal(cancels.length, 2)
+    for (const [index, cancel] of cancels.entries()) {
+      assert.equal(cancel.sessionId, builtins[index].sessionId, 'each cancel names its own trace')
+      assert.ok(events.indexOf(cancel) > events.indexOf(builtins[index]), 'the cancel follows its call')
+    }
+    t.diagnostic(`builtin ${builtins.map(event => event.toolCallId).join('+')} on ${builtins[0].sessionId}; session/cancel x${cancels.length} on ${cancels[0].sessionId}`)
   } finally {
     h.close()
     rmSync(dir, { recursive: true, force: true })
@@ -707,6 +713,35 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
     assert.equal(asked[0].toolName, 'bash')
   } finally {
     registered['acp-fake'].dispose()
+  }
+})
+
+test('switching away and back resumes the agent session with dshTools off, and starts clean with it on', async () => {
+  const off = dshHost({ toolsOn: false })
+  try {
+    const first = await step(off.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }] }])
+    assert.match(textIn(first), /turn 1/)
+    off.adapter.noteEvent(off.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
+    // Off: the agent run is kept across a turn on another provider, as on dev, so switching back
+    // resumes the same ACP session rather than starting fresh.
+    assert.equal(off.adapter.live.size, 1)
+    assert.equal(off.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND).length, 0)
+    const second = await step(off.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain again' }] }])
+    assert.match(textIn(second), /turn 2/)
+  } finally {
+    off.close()
+  }
+  const on = dshHost()
+  try {
+    await step(on.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }] }])
+    on.adapter.noteEvent(on.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
+    // On: the crossing ends the agent session (and its bridge) and writes the row.
+    assert.equal(on.adapter.live.size, 0)
+    assert.equal(on.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND).length, 1)
+    const second = await step(on.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain again' }] }])
+    assert.match(textIn(second), /turn 1/)
+  } finally {
+    on.close()
   }
 })
 

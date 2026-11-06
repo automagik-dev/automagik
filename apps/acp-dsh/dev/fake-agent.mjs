@@ -174,6 +174,8 @@ const implementation = {
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })
+    // A plain answer with no tool call: the turn ends cleanly, for tests about the session.
+    if (/plain/.test(said)) return { stopReason: 'end_turn' }
     if (/hang/.test(said)) {
       if (!session.cancelled) await new Promise((resolve) => { session.wake = resolve })
       return { stopReason: 'cancelled' }
