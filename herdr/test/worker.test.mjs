@@ -52,8 +52,10 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   for (const a of ["claude", "codex", "agy"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
-  // A fake gh (#567's cleanup asks it for a branch's pull requests): gh.json is its answer, else it fails.
+  // A fake gh (#567's cleanup asks it for a branch's pull requests): gh.json is its answer, else it
+  // fails. gh-hook.sh, when there, runs first (something landing between the cleanup's check and its remove).
   exe(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${join(root, "gh.log")}"\n`
+    + `if [ -f "${join(root, "gh-hook.sh")}" ]; then sh "${join(root, "gh-hook.sh")}"; fi\n`
     + `if [ -f "${join(root, "gh.json")}" ]; then cat "${join(root, "gh.json")}"; exit 0; fi\necho "fake gh: no answer" >&2\nexit 1\n`);
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
@@ -94,9 +96,10 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const ledger = () => { const p = join(app, "automagik-herdr/workers.jsonl"); return existsSync(p) ? readLedger(readFileSync(p, "utf8")) : []; };
   const bots = () => JSON.parse(readFileSync(join(project, ".herdr/bots.json"), "utf8"));
-  const finish = (address) => {
+  /** Finishes a terminal `ago` ms ago (hc's finished_ms; #567's cleanup waits 15 min after it). */
+  const finish = (address, ago = 16 * 60_000) => {
     const st = hcState();
-    st.terminals.find((x) => x.address === address).state = "finished";
+    Object.assign(st.terminals.find((x) => x.address === address), { state: "finished", finished_ms: Date.now() - ago });
     writeFileSync(statePath, JSON.stringify(st));
   };
   return { root, project, app, path: env.PATH, cli, cliAsync, spawnCli, calls, runs, hcState, ledger, bots, finish, setWindow, windowNow, appDos };
@@ -1630,7 +1633,7 @@ test("worker #567 (fail-before): an ended worker's created worktree is gone at t
   assert.equal(again.out.trim(), "No finished worker's worktree to remove.", "a removed worktree is done with");
 });
 
-test("worker #567: a killed worker's created worktree is removed by reap; a live one is left alone", (t) => {
+test("worker #567: a killed worker's created worktree is removed by reap 15 min after it ended; a live one is left alone", (t) => {
   const s = scene(t);
   withOrigin(s);
   const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
@@ -1639,6 +1642,12 @@ test("worker #567: a killed worker's created worktree is removed by reap; a live
   assert.deepEqual(live.json(), { removed: [], kept: [], failed: [], waiting: 1, more: 0 }, "a live worker's worktree waits");
   assert.equal(existsSync(w.worktree), true);
   fakeHc(s, "kill", w.terminal);
+  // Within 15 min of its end (restart --tree runs its workers again there, without the lock): waits.
+  assert.equal(s.cli(["reap", "--json"], { from: null }).json().waiting, 1, "just ended: not yet");
+  assert.equal(existsSync(w.worktree), true);
+  s.finish(w.terminal, 14 * 60_000);
+  assert.equal(s.cli(["reap", "--json"], { from: null }).json().waiting, 1, "14 min: not yet");
+  s.finish(w.terminal, 15 * 60_000 + 1000);
   const r = s.cli(["reap"], { from: null });
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out.trim(), `removed ${w.worktree}: its workers ended`);
@@ -1733,20 +1742,130 @@ test("worker #567: a live terminal working in it, or a restart's live pane on it
   assert.equal(existsSync(w.worktree), true);
 });
 
-test("reapCandidates/workLeft #567: only created rows, every later terminal, the newest outcome; merged or closed PRs clear commits", () => {
+test("reapCandidates/workLeft #567: created rows only, newest first, every later terminal, the newest outcome; what keeps a tree", () => {
   const start = (terminal, worktree, created, at, kind = "worker") => ({ event: "start", kind, terminal, worktree, created, at, project: "/p", branch: "b" });
-  const rows = [start("t1", "/w/given", false, "1"), start("t2", "/w/a", true, "2"), start("t3", "/w/a", false, "3"), { event: "session", terminal: "t2" },
+  const old = { event: "start", kind: "worker", terminal: "t7", worktree: "/w/old", created: true, at: "0", task: "fix/old" };
+  const rows = [old, start("t1", "/w/given", false, "1"), start("t2", "/w/a", true, "2"), start("t3", "/w/a", false, "3"), { event: "session", terminal: "t2" },
     start("t4", "/w/b", true, "4"), start("t5", "/w/c", true, "5"), start("t6", "/w/c", true, "7")];
-  const reaps = [{ worktree: "/w/b", result: "removed", at: "6" }, { worktree: "/w/c", result: "kept", why: "x", at: "6" }];
+  const reaps = [{ worktree: "/w/b", result: "removed", at: "6" }, { worktree: "/w/c", result: "kept", why: "x", at: "6" },
+    { worktree: "/w/a", result: "kept", why: "y", at: "8" }];
   assert.deepEqual(reapCandidates(rows, reaps), [
-    { worktree: "/w/a", project: "/p", branch: "b", terminals: ["t2", "t3"], last: null },
     { worktree: "/w/c", project: "/p", branch: "b", terminals: ["t6"], last: null },
-  ], "/w/given never; /w/b done; /w/c made again after its kept row");
-  assert.equal(workLeft({ changes: 0, unpushed: 0 }), null);
-  assert.equal(workLeft({ changes: 2, unpushed: 0, prs: [{ state: "MERGED" }] }), "uncommitted changes");
-  assert.equal(workLeft({ changes: 0, unpushed: 2, prs: [{ state: "MERGED" }, { state: "CLOSED" }], branch: "b" }), null);
-  assert.equal(workLeft({ changes: 0, unpushed: 2, prs: [{ state: "MERGED" }, { state: "OPEN" }], branch: "b" }), "2 commits on no remote; b has an open pull request");
-  assert.equal(workLeft({ changes: 0, unpushed: 1, prs: [], branch: "b" }), "1 commit on no remote; b has no pull request");
-  assert.equal(workLeft({ changes: 0, unpushed: 1, prs: null, branch: "b" }), "1 commit on no remote; gh couldn't tell whether b has a merged or closed pull request");
-  assert.equal(workLeft({ changes: 0, unpushed: 1, prs: [{ state: "MERGED" }] }), null, "a PR list clears it even without a branch name");
+    { worktree: "/w/a", project: "/p", branch: "b", terminals: ["t2", "t3"], last: { result: "kept", why: "y", at: "8" } },
+    { worktree: "/w/old", project: null, branch: "fix/old", terminals: ["t7"], last: null },
+  ], "/w/given never; /w/b done; /w/c made again after its kept row, so newest; a row before the task contract keeps its branch in task");
+  const ok = { changes: 0, unpushed: 0, branch: "b", expected: "b" };
+  assert.equal(workLeft(ok), null);
+  assert.equal(workLeft({ ...ok, changes: 2, prs: [{ state: "MERGED" }] }), "uncommitted changes");
+  assert.equal(workLeft({ ...ok, unpushed: 2, prs: [{ state: "MERGED" }, { state: "CLOSED" }] }), null);
+  assert.equal(workLeft({ ...ok, unpushed: 2, prs: [{ state: "MERGED" }, { state: "OPEN" }] }), "2 commits on no remote; b has an open pull request");
+  assert.equal(workLeft({ ...ok, unpushed: 1, prs: [] }), "1 commit on no remote; b has no pull request");
+  assert.equal(workLeft({ ...ok, unpushed: 1, prs: null }), "1 commit on no remote; gh couldn't tell whether b has a merged or closed pull request");
+  assert.equal(workLeft({ ...ok, branch: "other", prs: [{ state: "MERGED" }] }), "on other, not the worker's branch b");
+  assert.equal(workLeft({ ...ok, expected: null }), "on b, and the workers ledger names no branch for it");
+  assert.equal(workLeft({ ...ok, branch: null }), "HEAD is detached, not on the worker's branch b");
+  assert.equal(workLeft({ ...ok, branch: null, unpushed: 3, prs: [{ state: "MERGED" }] }), "HEAD is detached with 3 commits on no remote");
+});
+
+test("worker #567 F1: a worktree removed while a call waits for its lock: --worktree is refused, --branch makes it again", async (t) => {
+  const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
+  const s = scene(t);
+  withOrigin(s);
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  s.finish(w.terminal);
+  const lock = worktreeLock(join(s.app, "automagik-herdr"), w.worktree);
+  t.after(() => rmSync(lock, { force: true }));
+  /** One call while the test holds W's lock: once it says it waits, W is removed (as a sweep would) and the lock let go. */
+  const whileRemoved = async (args) => {
+    writeFileSync(lock, `${process.pid} held-by-the-test`);
+    const child = s.spawnCli(args);
+    let err = "";
+    let out = "";
+    child.stdout.on("data", (d) => { out += d; });
+    child.stderr.on("data", (d) => {
+      err += d;
+      if (/waiting for the worker lock/.test(err) && existsSync(lock)) { git(s.project, "worktree", "remove", w.worktree); rmSync(lock, { force: true }); }
+    });
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    return { code, err, out };
+  };
+  const given = await whileRemoved(["worker", "two", "--worktree", w.worktree]);
+  assert.equal(given.code, 1, given.err + given.out);
+  assert.match(given.err, new RegExp(`${reEsc(w.worktree)} is no longer a worktree of ${reEsc(s.project)}: it was removed while this call waited for its lock\\. `
+    + "Not started; pass --branch fix/one to make it again\\."));
+  assert.equal(existsSync(w.worktree), false, "never made again as a plain folder");
+  assert.equal(s.runs().length, 1, "not started");
+  git(s.project, "worktree", "add", "-q", w.worktree, "fix/one");
+  const branch = await whileRemoved(["worker", "three", "--branch", "fix/one", "--json"]);
+  assert.equal(branch.code, 0, branch.err);
+  const out = JSON.parse(branch.out);
+  assert.equal(out.created, true, "made again by the normal path");
+  assert.equal(worktreesOf(s).includes(w.worktree), true, "a real worktree, listed by git");
+  assert.equal(s.runs().length, 2);
+});
+
+test("worker #567 F2: a change landing between the check and the remove keeps the tree (no --force); a pane started there waits", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  writeFileSync(join(s.root, "gh.json"), JSON.stringify([{ number: 5, state: "MERGED" }]));
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  git(w.worktree, "commit", "-q", "--allow-empty", "-m", "squashed upstream");
+  s.finish(w.terminal);
+  // gh is asked after git status: a file written then is in the tree when the remove runs.
+  writeFileSync(join(s.root, "gh-hook.sh"), `echo late > "${join(w.worktree, "late.txt")}"\n`);
+  const r = s.cli(["reap"], { from: null });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out.trim(), new RegExp(`^couldn't remove ${reEsc(w.worktree)}: git worktree remove failed: `));
+  assert.equal(readFileSync(join(w.worktree, "late.txt"), "utf8"), "late\n", "the late file is still there");
+  rmSync(join(w.worktree, "late.txt"));
+  // Now a pane starts in it (no worktree lock) between the check and the remove.
+  writeFileSync(join(s.root, "gh-hook.mjs"), `import { readFileSync, writeFileSync } from "node:fs";
+const p = ${JSON.stringify(join(s.root, "hc.json"))};
+const st = JSON.parse(readFileSync(p, "utf8"));
+st.terminals.find((x) => x.address === "t2").cwd = ${JSON.stringify(w.worktree)};
+writeFileSync(p, JSON.stringify(st));
+`);
+  writeFileSync(join(s.root, "gh-hook.sh"), `"${process.execPath}" "${join(s.root, "gh-hook.mjs")}"\n`);
+  const live = s.cli(["reap", "--json"], { from: null });
+  assert.equal(live.code, 0, live.err);
+  assert.deepEqual(live.json(), { removed: [], kept: [], failed: [], waiting: 1, more: 0 });
+  assert.equal(existsSync(w.worktree), true);
+});
+
+test("worker #567 F6/F7: a worktree on another branch, or a detached HEAD with commits on no remote, is kept", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  writeFileSync(join(s.root, "gh.json"), JSON.stringify([{ number: 5, state: "MERGED" }]));
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  s.finish(w.terminal);
+  git(w.worktree, "checkout", "-q", "-b", "other");
+  assert.equal(s.cli(["reap"], { from: null }).out.trim(), `kept ${w.worktree}: on other, not the worker's branch fix/one`);
+  git(w.worktree, "checkout", "-q", "--detach");
+  git(w.worktree, "commit", "-q", "--allow-empty", "-m", "on no branch");
+  assert.equal(s.cli(["reap"], { from: null }).out.trim(), `kept ${w.worktree}: HEAD is detached with 1 commit on no remote`, "whatever gh says");
+  assert.equal(existsSync(w.worktree), true);
+});
+
+test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason is a day old; reap still checks it", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  git(w.worktree, "commit", "-q", "--allow-empty", "-m", "work");
+  s.finish(w.terminal);
+  assert.match(s.cli(["reap"], { from: null }).out, /^kept /);
+  const file = join(s.app, "automagik-herdr/worker-reap.jsonl");
+  const row = JSON.parse(readFileSync(file, "utf8").trim());
+  writeFileSync(file, `${JSON.stringify({ ...row, at: new Date(Date.now() - 25 * 3600_000).toISOString() })}\n`);
+  // Its created row ages with it: a kept row counts only from the worktree's newest created row on.
+  const ledgerFile = join(s.app, "automagik-herdr/workers.jsonl");
+  writeFileSync(ledgerFile, readFileSync(ledgerFile, "utf8").split("\n").filter(Boolean)
+    .map((l) => { const r = JSON.parse(l); return JSON.stringify(r.terminal === w.terminal ? { ...r, at: new Date(Date.now() - 26 * 3600_000).toISOString() } : r); })
+    .join("\n") + "\n");
+  const asked = () => readFileSync(join(s.root, "gh.log"), "utf8").split("\n").filter(Boolean).length;
+  const before = asked();
+  const next = s.cli(["worker", "two", "--branch", "fix/two", "--json"]);
+  assert.equal(next.code, 0, next.err);
+  assert.equal(asked(), before, "not looked at by the worker call");
+  assert.match(s.cli(["reap"], { from: null }).out.trim(), new RegExp(`^kept ${reEsc(w.worktree)}: 1 commit on no remote`));
+  assert.equal(asked(), before + 1, "reap looks at it");
 });

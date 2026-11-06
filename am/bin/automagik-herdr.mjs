@@ -3544,6 +3544,14 @@ async function makeBranchWorktree(place, base, key, warnings) {
   return { worktree: realDir(path) ?? path, branch, created: true, base: from };
 }
 
+/** `path` is still a folder and one of `key`'s worktrees (git worktree list); false when git can't say. */
+async function stillWorktree(path, key) {
+  const real = realDir(path);
+  if (!real || !isDir(real)) return false;
+  const listed = await git(["worktree", "list", "--porcelain"], key);
+  return listed !== null && parseWorktrees(listed).some((w) => (realDir(w.path) ?? w.path) === real);
+}
+
 /**
  * Keeps the task worktrees out of the main checkout's `git add -A`: WORKTREES_EXCLUDE in the
  * clone's own exclude file, as the briefing hook's settings file is. A warning, or null.
@@ -3700,8 +3708,25 @@ const REAP_MAX = 5;
 const REAP_BUDGET_MS = 20_000;
 /** How long the sweep waits for gh's list of a branch's pull requests. */
 const GH_TIMEOUT = 5000;
-/** How long one git worktree remove may take (a large tree). */
+/**
+ * How long one git worktree remove may take (a large tree). Not cut to the budget left: a remove
+ * stopped halfway leaves a half-deleted tree, which then reads as uncommitted changes. So a worker
+ * call's sweep usually takes up to about REAP_BUDGET_MS, and at worst one check's program calls
+ * (15 s each, gh 5 s) and one remove (this) past it.
+ */
 const REMOVE_TIMEOUT = 120_000;
+/**
+ * How long ago every terminal of a candidate must have finished (hc's finished_ms) before it is
+ * looked at. Restart --tree ends a bot's workers with its old pane and runs them again in the
+ * same worktrees, without the worktree lock, one at a time once the new pane is up (about 1 min
+ * at worst: hc run, agentUp's 30 s and a get). Each helper takes at worst about 2 min (helperEnded's
+ * get, hc ls, hc run, agentUp's 30 s plus a get, a kill, pidOf: 15 s calls), so the k-th is run
+ * again at worst about 1 + 2k min after it ended: 15 min covers 7 helpers at their worst (a
+ * short-limit Herdr caps --tree at 2). Longer only costs disk while it waits.
+ */
+const REAP_SETTLE_MS = 15 * 60_000;
+/** A worker call's sweep skips a kept worktree whose reason hasn't changed in this long (reap still checks it). */
+const REAP_QUIET_MS = 24 * 60 * 60 * 1000;
 
 /** The cleanup file's rows ([] when it can't be read). */
 function reapRows() {
@@ -3725,14 +3750,29 @@ async function hcTerminals(all) {
   if (r.code !== 0) return null;
   try { const list = JSON.parse(r.stdout)?.terminals; return Array.isArray(list) ? list : null; } catch { return null; }
 }
-/** The local terminals among `terms` that haven't finished and whose cwd is `dir` or inside it. */
+/** The local terminals among `terms` that haven't finished and whose cwd is `dir` or inside it (both as the disk spells them). */
 function liveIn(terms, dir) {
+  const here = nativeDir(dir) ?? dir;
   return terms.filter((t) => {
     if (!local(t?.address) || t.state === "finished" || typeof t.cwd !== "string") return false;
     const cwd = t.cwd.startsWith("~/") ? `${home()}${t.cwd.slice(1)}` : t.cwd;
     const real = nativeDir(cwd) ?? cwd;
-    return real === dir || real.startsWith(`${dir}/`);
+    return real === here || real.startsWith(`${here}/`);
   });
+}
+/**
+ * Whether every terminal in `names` that `terms` (hc ls --all) still lists finished at least
+ * REAP_SETTLE_MS ago, by hc get's finished_ms. One hc no longer has counts as settled; one hc
+ * can't date doesn't (fails closed).
+ */
+async function settled(names, terms) {
+  const listed = names.filter((t) => terms.some((x) => x?.address === t));
+  const ends = await Promise.all(listed.map(async (t) => {
+    const r = await hc(["get", t, "--json"]);
+    if (r.code !== 0) return r.code === 3 || /not_found/.test(r.stderr ?? "") ? 0 : null;
+    try { const ms = JSON.parse(r.stdout)?.finished_ms; return Number.isSafeInteger(ms) ? ms : null; } catch { return null; }
+  }));
+  return ends.every((ms) => ms !== null && Date.now() - ms >= REAP_SETTLE_MS);
 }
 const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
 
@@ -3748,8 +3788,8 @@ async function pullRequestsOf(branch, cwd) {
 
 /**
  * One candidate, under its worktree's lock: looked at again for a live terminal (a worker
- * started in it since the sweep's hc ls), then checked for work (workLeft) and removed with
- * git worktree remove --force, then git worktree prune. Never throws: { result, why }, result
+ * started in it since the sweep's hc ls), then checked for work (workLeft), looked at for a live
+ * terminal once more, and removed with git worktree remove (no --force), then git worktree prune. Never throws: { result, why }, result
  * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
  * or hc failure keeps it (fails closed).
  */
@@ -3771,12 +3811,17 @@ async function reapOne(c) {
     const count = await runProgram("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path });
     unpushed = Number(count.stdout.trim());
     if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
-    branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || c.branch;
-    if (unpushed > 0) prs = await pullRequestsOf(branch, main);
+    branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || null;
+    if (unpushed > 0 && branch && branch === c.branch) prs = await pullRequestsOf(branch, main);
   }
-  const why = workLeft({ changes, unpushed, prs, branch });
+  const why = workLeft({ changes, unpushed, prs, branch, expected: c.branch });
   if (why) return { result: "kept", why };
-  const rm = await runProgram("git", ["worktree", "remove", "--force", path], { cwd: main, timeout: REMOVE_TIMEOUT });
+  // Looked at once more just before the remove: a pane started in it without the worktree lock
+  // (a hand-made one, hc run) since the first look. No --force: git itself refuses a tree that
+  // has gained changes since the status above.
+  const last = await hcTerminals(false);
+  if (!last || liveIn(last, path).length) return { result: "waiting" };
+  const rm = await runProgram("git", ["worktree", "remove", path], { cwd: main, timeout: REMOVE_TIMEOUT });
   await runProgram("git", ["worktree", "prune"], { cwd: main });
   if (rm.code !== 0) return { result: "failed", why: `git worktree remove failed: ${firstLine(rm)}` };
   return { result: "removed", why: null };
@@ -3785,11 +3830,13 @@ async function reapOne(c) {
 /**
  * The sweep (#567): every worktree a worker call made (reapCandidates) whose start rows'
  * terminals have all ended, finished or gone in `hc ls --all`, killed or done alike, and in
- * which no live local terminal works, is removed unless it holds work (reapOne). A worktree only
- * given to a worker is never a candidate. One sweep at a time (a held lock: none now); a
- * worktree whose worker lock is held is left for later. At most `max` removals, and no new
- * check once `budget` ms have passed. hc failing skips the sweep. Each new outcome is a row in
- * the cleanup file and a line (`every`: a line for every kept or failed one, even unchanged).
+ * which no live local terminal works, is removed unless it holds work (reapOne), once those
+ * terminals finished REAP_SETTLE_MS ago. Newest first. A worktree only given to a worker is never
+ * a candidate. One sweep at a time (a held lock: none now); a worktree whose worker lock is held
+ * is left for later. At most `max` removals, and no new check once `budget` ms have passed.
+ * hc failing skips the sweep. Each new outcome is a row in the cleanup file and a line.
+ * `every` (reap): a line for every kept or failed one, even unchanged; without it (a worker
+ * call), a kept one whose reason hasn't changed in REAP_QUIET_MS is skipped.
  * Never throws: { removed, kept, failed, waiting, more, lines }.
  */
 async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
@@ -3808,11 +3855,14 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
       if (!terms) { out.lines.push("worktree cleanup skipped: hc ls --all failed"); return out; }
       const start = Date.now();
       for (const c of candidates) {
-        if (out.removed.length >= max || Date.now() - start > budget) { out.more += 1; continue; }
+        if (!every && c.last?.result === "kept" && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS) continue;
         if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
+        if (out.removed.length >= max || Date.now() - start > budget) { out.more += 1; continue; }
         const path = c.worktree;
         let done;
-        if (!isDir(path)) {
+        if (!(await settled(c.terminals, terms))) {
+          done = { result: "waiting" };
+        } else if (!isDir(path)) {
           if (c.project && isDir(c.project)) await runProgram("git", ["worktree", "prune"], { cwd: c.project });
           done = { result: "gone", why: null };
         } else if (liveIn(terms, path).length) {
@@ -3983,6 +4033,15 @@ async function cmdWorker(opts, rest) {
       const now = await branchPlace(opts.branch, opts.base, project.key, found);
       if (now.pending) place = await makeBranchWorktree(now, opts.base, project.key, warnings);
       else { place = now; warnings.push(...found); }
+    } else if (!(await stillWorktree(place.worktree, project.key))) {
+      // Removed while this call waited for the lock (a sweep's cleanup, #567): never started in
+      // what is left, since a hook's folder would make it a plain folder whose git is the main
+      // checkout's. A branch's own folder is made again; anything else is refused.
+      const gone = `${place.worktree} is no longer a worktree of ${project.key}: it was removed while this call waited for its lock.`;
+      if (opts.worktree !== undefined) throw new CliError(`${gone} Not started; pass --branch ${place.branch} to make it again.`);
+      const now = await branchPlace(opts.branch, opts.base, project.key, []);
+      if (!now.pending || now.worktree !== planned) throw new CliError(`${gone} Not started; run the worker call again.`);
+      place = await makeBranchWorktree(now, opts.base, project.key, warnings);
     }
     worktree = realDir(place.worktree) ?? place.worktree;
     base = await baseCommit(place, project.key);

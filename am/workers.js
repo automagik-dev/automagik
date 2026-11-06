@@ -347,43 +347,55 @@ export const reapRow = ({ worktree, result, why, at }) => ({ worktree, result, w
 /**
  * The worktrees a sweep looks at, from the workers ledger's `rows` and the cleanup file's
  * `reaps`: each path a worker start row says this command made (`created: true`), as
- * { worktree, project, branch, terminals, last }. `terminals`: every start row's terminal on
- * that path since its newest created row (a restart's new pane, a later worker given the same
- * worktree), all of which must have ended. `last`: the newest cleanup row for it since then
- * ({ result, why }), else null. A path already removed or gone is left out; one only ever
- * given (`created: false`: --worktree, a branch's existing worktree) is never in the list.
+ * { worktree, project, branch, terminals, last }, newest created first. `branch`: the worker's
+ * branch (a row from before the task contract has no `branch` key and holds it in `task`).
+ * `terminals`: every start row's terminal on that path since its newest created row (a
+ * restart's new pane, a later worker given the same worktree), all of which must have ended.
+ * `last`: the newest cleanup row for it since then ({ result, why, at }), else null. A path
+ * already removed or gone is left out; one only ever given (`created: false`: --worktree, a
+ * branch's existing worktree) is never in the list.
  */
 export function reapCandidates(rows, reaps = []) {
   const by = new Map();
   for (const r of rows) {
     if (r?.event !== "start" || typeof r.worktree !== "string" || !r.worktree) continue;
     if (r.kind === "worker" && r.created === true) {
-      by.set(r.worktree, { worktree: r.worktree, project: orNull(r.project), branch: orNull(r.branch), terminals: [], since: String(r.at ?? ""), last: null });
+      const branch = orNull("branch" in r ? r.branch : r.task);
+      by.delete(r.worktree);
+      by.set(r.worktree, { worktree: r.worktree, project: orNull(r.project), branch, terminals: [], since: String(r.at ?? ""), last: null });
     }
     const c = by.get(r.worktree);
     if (c && typeof r.terminal === "string" && r.terminal) c.terminals.push(r.terminal);
   }
   for (const r of reaps) {
     const c = typeof r?.worktree === "string" ? by.get(r.worktree) : null;
-    if (c && String(r.at ?? "") >= c.since) c.last = { result: r.result, why: r.why ?? null };
+    if (c && String(r.at ?? "") >= c.since) c.last = { result: r.result, why: r.why ?? null, at: r.at ?? null };
   }
   return [...by.values()].filter((c) => c.last?.result !== "removed" && c.last?.result !== "gone")
-    .map(({ since, ...c }) => c);
+    .reverse().map(({ since, ...c }) => c);
 }
 
 /**
  * Why a worktree with no live worker is kept, or null when it may go: `changes`, the lines of
- * `git status --porcelain`; `unpushed`, the commits on no remote branch; `prs`, the branch's pull
- * requests as gh lists them ([{ state }]), or null when gh couldn't say. Commits on no remote
- * keep it unless the branch has pull requests and every one is MERGED or CLOSED (a squash
- * merge leaves its commits on no remote once the branch is deleted).
+ * `git status --porcelain`; `unpushed`, the commits on no remote branch; `branch`, the branch
+ * checked out (null: a detached HEAD); `expected`, the worker's branch from the ledger; `prs`,
+ * the branch's pull requests as gh lists them ([{ state }]), or null when gh couldn't say. A
+ * worktree no longer on the worker's branch is kept (the folder may be another tree now); a
+ * detached HEAD with commits on no remote is kept whatever its branch's pull requests say. Commits
+ * on no remote keep it unless the branch has pull requests and every one is MERGED or CLOSED (a
+ * squash merge leaves its commits on no remote once the branch is deleted).
  */
-export function workLeft({ changes, unpushed, prs = null, branch = null }) {
+export function workLeft({ changes, unpushed, prs = null, branch = null, expected = null }) {
   if (changes > 0) return "uncommitted changes";
+  if (!branch) {
+    return unpushed > 0 ? `HEAD is detached with ${unpushed} ${unpushed === 1 ? "commit" : "commits"} on no remote`
+      : `HEAD is detached, not on the worker's branch ${expected ?? "(none recorded)"}`;
+  }
+  if (!expected) return `on ${branch}, and the workers ledger names no branch for it`;
+  if (branch !== expected) return `on ${branch}, not the worker's branch ${expected}`;
   if (unpushed > 0) {
     if (Array.isArray(prs) && prs.length && prs.every((p) => p?.state === "MERGED" || p?.state === "CLOSED")) return null;
     const commits = `${unpushed} ${unpushed === 1 ? "commit" : "commits"} on no remote`;
-    if (!branch) return `${commits} (no branch to look up a pull request for)`;
     if (prs === null) return `${commits}; gh couldn't tell whether ${branch} has a merged or closed pull request`;
     return prs.length ? `${commits}; ${branch} has an open pull request` : `${commits}; ${branch} has no pull request`;
   }

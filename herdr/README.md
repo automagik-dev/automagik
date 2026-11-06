@@ -582,17 +582,30 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   once the task merges. The bot's briefing says so. As an hc child, a worker
   also ends when its bot's program ends; its branch stays.
 - **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
-  (`git worktree remove --force`, then `git worktree prune`) once every worker that ran in it
-  has ended, done or killed, and no live terminal works in it. Each `worker` call does it
-  after its own start, at most 5 worktrees and about 20 s per call; `automagik-herdr reap`
-  does all of them at once. A worktree with uncommitted changes, or with commits on no remote
-  branch, is kept, with one line naming its path and why; commits on no remote are no reason
-  once `gh pr list --head <branch>` shows its pull requests all merged or closed (a squash
-  merge). gh missing or failing keeps it. A worktree only given to a worker (`--worktree`, a
-  branch's existing worktree) is never removed. Outcomes go to
-  `<app home>/automagik-herdr/worker-reap.jsonl` (`{ worktree, result: "removed" | "kept" |
-  "failed" | "gone", why, at }`), never to the workers ledger; a kept worktree is looked at
-  again on each call, and its line is said again only when its reason changes.
+  (`git worktree remove`, no `--force`, then `git worktree prune`) once every worker that ran
+  in it has ended, done or killed, at least 15 minutes ago (hc's `finished_ms`: restart
+  `--tree` runs a bot's workers again one at a time, about 1 + 2k minutes at worst for the k-th),
+  and no live terminal works in it. Each `worker` call does
+  it after its own start, newest first, at most 5 worktrees, and starts no new check after
+  about 20 s; one slow check and one large remove (up to 120 s) can still run past that.
+  `automagik-herdr reap` does all of them at once.
+  - An open pull request's worktree is removed once its workers end, if it is pushed and
+    clean. The branch is always kept: only the folder goes.
+  - The first sweep after this release covers every older `created: true` row in the
+    ledger: 5 per worker call, or all of them with `reap`.
+  - Kept, with one line naming the path and why: uncommitted changes (untracked files
+    included); a tree no longer on the worker's branch; a detached HEAD with commits on no
+    remote; commits on no remote branch, unless `gh pr list --head <branch>` shows the
+    branch's pull requests all merged or closed (a squash merge). gh missing or failing keeps
+    it. Ignored files (`.env`, build output) do not keep it: they go with the folder, as
+    `git worktree remove` does.
+  - A worktree only given to a worker (`--worktree`, a branch's existing worktree) is never
+    removed. A worker call that waited for a worktree the cleanup removed meanwhile never
+    starts in what is left: `--branch` makes the worktree again, `--worktree` is refused.
+  - Outcomes go to `<app home>/automagik-herdr/worker-reap.jsonl` (`{ worktree, result:
+    "removed" | "kept" | "failed" | "gone", why, at }`), never to the workers ledger. A kept
+    worktree is looked at again on each call, and its line is said again only when its reason
+    changes; a worker call skips one whose reason is a day old (`reap` still looks).
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
   terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,

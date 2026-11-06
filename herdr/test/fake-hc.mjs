@@ -233,6 +233,7 @@ switch (words[0]) {
     if (!t) fail(`no terminal ${words[1]}`);
     if (state.failKill === words[1]) fail(`kill refused on ${words[1]}`);
     t.state = "finished";
+    t.finished_ms = Date.now();
     // state.surviveParent: children that outlive their parent's end anyway (a kill that didn't take).
     for (const c of state.terminals) if (c.parent === t.address && c.state === "live" && c.die_with_parent && !(state.surviveParent ?? []).includes(c.address)) c.state = "finished";
     save();
