@@ -3,6 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir } from 'node:os'
+import { Buffer } from 'node:buffer'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
@@ -249,6 +250,34 @@ test('installing: the connector is said to be on its way, with no retry', () => 
   assert.equal(findAll(tree, node => /oai-waiting/.test(node.props?.className ?? '')).length, 1)
 })
 
+test('the client redactor alone removes every shared shape', () => {
+  const auth = Buffer.from('deploybot:secretpass').toString('base64')
+  const secrets = [
+    'npm_abcdefghijklmnopqrstuvwx',
+    auth,
+    'secretpass',
+    'sk-abcdef123456',
+    'ghp_abcdefghijklmnopqrstuvwx',
+    'abcdefgh12345678',
+    'abcdef123456',
+  ]
+  const raw = [
+    `npm_${'abcdefghijklmnopqrstuvwx'}`,
+    `_authToken=${auth}`,
+    'https://deploybot:secretpass@registry.npmjs.org/pkg',
+    'sk-abcdef123456',
+    'ghp_abcdefghijklmnopqrstuvwx',
+    'Bearer abcdefgh12345678',
+    '?token=abcdef123456',
+  ].join(' ')
+  const text = ui.redactText(raw)
+  for (const value of secrets) assert.ok(!text.includes(value), `hides ${value}`)
+  assert.match(text, /npm_\[hidden\]/)
+  assert.match(text, /_authToken=\[hidden\]/)
+  assert.match(text, /\[hidden\]@registry\.npmjs\.org/)
+  assert.match(text, /Bearer \[hidden\]/)
+})
+
 test('the row redacts a token and shows a home-relative log path', () => {
   const home = homedir()
   const token = 'ghp_abcdefghijklmnopqrstuvwx'
@@ -256,6 +285,25 @@ test('the row redacts a token and shows a home-relative log path', () => {
   const text = textOf(tree)
   assert.ok(!text.includes(token), 'the token is redacted in the row')
   assert.match(text, /Log: ~\/\.automagik\/acp\/adapters\/logs\/codex\.log/)
+})
+
+test('npm credentials and an absolute home are redacted in the answer and the row', async () => {
+  const npmToken = 'npm_abcdefghijklmnopqrstuvwx'
+  const auth = Buffer.from('deploybot:secretpass').toString('base64')
+  const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
+  const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
+  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}`
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} ${url}`, diagnostic } })])
+  const fake = host({ acp })
+  const { value } = await fake.handle('acp')
+  const connector = value.agents[0].connector
+  const text = textOf(rowOf(value.agents[0], acpOf([])))
+  for (const raw of [npmToken, auth, 'secretpass', homedir()]) {
+    assert.ok(!connector.error.includes(raw), `the error hides ${raw}`)
+    assert.ok(!connector.diagnostic?.includes(raw), `the diagnostic hides ${raw}`)
+    assert.ok(!text.includes(raw), `the row hides ${raw}`)
+  }
+  assert.match(connector.diagnostic, /~\/\.npm\/_logs\//)
 })
 
 test('a connector error is redacted before it reaches the page', async () => {

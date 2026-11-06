@@ -2,7 +2,7 @@
 // (fake registry, fake package manager), the routes only for CLIs that are here, and full access.
 import assert from 'node:assert/strict'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
@@ -261,17 +261,26 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const { adapter, bin } = AGENTS['acp-claude']
   const token = 'ghp_abcdefghijklmnopqrstuvwx'
+  const npmToken = 'npm_abcdefghijklmnopqrstuvwx'
+  const auth = Buffer.from('deploybot:secretpass').toString('base64')
+  const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
+  const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
   const store = new AdapterStore({
     home,
     latest: async () => '1.0.0',
-    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! auth: ${token}`) },
+    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}`) },
   })
   await assert.rejects(store.update(adapter, bin))
   const failure = store.lastFailure(adapter)
-  assert.ok(!failure.diagnostic.includes(token), 'the diagnostic is redacted')
-  assert.ok(!failure.message.includes(token), 'the short message is redacted')
-  const logged = readFileSync(failure.logPath, 'utf8')
-  assert.ok(!logged.includes(token), 'the log file is redacted')
+  for (const raw of [token, npmToken, auth, 'secretpass', homedir()]) {
+    assert.ok(!failure.diagnostic.includes(raw), `the diagnostic hides ${raw}`)
+    assert.ok(!failure.message.includes(raw), `the short message hides ${raw}`)
+    assert.ok(!readFileSync(failure.logPath, 'utf8').includes(raw), `the log hides ${raw}`)
+  }
+  assert.match(failure.diagnostic, /npm_\[hidden\]/)
+  assert.match(failure.diagnostic, /_authToken=\[hidden\]/)
+  assert.match(failure.diagnostic, /https:\/\/\[hidden\]@registry\.npmjs\.org/)
+  assert.match(failure.diagnostic, /~\/\.npm\/_logs\//)
   const mode = statSync(failure.logPath).mode & 0o777
   assert.equal(mode, 0o600)
   assert.equal(statSync(join(home, 'logs')).mode & 0o777, 0o700)

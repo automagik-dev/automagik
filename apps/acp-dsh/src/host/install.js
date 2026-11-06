@@ -20,29 +20,25 @@ export const INSTALL_TIMEOUT_MS = 10 * 60 * 1000
 // What a failed install keeps for the settings page: the end of the installer output.
 export const DIAGNOSTIC_MAX = 4000
 
-// The same credential shapes the Bot team's diagnostics redactor removes
-// (apps/bots-dsh/src/host/diagnostics.js, CREDENTIALS), applied here because the installer's
-// output can carry a registry token or an authorization header. The packages are independent,
-// so the list is kept in step rather than imported across plugins.
-const CREDENTIALS = [
-  [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
-  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
-  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
-  [/\bAKIA[0-9A-Z]{16}\b/g, '[hidden]'],
-  [/\bxox[baprs]-[A-Za-z0-9-]{8,}/g, '[hidden]'],
-  [/\bAIza[A-Za-z0-9_-]{20,}/g, '[hidden]'],
-  [/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g, '[hidden]'],
-  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, '$1 [hidden]'],
-  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, '$1[hidden]'],
-  [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, '$1[hidden]'],
-]
+import { redactText } from './redact.js'
 
 /** Remove credential-shaped strings from installer output before it is stored or shown. */
-export function redactInstallerOutput(text) {
+export { redactText as redactInstallerOutput }
+
+// Installer output can print absolute home paths (npm's log path, an nvm command); the stored
+// diagnostic and the log show the same "~" the Bot team report does.
+const HOME = homedir()
+function homeRelativeText(text) {
   let out = String(text ?? '')
-  for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement)
+  if (HOME.length > 1) {
+    out = out.split(HOME).join('~')
+    const slashes = HOME.replace(/\\/g, '/')
+    if (slashes !== HOME) out = out.split(slashes).join('~')
+  }
   return out
 }
+
+export { homeRelativeText }
 
 export const adaptersHome = (env = process.env) => join(env.AUTOMAGIK_HOME || join(homedir(), '.automagik'), 'acp', 'adapters')
 const folderOf = pkg => pkg.replace(/^@/, '').replace(/\//g, '__')
@@ -226,7 +222,7 @@ export class AdapterStore {
     const job = this.updateNow(pkg, bin, force).then(
       (found) => { this.failures.delete(pkg); return found },
       (error) => {
-        const full = redactInstallerOutput(error?.message ?? error)
+        const full = homeRelativeText(redactText(error?.message ?? error))
         const message = full.split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300)
         const diagnostic = full.slice(-DIAGNOSTIC_MAX)
         let logPath

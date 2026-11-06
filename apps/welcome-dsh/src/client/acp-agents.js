@@ -26,21 +26,10 @@ export function badgeOf(agent) {
   return null
 }
 
-// Defensive redaction for a connector error: the ACP host and the acp-dsh adapter redact
-// before sending one, but a row must not print a credential-shaped value even if one arrives
-// unredacted. The shapes mirror the host's redactor (src/host/acp.js).
-const CREDENTIAL_TEXT = [
-  [/\bsk-[A-Za-z0-9_*.-]{6,}/g, 'sk-[hidden]'],
-  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, '[hidden]'],
-  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, '[hidden]'],
-  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]{8,}/gi, '$1 [hidden]'],
-  [/([?&#](?:token|access_token|api_key|apikey|key|secret|password)=)[^&\s"']+/gi, '$1[hidden]'],
-]
-const redactText = (text) => {
-  let out = String(text ?? '')
-  for (const [pattern, replacement] of CREDENTIAL_TEXT) out = out.replace(pattern, replacement)
-  return out
-}
+import { redactText } from './redact.js'
+
+// Exported so the tests can exercise the client-layer redaction alone.
+export { redactText }
 
 /**
  * What the row says under its name, line by line: the CLI, the connector, the sign-in, and
