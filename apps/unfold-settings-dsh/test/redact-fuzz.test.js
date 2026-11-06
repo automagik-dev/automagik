@@ -60,10 +60,11 @@ function fuzzCases(seed = SEED, count = 200) {
 // best of five runs drops one that caught a background compile or a collection; noise can add CPU
 // time, never remove it, so a rule that is slow in every run stays slow in every sample.
 // The text path is the plain rule pass over one fixed-size piece, with no served-value walk on
-// top, so it keeps an absolute ceiling: 100 ms. The worst healthy pass measured 58.9 ms of CPU on
-// CI (events' #53 shape at 80k, against the old 50 ms ceiling that failed) and 12.6 ms here; a
-// machine 4x slower lands at 50 ms, while a planted quadratic KEY= rule measured 159.8 ms
-// (settings) and 379.6 ms (mind), so it still fails.
+// top, so it keeps an absolute ceiling: 100 ms. The slowest measured was 58.9 ms of CPU on CI
+// (events' #53 rule pass at 80k, against the old 50 ms ceiling); the browser copy costs 1.15-1.27x
+// the rule pass here, projecting 68-75 ms under the same inflation, so 100 keeps 1.3-1.5x
+// headroom. A machine 4x slower lands at 50 ms, and planted quadratic KEY= mutants measured
+// 125-379.6 ms, so they still fail.
 const TEXT_CEILING_MS = 100
 const FAST_TRIES = 5
 const sample = (fn) => {
@@ -103,11 +104,11 @@ const REFERENCE_TEXT = (() => {
 })()
 
 // `redact` walks a served value and sends its strings through redactText, so it costs a small
-// multiple of the reference: 1.00–1.55x measured here (worst of the 200 cases over two runs, Node
-// 24.13.1) and 2.02x on the CI run that failed (#513: 20.8 ms against a 10.3 ms reference).
-// SERVED_MARGIN 3 sits 1.49x above that CI reading and 1.94x above the local worst: a 2x
-// regression of either reading (3.10x local, 4.04x on CI) still fails, while a regression smaller
-// than 1.49x of the CI reading is the trade for clearing the runner's spread.
+// multiple of the reference: 1.37–1.63x measured here over five runs (worst of the 200 cases over
+// those runs, Node 24.13.1) and 2.02x on the CI run that failed (#513: 20.8 ms against a
+// 10.3 ms reference). SERVED_MARGIN 3 sits 1.49x above that CI reading and 1.84x above the local
+// worst: a 2x regression of either reading (3.26x local, 4.04x on CI) still fails, while a
+// regression smaller than 1.49x of the CI reading is the trade for clearing the runner's spread.
 // The absolute backstop caps how far a slow reference may widen the bound: 400 ms sits 1.7x above
 // the worst observed runner reading (mind's stream 225.8-233.2 ms at a 30.3-30.6 ms reference) and
 // only binds when 3 x reference passes it. A shared rule gone quadratic still fails: the text

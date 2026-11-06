@@ -69,10 +69,11 @@ const PLANTED = ` SVCTOKEN=${UPPER} db_password=${LOWER}`
 // collection; noise can add CPU time, never remove it, so a rule that is slow in every run stays
 // slow in every sample.
 // The text paths are the plain rule pass over one fixed-size piece, with no stream on top, so they
-// keep an absolute ceiling: 100 ms. The worst healthy pass measured 58.9 ms of CPU on CI (events'
-// #53 shape at 80k, against the old 50 ms ceiling that failed) and 12.6 ms here; a machine 4x
-// slower lands at 50 ms, while a planted quadratic KEY= rule measured 159.8 ms (settings) and
-// 379.6 ms (mind), so it still fails.
+// keep an absolute ceiling: 100 ms. The slowest measured was 58.9 ms of CPU on CI (events' #53
+// rule pass at 80k, against the old 50 ms ceiling); the browser copy costs 1.15-1.27x the rule
+// pass here, projecting 68-75 ms under the same inflation, so 100 keeps 1.3-1.5x headroom. A
+// machine 4x slower lands at 50 ms, and planted quadratic KEY= mutants measured 125-379.6 ms, so
+// they still fail.
 const TEXT_CEILING_MS = 100
 const FAST_TRIES = 5
 const sample = (fn) => {
@@ -113,8 +114,8 @@ const REFERENCE_TEXT = (() => {
 
 // The stream runs redactText over each delta and builds its row, sentence and audit work on top,
 // so it costs a multiple of the reference: 3.74–4.24x measured here (worst of the 200 cases over
-// two runs, Node 24.13.1) and 3.56x, 3.76x, 7.18x and 7.62x on four CI runs; the 7.62x one
-// measured 233.2 ms against a 30.6 ms reference and failed the old 200 ms bound (#513).
+// two runs, Node 24.13.1) and 3.56x, 3.76x, 7.18x, 7.45x and 7.62x across four CI runs; the 7.62x
+// one measured 233.2 ms against a 30.6 ms reference and failed the old 200 ms bound (#513).
 // STREAM_MARGIN 10 sits 1.31x above that worst CI reading. The trade: a 2x regression of the stream
 // on a quiet machine (8.5x) stays inside the bound, while the text ceiling catches a shared
 // quadratic key rule. The absolute backstop caps how far a slow reference may widen the bound:
