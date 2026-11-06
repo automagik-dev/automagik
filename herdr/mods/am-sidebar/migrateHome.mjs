@@ -4,7 +4,7 @@
 // after), which `revert` reads to undo exactly those edits and nothing the person changed since.
 // Backups: <backupDir>/layouts/<name>.json and <backupDir>/keys.json, the files as they were.
 // It writes only <home>/layouts/*.json and <home>/keys.json, never through a link (a link is
-// the person's: reported and left), never shared.json (Herdr owns it: the mods' shims carry the
+// the person's: reported and left, and read only to see what it names), never shared.json (Herdr owns it: the mods' shims carry the
 // shared keys) and never a folder in mods/ (update.mjs moves those). Node only; the rules live
 // in migrate.js. Apache-2.0.
 
@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parseMarker } from "./release.js";
+import { layoutNeeds, parseMarker } from "./release.js";
 import { ABSORBED, DROP_INS, DROP_IN_GAINS, PATH_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, own, rewriteKeys, rewriteLayout } from "./migrate.js";
 
 export { KEY_RENAMES, RENAMES } from "./migrate.js";
@@ -58,6 +58,28 @@ function writable(home, file) {
 }
 
 /**
+ * The files in <home>/layouts/ with a block still naming `old` once the migration to `now` has
+ * done all it can, so Herdr would drop them for plain Herdr without `old` in mods/ (#432): a link
+ * or anything under a linked layouts/ (read, never written), or a shape rewriteLayout refuses or
+ * does not walk. Decided on `old` alone, so update.mjs can ask before the folder moves. A file
+ * that does not parse names nothing, as in #420: Herdr cannot show it with or without the folder.
+ */
+export function strandedLayouts(home, old, now) {
+  const dir = join(resolve(home), "layouts");
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.map((n) => join(dir, n)).filter((file) => {
+    try {
+      const parsed = readJson(file);
+      if (parsed === undefined || !layoutNeeds(parsed).blocks.has(old)) return false;
+      if (isLink(dir) || isLink(file)) return true;
+      const moved = rewriteLayout(parsed, { [old]: now });
+      return !moved || layoutNeeds(moved.layout).blocks.has(old);
+    } catch { return false; }
+  });
+}
+
+/**
  * What the migration would do on app home `home`, from what is on disk and the ownership record:
  * `{ home, folders, layouts, keys, shared, paths, left, held }`.
  * - folders: [old, new] for record-listed old folders still in mods/ (update.mjs moves them when a
@@ -71,7 +93,8 @@ function writable(home, file) {
  * - paths: [old, new] app-home paths to copy;
  * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape);
  * - held: `{item, reason}` for a drop-in not swapped in because the layout places Herdr's block
- *   more than once (#387): said on every run until the person picks one.
+ *   more than once (#387), or a layout it cannot move off a renamed folder (strandedLayouts, #432):
+ *   said on every run until the person changes it.
  */
 export function plan(home) {
   home = resolve(home);
@@ -124,6 +147,14 @@ export function plan(home) {
     } catch (error) {
       out.left.push({ item: file, reason: `could not be read as a layout (${why(error)}): left as it is` });
     }
+  }
+
+  for (const old of Object.keys(RENAMES)) {
+    const now = own(active, old);
+    if (!now) continue;
+    const reason = present(old) ? `it names ${old}, and this migration cannot move it to ${now}, so mods/${old} stays: name ${now} in it, or take the block out, and the next update retires mods/${old}`
+      : `it names ${old}, which is gone, and this migration cannot move it to ${now}, so Herdr shows plain Herdr instead of it: name ${now} in it, or take the block out`;
+    for (const file of strandedLayouts(home, old, now)) out.held.push({ item: file, reason });
   }
 
   const keysFile = join(home, "keys.json");

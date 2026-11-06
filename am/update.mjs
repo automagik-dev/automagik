@@ -52,11 +52,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   AUTO_FILE, CATALOG_URL, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
+  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, packOfPointer, parseAuto, parseMarker, parseSums, pickUpdate,
   updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
-import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration } from "./migrateHome.mjs";
+import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, strandedLayouts } from "./migrateHome.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
@@ -441,7 +441,7 @@ export function restoreLayout({ modsDir, body, log = () => {} }) {
   const lastPack = isFile(ref) ? readFileSync(ref) : null;
   let placed = "kept";
   if (had && had.equals(body)) placed = "same";
-  else if (had && lastPack && had.equals(lastPack)) {
+  else if (had && lastPack && had.equals(lastPack) && !isLink(live)) {
     writeFileSync(live, body);
     log(`put back the automagik layout the rolled-back pack shipped (${live})`);
     placed = "restored";
@@ -480,8 +480,10 @@ function carryV1(modsDir, record, log) {
  * and mod.json, plain files and folders only, and its VERSION must be `version`. Per folder:
  * not there → installed; listed in the ownership record → replaced (the old copy into the kept
  * set, its private paths carried over); anyone else's → left alone, or with `adopt` moved to
- * backup/ and replaced. A link is never replaced. Returns `{ version, mods, installed, replaced,
- * left, adopted, retired, prev }` and rewrites the record.
+ * backup/ and replaced. A link is never replaced. A folder the record lists that the release no
+ * longer ships is retired into the kept set; a rename's old folder is held in mods/ while a layout
+ * the migration cannot move names it (#432). Returns `{ version, mods, installed, replaced, left,
+ * adopted, retired, held, prev }` and rewrites the record.
  */
 /**
  * Unpacks a release tarball into `staging` (an empty folder) and checks it is a plain pack: only
@@ -587,7 +589,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     };
     const owned = new Set(before?.mods ?? []);
     const kept = readSet(modsDir);
-    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], repaired: [], off: [], installedOff: [] };
+    const plan = { installed: [], replaced: [], renamed: [], left: [], adopted: [], retired: [], held: [], repaired: [], off: [], installedOff: [] };
     const keptOff = [];
     const leftOff = [];       // a mods-disabled/ folder the record doesn't own, where an off-by-default mod would go
     const keptBackOff = [];   // a kept copy that was off when kept, put back off
@@ -697,17 +699,32 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       if (adopt) adoptFolder(m);
       else plan.left.push(m);
     }
-    // A folder the record lists that this release no longer ships leaves mods/ with the set.
-    for (const m of repair ? [] : owned) {
+    // A folder the record lists that this release no longer ships leaves mods/ with the set. A
+    // rename's old folder leaves on the migration moving the layouts onto the new name, so it stays
+    // while one the migration cannot move names it (#432): Herdr would drop that layout for plain
+    // Herdr, and a link's target is the person's to change. It stays the record's and its copy
+    // goes into the kept set too, so a rollback swaps it like any folder; the update after the
+    // layout changes retires it. One switched off leaves (a layout naming it shows plain Herdr
+    // already), and a repair moves none of them.
+    for (const m of owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
+      if (repair) { record.mods.push(m); continue; }
+      const renamed = own(RENAMES, m);
+      const stranded = at === join(modsDir, m) && folders.includes(renamed) ? strandedLayouts(dirname(resolve(modsDir)), m, renamed) : [];
+      if (stranded.length) {
+        plan.held.push({ mod: m, renamed, layouts: stranded.map((f) => basename(f, ".json")) });
+        record.mods.push(m);
+        continue;
+      }
       moves.push([at, join(next, m)]);
       plan.retired.push(m);
       if (at !== join(modsDir, m)) keptOff.push(m);
     }
     mkdirSync(modsDir, { recursive: true });
-    const keep = [...plan.replaced, ...plan.retired];
+    for (const h of plan.held) cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true });
+    const keep = [...plan.replaced, ...plan.retired, ...plan.held.map((h) => h.mod)];
     const old = keep.length ? setAside(modsDir) : null;
     try {
       swapAll(moves, rename);
@@ -724,6 +741,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     if (before?.v1) { try { carryV1(modsDir, record, log); writeMarker(modsDir, record); } catch (error) { warnings.push(`v0.2's kept copies stay where they were (${error.message})`); } }
     if (keep.length) keepLayout(modsDir, next, warnings);
     keepSet(modsDir, next, keep, before, old, rename, warnings, keptOff);
+    for (const h of plan.held) log(heldModLine(h, version));
     for (const m of plan.off) log(`updated mods-disabled/${m}: it stays off`);
     for (const m of plan.installedOff) log(`installed mods-disabled/${m}: it ships off; turn it on in the Mods panel`);
     for (const m of keptBackOff) log(`installed mods-disabled/${m}: it was off when it was kept, so it stays off`);
@@ -934,7 +952,7 @@ export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".loc
  * Whether a run crossed the rename: `before` is oldSidebarHere(modsDir) taken before it, and the
  * sidebar's folder from before the rename (OLD_PACK_NAME) is gone from mods/ now.
  */
-export const oldSidebarHere = (modsDir) => exists(join(modsDir, OLD_PACK_NAME));
+export const oldSidebarHere = (modsDir) => exists(join(modsDir, OLD_PACK_NAME)) && !exists(join(modsDir, PACK_NAME));
 export const crossedRename = (modsDir, before) => before && !oldSidebarHere(modsDir);
 
 /** Whether `modsDir` is in the app home Herdr runs by default: only then are the open spaces asked for. */
@@ -1039,7 +1057,11 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
     const body = readFileSync(shipped);
     const had = isFile(live) ? readFileSync(live) : null;
     const lastPack = isFile(ref) ? readFileSync(ref) : null;
-    if (!had && record.layout === "removed") {
+    if (isLink(live)) {
+      // A link's target is the person's, whatever it holds (#432): kept, even byte-equal to a pack's.
+      log(`kept your automagik layout (${live}): it is a link; the pack's is in ${ref}`);
+      placed = "kept";
+    } else if (!had && record.layout === "removed") {
       // Uninstalled on its own (the herdr.layout part): an update or a repair never adds it back.
       log(`left out the automagik layout: it was uninstalled (\`am install herdr.layout\` puts it back)`);
       placed = "removed";
@@ -1055,7 +1077,7 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
       log(`kept your automagik layout (${live}): it differs from the one v0.2 shipped; the pack's is in ${ref}`);
       placed = "kept";
     }
-    if (placed !== "removed") record.layout = !had || record.layout === "added" ? "added" : "kept";
+    if (placed !== "removed") record.layout = (!had && !isLink(live)) || record.layout === "added" ? "added" : "kept";
     writeFileSync(ref, body);
     writeMarker(modsDir, record);
   }

@@ -140,7 +140,10 @@ The installer:
 - replaces the `automagik` layout while it is the unchanged one those releases shipped;
 - renames the pack mods your own layouts and `keys.json` name, each file backed up first in
   `automagik-herdr/backup/layouts-<date>/` (a mod you installed yourself keeps its name until
-  `--adopt`), and prints what a layout of yours still lacks;
+  `--adopt`), and prints what a layout of yours still lacks. A layout it cannot rewrite (a link,
+  whose target is yours, or a shape it does not read) keeps its old folder in `mods/` beside the
+  new one, said on every run, until you name the new folder in it or take the block out; the next
+  update then retires the old folder;
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets

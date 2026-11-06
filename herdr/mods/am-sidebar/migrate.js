@@ -101,7 +101,9 @@ export function activeRenames(owned, present) {
   const active = {};
   const kept = [];
   for (const old of [...Object.keys(RENAMES), ...Object.keys(ABSORBED)]) {
-    if (present(old)) { kept.push(old); continue; }
+    // The record listing both names: update.mjs held the old folder for a layout it cannot move
+    // (#432), so everything it can move still follows the rename. A person's own stays theirs.
+    if (present(old) && !(owned.has(old) && mine(own(RENAMES, old)))) { kept.push(old); continue; }
     const step = own(RENAMES, old) ?? own(ABSORBED, old);
     const target = mine(own(RENAMES, step)) ? own(RENAMES, step) : mine(step) ? step : null;
     if (target) active[old] = target;

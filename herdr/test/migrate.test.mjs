@@ -724,3 +724,32 @@ test("#387: workspace-status becomes am-status only in a layout showing the pack
   assert.equal(said("renamed.json").length, 2, "the rename's line and the swap's");
   assert.ok(said("renamed.json").every((l) => !/nothing else in the file changed/.test(l)), said("renamed.json").join("\n"));
 });
+
+// #432: an old folder update.mjs held for a layout it cannot move (the record lists both names)
+// does not stop the rest from following the rename; a person's own old folder still does.
+test("activeRenames: a held old folder beside its recorded am-* folder still renames; a person's own is kept", () => {
+  const here = new Set(["am-sidebar", "auto-tabs", "am-tabs"]);
+  const held = activeRenames(new Set(["am-sidebar", "auto-tabs", "am-tabs"]), (n) => here.has(n));
+  assert.equal(held.active["auto-tabs"], "am-tabs");
+  assert.ok(!held.kept.includes("auto-tabs"));
+  const theirs = activeRenames(new Set(["am-sidebar", "am-tabs"]), (n) => here.has(n));
+  assert.equal(theirs.active["auto-tabs"], undefined);
+  assert.ok(theirs.kept.includes("auto-tabs"));
+});
+
+test("a layout the migration cannot move off a gone old folder is said on every run, never silent", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  writeJson(join(s.home, "layouts", "odd.json"), { id: "r", children: { s: { content: { mod: "spaces-agents" } } } });
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const p = plan(s.home);
+  const held = p.held.map((h) => [h.item.split("/").at(-1), h.reason]);
+  assert.deepEqual(held.map(([f]) => f), ["mine.json", "odd.json"]);
+  assert.ok(held.every(([, why]) => /it names spaces-agents, which is gone, and this migration cannot move it to am-sidebar, so Herdr shows plain Herdr/.test(why)), held.join("\n"));
+  const lines = [];
+  migrateRefs({ modsDir: s.mods, log: (l) => lines.push(l) });
+  assert.equal(lines.filter((l) => /cannot move it to am-sidebar/.test(l)).length, 2, lines.join("\n"));
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
+});
