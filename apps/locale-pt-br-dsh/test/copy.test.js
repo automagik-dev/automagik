@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RULES, checkCopy, omniKeys } from '../scripts/copy-check.mjs'
+import { loadDictionaries } from '../scripts/dictionaries.mjs'
 
 test('the copy check is green', async () => {
   assert.deepEqual(await checkCopy(), [])
@@ -12,6 +13,17 @@ test('the copy check is green', async () => {
 test('the omni-ui keys the pack translates are still the Bot team\'s', async () => {
   const keys = await omniKeys()
   assert.ok(keys.size > 1000, `only ${keys.size} omni-ui keys found`)
+})
+
+// The pack carries DSH strings only where DSH 0.2.2 carries none: these are the four keys it
+// dropped, so none of them may be a key DSH's own pt dictionary translates.
+test('the four strings the pack keeps are not ones DSH 0.2.2 translates', () => {
+  const { translated } = JSON.parse(readFileSync(new URL('./dsh/0.2.2-rc.1.json', import.meta.url), 'utf8'))
+  const dictionaries = loadDictionaries()
+  for (const namespace of ['pluginManager', 'question']) {
+    const overlap = Object.keys(dictionaries[namespace]).filter((key) => translated[namespace].includes(key))
+    assert.deepEqual(overlap, [], `${namespace} carries a key DSH translates`)
+  }
 })
 
 // A pack with one of each fault, against a two-key reference.

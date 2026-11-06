@@ -48,6 +48,12 @@ test('client.js loads as the package, asks for no platform module and injects on
   assert.equal(typeof exports.apply, 'function')
 })
 
+test('the pack carries omni-ui and the four strings DSH dropped, and no DSH namespace', () => {
+  assert.deepEqual(Object.keys(dictionaries), ['omni-ui', 'pluginManager', 'question'])
+  assert.deepEqual(Object.keys(dictionaries.pluginManager), ['previewAlt', 'previewUnavailable'])
+  assert.deepEqual(Object.keys(dictionaries.question), ['reply.open', 'reply.close'])
+})
+
 test('a DSH without Portuguese gets pt-BR, whose fallback chain ends at en', () => {
   const { locale } = applied()
   assert.deepEqual(locale.getLocale().locales.map((entry) => entry.id), ['en', 'zh', 'pt-BR'])

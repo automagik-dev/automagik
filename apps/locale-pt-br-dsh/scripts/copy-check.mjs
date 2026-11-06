@@ -1,6 +1,7 @@
 // The copy check: every pt-BR text of the pack, against its English text and the copy rules.
-// - Each DSH namespace the pack carries is whole: every key of its English dictionary (test/en,
-//   at the DSH release the tests run on) has a text, and the pack adds no other key.
+// - A DSH namespace the pack carries holds only keys of its English dictionary (test/en, at the
+//   DSH release the tests run on). DSH 0.2.2 owns the rest of every DSH namespace, so the pack
+//   carries the few strings DSH dropped and nothing else.
 // - `omni-ui` is the Bot team's (apps/bots-dsh): its keys are the English text, and each key the
 //   pack translates is still one of them.
 // - A text keeps the {placeholders} of its English text.
@@ -73,7 +74,6 @@ export async function checkCopy({ folder = FOLDER, reference = REFERENCE, omni }
       findings.push(`${ns}: not a DSH namespace in ${reference.split('/').at(-1)}`)
       continue
     }
-    if (source) for (const key of Object.keys(source)) if (!(key in dict)) findings.push(`${ns}:${key}: missing`)
     for (const [key, text] of Object.entries(dict)) {
       const en = source ? source[key] : (known.has(key) ? key : undefined)
       if (en === undefined) findings.push(`${ns}:${key}: not an en key`)

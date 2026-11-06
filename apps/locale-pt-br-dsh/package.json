@@ -1,7 +1,7 @@
 {
   "name": "@automagik/locale-pt-br-dsh",
   "version": "3.86.30",
-  "description": "Brazilian Portuguese for DeepSeek Harness: adds Português (Brasil) to DSH's languages and translates what a first session shows, from the sidebar and the composer to approvals, plugins and settings. Anything it doesn't translate stays in English",
+  "description": "Brazilian Portuguese for DeepSeek Harness. DSH 0.2.2 ships Portuguese itself; this pack adds the Bot team's Portuguese (omni-ui) under DSH's own language and keeps a saved pt-BR choice working. Anything it doesn't translate stays in English",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -63,7 +63,7 @@
         "en": "Português (Brasil)"
       },
       "description": {
-        "en": "Brazilian Portuguese for DSH. Adds Português (Brasil) to Settings › General › Language, and a browser set to Brazilian Portuguese opens DSH in it. Translates what a first session shows: the sidebar, the composer and messages, approvals and questions, the plugin pages and the general settings. Anything it doesn't translate yet stays in English."
+        "en": "Brazilian Portuguese for DSH. DSH 0.2.2 ships Portuguese itself, in Settings › General › Language and across the app; this pack adds the Bot team's own Portuguese under DSH's language. One Portuguese entry, and a pt-BR choice saved before the upgrade keeps working. Anything it doesn't translate stays in English."
       },
       "category": "automagik",
       "keywords": [
