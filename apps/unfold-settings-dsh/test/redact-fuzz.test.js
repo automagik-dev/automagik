@@ -54,6 +54,7 @@ function fuzzCases(seed = SEED, count = 200) {
   })
   // The shape that once backtracked over a whole blank run: 80k of " \t", then a name and a block.
   cases.push(['fixed: 80000 " \\t" then accessToken: >', `${' \t'.repeat(40_000)}accessToken: >\n`])
+  cases.push(['fixed: 16384 of {"\\ runs', '{"\\'.repeat(5462).slice(0, 16_384)])
   return cases
 }
 
