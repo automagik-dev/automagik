@@ -9324,7 +9324,7 @@ var bound = null;
 function installLocale(locale) {
   if (!locale || typeof locale.register !== "function" || typeof locale.bind !== "function") return () => {
   };
-  const off = locale.register(NAMESPACE, { en: EN, "pt-BR": PT_BR });
+  const off = locale.register(NAMESPACE, { en: EN, pt: PT_BR, "pt-BR": PT_BR });
   const mine = locale.bind(NAMESPACE);
   bound = mine;
   return () => {

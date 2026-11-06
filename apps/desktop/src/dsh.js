@@ -349,7 +349,17 @@ export function backupSettings({ dshHome, version }) {
   const copy = join(dir, `settings-${version.replace(/[^0-9A-Za-z.-]/g, '_')}.yaml`)
   if (existsSync(copy)) return undefined
   mkdirSync(dir, { recursive: true })
-  cpSync(settings, copy, { errorOnExist: true, force: false })
+  // Written under a temporary name and renamed: a copy cut short (a quit, a full disk) never
+  // looks like a finished backup that the next launch then skips.
+  const temp = `${copy}.${process.pid}.tmp`
+  try {
+    rmSync(temp, { force: true })
+    cpSync(settings, temp, { errorOnExist: true, force: false })
+    renameSync(temp, copy)
+  } catch (error) {
+    rmSync(temp, { force: true })
+    throw error
+  }
   return copy
 }
 

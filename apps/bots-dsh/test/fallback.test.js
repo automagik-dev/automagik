@@ -36,7 +36,7 @@ function harness({ isBot = true, config = {}, defaultModel = 'deepseek-official/
   const agent = {
     id: 'bot-1',
     model: {
-      current: () => selected.at(-1),
+      current: () => selected.at(-1) ?? { ...OPENAI },
       select: (selection) => selected.push(selection),
     },
     followup: (message) => followed.push(message),
@@ -58,7 +58,8 @@ test('a failed turn records the fallback, wakes the next turn on it, and the tur
   h.turnEnd(3)
   assert.deepEqual(h.selected, [DEEPSEEK])
   h.turnEnd(4)
-  assert.deepEqual(h.selected, [DEEPSEEK, { provider: 'openai', model: 'gpt-5.4-mini' }], "the Bot's own route comes back with its effort")
+  const own = { provider: 'openai', model: 'gpt-5.4-mini', reasoningEffort: 'high' }
+  assert.deepEqual(h.selected, [DEEPSEEK, own], "the Bot's own route comes back whole, its explicit effort included")
   h.turnEnd(5)
   assert.equal(h.selected.length, 2, 'once')
 })

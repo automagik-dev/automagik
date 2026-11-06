@@ -156,7 +156,9 @@ export function apply(ctx, config) {
   }
 
   // Registered, not driven: nothing appends unfold/event to a DSH Session until a session adapter exists.
-  // dsh 0.2.2 acquires the unit asynchronously: await the handle and keep it (nothing reads it yet).
+  // dsh 0.2.2 acquires the unit asynchronously: await the registration so a refusal is reported.
+  // No local handle is kept (nothing reads this unit); the registry retains it through the
+  // plugin's fiber, which disposes it on unload.
   ctx.inject(['sessionProjections'], (sctx) => {
     void (async () => {
       try {

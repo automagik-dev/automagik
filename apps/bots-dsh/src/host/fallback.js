@@ -59,19 +59,22 @@ export function install(rt) {
     const fallback = fallbackFor({ failure, failed, fallback: await fallbackRoute().catch(() => undefined) })
     if (fallback === undefined) return decided
     // DSH prepares the next step's route from agent.model; the failed step's own retry
-    // keeps its fixed route, so the backup runs the turn this wakes.
+    // keeps its fixed route, so the backup runs the turn this wakes. The Bot's own selection
+    // is snapshotted whole (provider, model and its explicit reasoning effort) first.
+    const own = agent.model.current?.()
     try {
       agent.model.select({ provider: fallback.provider, model: fallback.model })
     } catch (error) {
       rt.warn('ds-bot: the fallback route was not recorded: %s', error)
       return decided
     }
-    if (!restore.has(agent.id) && failed?.provider !== undefined && failed.model !== undefined) {
-      restore.set(agent.id, {
-        agent,
-        route: { provider: failed.provider, model: failed.model },
-        failedTurn: turn,
-      })
+    if (!restore.has(agent.id)) {
+      const route = own?.provider !== undefined && own.model !== undefined
+        ? { ...own }
+        : failed?.provider !== undefined && failed.model !== undefined
+          ? { provider: failed.provider, model: failed.model }
+          : undefined
+      if (route !== undefined) restore.set(agent.id, { agent, route, failedTurn: turn })
     }
     rt.warn(
       'ds-bot: %s failed on %s (%s); the next turn continues on %s',
