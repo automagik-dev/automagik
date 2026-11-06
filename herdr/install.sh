@@ -308,7 +308,9 @@ mods_said() {
 # block ("mod": "<m>") of the layout Herdr shows names a pack mod in mods/ ($1, the record's
 # list), since Herdr would drop that layout and show plain Herdr. With no layout to read (no
 # herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
-# whose blocks name one ($2: the pack's own layout file when this run removes it, left out).
+# whose blocks name one ($2: the pack's own layout file when this run removes it, left out; refused
+# too while Herdr shows that file).
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 layout_guard() {
   shown=$(shown_layout)
   why=
@@ -332,11 +334,17 @@ layout_guard() {
   fi
   unset IFS
   set +f
+  # The command names main, so it does nothing while main is the layout in the way.
+  how="ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'"
+  if [ "$shown" = main ]; then how=ctrl-shift-l; fi
   if [ -n "$named" ]; then
-    # The command names main, so it does nothing while main is the layout in the way.
-    how="ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'"
-    if [ "$shown" = main ]; then how=ctrl-shift-l; fi
     fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
+  fi
+  # The layout Herdr shows is the file this run removes, though no pack mod it names leaves (each
+  # is a link, which stays: #450): refused as well, as the mod manager's package remove words it
+  # (its name case-insensitive, as macOS's disk). Not inside a linked layouts/: that file stays (#448).
+  if [ -z "$why" ] && [ -n "$2" ] && [ ! -L "$APP_HOME/layouts" ] && [ "$(lower "$shown.json")" = "$(lower "${2##*/}")" ]; then
+    fail "the $shown layout is this package's (layouts/${2##*/}) and Herdr shows it: removing the package takes it away (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
   fi
   [ -n "$why" ] && [ -n "$on" ] || return 0
   for f in "$APP_HOME"/layouts/*.json; do
@@ -361,6 +369,29 @@ switch_hint() {
   say "  herdr-app do layout.switch '{\"name\":\"automagik\"}'"
 }
 
+# The pack's layout, as --uninstall removes it: left where it is inside a linked layouts/, the
+# person's own folder (#448), else removed.
+say_left_layout() { say "Left $LAYOUT: $APP_HOME/layouts is a link, your own folder, not one this installer made; the file in it stays yours."; }
+say_removed_layout() { say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"; }
+drop_layout() {
+  if [ -L "$APP_HOME/layouts" ]; then say_left_layout; return 0; fi
+  rm -f "$LAYOUT"
+  say_removed_layout
+}
+
+# --uninstall's removals through the installed updater ($1, update.mjs): into the kept set ($2),
+# the layout ($3, or none) and each folder after them. Its lines on stdout (removed, moved, left),
+# its error as JSON there too; its stderr is not shown.
+pack_out() {
+  p_upd=$1
+  p_to=$2
+  p_layout=$3
+  shift 3
+  for f; do set -- "$@" --move "$f"; shift; done
+  if [ -n "$p_layout" ]; then set -- --layout "$p_layout" "$@"; fi
+  HERDR_APP_HOME=$APP_HOME node "$p_upd" pack-out --mods "$MODS" --to "$p_to" "$@" </dev/null 2>/dev/null
+}
+
 uninstall() {
   [ -f "$MARK" ] || { say "Nothing to uninstall: this installer did not install the pack in $MODS."; exit 0; }
   mods=$(mark_get mods)
@@ -378,9 +409,20 @@ uninstall() {
   if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then drop=$LAYOUT; fi
   # Nothing moves while the shown layout's blocks name a pack mod (#420).
   layout_guard "$mods" "$drop"
-  if [ -n "$drop" ]; then
-    rm -f "$LAYOUT"
-    say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
+  # How the layout and the folders leave: through the pack's updater (update.mjs pack-out, which
+  # runs them through layoutSafe.mjs, journalled) when Node is here and the installed updater has
+  # the command (read from its usage line: nothing runs, nothing is written); else this script's
+  # mv and rm, as before. Either way a layout inside a linked layouts/ stays (#448).
+  upd=
+  case ",$mods," in *,"${PACK##*/}",*) upd=$PACK/update.mjs ;; esac
+  via=shell
+  if [ -z "$upd" ]; then how_out="the record lists no ${PACK##*/}"
+  elif ! node_ok; then how_out="no Node $NODE_MIN or later"
+  elif [ ! -f "$upd" ] || ! grep -q '| pack-out --to <dir>' "$upd" 2>/dev/null; then how_out="the installed updater has no pack-out (an older pack)"
+  else via=updater; fi
+  if [ "$via" = shell ]; then
+    say "Removing the pack with this script ($how_out)."
+    [ -z "$drop" ] || drop_layout
   fi
   # usagemeter on the linked machines first, while the pack's CLI is still in mods/.
   if grep -q '^usagemeter-machines=.' "$MARK"; then
@@ -396,20 +438,54 @@ uninstall() {
   set -f
   IFS=,
   off=
+  set --
   for m in $mods; do
     case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
     if [ -L "$MODS/$m" ]; then say "Left $MODS/$m: it is a link, not a folder this script installed."; continue; fi
     if [ -d "$MODS/$m" ]; then
-      mv "$MODS/$m" "$next/$m"
+      set -- "$@" "$MODS/$m"
       moved=${moved:+$moved,}$m
     elif [ -d "$APP_HOME/mods-disabled/$m" ] && [ ! -L "$APP_HOME/mods-disabled/$m" ]; then
       # Switched off (the Mods panel, or a mod that ships off): kept as well, marked off, so a
       # reinstall or a rollback puts it back off.
-      mv "$APP_HOME/mods-disabled/$m" "$next/$m"
+      set -- "$@" "$APP_HOME/mods-disabled/$m"
       moved=${moved:+$moved,}$m
       off=${off:+$off,}$m
     fi
   done
+  unset IFS
+  set +f
+  if [ "$via" = updater ]; then
+    say "Removing the pack through its updater ($upd pack-out): a move that fails undoes the others."
+    rc=0
+    out=$(pack_out "$upd" "$next" "$drop" "$@") || rc=$?
+    # What it did, read from the disk: a folder is out once it is in $next.
+    gone=
+    still=
+    for f; do
+      if [ -e "$next/${f##*/}" ] || [ -L "$next/${f##*/}" ]; then gone=${gone:+$gone, }${f##*/}; else still=${still:+$still, }${f##*/}; fi
+    done
+    layout_gone=no
+    if [ -n "$drop" ] && [ ! -e "$drop" ] && [ ! -L "$drop" ]; then layout_gone=yes; fi
+    err=$(printf '%s\n' "$out" | sed -n 's/.*"error":"\(.*\)"}.*/\1/p' | head -n 1)
+    if [ "$rc" = 0 ] && [ -z "$still" ]; then
+      if [ -n "$drop" ] && printf '%s\n' "$out" | grep -Fqx "left $drop"; then say_left_layout
+      elif [ "$layout_gone" = yes ]; then say_removed_layout
+      elif [ -n "$drop" ]; then say "Left $LAYOUT: the updater's pack-out did not remove it."; fi
+    elif [ -z "$gone" ] && [ "$layout_gone" = no ]; then
+      # pack-out changed nothing: this script does it all instead.
+      say "Removing the pack with this script instead (the updater's pack-out failed${err:+: $err}; it changed nothing)."
+      [ -z "$drop" ] || drop_layout
+      via=shell
+    else
+      # Part done: nothing more moves, the record stays, and where each folder is gets said.
+      lay=; [ -z "$drop" ] || { if [ "$layout_gone" = yes ]; then lay=" The automagik layout ($LAYOUT) is gone."; else lay=" The automagik layout ($LAYOUT) is in place."; fi; }
+      fail "the updater's pack-out stopped partway${err:+ ($err)}. Already out, in $next: ${gone:-none}. Still in place: ${still:-none}.$lay The record ($MARK) stays: move the folders in $next back (mods/, or mods-disabled/ for ${off:-none}), then run --uninstall again."
+    fi
+  fi
+  if [ "$via" = shell ]; then for f; do mv "$f" "$next/${f##*/}"; done; fi
+  set -f
+  IFS=,
   # A folder already kept (one a rollback moved out, with its state) stays kept beside them.
   if [ -n "$moved" ] && [ -f "$STATE/.prev/.pack" ]; then
     was_off=,$(sed -n 's/^off=//p' "$STATE/.prev/.pack" | head -n 1),
@@ -809,11 +885,17 @@ install() {
     "$side/migrateHome.mjs" "$side/migrateHooks.mjs" "$side/briefingText.mjs" "$side/model.js" "$side/models.js" \
     </dev/null 2>/dev/null || fail "$TGZ lacks $side's updater files: nothing was installed."
   # retired.js: models.js imports it since #224; layoutSafe.mjs: update.mjs and migrateHome.mjs
-  # import it since #431's PR A. An older release (--version) neither has nor needs them.
+  # import it since #431's PR A (and update.mjs pack-out, --uninstall's removals, runs through it).
+  # An older release (--version) neither has nor needs them; one whose update.mjs imports
+  # layoutSafe.mjs must carry it.
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/retired.js" </dev/null >/dev/null 2>&1 || :
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/layoutSafe.mjs" </dev/null >/dev/null 2>&1 || :
   for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs; do
-    case $f in retired.js|layoutSafe.mjs) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;; esac
+    case $f in
+      retired.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;;
+      layoutSafe.mjs) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] \
+        && ! grep -q '/layoutSafe\.mjs"' "$TMP/x/$side/update.mjs" && continue ;;
+    esac
     { [ -f "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ]; } || fail "$TGZ: $side/$f is not a plain file: nothing was installed."
   done
   rc=0

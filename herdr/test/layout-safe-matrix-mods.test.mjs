@@ -30,7 +30,6 @@ const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file",
 const NEW_FAIL_OPEN = "new gap: the remove fails open without saying why";
 const NEW_UPDATE_MOD = "new gap: an update that stops shipping the shown layout's mod moves it aside";
 const EXPECTED_FAIL = {
-  ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout | ${s}`, "#431"])),
   ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout's mod | ${s}`, NEW_UPDATE_MOD])),
   [`package remove | ${NO_ANSWER}`]: NEW_FAIL_OPEN,
   [`package remove | ${NOTHING}`]: NEW_FAIL_OPEN,
@@ -180,6 +179,24 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
       t.diagnostic(`${verdict.safe ? "SAFE" : "UNSAFE"}: ${verdict.why}`);
       if (gap) assert.ok(!verdict.safe, `${route} | ${shape} is safe now: drop its expected-fail mark (${gap})`);
       else assert.ok(verdict.safe, `${route} | ${shape}: ${verdict.why}`);
+      // #431: the layout it kept stays in the record, so the next update after a switch moves it aside.
+      if (route === "package update dropping the shown layout") {
+        const kept = shape !== NO_ANSWER && shape !== NOTHING;
+        const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
+        assert.deepEqual(rec.layouts, kept ? ["scratchy.json"] : [], `the record's layouts (${shape})`);
+      }
     });
   }
 }
+
+test("package update dropping the shown layout, then a switch and a second update: it is moved aside then (#431)", async (t) => {
+  const m = machine(t, "plain folder", { layout: false });
+  await update(m);
+  assert.ok(existsSync(join(m.appHome, "layouts", "scratchy.json")), "kept while Herdr shows it");
+  state.shared.set("layout", "main");
+  ui.layout = { id: "root", children: [] };
+  const { said } = await update(m);
+  assert.equal(existsSync(join(m.appHome, "layouts", "scratchy.json")), false, `moved aside once another layout shows: ${said}`);
+  const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
+  assert.deepEqual(rec.layouts, []);
+});

@@ -53,14 +53,9 @@ const NEW_FAIL_OPEN = "new gap: with no layout from Herdr, the pack's own layout
 const NEW_SILENT = "new gap: with no layout readable at all, a mod leaves mods/ without a word";
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
 export const EXPECTED_FAIL = {
-  ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | symlinked mod folder`, "#450"])),
   ...Object.fromEntries(PACK_ROUTES.map((r) => [`${r} | ${NO_ANSWER}`, NEW_FAIL_OPEN])),
   ...Object.fromEntries([...PACK_ROUTES, "one-mod uninstall", "update retire", "rename"].map((r) => [`${r} | ${NOTHING}`, NEW_SILENT])),
   ...Object.fromEntries(SHAPES.filter((s) => s !== "symlinked mod folder").map((s) => [`rollback | ${s}`, NEW_ROLLBACK])),
-  // #448: the pack's layout in a linked layouts/ while Herdr shows another one (with it shown, the
-  // guard refuses first): the uninstall deletes the person's file through the link.
-  ...Object.fromEntries([...PACK_ROUTES, "herdr.layout uninstall", "herdr.layout uninstall --purge"]
-    .map((r) => [`${r} | ${LINKED_ANOTHER}`, "#448"])),
 };
 
 const exe = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); chmodSync(path, 0o755); };

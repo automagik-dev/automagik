@@ -79,6 +79,7 @@ export const offDirOf = (modsDir) => join(dirname(resolve(modsDir)), "mods-disab
 const backupOf = (modsDir) => join(stateDirOf(modsDir), "backup");
 
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
+const isDir = (path) => { try { return statSync(path).isDirectory(); } catch { return false; } };
 const isLink = (path) => { try { return lstatSync(path).isSymbolicLink(); } catch { return false; } };
 const exists = (path) => { try { lstatSync(path); return true; } catch { return false; } };
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -1325,12 +1326,14 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] [--auto] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] [--auto] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v> | pack-out --to <dir> [--layout <file>] [--move <folder>]...  (each takes [--mods <dir>])";
 const FLAGS = {
   check: [], apply: ["--expect", "--auto"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
-  repair: ["--from", "--version"],
+  repair: ["--from", "--version"], "pack-out": ["--to", "--layout", "--move"],
 };
-const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence"]);
+const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence", "--to", "--layout", "--move"]);
+/** Flags given more than once, collected in order. */
+const REPEATED = new Set(["--move"]);
 
 /** Strict arguments: an unknown command or flag, or a flag missing its value, is a usage error before anything is read. */
 export function parseArgs(argv) {
@@ -1344,17 +1347,45 @@ export function parseArgs(argv) {
     if (VALUED.has(flag)) {
       const value = rest[++i];
       if (value === undefined || value === "" || value.startsWith("-")) throw usage();
-      opts[flag.slice(2)] = value;
+      if (REPEATED.has(flag)) (opts[flag.slice(2)] ??= []).push(value);
+      else opts[flag.slice(2)] = value;
     } else opts[flag.slice(2)] = true;
   }
   if ((command === "install" || command === "repair") && !(opts.from && opts.version)) throw usage();
+  if (command === "pack-out" && !opts.to) throw usage();
   if (opts.sequence !== undefined && !/^\d{1,15}$/.test(String(opts.sequence))) throw usage();
   return { command, opts };
+}
+
+/**
+ * install.sh --uninstall's removals, when Node is there (#448, #450): the pack's layout file
+ * (`layout`, in layouts/) and its folders (`move`, each in mods/ or mods-disabled/) leave together
+ * through layoutSafe.mjs change(), journalled: one that fails undoes the rest, and a layout file
+ * in a linked layouts/ (the person's folder) stays (`links: "hold-layouts"`). Each folder goes
+ * to `to`/<its name>, in the pack's state folder. install.sh asked the shown layout first, in its
+ * own words. Its lines: `removed <path>`, `moved <name>`, `left <path>`.
+ */
+export function packOut({ modsDir, to, layout = null, move = [] }) {
+  const mods = resolve(modsDir), home = dirname(mods), dest = resolve(to);
+  const off = join(home, "mods-disabled"), state = join(home, "automagik-herdr");
+  const bad = (what) => Object.assign(new Error(`pack-out: ${what}`), { usage: true });
+  if (dirname(dest) !== state || !isDir(dest)) throw bad(`--to must be a folder in ${state}`);
+  if (layout && (dirname(resolve(layout)) !== join(home, "layouts") || !layout.endsWith(".json"))) throw bad(`--layout must be a .json file in ${join(home, "layouts")}`);
+  for (const m of move) {
+    if (![mods, off].includes(dirname(resolve(m))) || !/^[a-z0-9-]+$/.test(basename(m))) throw bad(`--move must be a pack folder in ${mods} or ${off}`);
+  }
+  const ops = [...(layout ? [{ op: "remove", path: resolve(layout) }] : []), ...move.map((m) => ({ op: "move", from: resolve(m), to: join(dest, basename(m)) }))];
+  const r = change(home, ops, { modsDir: mods, links: "hold-layouts" });
+  const lines = [...r.left.map((p) => `left ${p}`)];
+  if (layout && !r.left.includes(resolve(layout))) lines.push(`removed ${resolve(layout)}`);
+  for (const m of move) if (!r.left.includes(resolve(m))) lines.push(`moved ${basename(m)}`);
+  return { text: lines.join("\n") };
 }
 
 async function main(argv) {
   const { command, opts } = parseArgs(argv);
   const modsDir = opts.mods ?? defaultModsDir();
+  if (command === "pack-out") return packOut({ modsDir, to: opts.to, layout: opts.layout ?? null, move: opts.move ?? [] });
   const log = (line) => process.stderr.write(`${line}\n`);
   // The hooks notice, last and tagged: install.sh prints the `notice: ` lines at the end of its run.
   const notice = (hooks) => { for (const line of hooksNotice(hooks)) log(`notice: ${line}`); };

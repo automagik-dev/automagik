@@ -78,7 +78,7 @@ export function scan(repo = REPO) {
  * am/ copy shares it), `call` as scan() folds it, `count` how many times each scanned copy holds it.
  */
 export const ALLOWLIST = [
-  ["herdr/mods/am-mods/core.js", "run(io, \"mv\", [path, to])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: moveAside, a package's mods/ folder or layouts/ file moved to automagik-herdr/backup (never deleted). Remove is guarded in main.js removeGuard (layoutGuard, packageLayoutGuard); an update moving aside is not (#431, a new gap); matrix: package update and package remove rows"],
+  ["herdr/mods/am-mods/core.js", "run(io, \"mv\", [path, to])", 1, "am-mods runs inside Herdr through its io and cannot load layoutSafe.mjs: moveAside, a package's mods/ folder or layouts/ file moved to automagik-herdr/backup (never deleted). Remove is guarded in main.js removeGuard (layoutGuard, packageLayoutGuard); an update keeps the shown layout it no longer ships (applyInstall held, #431) and still moves aside the shown layout's mod (#490); matrix: package update and package remove rows"],
   ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [\"-RP\", `${src}/.`, `${dst}/`])", 1, "carryPrivate: a mod's private paths copied into its staged folder (automagik-herdr/staging), never into mods/"],
   ["herdr/mods/am-mods/core.js", "run(io, \"rm\", [\"-rf\", dst])", 1, "carryPrivate: a path inside the staged folder (automagik-herdr/staging) replaced by the person's copy"],
   ["herdr/mods/am-mods/core.js", "run(io, \"cp\", [\"-P\", src, dst])", 1, "carryPrivate: a private file copied into the staged folder (automagik-herdr/staging)"],
