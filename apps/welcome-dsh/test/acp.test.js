@@ -353,9 +353,9 @@ test('the Settings section is always there, and says so when acp-dsh is not runn
   const registered = []
   const ctx = { slots: { inject: (name, register) => { register(); return () => registered.push('disposed') }, register: (options, component) => registered.push([options.id, component]) } }
   const dispose = ui.installAcpSection(ctx)
-  assert.deepEqual(registered, [['acp-agents', ui.AcpSettingsSection]])
+  assert.deepEqual(registered, [['acp-agents', ui.AcpSettingsSection], ['acp-agents', ui.AcpSectionIcon]])
   dispose()
-  assert.equal(registered.at(-1), 'disposed')
+  assert.deepEqual(registered.slice(2), ['disposed', 'disposed'])
   // Without acp-dsh the host's route does not answer (here: no fetch at all), and the page says so.
   const run = runHook(() => ui.AcpSettingsSection())
   try {

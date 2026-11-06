@@ -169,11 +169,34 @@ export function AcpSettingsSection() {
           : h('p', { className: 'oai-muted' }, t('The ACP agents plugin is not running in this DSH.'))))
 }
 
+// The navigation glyph DSH's Settings shows for this section (its settings.section.icon seat):
+// a terminal prompt in a rounded square, in the shell's own 16 px stroke style.
+export function AcpSectionIcon({ size = 16 }) {
+  return h('svg', {
+    width: size,
+    height: size,
+    viewBox: '0 0 16 16',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.4,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+  },
+  h('rect', { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2.5 }),
+  h('path', { d: 'M4.6 6.2 6.8 8l-2.2 1.8M8.3 10.2h3.1' }))
+}
+
 // Settings → Claude Code and Codex, after onboarding too: DSH's settings and the
 // Bot team's both list it. Always there, so an acp-dsh turned on after the page loaded has its
 // page without a reload; without acp-dsh the page says the plugin is not running.
 export function installAcpSection(ctx) {
-  return ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: SETTINGS_SECTION, order: 30, label: () => t('Claude Code and Codex') }, AcpSettingsSection)) ?? (() => {})
+  const section = ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: SETTINGS_SECTION, order: 30, label: () => t('Claude Code and Codex') }, AcpSettingsSection)) ?? (() => {})
+  const icon = ctx.slots.inject('settings.section.icon', () => ctx.slots.register({ name: 'settings.section.icon', id: SETTINGS_SECTION, order: 30 }, AcpSectionIcon)) ?? (() => {})
+  return () => {
+    section()
+    icon()
+  }
 }
 
 export const ACP_CSS = `
