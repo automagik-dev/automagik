@@ -222,4 +222,5 @@ synthetic marker.
   out-of-band request without becoming a prompt of its own.
 - The synthetic assistant block is model-visible only to the review that asks for it; it is
   deliberately removed from the surface afterwards and filtered from replay.
-- `dshTools` remains off unless set. With it off, no bridge exists and none of this runs.
+- `dshTools` defaults on (flipped 2026-11-06); an explicit false is the kill switch. With it
+off, no bridge exists and none of this runs.

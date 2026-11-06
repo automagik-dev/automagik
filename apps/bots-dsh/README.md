@@ -142,7 +142,21 @@ Model providers are set up with dsh's `llm-pi-ai` plugin in `cordis.patch.yml`. 
 
 **Background model**: the jobs that run beside the chats use one model of the team's, never the Bot's agent: memory review and the memory panel, and, for a chat on an agent over ACP (`acp-claude`, `acp-codex`), the steward's call and the part's note and checkpoint. An agent answers only in its own chat, so it cannot take those. Other chats keep their own model for these, so the provider serves their prefix from cache. The model is the team's pick in Settings → Bots → Background jobs (`prefs.backgroundModel`, any model DSH serves that is not an agent), else DSH's default model (DeepSeek, unless the person chose another there) when it can run, else the first account connected here. A memory call that fails on it is tried once more on the Bot's own model, when that one is not an agent. DSH's own session titles and compaction summaries pick their model in DSH's config (`session-title-llm`'s `provider` and `model`, `compaction-basic`'s `summarizationProvider` and `summarizationModel`); those fields are not live settings, so this setting does not reach them.
 
-**Claude on ACP**: Claude Code came back through `@automagik/acp-dsh`. Once per team, a Bot that ran on the retired Claude Code plugin and is still on the pi-ai Claude model it was moved to takes `acp-claude` on the same family (`opus`, `sonnet`, `haiku`), keeping its Session and history. It moves only when the ACP plugin's `dshTools` bridge is on, a live bridge probe on this machine passes (cached per adapter version, retried after ten minutes or the next start), its adapter is installed, and its route lists that model; a Bot the person has changed since, or whose model the route does not list, stays where it is. With `dshTools` off nothing moves, as on 2026-11-03. On an ACP route the Bot's team tools reach it over the same per-session bridge: `post_to_group`, `message_bot` and the rest are offered, and every call asks DSH's approval under the Bot's level before it runs. On **Auto**, the bridge gives auto-review the call: an allowed call runs, a denied one is refused with `AUTO_REVIEW_DENIED`, and a reviewer that cannot decide refuses with `AUTO_REVIEW_FAILED`; the call never runs silently.
+**Claude on ACP**: Claude Code came back through `@automagik/acp-dsh`. Once per team, a Bot that ran
+on the retired Claude Code plugin and is still on the pi-ai Claude model it was moved to takes
+`acp-claude` on the same family (`opus`, `sonnet`, `haiku`), keeping its Session and history. It
+moves only when the ACP plugin's `dshTools` bridge is on (on unless explicitly false), a live bridge
+probe on this machine passes (cached per adapter version, retried after ten minutes or the next
+start), its adapter is installed, and its route lists that model; a Bot the person has changed
+since, or whose model the route does not list, stays where it is. With `dshTools` false nothing
+moves, as on 2026-11-03. The move does not check whether the Claude CLI is signed in: an
+installed-but-signed-out Claude still passes the bridge probe, so the Bots move and their next turn
+fails with Claude Code's own sign-in error until the person signs in; the team flag keeps them
+there. On an ACP route the Bot's team tools reach it over the same per-session bridge:
+`post_to_group`, `message_bot` and the rest are offered, and every call asks DSH's approval under
+the Bot's level before it runs. On **Auto**, the bridge gives auto-review the call: an allowed call
+runs, a denied one is refused with `AUTO_REVIEW_DENIED`, and a reviewer that cannot decide refuses
+with `AUTO_REVIEW_FAILED`; the call never runs silently.
 
 **Fallback**: when a Bot's model fails a request and nothing earlier answers it (DSH's own retries of the same model, or a move to a fresh part for a full or stuck chat), the step runs again on the fallback model: `fallbackModel`, else the team's default model (DeepSeek's, out of the box). The rest of that turn stays there, and a notice in the chat says which model failed and why; the next turn is back on the Bot's own model. A full context, a stop, and a fallback that fails too end the turn as before. It covers every Session of the team: a Bot's chat, a group seat, a task.
 
