@@ -10,6 +10,7 @@ import * as diagnostics from './src/host/diagnostics.js'
 import * as extend from './src/host/extend.js'
 import * as store from './src/host/store.js'
 import * as models from './src/host/models.js'
+import * as acpAdoption from './src/host/acp-adoption.js'
 import * as providers from './src/host/providers.js'
 import * as permissions from './src/host/permissions.js'
 import * as turns from './src/host/turns.js'
@@ -56,7 +57,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // the functions other modules call; they call them through `rt` at run time, never during
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
-const MODULES = [diagnostics, extend, store, models, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, appManifest, pocketChat]
+const MODULES = [diagnostics, extend, store, models, acpAdoption, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, appManifest, pocketChat]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks
 // (src/host/extend.js): Omni's channels and automations (@automagik/omni-channels-dsh),

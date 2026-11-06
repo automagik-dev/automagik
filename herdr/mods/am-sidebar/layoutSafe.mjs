@@ -15,7 +15,7 @@
 // shown layout's own file (#450) and leave what a link reaches (#448).
 
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { layoutGuard, layoutNeeds, packageLayoutGuard } from "./release.js";
 
@@ -23,6 +23,17 @@ const lstat = (path) => { try { return lstatSync(path); } catch { return null; }
 const isLink = (path) => Boolean(lstat(path)?.isSymbolicLink());
 const isDir = (path) => { try { return statSync(path).isDirectory(); } catch { return false; } };
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
+
+/**
+ * rmSync that never follows a link (#550): a link at `path`, live or dangling, is unlinked (never
+ * its target); anything else goes to rmSync(path, options) as before (missing and `force`: nothing;
+ * missing without it: rmSync's own error). On Node 24.0 to 24.9 rmSync returns without an error on
+ * a dangling link and leaves it there; unlinkSync removes it on every version.
+ */
+export function removePath(path, options) {
+  if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) unlinkSync(path);
+  else rmSync(path, options);
+}
 
 /** What a refusal adds after "Switch layouts first": the command, left out while main is shown (it names main). */
 export const switchCommand = (shown) => (typeof shown === "string" && shown.toLowerCase() === "main" ? ""
@@ -346,7 +357,8 @@ export function change(home, ops, options = {}) {
     for (const [from, to] of done.reverse()) renameSync(to, from);
     throw error;
   }
-  for (const at of trash) rmSync(at, { recursive: true, force: true });
+  // A removed mod folder or layout file may be a link, dangling too: unlinked, its target left.
+  for (const at of trash) removePath(at, { recursive: true, force: true });
   decision.done = true;
   return decision;
 }

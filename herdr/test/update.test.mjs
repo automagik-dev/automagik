@@ -655,6 +655,29 @@ test("relinkCli across the rename: a link into the old sidebar folder moves to t
   assert.equal(relinkCli({ modsDir: mods, binDir }), null);
 });
 
+test("relinkCli: a leftover dangling temp link (a killed run, the same pid since) is unlinked, never followed (#550)", (t) => {
+  const { home, mods } = appHome("0.5.0");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const binDir = join(home, "local-bin");
+  mkdirSync(binDir);
+  const link = join(binDir, "automagik-herdr");
+  const bin = join(mods, "am-sidebar", "bin");
+  const wrapper = join(bin, "automagik-herdr"), mjs = join(bin, "automagik-herdr.mjs");
+  mkdirSync(bin);
+  writeFileSync(mjs, "#!/usr/bin/env node\n");
+  writeFileSync(wrapper, "#!/bin/sh\n");
+  symlinkSync(mjs, link);
+  // relinkCli's own temp name, left pointing at nothing. Node 24.0 to 24.9's rmSync returns on a
+  // dangling link and leaves it, so the symlinkSync after it failed with EEXIST.
+  const tmp = join(binDir, `.automagik-herdr.relink-${process.pid}`);
+  const gone = join(home, "gone", "automagik-herdr");
+  symlinkSync(gone, tmp);
+  assert.deepEqual(relinkCli({ modsDir: mods, binDir }), { link, from: mjs, to: wrapper });
+  assert.equal(readlinkSync(link), wrapper);
+  assert.equal(lstatSync(tmp, { throwIfNoEntry: false }), undefined, "the temp link is gone");
+  assert.equal(existsSync(dirname(gone)), false, "nothing was made where the temp link pointed");
+});
+
 test("update --rollback to a pack without the wrapper repoints the link at its .mjs, and back again", async (t) => {
   const { home, mods } = appHome("0.3.2"); // the installed pack: no wrapper
   t.after(() => rmSync(home, { recursive: true, force: true }));

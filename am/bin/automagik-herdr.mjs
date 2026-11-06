@@ -438,32 +438,46 @@ function lockHolder(lock) {
 }
 
 /**
- * Takes `lock`, waiting up to `wait` ms. A wait past LOCK_NOTE_AFTER is said once on stderr,
- * naming `what` (else the lock) and its holder: written with writeSync, as Atomics.wait holds
- * the event loop and an async stderr write would only show once the lock is taken.
+ * One try at `lock` for a waiter (`w`: its token, start, wait, what, noted): true once taken.
+ * A wait past LOCK_NOTE_AFTER is said once on stderr, naming `what` (else the lock) and its
+ * holder: written with writeSync, so a sync waiter's Atomics.wait never holds the line back.
+ * Past the wait it throws, naming `what` beside the lock.
  */
-function takeLock(lock, wait = LOCK_WAIT, what = null) {
-  const token = `${process.pid} ${randomUUID()}`;
-  const start = Date.now();
-  const until = start + wait;
-  let noted = wait <= LOCK_NOTE_AFTER;
-  for (;;) {
-    try { writeFileSync(lock, token, { flag: "wx" }); return token; } catch (e) {
-      if (e?.code !== "EEXIST") throw e;
-      takeOverStale(lock);
-      if (Date.now() > until) {
-        const who = lockHolder(lock);
-        throw new Error(`${lock} is held by another automagik-herdr${who ? ` (${who})` : ""}${noted && wait > LOCK_NOTE_AFTER ? ` after ${Math.round(wait / 1000)} s` : ""}`);
-      }
-      if (!noted && Date.now() - start >= LOCK_NOTE_AFTER) {
-        noted = true;
-        const who = lockHolder(lock) ?? "another automagik-herdr";
-        const line = `automagik-herdr: waiting for ${what ?? lock} (${lock}), held by ${who}; up to ${Math.round(wait / 1000)} s in all.\n`;
-        try { writeSync(2, line); } catch { /* stderr closed */ }
-      }
-      pause(5 + Math.floor(Math.random() * 20));
-    }
+function tryLock(lock, w) {
+  try { writeFileSync(lock, w.token, { flag: "wx" }); return true; } catch (e) {
+    if (e?.code !== "EEXIST") throw e;
   }
+  takeOverStale(lock);
+  if (Date.now() > w.start + w.wait) {
+    const who = lockHolder(lock);
+    throw new Error(`${w.what ? `${w.what} (${lock})` : lock} is held by another automagik-herdr${who ? ` (${who})` : ""}`
+      + `${w.noted && w.wait > LOCK_NOTE_AFTER ? ` after ${Math.round(w.wait / 1000)} s` : ""}`);
+  }
+  if (!w.noted && Date.now() - w.start >= LOCK_NOTE_AFTER) {
+    w.noted = true;
+    const who = lockHolder(lock) ?? "another automagik-herdr";
+    const line = `automagik-herdr: waiting for ${w.what ?? lock} (${lock}), held by ${who}; up to ${Math.round(w.wait / 1000)} s in all.\n`;
+    try { writeSync(2, line); } catch { /* stderr closed */ }
+  }
+  return false;
+}
+const waiter = (wait, what) => ({ token: `${process.pid} ${randomUUID()}`, start: Date.now(), wait, what, noted: wait <= LOCK_NOTE_AFTER });
+const retryIn = () => 5 + Math.floor(Math.random() * 20);
+/** Takes `lock`, waiting up to `wait` ms with Atomics.wait: for sync holders only (withLock). */
+function takeLock(lock, wait = LOCK_WAIT, what = null) {
+  const w = waiter(wait, what);
+  while (!tryLock(lock, w)) pause(retryIn());
+  return w.token;
+}
+/**
+ * takeLock with timers in place of Atomics.wait, so the event loop runs while it waits: a lock
+ * this CLI already holds (a task's name lock while it waits for its worktree's, #552) keeps
+ * being refreshed and never goes stale under a long wait.
+ */
+async function takeLockAsync(lock, wait = LOCK_WAIT, what = null) {
+  const w = waiter(wait, what);
+  while (!tryLock(lock, w)) await new Promise((resolve) => setTimeout(resolve, retryIn()));
+  return w.token;
 }
 function dropLock(lock, token) {
   try { if (readFileSync(lock, "utf8") === token) unlinkSync(lock); } catch { /* gone already */ }
@@ -486,10 +500,11 @@ function keepFresh(lock, token) {
 }
 /**
  * withLock for an async `fn`, the lock kept fresh while fn awaits (keepFresh); waits up to
- * `wait` ms for it, a long wait named as `what` on stderr (takeLock).
+ * `wait` ms for it without holding the event loop (takeLockAsync), a long wait named as
+ * `what` on stderr.
  */
 async function withLockAsync(lock, fn, { wait = LOCK_WAIT, what = null } = {}) {
-  const token = takeLock(lock, wait, what);
+  const token = await takeLockAsync(lock, wait, what);
   const stop = keepFresh(lock, token);
   try { return await fn(); } finally { stop(); dropLock(lock, token); }
 }
@@ -1056,6 +1071,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 every exit but 0: anything but 0 or 3 is a failure. A name is
                                 1-128 of A-Z a-z 0-9 . _ -, not . or .. (hc may refuse more).
                                 Made for mods: their exec has no stdin to speak hc connect with.
+  launch-path <program>         where a launch finds <program> (PATH, ~/.local/bin, this CLI's
+                                node folder) and the PATH its pane gets, as one line of JSON:
+                                {"program": null, "path": null} when none has it. For the
+                                Accounts panel, which runs claude auth status as a launch would.
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -2440,12 +2459,16 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  * How to run helper plan `p` again by hand, as a child of `parent`: the hc run line the restart
  * would have run (its name, folder, labels, the seat's PATH, its command resumed), which runs as
  * pasted into sh, bash or zsh; then comment lines: its session, and for a worker that its ledger
- * row isn't copied by hand. { line, notes }.
+ * row isn't copied by hand, and a claude-logins.json warning when the line is on the default
+ * login because the record can't be followed. { line, notes }.
  */
 function byHand(p, parent) {
+  const loginWarnings = [];
   const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
-    login: claudeLogin(p.argv) });
+    login: claudeLogin(p.argv, loginWarnings) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
+  // A record that can't be followed: the line carries the default login's words, and says so.
+  for (const w of loginWarnings) notes.push(`# ${w}`);
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
 }
@@ -3533,13 +3556,24 @@ async function excludeWorktrees(key) {
 }
 
 /**
- * How long a worker call waits for its worktree's lock (saying so after LOCK_NOTE_AFTER). A
- * call that waited stays under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the
- * worker check's hc gets (WORKER_GET_TIMEOUT, at once) and hc run (15 s). A hold that runs a
- * fetch and git worktree add (60 s each) may outlast it: the waiting call is then refused, with
- * the holder named, and nothing made.
+ * WORKER_LOCK_WAIT from AUTOMAGIK_HERDR_WORKER_WAIT_MS (`raw`), for the tests only: 75 s when
+ * unset or not a number, else clamped to 100 ms..75 s, so it never lengthens a real call's wait.
  */
-const WORKER_LOCK_WAIT = 75_000;
+export function workerWait(raw) {
+  const ms = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(ms) ? Math.min(75_000, Math.max(100, ms)) : 75_000;
+}
+/**
+ * How long a worker call waits for its locks in all (saying so after LOCK_NOTE_AFTER): a task's
+ * name lock, then its worktree's, from one deadline. On the common path a call that waited stays
+ * under a bot shell tool's 120 s limit: 75 s, then hc ls (15 s), the worker check's hc gets
+ * (WORKER_GET_TIMEOUT, at once) and hc run (15 s). That is not a bound: more rows than one batch
+ * of gets, the git calls under the lock (15 s each), a fetch and git worktree add (60 s each)
+ * when the waiter makes the worktree itself, and pidOf and the tab setup after it can each run to
+ * their own timeouts. A hold that outlasts the wait refuses the waiting call, with the holder
+ * named, and nothing made.
+ */
+const WORKER_LOCK_WAIT = workerWait(process.env.AUTOMAGIK_HERDR_WORKER_WAIT_MS);
 /** How long the worker check waits for each `hc get` of a live terminal in the worktree. */
 const WORKER_GET_TIMEOUT = 5000;
 /**
@@ -3549,6 +3583,16 @@ const WORKER_GET_TIMEOUT = 5000;
 export function worktreeLock(lockDir, worktree) {
   const real = nativeDir(worktree) ?? resolvePath(worktree);
   return `${lockDir}/worktree-${createHash("sha256").update(real).digest("hex").slice(0, 16)}.lock`;
+}
+/**
+ * The lock a task's worker takes before its worktree's (#538): one per terminal name
+ * (`<id>-<role>`), in `lockDir`. Two calls for one task on two branches take two worktree
+ * locks, so without it both pass the name check before either hc run, and the second makes its
+ * worktree and hook before hc refuses the name. Always taken first, never while a worktree lock
+ * is held, so the two never wait on each other.
+ */
+export function taskLock(lockDir, name) {
+  return `${lockDir}/task-${createHash("sha256").update(name).digest("hex").slice(0, 16)}.lock`;
 }
 
 /**
@@ -3571,7 +3615,8 @@ async function workersIn(worktree, ls) {
     try {
       return { address: r.address, labels: (await hcLookup(r.address, { timeout: WORKER_GET_TIMEOUT }))?.labels };
     } catch (e) {
-      throw new CliError(`${r.address} is live in ${worktree}, but whether it's a worker can't be told: ${e?.message ?? e}. Not started.`);
+      throw new CliError(`${r.address} is live in ${worktree}, but whether it's a worker can't be told: ${e?.message ?? e}. Not started. `
+        + `Try again, or check it with hc get ${r.address}.`);
     }
   }));
   return found.filter((w) => w.labels?.[WORKER_OF_LABEL]);
@@ -3742,8 +3787,11 @@ async function cmdWorker(opts, rest) {
   let worktree = planned;
   let base = null;
   // Held across a fetch and git worktree add (60 s each) and the hc calls, so a second call on
-  // this worktree waits for the first's start rather than failing; kept fresh while held.
-  const started = await withLockAsync(worktreeLock(lockDir, planned), async () => {
+  // this worktree waits for the first's start rather than failing; kept fresh while held. A
+  // task's worker takes its name's lock first (taskLock), so a second call for the task on
+  // another branch waits too, then is refused by the name check with nothing made (#538).
+  const deadline = Date.now() + WORKER_LOCK_WAIT;
+  const inWorktree = () => withLockAsync(worktreeLock(lockDir, planned), async () => {
     const ls = await hcJson(["ls"]);
     // A task's worker is named exactly <id>-<role>: a live holder of that name is refused, never suffixed.
     // This computer's terminals only (hc names are unique per core), as workersIn sees them.
@@ -3798,7 +3846,10 @@ async function cmdWorker(opts, rest) {
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
     return { address, name };
-  }, { wait: WORKER_LOCK_WAIT, what: `the worker lock on ${place.worktree}` }).catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
+  }, { wait: Math.max(0, deadline - Date.now()), what: `the worker lock on ${place.worktree}` });
+  const started = await (taskName ? withLockAsync(taskLock(lockDir, taskName), inWorktree,
+    { wait: WORKER_LOCK_WAIT, what: `the task name ${taskName}` }) : inWorktree())
+    .catch((e) => { throw e instanceof CliError ? e : new CliError(e?.message ?? String(e)); });
   const terminal = started.address;
   // The ledger row first, as launchSeat writes its rows before anything waits on the window.
   const pid = await pidOf(terminal);
@@ -4062,9 +4113,21 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
   return PRINTED;
 }
 
+/**
+ * `launch-path <program>` (#453): { program, path }: the file a launch of `program` runs
+ * (programPath) and the PATH its pane gets (launchPath), both null when it isn't found. The
+ * Accounts panel runs `claude auth status` from there, so it finds claude the way launches do.
+ */
+export async function cmdLaunchPath(_opts, [program, ...rest]) {
+  if (!program || program.startsWith("-") || rest.length) throw new CliError("launch-path takes one program name.", 2);
+  const file = programPath(program);
+  process.stdout.write(`${JSON.stringify({ program: file, path: file ? launchPath(program).path : null })}\n`);
+  return PRINTED;
+}
+
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
+  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

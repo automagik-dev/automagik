@@ -31,6 +31,7 @@ const { state, finishRun } = await import(stubs.herdr);
 const { installs } = await import(FAKE_SWITCH);
 const { default: Panel, plain, records } = await import("../mods/am-quota/main.js");
 const { all, index, nodes, textOf } = await import(stubs["gpui-kit"]);
+const { AUTH_SCRIPT, FOLDER_SCRIPT, PRESENT_SCRIPT } = await import("../mods/am-quota/logins.js");
 
 const NOW = Date.now();
 const H = 3600000;
@@ -73,7 +74,39 @@ function makeCx() {
 const ACTIVE = `${state.appHome}/data/am-quota/active.json`;
 const RUNNER = `${state.appHome}/mods/am-sidebar/bin/run.sh`;
 
-async function panel({ config = { url: BASE, name: "lab" }, key = "example-key", active = { codex: { name: "codex-0a-ana-pro.json" } }, sidebar = true } = {}) {
+const LOGINS = `${state.appHome}/claude-logins.json`;
+const TWO = `${state.home}/.claude-2`;
+const DEFAULT_DIR = `${state.home}/.claude`;
+/** `claude auth status`'s canned answer for a login signed in as `email` (#453): never a real claude. */
+const signedIn = (email, configDirectory, extra = {}) => ({ code: 0, stdout: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email, configDirectory, ...extra }), stderr: "" });
+/** Where the CLI says a launch finds claude (`launch-path claude`): a stand-in, never run. */
+const WHERE = { program: "/stub-bin/claude", path: "/stub-bin:/usr/bin:/bin" };
+/**
+ * state.exec for the Claude logins (#453): the CLI's `launch-path claude` (`where`), each
+ * login's folder check (`folders[dir]`, else ok), its `claude auth status` (`status.default` or
+ * `status[dir]`, else signed out; a function is called, so a test can hold or never answer) and
+ * Herdr's credential variables (`vars`, names only); any other command goes to `rest`.
+ */
+function claudeExec({ status = {}, folders = {}, vars = [], where = WHERE } = {}, rest = () => ({ code: 0, stdout: "", stderr: "" })) {
+  return (command, args, options) => {
+    if (command === "env" && args.includes("launch-path")) return { code: 0, stdout: JSON.stringify(where), stderr: "" };
+    if (command === "sh" && args[1] === FOLDER_SCRIPT) return { code: 0, stdout: folders[args[3]] ?? "ok\n", stderr: "" };
+    const auth = command === "/usr/bin/env" && args.at(-1) === "status" && args.at(-2) === "auth";
+    if (auth || (command === "sh" && args[1] === AUTH_SCRIPT)) {
+      const words = auth ? args : args.slice(3);
+      const key = words[0] === "-u" ? "default" : words.find((w) => w.startsWith("CLAUDE_CONFIG_DIR=")).slice("CLAUDE_CONFIG_DIR=".length);
+      const answer = status[key] ?? { code: 1, stdout: '{"loggedIn":false}', stderr: "" };
+      return typeof answer === "function" ? answer() : answer;
+    }
+    if (command === "sh" && args[1] === PRESENT_SCRIPT) return { code: 0, stdout: vars.map((v) => `${v}\n`).join(""), stderr: "" };
+    return rest(command, args, options);
+  };
+}
+/** Two logins signed in: the default as cy (on the proxy), login 2 as dee (not on it). */
+const TWO_IN = { status: { default: signedIn("cy@example.com", DEFAULT_DIR), [TWO]: signedIn("dee@example.com", TWO) } };
+
+async function panel({ config = { url: BASE, name: "lab" }, key = "example-key", active = { codex: { name: "codex-0a-ana-pro.json" } }, sidebar = true,
+  claude = null, record = undefined, settle = true } = {}) {
   state.files = new Map();
   state.calls = [];
   state.runs = [];
@@ -84,11 +117,14 @@ async function panel({ config = { url: BASE, name: "lab" }, key = "example-key",
   if (key) state.files.set(`${state.home}/.config/cliproxyapi/mgmt.key`, `${key}\n`);
   if (active) state.files.set(ACTIVE, JSON.stringify(active));
   if (sidebar) state.files.set(RUNNER, "#!/bin/sh\n");
+  if (record !== undefined) state.files.set(LOGINS, typeof record === "string" ? record : JSON.stringify(record));
+  if (claude) state.exec = claudeExec(claude);
   const asked = fakeFetch();
   const cx = makeCx();
   const view = new Panel();
   poll = 0;
   view.init({}, cx);
+  if (!settle) return { view, cx, asked, draw: () => index(view.render()) };
   await cx.settle();
   poll = 1;
   view.reload(cx);
@@ -102,8 +138,7 @@ test("the tool switch shows one tool at a time; Codex lists its accounts by emai
   const { view, cx, draw } = await panel();
   let root = draw();
   assert.ok(nodes.has("tool-claude") && nodes.has("tool-codex"));
-  assert.match(text(root), /No switch for now/, "Claude first: no switch until it lists the logins on this Mac (#453)");
-  assert.match(text(root), /Not managed/);
+  assert.match(text(root), /Claude Code logins on this Mac/, "Claude first: the logins signed in here (#453)");
   assert.ok(!text(root).includes("ana@example.com"), "no Codex account on the Claude card");
   nodes.get("tool-codex").click(null, cx);
   root = draw();
@@ -124,18 +159,22 @@ test("no saved-login UI: no name box, no Restore, no footer notes about saved lo
 
 test("the footer names the proxy and opens its URL; with no name, the host", async () => {
   let p = await panel();
+  assert.match(text(p.draw()), /Claude logins are the ones signed in on this Mac; usage comes from your CLIProxyAPI, lab\./);
+  p.view.tool = "codex";
   let root = p.draw();
   assert.match(text(root), /Accounts come from your CLIProxyAPI, lab\. To add one, sign in to it there\./);
   state.calls = [];
   nodes.get("am-open-proxy").click(null, p.cx);
   assert.deepEqual(state.calls, [["xdg-open", BASE]]);
   p = await panel({ config: { url: `${BASE}/` } });
+  p.view.tool = "codex";
   root = p.draw();
   assert.match(text(root), /CLIProxyAPI, proxy\.example\.com\./);
 });
 
 test("no cliproxy.json: a setup line, the generic name, no Open button and no request", async () => {
-  const { draw, asked } = await panel({ config: null });
+  const { view, draw, asked } = await panel({ config: null });
+  view.tool = "codex";
   const root = draw();
   assert.match(text(root), /your own CLIProxyAPI/);
   assert.match(text(root), /Accounts come from your CLIProxyAPI\. To add one/);
@@ -879,16 +918,15 @@ test("colours: suggestions are never red; running out is amber", async () => {
   assert.equal(colours.includes("t.blocked"), false, "no red without an error");
 });
 
-test("Claude (#453): no Use or Switch; an old claude record is ignored, never checked in the Keychain, dropped at the next write", async () => {
+test("Claude (#453): no proxy install; an old claude record is ignored, never checked in the Keychain, dropped at the next write", async () => {
   state.platform = "macos";
   try {
     const { view, cx, draw, asked } = await panel({ active: { codex: { name: "codex-0a-ana-pro.json" }, claude: { name: "claude-0c-cy.json", fingerprint: "fp" } } });
     const root = draw();
     assert.equal(view.tool, "claude");
-    assert.match(text(root), /No switch for now/);
-    assert.match(text(root), /cy@example\.com/, "the proxy's Claude account is listed, for its usage");
+    assert.match(text(root), /On your CLIProxyAPI, not signed in here \(lab\)\s+cy@example\.com/, "the proxy's Claude account: listed, never installable");
     assert.equal(nodes.has("primary-claude"), false, "no Use");
-    assert.equal(all(root).some((n) => /^use-/.test(n.props?.id ?? "")), false, "no row button");
+    assert.equal(all(root).some((n) => /^(use|login-use)-/.test(n.props?.id ?? "")), false, "no row button");
     assert.doesNotMatch(text(root), /\bUse\b|Switch to/);
     const before = installs.length;
     view.use("claude", { id: "claude-0c-cy.json", name: "claude-0c-cy.json", provider: "claude", email: "cy@example.com" }, cx);
@@ -934,4 +972,288 @@ test("no switch while bots restart; a switch's busy line names the account by em
   await cx.settle();
   assert.equal(line, "switching Codex to bo@example.com · Pro…");
   assert.equal(installs.length, busyAt + 1);
+});
+
+// ---- Claude logins on this Mac (#453, docs/local-logins.md sections 2 to 7) ----
+
+const buttons = (root) => all(root).filter((n) => n.click).map((n) => n.id);
+const ranNoCredential = (asked) => {
+  const ran = state.calls.map((c) => c.join(" ")).join("\n");
+  assert.doesNotMatch(ran, /security|find-generic-password|Claude Code-credentials|\.credentials\.json|auth login|auth logout/, "no Keychain, credential, login or logout");
+  assert.ok(!asked.some((u) => u.includes("/download")), "no credential download");
+};
+
+test("Claude (#453): the logins signed in here, by email, quota matched by email; Use only on another signed-in login", async () => {
+  const { draw, asked } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }] }, claude: TWO_IN });
+  const root = draw();
+  const shown = text(root);
+  assert.match(shown, /cy@example\.com · the default login In use/, "the headline: the login new launches get");
+  assert.match(shown, /41% used of this week/, "its bar from the proxy account with its email");
+  assert.match(shown, /dee@example\.com · login 2 Use Remove usage not tracked/, "a login the proxy doesn't list");
+  assert.match(shown, /The first launch under login 2 needs one answer in its pane\./);
+  assert.ok(nodes.has("login-use-2") && !nodes.has("login-use-default"), "Use on the other login only");
+  assert.equal(nodes.has("login-remove-default"), false, "login A is never removed");
+  assert.doesNotMatch(shown, /not signed in here/, "every proxy account is signed in here");
+  const runs = state.calls.filter((c) => c[0] === "/usr/bin/env" && c.at(-1) === "status").map((c) => c.slice(1).join(" "));
+  assert.deepEqual(runs.sort(), [`-u CLAUDE_CONFIG_DIR PATH=${WHERE.path} ${WHERE.program} auth status`,
+    `PATH=${WHERE.path} CLAUDE_CONFIG_DIR=${TWO} ${WHERE.program} auth status`], "claude where launches find it, in each login's own words, looked at once on open");
+  ranNoCredential(asked);
+});
+
+test("Claude (#453): a proxy account with no login here is listed with no button; a signed-out login reads Sign in again, with the command", async () => {
+  const { draw } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }] },
+    claude: { status: { default: signedIn("eve@example.com", DEFAULT_DIR) } } });
+  const root = draw();
+  const shown = text(root);
+  assert.match(shown, /On your CLIProxyAPI, not signed in here \(lab\) cy@example\.com/);
+  const here = all(root).find((n) => /^not-here-/.test(n.id ?? ""));
+  assert.equal(all({ __node: here }).some((n) => n.click), false, "never a button: a proxy account is never installed");
+  assert.match(shown, /login 2 Remove usage not tracked Not signed in\. Sign in again from a terminal, then press ↻: CLAUDE_CONFIG_DIR="\$HOME\/\.claude-2" claude auth login/);
+  assert.equal(nodes.has("login-use-2"), false, "no Use on a login that isn't signed in");
+  assert.match(shown, /usage not tracked/, "the default login's account isn't on the proxy");
+  assert.equal(state.calls.some((c) => c.join(" ").includes("auth login")), false, "the command is shown, never run");
+});
+
+test("Claude Use (#453): one write of use with the snapshot it replaces; then the bots on another login by value, and Restart N bots", async () => {
+  const record = { use: "default", logins: [{ id: "2", dir: TWO }] };
+  const { view, cx, draw, asked } = await panel({ record, claude: TWO_IN });
+  const before = state.files.get(LOGINS);
+  const bots = { projects: [{ project: "/work/a", bots: [
+    { id: "on-a", name: "OnA", agent: "claude", project: "/work/a", terminal: "t1", status: "idle" },
+    { id: "on-2", name: "OnTwo", agent: "claude", project: "/work/a", terminal: "t2", status: "idle" },
+    { id: "old", name: "Old", agent: "claude", project: "/work/a", terminal: "t3", status: "idle" },
+    { id: "odd", name: "Odd", agent: "claude", project: "/work/a", terminal: "t4", status: "idle" },
+    { id: "cx", name: "Cx", agent: "codex", project: "/work/a", terminal: "t5", status: "idle" },
+  ] }] };
+  const argv = { t1: ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "PATH=/b", "claude"], t2: ["/usr/bin/env", "PATH=/b", `CLAUDE_CONFIG_DIR=${TWO}`, "claude"],
+    t3: ["/usr/bin/env", "PATH=/b", "claude"], t4: ["/usr/bin/env", "PATH=/b", "CLAUDE_CONFIG_DIR=/elsewhere", "claude"] };
+  state.exec = claudeExec(TWO_IN, (command, args) => {
+    if (command === "env" && args.includes("ls")) return { code: 0, stdout: JSON.stringify(bots), stderr: "" };
+    if (command === "env" && args.includes("restart")) return { code: 0, stdout: "{}", stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
+  });
+  state.hc = (args) => (args[0] === "get" ? { code: 0, stdout: JSON.stringify({ address: args[1], state: "live", argv: argv[args[1]] }), stderr: "" } : { code: 0, stdout: "[]", stderr: "" });
+  draw();
+  const writes = [];
+  const realWrite = state.files.set.bind(state.files);
+  state.files.set = (k, v) => { if (k === LOGINS) writes.push(v); return realWrite(k, v); };
+  try {
+    nodes.get("login-use-2").click(null, cx);
+    await cx.settle();
+  } finally {
+    delete state.files.set;
+  }
+  assert.equal(writes.length, 1, "one write");
+  assert.deepEqual(JSON.parse(writes[0]), { ...record, use: "2" }, "only use changed");
+  assert.notEqual(before, writes[0]);
+  let root = draw();
+  const shown = text(root);
+  assert.match(shown, /New Claude Code launches use dee@example\.com · login 2/);
+  assert.match(shown, /These 3 run on another login, by how they were launched:/);
+  assert.match(shown, /OnA · the default login/);
+  assert.match(shown, /Old · started before logins were tracked/);
+  assert.match(shown, /Odd · an unknown login \(\/elsewhere\)/);
+  assert.doesNotMatch(shown, /OnTwo|Cx/, "on login 2 already, or not Claude");
+  assert.match(shown, /dee@example\.com · login 2 In use/, "the pill follows the record");
+  state.calls = [];
+  nodes.get("restart-claude").click(null, cx);
+  nodes.get("restart-claude").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(state.calls.filter((c) => c[0] === "env").map((c) => c[c.indexOf("restart") + 1]), ["on-a", "old", "odd"]);
+  root = draw();
+  assert.match(text(root), /Restarted 3: every Claude Code bot is on the new login/);
+  ranNoCredential(asked);
+  void view;
+});
+
+test("Claude Use (#453): a record changed since the panel read it is never overwritten, and nothing is switched", async () => {
+  const { cx, draw } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }] }, claude: TWO_IN });
+  draw();
+  const edited = JSON.stringify({ use: "default", logins: [{ id: "2", dir: TWO }, { id: "3", dir: `${state.home}/.claude-3` }] });
+  state.files.set(LOGINS, edited);
+  nodes.get("login-use-2").click(null, cx);
+  await cx.settle();
+  assert.equal(state.files.get(LOGINS), edited, "the edit made since stays");
+  assert.match(text(draw()), /New Claude launches were not switched: claude-logins\.json changed since the panel read it/);
+});
+
+test("Claude (#453): a bad record shows one red line naming the problem, and no Use, Add or Remove until it is fixed", async () => {
+  // Login 2 itself is fine in the first two: only the record stops Use.
+  for (const [record, said, folder] of [["{ not json", "is not valid JSON"], [{ use: "7", logins: [{ id: "2", dir: TWO }] }, "use names 7 that it doesn't list"],
+    [{ use: "2", logins: [{ id: "2", dir: TWO }] }, `login 2's folder ${TWO} does not exist`, "missing\n"]]) {
+    const { view, cx, draw } = await panel({ record, claude: { ...TWO_IN, folders: folder ? { [TWO]: folder } : {} } });
+    if (!folder) assert.match(text(draw()), /dee@example\.com · login 2|cy@example\.com/, "login 2 signed in, its folder fine");
+    const root = draw();
+    const red = nodes.get("logins-problem");
+    assert.equal(textOf({ __node: red }), `claude-logins.json ${said}: new Claude launches start on the default login until it is fixed`);
+    assert.equal(red.props.color, "t.blocked");
+    assert.deepEqual(buttons(root).filter((id) => /^(login-|primary-claude)/.test(id)), [], `no switch: ${said}`);
+    const text0 = state.files.get(LOGINS);
+    view.useLogin("2", cx);
+    view.useLogin("default", cx);
+    view.addLogin(cx);
+    await cx.settle();
+    assert.equal(state.files.get(LOGINS), text0, "nothing written");
+    assert.match(text(root), /cy@example\.com · the default login In use/, "launches are on login A meanwhile");
+  }
+});
+
+test("Claude overrides (#453 section 5): settings moving the folder, a credential method, Herdr's variables, a linked file turned real", async () => {
+  const { draw } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }, { id: "3", dir: `${state.home}/.claude-3` }, { id: "4", dir: `${state.home}/.claude-4` }] },
+    claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR, { authMethod: "api_key" }), [TWO]: signedIn("dee@example.com", "/moved"),
+      [`${state.home}/.claude-4`]: signedIn("gus@example.com", `${state.home}/.claude-4`, { authMethod: "oauth_token" }),
+      [`${state.home}/.claude-3`]: signedIn("fay@example.com", `${state.home}/.claude-3`) },
+    folders: { [`${state.home}/.claude-3`]: "unlinked settings.json\nok\n" }, vars: ["ANTHROPIC_API_KEY"] } });
+  const root = draw();
+  const shown = text(root);
+  assert.match(shown, /an API key outranks this sign-in/);
+  assert.match(shown, /cy@example\.com · the default login In use not this sign-in's/, "its quota is not this sign-in's");
+  assert.match(shown, /settings move login 2 to another folder: switching can't choose it/);
+  assert.equal(nodes.has("login-use-2"), false, "no Use on a moved folder");
+  assert.match(shown, /settings\.json in login 3 is no longer shared/);
+  assert.match(shown, /gus@example\.com · login 4 Remove not this sign-in's a token variable outranks this sign-in/);
+  assert.equal(nodes.has("login-use-4"), false, "an outranked sign-in on another login gets no Use");
+  assert.ok(nodes.has("login-use-3"), "a file no longer shared is said, not a reason to refuse");
+  assert.match(shown, /ANTHROPIC_API_KEY is set in Herdr's environment/);
+  assert.doesNotMatch(JSON.stringify(state.calls), /sk-|printenv -- "\$n"\)/, "presence only: no value is read");
+  const colour = (re) => all(root).find((n) => typeof n.kids[0] === "string" && re.test(n.kids[0]))?.props.color;
+  assert.equal(colour(/settings move login 2/), "t.blocked");
+  assert.equal(colour(/an API key outranks/), "t.working");
+});
+
+test("Claude Add login (#453 section 7): the next slot, recorded only once its folder passes and it is signed in", async () => {
+  const { cx, draw } = await panel({ claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR) }, folders: { [TWO]: "missing\n" } } });
+  let shown = text(draw());
+  assert.match(shown, /To add login 2: make "\$HOME\/\.claude-2" and its links .* CLAUDE_CONFIG_DIR="\$HOME\/\.claude-2" claude auth login Add login 2/);
+  nodes.get("login-add-button").click(null, cx);
+  await cx.settle();
+  assert.equal(state.files.has(LOGINS), false, "a missing folder records nothing");
+  assert.match(text(draw()), /login 2 wasn't added: its folder .* does not exist: make it first/);
+  state.exec = claudeExec({ status: { default: signedIn("cy@example.com", DEFAULT_DIR) } });
+  nodes.get("login-add-button").click(null, cx);
+  await cx.settle();
+  assert.equal(state.files.has(LOGINS), false, "not signed in: nothing");
+  assert.match(text(draw()), /doesn't say signed in: sign in first/);
+  state.exec = claudeExec(TWO_IN);
+  nodes.get("login-add-button").click(null, cx);
+  await cx.settle();
+  assert.deepEqual(JSON.parse(state.files.get(LOGINS)), { use: "default", logins: [{ id: "2", dir: TWO }] }, "use unchanged");
+  shown = text(draw());
+  assert.match(shown, /login 2 added: dee@example\.com\. Press Use on it/);
+  assert.match(shown, /dee@example\.com · login 2 Use/);
+  assert.match(shown, /Add login 3/);
+});
+
+test("Claude Remove login (#453 section 7): never the one in use; refused while signed in or while a pane runs on it by value", async () => {
+  const record = { use: "default", logins: [{ id: "2", dir: TWO }] };
+  const { cx, draw } = await panel({ record, claude: TWO_IN });
+  const press = async () => {
+    draw();
+    nodes.get("login-remove-2").click(null, cx);
+    draw();
+    nodes.get("login-remove-2").click(null, cx);
+    await cx.settle();
+    return text(draw());
+  };
+  assert.match(await press(), /login 2 wasn't removed: it is still signed in: first, in a terminal, run CLAUDE_CONFIG_DIR="\$HOME\/\.claude-2" claude auth logout/);
+  state.exec = claudeExec({ status: { default: signedIn("cy@example.com", DEFAULT_DIR) } });
+  draw();
+  nodes.get("am-refresh").click(null, cx);
+  await cx.settle();
+  state.hc = (args) => (args[0] === "ls" ? { code: 0, stdout: JSON.stringify([{ address: "t6", name: "w-6", state: "live" }, { address: "t7", state: "live" }]), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ argv: args[1] === "t6" ? ["/usr/bin/env", `CLAUDE_CONFIG_DIR=${TWO}`, "sh", "-c", "claude"] : ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "claude"] }), stderr: "" });
+  assert.match(await press(), /login 2 wasn't removed: w-6 still runs on it: restart or stop it first/);
+  assert.deepEqual(JSON.parse(state.files.get(LOGINS)), record);
+  state.hc = (args) => (args[0] === "ls" ? { code: 0, stdout: JSON.stringify([{ address: "t7", state: "live" }]), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ argv: ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "claude"] }), stderr: "" });
+  assert.match(await press(), /login 2 removed from the panel\. Its folder stays/);
+  assert.deepEqual(JSON.parse(state.files.get(LOGINS)), { use: "default", logins: [] });
+  // The login in use offers no Remove.
+  const inUse = await panel({ record: { use: "2", logins: [{ id: "2", dir: TWO }] }, claude: TWO_IN });
+  inUse.draw();
+  assert.equal(nodes.has("login-remove-2"), false);
+  assert.ok(nodes.has("login-use-default"), "the default login gets Use");
+  state.hc = () => ({ code: 0, stdout: "{}", stderr: "" });
+});
+
+test("Claude Remove (#453 review M1): asked again at the press; a crash, unreadable output or no answer refuses, saying the panel can't tell", async () => {
+  const record = { use: "default", logins: [{ id: "2", dir: TWO }] };
+  for (const [answer, said] of [[{ code: 1, stdout: "", stderr: "node crashed" }, /claude auth status gave no answer the panel can read/],
+    [{ code: 0, stdout: "Signed in as someone", stderr: "" }, /gave no answer the panel can read/],
+    [() => new Promise(() => {}), /didn't answer in 0\.05 s/]]) {
+    Panel.prototype.probeMs = 50;
+    try {
+      // Signed out when the panel last looked: only the press's own answer decides.
+      const { cx, draw } = await panel({ record, claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR) } } });
+      state.exec = claudeExec({ status: { default: signedIn("cy@example.com", DEFAULT_DIR), [TWO]: answer } });
+      state.hc = () => ({ code: 0, stdout: "[]", stderr: "" });
+      draw();
+      nodes.get("login-remove-2").click(null, cx);
+      draw();
+      nodes.get("login-remove-2").click(null, cx);
+      await cx.settle();
+      assert.match(text(draw()), new RegExp(`login 2 wasn't removed: the panel can't tell whether login 2 is signed out \\(.*${said.source}`));
+      assert.deepEqual(JSON.parse(state.files.get(LOGINS)), record, "the record keeps login 2");
+    } finally {
+      delete Panel.prototype.probeMs;
+      state.hc = () => ({ code: 0, stdout: "{}", stderr: "" });
+    }
+  }
+});
+
+test("Claude Remove (#453 review L5): a pane on the folder by another spelling, or on an unmatched folder under home, refuses", async () => {
+  const record = { use: "default", logins: [{ id: "2", dir: TWO }] };
+  const { cx, draw } = await panel({ record, claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR) } } });
+  const press = async () => {
+    draw();
+    nodes.get("login-remove-2").click(null, cx);
+    draw();
+    nodes.get("login-remove-2").click(null, cx);
+    await cx.settle();
+    return text(draw());
+  };
+  const panes = (argv) => (args) => (args[0] === "ls" ? { code: 0, stdout: JSON.stringify([{ address: "t6", name: "w-6", state: "live" }]), stderr: "" }
+    : { code: 0, stdout: JSON.stringify({ argv }), stderr: "" });
+  try {
+    state.hc = panes(["/usr/bin/env", `CLAUDE_CONFIG_DIR=${TWO}/`, "claude"]);
+    assert.match(await press(), /w-6 still runs on it/);
+    state.hc = panes(["/usr/bin/env", `CLAUDE_CONFIG_DIR=${state.home}/.claude-2-alias`, "claude"]);
+    assert.match(await press(), /w-6 runs on a login folder the panel can't match to a login/);
+    state.hc = panes(["/usr/bin/env", "CLAUDE_CONFIG_DIR=/elsewhere/x", "claude"]);
+    assert.match(await press(), /login 2 removed from the panel/, "a folder outside home is not this login");
+  } finally {
+    state.hc = () => ({ code: 0, stdout: "{}", stderr: "" });
+  }
+});
+
+test("Claude logins (#453 review M2): a check that never answers lands as didn't answer; a round asked for meanwhile waits, never runs beside it", async () => {
+  Panel.prototype.probeMs = 40;
+  try {
+    const { draw } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }] },
+      claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR), [TWO]: () => new Promise(() => {}) } } });
+    const shown = text(draw());
+    assert.doesNotMatch(shown, /Reading the logins/);
+    assert.match(shown, /login 2 Remove usage not tracked claude auth status didn't answer in time/);
+    assert.equal(nodes.has("login-use-2"), false);
+  } finally {
+    delete Panel.prototype.probeMs;
+  }
+  // A round held open: reloads meanwhile start no claude beside it; one more round follows it.
+  let release;
+  const held = new Promise((go) => { release = go; });
+  const { view, cx, draw } = await panel({ record: { use: "default", logins: [{ id: "2", dir: TWO }] }, settle: false,
+    claude: { status: { default: signedIn("cy@example.com", DEFAULT_DIR), [TWO]: () => held.then(() => signedIn("dee@example.com", TWO)) } } });
+  const asks = () => state.calls.filter((c) => c[0] === "/usr/bin/env" && c.at(-1) === "status").length;
+  for (let i = 0; i < 20 && asks() < 2; i += 1) await new Promise((go) => setTimeout(go, 1));
+  assert.equal(asks(), 2, "the first round: both logins, side by side");
+  view.forceLogins = true;
+  view.reload(cx);
+  view.forceLogins = true;
+  view.reload(cx);
+  await new Promise((go) => setTimeout(go, 5));
+  assert.equal(asks(), 2, "no round beside the one running");
+  release();
+  await cx.settle();
+  assert.equal(asks(), 4, "one queued round after it, not two");
+  assert.match(text(draw()), /dee@example\.com · login 2 Use/);
 });

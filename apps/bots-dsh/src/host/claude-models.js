@@ -65,6 +65,24 @@ export function piAiClaudeOf(ref) {
   return `${PI_AI_CLAUDE}/${closestClaude(ref.slice(slash + 1))}`
 }
 
+/**
+ * The Claude family (`opus`, `sonnet`, `haiku`, `fable`) a claude-code* ref names, for the
+ * ACP move that picks the same family's alias (`acp-claude/opus`). Undefined for any other
+ * ref, and for a Claude Code id this table cannot read: unlike `closestClaude`, this never
+ * guesses Opus.
+ */
+export function claudeFamilyOf(ref) {
+  if (typeof ref !== 'string') return undefined
+  const slash = ref.indexOf('/')
+  if (slash <= 0 || !isClaudeCode(ref.slice(0, slash))) return undefined
+  const id = ref.slice(slash + 1).trim().toLowerCase()
+  const alias = ALIAS.exec(id)
+  if (alias) return alias[1]
+  const versioned = VERSIONED.exec(id)
+  if (versioned && Object.hasOwn(PI_AI_CLAUDE_MODELS, versioned[1])) return versioned[1]
+  return Object.keys(PI_AI_CLAUDE_MODELS).find(family => id.includes(family))
+}
+
 // The Claude models a menu offers on `anthropic`: each family's newest, by the same reading
 // as closestClaude. pi-ai serves its whole Claude catalog there (17 models in pi-ai 1.4.0:
 // every 4.5 to 5.5 version, dated snapshots, "(latest)" aliases), so the rest is marked
