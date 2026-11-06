@@ -391,6 +391,13 @@ test('over the socket: list and subscribe read; every other method is answered r
 
 // ---- the socket's start and stop (#548)
 
+/**
+ * Which file is at a path: the same tuple the stale check compares. An inode alone proves
+ * nothing, since Linux hands a freed one to the next file at once (#301).
+ */
+const identityOf = s => ({ dev: s.dev, ino: s.ino, ctimeMs: s.ctimeMs, birthtimeMs: s.birthtimeMs })
+const identity = path => identityOf(lstatSync(path))
+
 test('start refuses something that is not a socket at the path, and keeps it', async (t) => {
   const s = scope(t)
   mkdirSync(join(s.home, 'pocket'), { mode: 0o700 })
@@ -402,9 +409,9 @@ test('start refuses something that is not a socket at the path, and keeps it', a
 test('start refuses while another host serves the team, and leaves that host serving', async (t) => {
   const s = scope(t)
   const first = await s.start()
-  const before = lstatSync(first.path).ino
+  const before = identity(first.path)
   await assert.rejects(s.start(), /another host already serves/)
-  assert.equal(lstatSync(first.path).ino, before, 'the live socket is kept')
+  assert.deepEqual(identity(first.path), before, 'the live socket is kept')
   assert.equal((await s.hello()).readOnly, true)
 })
 
@@ -413,8 +420,9 @@ test('start removes a dead host\'s stale socket and serves in its place', async 
   const stale = await s.staleSocket()
   assert.ok(stale.isSocket())
   const server = await s.start()
-  assert.notEqual(lstatSync(server.path).ino, stale.ino)
+  assert.notDeepEqual(identity(server.path), identityOf(stale), 'another file than the stale one')
   assert.equal(statSync(server.path).mode & 0o777, 0o600)
+  // The stale host is dead, so an answer can only come from the new one.
   assert.equal((await s.hello()).readOnly, true)
   await server.close()
   assert.equal(existsSync(server.path), false, 'a clean stop leaves no socket')
@@ -465,7 +473,7 @@ for (const field of ['ctimeMs', 'birthtimeMs']) {
     const s = scope(t)
     const stale = await s.staleSocket()
     await assert.rejects(s.start({ lstat: remade(field) }), /another host already serves/)
-    assert.equal(lstatSync(s.path).ino, stale.ino, 'the file is kept')
+    assert.deepEqual(identity(s.path), identityOf(stale), 'the file is kept')
   })
 }
 
@@ -476,7 +484,7 @@ test('a bind that loses the race (EADDRINUSE) is refused like a live host', asyn
   // the bind meets the file still there.
   const gone = () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }) }
   await assert.rejects(s.start({ lstat: gone }), { message: 'another host already serves this team to Pocket' })
-  assert.equal(lstatSync(s.path).ino, stale.ino)
+  assert.deepEqual(identity(s.path), identityOf(stale), 'the file is kept')
 })
 
 test('a stop and a start at once: the stop finishes first and the new host keeps its socket', async (t) => {
