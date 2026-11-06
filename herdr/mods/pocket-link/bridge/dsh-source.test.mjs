@@ -331,6 +331,22 @@ test('a folder above the socket that another account owns or could write fails c
     const viaLink = join(link, 'pocket', 'chat.sock')
     assert.equal(ownerOnly(viaLink), true)
     assert.equal(ownerOnly(viaLink, uid, { lstat: ownedBy({ [link]: uid + 1 }) }), false)
+    // A link that leads into a folder anyone can write: fine as written, refused on the real path.
+    const open = join(c.root, 'open')
+    const inner = join(open, 'team')
+    mkdirSync(open)
+    chmodSync(open, 0o777)
+    const deep = await fakeSocket({ at: inner })
+    const intoOpen = join(c.root, 'into-open')
+    symlinkSync(inner, intoOpen)
+    try {
+      assert.equal(ownerOnly(join(intoOpen, 'pocket', 'chat.sock')), false)
+      assert.equal(ownerOnly(join(intoOpen, 'pocket', 'chat.sock'), uid, { platform: 'linux', gid: lstatSync(open).gid }), false, 'even in our own group')
+      assert.deepEqual(await new DshSource({ path: join(intoOpen, 'pocket', 'chat.sock') }).list(), [])
+      assert.deepEqual(deep.requests, [])
+    } finally {
+      await deep.close()
+    }
     assert.deepEqual(sock.requests, [])
   } finally {
     await sock.close()
