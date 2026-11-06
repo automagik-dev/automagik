@@ -35,8 +35,8 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
-import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
-  sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, paneCommand, planText as restartText,
+  restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
@@ -984,10 +984,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
   restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force] [--cwd DIR]
                                 the bot's agent again in its pane's place (same space and tab,
-                                same folder, labels kept, and the old pane's own command: its
-                                template, model and effort flags): the new pane starts, and the
-                                old one ends only once the new one's agent has stayed up (prints
-                                the new terminal). It resumes the conversation in that folder
+                                same folder, labels kept), launched from the bot's current
+                                definition (its agent and model, plus the agent's own resume
+                                words), never from the old pane's command: a pane flag the
+                                definition no longer names is dropped, with one line naming
+                                the difference. The new pane starts, and the old one ends only
+                                once the new one's agent has stayed up (prints the new
+                                terminal). It resumes the conversation in that folder
                                 by the pane's session id (its agent.session label, or the
                                 ledger's row): claude --resume <session>, codex resume
                                 <session>, omp --resume=<session>, pi --session <session>,
@@ -1971,6 +1974,8 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (!run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
   // The old pane's agent.session label, as restartPlan reads it for the agent.
   const label = old?.labels?.[SESSION_LABEL] ?? null;
+  // The old pane's launch, only to say when it differs from what the source launches now (#597).
+  const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
@@ -2002,6 +2007,12 @@ async function restartOnMachine(opts, project, bot, entry) {
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...seat.warnings];
+  // #597: the replacement is built from bots.json, never the pane's command; when the pane's
+  // own words no longer match the source, one line says so before the old pane ends.
+  if (oldLaunch && !entry && (planned.runningAgent === null || planned.runningAgent === plan.agent)) {
+    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source });
+    if (changed) warnings.push(changed);
+  }
   report(warnings);
   if (old) {
     let up = await agentUp(seat.address);
@@ -2764,11 +2775,12 @@ async function cmdRestart(opts, [ref]) {
     return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
+  // The old pane's launch, only to say when it differs from what the source launches now (#597).
+  const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
-    launch: old ? paneCommand(old) : null, runningModel: old && runningAgent ? detectModel(old.foreground?.argv, runningAgent) : null,
   };
   let plan = restartPlan(planned);
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
@@ -2809,6 +2821,12 @@ async function cmdRestart(opts, [ref]) {
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
+  // #597: the replacement is built from bots.json, never the pane's command; when the pane's
+  // own words no longer match the source, one line says so before the old pane ends.
+  if (oldLaunch && !swap && (runningAgent === null || runningAgent === plan.agent)) {
+    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source });
+    if (changed) say(changed);
+  }
   // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
   // (the text answer says it in its own line).
   if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);

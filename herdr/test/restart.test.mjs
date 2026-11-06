@@ -5,8 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { AGENTS, canResume, continuesAnywhere, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
-import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, paneCommand, paneSession, planText, restartAnswer, restartArgs,
-  claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, sharedFresh, takesWords, withoutPrompt } from "../mods/am-sidebar/restart.js";
+import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, launchChange, paneCommand, paneLaunch, paneSession, planText,
+  restartAnswer, restartArgs, claudeSlug, restartPlan, restartRefusal, sameSessions, sessionId, sessionOf, sharedFolders, sharedFresh, takesWords, withoutPrompt }
+  from "../mods/am-sidebar/restart.js";
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
@@ -175,7 +176,7 @@ test("continueRefusal: refused only when another bot's Claude shares the folder"
     /Genie has no recorded Claude session \(t5 has no agent.session label .*\), and Captain \(t9\), Dev \(t8\) also run Claude in \/p, so --continue could resume theirs\. Nothing was started; restart with --fresh/);
 });
 
-// ---- #213: the old pane's own command, resume by id, --tree ----
+// ---- #213/#597: the source's command, resume by id, --tree ----
 
 test("resumeArgs by session id: codex resume <id>, omp --resume=<id>, pi --session <id>, hermes --resume <id>, kimi --session=<id>, agy --conversation <id>", () => {
   assert.deepEqual(resumeArgs("codex", SID), ["resume", SID]);
@@ -213,24 +214,43 @@ test("paneCommand: hc's launch argv without this pack's env PATH prefix; a templ
   assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "PATH=/a", "sh", "-c", 'omp --x "$@"', "sh", "--continue"] }), { shell: "omp --x" });
 });
 
-test("restartPlan reuses the old pane's command when it runs the bot's agent: a template resumed through \"$@\", flags kept, a pin replacing the model", () => {
+test("restartPlan rebuilds from the source, never the pane's command: flags the source doesn't name are dropped (#597)", () => {
   const omp = { agent: "omp" };
-  const tpl = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --auto-approve --model k" }, runningModel: "k" });
-  assert.deepEqual([tpl.mode, tpl.reused, tpl.model], ["resume", true, "k"]);
-  assert.deepEqual(tpl.argv, ["sh", "-c", 'omp --auto-approve --model k "$@"', "sh", "--continue"]);
+  // A template's (shell) command doesn't survive: the agent row and its resume do.
+  const tpl = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --auto-approve --model k" } });
+  assert.deepEqual([tpl.mode, tpl.argv, tpl.source], ["resume", ["omp", "--continue"], ["omp"]]);
   const fresh = restartPlan({ bot: omp, run: ["omp"], runningAgent: "omp", fresh: true, launch: { shell: "omp --model k" } });
-  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["sh", "-c", "omp --model k"]], "--fresh: the same command, no resume");
+  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["omp"]], "--fresh: the source, no resume words");
+  // The bot's pin is the source's model, never the pane's old one or a hand-given flag.
   const codex = restartPlan({ bot: { agent: "codex", model: "gpt-b" }, run: ["codex"], runningAgent: "codex", session: SID,
     launch: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"] } });
-  assert.deepEqual(codex.argv, ["codex", "-c", "model_reasoning_effort=high", "--model", "gpt-b", "resume", SID]);
+  assert.deepEqual(codex.argv, ["codex", "resume", SID, "--model", "gpt-b"]);
+  assert.deepEqual(codex.source, ["codex", "--model", "gpt-b"]);
   assert.equal(codex.model, "gpt-b");
-  const same = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID, launch: { argv: ["claude", "--model", "claude-opus-5-5", "--effort", "high"] } });
-  assert.deepEqual(same.argv, ["claude", "--model", "claude-opus-5-5", "--effort", "high", "--resume", SID]);
-  // Another agent in the pane, or a swap: the definition's command, as before.
+  const same = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID });
+  assert.deepEqual(same.argv, ["claude", "--resume", SID, "--model", "claude-opus-5-5"]);
+  // Another agent in the pane, or a swap: the definition's command, fresh.
   const other = restartPlan({ bot: omp, run: ["omp"], runningAgent: "codex", launch: { argv: ["codex", "-m", "x"] } });
-  assert.deepEqual([other.mode, other.reused, other.argv], ["fresh", false, ["omp"]]);
+  assert.deepEqual([other.mode, other.argv], ["fresh", ["omp"]]);
   const swap = restartPlan({ bot: omp, run: ["codex"], runningAgent: "omp", agent: "codex", launch: { shell: "omp" } });
-  assert.deepEqual([swap.mode, swap.reused, swap.argv], ["swap", false, ["codex"]]);
+  assert.deepEqual([swap.mode, swap.argv], ["swap", ["codex"]]);
+});
+
+test("paneLaunch and launchChange: the pane's stale words are named, its briefing and resume words aren't (#597)", () => {
+  const stale = { argv: ["claude", "--proxy=http://proxy.example:8080", "-c"] };
+  assert.deepEqual(paneLaunch(stale, "claude"), ["claude", "--proxy=http://proxy.example:8080"]);
+  assert.equal(launchChange({ name: "Genie", launch: stale, agent: "claude", argv: ["claude"] }),
+    "Genie: its pane's command (claude --proxy=http://proxy.example:8080) differs from its source now (claude): "
+    + "restarting from the source, not the pane's command.");
+  // Its own resume words, briefing and a first prompt are this restart's to set: no line.
+  const own = { argv: ["claude", "--append-system-prompt-file", "/h/automagik-herdr/briefings/b.md", "--resume", SID] };
+  assert.deepEqual(paneLaunch(own, "claude"), ["claude"]);
+  assert.equal(launchChange({ name: "Genie", launch: own, agent: "claude", argv: ["claude"] }), null);
+  assert.equal(launchChange({ name: "Genie", launch: { argv: ["claude"] }, agent: "claude", argv: ["claude"] }), null);
+  assert.equal(launchChange({ name: "Genie", launch: null, agent: "claude", argv: ["claude"] }), null);
+  // A shell command (a template) can't be compared word for word: it is named whole.
+  assert.match(launchChange({ name: "Captain", launch: { shell: "omp --auto-approve" }, agent: "omp", argv: ["omp"] }),
+    /Captain: its pane's command \(omp --auto-approve\) differs from its source now \(omp\)/);
 });
 
 test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {
@@ -295,7 +315,7 @@ test("commandArgv: no \"$@\" after a command ending in a separator or a comment 
   assert.deepEqual(withoutPrompt(["codex", "-c", "a=b c"]), ["codex", "-c", "a=b c"], "an option's value stays");
   assert.deepEqual(withoutPrompt(["omp", "task"]), ["omp", "task"], "a one-word prompt can't be told from an argument");
   const tpl = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: "omp", launch: { shell: "omp --x # note" } });
-  assert.deepEqual([tpl.mode, tpl.argv, tpl.note], ["fresh", ["sh", "-c", "omp --x # note"], "its command ends in a separator or a comment, so it can't take resume words"]);
+  assert.deepEqual([tpl.mode, tpl.argv, tpl.note], ["resume", ["omp", "--continue"], null], "a bot's restart never runs the pane's shell command (#597)");
 });
 
 test("helperPlan: the worker's worktree first, then the pane's folder, then its program's; fresh when asked, with the reason", () => {
