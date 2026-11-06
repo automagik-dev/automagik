@@ -1,9 +1,0 @@
-{
-  "number.groupSeparator": ".",
-  "clock.md": "{d}/{m}",
-  "clock.ymd": "{d}/{m}/{y}",
-  "message.systemPrompt": "Prompt do sistema",
-  "message.systemPromptUpdate": "Atualização do prompt do sistema",
-  "message.stepProcess.tools": "Chamando ferramentas",
-  "message.context.instructions.updated": "atualizadas"
-}

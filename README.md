@@ -7,7 +7,7 @@ Automagik's plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | [`apps/bots-dsh`](apps/bots-dsh/README.md) | `@automagik/bots-dsh` | The Bot team: long-lived Bots, group chats, memory, settings, scheduled tasks, the Bot browser. Omni's and Genie's plugins build on it. |
 | [`apps/welcome-dsh`](apps/welcome-dsh/README.md) | `@automagik/welcome-dsh` | The welcome: the octopus, the team step, and Connect AI through DSH's own sign-ins. |
 | [`apps/acp-dsh`](apps/acp-dsh/README.md) | `@automagik/acp-dsh` | Agents other than DSH's own, over ACP (Agent Client Protocol), as DSH models: the agent's tool calls show as DSH tool cards and ask through DSH's approval dialog (RFC 0003). |
-| [`apps/locale-pt-br-dsh`](apps/locale-pt-br-dsh/README.md) | `@automagik/locale-pt-br-dsh` | Português (Brasil): adds Brazilian Portuguese to DSH's languages and translates what a first session shows, the Bot team's main screens included; the rest stays in English. |
+| [`apps/locale-pt-br-dsh`](apps/locale-pt-br-dsh/README.md) | `@automagik/locale-pt-br-dsh` | Português: the Bot team's Brazilian Portuguese under DSH's own Portuguese entry. Adds no language of its own, so Settings › General › Language keeps one Portuguese row; a pt-BR choice saved by an older pack moves to DSH's pt. |
 | [`apps/desktop`](apps/desktop/README.md) | (the app) | The Automagik desktop app: DSH of its own with the Bot team, the welcome and Omni's channels and canvases. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. |
 
 Omni's own plugins (its channels and canvases) live with Omni, in [automagik-dev/omni](https://github.com/automagik-dev/omni) (`apps/omni-channels-dsh`, `apps/omni-canvas-dsh`), and carry Omni's version.
