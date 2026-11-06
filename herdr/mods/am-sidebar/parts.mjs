@@ -37,7 +37,7 @@ import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } fro
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
-import { change, switchCommand } from "./layoutSafe.mjs";
+import { change, removePath, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -216,7 +216,7 @@ function linkCommand(ctx, name, entries, ours) {
   chmodSync(target, statSync(target).mode | 0o111);
   mkdirSync(ctx.binDir, { recursive: true });
   const tmp = join(ctx.binDir, `.${name}.am-tmp-${process.pid}`);
-  rmSync(tmp, { force: true });
+  removePath(tmp, { force: true }); // a leftover tmp link may dangle: unlinked, never followed (#550)
   symlinkSync(target, tmp);
   renameSync(tmp, link);
   return { link, done: true, changed: true };

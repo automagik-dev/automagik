@@ -233,6 +233,36 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
+      # Robolectric fetches its android-all jars into ~/.m2 while the tests run, outside Gradle's
+      # cache, so a download miss failed unrelated PRs (#549). The jars depend only on the
+      # Robolectric version and the SDKs the tests ask for (@Config(sdk = ...)), so those are the key.
+      - name: Robolectric cache key
+        id: robolectric
+        if: steps.changed.outputs.pocket == 'true'
+        run: |
+          set -euo pipefail
+          android=apps/pocket/android
+          version="$(grep -oE 'org\.robolectric:robolectric:[0-9][0-9A-Za-z.-]*' "$android/app/build.gradle.kts" | head -n 1 | cut -d: -f3 || true)"
+          sdks="$(grep -rhoE '@Config\(sdk = \[[0-9, ]+\]' "$android/app/src/test" | grep -oE '[0-9]+' | sort -un | paste -sd- - || true)"
+          if [ -z "$version" ]; then
+            echo "::warning::Robolectric's version not found in $android/app/build.gradle.kts; caching ~/.m2 under 'unknown'"
+            version=unknown
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sdks=${sdks:-default}" >> "$GITHUB_OUTPUT"
+          echo "Robolectric $version, SDKs ${sdks:-default}"
+
+      # A miss still builds and tests: Robolectric downloads what is missing and the job saves it.
+      - name: Cache Robolectric's jars (~/.m2)
+        id: m2
+        if: steps.changed.outputs.pocket == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository
+          key: robolectric-m2-${{ runner.os }}-${{ steps.robolectric.outputs.version }}-sdk${{ steps.robolectric.outputs.sdks }}-${{ hashFiles('apps/pocket/android/**/robolectric.properties') }}
+          restore-keys: |
+            robolectric-m2-${{ runner.os }}-${{ steps.robolectric.outputs.version }}-
+
       # Validates the wrapper checksum and caches Gradle's dependencies.
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         if: steps.changed.outputs.pocket == 'true'
@@ -240,7 +270,24 @@ jobs:
       - name: Build the debug APK, run the unit tests and lint
         if: steps.changed.outputs.pocket == 'true'
         working-directory: apps/pocket/android
-        run: ./gradlew --stacktrace :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        run: |
+          touch "$RUNNER_TEMP/m2-marker"
+          ./gradlew --stacktrace :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+
+      # Evidence only, never a failure: Gradle hides the tests' "Downloading" lines, so this lists
+      # the jars this run fetched into ~/.m2. A warm cache fetches none.
+      - name: Robolectric jars fetched in this run
+        if: always() && steps.changed.outputs.pocket == 'true'
+        run: |
+          echo "cache-hit=${{ steps.m2.outputs.cache-hit }}"
+          if [ -f "$RUNNER_TEMP/m2-marker" ] && [ -d ~/.m2/repository ]; then
+            fetched="$(find ~/.m2/repository -name '*.jar' -newer "$RUNNER_TEMP/m2-marker" || true)"
+            echo "fetched: $(printf '%s' "$fetched" | grep -c . || true) jar(s)"
+            [ -z "$fetched" ] || printf '%s\n' "$fetched"
+          else
+            echo "fetched: unknown (no marker or no ~/.m2/repository)"
+          fi
+          find ~/.m2/repository -name '*.jar' -exec ls -l {} + 2>/dev/null || true
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && steps.changed.outputs.pocket == 'true'

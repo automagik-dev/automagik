@@ -12,8 +12,9 @@ import { structuredNameOf } from '../src/host/acp.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 import { AGENTS } from '../src/host/agents.js'
 import { Backchannel, offeredTools, presetOf } from '../src/host/backchannel.js'
+import { SYNTHETIC_KIND } from '../src/host/names.js'
 import { credentialShapes } from '../src/host/redact.js'
-import { BOUNDARY_KIND } from '../src/host/switch.js'
+import { BOUNDARY_KIND, crossed } from '../src/host/switch.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
@@ -158,7 +159,7 @@ test('stopping the turn cancels the agent and finishes aborted', async () => {
 const drain = async stream => { const chunks = []; for await (const chunk of stream) chunks.push(chunk); return chunks }
 const codeOf = chunks => chunks.at(-1)?.reason?.failure?.code
 
-test('a Session title on an agent\'s chat goes to DSH\'s default model, or to sideModel when the default is an agent', async () => {
+test('a Session title or Auto review on an agent\'s chat goes to DSH\'s default model, or to sideModel when the default is an agent', async () => {
   let passed = 0
   const next = () => { passed++; return (async function* () {})() }
   const sent = []
@@ -168,7 +169,7 @@ test('a Session title on an agent\'s chat goes to DSH\'s default model, or to si
     llm: { stream: options => { sent.push(options); return (async function* () { yield { type: 'finish', reason: { kind: 'stop' } } })() } },
     get: name => (name === 'agentDefaultModel' ? { currentSelection: () => selection } : undefined),
   }
-  const listen = aside(new Map([['acp-fake', {}]]), ctx, () => side)
+  const listen = aside(new Map([['acp-fake', {}]]), ctx, () => side, credentialShapes)
   const title = { provider: 'acp-fake', model: 'fake', reasoningEffort: 'high', maxTokens: 4096, sessionId: 's1', purpose: 'session-title', messages: [] }
   const route = async () => { sent.length = 0; const chunks = await drain(listen(title, next)); return sent.length === 1 ? `${sent[0].provider}/${sent[0].model}` : codeOf(chunks) }
 
@@ -187,6 +188,33 @@ test('a Session title on an agent\'s chat goes to DSH\'s default model, or to si
   }
   assert.equal(codeOf(await drain(aside(new Map([['acp-fake', {}]]))(title, next))), 'UNSUPPORTED')
 
+  // Auto review on the same route: the same non-agent route, with its own system, messages and
+  // temperature kept and the Session text redacted before the reviewer sees it.
+  selection = { provider: 'deepseek-official', model: 'deepseek-v4' }
+  side = SIDE_MODEL
+  const review = {
+    ...title,
+    purpose: 'auto-review',
+    system: 'review policy',
+    temperature: 0,
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'echo sk-abcdef123456' }] }],
+  }
+  sent.length = 0
+  await drain(listen(review, next))
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].provider, 'deepseek-official')
+  assert.equal(sent[0].model, 'deepseek-v4')
+  assert.equal(sent[0].purpose, 'auto-review')
+  assert.equal(sent[0].system, 'review policy')
+  assert.equal(sent[0].temperature, 0)
+  assert.equal('reasoningEffort' in sent[0], false)
+  assert.doesNotMatch(JSON.stringify(sent[0].messages), /sk-abcdef123456/)
+  assert.match(JSON.stringify(sent[0].messages), /sk-\[hidden\]/)
+  // No non-agent reviewer model: the review is refused, never sent to the agent.
+  selection = undefined
+  side = { provider: 'acp-codex', model: 'default' }
+  assert.equal(codeOf(await drain(listen(review, next))), 'UNSUPPORTED')
+
   // Any other side request on an agent's route is refused, whatever the default.
   selection = { provider: 'deepseek-official', model: 'deepseek-v4' }
   side = SIDE_MODEL
@@ -198,6 +226,24 @@ test('a Session title on an agent\'s chat goes to DSH\'s default model, or to si
   await drain(listen(markAgentLoopRequest({ provider: 'acp-fake', messages: [] }), next))
   await drain(listen({ provider: 'deepseek-official', purpose: 'compaction', messages: [] }, next))
   assert.deepEqual([passed, sent.length], [2, 0])
+})
+
+test('a leaked synthetic bridge block never reaches a native provider', async () => {
+  const sent = []
+  const ctx = { llm: { stream: options => { sent.push(options); return (async function* () {})() } } }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx, () => SIDE_MODEL, credentialShapes)
+  const synthetic = {
+    role: 'assistant',
+    source: { kind: 'model', provider: 'acp-fake', bridge: true, synthetic: SYNTHETIC_KIND },
+    content: [{ type: 'tool-call', id: 'bridge-1', name: 'bridge_synthetic', arguments: '{}' }],
+  }
+  const question = { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }
+  await drain(listen({ provider: 'deepseek-official', model: 'deepseek-v4', messages: [question, synthetic] }, () => {
+    throw new Error('the cleaned request should be re-streamed')
+  }))
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0].messages, [question])
+  assert.equal(sent[0].provider, 'deepseek-official')
 })
 
 // The same through DSH's own llm service and DSH's own default-model service, saved on an agent
@@ -237,18 +283,32 @@ test('through DSH\'s real llm and default-model services, a title on an agent\'s
 })
 
 test('the plugin sends titles on its agents\' routes to its sideModel setting when DSH\'s default is an agent', async () => {
-  const listeners = {}
+  const listeners = new Map()
   const sent = []
   const defaults = { currentSelection: () => ({ provider: 'acp-fake', model: 'default' }) }
   const ctx = {
     llm: { registerAdapter: () => () => {}, stream: options => { sent.push(options); return (async function* () {})() } },
     agents: { get: () => undefined },
     get: name => (name === 'agentDefaultModel' ? defaults : undefined),
-    on: (name, listener) => { listeners[name] = listener; return () => {} },
+    on: (name, listener) => {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => {}
+    },
   }
   let side = { provider: 'deepseek-official', model: 'deepseek-v4' }
   apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, sideModel: { get: () => side } })
-  const title = () => drain(listeners['llm/stream']({ provider: 'acp-fake', model: 'default', purpose: 'session-title', messages: [] }, () => assert.fail('the agent got a side request')))
+  // The waterfall: the listeners registered on llm/stream, the last wrapping the next.
+  const call = (options) => {
+    let next = () => assert.fail('the agent got a side request')
+    for (const listener of [...(listeners.get('llm/stream') ?? [])].reverse()) {
+      const rest = next
+      next = () => listener(options, rest)
+    }
+    return next()
+  }
+  const title = () => drain(call({
+    provider: 'acp-fake', model: 'default', purpose: 'session-title', messages: [],
+  }))
   assert.deepEqual(await title(), [])
   // A live setting: the next title reads the new value.
   side = { provider: 'anthropic', model: 'claude-haiku-5-5' }
@@ -846,9 +906,16 @@ test('a fork that fails after the session moved revokes both credentials and end
 test('a Session moving to an agent carries its transcript redacted, and each crossing writes a row', async () => {
   const h = dshHost({ redactor: text => text.replaceAll('hunter2', '[secret:TOKEN]') })
   try {
+    // A synthetic bridge review block sits in the history: it is not a turn and must not cross.
+    const synthetic = {
+      role: 'assistant',
+      source: { kind: 'model', provider: 'deepseek-official', bridge: true, synthetic: SYNTHETIC_KIND },
+      content: [{ type: 'tool-call', id: 'bridge-synthetic', name: 'bridge_synthetic', arguments: '{}' }],
+    }
     const messages = [
       { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier question' }] },
       { role: 'assistant', source: { kind: 'model', provider: 'deepseek-official' }, content: [{ type: 'text', text: 'earlier answer hunter2' }] },
+      synthetic,
       { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] },
     ]
     const chunks = await step(h.adapter, messages)
@@ -856,15 +923,22 @@ test('a Session moving to an agent carries its transcript redacted, and each cro
     assert.match(said, /The chat so far, moved from DSH to Fake agent/)
     assert.match(said, /earlier answer \[secret:TOKEN\]/)
     assert.equal(said.includes('hunter2'), false)
+    assert.equal(said.includes('bridge_synthetic'), false)
     // The new-session notice is not written: this session does see the chat before it.
     assert.equal(h.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source?.kind === NOTICE_KIND), false)
     const boundary = () => h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(boundary().length, 1)
     assert.match(boundary()[0].data.source.summary, /Now answered by Fake agent \(acp-fake\)/)
+    // The row is one the chat draws: a notice, not reply text from the agent.
+    assert.equal(boundary()[0].data.role, 'user')
+    assert.equal(boundary()[0].data.source.form, 'notice')
+    assert.equal(boundary()[0].data.content[0].text, '[Now answered by Fake agent (acp-fake).]')
     // Moving back to DSH is the other crossing: a row, and the agent session (and bridge) end.
     h.adapter.noteEvent(h.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
     assert.equal(boundary().length, 2)
     assert.match(boundary()[1].data.source.summary, /Now answered by DSH/)
+    assert.equal(boundary()[1].data.source.form, 'notice')
+    assert.equal(boundary()[1].data.content[0].text, '[Now answered by DSH.]')
     assert.equal(h.adapter.live.size, 0)
     assert.equal(h.backchannel.records.size, 0)
   } finally {
@@ -981,6 +1055,24 @@ test('with dshTools off a turn is the old path: no bridge spawned, no bridge row
   }
 })
 
+test('with dshTools off the agent\'s stream is logged as it arrived', async () => {
+  // Redaction belongs to live switching: off is the behaviour before it, byte for byte, even
+  // with a redactor wired in. The same turn is redacted on the path above.
+  const h = dshHost({ toolsOn: false, redactor: credentialShapes })
+  try {
+    const ask = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }],
+    }]
+    const chunks = await step(h.adapter, ask)
+    assert.match(textIn(chunks), /sk-abcdef123456/)
+    assert.match(textIn(chunks), /Bearer abcdefgh1234/)
+    assert.match(thoughtIn(chunks), /sk-abcdef123456/)
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+  } finally {
+    h.close()
+  }
+})
+
 test('with dshTools unset (the default), the agent runs its own tools and no bridge is spawned', async () => {
   const session = Session.create('s1')
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
@@ -1021,35 +1113,71 @@ test('the adapter\'s own deferred-tool loader gets no DSH card and no dialog', a
   }
 })
 
-test('a credential the agent streamed crosses to another provider redacted: inbound is not redacted, the replay is', async () => {
-  // Ingest is the agent's answer, logged as a native answer would be (asserted below), so the
-  // canary starts from that very text. What must be redacted is the history that crosses.
+test('an agent answer is logged as said, and redacted at each provider crossing', async () => {
+  // Crossing 1: DSH history replayed to an agent. Crossing 2: the transcript handed back to a
+  // native provider. Ingest is not a crossing: DSH logs what the agent said.
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-replay-'))
   const trace = join(dir, 'trace.ndjson')
   const h = dshHost({ redactor: credentialShapes, trace })
+  const secrets = /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/
   try {
     h.adapter.agents.set('acp-fake-b', { ...h.spec, name: 'Fake agent B' })
-    const first = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] }])
+    const ask = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }],
+    }]
+    const first = await step(h.adapter, ask)
     const streamed = textIn(first)
-    // The agent produced these values, and DSH logs them as the assistant's words.
+    // Verifier 1: the agent's answer is stored as the agent said it, reasoning included.
     assert.match(streamed, /sk-abcdef123456/)
     assert.match(streamed, /npm_abcdefghijklmnopqrstuvwxyz/)
     assert.match(streamed, /Bearer abcdefgh1234/)
+    assert.match(thoughtIn(first), /sk-abcdef123456/)
+    const blocks = first.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)
+    assert.match(JSON.stringify(blocks), /sk-abcdef123456/)
+    // Verifier 2: crossing back to a native provider, that transcript is redacted.
+    const sent = []
+    const ctx = { llm: { stream: options => { sent.push(options); return 'stream' } } }
+    const listen = crossed(new Map([['acp-fake', {}]]), ctx, credentialShapes)
+    const back = {
+      provider: 'deepseek-official', sessionId: 's1',
+      messages: [
+        ...ask,
+        {
+          role: 'assistant', source: { kind: 'model', provider: 'acp-fake' },
+          content: [{ type: 'text', text: streamed }],
+        },
+        { role: 'tool', content: [{ type: 'text', text: 'read sk-abcdef123456' }] },
+      ],
+    }
+    const refused = () => assert.fail('a native provider received the raw transcript')
+    assert.equal(listen(back, refused), 'stream')
+    assert.equal(JSON.stringify(sent[0].messages).includes('sk-abcdef123456'), false)
+    assert.match(JSON.stringify(sent[0].messages), /sk-\[hidden\]/)
+    // Verifier 3: native history replayed to an agent is redacted too.
     const messages = [
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier' }] },
+      {
+        role: 'assistant', source: { kind: 'model', provider: 'deepseek-official' },
+        content: [{ type: 'text', text: 'answer ghp_abcdefghijklmnopqrst' }],
+      },
+      {
+        role: 'assistant', source: { kind: 'model', provider: 'acp-fake' },
+        content: [{ type: 'text', text: streamed }],
+      },
       { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'leak' }] },
-      { role: 'assistant', source: { kind: 'model', provider: 'acp-fake' }, content: [{ type: 'text', text: streamed }] },
-      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'next' }] },
     ]
     await step(h.adapter, messages, { provider: 'acp-fake-b' })
     // What the second agent received is the replayed history: read from its own prompt trace,
     // not from its answer (an answer may itself carry whatever the person showed it).
-    const prompts = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(event => event.event === 'prompt')
-    const prompt = prompts.at(-1).text
-    assert.doesNotMatch(prompt, /sk-abcdef123456|npm_abcdefghijklmnopqrstuvwxyz|Bearer abcdefgh1234/)
+    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const prompt = events.filter(event => event.event === 'prompt').at(-1).text
+    assert.doesNotMatch(prompt, secrets)
+    assert.doesNotMatch(prompt, /ghp_abcdefghijklmnopqrst/)
     assert.match(prompt, /sk-\[hidden\]/)
     assert.match(prompt, /moved from Fake agent to Fake agent B/)
     // The crossing is visible, and the agent's answer is what it got.
-    const rows = h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
+    const rows = h.session.snapshotEvents()
+      .filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(rows.length, 1)
     assert.match(rows[0].data.source.summary, /Now answered by Fake agent B \(acp-fake-b\)/)
   } finally {

@@ -2,10 +2,10 @@
 // journalled (a failure undoes every one done). The routes that use it are layout-safe-matrix*.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { change } from "../mods/am-sidebar/layoutSafe.mjs";
+import { change, removePath } from "../mods/am-sidebar/layoutSafe.mjs";
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const layout = (...mods) => JSON.stringify({ id: "root", children: mods.map((m, i) => ({ id: `b${i}`, content: { mod: m } })) });
@@ -39,6 +39,53 @@ test("a remove: done once the batch stands; missing with force, nothing; missing
   assert.equal(r.done, true);
   assert.deepEqual(readdirSync(join(h.app, "layouts")), []);
   assert.throws(() => change(h.app, [{ op: "remove", path: join(h.app, "layouts", "gone.json") }]), { code: "ENOENT" });
+});
+
+test("a remove of a link, dangling or live, takes the link and leaves no aside name; its target stays (#550)", (t) => {
+  const h = home(t);
+  const elsewhere = join(h.root, "elsewhere");
+  write(join(elsewhere, "live", "main.js"), "// the person's\n");
+  symlinkSync(join(elsewhere, "gone"), join(h.mods, "dangling")); // a linked mod folder whose target is gone
+  symlinkSync(join(elsewhere, "live"), join(h.mods, "live"));
+  write(join(h.app, "layouts", "keep.json"), "{}");
+  symlinkSync(join(elsewhere, "gone.json"), join(h.app, "layouts", "dangling.json"));
+  const r = change(h.app, [
+    { op: "remove", path: join(h.mods, "dangling") },
+    { op: "remove", path: join(h.mods, "live") },
+    { op: "remove", path: join(h.app, "layouts", "dangling.json") },
+  ]);
+  assert.equal(r.done, true);
+  // Node 24.0 to 24.9's rmSync returned on a dangling link and left it under its .am-rm- name.
+  assert.deepEqual(readdirSync(h.mods).sort(), ["a", "b"]);
+  assert.deepEqual(readdirSync(join(h.app, "layouts")), ["keep.json"]);
+  assert.equal(readFileSync(join(elsewhere, "live", "main.js"), "utf8"), "// the person's\n");
+  assert.equal(existsSync(join(elsewhere, "gone")), false);
+});
+
+test("removePath: a link, dangling or live, is unlinked and never followed; anything else is rmSync's (#550)", (t) => {
+  const h = home(t);
+  const at = (n) => join(h.root, n);
+  const there = (p) => lstatSync(p, { throwIfNoEntry: false }) !== undefined;
+  symlinkSync(at("nowhere"), at("dangling"));
+  removePath(at("dangling"), { force: true });
+  assert.equal(there(at("dangling")), false);
+  write(at("target/keep"), "x");
+  symlinkSync(at("target"), at("live"));
+  removePath(at("live"), { recursive: true, force: true });
+  assert.equal(there(at("live")), false);
+  assert.equal(readFileSync(at("target/keep"), "utf8"), "x", "the link's target is left");
+  symlinkSync(at("nowhere"), at("again"));
+  removePath(at("again")); // no options: a link still goes
+  assert.equal(there(at("again")), false);
+  write(at("file"), "x");
+  removePath(at("file"));
+  assert.equal(there(at("file")), false);
+  write(at("folder/inner/f"), "x");
+  assert.throws(() => removePath(at("folder")), { code: "ERR_FS_EISDIR" });
+  removePath(at("folder"), { recursive: true, force: true });
+  assert.equal(there(at("folder")), false);
+  removePath(at("missing"), { force: true });
+  assert.throws(() => removePath(at("missing")), { code: "ENOENT" });
 });
 
 test("needed: refuse asks the shown layout and refuses before any op, naming it; a menu's mod goes with a note", (t) => {

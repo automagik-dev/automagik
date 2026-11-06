@@ -12,8 +12,8 @@ import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest 
 import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
-import { BRIDGE_NAME, CREDENTIAL_ENV, URL_ENV } from './names.js'
-import { boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
+import { BRIDGE_NAME, CREDENTIAL_ENV, SYNTHETIC_KIND, URL_ENV } from './names.js'
+import { agentRoute, boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -106,6 +106,26 @@ export function promptOf(messages) {
 /** Where a Session title on an agent's chat goes when DSH's default model is an agent too. */
 export const SIDE_MODEL = Object.freeze({ provider: 'deepseek-official', model: 'deepseek-flash' })
 const TITLE_PURPOSE = 'session-title'
+// Auto review is a side request DSH's Auto preset makes on the Session's route. Like a title it
+// must not reach the agent; unlike a title it reads the Session, so it gets the redactor.
+const REVIEW_PURPOSE = 'auto-review'
+const SIDE_PURPOSES = new Set([TITLE_PURPOSE, REVIEW_PURPOSE])
+
+/** Redact the fixed system prompt and every text block of a review request. */
+function redactedReview(options, redact) {
+  return {
+    ...options,
+    ...(typeof options.system === 'string' ? { system: redact(options.system) } : {}),
+    ...(Array.isArray(options.messages) ? {
+      messages: options.messages.map(message => ({
+        ...message,
+        ...(Array.isArray(message.content) ? {
+          content: message.content.map(block => (block?.type === 'text' && typeof block.text === 'string' ? { ...block, text: redact(block.text) } : block)),
+        } : {}),
+      })),
+    } : {}),
+  }
+}
 
 /**
  * The `llm/stream` listener that keeps DSH's side requests (a Session title, a compaction
@@ -114,26 +134,41 @@ const TITLE_PURPOSE = 'session-title'
  * agent's effort, which is the agent's model's: DSH's default model when that is not an agent,
  * else `sideModel()` (acp-dsh's `sideModel` setting, DeepSeek by default). DSH's default is the
  * model the person last picked, so on a team that chats with an agent it is usually an agent.
+ * Auto review is another side request: DSH's Auto preset sends it on the Session's route, and
+ * it must reach a model that answers on its own just as a title does. It is redacted first:
+ * the reviewer reads the Session's history, so its text passes the shared redactor.
  * Every other side request (a compaction summary) is turned down: it would carry the agent's
  * whole chat to another provider, and the agent manages its own context. The agent loop's own
  * requests, and every other route's, go on as they are. Only here is the agent loop's mark on
  * a request reliable; DSH rebuilds the request before the adapter sees it whenever the
- * Session's tool set changed. `next` takes no request, so the title's call is a nested
+ * Session's tool set changed. `next` takes no request, so the side call is a nested
  * `ctx.llm.stream`, which passes through this listener again as another route's.
  * @param {Map<string, unknown>} providers the agents' routes
  * @param {{ llm?: { stream(options: object): AsyncIterable<object> }, get?: (name: string) => any }} [ctx]
  * @param {() => { provider?: string, model?: string } | undefined} [sideModel]
+ * @param {(text: string) => string} [redact] the shared redactor, for Auto review
  */
-export function aside(providers, ctx, sideModel = () => SIDE_MODEL) {
-  const agentRoute = provider => providers.has(provider) || String(provider).startsWith('acp-')
-  const answers = choice => typeof choice?.provider === 'string' && choice.provider !== '' && typeof choice.model === 'string' && choice.model !== '' && !agentRoute(choice.provider)
+export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = text => text) {
+  const answers = choice => typeof choice?.provider === 'string' && choice.provider !== ''
+    && typeof choice.model === 'string' && choice.model !== ''
+    && !agentRoute(providers, choice.provider)
+  const synthetic = message => message?.source?.synthetic === SYNTHETIC_KIND
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
   return (options, next) => {
-    if (!providers.has(options.provider) || isAgentLoopRequest(options)) return next()
-    if (options.purpose !== TITLE_PURPOSE || ctx?.llm === undefined) return refuse()
+    if (!providers.has(options.provider)) {
+      // A bridge review block that outlived its call (a crash, a failed replacement) is not a
+      // turn: drop it before any native model sees it. The nested call re-enters here clean.
+      if (Array.isArray(options.messages) && options.messages.some(synthetic) && ctx?.llm !== undefined) {
+        return ctx.llm.stream({ ...options, messages: options.messages.filter(message => !synthetic(message)) })
+      }
+      return next()
+    }
+    if (isAgentLoopRequest(options)) return next()
+    if (!SIDE_PURPOSES.has(options.purpose) || ctx?.llm === undefined) return refuse()
     const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
     if (chosen === undefined) return refuse()
-    const { reasoningEffort: _agentEffort, ...request } = options
+    const routed = options.purpose === REVIEW_PURPOSE ? redactedReview(options, redact) : options
+    const { reasoningEffort: _agentEffort, ...request } = routed
     return ctx.llm.stream({ ...request, provider: chosen.provider, model: chosen.model })
   }
 }
@@ -298,7 +333,7 @@ export class AcpAdapter extends LlmAdapter {
     const live = this.live.get(session?.id)
     if (live === undefined) return
     const provider = event.data?.provider
-    if (this.agents.has(provider)) return
+    if (agentRoute(this.agents, provider)) return
     this.live.delete(session.id)
     live.run.dispose()
     if (live.bridge !== undefined && this.backchannel !== undefined) this.backchannel.revoke(live.bridge)
@@ -459,9 +494,9 @@ export class AcpAdapter extends LlmAdapter {
     for (;;) {
       const event = await live.run.next(options.signal)
       if (event.type === 'end' || event.type === 'error') live.open = false
-      // Inbound text is the agent's answer to the person, logged as a native model's answer
-      // would be: DSH does not redact at ingest, and neither does this plugin. The redactor
-      // applies where history crosses providers (the outbound replay, `replayBlocks`).
+      // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
+      // does this plugin. The redactor runs at each provider crossing instead — the replay out
+      // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).
       if (event.type === 'text') yield* blocks.add('text', event.text)
       else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
       else if (event.type === 'tool') {

@@ -1,8 +1,10 @@
 // Live switching (RFC 0003, amendment, "Live switching"). A Session keeps the record: moving to
 // an agent replays the transcript into `session/prompt` content, in order, and moving back leaves
-// what the agent streamed in DSH's log. Before any text crosses it passes the redactor, and each
+// what the agent streamed in DSH's log. The redactor runs at each crossing only — the replay out
+// to an agent, and the transcript handed back to a native provider — never at ingest. Each
 // crossing writes a visible provider-boundary row, so the chat says who answered.
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SYNTHETIC_KIND } from './names.js'
 
 /** The source kind of the row that names the provider a turn came from or went to. */
 export const BOUNDARY_KIND = 'acp-boundary'
@@ -21,6 +23,7 @@ export function lastProviderOf(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     if (message?.role !== 'assistant') continue
+    if (message.source?.synthetic === SYNTHETIC_KIND) continue
     const provider = message.source?.provider
     return typeof provider === 'string' && provider !== '' ? provider : undefined
   }
@@ -40,6 +43,72 @@ export function boundaryNotice(summary) {
   })
 }
 
+/**
+ * A transcript with every text-bearing part redacted, for a crossing to another provider. The
+ * messages and their content are copied, never changed: DSH keeps the record it logged.
+ * @param {any[]} messages
+ * @param {(text: string) => string} redact
+ * @returns {any[]}
+ */
+export function redactTranscript(messages, redact) {
+  return messages.map((message) => {
+    const content = message?.content
+    if (typeof content === 'string') return { ...message, content: redact(content) }
+    if (!Array.isArray(content)) return message
+    return {
+      ...message,
+      content: content.map((block) => {
+        if (block === null || typeof block !== 'object') return block
+        const out = { ...block }
+        if (typeof out.text === 'string') out.text = redact(out.text)
+        if (typeof out.arguments === 'string') out.arguments = redact(out.arguments)
+        return out
+      }),
+    }
+  })
+}
+
+/**
+ * Whether a provider id is one of the agents' routes. A Session keeps it in its history after
+ * the agent is turned off or its CLI goes missing — the live map drops it — so the route's
+ * public shape (`acp-<agent>`) outlives the map entry and must still classify the turn.
+ * @param {Map<string, unknown>} providers the agents' live routes
+ * @param {unknown} provider
+ * @returns {boolean}
+ */
+export function agentRoute(providers, provider) {
+  return providers.has(provider) || String(provider).startsWith('acp-')
+}
+
+/** Whether a transcript carries a turn an agent wrote (its answer, with its calls and results). */
+export function fromAgent(messages, providers) {
+  return (messages ?? []).some(message =>
+    message?.role === 'assistant' && agentRoute(providers, message?.source?.provider))
+}
+
+/**
+ * The `llm/stream` listener for the crossing back to DSH's own providers: a transcript that
+ * carries an agent's turn is redacted before a native model sees it, so a secret the agent read
+ * with its own tools never reaches that provider. `next` takes no request, so the redacted call
+ * is a nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
+ * @param {Map<string, unknown>} providers the agents' routes
+ * @param {{ llm?: { stream(options: object): AsyncIterable<object> } }} [ctx]
+ * @param {(text: string) => string} redact
+ * @param {() => boolean} [on] whether live switching is on (the setting); off is the old path
+ */
+export function crossed(providers, ctx, redact, on = () => true) {
+  const rewritten = new WeakSet()
+  return (options, next) => {
+    if (on() !== true) return next()
+    if (agentRoute(providers, options.provider) || options.sessionId === undefined) return next()
+    if (rewritten.has(options) || ctx?.llm?.stream === undefined) return next()
+    if (!fromAgent(options.messages, providers)) return next()
+    const request = { ...options, messages: redactTranscript(options.messages, redact) }
+    rewritten.add(request)
+    return ctx.llm.stream(request)
+  }
+}
+
 const textOf = (content) => (typeof content === 'string' ? content : (content ?? [])
   .filter(block => block?.type === 'text')
   .map(block => block.text)
@@ -55,6 +124,8 @@ const clip = (text) => (text.length > PART_LIMIT ? `${text.slice(0, PART_LIMIT)}
  * @returns {string | undefined}
  */
 export function renderMessage(message) {
+  // A bridge's synthetic review block is not a turn: it never crosses to another provider.
+  if (message?.source?.synthetic === SYNTHETIC_KIND) return undefined
   const kind = message?.source?.kind
   if (message?.role === 'user') {
     if (kind !== 'user' && kind !== undefined) return undefined

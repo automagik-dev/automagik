@@ -212,6 +212,22 @@ test("the briefing entry point becomes a link into am's parts store: the pack's 
   assert.equal(guard().length, 2);
 });
 
+test("uninstall removes am's links when they dangle (the store's copy gone), never leaving them (#550)", (t) => {
+  const s = scratch(t);
+  const bin = join(s.home, ".local", "bin");
+  const entry = join(s.app, "automagik-herdr", "briefing.mjs");
+  assert.equal(s.am("self", "install").status, 0);
+  const links = [join(bin, "am"), join(bin, "automagik-herdr"), entry];
+  for (const l of links) assert.ok(lstatSync(l).isSymbolicLink(), l);
+  // The copy current names is gone, so every link into the store dangles. Node 24.0 to 24.9's
+  // rmSync returned on a dangling link and left it, while uninstall reported it removed.
+  rmSync(join(s.store, readlinkSync(join(s.store, "current"))), { recursive: true, force: true });
+  for (const l of links) assert.equal(existsSync(l), false, `${l} dangles`);
+  const gone = s.am("self", "uninstall");
+  assert.equal(gone.status, 0, gone.stderr);
+  for (const l of links) assert.equal(lstatSync(l, { throwIfNoEntry: false }), undefined, `${l} is gone`);
+});
+
 test("links: am takes the pack's automagik-herdr, leaves a foreign one, and hands it back on uninstall", (t) => {
   const s = scratch(t);
   const bin = join(s.home, ".local", "bin");
