@@ -600,9 +600,12 @@ export function doctor(ctx, part) {
     const dsh = dshTuiPresence({ env: ctx.env });
     note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
     note("dsh-tui-profile", dsh.profile
-      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
+      ? `the dsh-tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
       : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
-    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui -- "$@")`
+    note("dsh-tui-shim", dsh.shimOurs
+      ? dsh.shimLegacy
+        ? `${dsh.shim} is the earlier release's shim: \`automagik-herdr dsh-tui install\` replaces it`
+        : `${dsh.shim} (exec dsh --profile dsh-tui "$@")`
       : dsh.shimExists ? `${dsh.shim} is not this installer's`
         : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
   }

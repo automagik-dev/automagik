@@ -134,7 +134,7 @@ the same later:
 
 ```bash
 automagik-herdr dsh-tui install   # install, or update to the pack's pin
-automagik-herdr dsh-tui doctor    # what is there: dsh, the tui profile, the shim, the guide
+automagik-herdr dsh-tui doctor    # what is there: dsh, the dsh-tui profile, the shim, the guide
 automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and state stay
 ```
 
@@ -145,15 +145,25 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   profile's `package.json` pins the exact version and its `pnpm-lock.yaml` must record the
   registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
   version or integrity fails and takes back what it added. The install records that *it* added
-  the pin in `~/.dsh/profiles/tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
+  the pin in `~/.dsh/profiles/dsh-tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
   person's, and uninstall leaves it. A pin the pack did not record is never written over—not even
   at the pinned version—because `dsh plugin add` rewrites the person's lockfile: the install skips
   it and says how to remove it or hand it over. The record names the package and the version it
   set, so a pack-owned older pin is still the pack's after a bump.
-- **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
-  (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
-  settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints
-  after the plugin step and fails rather than claim success if DSH changed them.
+- **Its own profile, `dsh-tui`.** `dsh plugin --profile dsh-tui add …` writes
+  `<DSH_HOME>/profiles/dsh-tui` only (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise).
+  That is the profile dsh-TUI creates for itself (`bin/dsh-tui.js`'s `PROFILE`, where
+  `dsh-tui` and `dsh --profile dsh-tui` are equivalent), mounted as base + the TUI bundle.
+  Never `tui`: a profile with that name can have been initialized from the web template, which
+  boots the web app, and the web app rejects `--resume`, `-c` and `-p`. A `tui` profile an
+  earlier pack release created is left alone (nothing uses it now): remove its pin with
+  `dsh plugin --profile tui remove @deepseek-harness-tui/dsh-tui` if you want it gone. The
+  reserved `desktop` profile, its settings and `~/.dsh/.credentials.yaml` are never written; the
+  install checks their fingerprints after the plugin step and fails rather than claim success if
+  DSH changed them. The install writes `package.json`, the lockfile and the pnpm workspace file;
+  it never writes the profile's generated `cordis.yml` (DSH rewrites that root on every boot).
+  Machine or sandbox settings belong in the profile's `cordis.patch.yml`, the documented user
+  layer.
 - **pnpm's release-age gate.** pnpm 11's `minimumReleaseAge` (1440 minutes by default) refuses a
   version published hours ago, so the profile's `pnpm-workspace.yaml` carries
   `minimumReleaseAgeExclude` for exactly `@deepseek-harness-tui/dsh-tui@0.19.0` — never the bare
@@ -161,11 +171,12 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   that exact entry; uninstall removes it only for a pin this installer added. Other packages'
   entries are left alone.
 - **The shim.** `~/.local/bin/dsh-tui` is a shell script that checks `dsh` is on PATH (a clear
-  line and exit 127 when it isn't) and then runs `exec dsh --profile tui -- "$@"`. The long form
-  matters: dsh-TUI reads the profile name from the app's arguments, and the short `dsh tui` leaves
-  only `tui` there; `--` keeps an app argument that looks like a launcher flag (`--resume`,
-  `--help`) away from `dsh`. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks
-  that the first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
+  line and exit 127 when it isn't) and then runs `exec dsh --profile dsh-tui "$@"`, with the env
+  it was started in. No separator of its own: DSH's launcher takes its own flags first and the
+  first token it does not recognize starts the app's arguments, so `--resume <id>`, `-c`,
+  `--continue`, `--backend <id>` and a user's `-- <text>` reach dsh-TUI the way its own launcher
+  passes them. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks that the
+  first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
   `programs.json`.
 - **PATH.** The doctor checks `~/.local/bin` on the PATH Herdr **panes** get (an interactive login
   shell's, the way herdr-core starts a program) and names the file to edit for that shell
@@ -174,15 +185,19 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 - **First launch.** Sign in in dsh-TUI with `/model` → **DeepSeek Account**, or `/auth`; a key
   already in DSH's credential store or `DEEPSEEK_API_KEY` in the environment works too. No key is
   stored by this installer and no BWS launcher ships. The four-step first-run guide is marked
-  done once (`~/.dsh-tui/onboarding.json`); `/setup` opens it later.
+  done before the first pane: the install writes dsh-TUI's own record
+  `~/.dsh-tui/onboarding.json` with `{"completed": true, "version": 1}` (its `DATA_DIR`,
+  `ONBOARDING_VERSION` in `lib/types/onboardingPrefs.js`) only when that file is absent, so a
+  fresh pane starts clean and never blocks. A person completing the guide writes the same file;
+  an existing one is left byte for byte, and `/setup` opens it later.
 - **Sessions.** They land in DSH's home (usually `~/.dsh`) and appear in DSH Desktop's history
   after Desktop is quit and reopened: Desktop has no live refresh. One writer per session applies:
   don't continue the same session from Desktop and dsh-TUI at once.
-- **Uninstall.** `dsh plugin --profile tui remove` takes out the pin this installer added, the
+- **Uninstall.** `dsh plugin --profile dsh-tui remove` takes out the pin this installer added, the
   release-age entry that came with it, and the shim (only when it is the pack's). A pin the person
   added, a foreign shim, a dangling link and DSH's sessions are left alone. `--uninstall` of the
-  pack does the same while its command is still in place. `~/.dsh-tui` state and the `tui` profile
-  stay.
+  pack does the same while its command is still in place. `~/.dsh-tui` state and the `dsh-tui`
+  profile stay.
 
 ### From v0.2 to v0.4.x
 
