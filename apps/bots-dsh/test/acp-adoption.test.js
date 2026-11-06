@@ -121,6 +121,15 @@ test('a Bot still on the pi-ai model it was moved to goes to acp-claude once, ke
   assert.equal(state.bots.m1.claudeCodeModel, 'claude-code/opus')
   assert.equal(state.bots.m1.appliedModel, 'acp-claude/opus')
   assert.equal(state.bots.m1.appliedEffort, 'high')
+  // The move records what the Bot ran on before, thinking level included, for the rollback.
+  assert.deepEqual(state.bots.m1.acpMoved, {
+    from: { model: 'anthropic/claude-opus-5-5', effort: 'high' },
+    target: 'acp-claude/opus',
+  })
+  assert.deepEqual(state.bots.w2.acpMoved, {
+    from: { model: 'anthropic/claude-sonnet-4-5' },
+    target: 'acp-claude/sonnet',
+  })
   assert.deepEqual([state.bots.m1.sessionId, state.bots.w2.sessionId], ['m1', 'w2'])
 })
 
@@ -137,6 +146,91 @@ test('the move runs once per team: a model the person picks afterwards is never 
   await until(() => again.saved().bots.m1.model === 'deepseek/deepseek-v4-flash')
   assert.equal(again.saved().bots.m1.model, 'deepseek/deepseek-v4-flash')
   assert.equal(again.saved().claudeAcpMoved, true)
+})
+
+test('turning dshTools off restores a moved Bot\'s model and thinking level', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the Bot moved back to its pi-ai model',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+  // The Bot without a level of its own comes back without one.
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
+  assert.equal(state.bots.w2.effort, undefined)
+  assert.equal(state.bots.w2.acpMoved, undefined)
+})
+
+test('a Bot the person changed since the move stays as they set it', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const changed = await host.call('update-bot', { id: 'm1', model: 'deepseek/deepseek-v4-flash' })
+  assert.equal(changed.ok, true)
+  await until(() => host.saved().bots.m1.model === 'deepseek/deepseek-v4-flash')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().claudeAcpMoved === undefined, { label: 'the rollback ran' })
+  const state = host.saved()
+  // The person's pick is not overwritten, and the record that could overwrite it is gone.
+  assert.equal(state.bots.m1.model, 'deepseek/deepseek-v4-flash')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
+})
+
+test('a moved Bot whose person picked another level stays on the route', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const picked = await host.call('update-bot', { id: 'm1', effort: 'low' })
+  assert.equal(picked.ok, true)
+  await until(() => host.saved().bots.m1.appliedEffort === 'low')
+  on = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().claudeAcpMoved === undefined, { label: 'the rollback ran' })
+  const state = host.saved()
+  // The person's own effort pick is not overwritten by a move back.
+  assert.equal(state.bots.m1.model, 'acp-claude/opus')
+  assert.equal(state.bots.m1.effort, 'low')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+})
+
+test('a moved Bot comes back when the ACP route disappears', async (t) => {
+  let route = true
+  const ready = {
+    id: 'acp-claude', connector: { state: 'ready' }, model: { id: 'default', listed: true },
+  }
+  const acp = {
+    ...readyAcp(),
+    status: async () => ({ agents: route ? [ready] : [] }),
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  route = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.model === 'anthropic/claude-opus-5-5', {
+    label: 'the route disappeared and the Bot moved back',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
 })
 
 test('a Bot the person moved off its pi-ai Claude model is left alone', async (t) => {

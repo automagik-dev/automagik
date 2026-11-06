@@ -43,6 +43,91 @@ export function boundaryNotice(summary) {
   })
 }
 
+/** The source kind of the row that says a reasoning effort could not cross. */
+export const EFFORT_KIND = 'acp-effort'
+
+/**
+ * The target's own id for `effort`: the same id, or the one level with the same name.
+ * Undefined when the target cannot express it.
+ * @param {{ efforts?: { id: string, name?: string }[] } | undefined} reasoning
+ * @param {unknown} effort
+ * @returns {string | undefined}
+ */
+export function effortIdOf(reasoning, effort) {
+  if (typeof effort !== 'string' || effort === '') return undefined
+  const levels = reasoning?.efforts
+  if (!Array.isArray(levels) || levels.length === 0) return undefined
+  if (levels.some(level => level?.id === effort)) return effort
+  const wanted = effort.trim().toLowerCase()
+  const named = levels.filter(level =>
+    typeof level?.name === 'string' && level.name.trim().toLowerCase() === wanted)
+  return named.length === 1 ? named[0].id : undefined
+}
+
+/**
+ * The chat row that says the reasoning effort the Session ran on is not offered by the model
+ * it moved to, so that model runs on its own. A user-role notice, never reply text.
+ * @param {string} effort
+ * @param {string} target `provider/model`
+ */
+export function effortNotice(effort, target) {
+  const summary =
+    `Reasoning effort ${effort} is not available on ${target}; this chat runs on its own`
+  return createUserMessage({
+    content: [{ type: 'text', text: `[${summary}.]` }],
+    source: { kind: EFFORT_KIND, form: 'notice', summary: boundContextSummary(summary) },
+  })
+}
+
+/**
+ * The `session/event` listener that carries a Session's reasoning effort across a model
+ * crossing, both ways. DSH records the target model's own default effort on every model
+ * change; this replaces it with the effort the Session ran on when the target offers it. An
+ * effort-only change on the same route is the person's own pick and is left alone. When the
+ * target's levels are known and lack that effort, a notice says so. The corrected selection
+ * is marked, so the event it appends is never carried again.
+ * @param {(provider: string, model: string) => Promise<{
+ *   efforts?: { id: string, name?: string }[]
+ * } | undefined>} reasoningOf
+ * @param {() => boolean} [on] whether live switching is on (the setting)
+ * @param {(previous: any, next: any) => boolean} [crossing] whether this route change crosses
+ *   a provider boundary; without one every model change is a crossing
+ */
+export function carryEffort(reasoningOf, on = () => true, crossing = () => true) {
+  const corrected = new WeakSet()
+  return async (session, event) => {
+    if (on() !== true || event?.type !== 'model/selection') return
+    const next = event.data
+    if (next === null || typeof next !== 'object' || corrected.has(next)) return
+    if (typeof next.provider !== 'string' || typeof next.model !== 'string') return
+    const previous = session?.requestHeader?.()?.config
+    const effort = previous?.reasoningEffort
+    if (typeof effort !== 'string' || effort === '') return
+    // The same route is an effort-only pick (the person's), not a crossing.
+    if (previous.provider === next.provider && previous.model === next.model) return
+    if (crossing(previous, next) !== true) return
+    let reasoning
+    try {
+      reasoning = await reasoningOf(next.provider, next.model)
+    } catch {
+      return
+    }
+    if (corrected.has(next)) return
+    // An answer that has not read the model's levels says nothing: it is not a "cannot".
+    if (!Array.isArray(reasoning?.efforts)) return
+    const carried = effortIdOf(reasoning, effort)
+    if (carried === undefined) {
+      const row = effortNotice(effort, `${next.provider}/${next.model}`)
+      try { session.append?.('user/message', row, { surfaceOp: 'append' }) } catch {}
+      return
+    }
+    if (next.reasoningEffort === carried) return
+    const choice = { provider: next.provider, model: next.model, reasoningEffort: carried }
+    corrected.add(choice)
+    try { session.append?.('model/selection', choice) } catch {}
+  }
+}
+
 /**
  * A transcript with every text-bearing part redacted, for a crossing to another provider. The
  * messages and their content are copied, never changed: DSH keeps the record it logged.
@@ -89,15 +174,46 @@ export function fromAgent(messages, providers) {
 /**
  * The `llm/stream` listener for the crossing back to DSH's own providers: a transcript that
  * carries an agent's turn is redacted before a native model sees it, so a secret the agent read
- * with its own tools never reaches that provider. `next` takes no request, so the redacted call
- * is a nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
+ * with its own tools never reaches that provider. The reasoning effort the agent's turn ran on
+ * goes with it when the native model offers that level; the Session's selection records the
+ * carried effort, so the next turn keeps it. `next` takes no request, so the redacted call is a
+ * nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
  * @param {Map<string, unknown>} providers the agents' routes
- * @param {{ llm?: { stream(options: object): AsyncIterable<object> } }} [ctx]
+ * @param {{
+ *   llm?: { stream(options: object): AsyncIterable<object>,
+ *     resolveModelInfo?(provider: string, model: string): Promise<any> },
+ *   agents?: { get(id: string): any },
+ * }} [ctx]
  * @param {(text: string) => string} redact
  * @param {() => boolean} [on] whether live switching is on (the setting); off is the old path
  */
 export function crossed(providers, ctx, redact, on = () => true) {
   const rewritten = new WeakSet()
+  // The previous route and the target's levels are read while the crossing is forwarded: a
+  // nested `ctx.llm.stream` cannot take a request from `next`, so this is the one place that
+  // can add the effort before the native adapter resolves its call config.
+  const forward = async function* (request, session, previous) {
+    let out = request
+    if (typeof previous?.reasoningEffort === 'string') {
+      let reasoning
+      try {
+        reasoning = (await ctx.llm.resolveModelInfo?.(request.provider, request.model))?.reasoning
+      } catch {
+        reasoning = undefined
+      }
+      const carried = effortIdOf(reasoning, previous.reasoningEffort)
+      if (carried !== undefined && carried !== request.reasoningEffort) {
+        out = { ...request, reasoningEffort: carried }
+        rewritten.add(out)
+        try {
+          session.append?.('model/selection', {
+            provider: request.provider, model: request.model, reasoningEffort: carried,
+          })
+        } catch {}
+      }
+    }
+    yield* ctx.llm.stream(out)
+  }
   return (options, next) => {
     if (on() !== true) return next()
     if (agentRoute(providers, options.provider) || options.sessionId === undefined) return next()
@@ -105,6 +221,12 @@ export function crossed(providers, ctx, redact, on = () => true) {
     if (!fromAgent(options.messages, providers)) return next()
     const request = { ...options, messages: redactTranscript(options.messages, redact) }
     rewritten.add(request)
+    const session = ctx?.agents?.get?.(options.sessionId)?.session
+    const previous = session?.requestHeader?.()?.config
+    const fromAgentRoute = previous !== undefined && agentRoute(providers, previous.provider)
+    if (fromAgentRoute && typeof previous.reasoningEffort === 'string') {
+      return forward(request, session, previous)
+    }
     return ctx.llm.stream(request)
   }
 }

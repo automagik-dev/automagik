@@ -4,8 +4,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SYNTHETIC_KIND } from '../src/host/names.js'
 import {
-  agentRoute, BOUNDARY_KIND, boundaryNotice, crossed, fromAgent, lastProviderOf, redactTranscript,
-  renderMessage, replayBlocks, turnStart,
+  agentRoute, BOUNDARY_KIND, boundaryNotice, carryEffort, crossed, EFFORT_KIND, effortIdOf,
+  effortNotice, fromAgent, lastProviderOf, redactTranscript, renderMessage, replayBlocks,
+  turnStart,
 } from '../src/host/switch.js'
 import { credentialShapes } from '../src/host/redact.js'
 
@@ -79,6 +80,116 @@ test('the boundary row is a notice outside the reply, naming where the turn came
   assert.equal(row.source.form, 'notice')
   assert.equal(row.source.summary, 'Now answered by Claude Code (acp-claude)')
   assert.deepEqual(row.content, [{ type: 'text', text: '[Now answered by Claude Code (acp-claude).]' }])
+})
+
+const LEVELS = {
+  efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+}
+
+test('the effort notice is a drawn row outside the reply, naming what could not cross', () => {
+  const row = effortNotice('high', 'deepseek-official/plain')
+  const summary = 'Reasoning effort high is not available on deepseek-official/plain; '
+    + 'this chat runs on its own'
+  assert.equal(row.role, 'user')
+  assert.equal(row.source.kind, EFFORT_KIND)
+  assert.equal(row.source.form, 'notice')
+  assert.equal(row.source.summary, summary)
+  assert.deepEqual(row.content, [{ type: 'text', text: `[${summary}.]` }])
+  // A name the target uses for the same level counts as expressible.
+  assert.equal(effortIdOf({ efforts: [{ id: 'max', name: 'High' }] }, 'high'), 'max')
+  assert.equal(effortIdOf(LEVELS, 'high'), 'high')
+  assert.equal(effortIdOf({ efforts: [{ id: 'low', name: 'Low' }] }, 'high'), undefined)
+})
+
+test('a crossing carries the Session\'s effort both ways, and says where it cannot', async () => {
+  const appended = []
+  let previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  const session = {
+    requestHeader: () => ({ config: previous }),
+    append: (type, data, options) => {
+      appended.push({ type, data, options })
+      return { seq: appended.length }
+    },
+  }
+  const reasoning = new Map([
+    ['acp-fake/fake-large', LEVELS],
+    ['deepseek-official/deepseek-v4', LEVELS],
+    ['deepseek-official/plain', { efforts: [] }],
+  ])
+  const acpCrossing = (previous, next) =>
+    previous.provider.startsWith('acp-') || next.provider.startsWith('acp-')
+  const carry = carryEffort(
+    async (provider, model) => reasoning.get(`${provider}/${model}`),
+    () => true,
+    acpCrossing,
+  )
+  const cross = data => carry(session, { type: 'model/selection', data })
+  // Native -> agent: DSH records the target's default (low); high crosses instead.
+  await cross({ provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'low' })
+  assert.deepEqual(appended.at(-1), {
+    type: 'model/selection',
+    data: { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' },
+    options: undefined,
+  })
+  // Agent -> native: the same high crosses back.
+  previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
+  appended.length = 0
+  await cross({ provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'low' })
+  assert.deepEqual(appended.at(-1).data, {
+    provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high',
+  })
+  // The same route with another effort is the person's own pick, not a crossing.
+  appended.length = 0
+  await cross({ provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'low' })
+  assert.equal(appended.length, 0)
+  // A native model change is not an ACP crossing, so it is left alone.
+  previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  await cross({ provider: 'deepseek-official', model: 'deepseek-other', reasoningEffort: 'low' })
+  assert.equal(appended.length, 0)
+  // A known target that cannot express it: a notice, and no rewritten selection.
+  previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
+  await cross({ provider: 'deepseek-official', model: 'plain' })
+  assert.equal(appended.at(-1).type, 'user/message')
+  assert.equal(appended.at(-1).data.source.kind, EFFORT_KIND)
+  assert.match(appended.at(-1).data.content[0].text, /Reasoning effort high is not available/)
+})
+
+test('a crossing back to a native model carries the effort the agent ran on', async () => {
+  const sent = []
+  const appended = []
+  const session = {
+    requestHeader: () => ({
+      config: { provider: 'acp-fake', model: 'default', reasoningEffort: 'high' },
+    }),
+    append: (type, data) => { appended.push({ type, data }) },
+  }
+  const ctx = {
+    agents: { get: id => (id === 's1' ? { session } : undefined) },
+    llm: {
+      resolveModelInfo: async provider => ({
+        reasoning: provider === 'deepseek-official' ? LEVELS : undefined,
+      }),
+      stream: options => {
+        sent.push(options)
+        return (async function* () {})()
+      },
+    },
+  }
+  const listen = crossed(new Map([['acp-fake', {}]]), ctx, text => text)
+  const messages = [user('q'), answer('a', 'acp-fake')]
+  const request = {
+    provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'low',
+    sessionId: 's1', messages,
+  }
+  const stream = listen(request, () => 'next')
+  assert.deepEqual(await Array.fromAsync(stream), [])
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].reasoningEffort, 'high')
+  // The Session records the carried effort, so the next turn keeps it.
+  assert.deepEqual(appended, [{
+    type: 'model/selection',
+    data: { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' },
+  }])
 })
 
 test('a transcript crossing back to a native provider is redacted, its source untouched', () => {

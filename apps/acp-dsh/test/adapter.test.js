@@ -471,6 +471,46 @@ test('the chosen model and effort reach the agent before each prompt; default go
   }
 })
 
+test('a crossing into an agent carries the effort the Session ran on, and records it', async () => {
+  const reasoning = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const catalog = {
+    models: async () => [
+      { id: 'fake-large', name: 'Fake Large', reasoning },
+      { id: 'fake-small', name: 'Fake Small', reasoning },
+    ],
+    model: async id => (id === 'fake-large' || id === 'fake-small'
+      ? { id, name: id, reasoning }
+      : undefined),
+    ownEffort: () => undefined,
+    dispose() {},
+  }
+  const h = dshHost({ spec: { catalog } })
+  try {
+    // The last request ran on a native model at high effort; DSH's selection for the agent
+    // carries that model's own default (low), which the crossing replaces.
+    h.session.append('request/header', {
+      reason: 'change',
+      header: {
+        config: {
+          provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high',
+        },
+      },
+    })
+    const messages = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }],
+    }]
+    const chunks = await step(h.adapter, messages, { model: 'fake-large', effort: 'low' })
+    assert.match(thoughtIn(chunks), /^On fake-large at high effort\./)
+    const selection = h.session.snapshotEvents()
+      .filter(event => event.type === 'model/selection').at(-1)
+    assert.deepEqual(selection.data, {
+      provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high',
+    })
+  } finally {
+    h.close()
+  }
+})
+
 test('an agent that offers no models is one model, default, with no efforts', async (t) => {
   process.env.FAKE_ACP_NO_OPTIONS = '1'
   t.after(() => { delete process.env.FAKE_ACP_NO_OPTIONS })
@@ -984,6 +1024,52 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
     assert.equal(asked[0].toolName, 'bash')
   } finally {
     registered['acp-fake'].dispose()
+  }
+})
+
+test('the plugin wiring carries effort both ways on a model selection', async () => {
+  const handlers = []
+  const offs = []
+  const appended = []
+  let previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  const session = {
+    requestHeader: () => ({ config: previous }),
+    append: (type, data) => { appended.push({ type, data }) },
+  }
+  const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      resolveModelInfo: async () => ({ reasoning: levels }),
+    },
+    agents: { get: () => undefined },
+    on: (event, handler) => {
+      if (event === 'session/event') handlers.push(handler)
+      return () => {}
+    },
+    effect: (execute) => { offs.push(execute()) },
+    logger: { warn() {}, info() {} },
+    get: () => undefined,
+  }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: true })
+  const select = async (data) => {
+    for (const handler of handlers) handler(session, { type: 'model/selection', data })
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  try {
+    await select({ provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'low' })
+    assert.deepEqual(appended.at(-1), {
+      type: 'model/selection',
+      data: { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' },
+    })
+    previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
+    appended.length = 0
+    await select({ provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'low' })
+    assert.deepEqual(appended.at(-1).data, {
+      provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high',
+    })
+  } finally {
+    for (const off of offs) off()
   }
 })
 

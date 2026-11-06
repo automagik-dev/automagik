@@ -5,6 +5,10 @@
 // delivery-4/6 probes pass, the adapter is installed, and the route lists the model. A Bot
 // the person has changed since (or whose model the route does not list) is left alone.
 //
+// A moved Bot keeps the model and thinking level it had in `acpMoved`. With `dshTools` off, or
+// the route gone, it moves back to exactly that. A Bot the person changed since keeps their
+// pick: the record is dropped, never applied over it.
+//
 // `acpAgents.bridge()` runs a live probe on this machine: a fresh per-session credential, the
 // bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
 // adapter version; a failure is retried after ten minutes or the next start, so one slow start
@@ -35,35 +39,61 @@ export function acpClaudeTarget(bot, listed) {
 }
 
 /**
- * Whether this host may move Bots to `acp-claude` now: the bridge is on and its probes pass,
- * the adapter is installed, and the route is in DSH's picker.
- * @returns {Promise<{ listed: string[] } | undefined>}
+ * What the `acp-claude` route is doing on this machine: `ready` with its listed models,
+ * `waiting` while its adapter installs or its catalog has not answered, `off` with `dshTools`
+ * off, or `gone` when the route is no longer served (the plugin, the agent setting or its CLI).
+ * A `gone` or `off` route is the rollback: moved Bots go back to what they ran on before.
+ * @returns {Promise<{ state: 'ready', listed: string[] } | { state: 'waiting' | 'off' | 'gone' }>}
  */
-async function acpClaudeReady(ctx) {
+async function acpClaudeState(ctx) {
   const acp = ctx.get?.('acpAgents')
+  if (acp === undefined || typeof acp.bridge !== 'function') return { state: 'gone' }
   let bridge
   try {
-    bridge = typeof acp?.bridge === 'function' ? await acp.bridge() : undefined
+    bridge = await acp.bridge()
   } catch {
-    return undefined
+    return { state: 'gone' }
   }
-  if (bridge?.on !== true || bridge?.probesPass !== true) return undefined
+  if (bridge?.on !== true) return { state: 'off' }
+  // A bridge that does not pass its probe is not a route that disappeared: the agent may
+  // still be served while its tools cannot reach DSH.
+  if (bridge?.probesPass !== true) return { state: 'waiting' }
   let status
   try {
     status = await acp.status?.()
   } catch {
-    return undefined
+    return { state: 'waiting' }
   }
   const agent = status?.agents?.find?.(row => row?.id === ACP_AGENT)
-  // A route appears only once its CLI is here; its adapter installs behind it, and the
-  // model menu is the route's own.
-  if (agent?.connector?.state !== 'ready' || agent?.model?.listed !== true) return undefined
+  if (agent === undefined) return { state: 'gone' }
+  // Installing is a route on its way in; off, no CLI and a failed install are a route gone.
+  // Ready without a model list is a route that is still here, its catalog not answered yet.
+  if (!['installing', 'ready'].includes(agent?.connector?.state)) return { state: 'gone' }
+  if (agent.connector.state !== 'ready' || agent.model?.listed !== true) return { state: 'waiting' }
   try {
     const models = await ctx.llm.listModels(ACP_AGENT)
     const listed = (Array.isArray(models) ? models : []).map(model => model?.id).filter(id => typeof id === 'string')
-    return listed.length > 0 ? { listed } : undefined
+    return listed.length > 0 ? { state: 'ready', listed } : { state: 'waiting' }
   } catch {
-    return undefined
+    return { state: 'waiting' }
+  }
+}
+
+// The record an ACP move writes, when the team moved before this record existed (the
+// `claudeAcpMoved` flag alone): the pi-ai model is still recoverable from `claudeCodeModel`.
+// Only a Bot still on the same family's route alias is recorded; one the person moved to
+// another family or agent is left alone.
+function priorMove(bot) {
+  if (bot?.acpMoved !== undefined || typeof bot.claudeCodeModel !== 'string') return undefined
+  if (typeof bot.model !== 'string' || !bot.model.startsWith(`${ACP_AGENT}/`)) return undefined
+  const from = piAiClaudeOf(bot.claudeCodeModel)
+  if (from === undefined) return undefined
+  const family = claudeFamilyOf(bot.claudeCodeModel)
+  const moved = bot.model.slice(ACP_AGENT.length + 1)
+  if (moved !== family && moved !== from.slice(from.indexOf('/') + 1)) return undefined
+  return {
+    from: { model: from, ...(bot.effort === undefined ? {} : { effort: bot.effort }) },
+    target: bot.model,
   }
 }
 
@@ -71,44 +101,120 @@ export function install(rt) {
   const { ctx, state } = rt
   let running
 
+  // A moved Bot goes back to exactly the model and thinking level it had. One the person
+  // changed since keeps their pick: the record is dropped, never applied over it.
+  const restore = async () => {
+    const restored = []
+    let changed = false
+    for (const bot of Object.values(state.bots ?? {})) {
+      const moved = bot?.acpMoved ?? (state.claudeAcpMoved === true ? priorMove(bot) : undefined)
+      if (moved === undefined) continue
+      const theirs = bot.model !== moved.target
+        || (bot.effort ?? undefined) !== (moved.from.effort ?? undefined)
+      delete bot.acpMoved
+      changed = true
+      if (theirs) continue
+      bot.model = moved.from.model
+      if (moved.from.effort === undefined) delete bot.effort
+      else bot.effort = moved.from.effort
+      // The Session's record of the model it ran on goes with it, so the next sync selects
+      // the restored model. The Session and its history stay.
+      delete bot.appliedModel
+      delete bot.appliedEffort
+      restored.push(bot)
+    }
+    if (state.claudeAcpMoved === true) {
+      delete state.claudeAcpMoved
+      changed = true
+    }
+    if (!changed) return
+    await rt.save()
+    if (rt.readOnly?.() !== undefined) return
+    for (const bot of restored) {
+      const apply = rt.applyModel
+      if (typeof apply !== 'function') break
+      await apply(bot, { force: true })
+        .catch(error => rt.warn('ds-bot: model for %s not restored: %s', bot.name, error))
+    }
+  }
+
   const move = async () => {
     await rt.load()
-    // Nothing is written by a host that only reads the team; the writer moves them.
+    // Nothing is written by a host that only reads the team; the writer moves or restores them.
     if (rt.readOnly?.() !== undefined) return
-    if (state.claudeAcpMoved === true) return
-    const ready = await acpClaudeReady(ctx)
-    if (ready === undefined) return
+    // A team moved before this record existed: the pi-ai model is still recoverable from the
+    // old ref, so the rollback has something exact to restore.
+    if (state.claudeAcpMoved === true) {
+      for (const bot of Object.values(state.bots ?? {})) {
+        if (bot?.acpMoved !== undefined) continue
+        const recovered = priorMove(bot)
+        if (recovered !== undefined) bot.acpMoved = recovered
+      }
+    }
+    const route = await acpClaudeState(ctx)
+    if (route.state === 'off' || route.state === 'gone') {
+      await restore()
+      return
+    }
+    if (route.state !== 'ready') return
     const moved = []
+    const reapply = []
     let waiting = false
+    let changed = false
     for (const bot of Object.values(state.bots ?? {})) {
-      const target = acpClaudeTarget(bot, ready.listed)
+      const prior = bot?.acpMoved
+      if (prior !== undefined) {
+        const theirs = bot.model !== prior.target
+          || (bot.effort ?? undefined) !== (prior.from.effort ?? undefined)
+        if (theirs) {
+          delete bot.acpMoved
+          changed = true
+        } else {
+          reapply.push(bot)
+        }
+        continue
+      }
+      if (state.claudeAcpMoved === true) continue
+      const target = acpClaudeTarget(bot, route.listed)
       if (target === undefined) {
         // Eligible but this route does not list its model yet: the next catalog may, so the
         // team is not marked done and the Bot is not touched.
         if (bot?.claudeCodeModel !== undefined && bot.model === piAiClaudeOf(bot.claudeCodeModel)) waiting = true
         continue
       }
-      bot.model = target
-      moved.push(bot)
-    }
-    if (moved.length > 0) {
-      // The Session's record of the model it ran on goes with it, so the next sync selects
-      // the ACP model. The Session and its history stay.
-      for (const bot of moved) {
-        delete bot.appliedModel
-        delete bot.appliedEffort
+      bot.acpMoved = {
+        from: { model: bot.model, ...(bot.effort === undefined ? {} : { effort: bot.effort }) },
+        target,
       }
+      bot.model = target
+      delete bot.appliedModel
+      delete bot.appliedEffort
+      moved.push(bot)
+      changed = true
     }
-    if (!waiting) state.claudeAcpMoved = true
-    if (moved.length > 0 || !waiting) await rt.save()
+    if (state.claudeAcpMoved !== true && !waiting) {
+      state.claudeAcpMoved = true
+      changed = true
+    }
+    if (changed) await rt.save()
     // A lock lost during the save leaves the file unchanged; do not move live Sessions to a
     // model the team file does not record.
     if (rt.readOnly?.() !== undefined) return
     for (const bot of moved) {
       const apply = rt.applyModel
       if (typeof apply !== 'function') break
+      // The thinking level is the Bot's own, resolved against the route just picked: the move
+      // carries it where the agent offers it, never dropping it before the route answers.
       await apply(bot, { force: true })
         .catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
+    }
+    // The agent's catalog may have landed after the move: re-apply the moved Bots so the
+    // thinking level is set once the route can express it. A no-op when it already is.
+    for (const bot of reapply) {
+      const apply = rt.applyModel
+      if (typeof apply !== 'function') break
+      await apply(bot)
+        .catch(error => rt.warn('ds-bot: thinking level for %s not applied: %s', bot.name, error))
     }
   }
 
