@@ -258,6 +258,9 @@ test('the client redactor alone removes every shared shape', () => {
   const npmToken = ['npm_', 'a'.repeat(24)].join('')
   const skToken = ['sk-', 'b'.repeat(12)].join('')
   const ghToken = ['ghp_', 'c'.repeat(24)].join('')
+  const nodeToken = 'node-auth-secret'
+  const myToken = 'my-npm-secret'
+  const jsonToken = 'json-npm-secret'
   const secrets = [
     npmToken,
     auth,
@@ -270,6 +273,9 @@ test('the client redactor alone removes every shared shape', () => {
     'quoted-auth-secret==',
     'env-token-secret',
     'npm-config-secret',
+    nodeToken,
+    myToken,
+    jsonToken,
   ]
   const raw = [
     npmToken,
@@ -283,6 +289,9 @@ test('the client redactor alone removes every shared shape', () => {
     '"//registry.npmjs.org/:_auth": "quoted-auth-secret=="',
     'NPM_TOKEN=env-token-secret',
     'npm_config__authToken=npm-config-secret',
+    `NODE_AUTH_TOKEN=${nodeToken}`,
+    `MY_NPM_TOKEN=${myToken}`,
+    `{"NPM_TOKEN": "${jsonToken}"}`,
   ].join(' ')
   const text = ui.redactText(raw)
   for (const value of secrets) assert.ok(!text.includes(value), `hides ${value}`)
@@ -290,6 +299,9 @@ test('the client redactor alone removes every shared shape', () => {
   assert.match(text, /_authToken=\[hidden\]/)
   assert.match(text, /\[hidden\]@registry\.npmjs\.org/)
   assert.match(text, /Bearer \[hidden\]/)
+  assert.match(text, /NODE_AUTH_TOKEN=\[hidden\]/)
+  assert.match(text, /MY_NPM_TOKEN=\[hidden\]/)
+  assert.match(text, /"NPM_TOKEN": \[hidden\]/)
 })
 
 test('the row redacts a token and shows a home-relative log path', () => {
@@ -309,13 +321,16 @@ test('npm credentials and an absolute home are redacted in the answer and the ro
   const url = ['https://', user, ':', pass, '@registry.npmjs.org/pkg'].join('')
   const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
   const quoted = 'quoted-secret-123456'
-  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}\n{"_authToken": "${quoted}"}\nNPM_TOKEN=env-token-secret`
-  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} {"_authToken": "${quoted}"} ${url}`, diagnostic } })])
+  const nodeToken = 'node-auth-secret'
+  const myToken = 'my-npm-secret'
+  const jsonToken = 'json-npm-secret'
+  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}\n{"_authToken": "${quoted}"}\nNPM_TOKEN=env-token-secret\nNODE_AUTH_TOKEN=${nodeToken}\nMY_NPM_TOKEN=${myToken}\n{"NPM_TOKEN": "${jsonToken}"}`
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} {"_authToken": "${quoted}"} ${url} NODE_AUTH_TOKEN=${nodeToken} {"NPM_TOKEN": "${jsonToken}"}`, diagnostic } })])
   const fake = host({ acp })
   const { value } = await fake.handle('acp')
   const connector = value.agents[0].connector
   const text = textOf(rowOf(value.agents[0], acpOf([])))
-  for (const raw of [npmToken, auth, pass, homedir(), quoted, 'env-token-secret']) {
+  for (const raw of [npmToken, auth, pass, homedir(), quoted, 'env-token-secret', nodeToken, myToken, jsonToken]) {
     assert.ok(!connector.error.includes(raw), `the error hides ${raw}`)
     assert.ok(!connector.diagnostic?.includes(raw), `the diagnostic hides ${raw}`)
     assert.ok(!text.includes(raw), `the row hides ${raw}`)

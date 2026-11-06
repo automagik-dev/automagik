@@ -288,14 +288,17 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   const quotedAuth = 'quoted-auth-secret=='
   const envToken = 'env-token-secret'
   const npmConfig = 'npm-config-secret'
+  const nodeToken = 'node-auth-secret'
+  const myToken = 'my-npm-secret'
+  const jsonToken = 'json-npm-secret'
   const store = new AdapterStore({
     home,
     latest: async () => '1.0.0',
-    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}\n{"_authToken": "${quotedKey}"}\n{"//registry.npmjs.org/:_auth": "${quotedAuth}"}\nNPM_TOKEN=${envToken}\nnpm_config__authToken=${npmConfig}`) },
+    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}\n{"_authToken": "${quotedKey}"}\n{"//registry.npmjs.org/:_auth": "${quotedAuth}"}\nNPM_TOKEN=${envToken}\nnpm_config__authToken=${npmConfig}\nNODE_AUTH_TOKEN=${nodeToken}\nMY_NPM_TOKEN=${myToken}\n{"NPM_TOKEN": "${jsonToken}"}`) },
   })
   await assert.rejects(store.update(adapter, bin))
   const failure = store.lastFailure(adapter)
-  for (const raw of [token, npmToken, auth, pass, homedir(), quotedKey, quotedAuth, envToken, npmConfig]) {
+  for (const raw of [token, npmToken, auth, pass, homedir(), quotedKey, quotedAuth, envToken, npmConfig, nodeToken, myToken, jsonToken]) {
     assert.ok(!failure.diagnostic.includes(raw), `the diagnostic hides ${raw}`)
     assert.ok(!failure.message.includes(raw), `the short message hides ${raw}`)
     assert.ok(!readFileSync(failure.logPath, 'utf8').includes(raw), `the log hides ${raw}`)
@@ -308,9 +311,33 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   assert.match(failure.diagnostic, /_auth["']?:\s*\[hidden\]/)
   assert.match(failure.diagnostic, /NPM_TOKEN=\[hidden\]/)
   assert.match(failure.diagnostic, /npm_config__authToken=\[hidden\]/)
+  assert.match(failure.diagnostic, /NODE_AUTH_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /MY_NPM_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /"NPM_TOKEN": \[hidden\]/)
   const mode = statSync(failure.logPath).mode & 0o777
   assert.equal(mode, 0o600)
   assert.equal(statSync(join(home, 'logs')).mode & 0o777, 0o700)
+  // The install path's warn goes through the store's redacted message, never the raw error.
+  const warnings = []
+  let service
+  const ctx = {
+    llm: { registerAdapter: () => () => {}, listProviders: () => [] },
+    agents: { get: () => undefined },
+    get: () => undefined,
+    provide: (name, value) => { if (name === 'acpAgents') service = value },
+    on: () => {},
+    effect: () => {},
+    logger: { warn: message => warnings.push(message), info: () => {} },
+  }
+  apply(ctx, {}, { store, find: name => (name === 'claude' ? '/bin/claude' : undefined), signedIn: async () => undefined })
+  await service.retry('acp-claude')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const line = warnings.find(message => message.includes('not installed'))
+  assert.ok(line, 'the failed install is logged')
+  for (const raw of [token, npmToken, auth, pass, homedir(), quotedKey, quotedAuth, envToken, npmConfig, nodeToken, myToken, jsonToken]) {
+    assert.ok(!line.includes(raw), `the log line hides ${raw}`)
+  }
+  assert.match(line, /\[hidden\]/)
 })
 
 test('an install that pulls in a bundled CLI is refused, and the working adapter stays', async (t) => {

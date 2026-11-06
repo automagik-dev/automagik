@@ -89,7 +89,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
-      error => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${error?.message ?? error}`) },
+      // The store's short message is already redacted and home-relative; the raw installer
+      // error is not, so it never reaches the host log.
+      () => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`) },
     )
   }
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({

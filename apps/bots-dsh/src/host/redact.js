@@ -24,7 +24,9 @@ export const CREDENTIALS = [
   [/\bnpm_[A-Za-z0-9]{8,}/g, 'npm_[hidden]'],
   [/(\bnpm_config_(?:_?authToken|_?auth|_?password)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
   [/(\b_(?:authToken|auth|password)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
-  [/(\bNPM_TOKEN\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
+  // Any env name ending in NPM_TOKEN or AUTH_TOKEN (NPM_TOKEN, MY_NPM_TOKEN, NODE_AUTH_TOKEN),
+  // as a key with = or :, JSON-quoted keys included.
+  [/(\b[A-Z0-9_]*(?:NPM_TOKEN|AUTH_TOKEN)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
   [/(\bhttps?:\/\/)[^/\s]+@/gi, `$1${CREDENTIAL_MARK}@`],
   [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, `$1${CREDENTIAL_MARK}`],
 ]

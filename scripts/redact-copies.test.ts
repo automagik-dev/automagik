@@ -21,6 +21,9 @@ describe('the credential redactor copies', () => {
       ['"//registry.npmjs.org/:_auth": "quoted-auth-secret=="', 'quoted-auth-secret=='],
       ['NPM_TOKEN=env-token-secret', 'env-token-secret'],
       ['npm_config__authToken=npm-config-secret', 'npm-config-secret'],
+      ['NODE_AUTH_TOKEN=node-auth-secret', 'node-auth-secret'],
+      ['MY_NPM_TOKEN=my-npm-secret', 'my-npm-secret'],
+      ['{"NPM_TOKEN": "json-npm-secret"}', 'json-npm-secret'],
     ];
     for (const [raw, secret] of quoted) expect(redactText(raw)).not.toContain(secret);
   });
