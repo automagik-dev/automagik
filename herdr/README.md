@@ -293,7 +293,9 @@ automagik-herdr update [--check | --rollback]
   pane in that project, never on this computer's same-id bot, and `whois --bot <bot>` answers for
   this computer unless given `--machine M`. The pane's PATH comes from that machine's login shell,
   asked once with a 10 s bound (herdr-core may run as a service that never read `~/.profile`), plus
-  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. The agent and the interpreter on
+  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. When the PATH hc runs programs
+  with already finds the agent, that PATH goes first, so a working machine keeps the same agent and
+  interpreter; otherwise the login shell's goes first. The agent and the interpreter on
   its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A login shell
   that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
   text. A session id the pane carries is resumed by id

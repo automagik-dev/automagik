@@ -265,8 +265,9 @@ switch (words[0]) {
     // state.execUnanswered: programs whose call gets no answer (the machine dropped mid-call).
     if ((state.execUnanswered ?? []).includes(argv[0])) fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } }));
     if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
-    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers).
-    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
+    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers);
+    // state.execTimedOutAfterMs: how long that answer takes to come back over the link, really waited.
+    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { if (state.execTimedOutAfterMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.execTimedOutAfterMs); out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
     // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
     // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
     const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",
