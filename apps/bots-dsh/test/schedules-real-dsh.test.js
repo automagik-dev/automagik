@@ -1,0 +1,77 @@
+// The shapes the Bot team's schedule adapter sends, checked against DSH 0.2.2's own
+// ScheduleService from the pinned harness, over an in-memory storage domain. The service is
+// real: it validates the typed timing, resolves the session target, and owns catalog/edit.
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { Context } from '@deepseek-ai/cordis'
+import ScheduleService from '@deepseek-ai/dsh-schedule'
+
+// The storage-domain face ScheduleService opens: table(name) with entries/get/put/deleteMany.
+function memoryDomain() {
+  const tables = new Map()
+  return {
+    close: async () => {},
+    table(name) {
+      if (!tables.has(name)) tables.set(name, new Map())
+      const rows = tables.get(name)
+      return {
+        entries: () => [...rows.entries()],
+        get: id => rows.get(id),
+        put: async (id, value) => { rows.set(id, value) },
+        delete: async (id) => rows.delete(id),
+        deleteMany: async (ids) => {
+          let removed = 0
+          for (const id of ids) if (rows.delete(id)) removed++
+          return removed
+        },
+      }
+    },
+  }
+}
+
+async function service() {
+  const ctx = new Context()
+  ctx.provide('storageDomain', { open: async () => memoryDomain() })
+  ctx.provide('logger', { warn() {}, info() {}, error() {}, debug() {} })
+  ctx.provide('agents', { get: () => undefined })
+  ctx.provide('sessionPersistence', { stat: async () => ({ header: {} }) })
+  const schedule = new ScheduleService(ctx, {})
+  await schedule.ready
+  return schedule
+}
+
+test('DSH 0.2.2 takes the adapter\'s typed timing and session target, lists, catalogs and deletes', async () => {
+  const schedule = await service()
+  const created = await schedule.create({
+    title: 'Briefing',
+    prompt: 'Sum up the day',
+    timing: { kind: 'daily', daily: { time: '09:00:00', time_zone: 'UTC' } },
+    target: { kind: 'session', sessionId: 's1' },
+  })
+  assert.equal(created.kind, 'daily')
+  assert.equal(created.status, 'active')
+  assert.deepEqual(created.target, { kind: 'session', sessionId: 's1' })
+  assert.equal(created.time, '09:00:00.000')
+  assert.equal(created.timeZone, 'UTC')
+
+  const listed = await schedule.list({})
+  assert.equal(listed.total, 1)
+  assert.equal(listed.items[0].id, created.id)
+
+  const [catalogued] = await schedule.catalog()
+  assert.equal(catalogued.id, created.id)
+  assert.deepEqual(catalogued.target, { kind: 'session', sessionId: 's1' })
+  assert.equal(catalogued.status, 'active')
+
+  await schedule.edit({ id: created.id, action: 'delete' })
+  assert.deepEqual(await schedule.catalog(), [])
+})
+
+test('the old session-scoped create shape is refused by DSH 0.2.2', async () => {
+  const schedule = await service()
+  await assert.rejects(schedule.create('s1', {
+    title: 'Old part',
+    prompt: 'x',
+    every_seconds: 3600,
+  }))
+})
