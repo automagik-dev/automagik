@@ -23,13 +23,13 @@ test('anything but an exact version is refused', () => {
   }
 })
 
-test('a plugin tested on a dsh declares it up to the next patch, previews included', () => {
-  assert.equal(rangeFor('0.2.1-rc.3'), '>=0.2.1-rc.3 <0.2.2-0')
-  assert.equal(rangeFor('0.2.1'), '>=0.2.1 <0.2.2-0')
-  assert.equal(rangeFor('0.3.0-alpha.1'), '>=0.3.0-alpha.1 <0.3.1-0')
+test('a plugin tested on a dsh declares it up to the next minor, its prereleases excluded', () => {
+  assert.equal(rangeFor('0.2.1-rc.3'), '>=0.2.1-rc.3 <0.3.0-0')
+  assert.equal(rangeFor('0.2.1'), '>=0.2.1 <0.3.0-0')
+  assert.equal(rangeFor('0.3.0-alpha.1'), '>=0.3.0-alpha.1 <0.4.0-0')
   assert.throws(() => rangeFor('^0.2.1'), /not a dsh version/)
-  assert.deepEqual(pinRange({ name: 'p', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }, '0.2.2-rc.1'), { name: 'p', engines: { dsh: '>=0.2.2-rc.1 <0.2.3-0' } })
-  assert.equal(pinRange({ engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }, '0.2.1-rc.3'), null)
+  assert.deepEqual(pinRange({ name: 'p', engines: { dsh: '>=0.2.1-rc.3 <0.3.0-0' } }, '0.2.2-rc.1'), { name: 'p', engines: { dsh: '>=0.2.2-rc.1 <0.3.0-0' } })
+  assert.equal(pinRange({ engines: { dsh: '>=0.2.1-rc.3 <0.3.0-0' } }, '0.2.1-rc.3'), null)
 })
 
 test('the plugins it moves are the ones that declare the range, and their range is the one it writes', () => {
@@ -99,18 +99,19 @@ test('the boot gate boots the candidate exactly as carry writes it, both pins', 
 })
 
 
-test('a carried Omni harness admits only newer compatible releases in the same patch series', () => {
-  const range = '>=0.2.1-rc.3 <0.2.2-0'
-  for (const version of ['0.2.1-rc.3', '0.2.1-rc.4', '0.2.1']) {
+test('a carried Omni harness admits only newer compatible releases in the same minor series', () => {
+  const range = '>=0.2.1-rc.3 <0.3.0-0'
+  for (const version of ['0.2.1-rc.3', '0.2.1-rc.4', '0.2.1', '0.2.2-alpha.1', '0.2.2']) {
     assert.equal(acceptsHarness(version, '0.2.1-rc.3', range), true, version)
   }
-  for (const version of ['0.2.1-rc.2', '0.2.2-alpha.1', '0.2.2', '0.3.0', 'latest', undefined]) {
+  // dsh resolves engines with includePrerelease, so the next minor's prereleases must be excluded.
+  for (const version of ['0.2.1-rc.2', '0.3.0-alpha.1', '0.3.0-rc.1', '0.3.0', 'latest', undefined]) {
     assert.equal(acceptsHarness(version, '0.2.1-rc.3', range), false, version)
   }
   assert.equal(acceptsHarness('0.2.1-rc.4', '0.2.1-rc.3', '>=0.2.1-rc.3 <0.2.1-rc.4'), false)
   assert.equal(acceptsHarness('0.2.1-rc.4', '0.2.1-rc.3', undefined), false)
   assert.equal(acceptsHarness('0.2.1-rc.4', undefined, range), false)
-  assert.equal(acceptsHarness('0.2.2', '0.2.1-rc.3', '>=0.2.1-rc.2 <0.3.0'), false)
+  assert.equal(acceptsHarness('0.2.2', '0.2.1-rc.3', '>=0.2.1-rc.2 <0.3.0-0'), true)
 })
 
 test('patch version tooling preserves exact-byte guards and does not mutate its input', () => {
