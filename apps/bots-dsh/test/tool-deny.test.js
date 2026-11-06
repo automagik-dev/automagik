@@ -15,7 +15,7 @@ const SERVED = ['bash', 'read', 'write', 'edit', 'omni_send', 'omni_messages', '
 
 // Enough of the host for the roster and the tool-deny module: Sessions resolve to an agent
 // whose `ctx.tools.restrict` records the deny list and hands back a lift.
-function bench({ served = SERVED } = {}) {
+function bench({ served = SERVED, scoped = [] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-tool-deny-'))
   const ctx = fakeContext()
   const restricted = []
@@ -37,7 +37,8 @@ function bench({ served = SERVED } = {}) {
   ctx.tools.schemas = agent => (agent === undefined ? served : served.filter(name => !hiddenNames(agent).has(name)))
     .map(name => ({ name }))
   // `view().restrictableNames` is what `restrict()` accepts: the surface before restrictions.
-  ctx.tools.view = () => ({ restrictableNames: new Set(served), knownNames: new Set(served) })
+  // A capability mounted on the agent's own scope is known but not restrictable.
+  ctx.tools.view = () => ({ restrictableNames: new Set(served), knownNames: new Set([...served, ...scoped]) })
   Object.assign(ctx, {
     workspaceRegistry: {
       get: () => undefined,
@@ -260,6 +261,22 @@ test('an update that adds a name the restriction already hides keeps it', async 
   await assert.rejects(
     () => guard({ name: 'bash', agent: { id: bot.id } }, async () => 'ran'),
     /does not have the bash tool/,
+  )
+})
+
+test('a capability tool the Bot mounts is a valid deny name, and the guard refuses it', async (t) => {
+  const { ctx, restricted, warnings } = team(t, { scoped: ['mcp_lookup'] })
+  const rt = ctx.provided.get('omniTeam')
+  // `restrict()` cannot name a scope-local tool, but the name is served and the list takes it.
+  const bot = await rt.createBot({ name: 'Analista', denyTools: ['mcp_lookup'], pickModel: true, instructions: 'Read only.' })
+  assert.deepEqual(bot.denyTools, ['mcp_lookup'])
+  await flush()
+  assert.equal(restricted.filter(entry => entry.sessionId === bot.id && entry.deny.includes('mcp_lookup')).length, 0)
+  assert.match(warnings.join('\n'), /cannot restrict/)
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  await assert.rejects(
+    () => guard({ name: 'mcp_lookup', agent: { id: bot.id } }, async () => 'ran'),
+    /does not have the mcp_lookup tool/,
   )
 })
 

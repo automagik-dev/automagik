@@ -110,6 +110,18 @@ export function install(rt) {
     return new Set(ctx.tools.schemas(agent).map(schema => schema.name))
   }
 
+  // Every name this DSH serves to an Agent before any restriction, its own scope included: a
+  // capability mounted on `agent.ctx` registers there, so `restrictableNames` leaves it out,
+  // yet the name is real and the executor guard still refuses a call to it. Validation uses
+  // this set; application uses `servedNames`, because `restrict()` only takes global names.
+  const knownNames = (agent) => {
+    if (typeof ctx.tools.view === 'function') {
+      const view = ctx.tools.view(agent)
+      if (view?.knownNames !== undefined) return new Set(view.knownNames)
+    }
+    return new Set(ctx.tools.schemas(agent).map(schema => schema.name))
+  }
+
   const warnOnce = (sessionId, message) => {
     if (warned.get(sessionId) === message) return
     warned.set(sessionId, message)
@@ -190,7 +202,7 @@ export function install(rt) {
     const deny = wanted.filter(name => served.has(name))
     const missing = wanted.filter(name => !served.has(name))
     if (missing.length > 0) {
-      warnOnce(sessionId, `ds-bot: ${bot?.name ?? 'a Bot'} denies ${missing.join(', ')}, which this DSH does not serve; ignored`)
+      warnOnce(sessionId, `ds-bot: ${bot?.name ?? 'a Bot'} denies ${missing.join(', ')}, which this DSH does not serve or cannot restrict; ignored`)
     }
     waiting.delete(sessionId)
     release(sessionId)
@@ -246,7 +258,7 @@ export function install(rt) {
     const live = agent?.agent ?? agent
     let served
     try {
-      served = servedNames(live)
+      served = knownNames(live)
     } catch {
       return []
     }
