@@ -249,8 +249,9 @@ test('a leaked synthetic bridge block never reaches a native provider', async ()
 
 // The same through DSH's own llm service and DSH's own default-model service, saved on an agent
 // as it is after the person picks one: the listener's nested call passes through the waterfall
-// again, sideModel's adapter answers the title, and the agent's adapter sees no side request.
-test('through DSH\'s real llm and default-model services, a title on an agent\'s chat is answered by sideModel', async () => {
+// again, the team's first configured non-agent model answers the title, and the agent's adapter
+// sees no side request.
+test('through DSH llm services, an agent-chat title runs on the team model', async () => {
   const { Context } = await import('@deepseek-ai/cordis')
   const { default: LlmRuntime, LlmAdapter } = await import('@deepseek-ai/dsh-llm')
   const { default: AgentDefaultModel } = await import('@deepseek-ai/dsh-agent-default-model')
@@ -278,7 +279,10 @@ test('through DSH\'s real llm and default-model services, a title on an agent\'s
   assert.equal(await run({ provider: 'acp-fake', model: 'default', purpose: 'compaction', messages }), 'UNSUPPORTED')
   assert.equal(await run(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', messages })), 'from agent')
   assert.deepEqual(seen, [
-    { adapter: 'deepseek', provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: undefined, agentLoop: false },
+    {
+      adapter: 'deepseek', provider: 'deepseek-official', model: 'm',
+      reasoningEffort: undefined, agentLoop: false,
+    },
     { adapter: 'agent', provider: 'acp-fake', model: 'default', reasoningEffort: undefined, agentLoop: true },
   ])
 })
@@ -288,7 +292,13 @@ test('the plugin sends titles on its agents\' routes to its sideModel setting wh
   const sent = []
   const defaults = { currentSelection: () => ({ provider: 'acp-fake', model: 'default' }) }
   const ctx = {
-    llm: { registerAdapter: () => () => {}, stream: options => { sent.push(options); return (async function* () {})() } },
+    llm: {
+      registerAdapter: () => () => {},
+      stream: options => {
+        sent.push(options)
+        return (async function* () { yield { type: 'finish', reason: { kind: 'stop' } } })()
+      },
+    },
     agents: { get: () => undefined },
     get: name => (name === 'agentDefaultModel' ? defaults : undefined),
     on: (name, listener) => {
@@ -310,11 +320,93 @@ test('the plugin sends titles on its agents\' routes to its sideModel setting wh
   const title = () => drain(call({
     provider: 'acp-fake', model: 'default', purpose: 'session-title', messages: [],
   }))
-  assert.deepEqual(await title(), [])
+  assert.deepEqual(await title(), [{ type: 'finish', reason: { kind: 'stop' } }])
   // A live setting: the next title reads the new value.
   side = { provider: 'anthropic', model: 'claude-haiku-5-5' }
   await title()
   assert.deepEqual(sent.map(options => `${options.provider}/${options.model}`), ['deepseek-official/deepseek-v4', 'anthropic/claude-haiku-5-5'])
+})
+
+test('Auto review uses a Claude route when the team has no DeepSeek key', async () => {
+  const listeners = new Map()
+  const sent = []
+  const routes = {
+    'deepseek-official': [{ id: 'deepseek-flash' }],
+    anthropic: [{ id: 'claude-sonnet-4-5' }],
+  }
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      listProviders: () => [{ id: 'deepseek-official' }, { id: 'anthropic' }, { id: 'acp-fake' }],
+      listModels: async provider => routes[provider] ?? [],
+      stream: options => {
+        sent.push(`${options.provider}/${options.model}`)
+        return (async function* () {
+          if (options.provider === 'deepseek-official') {
+            yield { type: 'finish', reason: { kind: 'error', failure: {
+              message: 'no API key', code: 'MISSING_CREDENTIAL',
+            } } }
+            return
+          }
+          yield { type: 'text-delta', index: 0, text: '{"risk":"low","decision":"allow"}' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    },
+    agents: { get: () => undefined },
+    get: name => (name === 'agentDefaultModel'
+      ? { currentSelection: () => ({ provider: 'acp-fake', model: 'default' }) }
+      : undefined),
+    on: (name, listener) => {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => {}
+    },
+  }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  const call = (options) => {
+    let next = () => assert.fail('the agent got a side request')
+    for (const listener of [...(listeners.get('llm/stream') ?? [])].reverse()) {
+      const rest = next
+      next = () => listener(options, rest)
+    }
+    return next()
+  }
+  const chunks = await drain(call({
+    provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [],
+  }))
+  // The hard-coded DeepSeek default is refused by its missing key; the Claude route answers.
+  assert.deepEqual(sent, ['deepseek-official/deepseek-flash', 'anthropic/claude-sonnet-4-5'])
+  assert.equal(chunks.find(chunk => chunk.type === 'text-delta')?.text,
+    '{"risk":"low","decision":"allow"}')
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+})
+
+test('an Auto review with no reachable reviewer surfaces the failure, not a verdict', async () => {
+  const sent = []
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      listProviders: () => [{ id: 'deepseek-official' }],
+      listModels: async () => [{ id: 'deepseek-flash' }],
+      stream: options => {
+        sent.push(`${options.provider}/${options.model}`)
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'error', failure: {
+            message: 'no API key', code: 'MISSING_CREDENTIAL',
+          } } }
+        })()
+      },
+    },
+    get: () => undefined,
+  }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx)
+  const review = { provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [] }
+  const chunks = await drain(listen(review, () => {
+    throw new Error('the agent got a side request')
+  }))
+  // One candidate, and the built-in default is the same route: the last failure is the answer.
+  assert.deepEqual(sent, ['deepseek-official/deepseek-flash'])
+  assert.equal(chunks.at(-1).reason.failure.code, 'MISSING_CREDENTIAL')
 })
 
 test('sideModel is a live setting, DeepSeek Flash by default', async () => {

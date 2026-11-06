@@ -105,10 +105,12 @@ If a check fails, the bridge returns a named `AUTO_REVIEW_*` error to the agent 
 `apps/acp-dsh/src/host/adapter.js`, `aside(providers, ctx, sideModel, redact)`: add
 `'auto-review'` to the side-request purposes that may cross an agent route, beside
 `session-title`. The chosen model is the same fallback chain the title uses: DSH's
-`agentDefaultModel` selection when it is not an agent route, else `sideModel()` (DeepSeek Flash
-by default), with the agent's `reasoningEffort` removed; the request keeps its `system`,
-`messages`, `temperature`, `sessionId`, `purpose` and `signal`. If neither is a usable non-agent
-model, the request is refused with `UNSUPPORTED`, as today.
+`agentDefaultModel` selection when it is not an agent route, then an explicitly chosen
+`sideModel()`, then the first configured non-agent route, and finally the built-in DeepSeek Flash
+default. A credential or missing-route failure moves to the next candidate, so a team with only
+a Claude login reviews on the model it has; only no answer at all is refused with `UNSUPPORTED`,
+as today. The agent's `reasoningEffort` is removed; the request keeps its `system`, `messages`,
+`temperature`, `sessionId`, `purpose` and `signal`.
 
 **Redact before the reviewer.** For `auto-review`, every text block in the review's `messages`
 (and the `system` text) passes the shared redactor (`redactorFor(ctx)`: the Bot team's saved

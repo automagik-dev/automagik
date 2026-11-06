@@ -154,6 +154,43 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     && !agentRoute(providers, choice.provider)
   const synthetic = message => message?.source?.synthetic === SYNTHETIC_KIND
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
+  // A credential or route failure on one candidate is not a review verdict: try the next model
+  // the team has. Anything else (a bad reply, a timeout) is that candidate's answer.
+  const NEXT_MODEL = new Set(['MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'NO_ADAPTER'])
+  // Every model that can answer beside the chat, in the order the team can reach it: DSH's
+  // default model when it is not an agent, a sideModel the person chose, the first configured
+  // non-agent route, and only then the built-in DeepSeek fallback. Nothing here reaches an
+  // agent: a review must never become a prompt in the chat it reviews.
+  const choicesFor = async () => {
+    const choices = []
+    const add = (choice) => {
+      if (!answers(choice)) return
+      const same = seen => seen.provider === choice.provider && seen.model === choice.model
+      if (choices.some(same)) return
+      choices.push({ provider: choice.provider, model: choice.model })
+    }
+    try { add(ctx.get?.('agentDefaultModel')?.currentSelection?.()) } catch {}
+    let configured
+    try { configured = sideModel() } catch {}
+    const explicit = computed => computed !== undefined
+      && (computed.provider !== SIDE_MODEL.provider || computed.model !== SIDE_MODEL.model)
+    if (answers(configured) && explicit(configured)) add(configured)
+    let routes = []
+    try { routes = ctx.llm?.listProviders?.() ?? [] } catch {}
+    for (const route of Array.isArray(routes) ? routes : []) {
+      if (!answers({ provider: route?.id, model: 'candidate' })) continue
+      let models
+      try { models = await ctx.llm?.listModels?.(route.id) } catch {}
+      const first = Array.isArray(models)
+        ? models.find(model => typeof model?.id === 'string' && model.id !== '')
+        : undefined
+      if (first === undefined) continue
+      add({ provider: route.id, model: first.id })
+      if (choices.length >= 8) break
+    }
+    add(configured)
+    return choices
+  }
   return (options, next) => {
     if (!providers.has(options.provider)) {
       // A bridge review block that outlived its call (a crash, a failed replacement) is not a
@@ -165,11 +202,44 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     }
     if (isAgentLoopRequest(options)) return next()
     if (!SIDE_PURPOSES.has(options.purpose) || ctx?.llm === undefined) return refuse()
-    const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
-    if (chosen === undefined) return refuse()
     const routed = options.purpose === REVIEW_PURPOSE ? redactedReview(options, redact) : options
     const { reasoningEffort: _agentEffort, ...request } = routed
-    return ctx.llm.stream({ ...request, provider: chosen.provider, model: chosen.model })
+    return (async function* () {
+      let last
+      for (const chosen of await choicesFor()) {
+        const chunks = []
+        let failure
+        let finished = false
+        try {
+          const attempt = { ...request, provider: chosen.provider, model: chosen.model }
+          const stream = ctx.llm.stream(attempt)
+          for await (const chunk of stream) {
+            chunks.push(chunk)
+            if (chunk?.type !== 'finish') continue
+            finished = true
+            const kind = chunk.reason?.kind
+            if (kind === 'error' || kind === 'aborted') failure = chunk.reason.failure
+            break
+          }
+        } catch (error) {
+          failure = { message: error?.message ?? String(error), code: error?.code }
+        }
+        if (failure === undefined && finished) {
+          for (const chunk of chunks) yield chunk
+          return
+        }
+        last = failure ?? {
+          message: `${chosen.provider}/${chosen.model} ended without an answer`,
+          code: 'EMPTY_RESPONSE',
+        }
+        if (!NEXT_MODEL.has(last.code)) {
+          yield finish('error', last.message, last.code)
+          return
+        }
+      }
+      yield finish('error', last?.message ?? 'An ACP agent answers only in its own chat',
+        last?.code ?? 'UNSUPPORTED')
+    })()
   }
 }
 
