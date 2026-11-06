@@ -11,6 +11,19 @@ const folder = (t) => {
   return dir
 }
 
+// What the win32 retry path needs from the outside, recorded in order: a move that refuses,
+// a wait that costs nothing and a check that only counts.
+const refusing = code => {
+  const log = []
+  return {
+    log,
+    rename: async () => { log.push('try'); throw Object.assign(new Error(code), { code }) },
+    sleep: async ms => { log.push(`sleep ${ms}`) },
+    check: () => { log.push('check') },
+  }
+}
+const count = (log, step) => log.filter(entry => entry === step).length
+
 test('replaces a file that another program holds open for a moment', { skip: process.platform !== 'win32' && 'only Windows refuses it' }, async (t) => {
   const dir = folder(t)
   const path = join(dir, 'state.json')
@@ -37,18 +50,58 @@ test('stops trying when the check before a new try throws, and leaves the file a
   assert.equal(readFileSync(path, 'utf8'), 'old')
 })
 
-test('gives up at once on an error that waiting does not fix', async (t) => {
+test('the busy codes are retried; any other code is not', async () => {
+  // The set that makes Windows wait is the whole classification, and this runs on any OS:
+  // the real move cannot fail with EBUSY on a runner, so the test's move does (#356).
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    const { log, rename, sleep, check } = refusing(code)
+    await assert.rejects(
+      replaceFile('state.json.tmp', 'state.json', check, { platform: 'win32', sleep, rename }),
+      { code },
+    )
+    assert.equal(count(log, 'try'), 6, `${code} is retried to the last try`)
+    assert.equal(count(log, 'check'), 5, `${code} checks before each new try`)
+  }
+  for (const code of ['ENOENT', 'EEXIST']) {
+    const { log, rename, sleep, check } = refusing(code)
+    await assert.rejects(
+      replaceFile('state.json.tmp', 'state.json', check, { platform: 'win32', sleep, rename }),
+      { code },
+    )
+    assert.deepEqual(log, ['try'], `${code} is given up on the first try, with no wait and no check`)
+  }
+})
+
+test('an ENOENT is not waited for: the first try throws, no check and no sleep', async (t) => {
   const dir = folder(t)
-  // replaceFile tries again only on Windows, so the test makes that decision as Windows makes
-  // it and counts the new tries `check` runs before: ENOENT is not a busy error, so a new try
-  // on it is the bug. No clock is read, so a slow shared runner cannot fail this (#324).
-  const { platform } = process
-  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-  t.after(() => { Object.defineProperty(process, 'platform', { value: platform, configurable: true }) })
-  let retries = 0
+  let checks = 0
+  let sleeps = 0
+  const started = performance.now()
   await assert.rejects(
-    replaceFile(join(dir, 'missing.tmp'), join(dir, 'state.json'), () => { retries += 1 }),
+    replaceFile(join(dir, 'missing.tmp'), join(dir, 'state.json'), () => { checks += 1 }, {
+      platform: 'win32',
+      sleep: async () => { sleeps += 1 },
+    }),
     { code: 'ENOENT' },
   )
-  assert.equal(retries, 0, 'ENOENT must not wait for a second try')
+  // The time is a smoke report, not the assertion: a slow shared runner must not fail this.
+  t.diagnostic(`ENOENT rejected after ${(performance.now() - started).toFixed(1)} ms`)
+  assert.equal(checks, 0, 'ENOENT must not run the check')
+  assert.equal(sleeps, 0, 'ENOENT must not wait for a second try')
+})
+
+test('a busy file is waited for and checked between tries, then fails on the last', async () => {
+  const { log, rename, sleep, check } = refusing('EBUSY')
+  await assert.rejects(
+    replaceFile('state.json.tmp', 'state.json', check, { platform: 'win32', sleep, rename }),
+    { code: 'EBUSY' },
+  )
+  assert.deepEqual(log, [
+    'try', 'sleep 40', 'check',
+    'try', 'sleep 80', 'check',
+    'try', 'sleep 120', 'check',
+    'try', 'sleep 160', 'check',
+    'try', 'sleep 200', 'check',
+    'try',
+  ], 'six tries, and a wait and a check between each pair')
 })
