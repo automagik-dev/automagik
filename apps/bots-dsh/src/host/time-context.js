@@ -22,7 +22,9 @@ export function install(rt) {
     if (!rt.isBotSession(agent.id) || signal.aborted) return decision
     // A loaded DSH clock covers every step itself. Its listener may run before or
     // after this one (a reload reorders them), so its presence is read from its
-    // projection, not from the messages added so far.
+    // projection, not from the messages added so far. dsh 0.2.2 deprecates
+    // sessionProjections.stateOf(session, key), but the clock registers no wire value and
+    // exposes no owning service, so this read is the only presence check (it warns once).
     if (ctx.get?.('sessionProjections')?.stateOf(agent.session, 'timeContext') !== undefined) return decision
     if (decision.messages.some(message => isClock(message.source))) return decision
     const now = Date.now()

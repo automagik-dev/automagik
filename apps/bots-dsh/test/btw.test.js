@@ -75,23 +75,27 @@ function makeSession(id, { messages, header, seq = 4, toolHistory, events }) {
 }
 
 // The same register / stateOf face as ctx.sessionProjections: fold the unit
-// the host registers over snapshotEvents().
+// the host registers over snapshotEvents(). dsh 0.2.2 hands back a thenable
+// handle and host reads go through handle.stateOf; the service-level stateOf
+// stays as the deprecated face.
 function projectionRegistry(ctx) {
   const units = new Map()
+  const stateOf = (session, key) => {
+    const definition = units.get(key)
+    if (definition === undefined) return undefined
+    let state = definition.init(session.header, session.inheritedEventCount)
+    for (const event of session.snapshotEvents()) state = definition.apply(state, event)
+    return state
+  }
   return {
     register(definition) {
       ctx.effect(() => {
         units.set(definition.key, definition)
         return () => { units.delete(definition.key) }
       }, 'sessionProjections.register()')
+      return { stateOf: session => stateOf(session, definition.key), dispose: async () => {} }
     },
-    stateOf(session, key) {
-      const definition = units.get(key)
-      if (definition === undefined) return undefined
-      let state = definition.init(session.header, session.inheritedEventCount)
-      for (const event of session.snapshotEvents()) state = definition.apply(state, event)
-      return state
-    },
+    stateOf,
   }
 }
 

@@ -90,9 +90,14 @@ async function nativeTransition(t) {
   const target = { id: 'picked', session: { id: 'picked', header: { id: 'picked', cwd: '/selected', isSeeded: false } }, preset: 'standard', boundary: { openTurnStartSeq: null, lastTurn: 0 } }
   const resolve = rt.resolveAgent
   rt.resolveAgent = async id => id === 'picked' ? target : resolve(id)
-  bench.ctx.sessionProjections = { stateOf: (session, key) => key === 'agentPreset' ? target.preset : key === 'turnBoundary' ? target.boundary : undefined }
+  // dsh 0.2.2 reads the turn boundary and the preset through their owning services.
+  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined, isOwnedBy: () => false }
   const selected = []
-  const presets = { list: async () => [{ id: 'cordis' }], select: async (live, preset) => { selected.push([live.session.id, preset]); live.preset = preset } }
+  const presets = {
+    list: async () => [{ id: 'cordis' }],
+    select: async (live, preset) => { selected.push([live.session.id, preset]); live.preset = preset },
+    presetForSession: live => live.preset,
+  }
   bench.ctx.provided.set('agentPresets', presets)
   return { ...bench, rt, bot, botId, entry, target, presets, selected, adopt: () => bench.call('bot-session-adopt', { botId, sessionId: 'picked', sourceSessionId: botId }) }
 }
@@ -170,10 +175,7 @@ test('native chained nonblank forks require each actual parent to become the cur
   }]))
   const resolve = bench.rt.resolveAgent
   bench.rt.resolveAgent = async id => forks.get(id) ?? resolve(id)
-  bench.ctx.sessionProjections.stateOf = (session, key) => {
-    const live = forks.get(session.id) ?? bench.target
-    return key === 'agentPreset' ? live.preset : key === 'turnBoundary' ? live.boundary : undefined
-  }
+  bench.ctx.agents.turnBoundaryOf = session => (forks.get(session.id) ?? bench.target).boundary
   const associate = (sessionId, sourceSessionId) => bench.call('bot-session-adopt', { botId: bench.botId, sessionId, sourceSessionId })
   assert.equal((await associate('fork-c', 'picked')).ok, false, 'a skipped parent must never be accepted as a direct descendant')
   assert.equal((await associate('fork-b', 'picked')).ok, true)
