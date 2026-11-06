@@ -1,7 +1,8 @@
 // The bridge→DSH leg and its probes (RFC 0003, amendment, deliveries 4 and 6): the credential
 // binds a request to its Session and is revoked with it; a missing or foreign one is refused; a
 // credential alone cannot approve; every DSH tool call enters DSH's approval service before it
-// runs; and the offered set is the preset's, filtered by the Session's level.
+// runs, and auto-review refuses an out-of-band bridge call it cannot review; and the offered set
+// is the preset's, filtered by the Session's level.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
@@ -157,7 +158,7 @@ test('a refusal or an unavailable approval never runs the tool, and the agent ge
     run.backchannel.dispose()
   }
   // Under a non-Auto `never` the service rejects without prompting: the credential alone cannot
-  // approve. (Auto routes through the pipeline instead; the per-level test covers it.)
+  // approve. (Auto routes through the pipeline instead; the Auto test below covers it.)
   const never = host({ policy: 'never', sandbox: 'read-only' })
   await never.backchannel.listen()
   const record = never.backchannel.mint({ sessionId: 's1', agent: never.agent, name: 'Fake agent' })
@@ -168,7 +169,7 @@ test('a refusal or an unavailable approval never runs the tool, and the agent ge
   never.backchannel.dispose()
 })
 
-test('each level gates a bridge call as DSH gates its own tools: Manual asks, Auto and Full do not', async () => {
+test('each level gates a bridge call as DSH gates its own tools: Manual asks, Full does not', async () => {
   const runAt = async ({ sandbox, policy, answer = 'allowed-once' }) => {
     const run = host({ sandbox, policy, answer })
     await run.backchannel.listen()
@@ -189,18 +190,91 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Au
   assert.equal(manual.asked.length, 1)
   assert.equal(manual.body.isError, false)
   assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
-  // Auto as DSH's real preset defines it (danger-full-access + ask): the bridge cannot be
-  // reviewed out-of-band, so it routes the call through the pipeline without asking, and the
-  // call still runs (stated limit: auto-review does not see bridge calls).
-  const auto = await runAt({ sandbox: 'danger-full-access', policy: 'ask' })
-  assert.equal(auto.asked.length, 0)
-  assert.equal(auto.body.isError, false)
-  assert.deepEqual(auto.executed.map(entry => entry.name), ['bash'])
+  // Auto is not exercised here: this fixture's tools.execute is a recorder, so it cannot show
+  // DSH's gate. The real Auto stack (auto-review, the tools pipeline, the real Backchannel) is
+  // the next test.
   // Full access: never asks, as DSH's own tools do not there.
   const full = await runAt({ sandbox: 'danger-full-access', policy: 'never' })
   assert.equal(full.asked.length, 0)
   assert.equal(full.body.isError, false)
   assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
+})
+
+test('Auto refuses a bridge call: the review fails closed, so the body never runs', async () => {
+  // The real stack: DSH's cordis context, its ToolsService and native executor (the pipeline
+  // that fires `tools/pre-execute`), the real auto-review plugin, and this Backchannel. The
+  // handler receives the bridge call, but a bridge call is out-of-band — no assistant block on
+  // the model surface — so the review cannot resolve it and fails closed.
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { ToolsService } = await import('@deepseek-ai/dsh-tools')
+  const native = await import('@deepseek-ai/dsh-tool-executor-native')
+  const autoReview = await import('@deepseek-ai/dsh-experimental-auto-review')
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools() {}, section() {} })
+  await ctx.plugin(ToolsService)
+  await ctx.plugin(native)
+  const executed = []
+  ctx.tools.register({
+    name: 'bash',
+    description: 'Run a command',
+    parameters: { type: 'object', properties: { command: { type: 'string' } } },
+    output: { schema: {}, render: () => [{ type: 'text', text: 'ran bash' }] },
+    async execute(args) {
+      executed.push(args)
+      return {}
+    },
+  })
+  const asked = []
+  let reviewerCalls = 0
+  ctx.provide('approval', { effectivePolicy: () => 'ask', overrideOf: () => 'ask', request: async (request) => { asked.push(request); return 'allowed-once' } })
+  // Auto's preset, as dsh-permission-presets reports it for the Session.
+  ctx.provide('permissionPresets', { current: () => 'auto', set() {}, registerAuto() {} })
+  // The reviewer's model: any call here is a review that ran.
+  ctx.provide('llm', { stream: () => { reviewerCalls++; return (async function* () {})() } })
+  ctx.provide('workingDirectory', { ensure: async () => process.cwd() })
+  ctx.provide('sessions', { list: () => [] })
+  ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access' }) })
+  ctx.provide('agentPresets', { presetForSession: () => 'standard' })
+  ctx.provide('agents', { turnBoundaryOf: () => ({ lastTurn: 3 }) })
+  autoReview.apply(ctx)
+  const dispatch = ctx.tools.execute.bind(ctx.tools)
+  let executeCalls = 0
+  ctx.tools.execute = (input) => {
+    executeCalls++
+    return dispatch(input)
+  }
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 3 })
+  session.append('step/start', { turn: 3, step: 1 })
+  session.append('request/header', { header: { config: { provider: 'deepseek-official', model: 'deepseek-v4' } } })
+  const agent = { session }
+  const backchannel = new Backchannel({ ctx })
+  await backchannel.listen()
+  const record = backchannel.mint({ sessionId: 's1', agent, name: 'Fake agent' })
+  try {
+    const response = await fetch(backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'auto-1' }),
+    })
+    const body = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(body.isError, true)
+    // The one place the fail-closed reason is pinned: `failed()` puts only name and code in the
+    // row's error info, so this text is the only proof the review failed on the missing surface.
+    assert.match(body.content[0].text, /the pending root call is missing from the current surface/)
+    // The gate saw the call and refused it with its own code, recorded on the Session.
+    const result = session.snapshotEvents().find(event => event.type === 'tool/result')
+    assert.equal(result.data.message.isError, true)
+    assert.deepEqual(result.data.error.info, { name: 'AutoReviewFailedError', code: 'AUTO_REVIEW_FAILED' })
+    assert.equal(asked.length, 0, 'the bridge raises no dialog on Auto')
+    assert.equal(reviewerCalls, 0, 'auto-review never reached its reviewer')
+    assert.equal(executeCalls, 1, 'the bridge called tools.execute once')
+    assert.deepEqual(executed, [], 'the tool body never ran')
+  } finally {
+    backchannel.dispose()
+    await ctx.root.fiber.dispose()
+  }
 })
 
 test('full access runs a DSH tool call with no dialog, as it does DSH\'s own tools', async () => {

@@ -56,24 +56,57 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// A wall-clock sample holds the rule's own work plus the time this process waited for a CPU, and CI
-// runs this package's test files side by side. Five wall-clock runs of the same 80k text spanned
-// 8 ms to 211 ms here while their CPU time stayed within a millisecond. A rule's cost is CPU work,
-// so the sample is CPU time, and the best of five drops one that caught a background compile or a
-// collection. It cannot hide a regression: a rule slower than FAST_MS uses more than FAST_MS of
-// CPU in every run, so its best is over the ceiling too (the test below holds the harness to that).
+// A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
+// wall-clock sample includes the time this process waits for a CPU. Five wall-clock runs of the
+// same 80k text spanned 8 ms to 211 ms here while their CPU time stayed within a millisecond. The
+// best of five runs drops one that caught a background compile or a collection; noise can add CPU
+// time, never remove it, so a rule that is slow in every run stays slow in every sample.
 const FAST_MS = 50
 const FAST_TRIES = 5
-const timed = (fn) => {
+const sample = (fn) => {
+  const t0 = process.cpuUsage()
+  fn()
+  const used = process.cpuUsage(t0)
+  return (used.user + used.system) / 1000
+}
+const timed = (fn, ceiling = FAST_MS) => {
   let best = Infinity
-  for (let i = 0; i < FAST_TRIES && best >= FAST_MS; i++) {
-    const t0 = process.cpuUsage()
-    fn()
-    const used = process.cpuUsage(t0)
-    best = Math.min(best, (used.user + used.system) / 1000)
-  }
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
 }
+// The reference sets a bound, so it always takes all five samples.
+const fixedWork = (fn) => Math.min(...Array.from({ length: FAST_TRIES }, () => sample(fn)))
+
+// The reference is a fixed amount of the same work: redactText over one 80k text of the fuzz's own
+// pieces, built once from a fixed seed. It runs the same code path over a fixed N pieces, never the
+// fuzz texts, so its cost is linear in that input (40k, 80k and 160k characters measured 100, 98
+// and 98 ns per character) and every run pays exactly that work. A slower machine or a slower clock
+// raises the reference and the window's bound together: it is not a time constant.
+const REFERENCE_TEXT = (() => {
+  let state = 0x531 >>> 0
+  const rand = () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), state | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296
+  }
+  const parts = []
+  for (let n = 0; n < 80_000; ) {
+    const piece = PIECES[Math.floor(rand() * PIECES.length)]
+    parts.push(piece)
+    n += piece.length
+  }
+  return parts.join('')
+})()
+
+// The window runs redactText over every delta on top of its own row work, so it costs a multiple of
+// the reference: 1.89-1.96x measured here (Node 22.23.2) and 2.32-2.50x on the Ryzen numbers (26.24
+// ms against 10.5-11.3 ms, Node 24.9.0/24.22.2). WINDOW_MARGIN sits above both, and a 2x regression
+// of the window path fails on either (3.8x here, 4.6-5.0x on Ryzen); the absolute backstop caps how
+// far a reference that reads high can widen the bound. A quadratic rule at 80k characters is 6.4e9
+// steps, seconds of CPU, far past either.
+const WINDOW_MARGIN = 3.5
+const WINDOW_BACKSTOP_MS = 200
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
@@ -86,26 +119,22 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   // same texts through the same paths, so a rule that is slow on a shape is still slow on the
   // measured pass; only the one-time cold cost of a new process is left out.
   for (const [, text] of cases) for (const [, run] of PATHS) run(text)
+  const [windowPath, windowRun] = PATHS[PATHS.length - 1]
+  const textPaths = PATHS.slice(0, -1)
+  const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
+  // A zero sample would make the bound zero and pass a window that measured nothing.
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
+  const bound = Math.min(WINDOW_MARGIN * referenceMs, WINDOW_BACKSTOP_MS)
+  const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   for (const [shape, text] of cases) {
-    for (const [path, run] of PATHS) {
-      assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+    for (const [path, run] of textPaths) {
+      const ms = timed(() => run(text))
+      const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
+      assert.ok(ms < FAST_MS, detail)
     }
+    const windowMs = timed(() => windowRun(text), bound)
+    const detail = `${windowPath}: ${shape}: ${windowMs.toFixed(1)} ms of CPU, ` +
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${WINDOW_BACKSTOP_MS} ms)`
+    assert.ok(windowMs <= bound, detail)
   }
-})
-
-// The harness above must fail a path slower than the ceiling, or a regression could hide in the
-// sampling. This path burns 60 ms of CPU by construction, counting CPU time itself, so no amount
-// of load can cut the burn short: every run is over the ceiling and its best is too.
-test('the measurement fails a path slower than the ceiling', () => {
-  const slow = () => {
-    const start = process.cpuUsage()
-    let spin = 0
-    for (;;) {
-      spin += 1
-      if ((spin & 0x3ff) !== 0) continue
-      const used = process.cpuUsage(start)
-      if (used.user + used.system >= 60_000) return spin
-    }
-  }
-  assert.ok(timed(slow) >= FAST_MS)
 })

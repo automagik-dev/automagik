@@ -197,6 +197,11 @@ test('a stop waits for the log writes queued before it, and nothing is written a
   assert.equal((await rt.diagnostics.entries()).length, 0, 'the clear still empties the list in memory')
 })
 
+test('the report header names the host log location', () => {
+  const text = reportMarkdown({ facts: { botVersion: '0.1.0', logPath: '~/logs/diagnostics.jsonl' } })
+  assert.match(text, /\| Log \| ~\/logs\/diagnostics\.jsonl \|/)
+})
+
 test('reportMarkdown says when nothing went wrong', () => {
   const text = reportMarkdown({ facts: { botVersion: '0.1.0', os: 'linux' } })
   assert.match(text, /No host errors recorded\./)
