@@ -2,7 +2,7 @@ import { createElement as h, useSyncExternalStore } from 'react'
 import { cancelDraft, dropSubscription, openView, sendDraft, undoChange, watchSession } from './api.js'
 import { languageOf, translator } from './i18n.js'
 import { createInstall } from './install.js'
-import { BoardButton, Dock, InstallAction, RowAction, SettingsSection, WatchedMark } from './slots.js'
+import { BoardButton, Dock, InstallAction, RowAction, SectionIcon, SettingsSection, WatchedMark } from './slots.js'
 import { installStyles } from './styles.js'
 
 // The DSH client half of the Unfold bridge: it renders what the bridge's view stream carries
@@ -19,6 +19,8 @@ export const SLOTS = [
   // The nav label is "Unfold" in every language, so it never needs registering again on a
   // locale change.
   ['settings.section', { id: 'unfold-bridge', order: 900, label: 'Unfold' }, SettingsSection],
+  // DSH 0.2.2 renders a nav icon for a section whose id matches this seat's registration.
+  ['settings.section.icon', { id: 'unfold-bridge', order: 900 }, SectionIcon],
 ]
 
 // DSH's page as an app (src/client/install.js), beside the board button.
