@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
+import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
@@ -1142,6 +1142,7 @@ function readInstructions(opts) {
 
 function checkModel(agent, model) {
   if (!agent) throw new CliError("A model pin needs a coding agent (--agent).", 2);
+  if (modelRefusal(agent)) throw new CliError(modelRefusal(agent), 2);
   const list = knownModels(agent, modelIo());
   if (!list.includes(model)) {
     throw new CliError(list.length ? `${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`
@@ -1276,6 +1277,9 @@ function workerDefaults(opts, entry) {
     if (list.length && !list.includes(model)) throw new CliError(`--worker-model: ${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`);
     w.model = model;
   }
+  // dsh-tui workers take neither (#598): refused here, as workerPlan refuses them at a worker's start.
+  const refusal = modelRefusal(w.agent ?? entry.agent);
+  if (refusal && (w.model || w.effort)) throw new CliError(`--worker-model / --worker-effort: ${refusal}`, 2);
   entry.worker = w; // empty: applyBotEdit removes it
 }
 
@@ -2119,6 +2123,13 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
   // A session counts only when the command really resumes it by id (--resume <id> in its argv).
   let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  // #598: dsh-tui's id-less -c only once a turn has finished in the old pane (hc's turn counter;
+  // missing or unreadable is 0): else a new conversation, and why.
+  if (plan.mode === "resume" && !session && resumeAfterTurn(plan.agent) && !(Number.isSafeInteger(old?.turn) && old.turn >= 1)) {
+    const note = noTurnNote(agentTable(), plan.agent, old);
+    plan = { ...restartPlan({ ...planned, fresh: true }), note };
+    report([`${bot.name} starts on a new conversation: ${note}.`]);
+  }
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
@@ -2541,6 +2552,9 @@ async function attachMoved(bot, oldBinding, terminal, created_ms, key) {
 /** The exit code a command that printed its answer still fails with (a --tree that stopped part way): 0 else. */
 const exitAfter = { code: 0 };
 
+/** Why a restart of an agent whose -c needs a finished turn (models.js resumeAfterTurn) starts a new conversation. */
+const noTurnNote = (agents, agentKey, old) => `${agents[agentKey]?.name ?? agentKey} has no finished turn in ${old?.address ?? "the old pane"} to continue`;
+
 /** What cmdRestart returns once it has printed its own answer (a bot restarting itself). */
 export const PRINTED = Symbol.for("automagik-herdr.printed");
 
@@ -2932,6 +2946,13 @@ async function cmdRestart(opts, [ref]) {
     const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
     const note = sharedFresh({ name: bot.name, old, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
     if (note) { plan = { ...restartPlan({ ...planned, fresh: true }), note }; sharedNote = note; }
+  }
+  // #598: dsh-tui's id-less -c only once a turn has finished in the old pane (hc's turn counter;
+  // missing or unreadable is 0): else a new conversation, and why.
+  if (plan.mode === "resume" && !resumeId && resumeAfterTurn(plan.agent) && !(Number.isSafeInteger(old?.turn) && old.turn >= 1)) {
+    const note = noTurnNote(agents, plan.agent, old);
+    plan = { ...restartPlan({ ...planned, fresh: true }), note };
+    sharedNote = note;
   }
   const { tree, treeWarnings } = old && opts.tree
     ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],

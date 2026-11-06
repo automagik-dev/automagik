@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, effortArgs, hasEffortFlag, modelArgs, promptArgs, resolveAgent } from "./models.js";
+import { AGENTS, effortArgs, hasEffortFlag, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
 
@@ -167,6 +167,10 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     if (!agent) return { error: `"${pick.agent}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.` };
   }
   if (!agent || !agents[agent]?.run?.length) return { error: `${bot?.name ?? "This bot"} has no coding agent for its workers; pass --agent.` };
+  // An agent whose model and effort its own setup decides (dsh-tui, #598): a model or effort
+  // asked for, or set in the bot's worker defaults for it, is refused, never left out unsaid.
+  const refusal = modelRefusal(agent);
+  if (refusal && (pick.model || pick.effort || defaults.effort || (agent === fallback && defaults.model))) return { error: refusal };
   let model = pick.model || null;
   if (!model && defaults.model) {
     if (agent === fallback) model = defaults.model;
