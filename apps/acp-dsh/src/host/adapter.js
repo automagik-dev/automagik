@@ -13,9 +13,7 @@ import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, SYNTHETIC_KIND, URL_ENV } from './names.js'
-import {
-  agentRoute, boundaryNotice, effortIdOf, lastProviderOf, replayBlocks, turnStart,
-} from './switch.js'
+import { agentRoute, boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -224,33 +222,6 @@ export class AcpAdapter extends LlmAdapter {
   /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, off unless set). */
   bridgeOn() {
     return this.dshTools() === true && this.backchannel !== undefined
-  }
-
-  /**
-   * The effort a crossing into an agent carries: the one the Session last ran on, when this
-   * agent's model offers that level. DSH sends the target model's own default on a model
-   * change, so the previous request header is what the Session actually ran on.
-   * @param {any} session
-   * @param {{ provider: string, model: string }} options
-   */
-  async carriedEffort(session, options) {
-    if (!this.bridgeOn()) return undefined
-    const previous = session?.requestHeader?.()?.config
-    if (typeof previous?.reasoningEffort !== 'string' || previous.reasoningEffort === '') {
-      return undefined
-    }
-    // The same route and model is an effort-only pick (the person's), not a crossing.
-    if (previous.provider === options.provider && previous.model === options.model) {
-      return undefined
-    }
-    let reasoning
-    try {
-      reasoning = (await this.agents.get(options.provider)?.catalog?.model?.(options.model))
-        ?.reasoning
-    } catch {
-      return undefined
-    }
-    return effortIdOf(reasoning, previous.reasoningEffort)
   }
 
   /** The `session/new` server entry for one bridge: the adapter spawns it with this env only. */
@@ -490,21 +461,13 @@ export class AcpAdapter extends LlmAdapter {
         if (live.run.busy) return yield finish('error', `${agent.name} is still finishing its last answer; send this again in a moment`)
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
-      // A crossing carries the effort the Session last ran on when this model offers it; the
-      // corrected selection is recorded, so the next turn keeps it.
-      const carried = await this.carriedEffort(dshAgent?.session, options)
-      const effort = carried ?? options.reasoningEffort
-      if (carried !== undefined && carried !== options.reasoningEffort) {
-        try {
-          dshAgent?.session?.append?.('model/selection', {
-            provider: options.provider, model: options.model, reasoningEffort: carried,
-          })
-        } catch {}
-      }
       try {
-        await choose(live.run, options.model, effort, () => agent.catalog?.ownEffort(options.model))
+        await choose(
+          live.run, options.model, options.reasoningEffort,
+          () => agent.catalog?.ownEffort(options.model),
+        )
       } catch (error) {
-        const at = effort ? ` at ${effort} effort` : ''
+        const at = options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''
         const reason = error?.message ?? error
         const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
         return yield finish('error', why)

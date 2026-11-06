@@ -49,10 +49,13 @@ const readyAcp = (models = ['default', 'opus', 'sonnet', 'haiku']) => ({
   models,
 })
 
-async function start(team, { acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'], acpModels = undefined } = {}) {
+async function start(team, {
+  acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'],
+  acpModels = undefined, services = {},
+} = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-acp-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
-  const ctx = fakeContext({ services: { acpAgents: acp } })
+  const ctx = fakeContext({ services: { ...(acp ? { acpAgents: acp } : {}), ...services } })
   const workspaces = new Map()
   const selected = []
   const catalog = {
@@ -130,6 +133,10 @@ test('a Bot still on the pi-ai model it was moved to goes to acp-claude once, ke
     from: { model: 'anthropic/claude-sonnet-4-5' },
     target: 'acp-claude/sonnet',
   })
+  // The effort reached the Session's selection, not only the Bot's record.
+  const applied = host.selected.find(request =>
+    request.sessionId === 'm1' && request.provider === 'acp-claude')
+  assert.equal(applied.reasoningEffort, 'high')
   assert.deepEqual([state.bots.m1.sessionId, state.bots.w2.sessionId], ['m1', 'w2'])
 })
 
@@ -228,6 +235,82 @@ test('a moved Bot comes back when the ACP route disappears', async (t) => {
     label: 'the route disappeared and the Bot moved back',
   })
   const state = host.saved()
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('an effort pick still leaves a dead ACP route for the previous model', async (t) => {
+  let route = true
+  const ready = {
+    id: 'acp-claude', connector: { state: 'ready' }, model: { id: 'default', listed: true },
+  }
+  const acp = {
+    ...readyAcp(),
+    status: async () => ({ agents: route ? [ready] : [] }),
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  const picked = await host.call('update-bot', { id: 'm1', effort: 'low' })
+  assert.equal(picked.ok, true)
+  await until(() => host.saved().bots.m1.appliedEffort === 'low')
+  route = false
+  host.ctx.emit('loader/volatile-update')
+  await until(() => host.saved().bots.m1.model === 'anthropic/claude-opus-5-5', {
+    label: 'the dead route let the Bot go',
+  })
+  const state = host.saved()
+  // The person's level stays theirs; only the dead model is replaced.
+  assert.equal(state.bots.m1.effort, 'low')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+})
+
+test('a plugin that is still loading is not a route that disappeared', async (t) => {
+  const base = seed()
+  const moved = {
+    ...base,
+    claudeAcpMoved: true,
+    bots: {
+      ...base.bots,
+      m1: {
+        ...base.bots.m1, model: 'acp-claude/opus', appliedModel: 'acp-claude/opus',
+        claudeCodeModel: 'claude-code/default',
+      },
+    },
+  }
+  const loader = {
+    entries: () => [{ options: { name: '@automagik/acp-dsh' }, disabled: false }],
+  }
+  const host = await start(moved, { acp: false, services: { loader } })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'acp-claude/opus')
+  assert.equal(state.claudeAcpMoved, true)
+})
+
+test('a team moved before the record existed rolls back to its pi-ai model', async (t) => {
+  const base = seed()
+  const moved = {
+    ...base,
+    claudeAcpMoved: true,
+    bots: {
+      ...base.bots,
+      m1: {
+        ...base.bots.m1, model: 'acp-claude/opus', appliedModel: 'acp-claude/opus',
+        claudeCodeModel: 'claude-code/default',
+      },
+    },
+  }
+  const host = await start(moved, { acp: false })
+  t.after(host.stop)
+  await until(() => host.saved().bots.m1.model === 'anthropic/claude-opus-5-5', {
+    label: 'the legacy move rolled back',
+  })
+  const state = host.saved()
+  // `claude-code/default` names no family on its own; the pi-ai model it became did.
   assert.equal(state.bots.m1.effort, 'high')
   assert.equal(state.bots.m1.acpMoved, undefined)
   assert.equal(state.claudeAcpMoved, undefined)

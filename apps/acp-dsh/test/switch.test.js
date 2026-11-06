@@ -104,8 +104,12 @@ test('the effort notice is a drawn row outside the reply, naming what could not 
 test('a crossing carries the Session\'s effort both ways, and says where it cannot', async () => {
   const appended = []
   let previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  let defaulted = false
   const session = {
-    requestHeader: () => ({ config: previous }),
+    requestHeader: () => ({
+      config: previous,
+      ...(defaulted ? { adapterDefaults: { reasoningEffort: true } } : {}),
+    }),
     append: (type, data, options) => {
       appended.push({ type, data, options })
       return { seq: appended.length }
@@ -113,6 +117,7 @@ test('a crossing carries the Session\'s effort both ways, and says where it cann
   }
   const reasoning = new Map([
     ['acp-fake/fake-large', LEVELS],
+    ['acp-fake/fake-small', { efforts: [{ id: 'low', name: 'Low' }] }],
     ['deepseek-official/deepseek-v4', LEVELS],
     ['deepseek-official/plain', { efforts: [] }],
   ])
@@ -146,50 +151,45 @@ test('a crossing carries the Session\'s effort both ways, and says where it cann
   previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
   await cross({ provider: 'deepseek-official', model: 'deepseek-other', reasoningEffort: 'low' })
   assert.equal(appended.length, 0)
-  // A known target that cannot express it: a notice, and no rewritten selection.
-  previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
-  await cross({ provider: 'deepseek-official', model: 'plain' })
+  // Into an agent whose known levels lack it: the notice comes in this direction too.
+  await cross({ provider: 'acp-fake', model: 'fake-small' })
   assert.equal(appended.at(-1).type, 'user/message')
   assert.equal(appended.at(-1).data.source.kind, EFFORT_KIND)
   assert.match(appended.at(-1).data.content[0].text, /Reasoning effort high is not available/)
+  // Out of an agent whose target is a known model without it.
+  appended.length = 0
+  previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
+  await cross({ provider: 'deepseek-official', model: 'plain' })
+  assert.equal(appended.at(-1).type, 'user/message')
+  assert.match(appended.at(-1).data.content[0].text, /Reasoning effort high is not available/)
+  // An effort DSH itself defaulted is not the person's pick and is not carried.
+  appended.length = 0
+  defaulted = true
+  previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'medium' }
+  await cross({ provider: 'acp-fake', model: 'fake-large' })
+  assert.equal(appended.length, 0)
 })
 
-test('a crossing back to a native model carries the effort the agent ran on', async () => {
-  const sent = []
+test('a newer selection wins over a carry still reading the target', async () => {
   const appended = []
+  let finish
   const session = {
     requestHeader: () => ({
-      config: { provider: 'acp-fake', model: 'default', reasoningEffort: 'high' },
+      config: { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' },
     }),
     append: (type, data) => { appended.push({ type, data }) },
   }
-  const ctx = {
-    agents: { get: id => (id === 's1' ? { session } : undefined) },
-    llm: {
-      resolveModelInfo: async provider => ({
-        reasoning: provider === 'deepseek-official' ? LEVELS : undefined,
-      }),
-      stream: options => {
-        sent.push(options)
-        return (async function* () {})()
-      },
-    },
-  }
-  const listen = crossed(new Map([['acp-fake', {}]]), ctx, text => text)
-  const messages = [user('q'), answer('a', 'acp-fake')]
-  const request = {
-    provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'low',
-    sessionId: 's1', messages,
-  }
-  const stream = listen(request, () => 'next')
-  assert.deepEqual(await Array.fromAsync(stream), [])
-  assert.equal(sent.length, 1)
-  assert.equal(sent[0].reasoningEffort, 'high')
-  // The Session records the carried effort, so the next turn keeps it.
-  assert.deepEqual(appended, [{
+  const carry = carryEffort(() => new Promise(resolve => { finish = resolve }))
+  const pending = carry(session, {
     type: 'model/selection',
-    data: { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' },
-  }])
+    data: { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'low' },
+  })
+  // The person picks again while the first carry waits on the agent's catalog.
+  const newer = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  await carry(session, { type: 'model/selection', data: newer })
+  finish(LEVELS)
+  await pending
+  assert.equal(appended.length, 0)
 })
 
 test('a transcript crossing back to a native provider is redacted, its source untouched', () => {

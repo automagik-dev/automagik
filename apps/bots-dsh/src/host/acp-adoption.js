@@ -38,21 +38,37 @@ export function acpClaudeTarget(bot, listed) {
   return undefined
 }
 
+// Whether the ACP plugin is still on its way in: its loader entry exists and is enabled, but
+// it has not provided `acpAgents` yet. Missing service is not a missing route.
+function acpLoading(ctx) {
+  try {
+    const loader = ctx.get?.('loader')
+    if (loader === undefined || typeof loader.entries !== 'function') return false
+    for (const entry of loader.entries()) {
+      if (entry?.disabled === true) continue
+      if (String(entry?.options?.name ?? '').includes('acp-dsh')) return true
+    }
+  } catch {}
+  return false
+}
+
 /**
  * What the `acp-claude` route is doing on this machine: `ready` with its listed models,
- * `waiting` while its adapter installs or its catalog has not answered, `off` with `dshTools`
- * off, or `gone` when the route is no longer served (the plugin, the agent setting or its CLI).
- * A `gone` or `off` route is the rollback: moved Bots go back to what they ran on before.
+ * `waiting` while its plugin or adapter loads or its catalog has not answered, `off` with
+ * `dshTools` off, or `gone` when the route is no longer served (the plugin, the agent setting
+ * or its CLI). A `gone` or `off` route is the rollback: moved Bots go back to before.
  * @returns {Promise<{ state: 'ready', listed: string[] } | { state: 'waiting' | 'off' | 'gone' }>}
  */
 async function acpClaudeState(ctx) {
   const acp = ctx.get?.('acpAgents')
-  if (acp === undefined || typeof acp.bridge !== 'function') return { state: 'gone' }
+  if (acp === undefined || typeof acp.bridge !== 'function') {
+    return { state: acpLoading(ctx) ? 'waiting' : 'gone' }
+  }
   let bridge
   try {
     bridge = await acp.bridge()
   } catch {
-    return { state: 'gone' }
+    return { state: acpLoading(ctx) ? 'waiting' : 'gone' }
   }
   if (bridge?.on !== true) return { state: 'off' }
   // A bridge that does not pass its probe is not a route that disappeared: the agent may
@@ -88,12 +104,15 @@ function priorMove(bot) {
   if (typeof bot.model !== 'string' || !bot.model.startsWith(`${ACP_AGENT}/`)) return undefined
   const from = piAiClaudeOf(bot.claudeCodeModel)
   if (from === undefined) return undefined
-  const family = claudeFamilyOf(bot.claudeCodeModel)
+  const previous = from.slice(from.indexOf('/') + 1)
+  // `claude-code/default` names no family on its own; the pi-ai model it became does.
+  const family = claudeFamilyOf(bot.claudeCodeModel) ?? claudeFamilyOf(`claude-code/${previous}`)
   const moved = bot.model.slice(ACP_AGENT.length + 1)
-  if (moved !== family && moved !== from.slice(from.indexOf('/') + 1)) return undefined
+  if (moved !== family && moved !== previous) return undefined
   return {
     from: { model: from, ...(bot.effort === undefined ? {} : { effort: bot.effort }) },
     target: bot.model,
+    recovered: true,
   }
 }
 
@@ -103,20 +122,25 @@ export function install(rt) {
 
   // A moved Bot goes back to exactly the model and thinking level it had. One the person
   // changed since keeps their pick: the record is dropped, never applied over it.
-  const restore = async () => {
+  const restore = async (removed = false) => {
     const restored = []
     let changed = false
     for (const bot of Object.values(state.bots ?? {})) {
       const moved = bot?.acpMoved ?? (state.claudeAcpMoved === true ? priorMove(bot) : undefined)
       if (moved === undefined) continue
-      const theirs = bot.model !== moved.target
-        || (bot.effort ?? undefined) !== (moved.from.effort ?? undefined)
+      const pickedModel = bot.model !== moved.target
+      const pickedEffort = (bot.effort ?? undefined) !== (moved.from.effort ?? undefined)
       delete bot.acpMoved
       changed = true
-      if (theirs) continue
+      // A route that went away cannot keep answering, so even a Bot whose level the person
+      // changed goes back to its model; their level is kept. With dshTools off the route is
+      // still there and a person's change wins: leave the Bot where they put it.
+      if (pickedModel || (pickedEffort && !removed)) continue
       bot.model = moved.from.model
-      if (moved.from.effort === undefined) delete bot.effort
-      else bot.effort = moved.from.effort
+      if (!pickedEffort) {
+        if (moved.from.effort === undefined) delete bot.effort
+        else bot.effort = moved.from.effort
+      }
       // The Session's record of the model it ran on goes with it, so the next sync selects
       // the restored model. The Session and its history stay.
       delete bot.appliedModel
@@ -143,24 +167,32 @@ export function install(rt) {
     // Nothing is written by a host that only reads the team; the writer moves or restores them.
     if (rt.readOnly?.() !== undefined) return
     // A team moved before this record existed: the pi-ai model is still recoverable from the
-    // old ref, so the rollback has something exact to restore.
+    // old ref, so the rollback has something exact to restore. The record is saved, so a
+    // later pass cannot rebuild it from a level the person changed meanwhile.
+    let recovered = false
     if (state.claudeAcpMoved === true) {
       for (const bot of Object.values(state.bots ?? {})) {
         if (bot?.acpMoved !== undefined) continue
-        const recovered = priorMove(bot)
-        if (recovered !== undefined) bot.acpMoved = recovered
+        const record = priorMove(bot)
+        if (record !== undefined) {
+          bot.acpMoved = record
+          recovered = true
+        }
       }
     }
     const route = await acpClaudeState(ctx)
     if (route.state === 'off' || route.state === 'gone') {
-      await restore()
+      await restore(route.state === 'gone')
       return
     }
-    if (route.state !== 'ready') return
+    if (route.state !== 'ready') {
+      if (recovered) await rt.save()
+      return
+    }
     const moved = []
     const reapply = []
     let waiting = false
-    let changed = false
+    let changed = recovered
     for (const bot of Object.values(state.bots ?? {})) {
       const prior = bot?.acpMoved
       if (prior !== undefined) {

@@ -471,46 +471,6 @@ test('the chosen model and effort reach the agent before each prompt; default go
   }
 })
 
-test('a crossing into an agent carries the effort the Session ran on, and records it', async () => {
-  const reasoning = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
-  const catalog = {
-    models: async () => [
-      { id: 'fake-large', name: 'Fake Large', reasoning },
-      { id: 'fake-small', name: 'Fake Small', reasoning },
-    ],
-    model: async id => (id === 'fake-large' || id === 'fake-small'
-      ? { id, name: id, reasoning }
-      : undefined),
-    ownEffort: () => undefined,
-    dispose() {},
-  }
-  const h = dshHost({ spec: { catalog } })
-  try {
-    // The last request ran on a native model at high effort; DSH's selection for the agent
-    // carries that model's own default (low), which the crossing replaces.
-    h.session.append('request/header', {
-      reason: 'change',
-      header: {
-        config: {
-          provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high',
-        },
-      },
-    })
-    const messages = [{
-      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }],
-    }]
-    const chunks = await step(h.adapter, messages, { model: 'fake-large', effort: 'low' })
-    assert.match(thoughtIn(chunks), /^On fake-large at high effort\./)
-    const selection = h.session.snapshotEvents()
-      .filter(event => event.type === 'model/selection').at(-1)
-    assert.deepEqual(selection.data, {
-      provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high',
-    })
-  } finally {
-    h.close()
-  }
-})
-
 test('an agent that offers no models is one model, default, with no efforts', async (t) => {
   process.env.FAKE_ACP_NO_OPTIONS = '1'
   t.after(() => { delete process.env.FAKE_ACP_NO_OPTIONS })

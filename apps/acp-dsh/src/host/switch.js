@@ -94,13 +94,28 @@ export function effortNotice(effort, target) {
  *   a provider boundary; without one every model change is a crossing
  */
 export function carryEffort(reasoningOf, on = () => true, crossing = () => true) {
-  const corrected = new WeakSet()
+  const latest = new WeakMap()
+  const expected = new WeakMap()
+  const same = (a, b) => a.provider === b.provider && a.model === b.model
+    && (a.reasoningEffort ?? undefined) === (b.reasoningEffort ?? undefined)
   return async (session, event) => {
     if (on() !== true || event?.type !== 'model/selection') return
     const next = event.data
-    if (next === null || typeof next !== 'object' || corrected.has(next)) return
+    if (next === null || typeof next !== 'object') return
+    const key = session === null || typeof session !== 'object' ? undefined : session
+    // A newer pick always wins over a carry still reading the target's levels.
+    if (key !== undefined) latest.set(key, next)
+    const expecting = key === undefined ? undefined : expected.get(key)
+    if (expecting !== undefined && same(expecting, next)) {
+      // The selection this listener appended, read back from the log: never carried again.
+      expected.delete(key)
+      return
+    }
     if (typeof next.provider !== 'string' || typeof next.model !== 'string') return
-    const previous = session?.requestHeader?.()?.config
+    const header = session?.requestHeader?.()
+    // DSH's own projection drops an effort its adapter defaulted; it is not the person's.
+    if (header?.adapterDefaults?.reasoningEffort === true) return
+    const previous = header?.config
     const effort = previous?.reasoningEffort
     if (typeof effort !== 'string' || effort === '') return
     // The same route is an effort-only pick (the person's), not a crossing.
@@ -112,7 +127,7 @@ export function carryEffort(reasoningOf, on = () => true, crossing = () => true)
     } catch {
       return
     }
-    if (corrected.has(next)) return
+    if (key !== undefined && latest.get(key) !== next) return
     // An answer that has not read the model's levels says nothing: it is not a "cannot".
     if (!Array.isArray(reasoning?.efforts)) return
     const carried = effortIdOf(reasoning, effort)
@@ -123,8 +138,12 @@ export function carryEffort(reasoningOf, on = () => true, crossing = () => true)
     }
     if (next.reasoningEffort === carried) return
     const choice = { provider: next.provider, model: next.model, reasoningEffort: carried }
-    corrected.add(choice)
-    try { session.append?.('model/selection', choice) } catch {}
+    if (key !== undefined) expected.set(key, choice)
+    try {
+      session.append?.('model/selection', choice)
+    } catch {
+      if (key !== undefined) expected.delete(key)
+    }
   }
 }
 
@@ -174,46 +193,15 @@ export function fromAgent(messages, providers) {
 /**
  * The `llm/stream` listener for the crossing back to DSH's own providers: a transcript that
  * carries an agent's turn is redacted before a native model sees it, so a secret the agent read
- * with its own tools never reaches that provider. The reasoning effort the agent's turn ran on
- * goes with it when the native model offers that level; the Session's selection records the
- * carried effort, so the next turn keeps it. `next` takes no request, so the redacted call is a
- * nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
+ * with its own tools never reaches that provider. `next` takes no request, so the redacted call
+ * is a nested `ctx.llm.stream`; a WeakSet keeps that call from re-entering this listener.
  * @param {Map<string, unknown>} providers the agents' routes
- * @param {{
- *   llm?: { stream(options: object): AsyncIterable<object>,
- *     resolveModelInfo?(provider: string, model: string): Promise<any> },
- *   agents?: { get(id: string): any },
- * }} [ctx]
+ * @param {{ llm?: { stream(options: object): AsyncIterable<object> } }} [ctx]
  * @param {(text: string) => string} redact
  * @param {() => boolean} [on] whether live switching is on (the setting); off is the old path
  */
 export function crossed(providers, ctx, redact, on = () => true) {
   const rewritten = new WeakSet()
-  // The previous route and the target's levels are read while the crossing is forwarded: a
-  // nested `ctx.llm.stream` cannot take a request from `next`, so this is the one place that
-  // can add the effort before the native adapter resolves its call config.
-  const forward = async function* (request, session, previous) {
-    let out = request
-    if (typeof previous?.reasoningEffort === 'string') {
-      let reasoning
-      try {
-        reasoning = (await ctx.llm.resolveModelInfo?.(request.provider, request.model))?.reasoning
-      } catch {
-        reasoning = undefined
-      }
-      const carried = effortIdOf(reasoning, previous.reasoningEffort)
-      if (carried !== undefined && carried !== request.reasoningEffort) {
-        out = { ...request, reasoningEffort: carried }
-        rewritten.add(out)
-        try {
-          session.append?.('model/selection', {
-            provider: request.provider, model: request.model, reasoningEffort: carried,
-          })
-        } catch {}
-      }
-    }
-    yield* ctx.llm.stream(out)
-  }
   return (options, next) => {
     if (on() !== true) return next()
     if (agentRoute(providers, options.provider) || options.sessionId === undefined) return next()
@@ -221,12 +209,6 @@ export function crossed(providers, ctx, redact, on = () => true) {
     if (!fromAgent(options.messages, providers)) return next()
     const request = { ...options, messages: redactTranscript(options.messages, redact) }
     rewritten.add(request)
-    const session = ctx?.agents?.get?.(options.sessionId)?.session
-    const previous = session?.requestHeader?.()?.config
-    const fromAgentRoute = previous !== undefined && agentRoute(providers, previous.provider)
-    if (fromAgentRoute && typeof previous.reasoningEffort === 'string') {
-      return forward(request, session, previous)
-    }
     return ctx.llm.stream(request)
   }
 }
