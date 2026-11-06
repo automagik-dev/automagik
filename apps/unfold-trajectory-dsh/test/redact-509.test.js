@@ -110,9 +110,10 @@ for (const [what, input] of B_ROWS) {
 }
 
 // 5. The guard's edges over-hide, they never serve: an unquoted explicit name with a colon in it is
-// one token (the colon is not a separator), and a quote that closes past the bound, or not at all,
-// still hides the value on the `:` line, inline or under a block indicator (`: |`, whose value is
-// the block's lines). Before this fix all of them spelled the value out.
+// one token (the colon is not a separator), a `? ` line's long name (a colon far from the stem, or
+// none) is taken whole by a fail-closed branch, and a quote that closes past the bound, or not at
+// all, still hides the value on the `:` line, inline or under a block indicator. Before this fix
+// all of them served.
 const EDGES = [
   ['an unquoted name with a colon', `? ${PASS}:${TAIL}\n: ${VALUE}\n`, `? ${PASS}:${TAIL}\n: ${REDACTED}\n`],
   ['an unquoted name with a colon, then a comment', `? ${PASS}:${TAIL} # note\n: ${VALUE}\n`, `? ${PASS}:${TAIL} # note\n: ${REDACTED}\n`],
@@ -121,6 +122,14 @@ const EDGES = [
   ['an unquoted name with a colon, block', `? ${PASS}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}:${TAIL}\n: |\n  ${REDACTED}`],
   ['a quote past the bound', `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: ${VALUE}\n`, `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: ${REDACTED}\n`],
   ['a quote past the bound, block', `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: |\n  ${VALUE}\n`, `? "${'x'.repeat(250)}${PASS}:${TAIL}"\n: |\n  ${REDACTED}`],
+  ['a colon 16 after the stem', `? ${PASS}${'x'.repeat(15)}:${TAIL}\n: ${VALUE}\n`, `? ${PASS}${'x'.repeat(15)}:${TAIL}\n: ${REDACTED}\n`],
+  ['a colon 16 after the stem, block', `? ${PASS}${'x'.repeat(15)}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}${'x'.repeat(15)}:${TAIL}\n: |\n  ${REDACTED}`],
+  ['a colon 17 after the stem', `? ${PASS}${'x'.repeat(16)}:${TAIL}\n: ${VALUE}\n`, `? ${PASS}${'x'.repeat(16)}:${TAIL}\n: ${REDACTED}\n`],
+  ['a colon 17 after the stem, block', `? ${PASS}${'x'.repeat(16)}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}${'x'.repeat(16)}:${TAIL}\n: |\n  ${REDACTED}`],
+  ['a colon 40 after the stem', `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: ${VALUE}\n`, `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: ${REDACTED}\n`],
+  ['a colon 40 after the stem, block', `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: |\n  ${VALUE}\n`, `? ${PASS}${'x'.repeat(39)}:${TAIL}\n: |\n  ${REDACTED}`],
+  ['a long plain name', `? db_${PASS}_production_${TAIL}\n: ${VALUE}\n`, `? db_${PASS}_production_${TAIL}\n: ${REDACTED}\n`],
+  ['a long plain name, block', `? db_${PASS}_production_${TAIL}\n: |\n  ${VALUE}\n`, `? db_${PASS}_production_${TAIL}\n: |\n  ${REDACTED}`],
 ]
 for (const [what, input, want] of EDGES) {
   test(`#509: the guard's edge over-hides, never serves (${what})`, () => {
