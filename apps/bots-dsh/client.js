@@ -770,6 +770,8 @@ var ZH = {
   "Asking another Bot": "询问其他 Bot",
   "Stopping {name}": "叫停 {name}",
   "Stopping another Bot": "叫停其他 Bot",
+  "Deleting {name}": "删除 {name}",
+  "Deleting another Bot": "删除其他 Bot",
   "Creating {name}": "创建 {name}",
   "Updating {name}": "更新 {name}",
   "Checking the team": "查看团队",
@@ -806,6 +808,7 @@ var ZH = {
   "Couldn't message {name}": "没能给 {name} 发消息",
   Messaged: "已发消息给",
   "Couldn't stop {name}": "没能叫停 {name}",
+  "Couldn't delete {name}": "没能删除 {name}",
   Stopped: "已叫停",
   Created: "已创建",
   Updated: "已更新",
@@ -1419,6 +1422,8 @@ var ZH = {
   "{from} wants to stop {to}": "{from} 想停止 {to}",
   "{from} wants to add {name} to the team": "{from} 想把 {name} 加入团队",
   "{from} wants to change {name}": "{from} 想修改 {name}",
+  "{from} wants to delete {to}": "{from} 想删除 {to}",
+  "Deleting archives its memory and conversations, removes it from the team and groups, and deletes its secrets.": "删除会归档它的记忆和对话，把它移出团队和群聊，并删除它的密钥。",
   "{from} wants to post in {group}": "{from} 想在 {group} 里发言",
   "{from} wants to remember this": "{from} 想记住这件事",
   "{from} wants to forget this": "{from} 想忘掉这件事",
@@ -3036,7 +3041,7 @@ var import_react6 = require("react");
 var STATES = ["idle", "thinking", "searching", "working", "sending", "orbit", "waiting", "alert", "done", "failed", "review", "sleeping"];
 var WORK = ["thinking", "searching", "working", "sending", "orbit"];
 var botState = (running2, activity, alert, { failed = false, unread = false } = {}) => alert ? "alert" : running2 ? WORK.includes(activity) ? activity : "working" : failed ? "failed" : activity === "waiting" ? "waiting" : unread ? "review" : "idle";
-var toolState = (name) => /^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? "sending" : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? "searching" : "working";
+var toolState = (name) => /^(message_bot|stop_bot|create_bot|update_bot|delete_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? "sending" : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? "searching" : "working";
 function useGaze(ref, enabled) {
   (0, import_react6.useEffect)(() => {
     if (!enabled) return void 0;
@@ -9228,6 +9233,10 @@ function toolActivity(name, arg, findBot2, self) {
       const target = findBot2(arg("name")) ?? findBot2(arg("bot")) ?? (arg("bot") ? void 0 : self);
       return { label: t("Updating {name}", { name: target?.name ?? t("a Bot") }), state: "sending" };
     }
+    case "delete_bot": {
+      const target = findBot2(arg("bot"));
+      return { label: target ? t("Deleting {name}", { name: target.name }) : t("Deleting another Bot"), state: "sending" };
+    }
     case "list_bots":
       return { label: t("Checking the team"), state: "searching" };
     case "read_group_chat":
@@ -9437,7 +9446,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     })
   );
 }
-var DRAWN = /* @__PURE__ */ new Set(["start_task", "message_bot", "stop_bot", "create_bot", "update_bot", "group_relay", "create_group", "update_group", "delete_group", "post_to_group", "ask_user", "request_secret", "ask_user_question", "read_group_chat", "remember", "forget", "show_view", "browser_handoff", "generate_image"]);
+var DRAWN = /* @__PURE__ */ new Set(["start_task", "message_bot", "stop_bot", "create_bot", "update_bot", "delete_bot", "group_relay", "create_group", "update_group", "delete_group", "post_to_group", "ask_user", "request_secret", "ask_user_question", "read_group_chat", "remember", "forget", "show_view", "browser_handoff", "generate_image"]);
 var CARDS = /* @__PURE__ */ new Set(["ask_user", "request_secret", "show_view", "browser_handoff"]);
 function callTree(root) {
   const calls = [];
@@ -9492,6 +9501,12 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, useSess
     case "update_bot": {
       const target = findBot2(arg("name")) ?? findBot2(arg("bot")) ?? (arg("bot") ? void 0 : self);
       return done && target ? (0, import_react22.createElement)(EventLine, { prefix: t("Updated"), bots: [target], onOpen: (bot) => actions.openSession(bot.id) }) : null;
+    }
+    case "delete_bot": {
+      const name = arg("bot") ?? "…";
+      if (!done) return null;
+      if (call2.isError) return (0, import_react22.createElement)("div", { className: "bt-event" }, t("Couldn't delete {name}", { name }));
+      return (0, import_react22.createElement)("div", { className: "bt-event" }, (0, import_react22.createElement)("span", null, t("Deleted")), (0, import_react22.createElement)("span", null, name));
     }
     case "group_relay":
       return (0, import_react22.createElement)(GroupReplies, { sessionId, callId: call2.callId, done, content: call2.content, roster, actions, useUi, useWork });
@@ -16292,7 +16307,7 @@ var VOICE_SETTINGS_CSS = `
 // src/client/team-approval.js
 var import_react43 = require("react");
 var teamToolOf = (name) => String(name ?? "").replace(/^mcp__dsh__/, "");
-var TEAM_TOOLS = /* @__PURE__ */ new Set(["message_bot", "start_task", "stop_bot", "create_bot", "update_bot", "create_group", "update_group", "delete_group", "post_to_group", "group_relay", "remember", "forget", "save_capability", "delete_capability", "show_view"]);
+var TEAM_TOOLS = /* @__PURE__ */ new Set(["message_bot", "start_task", "stop_bot", "create_bot", "update_bot", "delete_bot", "create_group", "update_group", "delete_group", "post_to_group", "group_relay", "remember", "forget", "save_capability", "delete_capability", "show_view"]);
 var isTeamApproval = (pending) => pending?.kind === "approval" && TEAM_TOOLS.has(teamToolOf(pending.toolName));
 function argsOf(reason) {
   try {
@@ -16318,6 +16333,8 @@ function approvalView(toolName2, args, from) {
       return { title: t("{from} wants to add {name} to the team", { from: who, name: text(args.name) || t("a Bot") }), quote: text(args.instructions), rows: rows2(["role", "model"]) };
     case "update_bot":
       return { title: t("{from} wants to change {name}", { from: who, name: text(args.name) || text(args.to) || t("a Bot") }), quote: text(args.instructions), rows: rows2(["role", "model"]) };
+    case "delete_bot":
+      return { title: t("{from} wants to delete {to}", { from: who, to: text(args.bot) || t("another Bot") }), to: text(args.bot), note: t("Deleting archives its memory and conversations, removes it from the team and groups, and deletes its secrets."), rows: [] };
     case "post_to_group":
     case "group_relay":
       return { title: t("{from} wants to post in {group}", { from: who, group: text(args.group) || text(args.to) || t("a group chat") }), quote: text(args.message) || text(args.text), rows: [] };
