@@ -36,12 +36,22 @@ async function start(seed) {
   writeFileSync(join(home, 'state.json'), JSON.stringify(seed))
   const ctx = fakeContext()
   const agents = new Map()
+  const restricted = []
   const agentOf = (sessionId) => {
     if (!agents.has(sessionId)) {
       const calls = []
+      const agentCtx = {
+        tools: {
+          restrict: (filter) => {
+            restricted.push({ sessionId, deny: [...filter.deny] })
+            return () => {}
+          },
+        },
+      }
       agents.set(sessionId, {
         session: { id: sessionId, requestHeader: () => undefined },
         id: sessionId,
+        ctx: agentCtx,
         calls,
         status: 'idle',
         followup(message) { calls.push(['followup', message]) },
@@ -82,6 +92,7 @@ async function start(seed) {
     sessionTitle: { rename: async () => {} },
     sessions: { flush: async () => {} },
   })
+  ctx.tools.schemas = () => ['bash', 'read', 'write', 'omni_send', 'omni_messages'].map(name => ({ name }))
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => {
@@ -108,7 +119,7 @@ async function start(seed) {
   }
   // Loading once fills the Session-owner indexes turns.js filters events by.
   await tool('list_bots', {}, 'a')
-  return { ctx, agents, agentOf, emit, fire, tool, call, exchanges, home, stop }
+  return { ctx, agents, agentOf, emit, fire, tool, call, exchanges, home, stop, restricted }
 }
 
 const textOf = content => content.map(block => block.text ?? '').join('\n')
@@ -1025,4 +1036,23 @@ test('without file storage a message past 20,000 characters is not sent', async 
   // 20,000 characters still go as they are.
   await tool('message_bot', { to: 'Writer', message: 'x'.repeat(20_000) }, 'a')
   assert.equal(agentOf('b').calls.length, 1)
+})
+
+test('a fresh part gets its Bot\'s deny list before the handoff turn', async (t) => {
+  const seed = team()
+  seed.bots.b.denyTools = ['bash']
+  const { agents, agentOf, emit, fire, stop, restricted } = await start(seed)
+  t.after(stop)
+  const agent = agentOf('b')
+  agent.session.seq = 10
+  agent.session.eventAt = () => ({ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'INVALID_REQUEST' } } } })
+  emit('b', 'turn/start', { turn: 1 })
+  emit('b', 'user/message', { content: textBlock('work'), source: { kind: 'user' } })
+  await fire('agent/request-error', { failure: { code: 'INVALID_REQUEST' }, signal: AbortSignal.timeout(60_000), agent })
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'INVALID_REQUEST' } } })
+  for (let count = 0; count < 200 && agents.get('s1')?.calls.find(([, message]) => message.source?.handoff === true) === undefined; count += 1) await delay(5)
+  assert.ok(agents.get('s1')?.calls.some(([, message]) => message.source?.handoff === true), 'the Bot moved on to a fresh part')
+  const applied = restricted.filter(entry => entry.sessionId === 's1')
+  assert.ok(applied.length > 0, 'the fresh part was restricted before its handoff turn')
+  assert.deepEqual(applied.at(-1).deny, ['bash'])
 })

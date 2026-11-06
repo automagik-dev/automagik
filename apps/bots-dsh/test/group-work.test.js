@@ -31,6 +31,7 @@ async function start(t, room, services, extraRooms) {
   writeFileSync(join(home, 'state.json'), JSON.stringify(seed(room, extraRooms)))
   const ctx = fakeContext({ services })
   const agents = new Map()
+  const restricted = []
   const agentOf = (sessionId) => {
     if (!agents.has(sessionId)) {
       const calls = []
@@ -49,7 +50,15 @@ async function start(t, room, services, extraRooms) {
         },
       }
       const keep = list => message => { calls.push(message); list.push(message) }
-      agents.set(sessionId, { session: { id: sessionId }, calls, cancelled, inbox, followup: keep(held), steer: keep(nextStep), cancel(reason) { cancelled.push(reason) } })
+      const agentCtx = {
+        tools: {
+          restrict: (filter) => {
+            restricted.push({ sessionId, deny: [...filter.deny] })
+            return () => {}
+          },
+        },
+      }
+      agents.set(sessionId, { session: { id: sessionId }, ctx: agentCtx, calls, cancelled, inbox, followup: keep(held), steer: keep(nextStep), cancel(reason) { cancelled.push(reason) } })
     }
     return agents.get(sessionId)
   }
@@ -60,6 +69,7 @@ async function start(t, room, services, extraRooms) {
     sessionTitle: { rename: async () => {} },
     sessions: { flush: async () => {} },
   })
+  ctx.tools.schemas = () => ['bash', 'read', 'write', 'omni_send', 'omni_messages', 'omni_chats'].map(name => ({ name }))
   let route
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
@@ -109,7 +119,7 @@ async function start(t, room, services, extraRooms) {
     return { content: post.content, source: post.source }
   }
   await tool('list_bots', {}, 'a')
-  return { home, ctx, agentOf, emit, tool, call, begin, finish, round, say, takePost }
+  return { home, ctx, agentOf, emit, tool, call, begin, finish, round, say, takePost, restricted }
 }
 
 const settle = check => until(check, { poll: immediate })
@@ -1040,4 +1050,17 @@ test('deleting a working Bot clears its activity and tells the Bots waiting for 
   host.emit('b', 'turn/start', { turn: 2 })
   host.emit('b', 'turn/end', { turn: 1, reason: { kind: 'aborted' } })
   assert.equal((await host.call('state', {})).value.activity.b, undefined)
+})
+
+test('a new group Session gets a member\'s deny list before its first turn', async (t) => {
+  // Only the admin has a group Session; Writer's is made by this round.
+  const host = await start(t, { sessions: { a: 'ga' } })
+  const rt = host.ctx.provided.get('omniTeam')
+  await rt.updateBot('b', { denyTools: ['bash'] })
+  host.round('c1', host.say('@Writer hello'))
+  await settle(() => host.agentOf('s1').calls.length === 1)
+  // The restriction is in force as the Session takes its first message.
+  const applied = host.restricted.filter(entry => entry.sessionId === 's1')
+  assert.ok(applied.length > 0, 'the new group Session was restricted before its first turn')
+  assert.deepEqual(applied.at(-1).deny, ['bash'])
 })

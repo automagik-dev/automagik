@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Português (Brasil)",
-    "description": "Brazilian Portuguese for DSH 0.2.2 or later: the Bot team's Portuguese plus a pt-BR entry that corrects DSH's own Portuguese where it is wrong (date order, number grouping, plan hint, mistranslations). Falls back to DSH's pt for the rest."
+    "description": "Brazilian Portuguese for DSH 0.2.2 or later: the Bot team's Portuguese under DSH's own Portuguese entry. Adds no language row; a pt-BR choice saved by an older pack moves to DSH's pt."
   }
 }

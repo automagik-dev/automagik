@@ -48,6 +48,16 @@ export function pageLayout(size, { platform, maximized }) {
   }
 }
 
+/** The page follows the native window size, including Linux maximize/snap transitions. */
+export function windowPageLayout(window, { platform = process.platform } = {}) {
+  // On Linux/X11, resize can fire before getContentBounds() catches up. With no
+  // subsequent resize the page stays at its old size (electron/electron#42586).
+  // Our Linux window has no native frame or menu, so its outer size is the content
+  // size. Keep the content measurement on macOS and Windows for their native insets.
+  const size = platform === 'linux' ? window.getBounds() : window.getContentBounds()
+  return pageLayout(size, { platform, maximized: window.isMaximized() || window.isFullScreen() })
+}
+
 /** What the shell page may ask the main process for: the window buttons and the title bar's menu. */
 export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'menu'])
 

@@ -3,7 +3,7 @@
 // `u` on a pack mod running the pack's own `automagik-herdr update` (a fake command here).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { registerHooks } from "node:module";
@@ -283,4 +283,19 @@ test("x on a package with no layout from Herdr removes it and the panel says why
     + " mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)");
   // The line is the panel's: render() draws the message under the list.
   assert.ok(textOf(draw(view, cx)).includes(view.message), "the panel draws the line");
+});
+
+test("a linked mods/: the panel says why under the list, in the refusal's own words (#494)", async (t) => {
+  const s = scratch(t);
+  const ext = join(dirname(s.appHome), "their-mods");
+  renameSync(join(s.appHome, "mods"), ext);
+  symlinkSync(ext, join(s.appHome, "mods"));
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  assert.equal(view.message, `mods/ (${join(s.appHome, "mods")}) is a link to ${ext}, your own folder, not one this install made: `
+    + "nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again");
+  assert.ok(textOf(draw(view, cx)).includes(view.message), "the panel draws the line");
+  assert.ok(existsSync(join(ext, "scratch", "mod.json")), "nothing moved");
 });

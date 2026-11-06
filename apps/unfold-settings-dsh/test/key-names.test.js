@@ -109,17 +109,30 @@ const FORMS = [
 ]
 const CASES = KEYS.flatMap((k) => FORMS.map(([form, text]) => [`${k} (${form})`, text(k)]))
 const leaked = (text) => [...new Set(text.match(/[a-z]{3,}/gi) ?? [])].filter((t) => WORDS.some((w) => w.includes(t.toLowerCase()) || t.toLowerCase().includes(w)))
-// The best of three runs: noise only slows a run, and a quadratic rule is slow every time.
-const timed = (fn) => {
+// A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
+// wall-clock sample includes the time this process waits for a CPU. The best of five runs drops one
+// that caught a background compile or a collection; noise can add CPU time, never remove it, so a
+// rule that is slow in every run stays slow in every sample.
+// These inputs keep the absolute ceiling: every path here is the plain redactText rule pass over
+// fixed-size inputs (80k and 160k characters), never a served-value walk or a stream, so the cost
+// has no per-path constant to scale. 100 ms sits 9.5x above the slowest healthy input here (10.5 ms
+// of CPU measured, Node 24.13.1), and a quadratic rule on 80k characters is 6.5x over it (about
+// 650 ms, from a 20k run that grew 3.8x when doubled). A machine 4x slower lands at 42 ms, still
+// under it. The fuzz test, whose served value is a multiple of the rule pass, bounds that path by a
+// measured reference.
+const FAST_MS = 100
+const FAST_TRIES = 5
+const sample = (fn) => {
+  const t0 = process.cpuUsage()
+  fn()
+  const used = process.cpuUsage(t0)
+  return (used.user + used.system) / 1000
+}
+const timed = (fn, ceiling = FAST_MS) => {
   let best = Infinity
-  for (let i = 0; i < 3; i++) {
-    const t0 = performance.now()
-    fn()
-    best = Math.min(best, performance.now() - t0)
-  }
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
 }
-const FAST_MS = 50
 
 test('every key form in a served string, at any depth: no word of its value is left', () => {
   for (const [what, text] of CASES) {
@@ -146,7 +159,14 @@ test('a scheme after a key name is hidden in any case, and the scheme word stays
 })
 
 test('80k characters of adversarial input stay fast', () => {
-  for (const [what, text] of Object.entries(ADVERSARIAL)) assert.ok(timed(() => redactText(text)) < FAST_MS, what)
+  const inputs = Object.entries(ADVERSARIAL)
+  // Warm-up, not measured: a cold process pays to compile the rules' regular expressions and climb
+  // V8's tiers once, and that setup is not an input's cost. The same inputs then run measured.
+  for (const [, text] of inputs) redactText(text)
+  for (const [what, text] of inputs) {
+    const ms = timed(() => redactText(text))
+    assert.ok(ms < FAST_MS, `${what}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`)
+  }
 })
 
 test('a scheme in any case with no key name hides a token-shaped word', () => {

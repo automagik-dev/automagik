@@ -115,6 +115,20 @@ class CoreClient(
         return channel
     }
 
+    /**
+     * A stream another route opened on [channel] (the chat's subscriptions): each DATA frame to [data], its bytes
+     * granted back as credit once handled, as [subscribe] does; a CLOSE to [closed] with its reason.
+     */
+    fun stream(channel: Int, data: (ByteArray) -> Unit, closed: (String) -> Unit) = register(channel) { f ->
+        when (f.kind) {
+            Wire.DATA -> { data(f.payload); if (!this.closed) runCatching { send(f.channel, Wire.CREDIT, Wire.credit(f.payload.size)) } }
+            Wire.CLOSE -> {
+                handlers[channel] = { }
+                closed(runCatching { JSONObject(String(f.payload)).optString("reason") }.getOrDefault(""))
+            }
+        }
+    }
+
     fun detach(channel: Int) {
         synchronized(gate) { handlers[channel] = { } }
         if (!closed) send(channel, Wire.CLOSE)

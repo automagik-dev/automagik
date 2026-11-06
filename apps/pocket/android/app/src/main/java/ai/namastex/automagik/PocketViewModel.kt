@@ -916,6 +916,161 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(sending = false) }
         }
     }
+    // ---- The live chat (RFC 0015 delivery 5) over Pocket Link's chat route. Its rows are only in [chat], in memory:
+    // never in preferences, Room or the log (docs/privacy.md). One chat open at a time, on its own connection.
+    private val _chat = MutableStateFlow<Chat.State?>(null)
+    val chat = _chat.asStateFlow()
+    /** Each machine's Automagik Bot chats (read only), as chat.list gave them; null while loading. */
+    private val _botChats = MutableStateFlow<Map<String, Result<List<Chat.Terminal>>?>>(emptyMap())
+    val botChats = _botChats.asStateFlow()
+    private var chatJob: Job? = null
+    @Volatile private var chatRef: TerminalRef? = null
+    @Volatile private var chatLink: ChatClient? = null
+    @Volatile private var chatGen = 0
+
+    private suspend fun openChatLink(hostId: String, scope: CoroutineScope, lost: (String) -> Unit): ChatClient {
+        val profile = state.value.hosts.find { it.id == hostId && it.paired } ?: error("This machine isn’t paired with Pocket Link.")
+        val t = try { IrohLink.open(getApplication(), profile.ticket, profile.session, scope, IrohLink.CHAT) }
+            catch (e: Exception) { if (e !is CancellationException && ChatClient.refusedRoute(e)) throw ChatUnsupported() else throw e }
+        return withTimeout(20_000) { ChatClient.start(CoreClient(t.input, t.output, t, scope, lost)) }
+    }
+
+    private fun chatUpdate(gen: Int, change: (Chat.State) -> Chat.State) {
+        _chat.update { s -> if (s == null || gen != chatGen) s else change(s) }
+    }
+
+    /** Opens [ref]'s chat (a terminal's, or a `dsh:` Bot chat); the same chat already open stays as it is. */
+    fun openChat(ref: TerminalRef) {
+        if (chatRef == ref && chatJob?.isActive == true) return
+        closeChat()
+        val gen = ++chatGen
+        chatRef = ref
+        _chat.value = Chat.State(ref.address)
+        if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
+        chatJob = viewModelScope.launch(Dispatchers.IO) {
+            val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
+            var link: ChatClient? = null
+            try {
+                link = openChatLink(ref.hostId, scope) { reason -> chatUpdate(gen) { it.copy(connected = false, error = "Chat disconnected: $reason",
+                    messages = it.messages.map { m -> if (m.state == "sending") m.copy(state = "maybe") else m }) } }
+                chatLink = link
+                if (!Chat.readOnly(ref.address) && link.list().none { it.terminal == ref.address }) { chatUpdate(gen) { it.copy(error = Chat.NO_CHAT) }; return@launch }
+                chatSubscribe(link, ref.address, null, gen)
+                awaitCancellation()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { chatUpdate(gen) { it.copy(connected = false, error = e.message ?: "Chat couldn’t connect") } }
+            finally { if (chatLink === link) chatLink = null; link?.close() }
+        }
+    }
+
+    private suspend fun chatSubscribe(link: ChatClient, terminal: String, after: String?, gen: Int) {
+        link.subscribe(terminal, after, { e -> chatUpdate(gen) { Chat.reduce(it, e) } }) { reason ->
+            // Too slow to keep up: the bridge closed the stream; come back from the cursor.
+            if (reason == "slow" && gen == chatGen) viewModelScope.launch(Dispatchers.IO) {
+                runCatching { chatSubscribe(link, terminal, _chat.value?.cursor, gen) }
+                    .onFailure { e -> chatUpdate(gen) { it.copy(connected = false, error = e.message) } }
+            } else chatUpdate(gen) { it.copy(connected = false, error = if (reason.isBlank()) "The chat closed." else "The chat closed: $reason") }
+        }
+    }
+
+    /** Closes the chat for [ref] (any chat when null); its rows are dropped. */
+    fun closeChat(ref: TerminalRef? = null) {
+        if (ref != null && ref != chatRef) return
+        ++chatGen
+        chatRef = null
+        chatJob?.cancel(); chatJob = null
+        _chat.value = null
+    }
+
+    /** Connects the open chat again after it dropped. */
+    fun reconnectChat() { val ref = chatRef ?: return; chatJob?.cancel(); chatJob = null; openChat(ref) }
+
+    private fun chatAct(block: suspend (ChatClient, Chat.State, Int) -> Unit) {
+        val link = chatLink ?: return
+        val s = _chat.value ?: return
+        val gen = chatGen
+        viewModelScope.launch(Dispatchers.IO) { block(link, s, gen) }
+    }
+
+    /** Sends [text] to the open chat (never on a read-only one). */
+    fun chatSend(text: String, id: String = UUID.randomUUID().toString()) {
+        val s = _chat.value ?: return
+        if (!ChatActions.canSend(s) || text.isBlank()) return
+        chatUpdate(chatGen) { it.copy(messages = it.messages.filterNot { m -> m.id == id } + Chat.Message(id, text, "sending")) }
+        chatAct { link, st, gen ->
+            runCatching { link.send(st.terminal, text, id) }
+                .onSuccess { a -> chatUpdate(gen) { Chat.answered(it, id, text, a) } }
+                .onFailure { chatUpdate(gen) { Chat.unanswered(it, id, text) } }
+        }
+    }
+
+    /** A message that may not have gone: sent again with the same id, so the bridge types it at most once. */
+    fun chatRetry(m: Chat.Message) { if (_chat.value?.let { ChatActions.canRetry(it, m) } == true) chatSend(m.text, m.id) }
+
+    fun chatSendHeld(m: Chat.Message) {
+        val s = _chat.value ?: return
+        if (!ChatActions.canSendHeld(s, m)) return
+        chatAct { link, st, gen ->
+            runCatching { link.sendHeld(st.terminal, m.id) }
+                .onSuccess { a -> chatUpdate(gen) { Chat.answered(it, m.id, m.text, a) } }
+                .onFailure { chatUpdate(gen) { Chat.unanswered(it, m.id, m.text) } }
+        }
+    }
+
+    fun chatCancelHeld(m: Chat.Message) {
+        val s = _chat.value ?: return
+        if (s.readOnly) return
+        chatAct { link, st, gen ->
+            runCatching { link.cancelHeld(st.terminal, m.id) }
+                .onSuccess { a -> if (a.optBoolean("ok")) chatUpdate(gen) { it.copy(messages = it.messages.filterNot { x -> x.id == m.id }) } }
+        }
+    }
+
+    fun chatAnswer(row: Chat.Row, choice: String) {
+        val s = _chat.value ?: return
+        if (choice !in ChatActions.choices(s, row)) return
+        chatAct { link, st, gen ->
+            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice)) }.getOrElse { "Not confirmed. Check the terminal." }
+            chatUpdate(gen) { it.copy(notice = notice) }
+        }
+    }
+
+    fun chatInterrupt() {
+        val s = _chat.value ?: return
+        if (!ChatActions.canInterrupt(s)) return
+        chatAct { link, st, gen ->
+            val ok = runCatching { link.interrupt(st.terminal).optBoolean("ok") }.getOrDefault(false)
+            chatUpdate(gen) { it.copy(notice = if (ok) "Interrupt sent." else "Interrupt not confirmed. Check the terminal.") }
+        }
+    }
+
+    fun chatEarlier() {
+        val before = _chat.value?.oldest ?: return
+        chatAct { link, st, gen ->
+            runCatching { link.backfill(st.terminal, before) }
+                .onSuccess { page -> chatUpdate(gen) { Chat.earlier(it, page) } }
+                .onFailure { e -> chatUpdate(gen) { it.copy(notice = e.message) } }
+        }
+    }
+
+    fun dismissChatNotice() { _chat.update { it?.copy(notice = null) } }
+
+    /** Reads machine [hostId]'s Automagik Bot chats (read only) for the Bot chats list, on a short-lived connection. */
+    fun loadBotChats(hostId: String) {
+        if (state.value.demo) return
+        _botChats.update { it + (hostId to null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                coroutineScope {
+                    val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
+                    val link = openChatLink(hostId, scope) { }
+                    try { link.list().filter { it.readOnly } } finally { link.close(); scope.cancel() }
+                }
+            }
+            _botChats.update { it + (hostId to result) }
+        }
+    }
+
     fun startTerminal(hostId: String, cwd: String, command: String) {
         val c = clients[hostId] ?: return
         if (state.value.demo) return
@@ -993,7 +1148,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun closeStats() { _sheet.value = null }
     fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
     fun hostName(hostId: String) = if (state.value.demo) PREVIEW_MACHINE else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
-    override fun onCleared() { if (current === this) current = null; clients.values.forEach { it.close() }; clients.clear() }
+    override fun onCleared() { if (current === this) current = null; closeChat(); clients.values.forEach { it.close() }; clients.clear() }
 }
 
 /** The preview's sample screen for [t]: a header, and the menu its blocked agent waits on (synthetic). */
