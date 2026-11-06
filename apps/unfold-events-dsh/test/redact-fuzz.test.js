@@ -56,17 +56,16 @@ function fuzzCases(seed = SEED, count = 200) {
   })
 }
 
-// A wall-clock sample holds the rule's own work plus the time this process waited for a CPU, and CI
-// runs this package's test files side by side. Five wall-clock runs of the same 80k text spanned
-// 8 ms to 211 ms here while their CPU time stayed within a millisecond. A rule's cost is CPU work,
-// so the sample is CPU time, and the best of five drops one that caught a background compile or a
-// collection. It cannot hide a regression: a rule slower than FAST_MS uses more than FAST_MS of
-// CPU in every run, so its best is over the ceiling too (the test below holds the harness to that).
+// A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
+// wall-clock sample includes the time this process waits for a CPU. Five wall-clock runs of the
+// same 80k text spanned 8 ms to 211 ms here while their CPU time stayed within a millisecond. The
+// best of five runs drops one that caught a background compile or a collection; noise can add CPU
+// time, never remove it, so a rule that is slow in every run stays slow in every sample.
 const FAST_MS = 50
 const FAST_TRIES = 5
-const timed = (fn) => {
+const timed = (fn, ceiling = FAST_MS) => {
   let best = Infinity
-  for (let i = 0; i < FAST_TRIES && best >= FAST_MS; i++) {
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) {
     const t0 = process.cpuUsage()
     fn()
     const used = process.cpuUsage(t0)
@@ -74,6 +73,34 @@ const timed = (fn) => {
   }
   return best
 }
+
+// A slow path by construction: it burns SLOW_REFERENCE_MS of CPU, counting CPU time itself, so no
+// load can cut the burn short. The window's bound is a multiple of what this same run measures
+// here, so the bound travels with the machine and with the clock; the test at the end pins the
+// burn to what it claims, so a harness that misreads it fails rather than scaling every bound.
+const SLOW_REFERENCE_MS = 60
+const slowReference = () => {
+  const start = process.cpuUsage()
+  let spin = 0
+  for (;;) {
+    spin += 1
+    if ((spin & 0x3ff) !== 0) continue
+    const used = process.cpuUsage(start)
+    if (used.user + used.system >= SLOW_REFERENCE_MS * 1000) return spin
+  }
+}
+const slowRef = timed(slowReference)
+
+// The window runs redactText over every delta on top of its own row work, so it costs a multiple
+// of the text paths, and the exact multiple is not established: one Ryzen run under Node 24.9.0
+// measured 26.24 ms of CPU for it against 10.5-11.3 ms for the text paths (24.22.2: 26.30 ms), and
+// CI reported the row without its milliseconds. Its bound is therefore relative, WINDOW_MARGIN
+// times the slow reference above, capped by an absolute backstop sized from those numbers (7.6x
+// the measured window cost) with headroom. A quadratic rule at 80k characters is 6.4e9 steps,
+// seconds of CPU, far past either bound.
+const WINDOW_MARGIN = 3
+const WINDOW_BACKSTOP_MS = 200
+const WINDOW_BOUND_MS = Math.min(WINDOW_MARGIN * slowRef, WINDOW_BACKSTOP_MS)
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
@@ -86,26 +113,25 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   // same texts through the same paths, so a rule that is slow on a shape is still slow on the
   // measured pass; only the one-time cold cost of a new process is left out.
   for (const [, text] of cases) for (const [, run] of PATHS) run(text)
+  const [windowPath, windowRun] = PATHS[PATHS.length - 1]
+  const textPaths = PATHS.slice(0, -1)
   for (const [shape, text] of cases) {
-    for (const [path, run] of PATHS) {
-      assert.ok(timed(() => run(text)) < FAST_MS, `${path}: ${shape}`)
+    for (const [path, run] of textPaths) {
+      const ms = timed(() => run(text))
+      const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
+      assert.ok(ms < FAST_MS, detail)
     }
+    const windowMs = timed(() => windowRun(text), WINDOW_BOUND_MS)
+    const margin = `${WINDOW_MARGIN} x slow reference ${slowRef.toFixed(1)} ms`
+    const detail = `${windowPath}: ${shape}: ${windowMs.toFixed(1)} ms of CPU, ` +
+      `bound ${WINDOW_BOUND_MS.toFixed(1)} ms (${margin}; backstop ${WINDOW_BACKSTOP_MS} ms)`
+    assert.ok(windowMs <= WINDOW_BOUND_MS, detail)
   }
 })
 
-// The harness above must fail a path slower than the ceiling, or a regression could hide in the
-// sampling. This path burns 60 ms of CPU by construction, counting CPU time itself, so no amount
-// of load can cut the burn short: every run is over the ceiling and its best is too.
-test('the measurement fails a path slower than the ceiling', () => {
-  const slow = () => {
-    const start = process.cpuUsage()
-    let spin = 0
-    for (;;) {
-      spin += 1
-      if ((spin & 0x3ff) !== 0) continue
-      const used = process.cpuUsage(start)
-      if (used.user + used.system >= 60_000) return spin
-    }
-  }
-  assert.ok(timed(slow) >= FAST_MS)
+// The window's bound is only meaningful if this run can see the slow reference for what it is: a
+// harness that read the burn as less than FAST_MS would shrink every bound with it.
+test('the slow reference burns what its bound claims', () => {
+  const detail = `slow reference ${slowRef.toFixed(1)} ms of CPU, burn ${SLOW_REFERENCE_MS} ms`
+  assert.ok(slowRef >= SLOW_REFERENCE_MS, detail)
 })
