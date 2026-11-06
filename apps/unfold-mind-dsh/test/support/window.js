@@ -332,23 +332,6 @@ function explicitBlock(_, nl, indent, before, name, sep, indicator, block) {
 // Each rule is [pattern, replacement, gate]: a rule with a gate runs only on a text the gate finds
 // something in, a literal its pattern cannot match without, so a text skips the rules it cannot meet.
 const SECRET_TEXT = [
-  // A line a cut padded with blanks (#406 F-B): a run of blanks as long as the keep is the cut's
-  // padding, not text. It hides where the line's head ended, so the name on it cannot be read (a
-  // child key arrives as "pass" and "word:"), and no later rule can be trusted on it. Once the line
-  // has ended it is hidden whole, the one fail-closed answer to a head that is gone; while it is
-  // still arriving (a growing buffer's last line, OPEN_END) its rest is withheld, as the value that
-  // completes it is not remembered yet (#406's last frame). It runs first, as it hides the line,
-  // whatever the line turns out to hold.
-  [/^[^\n]*$/gm, (line, at, all) => {
-    const pad = /[ \t]{4096,}/.exec(line)
-    if (!pad) return line
-    // A pad-only line is the blank line the cut padded: it holds nothing to hide, and the later
-    // rules must read it as the blank line it is (a key line skips it to its value).
-    if (!/[^ \t]/.test(line)) return ' '
-    // While the line is still arriving (a growing buffer's last line) everything after the pad is
-    // withheld: the head is cut, so the line cannot be read, and no later rule sees the value.
-    return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
-  }, /[ \t]{4096,}/],
   // Whole-value priority: a credential key's value is secret as ONE unit, whatever it
   // starts with ("Bearer ", "Basic ", even an already-redacted marker, which is untrusted input),
   // so the key rules run first and no inner pattern can split a value they recognise.
@@ -436,6 +419,24 @@ const SECRET_TEXT = [
   // Standalone sk- credentials (the contract above): a whole key, then a still-open run at the end.
   [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}/g, () => REDACTED],
   [/(?:(?<![A-Za-z0-9_-])|(?<=\\[nrt]))sk-[A-Za-z0-9_-]+$/, () => REDACTED],
+  // A line a cut padded with blanks (#406 F-B): a run of blanks as long as the keep is the cut's
+  // padding, not text. Its head is gone — the name on it cannot be read (a child key arrives as
+  // "pass" and "word:") — so once the line has ended it is hidden whole, and while it is still
+  // arriving (a growing buffer's last line, OPEN_END) its rest is withheld, as the value that
+  // completes it is not remembered yet (#406's last frame). It runs LAST, on purpose: a padded line
+  // that is a key line still names the value on the lines under it, and the rules above hide that
+  // value first; hiding this line first would destroy the name and leave the value orphaned and
+  // served, however the deltas were split (#406 CLASS). A pad-only line is the blank line the cut
+  // padded: it holds nothing to hide, and the rules above read its blanks as the blank line it is
+  // (a key line skips it to its value).
+  [/^[^\n]*$/gm, (line, at, all) => {
+    const pad = /[ \t]{4096,}/.exec(line)
+    if (!pad) return line
+    if (!/[^ \t]/.test(line)) return ' '
+    // While the line is still arriving (a growing buffer's last line) everything after the pad is
+    // withheld: the head is cut, so the line cannot be read, and no rule above has served it.
+    return OPEN_END && at + line.length === all.length ? line.slice(0, pad.index + pad[0].length) : REDACTED
+  }, /[ \t]{4096,}/],
 ]
 
 export function redactText(s, open = false) {

@@ -74,3 +74,28 @@ test('a padded line is hidden whole', () => {
   assert.doesNotMatch(redactText(padded), VALUE, 'whole payload')
   assert.doesNotMatch(redactText(padded, true), VALUE, 'growing buffer')
 })
+
+// #406 CLASS: the split of a reply's deltas must not change what is served. A cut pads an unfinished
+// line with blanks, and the pad and the value under it arrive in as many deltas as the transport
+// chose. The rule (stated in the PR): in a growing buffer, the suffix after its last line terminator
+// is never matched, served or remembered until its terminator arrives, however many deltas it came
+// in — a padded key line's value line is hidden before the padded line itself is hidden whole. The
+// same table as the Mind and window tests, read by this copy of the rule.
+const SECRET = FILL['{value}']
+const PADS = [1000, 5000, 17000]
+test('a cut-padded key line and the value under it stay hidden however the deltas were split', () => {
+  for (const [what, input] of TABLE.chunk_split) for (const pad of PADS) {
+    const payload = fill(input).replace('{pad}', ' '.repeat(pad)).replace('{later}', `later the ${FILL['{name}']} and user words stay`)
+    const at = payload.indexOf(SECRET)
+    const end = payload.indexOf('\n', at + SECRET.length) // the terminator that completes the value's line
+    assert.ok(at > 0 && end > at, `${what}: the value is on a line that ends`)
+    assert.ok(!redactText(payload).includes(SECRET), `${what}, pad ${pad}: the completed text hides the value`)
+    // Every split the Reviewer used: the value's line is withheld until its terminator arrives.
+    for (const size of (pad <= 1000 ? [1, 10, 100] : [10, 100])) {
+      for (let i = 0; i < payload.length; i += size) {
+        assert.ok(!redactText(payload.slice(0, i + size), true).includes(SECRET), `${what}, pad ${pad}, ${size}-char deltas: no frame serves the value`)
+      }
+      assert.ok(!redactText(payload.slice(0, end), true).includes(SECRET), `${what}, pad ${pad}, ${size}-char deltas: the line is withheld until its terminator`)
+    }
+  }
+})

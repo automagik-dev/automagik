@@ -710,15 +710,32 @@ function setText(row, raw, { cut = false } = {}) {
 
 /**
  * The private raw tail kept for the next delta to join: the last TEXT_KEEP characters, never
- * starting inside a quoted credential value (whose spaces are not boundaries). A closed value the
- * cut lands in is dropped with its key; an open one keeps only its key and opening quote, so the
- * rest of the value is still hidden as it arrives. A cut in the blank run that ends a key line
- * still waiting for its value or block indicator keeps that line, as the window's bound does.
+ * starting inside a token or a quoted credential value (whose spaces are not boundaries), so a
+ * line's head survives every delta boundary and what is withheld for it does not depend on where
+ * the deltas were split (#406 CLASS). A closed value the cut lands in is dropped with its key; an
+ * open one keeps only its key and opening quote, so the rest of the value is still hidden as it
+ * arrives. A cut in the blank run that ends a key line still waiting for its value or block
+ * indicator keeps that line, as the window's bound does.
  */
 function keptTail(full) {
   if (full.length <= TEXT_KEEP) return full
-  const at = full.length - TEXT_KEEP
-  const span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
+  let at = full.length - TEXT_KEEP
+  let span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
+  // A cut inside a token would slice a credential name into a word that reads as no name, and the
+  // value under it would be served (#406 CLASS): the token is kept whole instead (a token longer
+  // than the keep, a value, is cut as before). A token that only blanks follow is the head of a
+  // line a cut padded: the cut is read from the token's end, so the blank-run branch below keeps
+  // that head whole as a key line and drops the pad, whatever the delta size. A cut inside an open
+  // quoted value keeps the value's own rule below, so the guard never moves it.
+  if (!span && /[^ \t\r\n]/.test(full[at]) && /[^ \t\r\n]/.test(full[at - 1])) {
+    let start = at
+    while (start > 0 && /[^ \t\r\n]/.test(full[start - 1])) start--
+    let end = at
+    while (end < full.length && /[^ \t\r\n]/.test(full[end])) end++
+    if (!/\S/.test(full.slice(end))) at = end
+    else if (at - start <= TEXT_KEEP) at = start
+    span = quotedSpans(full).find((sp) => sp.start < at && at < sp.end)
+  }
   if (!span && !/\S/.test(full.slice(at))) {
     const line = openKeyLine(full, TEXT_KEEP)
     if (line !== null) return line

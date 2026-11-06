@@ -1013,5 +1013,15 @@
    "{parent}: &d\n  user{cut}_id: {value}",
    "{parent}: &d\n  user_id: {value}"
   ]
+ ],
+ "chunk_split": [
+  [
+   "a cut-padded key line, its value on the next line",
+   "{parent}: &d\n  {name}:{pad}\n    {value}\n{later}"
+  ],
+  [
+   "a cut-padded key line completed on its own line",
+   "{parent}: &d\n  {name}:{pad}{value}\n{later}"
+  ]
  ]
 }

@@ -306,6 +306,39 @@ test('served: a cut-padded line never serves the value at the frame that complet
   }
 })
 
+// #406 CLASS: the split of a reply's deltas must not change what is served. A cut pads an unfinished
+// line with blanks, and the pad and the value under it arrive in as many deltas as the transport
+// chose. The rule (stated in the PR): in a growing buffer, the suffix after its last line terminator
+// is never matched, served or remembered until its terminator arrives, however many deltas it came
+// in — the bound keeps that open line's head whole (it never cuts inside it), and a padded key
+// line's value line is hidden before the padded line itself is hidden whole. One test, one table,
+// every split the Reviewer used; the copies of the rule carry the same table.
+const CHUNK = TABLE.chunk_split.map(([what, input]) => [what, input])
+const PADS = [1000, 5000, 17000]
+// One redaction runs per delta: a pad above the keep paid a character at a time costs about a
+// minute for 5 000 and minutes for 17 000, so the 1-char size runs on the pad at or under the keep;
+// the 10-char size already crosses the 4 KiB keep four times on the 17 000 pad.
+const sizesFor = (pad) => (pad <= 1000 ? [1, 10, 100] : [10, 100])
+test('served: a cut-padded key line and the value under it stay hidden however the deltas were split', () => {
+  for (const [what, input] of CHUNK) for (const pad of PADS) {
+    const payload = fill(input).replace('{pad}', ' '.repeat(pad)).replace('{later}', `later the ${FILL['{name}']} and user words stay`)
+    const at = payload.indexOf(SECRET)
+    const end = payload.indexOf('\n', at + SECRET.length) // the terminator that completes the value's line
+    assert.ok(at > 0 && end > at, `${what}: the value is on a line that ends`)
+    // The pad and the value in one delta, and the same text split at every size. Every delta is
+    // delivered; the served payload is read at each frame that can hold the value at all (a frame
+    // before it arrives cannot serve it), and the completing frame must remember it.
+    for (const size of [...sizesFor(pad), payload.length]) {
+      const r = journal()
+      for (let i = 0; i < payload.length; i += size) {
+        r.send(payload.slice(i, i + size))
+        if (i + size > at) assert.ok(!r.served().includes(SECRET), `${what}, pad ${pad}, ${size}-char deltas: no frame serves the value`)
+        if (i + size > end) assert.ok(r.row().secrets.includes(SECRET), `${what}, pad ${pad}, ${size}-char deltas: the completing frame remembers the value`)
+      }
+    }
+  }
+})
+
 // #406 FAIL 2: an explicit key's block (FB1) is remembered once its entry has ended even while the
 // buffer is still growing, as the continued form (FL1) is: a line break after the value, or a blank, a
 // tab or a comment that ends it at the end of the text, closes it. While the value is still the last
