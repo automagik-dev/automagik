@@ -35,6 +35,11 @@ anything, and installs every mod into `~/.config/herdr-app/mods/` as one unit. I
 you already use stays yours), points the mod manager at the pack's catalog (`herdr/catalog/` here), and runs
 `herdr-app check` on each mod.
 
+On a machine where Herdr has never opened, the installer leaves `keys.json` absent so
+Herdr can create its native shortcuts, including terminal copy/paste. Open Herdr once,
+then rerun the installer to add the pack's free shortcuts. The Mods button in the footer
+works before its shortcut is added. Existing key files and personal bindings are preserved.
+
 **What a release contains.** From v0.5.0, every release is one pack: `automagik-herdr-pack-<v>.tgz`
 holds nine mod folders and one layout, and nothing else:
 

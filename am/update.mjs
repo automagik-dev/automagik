@@ -1087,16 +1087,16 @@ export function preflightKeys(appHome) {
   }
 }
 
-/**
- * install.sh's part after the folders land: free keys only (a key in use stays the person's),
- * the mod manager's catalog.json, the layout (added when absent; replaced only when byte-identical
- * to v0.2.x's or to the last pack's, D8; otherwise kept with a note) and `herdr-app check` on
- * every installed mod. Returns the mods whose check failed.
- */
-export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = "herdr-app" }) {
-  const appHome = dirname(resolve(modsDir));
+/** Merge free pack shortcuts only after Herdr has initialized its native key file. */
+export function mergePackKeys(appHome, log = () => {}) {
   const keysPath = join(appHome, "keys.json");
-  const mine = existsSync(keysPath) ? JSON.parse(readFileSync(keysPath, "utf8")) : {};
+  // Herdr creates its default bindings only when this file is absent. A pack-only
+  // file here would suppress terminal paste and every other native shortcut.
+  if (!existsSync(keysPath)) {
+    log("Open Herdr once, then rerun the installer to add the pack's shortcuts; keys.json was left for Herdr to initialize.");
+    return 0;
+  }
+  const mine = JSON.parse(readFileSync(keysPath, "utf8"));
   let added = 0;
   for (const [section, entries] of Object.entries(PACK_KEYS)) {
     for (const [key, action] of Object.entries(entries)) {
@@ -1106,6 +1106,18 @@ export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = 
     }
   }
   if (added) writeFileSync(keysPath, JSON.stringify(mine, null, 2) + "\n");
+  return added;
+}
+
+/**
+ * install.sh's part after the folders land: free keys only (after native initialization),
+ * the mod manager's catalog.json, the layout (added when absent; replaced only when byte-identical
+ * to v0.2.x's or to the last pack's, D8; otherwise kept with a note) and `herdr-app check` on
+ * every installed mod. Returns the mods whose check failed.
+ */
+export function setupHome({ modsDir, tgzDir, record, log = () => {}, herdrApp = "herdr-app" }) {
+  const appHome = dirname(resolve(modsDir));
+  mergePackKeys(appHome, log);
   // The mod manager's catalog: it reads data/am-mods/catalog.json, then the one in its data folder
   // from before the rename (core.js catalogUrl). Each one there that still holds a URL the pack
   // wrote gets the current one; a URL the person set, a file it can't read or a link stays theirs.
@@ -1346,6 +1358,7 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window }) 
  * back or rewritten (the layout's reference copy and the record are rewritten as on every install).
  */
 export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir(), log = () => {}, herdrApp = "herdr-app", window = false }) {
+  preflightKeys(dirname(resolve(modsDir)));
   const found = await verifyInstall({ tgzPath, version, modsDir });
   for (const m of found.missing) log(`missing: mods/${m}`);
   for (const d of found.damaged) {
@@ -1358,13 +1371,14 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     await run("tar", ["-xzf", resolve(tgzPath), "-C", tgzDir, PACK_LAYOUT]).catch(() => {});
     const record = readMarker(modsDir);
     const layout = placeLayout({ modsDir, tgzDir, record, log });
+    const keysAdded = mergePackKeys(dirname(resolve(modsDir)), log);
     // A mod switched off (in mods-disabled/, not mods/) has no folder here to check.
     const { failed: checkFailed, checked } = checkMods({ modsDir, mods: toCheck(modsDir, record.mods), log, herdrApp });
     const warnings = repaired?.warnings ?? [];
     // The person's layouts too, as on an install: one edited since (or kept) that still places
     // Herdr's workspace-status gets am-status (#387); a second run finds nothing to do.
     const migration = migrateRefs({ modsDir, log, warnings });
-    const changed = Boolean(repaired) || layout === "added" || layout === "replaced" || Boolean(migration?.journal);
+    const changed = Boolean(repaired) || layout === "added" || layout === "replaced" || Boolean(migration?.journal) || keysAdded > 0;
     // The hooks too, so a rerun moves those of a project opened (or listed) since the install.
     const hooks = moveHooks({ modsDir, log, warnings, window });
     return { version, repaired: found.repair, layout, checkFailed, checked, changed, migration, hooks, warnings };

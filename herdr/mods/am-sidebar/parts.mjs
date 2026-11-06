@@ -38,7 +38,7 @@ import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
 import { change, linkedModsLine, removePath, switchCommand } from "./layoutSafe.mjs";
-import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
+import { appHomeOf, binDirOf, markerOf, mergePackKeys, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 import { dshTuiPresence } from "./dshTui.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -165,18 +165,6 @@ function ensurePack(ctx, source) {
   return true;
 }
 
-/** Each free key of the pack's (release.js PACK_KEYS) into keys.json; a key the person bound stays theirs. */
-function mergeKeys(ctx) {
-  const path = join(ctx.appHome, "keys.json");
-  const keys = isFile(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-  let added = 0;
-  for (const [section, entries] of Object.entries(PACK_KEYS)) {
-    for (const [key, action] of Object.entries(entries)) if (keys[section]?.[key] === undefined) { (keys[section] ??= {})[key] = action; added += 1; }
-  }
-  if (added) writeFileSync(path, `${JSON.stringify(keys, null, 2)}\n`);
-  return added;
-}
-
 /** Each pack key (PACK_KEYS) out of keys.json while it still runs the pack's action; a rebound one stays. */
 function dropKeys(ctx) {
   const path = join(ctx.appHome, "keys.json");
@@ -250,7 +238,7 @@ export function install(ctx, part, source) {
         changed = true;
       }
       if (!exists(live)) throw new Error(`mods/${part.mod} is missing: run install.sh again, which repairs the pack`);
-      if (part.mod === "am-mods" && mergeKeys(ctx)) { ctx.log("added the mod manager's key (cmd-shift-m)"); changed = true; }
+      if (part.mod === "am-mods" && mergePackKeys(ctx.appHome, ctx.log)) { ctx.log("added the mod manager's key (cmd-shift-m)"); changed = true; }
       return { ok: true, changed, detail: `${part.mod} is on (pack ${record.version})` };
     }
     if (part.kind === "layout") {

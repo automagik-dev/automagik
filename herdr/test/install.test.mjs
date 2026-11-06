@@ -189,7 +189,7 @@ test("a fresh install puts the pack and the command in place; a second run chang
   for (const f of ["run.sh", "automagik-herdr"]) assert.equal(lstatSync(join(s.pack, "bin", f)).mode & 0o111, 0o111, f);
   assert.equal(readlinkSync(s.link), join(s.pack, "bin", "automagik-herdr"));
   assert.match(r.out, /Checksum: ok\.\n(  .*\n)*Installed the pack 9\.9\.0/);
-  assert.deepEqual(JSON.parse(readFileSync(join(s.appHome, "keys.json"), "utf8")), { global: { "cmd-shift-m": "mod.open:am-mods" } });
+  assert.equal(existsSync(join(s.appHome, "keys.json")), false, "Herdr must initialize native keys on first launch");
   assert.match(readFileSync(join(s.appHome, "data", "am-mods", "catalog.json"), "utf8"), /automagik-dev\/automagik\/dev\/herdr\/catalog\/index\.json/);
   assert.match(r.out, /Add ~\/\.local\/bin to your PATH/);
   const version = spawnSync(s.link, ["--version"], { encoding: "utf8", env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` } });
@@ -947,7 +947,8 @@ test("a clean same-version rerun checks every file and every mod, swaps nothing 
   const ino = lstatSync(s.pack).ino, mark = s.mark(), checksBefore = s.checks().length, meterBefore = s.meterCalls().length;
   const r = s.run("--yes");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Checksum: ok\.\n(  check passed: .*\n)+(.*\n)*Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release and every mod passed herdr-app check\./);
+  assert.match(r.out, /Checksum: ok\./);
+  assert.match(r.out, /Automagik Herdr 9\.9\.0 is already up to date .*: every file matches the release and every mod passed herdr-app check\./);
   assert.equal(s.checks().length - checksBefore, ON_MODS.length);
   assert.match(r.out, /usagemeter 0\.3\.0: already installed/);
   assert.equal(s.meterCalls().length, meterBefore, "usagemeter current: nothing downloaded");
