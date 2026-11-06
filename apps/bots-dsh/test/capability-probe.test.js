@@ -591,3 +591,49 @@ test('a 6-character secret echoed inside letters is redacted whole by the probe'
 test('a 7-character secret echoed inside letters is redacted whole by the probe', async t => {
   await shortEcho(t, '6284917')
 })
+
+// #484: a value below the write floor (MIN_VALUE = 4) reaches the store only by hand-editing
+// secrets.json, and no redactor can match a 1-3 character value without hitting ordinary words.
+// The loader holds it, so the probe refuses before any request, names the floor, and no byte of
+// the value leaves the host (the #482 probe-only policy for 4+ values is untouched).
+test('a hand-edited 3-character secret in the URL is held, and the probe refuses naming the floor', async t => {
+  const value = 'q7z'
+  const hits = []
+  const server = await serve((_request, response) => {
+    hits.push(true)
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`aaay${value}buzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('held-url', `${server.url}?k=$DSH_SECRET_TOKEN`), { botId: 'chief' })
+  assert.equal(hits.length, 0, 'a held secret must not reach the wire')
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /^Secret TOKEN is held: its saved value is shorter than 4 characters/)
+  assert.deepEqual(runsOf(saved.verification.reason, value, 2), [])
+  assert.equal(saved.verification.reason.includes('aaay'), false)
+})
+
+test('a hand-edited 1-character secret in a header is held, and no request is sent', async t => {
+  const value = 'q'
+  const hits = []
+  const server = await serve((_request, response) => {
+    hits.push(true)
+    response.end(`aaay${value}[header]zbuzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('held-header', server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+  }), { botId: 'chief' })
+  assert.equal(hits.length, 0, 'a held secret must not reach the wire')
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /^Secret TOKEN is held: its saved value is shorter than 4 characters/)
+  // The surrounds the echo would have left are nowhere: the request was never made.
+  assert.equal(saved.verification.reason.includes('aaay'), false)
+  assert.equal(saved.verification.reason.includes('[header]'), false)
+})
