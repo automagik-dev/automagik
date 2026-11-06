@@ -424,10 +424,10 @@ function uninstallPack(ctx, { purge }) {
       renameSync(next, prev);
       lines.push(`moved the pack out of ${ctx.modsDir} (${moved.join(", ")}); it is kept in ${prev}`);
     }
-    rmSync(old, { recursive: true, force: true });
+    removePath(old, { recursive: true, force: true }); // .prev renamed aside, a dangling link too (#566)
   } else {
     rmSync(next, { recursive: true, force: true });
-    if (purge && exists(prev)) { rmSync(prev, { recursive: true, force: true }); lines.push(`deleted the kept set ${prev} (--purge)`); }
+    if (purge && exists(prev)) { removePath(prev, { recursive: true, force: true }); lines.push(`deleted the kept set ${prev} (--purge)`); }
   }
 
   // What the person had before: each adopted folder comes back where mods/ is free.
