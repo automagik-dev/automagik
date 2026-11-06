@@ -9,8 +9,9 @@ window and herdr-app runs in Linux inside a WSL container. This folder holds tha
 - `bin/dsh-launch.mjs`: the launcher, `/opt/automagik/bin/dsh-launch` in the image.
 - `bin/xdg-open.mjs`: `xdg-open` and `$BROWSER` in the image.
 - `lib/`: the framing, the CDP tunnel, `open`, the lane's handoff, seeds, and the launcher itself.
-- `smoke/`: the CI smoke (`smoke.mjs`), the Electron side it plays (`driver.mjs`) and a fake DSH
-  (`fake-dsh.mjs`) mounted into the container for it. The fake is never built into the image.
+- `smoke/`: the CI smoke (`smoke.mjs`), the Electron side it plays (`driver.mjs`), a fake DSH
+  (`fake-dsh.mjs`) mounted into the container for it, and the stderr masker that keeps the launch
+  token out of the public log (`redact.mjs`). The fake is never built into the image.
 - `test/`: the launcher's tests, plain Node: `node --test 'test/*.test.mjs'` from this folder.
   They run in the Linux job, not in the desktop's Windows matrix (Unix sockets, signals).
 
