@@ -770,12 +770,14 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       old = keep.length ? setAside(modsDir) : null;
     };
     try {
-      swapAll(modsDir, moves, rename, {
+      const swap = swapAll(modsDir, moves, rename, {
         needed: "hold", mods: inMods.map((r) => r.mod), exclude: replacedLayout(modsDir), stranded: strandedLayouts, prepare,
         renamed: Object.fromEntries(inMods.filter((r) => r.renamed).map((r) => [r.mod, r.renamed])),
         // A mod that leaves while a layout that does not parse names it in its text: said (#489).
         unknown: "warn", log,
       });
+      // A linked mods/ (#494): nothing done, prepare never ran.
+      if (swap.refused) throw new Error(swap.refused);
     } catch (error) {
       restoreSet(modsDir, old);
       throw error;
@@ -949,7 +951,11 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   for (const a of record.adopted) {
     const from = join(stateDirOf(modsDir), a.path), to = join(modsDir, a.mod);
     if (exists(to) || !exists(from) || isLink(from) || !dropped(a.mod)) { adopted.push(a); continue; }
-    try { change(dirname(resolve(modsDir)), [{ op: "move", from, to }]); log(`put back mods/${a.mod} from ${a.path}`); } catch (error) {
+    try {
+      const r = change(dirname(resolve(modsDir)), [{ op: "move", from, to }]);
+      if (r.refused) throw new Error(r.refused);
+      log(`put back mods/${a.mod} from ${a.path}`);
+    } catch (error) {
       warnings.push(`mods/${a.mod} stays in ${from} (${error.message})`);
       adopted.push(a);
     }
@@ -1417,6 +1423,7 @@ export function packOut({ modsDir, to, layout = null, move = [] }) {
   }
   const ops = [...(layout ? [{ op: "remove", path: resolve(layout) }] : []), ...move.map((m) => ({ op: "move", from: resolve(m), to: join(dest, basename(m)) }))];
   const r = change(home, ops, { modsDir: mods, links: "hold-layouts" });
+  if (r.refused) throw new Error(r.refused);
   const lines = [...r.left.map((p) => `left ${p}`)];
   if (layout && !r.left.includes(resolve(layout))) lines.push(`removed ${resolve(layout)}`);
   for (const m of move) if (!r.left.includes(resolve(m))) lines.push(`moved ${basename(m)}`);

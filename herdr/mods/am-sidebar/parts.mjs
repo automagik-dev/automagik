@@ -37,7 +37,7 @@ import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } fro
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
-import { change, removePath, switchCommand } from "./layoutSafe.mjs";
+import { change, linkedModsLine, removePath, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 import { dshTuiPresence } from "./dshTui.mjs";
 
@@ -244,7 +244,8 @@ export function install(ctx, part, source) {
       if (!record.mods.includes(part.mod)) throw new Error(`mods/${part.mod} is not the pack's (a folder of your own is left alone; install.sh --adopt replaces it)`);
       const live = join(ctx.modsDir, part.mod), off = join(ctx.offDir, part.mod);
       if (!exists(live) && exists(off) && !isLink(off)) {
-        change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        const r = change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        if (r.refused) throw new Error(r.refused);
         ctx.log(`switched ${part.mod} back on (mods-disabled/ → mods/)`);
         changed = true;
       }
@@ -373,6 +374,10 @@ function uninstallPack(ctx, { purge }) {
   const record = readMarker(ctx.modsDir);
   if (!record) return { ok: true, changed: false, detail: "the pack is not installed: nothing to do" };
   if (record.v1) throw new Error("this pack was installed by v0.2's installer: run install.sh --uninstall");
+  // A linked mods/ (#494) refuses before anything, as install.sh --uninstall does: change() refuses
+  // only an op in mods/, and with every pack mod switched off the first batch has none, so the
+  // layout and folders would go before an adopted folder's put-back into mods/ is refused.
+  if (isLink(ctx.modsDir)) throw new Error(linkedModsLine(resolve(ctx.modsDir), readlinkSync(ctx.modsDir)));
   const state = stateDirOf(ctx.modsDir);
   const prev = prevSetOf(ctx.modsDir);
   const lines = [];
@@ -435,7 +440,8 @@ function uninstallPack(ctx, { purge }) {
   for (const a of record.adopted) {
     const from = join(state, a.path), to = join(ctx.modsDir, a.mod);
     if (isDir(from) && !isLink(from) && !exists(to)) {
-      change(ctx.appHome, [{ op: "move", from, to }]);
+      const r = change(ctx.appHome, [{ op: "move", from, to }]);
+      if (r.refused) throw new Error(r.refused);
       lines.push(`put back ${to}, the one that was there before the install`);
     }
   }

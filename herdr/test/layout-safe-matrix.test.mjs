@@ -1,5 +1,5 @@
 // The layout-safety matrix (refs #431, #448, #450): every route that takes a folder out of mods/ or
-// a file out of layouts/, against six shapes of the app home, with the layout Herdr shows naming
+// a file out of layouts/, against seven shapes of the app home, with the layout Herdr shows naming
 // the mod. A row is safe when the shown layout keeps its bytes, every mod it names is still in
 // mods/, nothing outside the app home changed (nothing written through a link), and a refusal or a
 // hold names that layout in the guard's own wording. With no layout from Herdr and readable files
@@ -42,11 +42,17 @@ const LINKED_ANOTHER = "symlinked layouts folder, another layout shown";
 const NO_ANSWER = "Herdr does not answer, layout files readable";
 /** Herdr gives no layout, and no file in layouts/ parses (each still names its mods in its text). */
 const NOTHING = "no layout can be read";
-export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
+/** #494: mods/ itself a link to the person's folder (outside the app home), Herdr showing the layout. */
+const LINKED_MODS = "linked mods/ folder";
+/** #494, with the layout Herdr shows (the person's) naming no mod, so no layout guard stops a route first. */
+const LINKED_MODS_ANOTHER = "linked mods/ folder, another layout shown";
+/** A refusal of a linked mods/ (#494): it names the link as the person's folder and moves nothing through it. */
+const LINKED_MODS_REFUSAL = /mods\/ \(\S+\) is a link to \S+, your own folder, not one this install made: nothing is moved through it/;
+export const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING, LINKED_MODS];
 
 /**
  * Today's gaps: `${route} | ${shape}` → the issue. "new" names a gap no issue tracks yet (reported
- * with this PR, not fixed in it). None left here (#487 closed the last); the mod manager's are in
+ * with this PR, not fixed in it). None left here (#494 closed the last); the mod manager's are in
  * layout-safe-matrix-mods.test.mjs.
  */
 const PACK_ROUTES = ["pack uninstall", "pack uninstall --purge", "install.sh --uninstall"];
@@ -102,7 +108,12 @@ export function machine(t, shape, { shown, named = [MOD], mods = MODS, pack = tr
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), app = join(root, "app"), ext = join(root, "ext"), bin = join(root, "bin");
   const modsDir = join(app, "mods"), state = join(app, "automagik-herdr");
-  for (const d of [home, modsDir, state, ext, bin]) mkdirSync(d, { recursive: true });
+  for (const d of [home, state, ext, bin]) mkdirSync(d, { recursive: true });
+  // A linked mods/ (#494): the folders live in ext/mods, the person's folder, and mods/ points there.
+  if (shape === LINKED_MODS) {
+    mkdirSync(join(ext, "mods"), { recursive: true });
+    symlinkSync(join(ext, "mods"), modsDir);
+  } else mkdirSync(modsDir, { recursive: true });
   for (const m of mods) {
     if (shape === "symlinked mod folder" && named.includes(m)) {
       packFolder(join(ext, "checkout"), m, "0.1.0");
@@ -197,7 +208,9 @@ function judge(m, before, outcome, { rewrites = false } = {}) {
   if (after.ext !== before.ext) problems.push("something outside the app home changed (written through a link)");
   const stopped = Boolean(outcome.error) || outcome.held;
   // A refusal of a link (a checkout's mod folder) moves nothing the layout needs: it need not name it.
-  const linkRefusal = /is a link \(a checkout\?\)/.test(outcome.error ?? "");
+  // So does a refusal of a linked mods/ (#494), which moves nothing at all.
+  const linkRefusal = /is a link \(a checkout\?\)/.test(outcome.error ?? "")
+    || (m.shape === LINKED_MODS && LINKED_MODS_REFUSAL.test(outcome.error ?? ""));
   const named = lines.find((l) => guardLine(m.shown).test(l));
   if (stopped && !linkRefusal && !named) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${lines.find((l) => l.trim()) ?? ""}`);
   // Fail open (no layout from Herdr): going on is today's rule, given the reason (and the layout, when one reads).
@@ -279,17 +292,18 @@ export const ROUTES = {
   },
 };
 
-/** Every route against the five shapes, then the #448 rows: [route, shape, the machine's options]. */
+/** Every route against the seven shapes, then the #448 rows, then #494's: [route, shape, the machine's options]. */
 const ROWS = [
   ...Object.entries(ROUTES).flatMap(([route, spec]) => SHAPES.map((shape) => [route, shape, spec])),
   ...[...PACK_ROUTES, "herdr.layout uninstall", "herdr.layout uninstall --purge"]
     .map((route) => [route, LINKED_ANOTHER, { ...ROUTES[route], shown: "mine", named: [] }]),
+  ...Object.entries(ROUTES).map(([route, spec]) => [route, LINKED_MODS_ANOTHER, { ...spec, shown: "mine", named: [] }]),
 ];
 
 for (const [route, shape, spec] of ROWS) {
   const gap = EXPECTED_FAIL[`${route} | ${shape}`];
   test(`${route} | ${shape}${gap ? ` [expected-fail ${gap}]` : ""}`, async (t) => {
-    const linked = shape === LINKED_ANOTHER ? "symlinked layouts folder" : shape;
+    const linked = shape === LINKED_ANOTHER ? "symlinked layouts folder" : shape === LINKED_MODS_ANOTHER ? LINKED_MODS : shape;
     const m = machine(t, linked, { shown: spec.shown, named: spec.named, mods: spec.mods, pack: spec.pack });
     spec.setup?.(m);
     const before = snapshot(m);
