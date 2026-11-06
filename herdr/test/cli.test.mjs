@@ -584,6 +584,76 @@ test("with no app home, nothing is listed and the command still succeeds; an unw
   assert.match(r.err, /couldn't list .* so the sidebar shows it only once a space is open on it/);
 });
 
+// ---- forget (#229) ----
+
+test("forget takes one project off the list, under its lock, and touches no folder, bots file or pane", (t) => {
+  const s = scene(t, { terminals: [term("t9", { cwd: "/x" })] });
+  s.seed(team());
+  const list = join(s.app, "am-sidebar-projects.json");
+  const gone = join(s.root, "gone"), other = join(s.root, "other");
+  mkdirSync(other);
+  writeFileSync(list, JSON.stringify([gone, s.project, other]));
+  const bots = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["forget", s.project]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `${s.project} forgotten: off ${list}.\n`);
+  assert.equal(r.err, "");
+  assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), [gone, other], "only that entry; a gone one is left to tidy");
+  assert.equal(readFileSync(s.botsPath, "utf8"), bots, "its folder and bots file stay");
+  assert.deepEqual(readdirSync(s.app).sort(), ["am-sidebar-projects.json", "mods"], "no lock left behind");
+  assert.deepEqual(s.calls(), [], "never asks hc: no pane is touched");
+  assert.deepEqual(s.appCalls(), [], "never asks the window");
+  // A gone folder by a relative path with a trailing slash, from its parent; --json.
+  const json = s.cli(["forget", "gone/", "--json"], { cwd: s.root });
+  assert.equal(json.code, 0, json.err);
+  assert.deepEqual(json.json(), { forgotten: gone, list });
+  assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), [other]);
+});
+
+test("forget refuses a project that isn't on the list, the list unchanged; --json says so on stdout", (t) => {
+  const s = scene(t);
+  const list = join(s.app, "am-sidebar-projects.json");
+  const listed = JSON.stringify([join(s.root, "other")]);
+  writeFileSync(list, listed);
+  const r = s.cli(["forget", s.project]);
+  assert.equal(r.code, 1);
+  assert.equal(r.out, "");
+  assert.equal(r.err, `automagik-herdr: ${s.project} isn't on the project list (${list}); automagik-herdr ls --all shows the projects there.\n`);
+  assert.equal(readFileSync(list, "utf8"), listed, "byte for byte");
+  const json = s.cli(["forget", s.project, "--json"]);
+  assert.equal(json.code, 1);
+  assert.deepEqual(json.json(), { error: r.err.slice("automagik-herdr: ".length, -1), project: s.project, forgotten: false });
+  // One only the sidebar remembers: named as the sidebar's, and shared.json is never written.
+  const shared = JSON.stringify({ "am.sidebar.projects": [{ key: s.project, machine: null }] });
+  writeFileSync(join(s.app, "shared.json"), shared);
+  const side = s.cli(["forget", s.project]);
+  assert.equal(side.code, 1);
+  assert.match(side.err, /isn't on this CLI's project list \(.*\); the sidebar remembers it on its own and forgets it once its \.herdr\/bots\.json is gone\.\n$/);
+  assert.equal(readFileSync(join(s.app, "shared.json"), "utf8"), shared);
+  assert.equal(readFileSync(list, "utf8"), listed);
+  // Usage: a project is needed, as the argument.
+  assert.equal(s.cli(["forget"]).code, 2);
+  assert.equal(s.cli(["forget", "--project", s.project]).code, 2);
+  assert.equal(s.cli(["forget", s.project, "--machine", "build-box"]).code, 2);
+  // No app home: nothing is listed, so it is refused, and no app home is made.
+  rmSync(s.app, { recursive: true, force: true });
+  assert.equal(s.cli(["forget", s.project]).code, 1);
+  assert.equal(existsSync(s.app), false);
+});
+
+test("forget takes over a stale project-list lock (a CLI killed mid-write) and leaves none", (t) => {
+  const s = scene(t);
+  const list = join(s.app, "am-sidebar-projects.json"), lock = `${list}.lock`;
+  writeFileSync(list, JSON.stringify([s.project]));
+  writeFileSync(lock, "999999 someone-else");
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  const r = s.cli(["forget", s.project]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(readFileSync(list, "utf8")), []);
+  assert.equal(existsSync(lock), false);
+});
+
 // ---- start ----
 
 test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the pinned model; never --no-notify; the hook written and excluded", (t) => {

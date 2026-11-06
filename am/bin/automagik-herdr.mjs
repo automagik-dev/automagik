@@ -536,14 +536,21 @@ export function listProject(key, dir = appHome()) {
   return false;
 }
 
-/** Takes keys off the CLI's project list (tidy's registry prune), under listProject's lock. */
+/**
+ * Takes keys off the CLI's project list (tidy's registry prune, forget), under listProject's
+ * lock. Resolves with the keys it found there and took off (none: the file is unchanged).
+ */
 export function unlistProjects(keys, dir = appHome()) {
   const path = `${dir}/${PROJECTS_FILE}`;
-  withLock(`${path}.lock`, () => {
+  return withLock(`${path}.lock`, () => {
     let text;
-    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return; throw e; }
-    const next = `${JSON.stringify(listedProjects(text).filter((k) => !keys.includes(k)), null, 2)}\n`;
+    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    const listed = listedProjects(text);
+    const taken = listed.filter((k) => keys.includes(k));
+    if (!taken.length) return [];
+    const next = `${JSON.stringify(listed.filter((k) => !keys.includes(k)), null, 2)}\n`;
     if (next !== text) fsIo.replace(path, next);
+    return taken;
   });
 }
 
@@ -1033,6 +1040,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's briefing with its team's live state, as it is now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
+  forget <project>              take a project's folder off the project list (ls --all and the
+                                sidebar show it); its folder, worktrees, bots and panes stay as
+                                they are. start, restart, attach and create already drop one
+                                whose folder is gone, with a note
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
          [--role dev|test|review|fix] [--task ID [--lead BOT]]
@@ -1270,18 +1281,40 @@ const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "s
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
-// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
-function rememberedKeys() {
-  let keys = [];
+// The sidebar's own remembered projects on this computer: am.* since the rename, else the old
+// key. Read only: the sidebar writes them (and forgets one whose bots file is gone).
+function sidebarRemembered() {
   try {
-    // The sidebar's remembered projects: am.* since the rename, else the old key (read only).
     const held = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}");
     const list = held?.["am.sidebar.projects"] ?? held?.[renamedFrom(SHARED_RENAMES, "am.sidebar.projects")];
-    keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
-  } catch { /* unreadable: none */ }
+    return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
+  } catch { return []; /* unreadable: none */ }
+}
+
+// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
+function rememberedKeys() {
+  const keys = sidebarRemembered();
   let listed = [];
   try { listed = listedProjects(readText(`${appHome()}/${PROJECTS_FILE}`)); } catch { /* unreadable: none */ }
   return [...new Set([...keys, ...listed])];
+}
+
+/**
+ * `forget <project>`: takes the project's folder off this CLI's project list (the one `ls --all`
+ * and the sidebar read), under the list's lock. Only that entry: no folder, worktree, bots file
+ * or terminal is touched. An unknown name is refused, the file unchanged.
+ */
+async function cmdForget(opts, [ref]) {
+  if (!ref) throw new CliError("forget needs a project: its folder, as ls --all prints it.", 2);
+  if (opts.project !== undefined) throw new CliError("forget takes the project as its argument, not --project.", 2);
+  const key = resolvePath(ref);
+  const path = `${appHome()}/${PROJECTS_FILE}`;
+  // No app home (Herdr isn't set up here): there is no list, so nothing is on it.
+  if (existsSync(appHome()) && unlistProjects([key]).includes(key)) return opts.json ? { forgotten: key, list: path } : `${key} forgotten: off ${path}.`;
+  const why = sidebarRemembered().includes(key)
+    ? `${key} isn't on this CLI's project list (${path}); the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone.`
+    : `${key} isn't on the project list (${path}); automagik-herdr ls --all shows the projects there.`;
+  throw new CliError(why, 1, { project: key, forgotten: false });
 }
 
 async function cmdLs(opts) {
@@ -4107,7 +4140,7 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
+  tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

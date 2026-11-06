@@ -289,12 +289,18 @@ automagik-herdr import --from-hc [--squad-label L] [--apply]
 automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr history <bot>
 automagik-herdr brief <bot>
+automagik-herdr forget <project>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
 automagik-herdr update [--check | --rollback]
 ```
 
+- `forget <project>` takes a project's folder off the project list, the one `ls --all` and the
+  sidebar read (#229): only that entry, under the list's lock. Its folder, worktrees, bots file
+  and panes stay as they are; a project not on the list is refused and the list left as it was.
+  `start`, `restart`, `attach` and `create` already take off an entry whose folder is gone (tidy's
+  registry prune) and say so in one line.
 - `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
   labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
   that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
