@@ -1948,6 +1948,19 @@ test("restart #597: a template hc no longer lists falls back to the agent row; i
   assert.equal(r.err.includes("auto-approve"), false, "never the template's text");
 });
 
+test("restart D2: a bot moved to dsh-tui whose pane's agent can't be read doesn't restart its old omp template", (t) => {
+  const cmd = "omp --auto-approve --model kimi/k3";
+  const s = captainScene(t, { agent: "dsh-tui", templates: [{ name: "old-omp", command: cmd }],
+    over: { foreground: { argv: ["zsh"], cwd: "/x" }, argv: ["sh", "-c", cmd], template: "old-omp" } });
+  exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = ownWords(runCall(s.calls()));
+  assert.equal(words[0], "dsh-tui", JSON.stringify(words));
+  assert.equal(words.includes("omp"), false, "never the old omp template");
+  assert.match(r.err, /Captain: its pane's template old-omp differs from its source now: restarting from the source/);
+});
+
 test("restart #597: a hand-started codex bot comes back from its source, not its old flags; the old pane's folder gone: the project's, said", (t) => {
   const s = captainScene(t, { agent: "codex", over: {
     cwd: "/gone/folder", foreground: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"], cwd: "/gone/folder" },

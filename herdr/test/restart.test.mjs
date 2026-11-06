@@ -254,6 +254,19 @@ test("restartPlan runs a live template's CURRENT command with its resume words; 
   assert.deepEqual([swap.template, swap.argv], [null, ["codex"]]);
 });
 
+test("restartPlan uses a live template only when it runs the bot's own agent (D2)", () => {
+  const template = { name: "old-omp", command: "omp --auto-approve" };
+  // The pane's agent can't be read and the bot was moved to dsh-tui: the template's runner decides.
+  const moved = restartPlan({ bot: { agent: "dsh-tui" }, run: ["dsh-tui"], runningAgent: null, fresh: true, template });
+  assert.deepEqual([moved.template, moved.argv], [null, ["dsh-tui"]]);
+  // The same agent, pane unknown: the template is still the source.
+  const same = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true, template });
+  assert.deepEqual([same.template, same.argv], ["old-omp", ["sh", "-c", "omp --auto-approve"]]);
+  // A template running another agent never crosses into the bot's seat.
+  const crossed = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: "omp", fresh: true, template: { name: "dsh", command: "dsh-tui" } });
+  assert.deepEqual([crossed.template, crossed.argv], [null, ["omp"]]);
+});
+
 test("paneLaunch and launchChange: only flag names are named, values masked, a template by name (#597 F1/F2)", () => {
   const stale = { argv: ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value", "-c"] };
   assert.deepEqual(paneLaunch(stale, "claude"), ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value"]);
