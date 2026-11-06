@@ -173,16 +173,31 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
 - **The shim.** `~/.local/bin/dsh-tui` is a shell script that checks `dsh` is on PATH (a clear
   line and exit 127 when it isn't) and then runs `exec dsh --profile dsh-tui "$@"`, with the env
   it was started in. No separator of its own: DSH's launcher takes its own flags first and the
-  first token it does not recognize starts the app's arguments, so `--resume <id>`, `-c`,
-  `--continue`, `--backend <id>` and a user's `-- <text>` reach dsh-TUI the way its own launcher
-  passes them. Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks that the
-  first word resolves on its PATH, so the built-in DSH menu entry works with no per-user
-  `programs.json`.
+  first token it does not recognize starts the app's arguments, so `--resume <id>`, `-c` and
+  `--continue` reach dsh-TUI. `--backend` is **not supported through the shim**: the package's
+  own launcher maps it to `DSH_TUI_BACKEND`, but dsh passes it to the app, which reads it as
+  prompt text. A literal `-- <text>` is not a safe escape for text that starts with a flag: DSH
+  drops the bare `--`, so `-- --resume=<id>` resumes that session instead of sending text.
+  Herdr's built-in `dsh-tui` program entry (its `programs.json`) checks that the first word
+  resolves on its PATH, so the built-in DSH menu entry works with no per-user `programs.json`.
 - **Provider keys (optional).** The shim sources an optional `0600` env file at
   `~/.dsh/deepseek.env` (or `$DSH_HOME/deepseek.env`) so panes and workers get provider keys set
-  outside DSH; you can still use `/auth` or the credential store. Only a readable regular file
-  you own and that is not group- or world-writable is sourced; anything else is skipped with one
-  line. The installer writes no secret.
+  outside DSH; you can still use `/auth` or the credential store. Quote values so a space cannot
+  change the assignment:
+
+  ```sh
+  # ~/.dsh/deepseek.env, mode 0600
+  DEEPSEEK_API_KEY="your-key"
+  OTHER_KEY='your-value'
+  ```
+
+  Only a readable regular file you own with **mode 0600 or stricter** (no group or other
+  read/write), in a folder you own that is not group- or world-writable, with valid shell, is
+  sourced; anything else is skipped with one fixed line.
+  The shell's own syntax error (which can quote the offending line) is discarded, so the file's
+  content or values never reach stderr. Checking and sourcing are separate opens, which is why
+  the parent folder is checked too (another user who can write it could swap the file between
+  them). The installer writes no secret.
 - **Sandbox and permissions (`cordis.patch.yml`).** The installer writes no config and no policy.
   Settings belong in the profile's `cordis.patch.yml` (the documented user layer), never the
   generated `cordis.yml`, which DSH rewrites on every boot. A concrete example:
@@ -193,7 +208,7 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
       mode: workspace-write
       workspaceRoot: !!js process.cwd()
       additionalWritableRoots:
-        - /mnt/ai/automagik/.git   # or the main checkout's .git
+        - /path/to/main-checkout/.git   # replace with your checkout's .git
   - id: approval
     config:
       policy: never
@@ -215,11 +230,13 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
           approval: never
   ```
 
-  A matching preset is **required**: `defaultPreset` must name a preset whose sandbox and
-  approval equal the composed defaults, or `dsh-permission-presets` refuses boot ("composed
-  sandbox and approval defaults match no preset; configure defaultPreset explicitly"). The
-  `unattended` preset is workspace-write + approval never. Interactive dsh-TUI takes no
-  permission, add-dir or approval flags (they become prompt text); the profile supplies them.
+  `defaultPreset` is only inferred when it is **unset**: the composed sandbox/approval defaults
+  must then match one of `presets`; if they match none, `dsh-permission-presets` refuses boot
+  ("composed sandbox and approval defaults match no preset; configure defaultPreset
+  explicitly"). Setting `defaultPreset` names a configured preset instead (an unknown name also
+  refuses boot). The `unattended` preset is workspace-write + approval never. Interactive
+  dsh-TUI takes no permission, add-dir or approval flags (they become prompt text); the profile
+  supplies them.
 - **Automation.** dsh-TUI's `-p`/`run` automation exits 3 `ADAPTER_UNAVAILABLE` on DSH
   0.2.2-rc.1. Use `dsh --profile headless` for headless work.
 - **PATH.** The doctor checks `~/.local/bin` on the PATH Herdr **panes** get (an interactive login

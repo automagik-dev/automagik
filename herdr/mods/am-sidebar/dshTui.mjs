@@ -22,9 +22,11 @@
 // its first word, `dsh-tui`, resolves on PATH.
 //
 // The shim adds no separator of its own: dsh's launcher takes its own flags first, then the first
-// token it does not recognize starts the app's arguments. That is the rule dsh-TUI's own launcher
-// uses too, so `--resume <id>`, `-c`, `--continue`, `--backend <id>` and a user's `-- <text>`
-// reach the app as the TUI's grammar expects.
+// token it does not recognize starts the app's arguments. `--resume <id>`, `-c` and `--continue`
+// work; `--backend` is the package launcher's mapping and is not supported through the shim (dsh
+// passes it to the app, which reads it as prompt text). DSH's Commander drops a bare `--`, so a
+// literal `-- <text>` whose text starts with a flag does not protect it (`-- --resume=<id>`
+// resumes instead of sending text).
 //
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
@@ -52,19 +54,26 @@ export const SHIM_TEXT = `#!/bin/sh
 ${SHIM_MARK} (installed by \`automagik-herdr dsh-tui install\`).
 # The profile is dsh-TUI's own; "tui" can be a web-template profile that rejects --resume/-c/-p.
 # No separator of its own: dsh starts the app's arguments at the first token it does not
-# recognize, so --resume <id>, -c, --continue, --backend <id> and -- <text> arrive the way
-# dsh-TUI's own launcher passes them.
-# Optional provider keys set outside DSH: source a readable regular file you own, not group- or
-# world-writable. Anything else is skipped with one line. This shim never contains or writes a
-# secret; the installer creates no such file.
+# recognize, so --resume <id>, -c and --continue arrive the way dsh-TUI's own launcher passes
+# them. --backend is launcher-only (not supported here); a bare -- is dropped by dsh, so
+# -- <text> does not protect text that itself starts with a flag.
+# Optional provider keys set outside DSH: source a readable regular file you own with mode 0600
+# or stricter (no group/other read or write), in a folder you own that is not group- or
+# world-writable, with valid shell. Anything else is skipped with one fixed line; the shell's own
+# error (which can quote the file) is discarded. This shim never contains or writes a secret; the
+# installer creates no such file. Checking and sourcing are separate opens, so a folder another
+# user can write would allow a swap: it is refused too.
 env_file="\${DSH_HOME:-\$HOME/.dsh}/deepseek.env"
 if [ -e "\$env_file" ] || [ -h "\$env_file" ]; then
-  if [ -n "\$(find "\$env_file" -prune -type f -user "\$(id -u)" ! -perm -022 -print 2>/dev/null)" ] && [ -r "\$env_file" ]; then
+  env_dir="\$(dirname "\$env_file")"
+  safe_dir="\$(find "\$env_dir" -prune -type d -user "\$(id -u)" ! -perm -020 ! -perm -002 -print 2>/dev/null)"
+  safe_file="\$(find "\$env_file" -prune -type f -user "\$(id -u)" ! -perm -002 ! -perm -020 ! -perm -004 ! -perm -040 -print 2>/dev/null)"
+  if [ -n "\$safe_dir" ] && [ -n "\$safe_file" ] && [ -r "\$env_file" ] && /bin/sh -n "\$env_file" 2>/dev/null; then
     set -a
-    . "\$env_file"
+    . "\$env_file" 2>/dev/null
     set +a
   else
-    echo "dsh-tui: skipped the provider env file: it must be a readable regular file you own, not group/world-writable." >&2
+    echo "dsh-tui: skipped the provider env file: it must be a readable regular file you own with mode 0600 or stricter, in a folder you own that is not group- or world-writable, with valid shell." >&2
   fi
 fi
 if ! command -v dsh >/dev/null 2>&1; then

@@ -72,7 +72,7 @@ if (args[0] !== "plugin") {
   // dsh-TUI's resume grammar (lib/types/sessionHistory.js): \`--\` ends parsing (it starts literal
   // prompt text), so the shim sends none and these flags are read as flags.
   const cut = app.indexOf("--"), head = cut < 0 ? app : app.slice(0, cut);
-  let resume = null, backend = null;
+  let resume = null;
   const promptArgs = [];
   for (let i = 0; i < head.length; i++) {
     const a = head[i];
@@ -82,7 +82,6 @@ if (args[0] !== "plugin") {
       else resume = resume ?? "last";
       continue;
     }
-    if (a === "--backend") { backend = head[++i] ?? ""; continue; }
     if (a.startsWith("-")) continue;
     promptArgs.push(a);
   }
@@ -90,7 +89,7 @@ if (args[0] !== "plugin") {
   // onboardingPrefs: completed at the current guide revision means the wizard stays away.
   let onboarding = true;
   try { const prefs = readJson(path.join(process.env.HOME, ".dsh-tui", "onboarding.json")); onboarding = prefs.completed !== true || !(prefs.version >= 1); } catch {}
-  console.log(JSON.stringify({ profile, dshHome, app, resume, backend, prompt, onboarding, key: process.env.AM_TEST_KEY ?? null }));
+  console.log(JSON.stringify({ profile, dshHome, app, resume, prompt, onboarding, key: process.env.AM_TEST_KEY ?? null }));
   process.exit(0);
 }
 if (args[1] !== "--profile" || args[2] !== "dsh-tui") { console.error("wrong call: " + args.join(" ")); process.exit(64); }
@@ -216,7 +215,6 @@ test("the shim runs the dsh-tui profile and the TUI parses its startup flags", a
     [["--resume", "abc"], { resume: "abc", prompt: null }],
     [["-c"], { resume: "last", prompt: null }],
     [["--continue"], { resume: "last", prompt: null }],
-    [["--backend", "dsh"], { backend: "dsh", prompt: null }],
     [["--", "hello", "world"], { prompt: "hello world" }],
   ]) {
     const r = s.runShim(args, { DSH_LOG: shimLog });
@@ -224,13 +222,12 @@ test("the shim runs the dsh-tui profile and the TUI parses its startup flags", a
     const boot = JSON.parse(r.stdout);
     assert.equal(boot.profile, PROFILE);
     if (expected.resume !== undefined) assert.equal(boot.resume, expected.resume);
-    if (expected.backend !== undefined) assert.equal(boot.backend, expected.backend);
     assert.equal(boot.prompt, expected.prompt);
   }
   // The shim's own launcher call has no added separator; a user's `-- <text>` travels verbatim.
   assert.deepEqual(readFileSync(shimLog, "utf8").split("\n").filter(Boolean),
     ["--profile dsh-tui --resume abc", "--profile dsh-tui -c", "--profile dsh-tui --continue",
-      "--profile dsh-tui --backend dsh", "--profile dsh-tui -- hello world"]);
+      "--profile dsh-tui -- hello world"]);
   assert.equal(spawnSync("sh", ["-n", join(s.home, ".local", "bin", SHIM)], { encoding: "utf8" }).status, 0);
   assert.match(readFileSync(join(s.home, ".local", "bin", SHIM), "utf8"), /^exec dsh --profile dsh-tui "\$@"$/m);
   const missing = s.runShim([], { PATH: "/usr/bin:/bin" });
@@ -269,13 +266,16 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   assert.equal(run.boot.key, null);
   assert.match(run.r.stderr, /^dsh-tui: skipped the provider env file/m);
   assert.equal(run.r.stderr.trim().split("\n").length, 1);
-  // Group- or world-writable is skipped the same way.
-  rmSync(guide);
-  writeFileSync(guide, "AM_TEST_KEY=unsafe-mode\n");
-  chmodSync(guide, 0o666);
-  run = boot();
-  assert.equal(run.boot.key, null);
-  assert.match(run.r.stderr, /skipped the provider env file/);
+  // Any group/other read or write bit is refused, one bit at a time.
+  for (const mode of [0o620, 0o602, 0o660, 0o606, 0o666, 0o644, 0o604]) {
+    if (existsSync(guide)) rmSync(guide);
+    writeFileSync(guide, "AM_TEST_KEY=unsafe-mode\n");
+    chmodSync(guide, mode);
+    run = boot();
+    assert.equal(run.boot.key, null, `mode ${mode.toString(8)} must not be sourced`);
+    assert.match(run.r.stderr, /skipped the provider env file/);
+    assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  }
   // Unreadable is skipped too.
   chmodSync(guide, 0o600);
   writeFileSync(guide, "AM_TEST_KEY=unreadable\n");
@@ -283,6 +283,26 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   run = boot();
   assert.equal(run.boot.key, null);
   assert.match(run.r.stderr, /skipped the provider env file/);
+  // Malformed shell is refused without echoing the offending line or its value.
+  chmodSync(guide, 0o600);
+  writeFileSync(guide, 'AM_TEST_KEY="unterminated\n');
+  chmodSync(guide, 0o600);
+  run = boot();
+  assert.equal(run.boot.key, null);
+  assert.match(run.r.stderr, /^dsh-tui: skipped the provider env file/m);
+  assert.equal(run.r.stderr.trim().split("\n").length, 1);
+  assert.ok(!run.r.stderr.includes("AM_TEST_KEY"), "the shell's syntax error is discarded");
+  assert.ok(!run.r.stderr.includes("unterminated"));
+  // The parent folder matters too: check and source are separate opens.
+  writeFileSync(guide, "AM_TEST_KEY=parent-unsafe\n");
+  chmodSync(guide, 0o600);
+  for (const mode of [0o730, 0o702, 0o777]) {
+    chmodSync(join(s.home, ".dsh"), mode);
+    run = boot();
+    assert.equal(run.boot.key, null, `parent mode ${mode.toString(8)} must not trust the file`);
+    assert.match(run.r.stderr, /skipped the provider env file/);
+  }
+  chmodSync(join(s.home, ".dsh"), 0o700);
   // DSH_HOME moves the file; the default under ~/.dsh is not read.
   chmodSync(guide, 0o600);
   writeFileSync(guide, "AM_TEST_KEY=from-default\n");
