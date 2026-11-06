@@ -130,12 +130,12 @@ function buildTargets(t, windows) {
 
 test('by default no Windows build runs: Mac and Linux only', bash, (t) => {
   for (const windows of ['', 'false']) {
-    assert.deepEqual(buildTargets(t, windows), [{ target: 'linux', os: 'ubuntu-24.04' }, { target: 'mac', os: 'macos-14' }], `windows=${windows}`)
+    assert.deepEqual(buildTargets(t, windows), [{ target: 'linux', os: 'ubuntu-24.04' }, { target: 'mac', os: 'macos-15' }], `windows=${windows}`)
   }
 })
 
 test('with the switch on, Windows builds beside Mac and Linux', bash, (t) => {
-  assert.deepEqual(buildTargets(t, 'true'), [{ target: 'linux', os: 'ubuntu-24.04' }, { target: 'mac', os: 'macos-14' }, { target: 'windows', os: 'windows-latest' }])
+  assert.deepEqual(buildTargets(t, 'true'), [{ target: 'linux', os: 'ubuntu-24.04' }, { target: 'mac', os: 'macos-15' }, { target: 'windows', os: 'windows-latest' }])
 })
 
 const VERSION = '3.65.0'
