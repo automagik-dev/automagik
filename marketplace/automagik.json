@@ -4448,7 +4448,7 @@
         "en": "Português (Brasil)"
       },
       "description": {
-        "en": "Brazilian Portuguese for DSH. Adds Português (Brasil) to Settings › General › Language, and a browser set to Brazilian Portuguese opens DSH in it. Translates what a first session shows: the sidebar, the composer and messages, approvals and questions, the plugin pages and the general settings. Anything it doesn't translate yet stays in English."
+        "en": "Brazilian Portuguese for DSH: the Bot team's own strings, under DSH's own Portuguese entry. Adds no language of its own, so Settings › General › Language keeps one Portuguese row; a pt-BR choice saved by an older pack moves to DSH's pt. Requires DeepSeek Harness 0.2.2 or later."
       },
       "author": "Automagik",
       "homepage": "https://github.com/automagik-dev/automagik/tree/dev/apps/locale-pt-br-dsh#readme",

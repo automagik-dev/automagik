@@ -6,7 +6,7 @@ Supported runtime: **DSH 0.2.2-rc.1 or later** (`engines.dsh` is `>=0.2.2-rc.1 <
 
 ## One Portuguese entry
 
-The pack used to add its own **Português (Brasil)** entry with a corrected copy of five DSH namespaces (date order, thousands separator, the plan hint and several mistranslations). A pack cannot override a namespace DSH already registers for `pt` — the second registration throws (`locale namespace "<ns>" already has locale "pt"`) — so those corrections required a second language, and therefore a second Portuguese row in the picker.
+The pack used to add its own **Português (Brasil)** entry with a corrected copy of four DSH namespaces (date order, thousands separator, the plan hint and several mistranslations). A pack cannot override a namespace DSH already registers for `pt` — the second registration throws (`locale namespace "<ns>" already has locale "pt"`) — so those corrections required a second language, and therefore a second Portuguese row in the picker.
 
 That row is gone. The Language list shows DSH's **Português** alone, and DSH's `pt` copy serves the DSH screens. The pack's own strings are the Bot team's, and they belong to the Bot team's namespace: DSH does not have `omni-ui`.
 
@@ -28,7 +28,7 @@ A profile that installed the pack before 0.2.2 has an older copy that registered
 
 A language choice saved as `pt-BR` under the old pack is an exact id to DSH's locale runtime, and DSH's entry is `pt`. On load the pack rewrites the stored choice through the runtime's only preference write (`setLocale`), before the choice is read, so a team that picked **Português (Brasil)** opens in Portuguese instead of falling back to English. A browser or home that never picked a language is left alone.
 
-To stop shipping the Bot team's strings, remove the plugin: `dsh plugin remove @automagik/locale-pt-br-dsh` (or Settings › Plugins). DSH's own **Português** entry and everything DSH translates stay; only `omni-ui` falls back to its English text, and a saved `pt` choice keeps resolving.
+To stop shipping the Bot team's strings, remove the plugin: `dsh plugin --profile <profile> remove @automagik/locale-pt-br-dsh` (or Settings › Plugins, then the Plugins page, which manages what the list only shows). DSH's own **Português** entry and everything DSH translates stay; only `omni-ui` falls back to its English text, and a saved `pt` choice keeps resolving.
 
 ## Install
 
