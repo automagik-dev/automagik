@@ -34,6 +34,11 @@ export function splitPermission(agent, argv) {
   return { perm, rest };
 }
 
+/** `argv` without any agent's permission words: what args carry over to another agent. */
+export function withoutPermission(argv) {
+  return Object.keys(PERMISSION).reduce((words, agent) => splitPermission(agent, words).rest, Array.isArray(argv) ? argv : []);
+}
+
 /** The automatic mode's flags for a new `agent` automation (AUTO_ARGS), or null when it has none. */
 export function autoArgs(agent) {
   return Object.hasOwn(AUTO_ARGS, agent) ? [...AUTO_ARGS[agent]] : null;

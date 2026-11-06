@@ -67,14 +67,17 @@ three views:
   flags in `modes.js` `AUTO_ARGS` (codex `--dangerously-bypass-approvals-and-sandbox`, claude
   `--dangerously-skip-permissions`: an unattended run must be able to work); `Agent default` saves
   no permission flag. An existing entry opens on `As saved` and goes back exactly as it came:
-  nothing is migrated or rewritten on load or on an edit that leaves the mode and args alone. A
-  template run is given no flags (the scheduler passes none to a template anyway).
+  nothing is migrated or rewritten on load or on an edit that leaves the mode and args alone. Its
+  saved args are kept exactly only while its agent is the saved one: switching to another agent drops
+  every permission flag from the words that carry over and lands on `Agent default`, never on
+  `Automatic`; switching back brings `As saved` back. A template run is given no flags (the
+  scheduler passes none to a template anyway).
 - **Put replaces the whole entry** (#501), so the form sends back what it does not edit:
   `agent_args`, `catch_up_minutes`, `disabled` (a paused entry stays paused) and `workflow`.
 - **Address warning** (#498): a prompt holding an hc address (`t3q1`, `build-box/t9`: a `t`, a
   digit, then letters and digits) is warned about on every preview and on Save, "… is a terminal
   address; it changes on restart. Name the bot instead"; it is saved all the same. A name given with
-  `hc --name` is not caught.
+  `hc --name` is not caught, and a branch shaped like one (`feat/t3q1`) is warned about too, by design.
 - **Form** re-runs `put --dry-run` on every keystroke or pill (last answer wins), so the previewed
   next runs are the server's; `Save` runs `put` (with `--original` when editing).
 - **Toasts**: a run that turns `failed` or `missed` after the panel started posts a notification;

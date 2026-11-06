@@ -10,7 +10,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
 import { offeredAgents, RETIRED } from "./agents.js";
-import { addressWarning, argsText, autoArgs, modeOf, parseArgs, splitPermission, templateMode } from "./modes.js";
+import { addressWarning, argsText, autoArgs, modeOf, parseArgs, splitPermission, templateMode, withoutPermission } from "./modes.js";
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -158,8 +158,14 @@ export default class Automations extends View {
     else { this.view = { kind: "detail", name: run_.automation }; cx.notify(); }
   }
 
+  // hc's templates, or null when hc gave no list: a failure is never kept as an empty list, so
+  // the next refresh asks again (template modes read "not known" until then).
   async loadTemplates() {
-    try { return JSON.parse((await hc(["templates", "--json"])).stdout).templates ?? []; } catch { return []; }
+    try {
+      const r = await hc(["templates", "--json"]);
+      const list = r.code === 0 ? JSON.parse(r.stdout).templates : null;
+      return Array.isArray(list) ? list : null;
+    } catch { return null; }
   }
 
   // ---- form ----
@@ -184,7 +190,10 @@ export default class Automations extends View {
       // #501: the entry's own agent_args, kept as they are unless the person changes them here.
       // #498: a new entry starts on the automatic mode ("auto"); an existing one on "kept", its
       // saved args as they are, so nothing is migrated on load (housekeeper-daily included).
+      // Kept exactly only while the agent is the saved one (savedAgent; "" for a template entry):
+      // after a switch the other agent's permission flags never carry over (agentArgsOf).
       agentArgs: Array.isArray(a.agent_args) ? [...a.agent_args] : null,
+      savedAgent: a.template ? "" : a.agent ?? "claude",
       mode: original ? "kept" : "auto",
       prompt: TextareaState.new({ placeholder: "What should the agent do each time?", value: a.prompt ?? "" }),
       result: null, warning: null, seq: 0,
@@ -196,7 +205,7 @@ export default class Automations extends View {
     this.form.prompt.on("change", (_e, cx) => this.preview(cx));
     this.view = { kind: "form" };
     cx.spawn(async (cx) => {
-      this.templates = await this.loadTemplates();
+      this.templates = (await this.loadTemplates()) ?? this.templates;
       try { this.installed = (await knownAgents()).filter((a) => a.installed).map((a) => a.key); } catch { this.installed = null; }
       cx.notify();
     });
@@ -220,13 +229,19 @@ export default class Automations extends View {
   // An existing entry the person did not touch here sends its own args back exactly. A template
   // run gets no flags from the panel (its command brings its own): its saved args go back as
   // they were. Otherwise: the chosen mode's permission flags, then the words of AGENT ARGS.
+  // After a switch away from the saved agent, every permission word is dropped from the words that
+  // carry over, and "kept" reads as Agent default.
   agentArgsOf(f) {
-    const own = f.agentArgs;
-    const args = f.template || (f.mode === "kept" && f.args.value() === f.argsLine) ? own
-      : [...(f.mode === "kept" ? splitPermission(f.agent, own).perm : f.mode === "auto" ? autoArgs(f.agent) ?? [] : []),
-        ...parseArgs(f.args.value())];
+    const own = f.agentArgs, same = this.sameAgent(f);
+    const mode = f.mode === "kept" && !same ? "default" : f.mode;
+    const args = f.template || (mode === "kept" && f.args.value() === f.argsLine) ? own
+      : [...(mode === "kept" ? splitPermission(f.agent, own).perm : mode === "auto" ? autoArgs(f.agent) ?? [] : []),
+        ...(same ? parseArgs(f.args.value()) : withoutPermission(parseArgs(f.args.value())))];
     return args?.length ? { agent_args: args } : {};
   }
+
+  // Whether the form's agent is the one the entry was saved with (always, for a new entry).
+  sameAgent(f) { return !f.original || (!f.template && f.agent === f.savedAgent); }
 
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
@@ -438,9 +453,10 @@ export default class Automations extends View {
     if (f.template) return note("f-mode-template", `${f.template}: ${this.templateModeOf(f.template)}. `
       + "The template's command brings its own flags; the panel adds none.");
     const auto = autoArgs(f.agent);
-    const picked = f.mode === "auto" && !auto ? "default" : f.mode;
+    const same = this.sameAgent(f);
+    const picked = (f.mode === "auto" && !auto) || (f.mode === "kept" && !same) ? "default" : f.mode;
     const options = [
-      ...(f.original ? [["kept", `As saved: ${modeOf(f.agent, f.agentArgs)}`]] : []),
+      ...(f.original && same ? [["kept", `As saved: ${modeOf(f.agent, f.agentArgs)}`]] : []),
       ...(auto ? [["auto", `Automatic (${auto.join(" ")})`]] : []),
       ["default", "Agent default"],
     ];
@@ -486,6 +502,9 @@ export default class Automations extends View {
         (v, cx) => { f.workspace_id = v; this.preview(cx); cx.notify(); })))
       .child(label("AGENT")).child(this.pills("f-agent", agents, agentValue, t, (v, cx) => {
         if (v.startsWith("template:")) { f.template = v.slice(9); f.agent = ""; } else { f.template = ""; f.agent = v; }
+        // An existing entry: its saved agent gets its saved args back; any other lands on Agent
+        // default, never on Automatic (nothing is migrated; #505).
+        if (f.original) f.mode = this.sameAgent(f) ? "kept" : "default";
         this.preview(cx); cx.notify();
       }))
       .when(!f.template, (el) => el.child(label("MODEL")).child(input("f-model", f.model)))
