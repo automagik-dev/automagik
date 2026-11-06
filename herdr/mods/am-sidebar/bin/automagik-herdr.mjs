@@ -44,6 +44,7 @@ import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, write
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
+import { DSH_TUI, doctorDshTui, installDshTui, uninstallDshTui } from "../dshTui.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -536,14 +537,21 @@ export function listProject(key, dir = appHome()) {
   return false;
 }
 
-/** Takes keys off the CLI's project list (tidy's registry prune), under listProject's lock. */
+/**
+ * Takes keys off the CLI's project list (tidy's registry prune, forget), under listProject's
+ * lock. Resolves with the keys it found there and took off (none: the file is unchanged).
+ */
 export function unlistProjects(keys, dir = appHome()) {
   const path = `${dir}/${PROJECTS_FILE}`;
-  withLock(`${path}.lock`, () => {
+  return withLock(`${path}.lock`, () => {
     let text;
-    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return; throw e; }
-    const next = `${JSON.stringify(listedProjects(text).filter((k) => !keys.includes(k)), null, 2)}\n`;
+    try { text = readFileSync(path, "utf8"); } catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+    const listed = listedProjects(text);
+    const taken = listed.filter((k) => keys.includes(k));
+    if (!taken.length) return [];
+    const next = `${JSON.stringify(listed.filter((k) => !keys.includes(k)), null, 2)}\n`;
     if (next !== text) fsIo.replace(path, next);
+    return taken;
   });
 }
 
@@ -1033,6 +1041,13 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   brief <bot>                   print the bot's briefing with its team's live state, as it is now
   tidy                          what drifted in the window, labels and project list, as a plan;
                                 changes nothing (--json: the plan's actions)
+  forget <project>              take a project's folder off this CLI's project list; its folder,
+                                worktrees, bots and panes stay as they are. ls --all and the
+                                sidebar also show the sidebar's own remembered projects, which
+                                the sidebar forgets once the bots file is gone: forget says when
+                                it remembers this one (--json: sidebar_remembers). start,
+                                restart, attach and create already drop an entry whose folder
+                                is gone, with a note when the command succeeds
   worker "<task>" (--branch B [--base REF] | --worktree DIR)
          [[--agent A] [--model M] [--effort E] | --template T] [--name N]
          [--role dev|test|review|fix] [--task ID [--lead BOT]]
@@ -1063,6 +1078,14 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 it records your yes (--local: this computer only) for updates
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
+  dsh-tui install | update      DSH as a Herdr agent: the pinned dsh-TUI ${DSH_TUI.version} in its
+                                own \`tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
+                                built-in DSH entry finds it), and dsh-TUI's first-run guide
+                                marked done. No dsh on PATH: one honest line, skipped.
+  dsh-tui uninstall             dsh-TUI out of the tui profile and the shim away (sessions,
+                                dsh-TUI's state and the profile stay)
+  dsh-tui doctor                whether dsh, the tui profile and the shim are there, and
+                                whether the profile is the pinned one (read-only)
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
                                 that linked machine's doc. Exit 0 with the JSON; 3: no such doc
@@ -1274,18 +1297,52 @@ const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "s
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
-// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
-function rememberedKeys() {
-  let keys = [];
+// The sidebar's own remembered projects on this computer: am.* since the rename, else the old
+// key. Read only: the sidebar writes them (and forgets one whose bots file is gone).
+function sidebarRemembered() {
   try {
-    // The sidebar's remembered projects: am.* since the rename, else the old key (read only).
     const held = JSON.parse(readText(`${appHome()}/shared.json`) ?? "{}");
     const list = held?.["am.sidebar.projects"] ?? held?.[renamedFrom(SHARED_RENAMES, "am.sidebar.projects")];
-    keys = Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
-  } catch { /* unreadable: none */ }
+    return Array.isArray(list) ? list.filter((p) => typeof p?.key === "string" && !p.machine).map((p) => p.key) : [];
+  } catch { return []; /* unreadable: none */ }
+}
+
+// The projects the sidebar shows with no space open: its remembered list, then this CLI's.
+function rememberedKeys() {
+  const keys = sidebarRemembered();
   let listed = [];
   try { listed = listedProjects(readText(`${appHome()}/${PROJECTS_FILE}`)); } catch { /* unreadable: none */ }
   return [...new Set([...keys, ...listed])];
+}
+
+/**
+ * `forget <project>`: takes the project's folder off this CLI's project list, under the list's
+ * lock. Only that entry: no folder, worktree, bots file or terminal is touched. An unknown name
+ * is refused, the file unchanged. `ls --all` and the sidebar also show the sidebar's own
+ * remembered projects (shared.json), which only the sidebar writes: when it remembers this one
+ * too, forget says so (stderr, and `sidebar_remembers` in --json).
+ */
+async function cmdForget(opts, [ref]) {
+  if (!ref) throw new CliError("forget needs a project: its folder, as ls --all prints it.", 2);
+  if (opts.project !== undefined) throw new CliError("forget takes the project as its argument, not --project.", 2);
+  const key = resolvePath(ref);
+  const path = `${appHome()}/${PROJECTS_FILE}`;
+  let taken;
+  // No app home (Herdr isn't set up here): there is no list, so nothing is on it.
+  try { taken = existsSync(appHome()) ? unlistProjects([key]) : []; } catch (e) {
+    throw new CliError(`${key} wasn't taken off ${path}: ${String(e?.message ?? e).split("\n")[0]}`, 1, { project: key, forgotten: false });
+  }
+  const sidebar = sidebarRemembered().includes(key);
+  const sidebarLine = `the sidebar remembers it on its own and forgets it once its ${BOTS_PATH} is gone, so ls --all and the sidebar `
+    + "still show it until then.";
+  if (taken.includes(key)) {
+    if (sidebar) process.stderr.write(`automagik-herdr: ${key} is off this CLI's project list, but ${sidebarLine}\n`);
+    return opts.json ? { forgotten: key, list: path, sidebar_remembers: sidebar } : `${key} forgotten: off ${path}.`;
+  }
+  const why = sidebar
+    ? `${key} isn't on this CLI's project list (${path}); ${sidebarLine}`
+    : `${key} isn't on the project list (${path}); automagik-herdr ls --all shows the projects there.`;
+  throw new CliError(why, 1, { project: key, forgotten: false });
 }
 
 async function cmdLs(opts) {
@@ -3974,12 +4031,16 @@ async function cmdTidy(opts) {
   return opts.json ? actions : planText(actions);
 }
 
-/** After start, attach and create: the plan's non-visual fixes only; a failure only warns. */
+/**
+ * After start, attach and create: the plan's non-visual fixes only; a failure only warns. A
+ * prune's note only when the command succeeded: a failed one's last stderr line stays its own
+ * error (the sidebar shows that line, restart.js restartAnswer).
+ */
 async function tidyQuietly() {
   try {
     const io = tidyIo();
     const actions = tidyPlan(await readState(io, { window: false }), { now: Date.now(), home: io.home, appHome: io.appHome });
-    report(await fixNonVisual(actions.filter((a) => !a.visual), io));
+    report(await fixNonVisual(actions.filter((a) => !a.visual), io, { notes: exitAfter.code === 0 }));
   } catch (e) { report([`tidy: ${e?.message ?? e}`]); }
 }
 const TIDIES = new Set(["start", "restart", "attach", "create"]);
@@ -4071,6 +4132,31 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
 }
 
 /**
+ * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `tui`
+ * profile, through the pinned dsh-TUI and the `dsh-tui` shim. `update` is the same idempotent
+ * install (a newer pin in a later pack replaces it). Local only: the profile is this computer's.
+ */
+export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
+  if (rest.length) throw new CliError(`dsh-tui ${verb ?? ""} takes no arguments (got ${rest.join(" ")}).`, 2);
+  if (!["install", "update", "uninstall", "doctor"].includes(verb)) throw new CliError(`dsh-tui needs install, update, uninstall or doctor${verb ? `, not "${verb}"` : ""}.`, 2);
+  const env = io.env ?? process.env;
+  if (verb === "doctor") {
+    const r = doctorDshTui({ env });
+    exitAfter.code = r.code;
+    return opts.json ? r : r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
+  }
+  // A test's own publish time: the registry is never reached for a file:// run or a unit test.
+  const published = Object.hasOwn(env, "AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED")
+    ? (env.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED || null) : undefined;
+  const r = verb === "uninstall"
+    ? uninstallDshTui({ env, exec: io.exec })
+    : await installDshTui({ env, exec: io.exec, ...(published === undefined ? {} : { publishedAt: published }) });
+  exitAfter.code = r.status === "failed" ? 1 : 0;
+  const lines = r.lines?.length ? r.lines : [r.detail];
+  return opts.json ? r : lines.join("\n");
+}
+
+/**
  * After `update` installed a pack: that pack's own `meter install` (its release.js may pin a newer
  * usagemeter than this running CLI's), as install.sh's scope says. Lines to print; never throws.
  */
@@ -4127,7 +4213,7 @@ export async function cmdLaunchPath(_opts, [program, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc, "launch-path": cmdLaunchPath };
+  tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

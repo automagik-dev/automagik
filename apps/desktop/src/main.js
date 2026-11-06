@@ -27,7 +27,7 @@ import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { findHerdr, herdrStatus } from './herdr.js'
 import { openRequest, pickSpace } from './herdr-space.js'
 import { openLatest } from './herdr-update.js'
-import { pageLayout, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from './frame.js'
+import { tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
@@ -795,9 +795,8 @@ function openWindow() {
 // dsh's page goes below the frame's title bar; see frame.js.
 function layout() {
   if (!window) return
-  const maximized = window.isMaximized() || window.isFullScreen()
   if (page && ready) {
-    const { bounds, radius } = pageLayout(window.getContentBounds(), { platform: process.platform, maximized })
+    const { bounds, radius } = windowPageLayout(window)
     page.setBounds(bounds)
     page.setBorderRadius(radius)
     pageRadius = radius

@@ -85,7 +85,8 @@ fun machineStatus(host: HostProfile, machine: MachineState): String = if (host.l
 }
 
 /** [onRepair]: a legacy SSH machine's "Pair with QR", which opens the QR scanner ([LegacySsh]). */
-@Composable fun MachinesScreen(state: PocketState, onPair: () -> Unit, onRepair: (HostProfile) -> Unit, onConnect: (HostProfile) -> Unit, onEdit: (HostProfile) -> Unit, onDisconnect: (String) -> Unit, onRemove: (String) -> Unit) {
+@Composable fun MachinesScreen(state: PocketState, onPair: () -> Unit, onRepair: (HostProfile) -> Unit, onConnect: (HostProfile) -> Unit, onEdit: (HostProfile) -> Unit, onDisconnect: (String) -> Unit, onRemove: (String) -> Unit,
+                               onBotChats: (HostProfile) -> Unit = {}) {
     var remove by remember { mutableStateOf<HostProfile?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("Your work lives here.", fontSize = 26.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(10.dp)); Text("Pair the computer running Herdr desktop: scan the QR code its Pocket Link shows.", fontSize = 13.sp, lineHeight = 21.sp, color = Muted); Spacer(Modifier.height(12.dp)) }
@@ -102,6 +103,7 @@ fun machineStatus(host: HostProfile, machine: MachineState): String = if (host.l
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (machine.connected) OutlinedButton(onClick = { onDisconnect(host.id) }) { Text("Disconnect", fontSize = 13.sp) }
+                        if (machine.connected && host.paired) { Spacer(Modifier.width(8.dp)); TextButton(onClick = { onBotChats(host) }) { Text("Bot chats", fontSize = 13.sp) } }
                         else Button(onClick = { onConnect(host) }, enabled = !machine.connecting) {
                             if (machine.connecting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text("Connect", fontSize = 13.sp)
                         }

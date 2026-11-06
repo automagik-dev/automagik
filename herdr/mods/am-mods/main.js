@@ -100,6 +100,10 @@ export default class ModManager extends View {
   async refresh(cx) {
     try {
       await this.reloadMods();
+      // A linked mods/ (#494): the list cannot see into it, and nothing is moved through it; said
+      // under the list, where the person looks.
+      const linked = await core.linkedModsRefusal(io, appHome());
+      if (linked) this.message = linked;
       // The official index (herdr.dev/mods): which repo each installed mod came from, and its
       // blurb. Ten minutes of cache, so opening the panel is not a fetch every time.
       if (!this.catalog || Date.now() - this.catalogAt > 600000) {

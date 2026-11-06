@@ -56,64 +56,88 @@ function runtime(languages, { host } = {}) {
 
 const pack = loadClient().exports
 
-// DSH 0.2.2's own language and dictionaries, as its client bundles register them. The chat
-// copy carries the two defects the pack overrides: inverted date order and `,` grouping.
+// DSH 0.2.2's own language and dictionaries, as its client bundles register them.
 function dshPortuguese(locale) {
   locale.addLanguage({ id: 'pt', label: 'Português', fallback: 'en' })
-  locale.register('chat', 'pt', { 'clock.md': '{m}/{d}', 'number.groupSeparator': ',', 'message.systemPrompt': 'Alerta do sistema' })
+  locale.register('chat', 'pt', { 'clock.md': '{m}/{d}', 'number.groupSeparator': ',' })
   locale.register('sidebar', 'pt', { 'session.new': 'Nova sessão' })
 }
 
-test('a saved pt-BR choice still resolves to Portuguese on 0.2.2', () => {
+// The pack as it was before this one: its pt-BR entry, the DSH namespace under it, and omni-ui
+// under pt. Its disposers are what DSH runs as it replaces the old plugin with this one.
+function oldPack(locale) {
+  const offs = [
+    locale.addLanguage({ id: 'pt-BR', label: 'Português (Brasil)', fallback: 'pt' }),
+    locale.register('chat', 'pt-BR', { 'clock.md': '{d}/{m}' }),
+    locale.register('omni-ui', 'pt', { 'Main Bot': 'Bot principal da cópia antiga' }),
+  ]
+  return () => offs.forEach((off) => off())
+}
+
+const portuguese = (locale) => Array.from(locale.getLocale().locales)
+  .filter((entry) => entry.id.toLowerCase().startsWith('pt'))
+  .map((entry) => [entry.id, entry.label])
+
+test('a fresh install keeps DSH\'s one Portuguese entry and registers omni-ui under it', () => {
+  const host = fakeHost()
+  const { locale, ctx } = runtime(['en-US'], { host })
+  dshPortuguese(locale)
+  assert.doesNotThrow(() => pack.apply(ctx))
+  assert.deepEqual(portuguese(locale), [['pt', 'Português']])
+  assert.equal(locale.getLocale().active, 'en')
+  assert.equal(host.preference, undefined)
+  locale.setLocale('pt')
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
+})
+
+test('a browser set to pt-BR lands on DSH pt, the only Portuguese entry', () => {
+  const { locale, ctx } = runtime(['pt-BR', 'en-US'])
+  dshPortuguese(locale)
+  pack.apply(ctx)
+  assert.deepEqual(portuguese(locale), [['pt', 'Português']])
+  assert.equal(locale.getLocale().active, 'pt')
+})
+
+test('a saved pt-BR choice ends on pt instead of dropping to English', () => {
   const host = fakeHost('pt-BR')
   const { locale, ctx } = runtime(['en-US'], { host })
   dshPortuguese(locale)
   assert.equal(locale.getLocale().active, 'en')
   assert.doesNotThrow(() => pack.apply(ctx))
-  assert.equal(locale.getLocale().active, 'pt-BR')
-  assert.equal(host.preference, 'pt-BR')
+  assert.equal(locale.getLocale().active, 'pt')
+  assert.equal(host.preference, 'pt')
+  assert.deepEqual(portuguese(locale), [['pt', 'Português']])
   assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
   assert.equal(locale.bind('sidebar')('session.new'), 'Nova sessão')
 })
 
-test('the pt-BR entry keeps the corrected formats and wording over DSH pt', () => {
-  const { locale, ctx } = runtime(['pt-BR', 'en-US'])
+test('a profile with the old pack ends with one Portuguese entry and no duplicate registration', () => {
+  const host = fakeHost('pt-BR')
+  const { locale, ctx } = runtime(['en-US'], { host })
   dshPortuguese(locale)
-  pack.apply(ctx)
-  assert.equal(locale.getLocale().active, 'pt-BR')
-  const t = locale.bind('chat')
-  assert.equal(t('clock.md'), '{d}/{m}')
-  assert.equal(t('number.groupSeparator'), '.')
-  assert.equal(t('message.systemPrompt'), 'Prompt do sistema')
-})
-
-test('the catalog lists two Portuguese entries while DSH\'s copy is wrong', () => {
-  const { locale, ctx } = runtime(['pt-BR'])
-  dshPortuguese(locale)
-  pack.apply(ctx)
-  const portuguese = Array.from(locale.getLocale().locales).filter((entry) => entry.id.toLowerCase().startsWith('pt'))
-  assert.deepEqual(Array.from(portuguese, (entry) => [entry.id, entry.label]), [
-    ['pt', 'Português'],
-    ['pt-BR', 'Português (Brasil)'],
-  ])
-})
-
-test('reading omni-ui on DSH pt works too', () => {
-  const { locale, ctx } = runtime(['en-US'])
-  dshPortuguese(locale)
-  pack.apply(ctx)
-  locale.setLocale('pt')
+  const unload = oldPack(locale)
+  assert.deepEqual(portuguese(locale), [['pt', 'Português'], ['pt-BR', 'Português (Brasil)']])
+  assert.doesNotThrow(() => pack.apply(ctx))
   assert.equal(locale.getLocale().active, 'pt')
+  assert.equal(host.preference, 'pt')
+  // DSH unloads the old plugin as it loads this one: the old row and its dictionary leave, and the
+  // strings this copy could not register while the old one held them take over.
+  unload()
+  assert.deepEqual(portuguese(locale), [['pt', 'Português']])
   assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
-  // The DSH namespace has no pt-BR registration for this reader; DSH's own copy is used.
+  // DSH's own pt copy serves the DSH screens; this pack no longer overrides them.
   assert.equal(locale.bind('chat')('clock.md'), '{m}/{d}')
 })
 
-test('a fresh English browser stays English', () => {
-  const host = fakeHost()
+test('uninstalling the pack leaves DSH pt, the saved choice and DSH\'s copy', () => {
+  const host = fakeHost('pt-BR')
   const { locale, ctx } = runtime(['en-US'], { host })
   dshPortuguese(locale)
   pack.apply(ctx)
-  assert.equal(locale.getLocale().active, 'en')
-  assert.equal(host.preference, undefined)
+  ctx.dispose()
+  assert.deepEqual(portuguese(locale), [['pt', 'Português']])
+  assert.equal(locale.getLocale().active, 'pt')
+  assert.equal(host.preference, 'pt')
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Main Bot')
+  assert.equal(locale.bind('sidebar')('session.new'), 'Nova sessão')
 })

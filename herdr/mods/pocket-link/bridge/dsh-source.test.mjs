@@ -3,20 +3,23 @@
 // DSH, Herdr or iroh).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ChatConnection, DATA, frame } from './chat.mjs'
-import { ANSWER_ON_COMPUTER, DshSource, ownerOnly, socketPath, teamHome, withDsh } from './dsh-source.mjs'
+import { ANSWER_ON_COMPUTER, DshSource, ownerOnly, socketPaths, teamHomes, withDsh } from './dsh-source.mjs'
 
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r)) }
 
-/** A stand-in for bots-dsh's pocket-socket.js: answers like it, records every request. */
-async function fakeSocket({ readOnly = true, mode = 0o600, dirMode = 0o700 } = {}) {
-  const home = mkdtempSync(join(tmpdir(), 'dsh-src-'))
+/**
+ * A stand-in for bots-dsh's pocket-socket.js: answers like it, records every request. In its own
+ * temp home, or in the team home `at` (made if missing, left for the caller to remove).
+ */
+async function fakeSocket({ readOnly = true, mode = 0o600, dirMode = 0o700, at } = {}) {
+  const home = at ?? mkdtempSync(join(tmpdir(), 'dsh-src-'))
   const dir = join(home, 'pocket')
-  mkdirSync(dir, { mode: 0o700 })
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
   const path = join(dir, 'chat.sock')
   const requests = []
   const sockets = new Set()
@@ -53,7 +56,7 @@ async function fakeSocket({ readOnly = true, mode = 0o600, dirMode = 0o700 } = {
     async close() {
       for (const s of sockets) s.destroy()
       await new Promise(r => server.close(r))
-      rmSync(home, { recursive: true, force: true })
+      if (!at) rmSync(home, { recursive: true, force: true })
     },
   }
 }
@@ -203,9 +206,150 @@ test('absent is empty: no socket, a socket others can reach, or one that is not 
   }
 })
 
-test('the socket is found where bots-dsh puts it: the team home\'s pocket/chat.sock', () => {
-  assert.equal(teamHome({ AUTOMAGIK_BOTS_HOME: '/srv/team' }), '/srv/team')
-  assert.equal(teamHome({ AUTOMAGIK_HOME: '/srv/am' }), join('/srv/am', 'bots'))
-  assert.equal(socketPath({ AUTOMAGIK_BOTS_HOME: '/srv/team' }), join('/srv/team', 'pocket', 'chat.sock'))
-  assert.ok(socketPath({}).endsWith(join('.automagik', 'bots', 'pocket', 'chat.sock')))
+test('the team homes, in the order they are tried; HERDR_APP_HOME does not enter them', () => {
+  const you = '/home/you'
+  assert.deepEqual(teamHomes({}, you), [join(you, '.automagik', 'desktop', 'bots'), join(you, '.automagik', 'bots')])
+  assert.deepEqual(teamHomes({ AUTOMAGIK_BOTS_HOME: '/srv/team', HERDR_APP_HOME: '/srv/herdr' }, you),
+    ['/srv/team', join(you, '.automagik', 'desktop', 'bots'), join(you, '.automagik', 'bots')])
+  assert.deepEqual(teamHomes({ AUTOMAGIK_HOME: '/srv/am', AUTOMAGIK_BOTS_HOME: ' ' }, you), [join('/srv/am', 'desktop', 'bots'), join('/srv/am', 'bots')])
+  assert.deepEqual(teamHomes({ AUTOMAGIK_BOTS_HOME: '~/.automagik/desktop/bots' }, you), [join(you, '.automagik', 'desktop', 'bots'), join(you, '.automagik', 'bots')], 'once each')
+  assert.deepEqual(socketPaths({ AUTOMAGIK_BOTS_HOME: '/srv/team' }, you)[0], join('/srv/team', 'pocket', 'chat.sock'))
+})
+
+/** Temp Automagik home with the three candidate team homes (#548): named by env, desktop, own dsh. */
+function candidates() {
+  const root = mkdtempSync(join(tmpdir(), 'dr-'))
+  const env = { AUTOMAGIK_HOME: root, AUTOMAGIK_BOTS_HOME: join(root, 'named') }
+  return { root, env, named: join(root, 'named'), desktop: join(root, 'desktop', 'bots'), own: join(root, 'bots'), done: () => rmSync(root, { recursive: true, force: true }) }
+}
+
+test('each team home is used when it is the only one with an owner-only socket', async () => {
+  for (const which of ['named', 'desktop', 'own']) {
+    const c = candidates()
+    const sock = await fakeSocket({ at: c[which] })
+    const dsh = new DshSource({ paths: socketPaths(c.env) })
+    try {
+      assert.deepEqual((await dsh.list()).map(t => t.terminal), ['dsh:omni'], which)
+      assert.equal(dsh.path, sock.path, which)
+    } finally {
+      dsh.close()
+      await sock.close()
+      c.done()
+    }
+  }
+})
+
+test('the first team home with an owner-only socket wins; one others can reach is passed over', async () => {
+  const c = candidates()
+  const named = await fakeSocket({ at: c.named, mode: 0o666 })
+  const desktop = await fakeSocket({ at: c.desktop })
+  const own = await fakeSocket({ at: c.own })
+  const dsh = new DshSource({ paths: socketPaths(c.env) })
+  try {
+    assert.deepEqual((await dsh.list()).map(t => t.terminal), ['dsh:omni'])
+    assert.equal(dsh.path, desktop.path)
+    assert.deepEqual(named.requests, [], 'nothing is sent to a socket others can reach')
+    assert.deepEqual(own.requests, [])
+  } finally {
+    dsh.close()
+    await Promise.all([named, desktop, own].map(s => s.close()))
+    c.done()
+  }
+})
+
+test('a wrong AUTOMAGIK_BOTS_HOME falls through to the desktop app\'s team', async () => {
+  const c = candidates()
+  const desktop = await fakeSocket({ at: c.desktop })
+  const env = { ...c.env, AUTOMAGIK_BOTS_HOME: join(c.root, 'nowhere') }
+  const dsh = new DshSource({ paths: socketPaths(env) })
+  try {
+    assert.deepEqual((await dsh.list()).map(t => t.terminal), ['dsh:omni'])
+    assert.equal(dsh.path, desktop.path)
+  } finally {
+    dsh.close()
+    await desktop.close()
+    c.done()
+  }
+})
+
+test('no team home with an owner-only socket: no source, nothing connected, said once', async () => {
+  const c = candidates()
+  mkdirSync(join(c.named, 'pocket'), { recursive: true, mode: 0o700 })
+  const desktop = await fakeSocket({ at: c.desktop, dirMode: 0o755 })
+  const logs = []
+  const connected = []
+  const dsh = new DshSource({ paths: socketPaths(c.env), connect: (path) => { connected.push(path); throw new Error('no connect') }, log: (line) => logs.push(line) })
+  try {
+    assert.deepEqual(await dsh.list(), [])
+    assert.deepEqual(await dsh.list(), [])
+    assert.equal(dsh.path, null)
+    assert.deepEqual(connected, [], 'no socket is read')
+    assert.deepEqual(desktop.requests, [])
+    assert.equal(logs.length, 1)
+    assert.match(logs[0], /no DSH socket only this account reaches/)
+  } finally {
+    await desktop.close()
+    c.done()
+  }
+})
+
+/** lstat, with another owner for the folders in `owners` (real and as written). */
+const ownedBy = (owners) => (path) => {
+  const s = lstatSync(path)
+  return Object.hasOwn(owners, path) ? Object.assign(Object.create(Object.getPrototypeOf(s)), s, { uid: owners[path] }) : s
+}
+const both = (path, uid) => ({ [path]: uid, [realpathSync(path)]: uid })
+
+test('a folder above the socket that another account owns or could write fails closed (#548)', async () => {
+  const c = candidates()
+  const team = c.named
+  const sock = await fakeSocket({ at: team })
+  try {
+    assert.equal(ownerOnly(sock.path), true)
+    const uid = process.getuid()
+    for (const mode of [0o757, 0o777]) {
+      chmodSync(team, mode)
+      assert.equal(ownerOnly(sock.path), false, mode.toString(8))
+      assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: lstatSync(team).gid }), false, `${mode.toString(8)}: others, even in our group`)
+      assert.deepEqual(await new DshSource({ path: sock.path }).list(), [], mode.toString(8))
+    }
+    // Group-writable: only on Linux, and only when the group is our own primary group.
+    chmodSync(team, 0o775)
+    const group = lstatSync(team).gid
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: group }), true, 'Linux, our own group')
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'linux', gid: group + 1 }), false, 'Linux, another group')
+    assert.equal(ownerOnly(sock.path, uid, { platform: 'darwin', gid: group }), false, 'macOS: staff is shared')
+    assert.deepEqual(await new DshSource({ path: sock.path, check: (p) => ownerOnly(p, uid, { platform: 'darwin', gid: group }) }).list(), [])
+    chmodSync(team, 0o1777)
+    assert.equal(ownerOnly(sock.path), true, 'sticky: nobody else can rename what is ours in it')
+    chmodSync(team, 0o755)
+    assert.equal(ownerOnly(sock.path, uid, { lstat: ownedBy(both(c.root, uid + 1)) }), false, 'another account')
+    assert.equal(ownerOnly(sock.path, uid, { lstat: ownedBy(both(c.root, 0)) }), true, 'root')
+    // A link on the way: ours is fine, another account's is not (it could point it elsewhere).
+    const link = join(c.root, 'link')
+    symlinkSync(team, link)
+    const viaLink = join(link, 'pocket', 'chat.sock')
+    assert.equal(ownerOnly(viaLink), true)
+    assert.equal(ownerOnly(viaLink, uid, { lstat: ownedBy({ [link]: uid + 1 }) }), false)
+    // A link that leads into a folder anyone can write: fine as written, refused on the real path.
+    const open = join(c.root, 'open')
+    const inner = join(open, 'team')
+    mkdirSync(open)
+    chmodSync(open, 0o777)
+    const deep = await fakeSocket({ at: inner })
+    const intoOpen = join(c.root, 'into-open')
+    symlinkSync(inner, intoOpen)
+    try {
+      assert.equal(ownerOnly(join(intoOpen, 'pocket', 'chat.sock')), false)
+      assert.equal(ownerOnly(join(intoOpen, 'pocket', 'chat.sock'), uid, { platform: 'linux', gid: lstatSync(open).gid }), false, 'even in our own group')
+      assert.deepEqual(await new DshSource({ path: join(intoOpen, 'pocket', 'chat.sock') }).list(), [])
+      assert.deepEqual(deep.requests, [])
+    } finally {
+      await deep.close()
+    }
+    assert.deepEqual(sock.requests, [])
+  } finally {
+    await sock.close()
+    c.done()
+  }
 })

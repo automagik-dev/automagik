@@ -3,40 +3,72 @@ window.__ModuleLoader__.load({
   id: '@automagik/locale-pt-br-dsh',
   factory: () => {
 const createPack = function createPack(dictionaries) {
-  const language = { id: 'pt-BR', label: 'Português (Brasil)', fallback: 'pt' }
+  const PT = 'pt'
+  // DSH's wording when a namespace already holds a dictionary for the locale.
+  const DUPLICATE = /already has locale/
+
   return {
     inject: ['locale'],
     apply(ctx) {
-      ctx.effect(() => ctx.locale.addLanguage(language), 'locale-pt-br: language')
+      const hasPortuguese = () => ctx.locale.getLocale().locales.some((entry) => entry.id.toLowerCase() === PT)
       for (const [namespace, dictionary] of Object.entries(dictionaries)) {
-        // DSH owns every DSH namespace under `pt`; only the Bot team's own namespace is safe
-        // there, and it serves both entries through the fallback chain.
-        const id = namespace === 'omni-ui' ? 'pt' : language.id
-        ctx.effect(
-          () => ctx.locale.register(namespace, id, dictionary),
-          `locale-pt-br: ${namespace}`,
-        )
+        ctx.effect(() => registerWhenFree(namespace, dictionary), `locale-pt-br: ${namespace}`)
+      }
+      if (hasPortuguese()) moveSavedChoice()
+
+      // Register one dictionary under DSH's `pt`. A namespace that already has one belongs to an
+      // older copy of this pack still mounted while it unloads; this copy contributes nothing until
+      // that copy's disposer removes the entry and publishes, then registers its own. On a fresh
+      // install, or once the old copy is gone, the first attempt succeeds.
+      function registerWhenFree(namespace, dictionary) {
+        let off
+        let busy = false
+        const attempt = () => {
+          if (busy || off !== undefined) return
+          busy = true
+          try {
+            off = ctx.locale.register(namespace, PT, dictionary)
+          } catch (error) {
+            if (!DUPLICATE.test(String(error?.message ?? ''))) throw error
+          } finally {
+            busy = false
+          }
+        }
+        const unsubscribe = ctx.locale.subscribe(attempt)
+        try {
+          attempt()
+        } catch (error) {
+          unsubscribe()
+          throw error
+        }
+        return () => {
+          unsubscribe()
+          off?.()
+        }
+      }
+
+      // A saved pt-BR choice is an exact id to DSH's locale runtime. DSH's own id is `pt`, so
+      // rewrite the stored choice through the runtime's only preference write, before the choice
+      // is read. The preference host may adopt a late snapshot (a start, a settings load), hence
+      // the subscription as well. Only a stored `pt-BR` is touched: an English browser that never
+      // picked a language stays English.
+      function moveSavedChoice() {
+        ctx.inject(['configForms'], (scope) => {
+          const host = scope.configForms.get('locale')
+          if (!host || typeof host.getSnapshot !== 'function' || typeof host.subscribe !== 'function') return
+          const move = () => {
+            if (host.getSnapshot()?.value?.preference !== 'pt-BR') return
+            if (!hasPortuguese()) return
+            ctx.locale.setLocale(PT)
+          }
+          ctx.effect(() => host.subscribe(move), 'locale-pt-br: saved choice')
+          move()
+        })
       }
     },
   }
 }
 const pack = createPack({
-  "chat": {
-    "number.groupSeparator": ".",
-    "clock.md": "{d}/{m}",
-    "clock.ymd": "{d}/{m}/{y}",
-    "message.systemPrompt": "Prompt do sistema",
-    "message.systemPromptUpdate": "Atualização do prompt do sistema",
-    "message.stepProcess.tools": "Chamando ferramentas",
-    "message.context.instructions.updated": "atualizadas"
-  },
-  "conversation": {
-    "hint.plan": "descreva sua tarefa para gerar um plano",
-    "placeholder.plan": "descreva sua tarefa para gerar um plano",
-    "row.input": "ENTRADA",
-    "row.output": "SAÍDA",
-    "tool.title.queryRuntime": "Consultar o runtime"
-  },
   "omni-ui": {
     "Channels": "Canais",
     "connected": "conectados",
@@ -1488,12 +1520,6 @@ const pack = createPack({
     "Has a computer: ask it for code, files and commands.": "Tem computador: peça código, arquivos e comandos.",
     "Works in your Omni channels: ask it to read, send or answer messages there.": "Trabalha nos seus canais do Omni: peça para ler, enviar ou responder mensagens lá.",
     "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo."
-  },
-  "permission.access": {
-    "auto.label": "Revisão automática"
-  },
-  "pluginManager": {
-    "terminalRunning": "Rodando"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

@@ -72,7 +72,13 @@ const PLANTED = ` SVCTOKEN=${UPPER} db_password=${LOWER}`
 // the hundred milliseconds. The best of five runs drops one that caught a background compile or a
 // collection; noise can add CPU time, never remove it, so a rule that is slow in every run stays
 // slow in every sample.
-const FAST_MS = 50
+// The text paths are the plain rule pass over one fixed-size piece, with no stream on top, so they
+// keep an absolute ceiling: 100 ms. The slowest measured was 58.9 ms of CPU on CI (events' #53
+// rule pass at 80k, against the old 50 ms ceiling); the browser copy costs 1.15-1.27x the rule
+// pass here, projecting 68-75 ms under the same inflation, so 100 keeps 1.3-1.5x headroom. A
+// machine 4x slower lands at 50 ms, and planted quadratic KEY= mutants measured 125-379.6 ms, so
+// they still fail.
+const TEXT_CEILING_MS = 100
 const FAST_TRIES = 5
 const sample = (fn) => {
   const t0 = process.cpuUsage()
@@ -80,7 +86,7 @@ const sample = (fn) => {
   const used = process.cpuUsage(t0)
   return (used.user + used.system) / 1000
 }
-const timed = (fn, ceiling = FAST_MS) => {
+const timed = (fn, ceiling = TEXT_CEILING_MS) => {
   let best = Infinity
   for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
@@ -111,12 +117,18 @@ const REFERENCE_TEXT = (() => {
 })()
 
 // The stream runs redactText over each delta and builds its row, sentence and audit work on top,
-// so it costs a multiple of the reference: 4.74x measured here (worst of the 200 cases, Node
-// 24.13.1). STREAM_MARGIN sits 1.7x above it, and a 2x regression of the stream path fails (9.5x);
-// the absolute backstop caps how far a reference that reads high can widen the bound. A quadratic
-// rule at 80k characters is 6.4e9 steps, seconds of CPU, far past either.
-const STREAM_MARGIN = 8
-const STREAM_BACKSTOP_MS = 200
+// so it costs a multiple of the reference: 3.74–4.24x measured here (worst of the 200 cases over
+// two runs, Node 24.13.1) and 3.56x, 3.76x, 7.18x, 7.45x and 7.62x across four CI runs; the 7.62x
+// one measured 233.2 ms against a 30.6 ms reference and failed the old 200 ms bound (#513).
+// STREAM_MARGIN 10 sits 1.31x above that worst CI reading. The trade: a 2x regression of the stream
+// on a quiet machine (8.5x) stays inside the bound, while the text ceiling catches a shared
+// quadratic key rule. The absolute backstop caps how far a slow reference may widen the bound:
+// 400 ms sits 1.7x above the worst observed stream reading (225.8 and 233.2 ms at 30.3-30.6 ms
+// references, the #513 reds) and only binds when 10 x reference passes it (a reference above 40 ms,
+// 1.3x above the worst observed). A shared rule gone quadratic still fails: the text ceiling
+// catches it on the rule pass, and the stream runs past the cap.
+const STREAM_MARGIN = 10
+const BACKSTOP_MS = 400
 
 function push(text) {
   const mind = new MindStream({ now: () => 1 })
@@ -142,8 +154,8 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
   const textPaths = PATHS.slice(0, -1)
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a stream that measured nothing.
-  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
-  const bound = Math.min(STREAM_MARGIN * referenceMs, STREAM_BACKSTOP_MS)
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(1)} ms of CPU`)
+  const bound = Math.min(STREAM_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${STREAM_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   const slowest = new Map()
   const noteSlowest = (path, ms, shape) => {
@@ -160,8 +172,8 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
         for (const secret of [UPPER, LOWER]) assert.ok(found.some((v) => v.includes(secret)), `${note} misses ${secret}`)
       }
       const ms = timed(() => run(text))
-      const detail = `${note}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
-      assert.ok(ms < FAST_MS, detail)
+      const detail = `${note}: ${ms.toFixed(1)} ms of CPU, ceiling ${TEXT_CEILING_MS} ms`
+      assert.ok(ms < TEXT_CEILING_MS, detail)
       noteSlowest(path, ms, shape)
     }
     for (const out of streamShown(streamRun(text))) {
@@ -171,7 +183,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
     }
     const streamMs = timed(() => streamRun(text), bound)
     const detail = `${streamPath}: ${shape}: ${streamMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${STREAM_BACKSTOP_MS} ms)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(streamMs <= bound, detail)
     noteSlowest(streamPath, streamMs, shape)
   }

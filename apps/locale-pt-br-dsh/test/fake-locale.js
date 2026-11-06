@@ -9,10 +9,14 @@
 //   `common`, then the key itself.
 const TAG = /^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$/
 
-export function fakeLocale({ languages = [], portuguese = false } = {}) {
+export function fakeLocale({ languages = [], portuguese = false, host } = {}) {
   const catalog = new Map([['en', { id: 'en', label: 'English' }], ['zh', { id: 'zh', label: '中文', fallback: 'en' }]])
   if (portuguese) catalog.set('pt', { id: 'pt', label: 'Português', fallback: 'en' })
   const dicts = new Map()
+  const listeners = new Set()
+  const publish = () => {
+    for (const fn of listeners) fn()
+  }
   const key = (id) => id.toLowerCase()
   const browser = () => {
     for (const tag of languages) {
@@ -43,17 +47,28 @@ export function fakeLocale({ languages = [], portuguese = false } = {}) {
   const one = (ns, locale, dict) => {
     if (!TAG.test(locale)) throw new Error(`not a locale tag: ${locale}`)
     const slot = `${ns}\u0000${key(locale)}`
-    if (dicts.has(slot)) throw new Error(`${ns} already has a ${locale} dictionary`)
+    if (dicts.has(slot)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`)
     dicts.set(slot, { ...dict })
-    return () => dicts.delete(slot)
+    publish()
+    return () => {
+      dicts.delete(slot)
+      publish()
+    }
   }
   return {
     calls: [],
+    // LocaleFace: notified on every catalog or dictionary change, as DSH's runtime does.
+    subscribe(fn) {
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
     getLocale: () => ({ active, locales: [...catalog.values()] }),
     chain: () => chain(active),
     setLocale(id) {
       if (!catalog.has(key(id))) throw new Error(`unknown locale ${id}`)
       active = catalog.get(key(id)).id
+      // DSH's durable write, to the same settings scope the runtime adopts.
+      host?.set('preference', active)
     },
     addLanguage(input) {
       this.calls.push(['addLanguage', input])
@@ -68,10 +83,12 @@ export function fakeLocale({ languages = [], portuguese = false } = {}) {
         throw new Error(`locale "${id}" does not fall back to en`)
       }
       active = browser()
+      publish()
       return () => {
         if (catalog.get(key(id)) !== entry) return
         catalog.delete(key(id))
         if (!catalog.has(key(active))) active = browser()
+        publish()
       }
     },
     register(ns, a, b) {

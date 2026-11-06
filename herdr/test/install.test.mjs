@@ -1954,7 +1954,7 @@ test("--uninstall is refused while Herdr shows the pack's layout, even when ever
   assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
 });
 
-test("--uninstall through the updater with a linked mods/: the folders move to the kept set as the log says, and the record goes", (t) => {
+test("#494: a same-version rerun with a linked mods/: up to date, nothing written; a file to repair, left as it is with why, not as a failed check", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
@@ -1962,17 +1962,51 @@ test("--uninstall through the updater with a linked mods/: the folders move to t
   cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
   rmSync(s.mods, { recursive: true });
   symlinkSync(ext, s.mods);
-  const r = s.run("--uninstall");
-  assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /Removing the pack through its updater/);
-  const moved = r.out.match(/Moved the pack out of \S+ \(([^)]*)\); it is kept in/)?.[1].split(",") ?? [];
-  assert.ok(moved.includes("am-sidebar"), r.out);
-  for (const x of moved) {
-    assert.ok(existsSync(join(s.state, ".prev", x)), `${x} said moved, so it is in .prev`);
-    assert.ok(!existsSync(join(ext, x)), `${x} is not left in mods/`);
+  // Every file matches the release: only read through the link, nothing to write, so it goes on.
+  const files = () => readdirSync(ext, { recursive: true }).map(String).sort();
+  const listed = files();
+  const same = s.run("--yes");
+  assert.equal(same.code, 0, same.err);
+  assert.match(same.out, /already up to date/);
+  assert.deepEqual(files(), listed);
+  // One file differs: the repair would write it through the link, so the pack is left as it is.
+  const damaged = join(ext, "am-tabs", "main.js");
+  writeFileSync(damaged, "// damaged\n");
+  const before = files();
+  const r = s.run("--yes");
+  assert.equal(r.code, 1, r.out);
+  assert.equal(readFileSync(damaged, "utf8"), "// damaged\n", "nothing written through the link");
+  assert.ok(r.err.includes(`automagik-herdr install: the installed pack 9.9.0 was left as it is (not checked or repaired): mods/ (${s.mods}) is a link to ${ext}, `
+    + "your own folder, not one this install made: nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again"), r.err);
+  assert.doesNotMatch(r.err, /could not check/);
+  assert.deepEqual(readdirSync(ext, { recursive: true }).map(String).sort(), before, "nothing in the linked mods/ changed");
+});
+
+test("#494: --uninstall with a linked mods/ refuses before anything, saying why, Node or not: nothing moves, the record and the link stay", (t) => {
+  for (const node of [true, false]) {
+    const s = scratch(t);
+    s.publish("9.9.0");
+    assert.equal(s.run("--yes").code, 0);
+    const ext = join(s.root, "their-mods");
+    cpSync(s.mods, ext, { recursive: true, verbatimSymlinks: true });
+    rmSync(s.mods, { recursive: true });
+    symlinkSync(ext, s.mods);
+    const before = readdirSync(ext).sort();
+    // With Node, the shim logs a pack-out; without (one on PATH that fails), the shell path.
+    const packOuts = node ? nodeShim(s) : (exe(join(s.bin, "node"), "#!/bin/sh\nexit 1\n"), () => "");
+    const r = s.run("--uninstall");
+    assert.equal(r.code, 1, `node: ${node}\n${r.out}`);
+    // The exact words (layoutSafe.mjs linkedModsLine's), written out so a changed line fails here.
+    assert.ok(r.err.includes(`automagik-herdr install: mods/ (${s.mods}) is a link to ${ext}, your own folder, not one this install made: `
+      + "nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again\n"), r.err);
+    assert.deepEqual(readdirSync(ext).sort(), before, "every folder in the linked mods/ stays");
+    assert.equal(packOuts(), "", "the updater's pack-out never ran");
+    assert.doesNotMatch(r.out, /Removing the pack|Moved the pack|Removed the automagik layout/);
+    assert.equal(readdirSync(s.state).some((x) => x.startsWith(".prev")), false, "nothing went into a kept set");
+    assert.ok(existsSync(join(s.appHome, "layouts", "automagik.json")), "the layout stays");
+    assert.ok(existsSync(join(s.state, "installed-by-install.sh")), "the record stays");
+    assert.ok(existsSync(s.link), "the command link stays");
   }
-  assert.doesNotMatch(r.out, /where it is/);
-  assert.equal(existsSync(join(s.state, "installed-by-install.sh")), false, "nothing stays, so the record goes");
 });
 
 test("--uninstall whose pack-out stops partway: nothing more moves, the record stays, and it says where each folder is", (t) => {
@@ -2050,4 +2084,150 @@ test("a release whose update.mjs imports layoutSafe.mjs but lacks it installs no
   assert.equal(r.code, 1, r.out);
   assert.match(r.err, /am-sidebar\/layoutSafe\.mjs is not a plain file: nothing was installed\./);
   assert.equal(existsSync(s.pack), false);
+});
+
+/**
+ * A fake `dsh` in the scratch PATH: it records every argv and, on `plugin --profile tui add`,
+ * writes the tui profile the way pnpm does; `remove` takes the dependency out. DSH's home is
+ * under the scratch HOME, so nothing reaches the real one.
+ */
+const fakeDsh = (s) => {
+  const log = join(s.root, "dsh.log");
+  writeFileSync(log, "");
+  exe(join(s.bin, "dsh"), `#!/bin/sh
+printf '%s\\n' "$*" >> "${log}"
+case "$1 $2 $3" in
+  "plugin --profile tui")
+    shift 3
+    d="$DSH_HOME/profiles/tui"
+    case $1 in
+      add)
+        mkdir -p "$d/node_modules/@deepseek-harness-tui/dsh-tui"
+        printf '{"dependencies":{"@deepseek-harness-tui/dsh-tui":"0.19.0"}}\\n' > "$d/package.json"
+        printf "minimumReleaseAgeExclude:\\n  - '@deepseek-harness-tui/dsh-tui@0.19.0'\\n" > "$d/pnpm-workspace.yaml"
+        printf "packages:\\n\\n  '@deepseek-harness-tui/dsh-tui@0.19.0':\\n    resolution: {integrity: sha512-4TAPhsTqfL+oG1H39Fbj13tfaVVGnwV9N33dV8Acn/YBoZT/YgXwF+ZnbhvRi0l55bNc6X6loKkngxrNL8NX3w==}\\n\\n" > "$d/pnpm-lock.yaml"
+        printf '{"version":"0.19.0"}\\n' > "$d/node_modules/@deepseek-harness-tui/dsh-tui/package.json"
+        ;;
+      remove)
+        printf '{"dependencies":{}}\\n' > "$d/package.json"
+        rm -rf "$d/node_modules/@deepseek-harness-tui/dsh-tui"
+        ;;
+    esac
+    ;;
+esac
+exit 0
+`);
+  s.extraEnv.DSH_LOG = log;
+  s.extraEnv.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED = "2026-11-06T03:36:00Z";
+  return { log, calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+};
+
+test("--dsh-tui installs the opt-in dsh-TUI into its own tui profile; --uninstall removes the shim and plugin", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  // DSH's desktop sentinels: this install must never write them.
+  mkdirSync(join(s.home, ".dsh", "profiles", "desktop"), { recursive: true });
+  writeFileSync(join(s.home, ".dsh", "profiles", "desktop", "package.json"), "{\"name\":\"desktop\"}\n");
+  writeFileSync(join(s.home, ".dsh", ".credentials.yaml"), "keep: me\n");
+  const profile = join(s.home, ".dsh", "profiles", "tui");
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  const r = s.run("--dsh-tui", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /dsh-TUI 0\.19\.0 is installed in the tui profile|installed dsh-TUI 0\.19\.0/);
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, { "@deepseek-harness-tui/dsh-tui": "0.19.0" });
+  assert.match(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8"), /'@deepseek-harness-tui\/dsh-tui@0\.19\.0'/);
+  assert.match(readFileSync(shim, "utf8"), /^exec dsh --profile tui -- "\$@"$/m);
+  assert.match(readFileSync(shim, "utf8"), /is not on PATH/);
+  assert.deepEqual(dsh.calls(), ["plugin --profile tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
+  assert.equal(readFileSync(join(s.home, ".dsh", "profiles", "desktop", "package.json"), "utf8"), "{\"name\":\"desktop\"}\n");
+  assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Removed .*dsh-tui shim/);
+  assert.equal(existsSync(shim), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
+  assert.ok(dsh.calls().includes("plugin --profile tui remove @deepseek-harness-tui/dsh-tui"));
+  assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+});
+
+test("--yes alone never installs the third-party dsh-TUI", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /--yes never installs the third-party dsh-TUI package/);
+  assert.deepEqual(dsh.calls(), []);
+  assert.equal(existsSync(join(s.home, ".dsh", "profiles", "tui")), false);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
+});
+
+test("an explicit answer at the terminal installs dsh-TUI without any flag", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const tty = join(s.root, "tty");
+  writeFileSync(tty, "y\n");
+  s.extraEnv.AUTOMAGIK_HERDR_TTY = tty;
+  const r = s.run("--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.err, /Install DSH as a Herdr agent .*\[y\/N\]/);
+  assert.deepEqual(dsh.calls(), ["plugin --profile tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
+  assert.ok(existsSync(join(s.home, ".local", "bin", "dsh-tui")));
+  assert.match(r.out, /installed dsh-TUI 0\.19\.0/);
+});
+
+test("--uninstall's fallback removes only this installer's dsh-tui shim, by the CLI's predicate", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  fakeDsh(s);
+  assert.equal(s.run("--dsh-tui", "--no-usagemeter").code, 0);
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  const other = join(s.root, "other-command");
+  writeFileSync(other, "#!/bin/sh\nexit 0\n");
+  rmSync(s.link);
+  symlinkSync(other, s.link);
+  const r = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Removed .*dsh-tui; the tui DSH profile was left as it is/);
+  assert.equal(existsSync(shim), false);
+});
+
+test("--uninstall's fallback leaves a foreign dsh-tui shim, even one naming Automagik Herdr", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  fakeDsh(s);
+  assert.equal(s.run("--dsh-tui", "--no-usagemeter").code, 0);
+  const shim = join(s.home, ".local", "bin", "dsh-tui");
+  writeFileSync(shim, "#!/bin/sh\n# Automagik Herdr\n# not the pack's shim\nexec my-dsh \"$@\"\n");
+  const other = join(s.root, "other-command");
+  writeFileSync(other, "#!/bin/sh\nexit 0\n");
+  rmSync(s.link);
+  symlinkSync(other, s.link);
+  const r = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Left .*dsh-tui: it is not this installer's/);
+  assert.match(readFileSync(shim, "utf8"), /not the pack's shim/);
+});
+
+test("no dsh: --yes installs the pack and prints one honest dsh-TUI skip line", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /DSH is not installed \(no dsh on PATH\): skipped dsh-TUI\. Install DSH Desktop or 'npm install -g @deepseek-ai\/dsh', then run 'automagik-herdr dsh-tui install'\./);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
+});
+
+test("--no-dsh-tui leaves DSH alone even when dsh is on PATH", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const r = s.run("--no-dsh-tui", "--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Left DSH \(dsh-TUI\) alone \(--no-dsh-tui\)\./);
+  assert.deepEqual(dsh.calls(), []);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
 });
