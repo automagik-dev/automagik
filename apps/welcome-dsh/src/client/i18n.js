@@ -385,7 +385,9 @@ let bound = null
 // `locale` is the DSH locale service; without one, copy stays English.
 export function installLocale(locale) {
   if (!locale || typeof locale.register !== 'function' || typeof locale.bind !== 'function') return () => {}
-  const off = locale.register(NAMESPACE, { en: EN, 'pt-BR': PT_BR })
+  // DSH 0.2.2 lists both `pt` (its own entry) and the locale pack's `pt-BR`; the same copy
+  // must answer for either, or a reader moved onto DSH's `pt` falls back to English here.
+  const off = locale.register(NAMESPACE, { en: EN, pt: PT_BR, 'pt-BR': PT_BR })
   const mine = locale.bind(NAMESPACE)
   bound = mine
   return () => {

@@ -1,5 +1,6 @@
 // A stand-in for DSH's locale service (dsh-client-locale's LocaleRuntime) with the catalog DSH
-// ships: en and zh only. It keeps the documented contract a language pack relies on, and no more:
+// 0.2.1 ships: en and zh only. `portuguese` adds DSH 0.2.2's own pt entry. It keeps the
+// documented contract a language pack relies on, and no more:
 // - addLanguage: the id is a BCP 47-style tag, not taken; its fallback is registered, and following
 //   fallbacks ends at en. The browser's languages are matched again in order, each by full tag,
 //   then by primary subtag.
@@ -8,8 +9,9 @@
 //   `common`, then the key itself.
 const TAG = /^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$/
 
-export function fakeLocale({ languages = [] } = {}) {
+export function fakeLocale({ languages = [], portuguese = false } = {}) {
   const catalog = new Map([['en', { id: 'en', label: 'English' }], ['zh', { id: 'zh', label: '中文', fallback: 'en' }]])
+  if (portuguese) catalog.set('pt', { id: 'pt', label: 'Português', fallback: 'en' })
   const dicts = new Map()
   const key = (id) => id.toLowerCase()
   const browser = () => {
@@ -83,12 +85,22 @@ export function fakeLocale({ languages = [] } = {}) {
 }
 
 // A client ctx around a locale service: effects run at once, and dispose() runs their disposers.
-export function fakeCtx(locale) {
+// `host` is DSH's durable preference scope; `inject` runs a callback as soon as its services are
+// there, as Cordis does.
+export function fakeCtx(locale, { host } = {}) {
   const disposers = []
   const labels = []
-  return {
+  let ctx
+  const inject = (deps, callback) => {
+    if (deps.includes('configForms') && host) {
+      const scope = { ...ctx, configForms: { get: (name) => (name === 'locale' ? host : undefined) } }
+      callback(scope)
+    }
+  }
+  ctx = {
     locale,
     labels,
+    inject,
     effect(run, label) {
       labels.push(label)
       const off = run()
@@ -99,4 +111,5 @@ export function fakeCtx(locale) {
       while (disposers.length > 0) disposers.pop()()
     },
   }
+  return ctx
 }
