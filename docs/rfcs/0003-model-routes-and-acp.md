@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (deliveries 1-3 merged: #187, #189; 4 and 5 open) |
+| Status | Accepted (deliveries 1-3 merged: #187, #189; 4-5 open; amended 2026-11-06) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |
@@ -58,6 +58,8 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   at the `llm/stream` waterfall, so they never reach the agent as prompts.
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
+  (Amended, 2026-11-06: that bridge carries the Session's whole preset tool set, the team's tools
+  included; see Amendments.)
 - **The person's own CLI, the newest adapter.** (Amended, owner decision D17.) An agent is offered
   only when its CLI is installed (`claude`, `codex`, found on PATH or where their installers put
   them); it runs that CLI, which the person signs in to and which updates itself. Between DSH and
@@ -81,12 +83,14 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   allowed, as DSH allows its own tools there. An agent that does not offer the strict mode
   (`default`; `read-only` or `workspace-write`) fails the turn; one that lacks a permissive mode
   gets the strict one instead.
-- **Claude Code keeps the person's own settings.** (Owner decision, 2026-11-03.) The Claude
-  adapter loads the person's Claude Code settings (user, project and local), and Claude Code asks
-  DSH only for what those leave as "ask". So in Manual, a call the person's allow rules or saved
-  "always allow" rules permit, or a PreToolUse or PermissionRequest hook approves, runs with no
-  DSH dialog; a call they deny is denied. Their CLAUDE.md, MCP servers and hooks keep working
-  too.
+- **Claude Code keeps the person's own settings.** (Owner decision, 2026-11-03. Superseded for
+  tools and approvals, 2026-11-06: see Amendments, delivery 6. Their CLAUDE.md, MCP servers and
+  hooks keep working; what changes is that the agent runs DSH's tool set, and DSH approves each
+  DSH tool call.) The Claude adapter loads the person's Claude Code settings (user, project and
+  local), and Claude Code asks DSH only for what those leave as "ask". So in Manual, a call the
+  person's allow rules or saved "always allow" rules permit, or a PreToolUse or PermissionRequest
+  hook approves, runs with no DSH dialog; a call they deny is denied. Their CLAUDE.md, MCP
+  servers and hooks keep working too.
 - **Resume.** Use the agent's own session load when it offers one; otherwise start fresh and say so.
 
 ### Retired: the Claude Code plugin
@@ -115,7 +119,15 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
   2026-11). This replaces the pinned-adapter rule and answers open question 1.
 - acp-dsh is on by default in the desktop profile (owner, D17, 2026-11).
 - Claude Code over ACP keeps the person's own Claude Code settings, allow rules and hooks
-  included (owner, 2026-11-03).
+  included (owner, 2026-11-03. Reversed for tools and approvals, 2026-11-06: an ACP agent runs
+  DSH's tool set and DSH approves every DSH tool call; see Amendments. The person's CLAUDE.md,
+  their own MCP servers and their hooks keep working).
+- An ACP agent runs the same DSH tool set as a vanilla Session, built from the Session's preset,
+  over a per-session stdio MCP bridge; every DSH tool call is approved by DSH, whatever the
+  agent's own rules say; the agent's built-in tools are off where its adapter has a switch
+  (owner, 2026-11-06, #516). Live switching carries history each way, redacted, with a visible
+  provider-boundary notice, behind a setting (owner, 2026-11-06, #516). The council behind this:
+  [dsh-022-council.md](../research/dsh-022-council.md).
 
 ### Per-teammate models (status note)
 
@@ -138,18 +150,31 @@ patch is removed in the release whose DSH carries the change.
   `@agentclientprotocol/codex-acp`, at their newest release (no pin list; amended, D17).
 - Settings `claude` and `codex` (on unless set off) and the install folder
   `$AUTOMAGIK_HOME/acp/adapters`.
+- The bridge (amended, 2026-11-06): one stdio MCP server per ACP session, named `dsh`, passed in
+  that session's `session/new` `mcpServers` as `{ name, command, args, env }`, `env` a list of
+  `{ name, value }`. Never a listening port. It offers the Session's preset's tools, filtered by
+  the Session's level, and answers every DSH tool call through DSH's approval service. Its
+  failure is the turn's: a bridge the adapter skipped (a same-named server in the person's Codex
+  config) fails the turn instead of running with half a tool set.
+- Setting `dshTools` (off unless set): the bridge and live switching. Off is the 2026-11-03
+  behaviour: each agent keeps its own tools and its own approvals.
+- The provider-boundary row: a Session-log row that names the provider a turn came from or went
+  to, so a switch is visible in the chat.
 
 ## Threat model
 
 - **Who can reach it.** The agent is third-party code running as the user, with its own tools.
-  The MCP bridge hands it the Bot's team tools.
-- **What it can do.** Whatever its tools and the Bot's level allow, and what the agent's own
-  settings allow: every call the agent asks permission for goes through DSH's approval dialog
-  under the Session's level, but Claude Code does not ask for what the person's Claude Code
-  allow rules or hooks approve (decided, above). If the agent offers no strict mode, the turn
-  fails rather than run in the agent's own default.
+  The MCP bridge hands it DSH's tools (amended, 2026-11-06).
+- **What it can do.** (Amended, 2026-11-06.) DSH's tools come back through the bridge and every
+  one of their calls is approved by DSH under the Session's level, whatever the agent's own
+  allow rules, hooks or mode say. The agent's own tools are off on `acp-claude`; on `acp-codex`
+  they stay, so a Codex turn can still run its own file and shell tools under the Codex sandbox
+  the level sets. If the agent offers no strict mode, the turn fails rather than run in the
+  agent's own default.
 - **Authentication.** The agent command comes only from host-side settings, never from a client
-  route. The MCP bridge is stdio, or authenticated per session; it never listens on an open port.
+  route. The MCP bridge is stdio (decided, 2026-11-06): the adapter spawns it with the session's
+  own arguments, it holds no listen socket and no token, and it dies with the adapter. The
+  agent never reaches DSH's tools any other way.
 - **Credentials.** Stored with mode 0600 or in the OS keychain. Never returned to the client.
 - **Supply chain (amended, D17).** Adapters are not pinned. What that costs: a second publisher,
   the `@agentclientprotocol` npm organisation, joins a boundary that already holds Anthropic's and
@@ -188,8 +213,25 @@ patch is removed in the release whose DSH carries the change.
    Rollback: revert; the Bot is chat-only on ACP.
 5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
    approval. Rollback: the next release drops it.
+6. **DSH's tools over the bridge** (amended, 2026-11-06). One stdio MCP bridge per ACP session,
+   built from the Session's preset (`standard`, or `cordis` in creator mode) and filtered by the
+   Session's level; every DSH tool call is approved by DSH; the agent's built-in tools are off
+   where its adapter has a switch; its tool list refreshes on a preset or level change. Lane:
+   plugin, behind `dshTools`, off unless set. Built on the DSH 0.2.2 branch (`feat/dsh-022-upgrade`)
+   and rebased onto `dev` once that merges. Check: on `acp-claude`, an approval is asked for a DSH
+   tool call the agent makes, an always-allow `mcp__*` rule in the person's Claude Code settings
+   cannot skip it, a tool above the level is not offered, and the agent's own file tools are
+   absent; on `acp-codex` the same approval holds for DSH tools, a preset change refreshes the
+   offered DSH tools by `session/fork`, and the turn says the agent's own tools stay. Rollback:
+   turn the setting off (the 2026-11-03 behaviour).
+7. **Live switching** (amended, 2026-11-06). A Session moves between providers with its history,
+   each way: the transcript is replayed (redacted) into the target, and what the agent streams is
+   written back into the Session's log. Lane: plugin, behind `dshTools`. Check: a Session moves
+   DSH → `acp-claude` → DSH with its transcript intact; a stored secret in that transcript never
+   appears in an outbound prompt; a provider-boundary row shows at each crossing. Rollback:
+   turn the setting off; the Session keeps the transcript it already has.
 
-Delivery 1 is in milestone 2 (One message box), because the picker needs it. Deliveries 2 to 5
+Delivery 1 is in milestone 2 (One message box), because the picker needs it. Deliveries 2 to 7
 are milestone 3 (Other agents in the same chat).
 
 ## Open questions
@@ -202,7 +244,80 @@ are milestone 3 (Other agents in the same chat).
 3. **Separate plugin or inside the Bot team?** Decided: a separate plugin, `@automagik/acp-dsh`
    (D17), on by default in the desktop profile.
 
+## Amendments
+
+### RFC 0003 (model routes and ACP): DSH's tool set on ACP routes, and live switching
+
+Owner decision (Felipe, 2026-11-06, tracker #516), on the council's recommendation
+([dsh-022-council.md](../research/dsh-022-council.md)): **an ACP agent runs the same DSH tool set
+as a vanilla Session, and DSH approves every DSH tool call.** This reverses the 2026-11-03
+decision for tools and approvals (Design's "Claude Code keeps the person's own settings" bullet
+and Threat model's "What it can do"), not for the person's CLAUDE.md, hooks or MCP servers. The
+mechanism was spiked before this text was written:
+[acp-dsh-tools-spike.md](../research/acp-dsh-tools-spike.md).
+
+**The tool set.** A Session on an ACP route is offered exactly what the same Session on `dsh`
+would be offered: the tools the Session's preset registers (`standard`; `cordis` when the Session
+is in creator mode, DSH's `cordis` agent preset), filtered by the Session's level as DSH's
+sandbox policy resolves it. Nothing the preset does not grant is added. An agent whose adapter
+cannot be held to that set is still offered the bridge; what it keeps of its own is named under
+**The agent's own tools** below.
+
+**The bridge.** One stdio MCP server per ACP session, spawned by the adapter with that session's
+own arguments, named `dsh` (stdio, because both adapters spawn their servers themselves; a bridge
+that carried a per-session token is allowed only if it never listens on a port: nothing on the
+machine can address it). Each call arrives with the ACP session it belongs to; the bridge
+resolves it to DSH's Session and refuses any other. The name is a contract, because a Claude Code
+allow rule reads `mcp__dsh__*`. `codex-acp` skips a requested server whose name the person's own
+Codex config already defines, so the bridge confirms it was started and fails the turn when it
+was not, instead of running with half a tool set.
+
+**Approval.** Every DSH tool call asks DSH's approval service (`approval/request`) under the
+Session's level before it runs, and hands the agent DSH's answer; a refusal is an error to the
+agent. The agent's own rules cannot lift it: an entry in the person's Claude Code settings that
+always allows `mcp__*`, or a hook that approves it, stops Claude Code asking, never the bridge.
+Delivery 6's test is exactly that: with such a rule saved, a DSH tool call still raises
+`approval/asked` in the Session log and waits for the person. `session/request_permission` is not
+the path: the spike shows the agent's own mode answers it (a session started in Claude Code's
+`auto` mode ran an MCP tool call with no permission request at all).
+
+**The agent's own tools.** `acp-claude`: off, by `session/new` `_meta.disableBuiltInTools: true`
+(the adapter's legacy shorthand for `_meta.claudeCode.options.tools: []`), which the spike shows
+leaves the MCP tools working and removes the built-in file tools. `acp-codex`: the adapter has no
+such switch, so Codex's own tools stay; the level still bounds them through Codex's sandbox mode,
+and DSH's tools on that route are still DSH-approved. Two tool sets on `acp-codex` is the one
+place "one tool set" is not reached, and it is a limit of the adapter, not of this decision.
+
+**The person's own MCP servers.** They keep working: the bridge joins the session's server list
+instead of replacing it, so the servers from Claude Code's settings and Codex's config load as
+before, with their own tools and their own sign-ins.
+
+**Refreshing the tool list.** On a preset or level change the bridge re-announces its tools
+(`notifications/tools/list_changed`) and serves the new list. `acp-codex` ignores that and also
+ignores a new server list on `session/resume`; there the plugin forks the ACP session
+(`session/fork`), which the spike shows starts the new bridge in the same conversation. Claude
+Code re-lists only after its MCP client has settled (an announcement in the first ~4 s after the
+session starts is dropped), so a change that early is re-announced on the next turn.
+
+**Live switching.** DSH keeps the record. A Session moving to an agent has its transcript replayed
+into `session/prompt` content, in order; moving back, what the agent streamed is written into the
+log with its tool calls keeping their cards. Before any text crosses, it passes the redactor: the
+Bot team's secret store for a Bot's Session (`apps/bots-dsh/src/host/secrets.js`), and the
+credential shapes the Bot team's diagnostics already mask otherwise
+(`apps/bots-dsh/src/host/diagnostics.js`). A stored secret's value never reaches an outbound
+prompt; the test is a saved secret sitting in the transcript. Each crossing writes a
+provider-boundary row into the Session log ("Claude Code via acp-claude", "DSH"), so the chat
+shows who answered, not only a log file.
+
+**Setting and order.** Deliveries 6 and 7 ship behind `dshTools`, off unless set, until the owner
+tries them; off is the 2026-11-03 behaviour and the rollback. The build branches from the DSH
+0.2.2 branch (`feat/dsh-022-upgrade`) and is rebased onto `dev` once that merges; nothing of it
+is built in the docs PR that carries this amendment.
+
 ## Links
 
 - #130 per-teammate models (runtime patch)
 - [0004](0004-composer-chat-kinds.md) picker, [0006](0006-herdr-terminal-mode.md) Herdr harness
+- Amendment evidence: [acp-dsh-tools-spike.md](../research/acp-dsh-tools-spike.md) (adapters'
+  `mcpServers`, `list_changed`, fork); [dsh-022-council.md](../research/dsh-022-council.md) (the
+  council behind the 2026-11-06 decision).
