@@ -143,10 +143,17 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
   hc's (letters, digits, `_`, `.`, `-`), never only dots.
 - **Automagik Bots' chats (#517).** Beside the terminals, `chat.list` also lists the Automagik
   Bots' own chats, as `dsh:<botId>` with `chat: "session"`, read from the Bot plugin's
-  read-only socket in the team's home (`~/.automagik/bots/pocket/chat.sock`, or under
-  `$AUTOMAGIK_BOTS_HOME`). The bridge uses that socket only when it and its folder are this
-  account's alone (no group or other access) and it says it is read-only; otherwise nothing is
-  listed. These chats only read: their rows come from the Bot's DSH Session log (a cursor is
+  read-only socket in the team's home, `<team home>/pocket/chat.sock`. The bridge tries these
+  team homes in order and uses the first whose socket passes the check below (a folder that
+  exists is not enough): `$AUTOMAGIK_BOTS_HOME` when the bridge's own environment sets it, then
+  the desktop app's team `~/.automagik/desktop/bots` (the app sets `AUTOMAGIK_BOTS_HOME` there
+  for its own DSH only; the bridge's login service does not see it), then
+  `~/.automagik/bots` (a team in a dsh you run). `~/.automagik` is `$AUTOMAGIK_HOME` when set;
+  `HERDR_APP_HOME` does not move the team home. It never searches elsewhere: a team kept
+  anywhere else is not seen. The check: the socket and its folder are this account's alone (no
+  group or other access), every folder above them belongs to this account or root and nobody
+  else can write it (a sticky folder like `/tmp` is fine), and the socket says it is read-only;
+  otherwise nothing is listed and the bridge log says so once. These chats only read: their rows come from the Bot's DSH Session log (a cursor is
   `dsh:<session>:<seq>`), and `chat.send`, `chat.sendHeld`, `chat.cancelHeld`, `chat.answer` and
   `chat.interrupt` on them are `refused` (`read-only`). An approval or a question shows as a row
   without buttons that says "Answer on the computer". Terminal chats are unchanged.

@@ -10,7 +10,17 @@
 //
 // Absent is empty: no socket, a socket another account could reach, or one that does not say it
 // is read-only, and the source lists nothing and opens nothing.
-import { lstatSync } from 'node:fs'
+//
+// Where the socket is (#548). The bridge tries the team homes below in order and uses the first
+// whose pocket/chat.sock passes ownerOnly; a folder that exists is not enough. It never searches
+// elsewhere: a team kept anywhere else is not seen, and with no such socket it stays absent.
+//   1. $AUTOMAGIK_BOTS_HOME, when the bridge's own environment sets it;
+//   2. <Automagik home>/desktop/bots: the desktop app's team (apps/desktop dsh.js gives the DSH it
+//      runs AUTOMAGIK_BOTS_HOME there; the bridge's login service does not see that variable);
+//   3. <Automagik home>/bots: a team installed into a dsh the person runs (bots-dsh's default).
+// The Automagik home is $AUTOMAGIK_HOME, else ~/.automagik. HERDR_APP_HOME does not enter it (it
+// moves only the bridge's state folder, state.mjs).
+import { lstatSync, realpathSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -25,24 +35,42 @@ export const MAX_LINE = 8 * 1024 * 1024
 
 export const isDsh = (terminal) => typeof terminal === 'string' && terminal.startsWith(PREFIX)
 
-const expand = (text) => (text === '~' ? homedir() : /^~[\\/]/.test(text) ? join(homedir(), text.slice(2)) : text)
+const expand = (text, home) => (text === '~' ? home : /^~[\\/]/.test(text) ? join(home, text.slice(2)) : text)
 
-/** The team's home as bots-dsh reads it (src/host/folders.js teamHomeOf). */
-export function teamHome(env = process.env) {
-  if (env.AUTOMAGIK_BOTS_HOME?.trim()) return resolve(expand(env.AUTOMAGIK_BOTS_HOME.trim()))
-  const automagik = env.AUTOMAGIK_HOME?.trim() ? resolve(expand(env.AUTOMAGIK_HOME.trim())) : join(homedir(), '.automagik')
-  return join(automagik, 'bots')
+/** The team homes the socket may be in, in the order they are tried (see the top of this file). */
+export function teamHomes(env = process.env, home = homedir()) {
+  const automagik = env.AUTOMAGIK_HOME?.trim() ? resolve(expand(env.AUTOMAGIK_HOME.trim(), home)) : join(home, '.automagik')
+  const named = env.AUTOMAGIK_BOTS_HOME?.trim() ? [resolve(expand(env.AUTOMAGIK_BOTS_HOME.trim(), home))] : []
+  return [...new Set([...named, join(automagik, 'desktop', 'bots'), join(automagik, 'bots')])]
 }
 
-export const socketPath = (env = process.env) => join(teamHome(env), 'pocket', 'chat.sock')
+export const socketPaths = (env = process.env, home = homedir()) => teamHomes(env, home).map((team) => join(team, 'pocket', 'chat.sock'))
 
-/** A socket only this account reaches: a socket, owned by us, no group or other bits, in such a folder. */
-export function ownerOnly(path, uid = process.getuid?.()) {
+/**
+ * A socket only this account reaches (#523, #548):
+ * - the socket and its folder: ours, with no group or other bits at all;
+ * - every folder above them, up to the root, both as written and on the real path: owned by us or
+ *   by root, and not writable by group or others unless it is sticky (like /tmp, where nobody else
+ *   can rename or remove what is ours); a link on the way must be ours or root's.
+ * Another account that could rename a folder above could swap the socket after this check.
+ * Without uids (Windows, where there is no socket anyway) only the modes are checked.
+ */
+export function ownerOnly(path, uid = process.getuid?.(), { lstat = lstatSync, realpath = realpathSync } = {}) {
   try {
-    const socket = lstatSync(path)
-    const folder = lstatSync(dirname(path))
+    const socket = lstat(path)
+    const folder = lstat(dirname(path))
     const ours = (s) => uid === undefined || s.uid === uid
-    return socket.isSocket() && folder.isDirectory() && (socket.mode & 0o077) === 0 && (folder.mode & 0o077) === 0 && ours(socket) && ours(folder)
+    if (!(socket.isSocket() && folder.isDirectory() && (socket.mode & 0o077) === 0 && (folder.mode & 0o077) === 0 && ours(socket) && ours(folder))) return false
+    if (uid === undefined) return true
+    const safe = (dir) => {
+      for (;; dir = dirname(dir)) {
+        const s = lstat(dir)
+        if (s.uid !== uid && s.uid !== 0) return false
+        if (!s.isSymbolicLink() && (!s.isDirectory() || ((s.mode & 0o022) !== 0 && (s.mode & 0o1000) === 0))) return false
+        if (dirname(dir) === dir) return true
+      }
+    }
+    return safe(dirname(dirname(path))) && safe(dirname(realpath(dirname(path))))
   } catch {
     return false
   }
@@ -54,9 +82,15 @@ export const refusedDsh = (id) => ({ state: 'refused', ok: false, reason: 'read-
 const rowsCut = (e) => (Array.isArray(e?.rows) ? { ...e, rows: e.rows.map(cutRow) } : e)
 
 export class DshSource {
-  /** @param {{ path?: string, connect?: typeof createConnection, check?: (path: string) => boolean, log?: (...a: any[]) => void, requestMs?: number }} [options] */
-  constructor({ path = socketPath(), connect = createConnection, check = ownerOnly, log = () => {}, requestMs = REQUEST_MS } = {}) {
-    Object.assign(this, { path, connect, check, log, requestMs })
+  /**
+   * `paths` are tried in order (socketPaths); `path` is one place only.
+   * @param {{ path?: string, paths?: string[], connect?: typeof createConnection, check?: (path: string) => boolean, log?: (...a: any[]) => void, requestMs?: number }} [options]
+   */
+  constructor({ path, paths = path === undefined ? socketPaths() : [path], connect = createConnection, check = ownerOnly, log = () => {}, requestMs = REQUEST_MS } = {}) {
+    Object.assign(this, { paths, connect, check, log, requestMs })
+    /** The socket in use: the first of `paths` that passed the check. */
+    this.path = null
+    this.absent = false
     this.socket = null
     this.opening = null
     this.pending = new Map()
@@ -70,7 +104,14 @@ export class DshSource {
   open() {
     if (this.socket && !this.socket.destroyed) return Promise.resolve(this.socket)
     if (this.opening) return this.opening
-    if (!this.check(this.path)) return Promise.resolve(null)
+    const path = this.paths.find((candidate) => this.check(candidate))
+    if (!path) {
+      if (!this.absent) this.log(`chat: no DSH socket only this account reaches in ${this.paths.join(', ')}; no Bot chats`)
+      this.absent = true
+      return Promise.resolve(null)
+    }
+    this.absent = false
+    this.path = path
     this.opening = new Promise((done) => {
       const socket = this.connect(this.path)
       let buffer = ''
