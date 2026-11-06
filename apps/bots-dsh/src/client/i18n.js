@@ -5,6 +5,12 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  // A Bot's capability pills (capability-pills.js); 'Channels' is the Channels page's.
+  'Computer': '电脑',
+  'Leads the team': '带领团队',
+  'Has a computer: ask it for code, files and commands.': '有电脑：可以让它写代码、处理文件、运行命令。',
+  'Works in your Omni channels: ask it to read, send or answer messages there.': '在你的 Omni 渠道中工作：可以让它读取、发送或回复那里的消息。',
+  'Leads the team: ask it to plan work, make Bots and hand tasks to the right one.': '带领团队：可以让它规划工作、创建 Bot，并把任务交给合适的 Bot。',
   // The model menu of a Bot its plugin answers for (host-model-menu.js).
   'computer': '电脑',
   'Stays on this {device}.': '只留在这台{device}上。',
@@ -844,6 +850,8 @@ const ZH = {
   'added {time}': '添加于 {time}',
   'last used {time}': '上次使用 {time}',
   'not used yet': '还没用过',
+  'Held: the saved value is shorter than {count} characters': '已暂停使用：保存的值不足 {count} 个字符',
+  'Held: nothing uses this key until you save a value of at least {count} characters.': '已暂停使用：在你保存至少 {count} 个字符的值之前，没有任何地方使用这个密钥。',
   'Delete {name}? Bots lose it at once.': '删除 {name}？Bot 会立刻失去它。',
   Keep: '保留',
   'Key name': '密钥名',

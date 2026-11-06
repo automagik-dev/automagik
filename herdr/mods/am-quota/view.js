@@ -124,15 +124,18 @@ export function why(pick, verdict, activeId, now) {
  */
 export function toolView({ provider, accounts = [], record = null, badge = null, now = Date.now(), source = "CLIProxyAPI" }) {
   const label = TOOLS[provider] ?? provider;
+  // Only Codex is installed from the proxy. A Claude login never is (#453): its card shows the
+  // proxy's usage with no Use or Switch until it lists the logins signed in on this Mac.
+  const installs = provider === "codex";
   const mine = accounts.filter((a) => a.provider === provider)
     .sort((a, b) => who(a).localeCompare(who(b)) || String(a.id).localeCompare(String(b.id)));
-  const current = record ? mine.find((a) => a.id === record.name) ?? null : null;
+  const current = installs && record ? mine.find((a) => a.id === record.name) ?? null : null;
   const managed = Boolean(current) && (!badge || badge.text === "in use");
   const verdict = choose(mine, { provider, now, activeId: managed ? current.id : null });
   const pick = verdict.action === "switch" ? mine.find((a) => a.id === verdict.to) ?? null : null;
   const row = (a, next = false) => ({
     account: a, who: who(a), usage: usage(a, now), next,
-    switchable: !a.disabled && !a.requires_sign_in,
+    switchable: installs && !a.disabled && !a.requires_sign_in,
   });
   const out = { provider, label, current: managed ? current : null, primary: null, fine: null };
 
@@ -149,8 +152,13 @@ export function toolView({ provider, accounts = [], record = null, badge = null,
       headline = `Not on ${source} any more`;
       text = `The account the panel installed for ${label} is no longer on ${source}, so it can't tell how long it lasts.`;
     }
+    if (!installs) {
+      headline = "No switch for now";
+      text = `${label} keeps the login it has on this Mac. This panel no longer installs ${label} logins from ${source}, because that `
+        + "overwrote the Mac's own sign-in; switching between the logins signed in on this Mac comes next.";
+    }
     if (!mine.length) text += ` ${source} has no ${label} account yet.`;
-    if (pick) out.primary = { account: pick, label: `Use ${pick.email || "this account"}`, why: why(pick, verdict, null, now) };
+    if (pick && installs) out.primary = { account: pick, label: `Use ${pick.email || "this account"}`, why: why(pick, verdict, null, now) };
     return { ...out, state: "new", dot: "none", headline, pill: { text: "Not managed", tone: "none" },
       sentence: { text, tone: "none" }, others: mine.map((a) => row(a)) };
   }

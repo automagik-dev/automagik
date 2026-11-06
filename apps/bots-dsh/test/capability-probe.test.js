@@ -41,9 +41,9 @@ const team = () => ({
 })
 const secret = { name: 'TOKEN', value: SECRET_VALUE, purpose: '', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 1 }
 
-async function setup() {
+async function setup(entries = [secret]) {
   const home = makeHome(team())
-  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ secrets: [secret] }))
+  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ secrets: entries }))
   const loader = { import: async () => ({ default: { name: 'mcp-client', apply() {} } }), unwrapExports: exports => exports.default }
   const ctx = fakeContext({ services: { loader } })
   const rt = createRuntime(ctx, { home, github: false, diagnosticsFile: false })
@@ -306,4 +306,334 @@ test('the Shared capabilities row shows the verdict a failed probe left', () => 
   assert.match(unverified, /Unverified: HTTP 401/)
   assert.doesNotMatch(unverified, /Verified/)
   assert.match(rowText({ ...base, verification: { checkedAt: new Date().toISOString(), status: 'unverified' } }), /Unverified/)
+})
+
+// A redirect must not be followed: fetch would replay the POST (307) or turn it into a GET
+// (302) at another origin, where the custom headers are still attached.
+const redirectCase = async (status, t) => {
+  const target = []
+  const destination = await serve(async (request, response) => {
+    target.push({ method: request.method, headers: request.headers })
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end('{"jsonrpc":"2.0","id":1,"result":{}}')
+  })
+  t.after(() => destination.close())
+  const origin = []
+  const source = await serve(async (request, response) => {
+    origin.push({ method: request.method, headers: request.headers, body: await readBody(request) })
+    response.writeHead(status, { Location: destination.url })
+    response.end()
+  })
+  t.after(() => source.close())
+  return { origin, target, source }
+}
+
+test('a 307 probe makes exactly one POST and never reaches the redirect target', async t => {
+  const { origin, target, source } = await redirectCase(307, t)
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('moved', source.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Api-Key': '$DSH_SECRET_TOKEN',
+  }), { botId: 'chief' })
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /HTTP 307/)
+  assert.doesNotMatch(saved.verification.reason, new RegExp(SECRET_VALUE))
+  assert.equal(live(env).moved.verification.status, 'unverified')
+
+  assert.equal(target.length, 0)
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(origin[0].headers.authorization, `Bearer ${SECRET_VALUE}`)
+  assert.equal(origin[0].headers['x-api-key'], SECRET_VALUE)
+
+  const base = { name: 'moved', kind: 'mcp', transport: 'streamable-http', description: '' }
+  const row = rowText({ ...base, verification: saved.verification })
+  assert.match(row, /Unverified: HTTP 307/)
+  assert.doesNotMatch(row, new RegExp(SECRET_VALUE))
+  assert.doesNotMatch(row, new RegExp(source.url))
+})
+
+test('a 302 probe makes exactly one POST and its answer carries no header value', async t => {
+  const { origin, target, source } = await redirectCase(302, t)
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const answer = await env.ctx.registeredTools.get('save_capability').execute(
+    capability('moved', source.url, {
+      'X-Api-Key': '$DSH_SECRET_TOKEN', 'X-Probe-Header': HEADER_VALUE,
+    }),
+    { agent: { id: 'chief' } },
+  )
+  assert.match(answer, /^Saved moved \(unverified: HTTP 302/)
+  assert.doesNotMatch(answer, new RegExp(SECRET_VALUE))
+  assert.doesNotMatch(answer, new RegExp(HEADER_VALUE))
+  assert.equal(answer.includes(source.url), false)
+
+  assert.equal(target.length, 0)
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(live(env).moved.verification.status, 'unverified')
+  assert.equal(live(env).moved.verification.reason, 'HTTP 302 (a redirect is not followed)')
+})
+
+test('a 3xx to the same origin is still one request', async t => {
+  const origin = []
+  const followed = []
+  const server = await serve(async (request, response) => {
+    if (request.url === '/moved-elsewhere') {
+      followed.push({ method: request.method, headers: request.headers })
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end('{"jsonrpc":"2.0","id":1,"result":{}}')
+      return
+    }
+    origin.push({ method: request.method, headers: request.headers, body: await readBody(request) })
+    response.writeHead(301, { Location: '/moved-elsewhere' })
+    response.end()
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(
+    capability('moved', server.url, { 'X-Api-Key': '$DSH_SECRET_TOKEN' }),
+    { botId: 'chief' },
+  )
+  assert.equal(saved.verification.status, 'unverified')
+  assert.equal(saved.verification.reason, 'HTTP 301 (a redirect is not followed)')
+  assert.doesNotMatch(saved.verification.reason, new RegExp(SECRET_VALUE))
+  assert.equal(origin.length, 1)
+  assert.equal(origin[0].method, 'POST')
+  assert.equal(followed.length, 0)
+})
+
+test('a challenge value is redacted before it is capped', async t => {
+  const long = 'x'.repeat(400)
+  const server = await serve((_request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': `Bearer ${SECRET_VALUE} ${long}` })
+    response.end('no')
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('blocked', server.url, { 'X-Api-Key': '$DSH_SECRET_TOKEN' }),
+      { botId: 'chief' },
+    ),
+    error => {
+      // The redactor runs first, so the challenge reads as the secret label; the header scrub
+      // has nothing left to replace (the accepted consequence: the label wins, no byte of the
+      // secret survives).
+      assert.match(error.message, /WWW-Authenticate: Bearer \[secret:TOKEN\]/)
+      assert.doesNotMatch(error.message, /\[header\]/)
+      assert.doesNotMatch(error.message, new RegExp(SECRET_VALUE))
+      assert.doesNotMatch(error.message, /x{200}/)
+      return true
+    },
+  )
+})
+
+// The edge the tester found: the sent header value is a substring of the secret. Scrubbing the
+// header first cuts the secret around it, so redaction can no longer see the secret and its
+// prefix and suffix stay in the answer. Every clean() here redacts first.
+const runsOf = (text, value, size = 4) => {
+  const found = []
+  for (let i = 0; i + size <= value.length; i += size) {
+    const run = value.slice(i, i + size)
+    if (text.includes(run)) found.push(run)
+  }
+  return found
+}
+
+test('a header value inside the secret echoes the label, never the secret edges', async t => {
+  // The server reflects the whole secret (it has it from Authorization); the configured header
+  // only carries a piece of it.
+  const inner = SECRET_VALUE.slice(6, 22)
+  const server = await serve((_request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`reflected ${SECRET_VALUE}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(capability('leaky', server.url, {
+      Authorization: 'Bearer $DSH_SECRET_TOKEN',
+      'X-Probe-Header': inner,
+    }), { botId: 'chief' }),
+    error => {
+      assert.match(error.message, /body: reflected \[secret:TOKEN\]\)/)
+      assert.deepEqual(runsOf(error.message, SECRET_VALUE), [])
+      assert.equal(error.message.includes('probe-'), false)
+      assert.equal(error.message.includes(inner), false)
+      assert.doesNotMatch(error.message, /\[header\]/)
+      return true
+    },
+  )
+  assert.equal(live(env).leaky, undefined)
+})
+
+test('a header that embeds a whole secret reads as the label, not as [header]', async t => {
+  const server = await serve(async (request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`got ${request.headers['x-api-key']}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('wrapped', server.url, { 'X-Api-Key': 'k-$DSH_SECRET_TOKEN-z' }),
+      { botId: 'chief' },
+    ),
+    error => {
+      assert.match(error.message, /body: got k-\[secret:TOKEN\]-z\)/)
+      assert.doesNotMatch(error.message, /\[header\]/)
+      assert.deepEqual(runsOf(error.message, SECRET_VALUE), [])
+      return true
+    },
+  )
+  assert.equal(live(env).wrapped, undefined)
+})
+
+test('a header value with no secret overlap is still scrubbed to [header]', async t => {
+  const server = await serve(async (request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`got ${request.headers['x-probe-header']}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('plain', server.url, { 'X-Probe-Header': HEADER_VALUE }),
+      { botId: 'chief' },
+    ),
+    error => {
+      assert.match(error.message, /body: got \[header\]\)/)
+      assert.equal(error.message.includes(HEADER_VALUE), false)
+      return true
+    },
+  )
+  assert.equal(live(env).plain, undefined)
+})
+
+test('a cap after redaction cannot split a secret into surviving halves', async t => {
+  // The secret starts 186 characters in, so its original span crosses the 200-character cap;
+  // the configured header carries a slice of it that also crosses the cap.
+  const filler = 'y'.repeat(186)
+  const inner = SECRET_VALUE.slice(6, 24)
+  const server = await serve((_request, response) => {
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`${filler}${SECRET_VALUE}${'z'.repeat(40)}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('capped', server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Probe-Header': inner,
+  }), { botId: 'chief' })
+  assert.match(saved.verification.reason, /^HTTP 500: y{186}\[secret:TOKEN\]$/)
+  assert.equal(saved.verification.reason.slice('HTTP 500: '.length).length, 200)
+  assert.deepEqual(runsOf(saved.verification.reason, SECRET_VALUE), [])
+  assert.equal(saved.verification.reason.includes('probe-'), false)
+  assert.doesNotMatch(saved.verification.reason, /\[header\]/)
+})
+
+// #480: below WHOLE_VALUE the global redactor only matches a value that stands alone, so a
+// 4-7 character secret echoed between letters is never replaced; the header scrub then cuts the
+// echo around the header slice and leaves the secret's edges. The probe redacts every known
+// value anywhere instead, so the whole secret reads as its label and nothing is left to rebuild.
+const shortSecret = value => ({
+  name: 'TOKEN', value, purpose: '', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 1,
+})
+const shortEcho = async (t, value) => {
+  const inner = value.slice(1, -1)
+  const requests = []
+  const server = await serve((request, response) => {
+    requests.push(request.headers)
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`aaay${value}buzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability(`short-${value.length}`, server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Probe-Header': inner,
+  }), { botId: 'chief' })
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0]['x-probe-header'], inner)
+  assert.equal(saved.verification.status, 'unverified')
+  assert.equal(saved.verification.reason, 'HTTP 500: aaay[secret:TOKEN]buzzz')
+  assert.equal(saved.verification.reason.includes('[header]'), false)
+  assert.equal(saved.verification.reason.includes(inner), false)
+  assert.deepEqual(runsOf(saved.verification.reason, value, 2), [])
+}
+
+test('a 4-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '4821')
+})
+
+test('a 6-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '935174')
+})
+
+test('a 7-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '6284917')
+})
+
+// #484: a value below the write floor (MIN_VALUE = 4) reaches the store only by hand-editing
+// secrets.json, and no redactor can match a 1-3 character value without hitting ordinary words.
+// The loader holds it, so the probe refuses before any request, names the floor, and no byte of
+// the value leaves the host (the #482 probe-only policy for 4+ values is untouched).
+test('a hand-edited 3-character secret in the URL is held, and the probe refuses naming the floor', async t => {
+  const value = 'q7z'
+  const hits = []
+  const server = await serve((_request, response) => {
+    hits.push(true)
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`aaay${value}buzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('held-url', `${server.url}?k=$DSH_SECRET_TOKEN`), { botId: 'chief' })
+  assert.equal(hits.length, 0, 'a held secret must not reach the wire')
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /^Secret TOKEN is held: its saved value is shorter than 4 characters/)
+  assert.deepEqual(runsOf(saved.verification.reason, value, 2), [])
+  assert.equal(saved.verification.reason.includes('aaay'), false)
+})
+
+test('a hand-edited 1-character secret in a header is held, and no request is sent', async t => {
+  const value = 'q'
+  const hits = []
+  const server = await serve((_request, response) => {
+    hits.push(true)
+    response.end(`aaay${value}[header]zbuzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('held-header', server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+  }), { botId: 'chief' })
+  assert.equal(hits.length, 0, 'a held secret must not reach the wire')
+  assert.equal(saved.verification.status, 'unverified')
+  assert.match(saved.verification.reason, /^Secret TOKEN is held: its saved value is shorter than 4 characters/)
+  // The surrounds the echo would have left are nowhere: the request was never made.
+  assert.equal(saved.verification.reason.includes('aaay'), false)
+  assert.equal(saved.verification.reason.includes('[header]'), false)
 })

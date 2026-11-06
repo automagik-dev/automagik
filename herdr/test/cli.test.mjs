@@ -97,10 +97,14 @@ const term = (address, { bot: b, argv = ["claude"], cwd = "/x", app = "claude-co
   foreground: { argv, cwd }, status: { app, state: status, ...(msg ? { msg } : {}) },
 });
 const runCall = (calls) => calls.find((c) => c[0] === "run");
-/** What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets (#213). */
+/**
+ * What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets
+ * (#213), and a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453).
+ */
 const agentWords = (run) => {
   const w = run.slice(run.indexOf("--") + 1);
-  return w[0] === "/usr/bin/env" && w[1]?.startsWith("PATH=") ? w.slice(2) : w;
+  const at = w[1] === "-u" && w[2] === "CLAUDE_CONFIG_DIR" ? 3 : 1;
+  return w[0] === "/usr/bin/env" && w[at]?.startsWith("PATH=") ? w.slice(at + 1) : w;
 };
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
@@ -592,7 +596,9 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   // the pane would get herdr-core's PATH, which may have no node for an npm agent.
   assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
     "--", "/usr/bin/env"]);
-  assert.ok(run[run.indexOf("--") + 2].startsWith("PATH="), run.join(" "));
+  // No claude-logins.json: the default login, the variable unset before PATH (#453).
+  assert.deepEqual(run.slice(run.indexOf("--") + 2, run.indexOf("--") + 4), ["-u", "CLAUDE_CONFIG_DIR"], run.join(" "));
+  assert.ok(run[run.indexOf("--") + 4].startsWith("PATH="), run.join(" "));
   assert.deepEqual(plain(agentWords(run)), ["claude", "--model", "claude-opus-5-5"]);
   const words = agentWords(run);
   assert.equal(words[1], "--append-system-prompt-file", "the briefing in its system prompt, right after the executable");
@@ -2029,6 +2035,76 @@ test("restart --tree: a helper that is itself a bot (started under the pane, the
   assert.deepEqual(ledgerOf(s).filter((x) => x.terminal === "t101").map((x) => [x.kind, x.botId, x.worktree]), [["seat", ID.dev, wt]]);
 });
 
+// ---- Claude logins (#453): claude-logins.json read at each launch, start, restart and --tree ----
+
+/** After `--` in an hc run: the env words before the program, and the program on. */
+const envAndProgram = (run) => {
+  const w = run.slice(run.indexOf("--") + 1);
+  const at = w.findIndex((x, i) => i > 0 && x !== "-u" && w[i - 1] !== "-u" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x));
+  return { env: w.slice(0, at), program: w.slice(at) };
+};
+
+test("start #453: login 2's folder by value after PATH; a bad record starts Claude on login A, warned; a codex bot never reads it", (t) => {
+  const f = team();
+  f.bots[1].agent = "codex";
+  const s = scene(t);
+  s.seed(f);
+  const two = join(s.home, ".claude-2");
+  mkdirSync(two);
+  const record = join(s.app, "claude-logins.json");
+  writeFileSync(record, JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  let { env, program } = envAndProgram(runsOf(s).at(-1));
+  assert.equal(env[0], "/usr/bin/env");
+  assert.match(env[1], /^PATH=/);
+  assert.deepEqual(env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
+  assert.equal(program[0], "claude");
+  assert.doesNotMatch(r.err, /claude-logins/);
+  assert.deepEqual(r.json().argv.slice(0, 1), ["claude"], "start's own argv is the agent's, as before");
+
+  rmSync(record);
+  mkdirSync(record); // unreadable: a folder in its place
+  const codex = s.cli(["start", "Captain", "--json"]);
+  assert.equal(codex.code, 0, codex.err);
+  ({ env, program } = envAndProgram(runsOf(s).at(-1)));
+  assert.equal(program[0], "codex");
+  assert.equal(env.length, 2, `codex: env and PATH only, no login words: ${env.join(" ")}`);
+  assert.doesNotMatch(codex.err, /claude-logins/, "a codex launch never reads or warns about the record");
+
+  const dev = s.cli(["start", "Dev", "--json"]);
+  assert.equal(dev.code, 0, dev.err);
+  ({ env, program } = envAndProgram(runsOf(s).at(-1)));
+  assert.deepEqual(env.slice(0, 3), ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR"], "login A, never a refusal");
+  assert.equal(program[0], "claude");
+  assert.match(dev.err, /claude-logins\.json: can't be read \(EISDIR\); started on the default login/);
+});
+
+test("restart --tree #453: the bot's own -u launch reused under login 2; a Claude helper gets the words, a codex helper none", (t) => {
+  const s = restartScene(t);
+  const two = join(s.home, ".claude-2");
+  mkdirSync(two);
+  writeFileSync(join(s.app, "claude-logins.json"), JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
+  const st = s.hcState();
+  // Genie was started on login A (its launch argv has -u): Restart strips it and reuses its command.
+  st.terminals[0].argv = ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "PATH=/old", "claude", "--model", "opus"];
+  const wa = join(s.root, "wa"), wb = join(s.root, "wb");
+  mkdirSync(wa);
+  mkdirSync(wb);
+  st.terminals.push({ ...term("t8", { parent: "t5", cwd: wa }), die_with_parent: true, argv: ["claude", "--model", "m"] });
+  st.terminals.push({ ...term("t9", { parent: "t5", cwd: wb, argv: ["codex", "-m", "g"], app: "codex" }), die_with_parent: true, argv: ["codex", "-m", "g"] });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const [bot, claude, codex] = runs(s).map(envAndProgram);
+  assert.deepEqual(bot.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(plain(bot.program).slice(0, 3), ["claude", "--model", "opus"], "its own command, never env");
+  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.equal(claude.program[0], "claude");
+  assert.equal(codex.program[0], "codex");
+  assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
+});
+
 // ---- restart --tree: shared folders and failure paths (#256 review) ----
 
 /** Genie's t5 with six codex helpers of one template in one folder (as t2p6's integrators), each with `labels(n)`. */
@@ -2425,4 +2501,270 @@ test("restart --save keeps bots.json's tabs (#230)", (t) => {
   const text = readFileSync(s.botsPath, "utf8");
   assert.equal(JSON.parse(text).bots[0].agent, "codex");
   assert.equal(text, indented(JSON.parse(text), "\t"));
+});
+
+// ---- import (#232): a running hc team as bots ----
+
+/** A seat: a live pane with an hc name, a squad label and an agent in front, run in `cwd`. */
+const seat = (address, name, squad, { argv = ["claude"], app = "claude-code", labels = {}, ...rest } = {}) => {
+  const x = term(address, { argv, app, ...rest });
+  x.name = name;
+  x.labels = { ...(squad ? { squad } : {}), ...labels };
+  return x;
+};
+/** Two squads, a pane with no agent in front, a worker, a finished pane and an unlabelled one. */
+const hcTeam = () => [
+  term("t1", { bot: ID.main }),
+  seat("t7", "runtime-cap", "runtime"),
+  seat("t8", "runtime-dev", "runtime", { argv: ["codex"], app: "codex" }),
+  seat("t9", "runtime-test", "runtime"),
+  seat("t10", "infra-lead", "infra", { labels: { role: "captain" } }),
+  seat("t11", "infra-review", "infra", { argv: ["codex"], app: "codex" }),
+  seat("t12", "runtime-shell", "runtime", { argv: ["zsh"], app: null }),
+  seat("t13", "runtime-helper", "runtime", { labels: { "worker.of": ID.main } }),
+  seat("t14", "runtime-gone", "runtime", { state: "finished" }),
+  seat("t20", "elsewhere", null),
+];
+/** A scene whose panes run in its project (a Claude seat's session must be the project's). */
+function importScene(t, terminals = hcTeam(), file = { version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Genie" })] }) {
+  const s = scene(t, { terminals });
+  const st = s.hcState();
+  for (const x of st.terminals) { x.cwd = s.project; x.foreground.cwd = s.project; }
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  s.seed(file);
+  return s;
+}
+const ledgerText = (s) => (existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "");
+// The calls that would start, move, end or type into a pane: the import never makes one.
+const paneMoves = (s) => s.calls().filter((c) => ["run", "kill", "send", "keys", "move", "interrupt"].includes(c[0]));
+
+test("import --from-hc: the dry run prints the plan, captains first, and changes nothing", (t) => {
+  const s = importScene(t);
+  const before = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["import", "--from-hc"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /\(dry run: nothing is changed\)/);
+  assert.match(r.out, /squad infra\n {4}t10 {2}create infra-lead \(captain by role=captain, reports to Genie, claude\), then attach\n {4}t11 {2}create infra-review \(member, lead infra-lead, rank reviewer, codex\)/);
+  assert.match(r.out, /squad runtime\n {4}t7 {2}create runtime-cap \(captain by name, reports to Genie, claude\), then attach\n {4}t8 {2}create runtime-dev \(member, lead runtime-cap, rank dev, codex\)/);
+  assert.match(r.out, /t9 {2}create runtime-test \(member, lead runtime-cap, rank tester, claude\)/);
+  assert.match(r.out, /skipped t12 \(runtime-shell\): no coding agent in front/);
+  assert.match(r.out, /skipped t13 \(runtime-helper\): a worker/);
+  assert.doesNotMatch(r.out, /runtime-gone|elsewhere/);
+  assert.match(r.out, /Run it with --apply: 5 seat\(s\) to import\./);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
+  // #486 L1: not even the attach ledger's one-time import (t1's bot= label) is written.
+  assert.equal(existsSync(attachFile(s.app)), false, "no attach ledger made");
+  assert.deepEqual(labelCalls(s.calls()), [], "no label");
+  assert.deepEqual(paneMoves(s), []);
+  const j = s.cli(["import", "--from-hc", "--json"]);
+  assert.equal(j.code, 0, j.err);
+  const plan = j.json();
+  assert.equal(plan.dryRun, true);
+  assert.deepEqual(plan.seats.map((x) => [x.terminal, x.name, x.action, x.captain, x.lead, x.rank, x.agent, x.id]), [
+    ["t10", "infra-lead", "create", true, "Genie", "captain", "claude", null],
+    ["t11", "infra-review", "create", false, "infra-lead", "reviewer", "codex", null],
+    ["t7", "runtime-cap", "create", true, "Genie", "captain", "claude", null],
+    ["t8", "runtime-dev", "create", false, "runtime-cap", "dev", "codex", null],
+    ["t9", "runtime-test", "create", false, "runtime-cap", "tester", "claude", null],
+  ]);
+  assert.deepEqual(plan.seats.filter((x) => x.captain).map((x) => [x.name, x.captainBy]), [["infra-lead", "role"], ["runtime-cap", "name"]]);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  assert.equal(existsSync(attachFile(s.app)), false);
+});
+
+test("import --from-hc --apply creates and attaches every seat; a second run changes nothing", (t) => {
+  const s = importScene(t);
+  const r = s.cli(["import", "--from-hc", "--apply"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^Import of the panes labelled squad= into .*:\n {2}squad infra/);
+  assert.match(r.out, /runtime-dev \(b-[a-z2-7]{10}\) is now t8, created\./);
+  const file = s.bots();
+  assert.deepEqual(checkBots(file), []);
+  const by = (n) => file.bots.find((b) => b.name === n);
+  for (const n of ["runtime-cap", "infra-lead"]) assert.deepEqual([by(n).kind, by(n).lead, by(n).rank], ["member", undefined, "captain"]);
+  assert.equal(by("runtime-dev").lead, by("runtime-cap").id);
+  assert.equal(by("runtime-dev").agent, "codex");
+  assert.equal(by("runtime-test").lead, by("runtime-cap").id);
+  assert.equal(by("infra-review").lead, by("infra-lead").id);
+  assert.equal(file.bots.length, 6);
+  // The ledger: one attach per seat, by attach, none moved; whois answers by it.
+  const rows = attachOf(s).filter((x) => x.by !== "import");
+  assert.deepEqual(rows.map((x) => [x.event, x.terminal, x.bot, x.reason ?? null]).sort(), [
+    ["attach", "t10", by("infra-lead").id, null], ["attach", "t11", by("infra-review").id, null],
+    ["attach", "t7", by("runtime-cap").id, null], ["attach", "t8", by("runtime-dev").id, null],
+    ["attach", "t9", by("runtime-test").id, null],
+  ]);
+  const whois = s.cli(["whois", "t8", "--json"]).json();
+  assert.equal(whois.bot, by("runtime-dev").id);
+  assert.deepEqual(Object.keys(whois).sort(), ["bot", "core", "created_ms", "project", "since", "terminal"], "bots.whois-json@1's keys");
+  assert.equal(labelsIn(s).t8.bot, by("runtime-dev").id);
+  assert.equal(labelsIn(s).t12.bot, undefined, "a skipped pane is left as it is");
+  assert.deepEqual(paneMoves(s), [], "no pane started, moved or ended");
+  // Again: the same plan, every seat already plays its bot; no file, ledger or label changes.
+  const botsBefore = readFileSync(s.botsPath, "utf8");
+  const ledgerBefore = ledgerText(s);
+  const labelsBefore = labelCalls(s.calls()).length;
+  const again = s.cli(["import", "--from-hc", "--apply"]);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /t8 {2}runtime-dev \(b-[a-z2-7]{10}\) already plays it: nothing to do/);
+  assert.match(again.out, /Nothing to do: every seat already plays its bot\./);
+  assert.equal(readFileSync(s.botsPath, "utf8"), botsBefore);
+  assert.equal(ledgerText(s), ledgerBefore);
+  assert.equal(labelCalls(s.calls()).length, labelsBefore);
+  assert.deepEqual(paneMoves(s), []);
+  // A run cut short leaves a bot defined but attached nowhere: the next run only attaches it.
+  assert.equal(s.cli(["detach", "runtime-dev"]).code, 0);
+  const resume = s.cli(["import", "--from-hc", "--apply", "--json"]);
+  assert.equal(resume.code, 0, resume.err);
+  const out = resume.json();
+  assert.deepEqual(out.seats.filter((x) => x.action !== "already").map((x) => [x.terminal, x.action, x.id]), [["t8", "attach", by("runtime-dev").id]]);
+  assert.deepEqual(out.attached.map((x) => [x.terminal, x.created]), [["t8", false]]);
+  assert.equal(s.bots().bots.length, 6, "nothing created twice");
+  assert.equal(s.cli(["whois", "t8", "--json"]).json().bot, by("runtime-dev").id);
+});
+
+test("import refuses the whole run on a conflict with an existing bot; nothing is written", (t) => {
+  const taken = term("t30", { bot: ID.dev });
+  const terminals = [...hcTeam(), taken, seat("t31", "loose-a", "loose"), seat("t32", "loose-b", "loose")];
+  const s = importScene(t, terminals, { version: 1, categories: [], bots: [
+    bot(ID.main, "main", { name: "Genie" }),
+    // runtime-dev plays t30, so its seat t8 can't be it; Genie's pane carries a squad label.
+    bot(ID.dev, "member", { name: "runtime-dev" }),
+    bot(ID.cap, "member", { name: "Spare" }),
+  ] });
+  // The ledger first (its one-time import from labels), then a bot= label on t11 by hand.
+  assert.equal(s.cli(["whois", "t30", "--json"]).json().bot, ID.dev);
+  const st = s.hcState();
+  st.terminals.find((x) => x.address === "t1").labels.squad = "runtime";
+  st.terminals.find((x) => x.address === "t11").labels.bot = ID.cap;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const before = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["import", "--from-hc", "--apply"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /import refused, nothing was changed: 4 conflict\(s\)/);
+  assert.match(r.out, /conflict: t1 already plays Genie \(b-aaaaaaaaaa\); the import never takes another bot's pane/);
+  assert.match(r.out, /conflict: runtime-dev \(b-cccccccccc\) already plays t30, not t8; the import never moves a bot/);
+  assert.match(r.out, /conflict: t11 \(infra-review\) is labelled bot=b-bbbbbbbbbb, Spare \(b-bbbbbbbbbb\)/);
+  assert.match(r.out, /conflict: Squad loose has no captain/);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  assert.deepEqual(attachOf(s).filter((x) => x.by !== "import"), []);
+  assert.deepEqual(labelCalls(s.calls()), []);
+  assert.deepEqual(paneMoves(s), []);
+  // The dry run says the same and exits 1 too.
+  assert.equal(s.cli(["import", "--from-hc"]).code, 1);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before);
+});
+
+test("import: needs --from-hc, works on this computer only, and refuses with no main bot", (t) => {
+  const s = importScene(t, hcTeam(), { version: 1, categories: [], bots: [] });
+  assert.equal(s.cli(["import"]).code, 2);
+  assert.match(s.cli(["import", "--from-hc", "--machine", "vps"]).err, /import works on this computer only/);
+  const r = s.cli(["import", "--from-hc", "--apply"]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /has no main bot; the import makes captains and members under it/);
+  assert.deepEqual(paneMoves(s), []);
+});
+
+/** The scene's hc state, changed by `edit` and written back; a pane added runs in the project. */
+const hcEdit = (s, edit) => {
+  const st = s.hcState();
+  edit(st.terminals, (x) => st.terminals.find((y) => y.address === x));
+  for (const x of st.terminals) { x.cwd = s.project; x.foreground.cwd = s.project; }
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+};
+
+test("import's dry run (#486 L1) sees the ledger's one-time import and ended panes, and writes neither", (t) => {
+  // t1 plays Genie by its bot= label only (no ledger yet), and carries a squad label.
+  const terminals = hcTeam();
+  terminals[0].labels = { ...terminals[0].labels, squad: "runtime" };
+  const s = importScene(t, terminals);
+  const r = s.cli(["import", "--from-hc"]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /conflict: t1 already plays Genie \(b-aaaaaaaaaa\)/);
+  assert.equal(existsSync(attachFile(s.app)), false, "the one-time import is worked out, not written");
+  hcEdit(s, (_, at) => { delete at("t1").labels.squad; });
+  assert.equal(s.cli(["import", "--from-hc", "--apply"]).code, 0);
+  // A seat hc no longer confirms: the dry run leaves its end row to a command that writes.
+  hcEdit(s, (_, at) => { at("t9").state = "finished"; });
+  const ledger = ledgerText(s);
+  const d = s.cli(["import", "--from-hc"]);
+  assert.equal(d.code, 0, d.err);
+  assert.equal(ledgerText(s), ledger, "no end row from the dry run");
+  s.cli(["whois", "t9", "--json"]);
+  assert.ok(attachOf(s).some((x) => x.event === "end" && x.terminal === "t9" && x.by === "sweep"), "whois writes it");
+});
+
+test("import refuses a defined bot of another agent than its pane, naming both (#486 L2)", (t) => {
+  const defined = (agent) => ({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Genie" }), bot(ID.cap, "member", { name: "runtime-cap", agent })] });
+  const s = importScene(t, hcTeam(), defined("codex"));
+  const before = readFileSync(s.botsPath, "utf8");
+  const r = s.cli(["import", "--from-hc", "--apply"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /import refused, nothing was changed: 2 conflict\(s\)/);
+  assert.match(r.out, /conflict: t7 \(runtime-cap\) runs claude, and runtime-cap \(b-bbbbbbbbbb\) is defined with agent codex; the import never attaches a bot to another agent's pane\. Edit it first \(automagik-herdr edit b-bbbbbbbbbb --agent claude\)/);
+  assert.match(r.out, /conflict: Squad runtime has no captain/, "its seat is out of the plan");
+  assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  assert.deepEqual(attachOf(s).filter((x) => x.by !== "import"), []);
+  assert.deepEqual(labelCalls(s.calls()), []);
+  // The pane's agent: the bot is attached, the others made under it.
+  s.seed(defined("claude"));
+  const ok = s.cli(["import", "--from-hc", "--apply", "--json"]);
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual(ok.json().attached.filter((x) => x.terminal === "t7").map((x) => [x.id, x.created]), [[ID.cap, false]]);
+  assert.equal(s.bots().bots.find((b) => b.name === "runtime-dev").lead, ID.cap);
+  assert.deepEqual(paneMoves(s), []);
+});
+
+test("import's captain by name is the squad's name then -cap or -captain (#486 L3)", (t) => {
+  const s = importScene(t, [
+    term("t1", { bot: ID.main }),
+    seat("t7", "web-lead", "web"),
+    seat("t8", "escape-cap", "web"),
+    seat("t9", "cap", "web"),
+    seat("t10", "web-cap", "web", { labels: { role: "dev" } }),
+  ]);
+  const none = s.cli(["import", "--from-hc"]);
+  assert.equal(none.code, 1);
+  assert.match(none.out, /conflict: Squad web has no captain/);
+  hcEdit(s, (all) => { all.push(seat("t11", "Web_Captain", "web")); });
+  const byName = s.cli(["import", "--from-hc", "--json"]);
+  assert.equal(byName.code, 0, byName.err);
+  assert.deepEqual(byName.json().seats.map((x) => [x.terminal, x.captain, x.captainBy, x.lead, x.rank]), [
+    ["t11", true, "name", "Genie", "captain"],
+    ["t7", false, null, "Web_Captain", null],
+    ["t8", false, null, "Web_Captain", null],
+    ["t9", false, null, "Web_Captain", null],
+    ["t10", false, null, "Web_Captain", "dev"],
+  ]);
+  assert.match(s.cli(["import", "--from-hc"]).out, /t11 {2}create Web_Captain \(captain by name, reports to Genie, claude\)/);
+  hcEdit(s, (_, at) => { at("t11").name = "web-two"; at("t11").template = "web-cap"; });
+  const byTemplate = s.cli(["import", "--from-hc", "--json"]).json();
+  assert.deepEqual(byTemplate.seats.filter((x) => x.captain).map((x) => [x.terminal, x.captainBy]), [["t11", "template"]]);
+  assert.equal(existsSync(attachFile(s.app)), false);
+});
+
+test("import gives a seat already playing its bot its lost labels back, with no ledger row (#486 L5)", (t) => {
+  const s = importScene(t);
+  assert.equal(s.cli(["import", "--from-hc", "--apply"]).code, 0);
+  const want = labelsIn(s).t8;
+  hcEdit(s, (_, at) => { delete at("t8").labels.bot; delete at("t8").labels.role; });
+  const botsBefore = readFileSync(s.botsPath, "utf8");
+  const ledgerBefore = ledgerText(s);
+  const workersBefore = readFileSync(ledgerPath(s.app), "utf8");
+  const labelsBefore = labelCalls(s.calls()).length;
+  const dry = s.cli(["import", "--from-hc"]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, /t8 {2}runtime-dev \(b-[a-z2-7]{10}\) already plays it: its lost labels go back \(bot=b-[a-z2-7]{10} role=/);
+  assert.match(dry.out, /t9 {2}runtime-test \(b-[a-z2-7]{10}\) already plays it: nothing to do/);
+  assert.match(dry.out, /Run it with --apply: 1 seat\(s\) to import\./);
+  assert.equal(labelCalls(s.calls()).length, labelsBefore, "the dry run labels nothing");
+  const r = s.cli(["import", "--from-hc", "--apply", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json().attached.map((x) => [x.terminal, x.created, x.already]), [["t8", false, true]]);
+  assert.deepEqual(labelsIn(s).t8, want);
+  assert.equal(readFileSync(s.botsPath, "utf8"), botsBefore);
+  assert.equal(ledgerText(s), ledgerBefore, "no attach row");
+  assert.equal(readFileSync(ledgerPath(s.app), "utf8"), workersBefore, "no workers-ledger row");
+  assert.match(s.cli(["import", "--from-hc"]).out, /Nothing to do: every seat already plays its bot\./);
+  assert.deepEqual(paneMoves(s), []);
 });

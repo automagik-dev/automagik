@@ -270,19 +270,21 @@ test("migrate, then rollback: v0.2.0's folders, Cmd+V and main-agents come back;
   const pocket = treeSum(join(s.mods, "pocket-link"));
   const pack = amPack(s.root, "0.3.0");
   assert.equal(s.cli("install", "--from", pack, "--version", "0.3.0", "--adopt", "--setup").code, 0);
-  // Made under v0.3.0: a new binding to am-sidebar, a new state file and a layout block of its own.
+  // Made under v0.3.0: a new binding to am-sidebar, a new state file, and a layout block for a mod
+  // of the person's own, in neither pack (a block naming a mod the rollback takes away refuses it, #488).
   const keys = readJson(join(s.home, "keys.json"));
   keys.global["cmd-j"] = "am-sidebar.paste";
   writeJson(join(s.home, "keys.json"), keys);
   write(join(s.mods, "am-sidebar", ".state", "later.txt"), "later\n");
   const layout = readJson(join(s.home, "layouts", "main-agents.json"));
-  layout.children.unshift({ id: "extra", type: "block", content: { mod: "am-sidebar" } });
+  modFolder(join(s.mods, "my-panel"));
+  layout.children.unshift({ id: "extra", type: "block", content: { mod: "my-panel" } });
   writeJson(join(s.home, "layouts", "main-agents.json"), layout);
 
   const r = s.cli("rollback");
   assert.equal(r.code, 0, r.log);
   // The folders: spaces-agents with its state (and what was written since); the adopted ones back.
-  assert.deepEqual(readdirSync(s.mods).sort(), ["markdown-browser", "md-menu", "mod-manager", "pocket-link", "sidebar-chrome", "space-icon", "spaces-agents"]);
+  assert.deepEqual(readdirSync(s.mods).sort(), ["markdown-browser", "md-menu", "mod-manager", "my-panel", "pocket-link", "sidebar-chrome", "space-icon", "spaces-agents"]);
   assert.equal(read(join(s.mods, "spaces-agents", ".state", "later.txt")), "later\n");
   assert.equal(read(join(s.mods, "spaces-agents", "VERSION")), "0.2.0\n");
   assert.equal(read(join(s.mods, "sidebar-chrome", ".state", "rail.txt")), "rail\n");
@@ -297,10 +299,25 @@ test("migrate, then rollback: v0.2.0's folders, Cmd+V and main-agents come back;
   assert.equal(back["mod:am-markdown"], undefined);
   const restored = readJson(join(s.home, "layouts", "main-agents.json"));
   assert.equal(restored.terminal_menu, "md-menu");
-  assert.equal(restored.children[0].content.mod, "am-sidebar", "a block added since is the person's");
+  assert.equal(restored.children[0].content.mod, "my-panel", "a block added since is the person's");
   assert.deepEqual(restored.children[1].children.map((c) => c.content.mod), ["sidebar-chrome", "spaces-agents", "pocket-link"]);
   assert.ok(existsSync(join(s.state, "backup", `layouts-${today()}`, "journal.reverted.json")));
   assert.equal(treeSum(join(s.mods, "pocket-link")), pocket);
+});
+
+test("#488: a block added since naming a mod the rollback takes away refuses it, in a layout the migration edited too", (t) => {
+  const s = scratch(t);
+  ownerHome(s);
+  assert.equal(s.cli("install", "--from", amPack(s.root, "0.3.0"), "--version", "0.3.0", "--adopt", "--setup").code, 0);
+  const file = join(s.home, "layouts", "main-agents.json");
+  const layout = readJson(file);
+  layout.children.unshift({ id: "extra", type: "block", content: { mod: "am-sidebar" } });
+  writeJson(file, layout);
+  const before = { layout: read(file), mods: readdirSync(s.mods).sort(), record: read(join(s.state, "installed-by-install.sh")) };
+  const r = s.cli("rollback");
+  assert.notEqual(r.code, 0, r.log);
+  assert.match(r.out?.error ?? "", /^nothing rolled back: am-sidebar would leave mods\/, but the main-agents layout still names it/);
+  assert.deepEqual({ layout: read(file), mods: readdirSync(s.mods).sort(), record: read(join(s.state, "installed-by-install.sh")) }, before);
 });
 
 test("v0.2.0 home without --adopt: the person's mods and every reference to them stay; only the record's move", (t) => {

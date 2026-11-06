@@ -56,7 +56,10 @@ import {
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
-import { apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, strandedLayouts } from "./migrateHome.mjs";
+import {
+  apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, revertedLayouts, strandedLayouts,
+} from "./migrateHome.mjs";
+import { change } from "./layoutSafe.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
@@ -78,6 +81,7 @@ export const offDirOf = (modsDir) => join(dirname(resolve(modsDir)), "mods-disab
 const backupOf = (modsDir) => join(stateDirOf(modsDir), "backup");
 
 const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
+const isDir = (path) => { try { return statSync(path).isDirectory(); } catch { return false; } };
 const isLink = (path) => { try { return lstatSync(path).isSymbolicLink(); } catch { return false; } };
 const exists = (path) => { try { lstatSync(path); return true; } catch { return false; } };
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -376,21 +380,12 @@ function backupName(modsDir, mod) {
 }
 
 /**
- * Renames in order, journalled: on any failure every rename already done is reversed (the old
- * folders go back where they were) and the error is thrown. `rename` is injectable for tests.
+ * Renames in order, journalled (layoutSafe.mjs change(), which `options` reach): on any failure every
+ * rename already done is reversed (the old folders go back where they were) and the error is
+ * thrown. `rename` is injectable for tests.
  */
-function swapAll(moves, rename) {
-  const done = [];
-  try {
-    for (const [from, to] of moves) {
-      mkdirSync(dirname(to), { recursive: true });
-      rename(from, to);
-      done.push([from, to]);
-    }
-  } catch (error) {
-    for (const [from, to] of done.reverse()) renameSync(to, from);
-    throw error;
-  }
+function swapAll(modsDir, moves, rename, options = {}) {
+  return change(dirname(resolve(modsDir)), moves.map(([from, to]) => ({ op: "move", from, to, mkdir: true })), { ...options, modsDir, rename });
 }
 
 /**
@@ -597,24 +592,13 @@ export async function verifyInstall({ tgzPath, version, modsDir = defaultModsDir
 }
 
 /**
- * The layouts in <app home>/layouts/ (names, sorted) whose blocks name `mod` (release.js
- * layoutNeeds); an unreadable one names none. The pack's automagik.json counts only when placeLayout
- * would keep it: an unedited copy gets the release's.
+ * The pack's automagik.json in a scan of layouts/ for a mod a release retires counts only when
+ * placeLayout would keep it: an unedited copy gets the release's (layoutSafe.mjs change() `exclude`).
  */
-function layoutsShowing(modsDir, mod) {
-  const dir = join(dirname(resolve(modsDir)), "layouts");
+const replacedLayout = (modsDir) => {
   const ref = layoutRefOf(modsDir);
-  const replaced = (body) => sha256(body) === V020_LAYOUT_SHA256 || (isFile(ref) && body.equals(readFileSync(ref)));
-  let names = [];
-  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
-  return names.filter((n) => {
-    try {
-      const file = join(dir, n);
-      if (!isFile(file) || (n === basename(PACK_LAYOUT) && replaced(readFileSync(file)))) return false;
-      return layoutNeeds(JSON.parse(readFileSync(file, "utf8"))).blocks.has(mod);
-    } catch { return false; }
-  }).map((n) => n.slice(0, -".json".length));
-}
+  return (name, body) => name === basename(PACK_LAYOUT) && ((b) => sha256(b) === V020_LAYOUT_SHA256 || (isFile(ref) && b.equals(readFileSync(ref))))(body());
+};
 
 export async function applyUpdate({ tgzPath, version, sequence = null, modsDir = defaultModsDir(), adopt = false, repair = null, log = () => {}, rename = renameSync }) {
   if (typeof version !== "string" || version === "") throw new Error("applyUpdate needs the release's version");
@@ -757,30 +741,41 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     // moves the rest onto the new name. One switched off leaves (a layout naming it shows plain
     // Herdr already). A held mod's copy goes into the kept set too, so a rollback swaps it like any
     // folder and it stays in mods/ and the record. A repair moves none of them; a held one stays the record's.
+    const retiring = [];
     for (const m of owned) {
       if (folders.includes(m) || !packFolder(m)) continue;
       const at = placeOf(modsDir, m);
       if (!at) continue;
       if (repair) { record.mods.push(m); continue; }
       const renamed = own(RENAMES, m);
-      const renaming = folders.includes(renamed);
-      const showing = at !== join(modsDir, m) ? []
-        : renaming ? strandedLayouts(dirname(resolve(modsDir)), m, renamed).map((f) => basename(f, ".json")) : layoutsShowing(modsDir, m);
-      if (showing.length) {
-        plan.held.push(renaming ? { mod: m, renamed, layouts: showing } : { mod: m, layouts: showing });
-        record.mods.push(m);
-        continue;
-      }
+      retiring.push({ mod: m, at, renamed: folders.includes(renamed) ? renamed : null });
       moves.push([at, join(next, m)]);
-      plan.retired.push(m);
-      if (at !== join(modsDir, m)) keptOff.push(m);
     }
-    mkdirSync(modsDir, { recursive: true });
-    for (const h of plan.held) cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true });
-    const keep = [...plan.replaced, ...plan.retired, ...plan.held.map((h) => h.mod)];
-    const old = keep.length ? setAside(modsDir) : null;
+    // Held or retired, decided by change() before the swap: a folder in mods/ (one in mods-disabled/
+    // is never held) stays while a file in layouts/ names it, a rename's old one while
+    // strandedLayouts finds a layout the migration cannot move onto the new name.
+    const inMods = retiring.filter((r) => r.at === join(modsDir, r.mod));
+    let keep = [];
+    let old = null;
+    const prepare = ({ held }) => {
+      for (const r of retiring) {
+        const h = held.find((x) => x.mod === r.mod);
+        if (h) { plan.held.push(h); record.mods.push(r.mod); continue; }
+        plan.retired.push(r.mod);
+        if (r.at !== join(modsDir, r.mod)) keptOff.push(r.mod);
+      }
+      mkdirSync(modsDir, { recursive: true });
+      for (const h of plan.held) cpSync(join(modsDir, h.mod), join(next, h.mod), { recursive: true, verbatimSymlinks: true });
+      keep = [...plan.replaced, ...plan.retired, ...plan.held.map((h) => h.mod)];
+      old = keep.length ? setAside(modsDir) : null;
+    };
     try {
-      swapAll(moves, rename);
+      swapAll(modsDir, moves, rename, {
+        needed: "hold", mods: inMods.map((r) => r.mod), exclude: replacedLayout(modsDir), stranded: strandedLayouts, prepare,
+        renamed: Object.fromEntries(inMods.filter((r) => r.renamed).map((r) => [r.mod, r.renamed])),
+        // A mod that leaves while a layout that does not parse names it in its text: said (#489).
+        unknown: "warn", log,
+      });
     } catch (error) {
       restoreSet(modsDir, old);
       throw error;
@@ -840,6 +835,8 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   const next = freshPath(stateDirOf(modsDir), ".prev-next-");
   const moves = [];
   const out = [];
+  // Private paths carried into the kept set, once the layouts allow the rollback (change()'s prepare).
+  const carries = [];
   for (const m of set.mods) {
     const live = join(modsDir, m);
     if (!packFolder(m) || !exists(join(prev, m))) throw new Error(`the kept set lists ${m}, which is not there: nothing rolled back`);
@@ -853,12 +850,12 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
     const live = join(modsDir, m);
     const off = join(offDirOf(modsDir), m);
     if (exists(live)) {
-      carryPrivate(live, join(prev, m));
+      carries.push([live, join(prev, m)]);
       moves.push([live, join(next, m)]);
       out.push(m);
     } else if (owned.has(m) && exists(off) && !isLink(off)) {
       // Switched off: the kept copy comes back where it is, still off.
-      carryPrivate(off, join(prev, m));
+      carries.push([off, join(prev, m)]);
       moves.push([off, join(next, m)], [join(prev, m), off]);
       out.push(m);
       outOff.push(m);
@@ -871,7 +868,7 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
     } else {
       // Across the rename: the live twin's private paths go back with it (it leaves below).
       const twin = twinOf(m), twinLive = twin && join(modsDir, twin);
-      if (twin && owned.has(twin) && !set.mods.includes(twin) && exists(twinLive) && !isLink(twinLive)) carryPrivate(twinLive, join(prev, m));
+      if (twin && owned.has(twin) && !set.mods.includes(twin) && exists(twinLive) && !isLink(twinLive)) carries.push([twinLive, join(prev, m)]);
     }
     moves.push([join(prev, m), live]);
   }
@@ -886,15 +883,51 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   // The version rolled away from is never installed on its own again (auto-update waits for a
   // newer one). Recorded before the swap: a run that dies after it still leaves the skip; one
   // whose swap fails leaves that version installed, where the skip changes nothing.
-  if (/^\d+\.\d+\.\d+$/.test(record.version ?? "") && record.version !== UNRELEASED) {
+  const recordSkip = () => {
+    if (!/^\d+\.\d+\.\d+$/.test(record.version ?? "") || record.version === UNRELEASED) return;
     try { writeAutoHeld(modsDir, { skip: record.version }); } catch (error) {
       throw new Error(`the rollback could not be recorded in ${autoFileOf(modsDir)} (${error.message}): nothing rolled back`);
     }
-  }
+  };
   // The kept set's folders come back out of `prev`, which then holds only what stays behind
   // (.pack and anything unlisted): it is set aside, and removed only once the swap stands.
+  // Herdr is not asked (#488): a mod the rolled-to set lacks leaves mods/ only while no file in
+  // layouts/ names it, else nothing is rolled back (the skip, the private paths: none written).
+  // The pack's own unedited layout (the reference copy) does not count: restoreLayout gives it the
+  // kept set's, or, for a set kept before v0.9 (no layout kept), leaves it as the pack's own (a gap
+  // this guard does not close). An edited one counts. A layout that does not read is said, and the
+  // rollback goes on (fail open).
+  // Each layout is judged as it reads once revertRefs (below) has undone the migration's edits
+  // whose mod leaves: its `due`, worked out from the moves before they are done (a folder put
+  // back from backup/ counted as there, so fewer edits are undone, never more).
+  const packLayout = join(dirname(resolve(modsDir)), PACK_LAYOUT);
+  const after = new Set(exists(modsDir) ? readdirSync(modsDir) : []);
+  for (const [from, to] of moves) {
+    if (dirname(resolve(from)) === resolve(modsDir)) after.delete(basename(from));
+    if (dirname(resolve(to)) === resolve(modsDir)) after.add(basename(to));
+  }
+  for (const a of record.adopted) after.add(a.mod);
+  const leaving = (mod) => out.includes(mod) && !set.mods.includes(mod);
+  const due = (edit) => { const mod = editTarget(edit); return !mod || leaving(mod) || !after.has(mod); };
+  let afterRevert = new Map();
   try {
-    swapAll(moves, rename);
+    const journals = [...(record.migrated ?? [])].reverse().map((p) => join(stateDirOf(modsDir), p));
+    afterRevert = revertedLayouts(journals, { home: dirname(resolve(modsDir)), due });
+  } catch {}
+  const exclude = (name, body, mod) => {
+    const view = afterRevert.get(join(dirname(resolve(modsDir)), "layouts", name));
+    if (view && mod && !layoutNeeds(view).blocks.has(mod)) return true;
+    if (name !== basename(PACK_LAYOUT) || linkedLayout(packLayout) || !isFile(layoutRefOf(modsDir))) return false;
+    const had = body();
+    return !(keptLayout && had.equals(keptLayout)) && had.equals(readFileSync(layoutRefOf(modsDir)));
+  };
+  const prepare = () => {
+    recordSkip();
+    for (const [from, to] of carries) carryPrivate(from, to);
+  };
+  try {
+    const r = swapAll(modsDir, moves, rename, { needed: "refuse", unknown: "warn", then: "roll back", exclude, prepare, log });
+    if (r.refused) throw new Error(`nothing rolled back: ${r.refused}`);
   } catch (error) {
     rmSync(next, { recursive: true, force: true });
     throw error;
@@ -916,7 +949,7 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   for (const a of record.adopted) {
     const from = join(stateDirOf(modsDir), a.path), to = join(modsDir, a.mod);
     if (exists(to) || !exists(from) || isLink(from) || !dropped(a.mod)) { adopted.push(a); continue; }
-    try { renameSync(from, to); log(`put back mods/${a.mod} from ${a.path}`); } catch (error) {
+    try { change(dirname(resolve(modsDir)), [{ op: "move", from, to }]); log(`put back mods/${a.mod} from ${a.path}`); } catch (error) {
       warnings.push(`mods/${a.mod} stays in ${from} (${error.message})`);
       adopted.push(a);
     }
@@ -1333,12 +1366,14 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
   }
 }
 
-const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] [--auto] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v>  (each takes [--mods <dir>])";
+const USAGE = "usage: node update.mjs check | update [--check] [--json] | apply [--expect <v>] [--auto] | rollback | install --from <tgz> --version <v> [--sequence <n>] [--adopt] [--setup] | repair --from <tgz> --version <v> | pack-out --to <dir> [--layout <file>] [--move <folder>]...  (each takes [--mods <dir>])";
 const FLAGS = {
   check: [], apply: ["--expect", "--auto"], rollback: [], update: ["--check", "--json"], install: ["--from", "--version", "--sequence", "--adopt", "--setup"],
-  repair: ["--from", "--version"],
+  repair: ["--from", "--version"], "pack-out": ["--to", "--layout", "--move"],
 };
-const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence"]);
+const VALUED = new Set(["--mods", "--from", "--version", "--expect", "--sequence", "--to", "--layout", "--move"]);
+/** Flags given more than once, collected in order. */
+const REPEATED = new Set(["--move"]);
 
 /** Strict arguments: an unknown command or flag, or a flag missing its value, is a usage error before anything is read. */
 export function parseArgs(argv) {
@@ -1352,17 +1387,45 @@ export function parseArgs(argv) {
     if (VALUED.has(flag)) {
       const value = rest[++i];
       if (value === undefined || value === "" || value.startsWith("-")) throw usage();
-      opts[flag.slice(2)] = value;
+      if (REPEATED.has(flag)) (opts[flag.slice(2)] ??= []).push(value);
+      else opts[flag.slice(2)] = value;
     } else opts[flag.slice(2)] = true;
   }
   if ((command === "install" || command === "repair") && !(opts.from && opts.version)) throw usage();
+  if (command === "pack-out" && !opts.to) throw usage();
   if (opts.sequence !== undefined && !/^\d{1,15}$/.test(String(opts.sequence))) throw usage();
   return { command, opts };
+}
+
+/**
+ * install.sh --uninstall's removals, when Node is there (#448, #450): the pack's layout file
+ * (`layout`, in layouts/) and its folders (`move`, each in mods/ or mods-disabled/) leave together
+ * through layoutSafe.mjs change(), journalled: one that fails undoes the rest, and a layout file
+ * in a linked layouts/ (the person's folder) stays (`links: "hold-layouts"`). Each folder goes
+ * to `to`/<its name>, in the pack's state folder. install.sh asked the shown layout first, in its
+ * own words. Its lines: `removed <path>`, `moved <name>`, `left <path>`.
+ */
+export function packOut({ modsDir, to, layout = null, move = [] }) {
+  const mods = resolve(modsDir), home = dirname(mods), dest = resolve(to);
+  const off = join(home, "mods-disabled"), state = join(home, "automagik-herdr");
+  const bad = (what) => Object.assign(new Error(`pack-out: ${what}`), { usage: true });
+  if (dirname(dest) !== state || !isDir(dest)) throw bad(`--to must be a folder in ${state}`);
+  if (layout && (dirname(resolve(layout)) !== join(home, "layouts") || !layout.endsWith(".json"))) throw bad(`--layout must be a .json file in ${join(home, "layouts")}`);
+  for (const m of move) {
+    if (![mods, off].includes(dirname(resolve(m))) || !/^[a-z0-9-]+$/.test(basename(m))) throw bad(`--move must be a pack folder in ${mods} or ${off}`);
+  }
+  const ops = [...(layout ? [{ op: "remove", path: resolve(layout) }] : []), ...move.map((m) => ({ op: "move", from: resolve(m), to: join(dest, basename(m)) }))];
+  const r = change(home, ops, { modsDir: mods, links: "hold-layouts" });
+  const lines = [...r.left.map((p) => `left ${p}`)];
+  if (layout && !r.left.includes(resolve(layout))) lines.push(`removed ${resolve(layout)}`);
+  for (const m of move) if (!r.left.includes(resolve(m))) lines.push(`moved ${basename(m)}`);
+  return { text: lines.join("\n") };
 }
 
 async function main(argv) {
   const { command, opts } = parseArgs(argv);
   const modsDir = opts.mods ?? defaultModsDir();
+  if (command === "pack-out") return packOut({ modsDir, to: opts.to, layout: opts.layout ?? null, move: opts.move ?? [] });
   const log = (line) => process.stderr.write(`${line}\n`);
   // The hooks notice, last and tagged: install.sh prints the `notice: ` lines at the end of its run.
   const notice = (hooks) => { for (const line of hooksNotice(hooks)) log(`notice: ${line}`); };

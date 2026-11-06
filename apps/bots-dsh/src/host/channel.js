@@ -139,7 +139,21 @@ export function install(rt) {
     // plugin keeps, or the older omni.url on this row) whose DSH has only this plugin
     // learns where they went.
     channelsMoved: ctx.get?.('omniChannels') === undefined && (typeof rt.config?.omni?.url === 'string' || existsSync(join(rt.home, 'omni.json'))),
+    // Whether the channels plugin operates an Omni here. Then a Bot that operates it (every
+    // Main Bot, and the Omni Bot) works through Omni's tools and has no computer: that plugin
+    // takes DSH's shell and file tools from its Sessions (omni-channels-dsh grants.js
+    // operatesHere). Its runtime is its own child of this one, so it is read from the service.
+    omniLinked: omniLinked(),
   })
+  const omniLinked = () => {
+    const channels = ctx.get?.('omniChannels')
+    if (channels === undefined || channels === null) return false
+    try {
+      return Boolean(channels.omniNamed?.() ?? channels.config?.omni?.url)
+    } catch {
+      return false
+    }
+  }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()

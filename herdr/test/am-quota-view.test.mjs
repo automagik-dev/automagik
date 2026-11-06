@@ -94,25 +94,41 @@ test("running out with nowhere to go: amber, no button, and it says so", () => {
 });
 
 test("not managed: no record, a change outside the panel, or a record the proxy no longer has", () => {
-  const a = acct("ana", { provider: "claude", plan: null, win: "seven_day" });
-  const b = acct("bo", { provider: "claude", plan: null, win: "seven_day", resetH: 3 });
-  const base = { provider: "claude", accounts: [a, b], now: NOW, source: "lab" };
+  const a = acct("ana");
+  const b = acct("bo", { resetH: 3 });
+  const base = { provider: "codex", accounts: [a, b], now: NOW, source: "lab" };
   const none = toolView({ ...base, record: null });
   assert.equal(none.state, "new");
   assert.equal(none.dot, "none");
   assert.equal(none.headline, "No account from lab");
   assert.deepEqual(none.pill, { text: "Not managed", tone: "none" });
-  assert.match(none.sentence.text, /Claude Code on this Mac uses a login the panel didn't install/);
+  assert.match(none.sentence.text, /Codex on this Mac uses a login the panel didn't install/);
   assert.equal(none.primary.label, "Use bo@example.com");
   assert.equal(none.others.length, 2, "every account is listed");
 
   const changed = toolView({ ...base, record: rec(a), badge: { text: "changed outside this panel" } });
   assert.equal(changed.state, "new");
   assert.equal(changed.headline, "Changed outside this panel");
-  const gone = toolView({ ...base, record: { name: "claude-removed.json", fingerprint: "fp" }, badge: IN_USE });
+  const gone = toolView({ ...base, record: { name: "codex-removed.json", fingerprint: "fp" }, badge: IN_USE });
   assert.equal(gone.headline, "Not on lab any more");
   const removed = toolView({ ...base, record: rec(a), badge: { text: "no longer installed" } });
   assert.equal(removed.headline, "No login on this Mac");
+});
+
+test("Claude, until it lists the logins on this Mac (#453): the proxy's usage, no Use and no Switch, even with a record", () => {
+  const a = acct("ana", { provider: "claude", plan: null, win: "seven_day", used: 95 });
+  const b = acct("bo", { provider: "claude", plan: null, win: "seven_day", resetH: 3 });
+  for (const record of [null, rec(a)]) {
+    const v = toolView({ provider: "claude", accounts: [a, b], record, badge: record ? IN_USE : null, now: NOW, source: "lab" });
+    assert.equal(v.state, "new");
+    assert.equal(v.current, null, "no proxy account is ever Claude's account in use");
+    assert.equal(v.primary, null, "no Use or Switch button");
+    assert.equal(v.headline, "No switch for now");
+    assert.match(v.sentence.text, /keeps the login it has on this Mac/);
+    assert.match(v.sentence.text, /no longer installs Claude Code logins from lab/);
+    assert.equal(v.others.length, 2, "both listed, for their usage");
+    assert.ok(v.others.every((r) => r.switchable === false), "no row offers a switch");
+  }
 });
 
 test("an account in use with no window, or one that needs a sign-in, says so honestly", () => {

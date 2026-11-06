@@ -9161,6 +9161,7 @@ var PT_BR = {
   "Your companion": "Sua companhia",
   "Grow your team": "Aumente sua equipe",
   "{name} leads. Who comes along?": "{name} lidera. Quem vem junto?",
+  "Code work goes to a Bot with Computer.": "Trabalho de código vai para um Bot com Computador.",
   "Bringing them in…": "Trazendo a equipe…",
   "Omni is moving in…": "O Omni está se mudando…",
   "Omni is waking…": "O Omni está acordando…",
@@ -11245,6 +11246,13 @@ var genieSpeechOf = (phase) => ({
   restart: t("Genie is installed. Restart DSH to wake it."),
   failed: t("Genie could not be installed here.")
 })[phase];
+var TeamLede = ({ name }) => (0, import_react5.createElement)(
+  "p",
+  { className: "oai-lede" },
+  t("{name} leads. Who comes along?", { name }),
+  (0, import_react5.createElement)("br"),
+  (0, import_react5.createElement)("span", { className: "oai-lede-rule" }, t("Code work goes to a Bot with Computer."))
+);
 function TeamStep(props) {
   const state = useGate(props);
   const finish2 = useFinish(props);
@@ -11327,7 +11335,7 @@ function TeamStep(props) {
       glitching,
       wide: true
     },
-    (0, import_react5.createElement)("p", { className: "oai-lede" }, t("{name} leads. Who comes along?", { name })),
+    (0, import_react5.createElement)(TeamLede, { name }),
     (0, import_react5.createElement)(
       "div",
       { className: "oai-select" },

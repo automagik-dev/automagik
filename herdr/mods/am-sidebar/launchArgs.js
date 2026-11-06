@@ -4,6 +4,7 @@
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
 import { ENV } from "./workers.js";
+import { envWords } from "./logins.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
@@ -46,8 +47,10 @@ export function startRefusal(file, botId) {
  * With `path`, the agent runs as `/usr/bin/env PATH=<path> <argv>`, as a worker does
  * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56). `env`: more
  * variables the agent starts with, after PATH (an agent that takes its briefing that way, models.js).
+ * `login`: a Claude launch's login words (logins.js chooseLogin): `-u CLAUDE_CONFIG_DIR` first,
+ * or `CLAUDE_CONFIG_DIR=<dir>` last.
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {} }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [] }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -55,7 +58,7 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  const vars = [...(path ? [`PATH=${path}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)];
+  const vars = envWords([...(path ? [`PATH=${path}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
   return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...argv];
 }
 

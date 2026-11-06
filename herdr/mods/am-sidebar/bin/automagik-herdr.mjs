@@ -34,14 +34,15 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   writesWorktree } from "../workers.js";
-import { carriedLabels, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan, sharedFresh,
-  claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
+  sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
+import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -138,6 +139,26 @@ const local = (address) => typeof address === "string" && !address.includes("/")
 
 function appHome(env = process.env) { return (env.HERDR_APP_HOME || `${homedir()}/.config/herdr-app`).replace(/\/+$/, ""); }
 const home = () => process.env.HOME || homedir();
+/** The agent a launch argv runs: a `sh -c <command>` (a template's) by its command, else by its program. */
+const launchAgent = (argv, agents = agentTable()) => (Array.isArray(argv) && /(^|\/)(ba|z|da)?sh$/.test(argv[0] ?? "") && argv[1] === "-c"
+  ? templateAgent(argv[2], agents) : agentKeyOfArgv(argv, agents));
+/**
+ * The Claude login words for a local launch of `argv` (#453, logins.js): read from the app home's
+ * claude-logins.json at this launch, only when `argv` runs Claude Code; [] for any other agent,
+ * which never reads the record. A record that can't be followed gives login A's words and its
+ * warning (pushed on `warnings`), never a refusal.
+ */
+function claudeLogin(argv, warnings = []) {
+  if (launchAgent(argv) !== "claude") return [];
+  let chosen;
+  try {
+    chosen = chooseLogin(appHome(), { read: (p) => readFileSync(p, "utf8"), realpath: realpathSync, isDir: (p) => statSync(p).isDirectory(), home: home() });
+  } catch (e) {
+    chosen = { words: ["-u", "CLAUDE_CONFIG_DIR"], warning: `claude-logins.json: ${e?.code ?? "error"}; started on the default login` };
+  }
+  if (chosen.warning) warnings.push(chosen.warning);
+  return chosen.words;
+}
 const modelIo = () => ({ home: home(), read: (p) => { try { return readText(p); } catch { return null; } } });
 /** The agents Herdr can start: its shipped table with the app home's programs.json applied. */
 const agentTable = () => withOverrides(readText(`${appHome()}/programs.json`));
@@ -573,6 +594,17 @@ async function projectDefining(botId, folder) {
  * that defines the bot. The file is created, even empty, so it happens once.
  */
 async function importLabels(path) {
+  const found = await labelRows();
+  try {
+    await withLockAsync(ledgerLock(path), async () => {
+      if (existsSync(path)) return; // another CLI imported first
+      appendAttach(path, found, "ax");
+    });
+  } catch (e) { throw asCliError(e); }
+}
+
+/** The one-time import's rows (importLabels), worked out and not written. */
+async function labelRows() {
   const core = await coreId();
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
   // One terminal hc fails to answer for is left out, never the whole import.
@@ -588,12 +620,7 @@ async function importLabels(path) {
     const project = await projectDefining(bot, pick.foreground?.cwd ?? pick.cwd);
     if (project) found.push(attachRow({ event: "attach", bot, project, terminal: pick.address, core, created_ms: pick.created_ms, by: "import" }));
   }
-  try {
-    await withLockAsync(ledgerLock(path), async () => {
-      if (existsSync(path)) return; // another CLI imported first
-      appendAttach(path, found, "ax");
-    });
-  } catch (e) { throw asCliError(e); }
+  return found;
 }
 
 /** End rows (by "sweep") for bindings hc no longer confirms, under the lock; a failure only warns. */
@@ -614,11 +641,14 @@ async function sweep(path, ended) {
 /**
  * The ledger's rows, the one-time import done first when there is no file. With no app home
  * (Herdr not set up here) nothing is imported or made: no rows, until a start or attach.
+ * readOnly (the import's dry run, #486): the one-time import's rows as it would write them,
+ * and no file made.
  */
-async function ledgerRows(path) {
+async function ledgerRows(path, readOnly = false) {
   const rows = readAttachFile(path);
   if (rows !== null) return rows;
   if (!existsSync(appHome())) return [];
+  if (readOnly) return labelRows();
   await importLabels(path);
   return readAttachFile(path) ?? [];
 }
@@ -629,16 +659,18 @@ let viewOnce = null;
  * byTerminal: Map address -> { binding, get } }. Every binding is checked with `hc get`;
  * one hc no longer confirms (finished, gone, or its id reused) is left out, and its end row
  * written. Once per run: commands that write the ledger decide again under its lock.
+ * readOnly (the import's dry run, #486, the run's first caller): the same view, with no
+ * one-time import written and no end row; the run's later calls get that view too.
  */
-export function attachView() {
+export function attachView({ readOnly = false } = {}) {
   viewOnce ??= (async () => {
     const path = attachPath(appHome());
-    const rows = await ledgerRows(path);
+    const rows = await ledgerRows(path, readOnly);
     const core = await coreId();
     const machines = await machinesNow();
     const { byKey } = foldAttach(rows);
     const { live, ended, unknown } = await confirmBindings([...byKey.values()], core, lookup, UNANSWERED, machines);
-    if (ended.length) await sweep(path, ended);
+    if (ended.length && !readOnly) await sweep(path, ended);
     // live: this computer's bindings by bot. liveAt / unknownAt: every binding by place and bot
     // (atKey; a linked machine's place is its core id, and a project's checkouts on two
     // machines share their bots' ids). byTerminal: by hc address ("lab/t8" for a machine's).
@@ -836,6 +868,7 @@ const OPTIONS = {
   fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" }, "fresh-shared": { type: "boolean" },
   cwd: { type: "string" },
   machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
+  "from-hc": { type: "boolean" }, "squad-label": { type: "string" }, apply: { type: "boolean" },
 };
 
 export const USAGE = `automagik-herdr: Automagik Herdr's bots and updates from the command line
@@ -899,6 +932,23 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   attach <bot> <terminal> [--move]   tie a running pane to the bot; a bot attached elsewhere
                                 is refused unless --move (its old pane is detached first)
   detach <bot>                  untie the bot from its pane (a removed bot: by its id)
+  import --from-hc [--squad-label L] [--apply]
+                                a running hc team as bots: each live pane on this computer
+                                labelled L= (default: squad) with an hc name and an agent in front
+                                becomes a bot of that name, attached to that pane. In each squad
+                                the captain (the pane labelled role=captain, else the one whose
+                                name or template is the squad's name then -cap or -captain, as
+                                web-cap) reports to the main bot and the others to their
+                                captain; a member's rank is its role= label when that is a rank,
+                                else its name's last word (dev, test, review, fix, pm). Prints
+                                the plan and writes nothing, the attach ledger included, unless
+                                --apply, which prints it, then creates and attaches. A pane
+                                already playing its bot only gets its lost labels back, so a
+                                second run changes nothing. Any conflict (a pane playing or
+                                labelled for another bot, a bot of that name attached
+                                elsewhere, under another lead or of another agent, a squad
+                                without one captain) refuses the whole import. Never starts,
+                                moves or restarts a pane
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
   history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
                                 starts, sessions (and the newest transcript) and workers
@@ -1932,8 +1982,10 @@ async function launchSeat(project, bot, over = {}) {
     const seen = await windowSpaces();
     place = spaceOnly(await windowPlace(key, await placementOf(key, seen), seen));
   }
+  // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
+  const login = claudeLogin(argv, briefed.warnings);
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env: briefed.env });
+    env: briefed.env, login });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
@@ -2328,7 +2380,8 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  * row isn't copied by hand. { line, notes }.
  */
 function byHand(p, parent) {
-  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path });
+  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
+    login: claudeLogin(p.argv) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
@@ -2367,7 +2420,10 @@ async function rerunHelpers(plans, parent, say) {
     }
     const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
     const name = p.name && !taken.has(p.name) ? p.name : null;
-    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path }));
+    const loginWarnings = [];
+    const login = claudeLogin(p.argv, loginWarnings);
+    for (const w of loginWarnings) say(`${who}: ${w}`);
+    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path, login }));
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
@@ -2877,6 +2933,252 @@ async function cmdDetach(opts, [ref]) {
     : from ? `${name} detached from ${from}.` : `${name} has no pane on this computer.`;
 }
 
+// ---- import (#232): a running hc team as bots ----
+
+// The squad's captain by its hc name or template, when no seat of the squad is labelled
+// role=captain: the squad's name, a separator, then cap or captain (web-cap, web_captain), so
+// escape-cap is no captain of web, and a bare "cap" none at all (#486).
+const CAPTAIN_NAME = /^(.+)[-_.](cap|captain)$/i;
+// A member's rank by its name's last word, when its pane's role= label is not a rank.
+const RANK_WORDS = { dev: "dev", test: "tester", tester: "tester", qa: "tester", review: "reviewer", reviewer: "reviewer",
+  fix: "fixer", fixer: "fixer", pm: "pm", int: "integrator", integrator: "integrator" };
+const byTerminal = (a, b) => a.terminal.localeCompare(b.terminal, undefined, { numeric: true });
+
+/** How a seat is its squad's captain by name (#486): "name", "template" or null; never a seat whose role= is another rank. */
+function captainByName(squad, seat) {
+  const role = seat.get.labels?.role;
+  if (RANKS.includes(role) && role !== "captain") return null;
+  const of = (n) => typeof n === "string" && CAPTAIN_NAME.exec(n.trim())?.[1].toLowerCase() === squad.toLowerCase();
+  return of(seat.name) ? "name" : of(seat.get.template) ? "template" : null;
+}
+
+function seatRank(get, name) {
+  const role = get.labels?.role;
+  if (RANKS.includes(role) && role !== "captain") return role;
+  return RANK_WORDS[name.toLowerCase().split(/[-_.]/).pop()] ?? null;
+}
+
+/**
+ * The import's plan (#232): { seats, skipped, conflicts, raw }, from this computer's live panes
+ * labelled `label`=. A seat is one with an hc name and an agent in front: "already" (it plays the
+ * bot of its name, by the attach ledger), "attach" (that bot is defined and attached nowhere, as
+ * a run cut short before its attaches leaves it) or "create" (then attach). Captains first, every
+ * new bot is checked as create checks it against the file as the plan grows it; `raw` is that
+ * file. Nothing is written here; readOnly (the dry run, #486) keeps the ledger view from
+ * writing too (attachView).
+ */
+async function importPlan(project, label, { readOnly = false } = {}) {
+  const { file } = project;
+  const main = mainBotOf(file);
+  const conflicts = [];
+  const skipped = [];
+  if (!main) {
+    conflicts.push(`${under(project.key, BOTS_PATH)} has no main bot; the import makes captains and members under it. `
+      + "Create it first: automagik-herdr create --name N --agent A");
+  }
+  const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
+  const gets = (await Promise.all(rows.map(async (r) => {
+    const g = await hcLookup(r.address);
+    return g ? { ...g, address: g.address ?? r.address, name: g.name ?? r.name ?? null } : null;
+  }))).filter((g) => g?.state === "live" && local(g.address) && typeof g.labels?.[label] === "string" && g.labels[label].trim());
+  const view = await attachView({ readOnly });
+  const agents = agentTable();
+  const botName = (id) => { const b = file.bots.find((x) => x.id === id); return b ? `${b.name} (${b.id})` : `bot ${id}`; };
+  const seats = [];
+  for (const get of gets) {
+    const terminal = get.address;
+    const name = typeof get.name === "string" && get.name.trim() && get.name !== terminal ? get.name.trim() : null;
+    const seat = { squad: get.labels[label].trim(), terminal, name, agent: null, rank: null, captain: false, action: "create", id: null, get };
+    const named = name ? file.bots.find((b) => b.name.toLowerCase() === name.toLowerCase()) ?? null : null;
+    const at = `${terminal}${name ? ` (${name})` : ""}`;
+    const held = view.byTerminal.get(terminal)?.binding ?? null;
+    if (held) {
+      if (named && held.bot === named.id) {
+        // Its labels as attach sets them (#486): lost ones come back by attaching again, which
+        // writes no ledger row for a pane that already plays its bot.
+        const have = get.labels ?? {};
+        const lead = leadIdOf(file, named.id);
+        let leadRows = [];
+        try { leadRows = lead ? await liveRows(lead) : []; } catch { leadRows = []; }
+        const relabel = [...(have[BOT_LABEL] !== named.id ? [`${BOT_LABEL}=${named.id}`] : []),
+          ...attachWords(file, named.id, { ...have, [BOT_LABEL]: named.id }, leadRows)];
+        seats.push({ ...seat, action: "already", id: named.id, bot: named, relabel });
+        continue;
+      }
+      conflicts.push(`${at} already plays ${botName(held.bot)}; the import never takes another bot's pane. Detach that bot `
+        + `first, or take ${label}= off the pane (hc label ${terminal} ${label}=).`);
+      continue;
+    }
+    if (get.labels[WORKER_OF_LABEL]) { skipped.push({ terminal, name, why: "a worker (worker.of), not a seat" }); continue; }
+    if (!name) { skipped.push({ terminal, name, why: "no hc name to name its bot by" }); continue; }
+    const claude = isClaude({ report: { app: get.status?.app } }, get) || agentKeyOfArgv(get.foreground?.argv) === "claude";
+    const agent = agentKeyOfArgv(get.foreground?.argv, agents) ?? (claude ? "claude" : null);
+    if (!agent) { skipped.push({ terminal, name, why: "no coding agent in front" }); continue; }
+    const tagged = get.labels[BOT_LABEL];
+    if (tagged && tagged !== named?.id && file.bots.some((b) => b.id === tagged)) {
+      conflicts.push(`${at} is labelled ${BOT_LABEL}=${tagged}, ${botName(tagged)}; the import never takes another bot's pane.`);
+      continue;
+    }
+    if (claude) {
+      const cwd = get.foreground?.cwd;
+      if (!cwd) { conflicts.push(`Can't read where ${at}'s Claude session runs (hc get ${terminal}).`); continue; }
+      const refusal = attachRefusal({ botName: name, projectKey: project.key, sessionFolder: cwd, sessionKey: await keyOf(cwd) });
+      if (refusal) { conflicts.push(`${at}: ${refusal}`); continue; }
+    }
+    if (named) {
+      const there = liveFor(view, named.id, project);
+      if (there) {
+        conflicts.push(`${botName(named.id)} already plays ${there.binding.terminal}, not ${terminal}; the import never moves a bot. `
+          + `Detach it first (automagik-herdr detach ${named.id}), or give the seat another hc name.`);
+        continue;
+      }
+      if (named.kind === "main" || named.planned) {
+        conflicts.push(`${at}: ${botName(named.id)} is ${named.kind === "main" ? "the main bot" : "planned"}, so the import can't make it a squad's seat.`);
+        continue;
+      }
+      if (named.agent && named.agent !== agent) {
+        conflicts.push(`${at} runs ${agent}, and ${botName(named.id)} is defined with agent ${named.agent}; the import never attaches `
+          + `a bot to another agent's pane. Edit it first (automagik-herdr edit ${named.id} --agent ${agent}), or give the seat another hc name.`);
+        continue;
+      }
+      seats.push({ ...seat, agent, action: "attach", id: named.id, bot: named });
+      continue;
+    }
+    seats.push({ ...seat, agent });
+  }
+  const byName = new Map();
+  for (const s of seats) byName.set(s.name.toLowerCase(), [...(byName.get(s.name.toLowerCase()) ?? []), s.terminal]);
+  for (const [n, ts] of byName) if (ts.length > 1) conflicts.push(`${ts.join(", ")} share the hc name "${n}"; names pick bots, so rename all but one.`);
+  // Each squad: its one captain first, then its members by terminal.
+  const ordered = [];
+  const squads = new Map();
+  for (const s of seats) squads.set(s.squad, [...(squads.get(s.squad) ?? []), s]);
+  for (const squad of [...squads.keys()].sort()) {
+    const all = squads.get(squad).sort(byTerminal);
+    const labelled = all.filter((s) => s.get.labels?.role === "captain");
+    const caps = labelled.length ? labelled : all.filter((s) => captainByName(squad, s));
+    const by = labelled.length ? "role" : caps.length === 1 ? captainByName(squad, caps[0]) : null;
+    if (caps.length !== 1) {
+      conflicts.push(caps.length
+        ? `Squad ${squad} has ${caps.length} captains (${caps.map((s) => `${s.terminal} ${s.name}`).join(", ")}); keep role=captain on one: hc label <terminal> role=captain.`
+        : `Squad ${squad} has no captain: label one pane role=captain (hc label <terminal> role=captain), or name it ${squad}-cap.`);
+      continue;
+    }
+    for (const s of [caps[0], ...all.filter((x) => x !== caps[0])]) {
+      s.captain = s === caps[0];
+      s.captainBy = s.captain ? by : null;
+      s.lead = s.captain ? main : null;
+      s.rank = s.captain ? "captain" : seatRank(s.get, s.name);
+      if (!s.captain) s.leadSeat = caps[0];
+      ordered.push(s);
+    }
+  }
+  if (!main) return { seats: ordered, skipped, conflicts, raw: project.raw };
+  // A defined bot is attached only where the plan would have put it: same lead.
+  let raw = project.raw;
+  let grown = file;
+  for (const s of ordered) {
+    const leadId = s.captain ? main.id : s.leadSeat.id;
+    if (s.action === "attach") {
+      const has = s.bot.lead ?? main.id;
+      if (!leadId || has !== leadId) {
+        conflicts.push(`${s.terminal} (${s.name}): ${botName(s.bot.id)} is defined with lead ${botName(has)}, and the import would `
+          + `make it ${s.captain ? `the ${s.squad} captain, under ${botName(main.id)}` : `report to ${s.leadSeat.name}`}. Edit it first.`);
+      }
+      continue;
+    }
+    if (s.action !== "create") continue;
+    if (!leadId) continue; // its captain is refused above
+    const id = newBotId();
+    try {
+      const entry = entryFrom({ name: s.name, agent: s.agent, rank: s.rank ?? undefined, lead: s.captain ? undefined : leadId,
+        role: s.captain ? `Captain of the ${s.squad} squad` : `Member of the ${s.squad} squad` }, { id, kind: "member" }, { file: grown }, { creating: true });
+      raw = applyBotEdit(raw, entry);
+      grown = parseBots(JSON.stringify(raw)).file;
+      s.id = id;
+    } catch (e) {
+      if (!(e instanceof CliError)) throw e;
+      conflicts.push(`${s.terminal} (${s.name}): ${e.message}`);
+    }
+  }
+  return { seats: ordered, skipped, conflicts, raw };
+}
+
+/** A seat as the plan prints it; a new bot's id only once it is made. captainBy: "role", "name", "template" or null. */
+const seatOut = (s, made) => ({ squad: s.squad, terminal: s.terminal, name: s.name, action: s.action, captain: s.captain, captainBy: s.captainBy ?? null,
+  lead: s.captain ? (s.lead?.name ?? null) : s.leadSeat.name, rank: s.action === "create" ? s.rank : (s.bot.rank ?? null),
+  agent: s.agent ?? s.bot?.agent ?? null, id: s.action === "create" && !made ? null : s.id, relabel: s.relabel ?? [] });
+/** A seat --apply attaches: every one but a seat already playing its bot with all its labels (#486). */
+const importTodo = (s) => s.action !== "already" || s.relabel.length > 0;
+const CAPTAIN_BY = { role: " by role=captain", name: " by name", template: " by template" };
+
+function importText(plan, { key, label, apply }) {
+  const lines = [`Import of the panes labelled ${label}= into ${key}${apply ? "" : " (dry run: nothing is changed)"}:`];
+  if (!plan.seats.length && !plan.skipped.length && !plan.conflicts.length) lines.push(`  No live pane on this computer is labelled ${label}=.`);
+  let squad = null;
+  for (const s of plan.seats) {
+    if (s.squad !== squad) { squad = s.squad; lines.push(`  squad ${squad}`); }
+    const who = s.captain ? `captain${CAPTAIN_BY[s.captainBy] ?? ""}, reports to ${s.lead?.name ?? "the main bot"}` : `member, lead ${s.leadSeat.name}${s.rank ? `, rank ${s.rank}` : ""}`;
+    lines.push(`    ${s.terminal}  ${s.action === "already" ? `${s.name} (${s.id}) already plays it: ${s.relabel.length ? `its lost labels go back (${s.relabel.join(" ")})` : "nothing to do"}`
+      : s.action === "attach" ? `attach ${s.name} (${s.id}), defined already`
+        : `create ${s.name} (${who}, ${s.agent}), then attach`}`);
+  }
+  for (const k of plan.skipped) lines.push(`  skipped ${k.terminal}${k.name ? ` (${k.name})` : ""}: ${k.why}`);
+  for (const c of plan.conflicts) lines.push(`  conflict: ${c}`);
+  const todo = plan.seats.filter(importTodo).length;
+  if (plan.conflicts.length) lines.push(`Nothing was changed: ${plan.conflicts.length} conflict(s) refuse the import.`);
+  else if (!todo) lines.push("Nothing to do: every seat already plays its bot.");
+  else if (!apply) lines.push(`Run it with --apply: ${todo} seat(s) to import.`);
+  return lines.join("\n");
+}
+
+async function cmdImport(opts) {
+  if (!opts["from-hc"]) throw new CliError("import needs its source: automagik-herdr import --from-hc [--squad-label L] [--apply].", 2);
+  const label = opts["squad-label"] ?? "squad";
+  if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new CliError(`--squad-label: "${label}" isn't an hc label key.`, 2);
+  const project = await editProjectFor(opts);
+  if (project.dir !== project.key) {
+    throw new CliError(`Run the import in ${project.key}: attach reads ${under(project.key, BOTS_PATH)}, and from this worktree the bots `
+      + `would go to ${under(project.dir, BOTS_PATH)}. Nothing was changed.`);
+  }
+  const plan = await importPlan(project, label, { readOnly: !opts.apply });
+  const apply = Boolean(opts.apply) && !plan.conflicts.length;
+  const todo = plan.seats.filter(importTodo);
+  const out = { project: project.key, squadLabel: label, dryRun: !opts.apply, seats: plan.seats.map((s) => seatOut(s, false)),
+    skipped: plan.skipped, conflicts: plan.conflicts, attached: [], stopped: null };
+  if (plan.conflicts.length) {
+    exitAfter.code = 1;
+    report([`import refused, nothing was changed: ${plan.conflicts.length} conflict(s).`]);
+  }
+  if (!opts.json) process.stdout.write(`${importText(plan, { key: project.key, label, apply: Boolean(opts.apply) })}\n`);
+  if (apply && todo.length) {
+    // One write for every new bot, then one attach per seat, captains first: attach checks
+    // again under the ledger's lock and never moves a bot (no --move).
+    if (todo.some((s) => s.action === "create")) {
+      await saveProject(project, plan.raw);
+      await relabelAfter(project.file, plan.raw);
+    }
+    for (const s of todo) {
+      try {
+        const r = await cmdAttach({ project: opts.project, json: true }, [s.id, s.terminal]);
+        out.attached.push({ id: s.id, name: s.name, terminal: s.terminal, created: s.action === "create", already: r.already, warnings: r.warnings });
+        const now = s.action === "already" ? "is" : "is now";
+        if (!opts.json) process.stdout.write(`  ${s.name} (${s.id}) ${now} ${s.terminal}${s.action === "create" ? ", created" : s.action === "already" ? ", its labels back" : ""}.\n`);
+      } catch (e) {
+        if (!(e instanceof CliError)) throw e;
+        out.stopped = { terminal: s.terminal, name: s.name, error: e.message };
+        exitAfter.code = 1;
+        report([`import stopped at ${s.terminal} (${s.name}): ${e.message} The bots made so far are saved; run the import again to attach the rest.`]);
+        break;
+      }
+    }
+    out.seats = plan.seats.map((s) => seatOut(s, true));
+    await tidyQuietly();
+  }
+  if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+  return PRINTED;
+}
+
 async function cmdWhois(opts, [terminal]) {
   if ((opts.bot === undefined) === (terminal === undefined)) {
     throw new CliError("whois needs a terminal or --bot <id>: automagik-herdr whois <terminal> | whois --bot <id>.", 2);
@@ -3186,8 +3488,8 @@ async function workersIn(worktree, ls) {
 }
 
 /**
- * The agent an hc template runs, from its command in `hc templates`: an agent key, or
- * undefined when no known agent is in the command. A template hc doesn't list, or no list at
+ * The agent an hc template runs, from its command in `hc templates`: { runs: an agent key, or
+ * undefined when no known agent is in the command; command: that command }. A template hc doesn't list, or no list at
  * all, is refused here, before any worktree is made: `hc run` runs an unlisted name as a
  * program (`--template rm` would run rm).
  */
@@ -3204,7 +3506,7 @@ async function templateRuns(template, agents) {
     const names = list.map((x) => x?.name).filter(Boolean);
     throw new CliError(`hc has no template ${template}${names.length ? `. Its templates: ${names.join(", ")}` : ""}.`);
   }
-  return templateAgent(hit.command, agents) ?? undefined;
+  return { runs: templateAgent(hit.command, agents) ?? undefined, command: typeof hit.command === "string" ? hit.command : null };
 }
 
 /**
@@ -3310,8 +3612,20 @@ async function cmdWorker(opts, rest) {
   warnings.push(...plan.warnings);
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
   let runs = plan.agent;
-  if (plan.template) runs = await templateRuns(plan.template, agents);
-  else {
+  // A Claude template runs its own command under the login words (#453): hc's template form takes
+  // no environment. One that can't take its task as a last argument is refused, as unrunnable.
+  let templateArgv = null;
+  if (plan.template) {
+    const t = await templateRuns(plan.template, agents);
+    runs = t.runs;
+    if (runs === "claude") {
+      templateArgv = t.command?.trim() ? commandArgv({ shell: t.command }, [task]) : null;
+      if (!templateArgv) {
+        throw new CliError(`Template ${plan.template} runs Claude, but ${t.command?.trim() ? "its command ends in a separator or a comment, so it can't take the task"
+          : "hc gave no command for it"}; it can't be started on the chosen Claude login. Not started.`);
+      }
+    }
+  } else {
     if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
     const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
     if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
@@ -3366,7 +3680,8 @@ async function cmdWorker(opts, rest) {
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
-      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template,
+      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
+      login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
@@ -3638,7 +3953,7 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
 }
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
-  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
+  start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
   tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 

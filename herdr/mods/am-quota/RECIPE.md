@@ -2,8 +2,14 @@
 
 **Accounts** keeps your bots working when a plan hits its limit: it shows how long the Claude
 Code or Codex account this computer uses will last, and moves the tool to another account on your
-own CLIProxyAPI before it runs out. A personal tool for people who run one; accounts are added on
-the proxy (sign in there), never on this computer.
+own CLIProxyAPI before it runs out. A personal tool for people who run one; Codex accounts are
+added on the proxy (sign in there), never on this computer.
+
+**Claude is not switched from the proxy any more (#453).** Copying a proxy login into the Mac's
+Keychain made the proxy and the Mac sign each other out, and the switch would overwrite the Mac's
+own sign-in. The Claude card shows each proxy account's usage and offers **no Use or Switch** until
+it lists the Claude logins signed in on this Mac (`docs/local-logins.md`). Nothing here reads,
+writes or deletes a Claude Keychain item or downloads a Claude credential.
 
 CLIProxyAPI: <https://github.com/router-for-me/CLIProxyAPI>.
 
@@ -55,11 +61,11 @@ tracked). For the tool picked, in order:
    sentence: **Lasts until it resets**, or **At this pace it runs out in about N h, before it
    resets** (policy's projection; for the first minute, before there are two readings, it says it
    is measuring the pace).
-2. **One button when the policy says switch**: `Switch to <email>`, with the reason underneath
+2. **One button when the policy says switch** (Codex): `Switch to <email>`, with the reason underneath
    (`12% used · resets in 6 h · resets soonest, so none of its hours go to waste`). Bots already
    running stay on the old account until restarted; the panel offers that right after the switch.
 3. **The tool's other accounts on the proxy**: `email · plan`, a bar, `N% used`, the reset, a
-   **Switch** button, and `next` on the one the rule would move to next. An account the quota
+   **Switch** button (Codex), and `next` on the one the rule would move to next. An account the quota
    extension reports no window for says **usage not tracked** and has no bar; one that needs a new
    sign-in or is disabled says so and has no button.
 4. A footer: "Accounts come from your CLIProxyAPI, <name>. To add one, sign in to it there." and
@@ -92,31 +98,15 @@ never red. Red is kept for errors (a failed read or switch).
   - Codex: `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`; `OPENAI_API_KEY: null`,
     `auth_mode: "chatgpt"`, `last_refresh`, `tokens{…}`), previous file kept as
     `auth.json.bak-<stamp>`;
-  - Claude: the Keychain item **first** on macOS. With no `CLAUDE_CONFIG_DIR` that is
-    `Claude Code-credentials`; with one, it is that profile's own item,
-    `Claude Code-credentials-<sha256(dir)[:8]>` (measured on CLI 2.1.316), so a profile switch never
-    replaces your default-profile login — and the profile's `.credentials.json` is written as well.
-    On Linux there is no item: the profile's / default `.credentials.json` is the route. The item is
-    **merged**: only `claudeAiOauth` changes, so other keys the CLI keeps there (`mcpOAuth`, …)
-    survive. The old item is saved to a `0600` file before the write and put back if a later step
-    fails. On macOS with the item verified and no `CLAUDE_CONFIG_DIR`, the plaintext
-    `~/.claude/.credentials.json` is not written or backed up at all. An existing item too large for
-    one `security -i` line (past ~1,950 bytes once merged) is refused — "this login item is too large
-    to switch safely" — rather than truncated or stripped of its other keys.
+  - Claude: nothing. A Claude login is never downloaded or installed (#453).
   Written through `sh`: the payload lives in a `0700` folder, is `0600`d the moment it exists, and
   becomes the real file by `mv` (atomic rename); the token is read from a file by the shell, so it
   never appears in `argv`, a log, a notify, shared state or an error message. Backups are pruned to
-  the three newest. The Keychain item is written via `security -i` on stdin with the payload
-  hex-encoded (`-X`) — the same mechanism the installed CLI uses; `security -w` would put the token
-  in `argv` and, read from the prompt, truncates at 128 bytes. It is read back before success is
-  reported, because an over-long `-i` line can store a truncated item and still exit 0. The scratch
-  file is deleted afterwards, success or failure.
-- If the app's environment cannot be read, the panel does not know whether a `CLAUDE_CONFIG_DIR`
-  is set, so a Claude switch refuses rather than act on the default login. A failed `active.json`
-  write is shown as an error.
+  the three newest. The scratch file is deleted afterwards, success or failure.
+- A failed `active.json` write is shown as an error.
 - **After a switch**: the panel records `<provider> → <credential name + token fingerprint>` in
   `data/am-quota/active.json` (an older record naming a saved login, `saved:<name>`, reads as not
-  managed). New client runs use the new account; ones already running keep the old one — that is
+  managed, and a `claude` entry an older version wrote is ignored and dropped at the next write). New client runs use the new account; ones already running keep the old one — that is
   the client's behaviour, not a defect. So the banner lists the bots still on the old account:
   `automagik-herdr ls --all --json` (run as the sidebar runs it, through
   `mods/am-sidebar/bin/run.sh`), the running bots whose agent is that tool and whose pane started
@@ -152,36 +142,32 @@ never red. Red is kept for errors (a failed read or switch).
   before. The panel never names a CLI flag:
   a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
-- **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates
-  it on use, so whichever side refreshes first can sign the other out. Expect to re-import or sign in
-  on the side that lost it; the banner after a Claude switch says so too.
 
 ## Built from
 
 `main.js` (the panel, drawing what `view.js` says), `view.js` (each tool's card, the proxy's
 name and the bots a switch left behind, as plain data; pure), `policy.js` (the decision, pure), `proxy.js` (the reader and the per-window
-samples, pure), `translate.js` (proxy credential → client credential, item merge, Keychain service
-name, fingerprints; pure apart from the `shasum` lookup), `write.js` (the shell that writes; pure),
+samples, pure), `translate.js` (Codex's proxy credential → its `auth.json`, fingerprints; pure),
+`write.js` (the shell that writes; pure),
 `switch.js` (the install flow, with its shell and files injected so it is tested end to end),
 `lock.js` (one switch at a time), `mod.json` (`place: none`), `LICENSE`, `DESIGN.md` (endpoints,
 writers, secret rules), and tests for every module in the repository's `test/`.
 
 Herdr API: `exec`, `theme`, `appHome`, `home`, `readTextFile`, `writeTextFile`, `window`,
-`fs/promises`; the runtime's `fetch`. Programs: `sh`, `security` (macOS Keychain), `od`/`tr` for
-the hex encoding, `open` (`xdg-open` on Linux) for Open, and the sidebar's `automagik-herdr`.
+`fs/promises`; the runtime's `fetch`. Programs: `sh`, `open` (`xdg-open` on Linux) for Open, and
+the sidebar's `automagik-herdr`. Never `security`.
 
 ## Watch out
 
-- **It writes real credentials.** That is its purpose; the old file is always kept as a dated
-  backup, the old Keychain item is saved and restored on failure, and no token is ever logged. A
+- **It writes real Codex credentials.** That is its purpose; the old file is always kept as a dated
+  backup, and no token is ever logged. A
   switch affects **new** client runs only.
 - **`login status` / `auth status` are shallow** — a garbage token reported "logged in". The panel
   therefore reports what it *wrote*, not that the account *works*; a verification request is a
   separate, quota-spending action, and is not wired yet.
 - Codex's `auth.json` expects a nested `tokens` object while the proxy's file is flat; `translate.js`
   is the only place that knows the mapping, and the tests pin it.
-- `CODEX_HOME` and `CLAUDE_CONFIG_DIR` are honoured: the panel writes where the client would read —
-  including the separate Keychain item a `CLAUDE_CONFIG_DIR` profile reads.
+- `CODEX_HOME` is honoured: the panel writes where Codex would read.
 - A provider with no window is shown but never suggested (nothing to project).
 - The proxy's quota extension (`cpa-quota-api-extension`) supplies the windows, Claude's
   (`seven_day`) as well as Codex's; without it the panel still lists accounts, each reading `usage
@@ -190,7 +176,6 @@ the hex encoding, `open` (`xdg-open` on Linux) for Open, and the sidebar's `auto
 ## Done when
 
 `herdr-app check mods/am-quota` passes; the panel lists both providers' accounts with their windows;
-Switch rewrites the file (and the Keychain item for Claude — the profile's own item under a
-`CLAUDE_CONFIG_DIR`) with a backup and a 0600 permission; the next `claude`/`codex` run is on the
-chosen account; the banner names the bots still on the old one and Restart moves them; no token
+a Codex Switch rewrites its file with a backup and a 0600 permission, and the next `codex` run is
+on the chosen account; the Claude card offers no switch and touches no Claude login; the banner names the bots still on the old one and Restart moves them; no token
 appears in any log, notify or state.

@@ -65,6 +65,15 @@ test('a short key (4 to 7 characters) is replaced only where it stands alone', (
   assert.equal(redact('中文4821中文'), '中文4821中文')
 })
 
+test('an anywhere redactor matches a short value inside a word, longest value first', () => {
+  const long = `pin${'z'.repeat(12)}`
+  const short = long.slice(3, 7)
+  const entries = [{ name: 'PIN', value: short }, { name: 'LONG', value: long }]
+  const redact = redactor(entries, { wholeWords: false })
+  assert.equal(redact(`x${short}y`), 'x[secret:PIN]y')
+  assert.equal(redact(`x${long}y`), 'x[secret:LONG]y')
+})
+
 const TEAM = {
   version: 1,
   mainBotIds: ['m1'],
@@ -82,7 +91,7 @@ const TEAM = {
   questions: {},
 }
 
-function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')) } = {}) {
+function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings } = {}) {
   writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
   const contributors = []
   const shellEnv = {
@@ -93,6 +102,7 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')) } = {}) {
     },
   }
   const ctx = fakeContext({ services: { shellEnv } })
+  if (warnings !== undefined) ctx.logger = { info() {}, warn: (...args) => warnings.push(args.slice(1).join(' ')) }
   const listeners = {}
   const on = ctx.on
   ctx.on = (name, listener, options) => {
@@ -380,6 +390,60 @@ test('a secrets file that is not JSON is kept aside, and the store goes on', asy
   const broken = readdirSync(home).filter(name => name.startsWith('secrets.json.broken-'))
   assert.deepEqual(broken.length, 1)
   assert.equal(readFileSync(join(home, broken[0]), 'utf8'), 'not a secrets file\n')
+})
+
+// #484: a value below the write floor can only come from a hand-edited file, and no redactor
+// can match it (a 1-3 character value sits inside ordinary words). The loader holds it with a
+// warning that names the floor: nothing uses it, yet it stays in secrets.json and in the list
+// instead of being silently dropped, and a new longer value lifts the hold.
+test('a hand-edited secret below the floor is held with a warning, and never silently dropped', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
+  const short = 'q7z'
+  const long = fresh()
+  writeFileSync(join(home, 'secrets.json'), JSON.stringify({
+    version: 1,
+    secrets: [
+      { name: 'SHORT_KEY', value: short, purpose: 'hand-edited', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 2 },
+      { name: 'LONG_KEY', value: long, purpose: 'fine', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 2 },
+    ],
+  }))
+  const warnings = []
+  const bench = start({ home, warnings })
+  t.after(bench.stop)
+
+  // Loading goes through the tool, which awaits the file read.
+  const listed = await bench.tool('list_secrets', {}, 'b2')
+  assert.ok(
+    warnings.some(line => /secret SHORT_KEY in .*secrets\.json is held: its saved value is shorter than the 4-character minimum; nothing uses it until a longer value is saved/.test(line)),
+    warnings.join('\n'),
+  )
+  assert.equal(warnings.some(line => line.includes(short)), false)
+
+  // The valid key works; the held one reaches no shell, is listed as held, and its value is
+  // never in anything a Bot or the browser reads.
+  assert.deepEqual(bench.env('b2'), { DSH_SECRET_LONG_KEY: long })
+  assert.ok(listed.text.includes('- SHORT_KEY — hand-edited — for every Bot — held: its saved value is shorter than 4 characters, so nothing uses it; save a new value'))
+  assert.equal(listed.text.includes(short), false)
+  const team = await bench.view()
+  assert.deepEqual(team.secrets.map(secret => [secret.name, secret.held]), [['LONG_KEY', undefined], ['SHORT_KEY', true]])
+  assert.equal(JSON.stringify(team).includes(short), false)
+
+  // Asking again shows the fill card, so the value can be replaced with a usable one.
+  const asked = await bench.tool('request_secret', { name: 'SHORT_KEY', purpose: 'retry' }, 'b2')
+  assert.match(asked.text, /card asking the user for SHORT_KEY is on screen/)
+  assert.equal((await bench.view()).secretRequests.b2.at(-1).kind, 'fill')
+
+  // Saving another key rewrites the file with the held entry intact: no silent drop.
+  const other = fresh()
+  assert.equal((await bench.call('secret-set', { name: 'OTHER_KEY', value: other })).ok, true)
+  const file = JSON.parse(readFileSync(join(bench.home, 'secrets.json'), 'utf8')).secrets
+  assert.equal(file.find(secret => secret.name === 'SHORT_KEY').value, short)
+
+  // A longer value for the held name lifts the hold and reaches the shell.
+  const next = fresh()
+  assert.equal((await bench.call('secret-set', { name: 'SHORT_KEY', value: next })).ok, true)
+  assert.deepEqual(bench.env('c3'), { DSH_SECRET_LONG_KEY: long, DSH_SECRET_OTHER_KEY: other, DSH_SECRET_SHORT_KEY: next })
+  assert.equal((await bench.view()).secrets.find(secret => secret.name === 'SHORT_KEY').held, undefined)
 })
 
 // #316: a GitHub token request carries the work it is for, and the card asks for no more.
