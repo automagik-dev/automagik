@@ -29,9 +29,9 @@
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
 # over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
 # the pack's `automagik-herdr meter install --linked`: each machine downloads and checks it
-# itself); a failure there is only a warning. When asked (or with --dsh-tui), it installs the
-# pinned dsh-TUI into DSH's own `tui` profile and the `dsh-tui` shim into ~/.local/bin, so Herdr's
-# built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
+# itself); a failure there is only a warning. When asked at a terminal (or with --dsh-tui; --yes
+# never does), it installs the pinned dsh-TUI into DSH's own `tui` profile and the `dsh-tui` shim
+# into ~/.local/bin, so Herdr's built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
 # missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
 # missing automagik layout and runs `herdr-app check` again. It says "up to date" only when every
@@ -89,7 +89,8 @@ main() {
   METER_OK=1
   # Linked machines too (meterFleet.js): 0 with --usagemeter-local-only (or --no-usagemeter).
   FLEET_OK=1
-  # DSH as a Herdr agent (#561): ask, yes or no. --yes consents like it does to every question.
+  # DSH as a Herdr agent (#561): ask, yes or no. Third-party: only --dsh-tui or an explicit
+  # answer installs it; --yes never does.
   DSH_TUI=ask
 
   YES=0
@@ -112,8 +113,7 @@ main() {
     esac
     shift
   done
-  # --yes answers the dsh-TUI question only when neither flag said which way.
-  if [ "$YES" = 1 ] && [ "$DSH_TUI" = ask ]; then DSH_TUI=yes; fi
+  # --yes answers the other questions; the third-party dsh-TUI package is never installed by it.
 
   # The test hooks: a release from a file:// folder or this repository's GitHub pages only.
   if [ -n "${AUTOMAGIK_HERDR_RELEASE_URL:-}" ]; then
@@ -150,7 +150,8 @@ Automagik Herdr installer
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
-switching Herdr to the automagik layout, installing DSH as an agent). --version installs that Automagik release; it must carry the
+switching Herdr to the automagik layout). It never installs dsh-TUI: that third-party package is
+opt-in by --dsh-tui or an explicit answer. --version installs that Automagik release; it must carry the
 pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
 <app home>/automagik-herdr/backup/; without it such a folder is reported and left alone.
@@ -160,8 +161,8 @@ machine: install skips it, and --uninstall keeps it even where this installer pu
 (hc machine ls). Both are remembered for 'automagik-herdr update' and the sidebar's sync.
 --dsh-tui installs the pinned dsh-TUI into DSH's own `tui` profile and the dsh-tui shim into
 ~/.local/bin, so Herdr's built-in DSH entry works; --no-dsh-tui leaves DSH alone. Without either,
-the installer asks, and a machine with no dsh gets one line saying how to get it. --uninstall
-removes dsh-TUI (the plugin and the shim) when this installer put it there.
+the installer asks (unless --yes), and a machine with no dsh gets one line saying how to get it.
+--uninstall removes dsh-TUI (the plugin and the shim) when this installer put it there.
 EOF
 }
 
@@ -186,6 +187,17 @@ ask() {
     read -r reply <"$TTY" || reply=
     case $reply in [yY]|[yY][eE][sS]) return 0 ;; esac
   fi
+  return 1
+}
+
+# A question --yes must not answer: a third-party package is installed only by its own flag or an
+# explicit answer at the terminal. The prompt goes to stderr, so the answer source (a terminal,
+# or a test's file named by AUTOMAGIK_HERDR_TTY) is only read. No terminal (an agent, CI): no.
+ask_opt_in() {
+  ( : <"$TTY" ) 2>/dev/null || return 1
+  printf '%s [y/N] ' "$1" >&2
+  read -r reply <"$TTY" || reply=
+  case $reply in [yY]|[yY][eE][sS]) return 0 ;; esac
   return 1
 }
 
@@ -745,7 +757,11 @@ dsh_tui_step() {
     say "DSH is not installed (no dsh on PATH): skipped dsh-TUI. Install DSH Desktop or 'npm install -g @deepseek-ai/dsh', then run 'automagik-herdr dsh-tui install'."
     return 0
   fi
-  if [ "$DSH_TUI" = ask ] && ! ask "Install DSH as a Herdr agent (dsh-TUI, its own tui DSH profile)?"; then
+  if [ "$DSH_TUI" = ask ] && [ "$YES" = 1 ]; then
+    say "Left DSH (dsh-TUI) alone: --yes never installs the third-party dsh-TUI package; 'automagik-herdr dsh-tui install' or this installer with --dsh-tui adds it."
+    return 0
+  fi
+  if [ "$DSH_TUI" = ask ] && ! ask_opt_in "Install DSH as a Herdr agent (dsh-TUI, its own tui DSH profile; a third-party package)?"; then
     say "Left DSH (dsh-TUI) alone; 'automagik-herdr dsh-tui install' adds it later."
     return 0
   fi

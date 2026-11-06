@@ -282,32 +282,55 @@ test("a pack-owned old pin uninstalls even when the current pin has moved on", (
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
 });
 
-test("a different version the person pinned is refused, never replaced", async (t) => {
+test("a different version the person pinned is skipped, never replaced", async (t) => {
   const s = scene(t);
   const profile = seedProfile(s, { version: "0.18.0" });
+  const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
   const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
-  assert.equal(r.status, "failed");
-  assert.match(r.detail, /already pins .*0\.18\.0/);
+  assert.equal(r.status, "skipped");
+  assert.match(r.detail, /already pins .*0\.18\.0, not 0\.19\.0/);
+  assert.match(r.detail, /left it and its lockfile unchanged/);
   assert.deepEqual(s.calls(), []);
   assert.equal(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies[DSH_TUI.package], "0.18.0");
+  assert.equal(readFileSync(join(profile, "pnpm-lock.yaml"), "utf8"), lock, "the person's lockfile is untouched");
   assert.equal(existsSync(join(profile, RECORD_FILE)), false);
+  assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
 });
 
-test("a pin the person added is not the installer's, so uninstall leaves it", async (t) => {
+test("a person's pin is skipped without plugin add even at the pinned version; uninstall leaves it", async (t) => {
   const s = scene(t);
   const profile = seedProfile(s, { version: DSH_TUI.version });
+  const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
   const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
-  assert.equal(installed.status, "installed", installed.detail);
+  assert.equal(installed.status, "skipped", installed.detail);
+  assert.match(installed.detail, /already pins .*0\.19\.0, which this installer did not add/);
+  assert.deepEqual(s.calls(), [], "no plugin add over a pin it did not record");
   assert.equal(ownershipOf(profile), null);
   assert.equal(existsSync(join(profile, RECORD_FILE)), false);
-  assert.match(installed.lines.join("\n"), /already had dsh-TUI/);
+  assert.equal(readFileSync(join(profile, "pnpm-lock.yaml"), "utf8"), lock, "the person's lockfile is untouched");
+  assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
   const r = uninstallDshTui({ env: s.env });
-  assert.equal(r.status, "removed");
+  assert.equal(r.status, "absent");
   assert.equal(s.calls().filter((line) => line.includes("remove")).length, 0, "no dsh plugin remove for a pin it did not add");
   assert.equal(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies[DSH_TUI.package], DSH_TUI.version);
   assert.deepEqual(releaseAgeEntries(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8")), [PIN]);
   assert.match(r.lines.join("\n"), /did not add it/);
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
+});
+
+test("a record whose pin the person moved is dropped, and their current pin is never written over", async (t) => {
+  const s = scene(t);
+  const profile = seedProfile(s, { version: "0.18.0", record: true });
+  // The person set the pin themselves after the pack recorded 0.18.0: still their pin.
+  writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: DSH_TUI.version } }) + "\n");
+  const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "skipped");
+  assert.equal(r.changed, true, "the stale record was dropped");
+  assert.match(r.detail, /already pins .*0\.19\.0, which this installer did not add/);
+  assert.deepEqual(s.calls(), [], "no plugin add over the person's pin");
+  assert.equal(existsSync(join(profile, RECORD_FILE)), false);
+  assert.equal(readFileSync(join(profile, "pnpm-lock.yaml"), "utf8"), lock);
 });
 
 test("a dangling shim is present but broken; install refuses and uninstall leaves it", async (t) => {

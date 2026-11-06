@@ -128,7 +128,8 @@ version.
 
 DSH, the DeepSeek Harness, is an agent in Herdr's `+` menu through
 [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI), in its own DSH profile. The installer asks
-once; `--dsh-tui` takes it without asking and `--no-dsh-tui` leaves DSH alone. The command does
+once; `--dsh-tui` takes it without asking and `--no-dsh-tui` leaves DSH alone. `--yes` never
+installs it: a third-party package is opt-in by its own flag or an explicit answer. The command does
 the same later:
 
 ```bash
@@ -145,9 +146,10 @@ automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and s
   registry integrity this pack carries (`sha512-4TAP…`); an install that lands on another
   version or integrity fails and takes back what it added. The install records that *it* added
   the pin in `~/.dsh/profiles/tui/.automagik-herdr-dsh-tui.json`; a pin already there is the
-  person's, and uninstall leaves it. A different version the person chose is never replaced: the
-  install refuses and says how to remove it or pin the pack's version. The record names the
-  package and the version it set, so a pack-owned older pin is still the pack's after a bump.
+  person's, and uninstall leaves it. A pin the pack did not record is never written over—not even
+  at the pinned version—because `dsh plugin add` rewrites the person's lockfile: the install skips
+  it and says how to remove it or hand it over. The record names the package and the version it
+  set, so a pack-owned older pin is still the pack's after a bump.
 - **Its own profile.** `dsh plugin --profile tui add …` writes `<DSH_HOME>/profiles/tui` only
   (DSH's home is `~/.dsh` unless `DSH_HOME` says otherwise). The reserved `desktop` profile, its
   settings and `~/.dsh/.credentials.yaml` are never written; the install checks their fingerprints

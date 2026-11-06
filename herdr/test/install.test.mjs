@@ -2088,7 +2088,7 @@ exit 0
   return { log, calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
 };
 
-test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall removes the shim and plugin", (t) => {
+test("--dsh-tui installs the opt-in dsh-TUI into its own tui profile; --uninstall removes the shim and plugin", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   const dsh = fakeDsh(s);
@@ -2098,7 +2098,7 @@ test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall re
   writeFileSync(join(s.home, ".dsh", ".credentials.yaml"), "keep: me\n");
   const profile = join(s.home, ".dsh", "profiles", "tui");
   const shim = join(s.home, ".local", "bin", "dsh-tui");
-  const r = s.run("--yes", "--no-usagemeter");
+  const r = s.run("--dsh-tui", "--no-usagemeter");
   assert.equal(r.code, 0, r.err + r.out);
   assert.match(r.out, /dsh-TUI 0\.19\.0 is installed in the tui profile|installed dsh-TUI 0\.19\.0/);
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, { "@deepseek-harness-tui/dsh-tui": "0.19.0" });
@@ -2118,11 +2118,38 @@ test("--yes installs the opt-in dsh-TUI into its own tui profile; --uninstall re
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
 });
 
+test("--yes alone never installs the third-party dsh-TUI", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /--yes never installs the third-party dsh-TUI package/);
+  assert.deepEqual(dsh.calls(), []);
+  assert.equal(existsSync(join(s.home, ".dsh", "profiles", "tui")), false);
+  assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
+});
+
+test("an explicit answer at the terminal installs dsh-TUI without any flag", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const dsh = fakeDsh(s);
+  const tty = join(s.root, "tty");
+  writeFileSync(tty, "y\n");
+  s.extraEnv.AUTOMAGIK_HERDR_TTY = tty;
+  const r = s.run("--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.err, /Install DSH as a Herdr agent .*\[y\/N\]/);
+  assert.deepEqual(dsh.calls(), ["plugin --profile tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
+  assert.ok(existsSync(join(s.home, ".local", "bin", "dsh-tui")));
+  assert.match(r.out, /installed dsh-TUI 0\.19\.0/);
+});
+
 test("--uninstall's fallback removes only this installer's dsh-tui shim, by the CLI's predicate", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
   fakeDsh(s);
-  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  assert.equal(s.run("--dsh-tui", "--no-usagemeter").code, 0);
   const shim = join(s.home, ".local", "bin", "dsh-tui");
   const other = join(s.root, "other-command");
   writeFileSync(other, "#!/bin/sh\nexit 0\n");
@@ -2138,7 +2165,7 @@ test("--uninstall's fallback leaves a foreign dsh-tui shim, even one naming Auto
   const s = scratch(t);
   s.publish("9.9.0");
   fakeDsh(s);
-  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  assert.equal(s.run("--dsh-tui", "--no-usagemeter").code, 0);
   const shim = join(s.home, ".local", "bin", "dsh-tui");
   writeFileSync(shim, "#!/bin/sh\n# Automagik Herdr\n# not the pack's shim\nexec my-dsh \"$@\"\n");
   const other = join(s.root, "other-command");
