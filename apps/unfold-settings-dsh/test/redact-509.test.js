@@ -119,9 +119,8 @@ for (const [what, input, want] of EDGES) {
 }
 
 for (const [what, valueLine] of [['an empty colon', `: ${VALUE}\n`], ['a block', `: |\n  ${VALUE}\n`]]) {
-  test(`#509: an unclosed quote serves the name, never the value (${what})`, () => {
+  test(`#509: an unclosed quote never serves the value (${what})`, () => {
     const served = redactText(`? "${PASS}:${TAIL} # note\n${valueLine}`)
-    assert.ok(served.includes(`"${PASS}:${TAIL}`), 'the name is served whole')
     assert.ok(!served.includes(VALUE), 'the value on the `:` line is hidden')
   })
 }
@@ -129,4 +128,15 @@ for (const [what, valueLine] of [['an empty colon', `: ${VALUE}\n`], ['a block',
 test('#509: a mid-line ? is not an explicit key', () => {
   const input = `What? ${PASS}:${LEAK}\n: note\n`
   assert.equal(redactText(input), `What? ${PASS}:${REDACTED}\n: note\n`)
+})
+
+test('#509: an unclosed no-space colon tail is masked and not remembered', () => {
+  for (const [what, input, want] of [
+    ['double quoted', `? "${PASS}:${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
+    ['single quoted', `? '${PASS}:${LEAK}\n`, `? '${PASS}:${REDACTED}\n`],
+    ['a 5000-char tail', `? "${PASS}:${'y'.repeat(5000)}${LEAK}\n`, `? "${PASS}:${REDACTED}\n`],
+    ['a 5000-char glued name', `? "${PASS}${'x'.repeat(5000)}:${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}:${REDACTED}\n`],
+  ]) {
+    assert.equal(redactText(input), want, what)
+  }
 })
