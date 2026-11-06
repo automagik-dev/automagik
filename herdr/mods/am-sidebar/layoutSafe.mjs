@@ -53,7 +53,8 @@ function layoutsNaming(home, mods, skip = []) {
 
 /**
  * The layouts in layouts/ (names, sorted) whose blocks name `mod`; an unreadable one names none.
- * `exclude(name, body)`: a file the caller knows will not stay (the pack's own unedited copy).
+ * `exclude(name, body, mod)`: a file the caller knows will not stay (the pack's own unedited copy),
+ * or will not name `mod` by then (a rollback's reverted migration edits).
  */
 function layoutsShowing(home, mod, exclude) {
   const dir = join(home, "layouts");
@@ -62,10 +63,25 @@ function layoutsShowing(home, mod, exclude) {
   return names.filter((n) => {
     try {
       const file = join(dir, n);
-      if (!isFile(file) || (exclude && exclude(n, () => readFileSync(file)))) return false;
+      if (!isFile(file) || (exclude && exclude(n, () => readFileSync(file), mod))) return false;
       return layoutNeeds(JSON.parse(readFileSync(file, "utf8"))).blocks.has(mod);
     } catch { return false; }
   }).map((n) => n.slice(0, -".json".length));
+}
+
+/** The files in layouts/ (sorted) that do not parse, `exclude` leaving some out (as layoutsShowing's). */
+function layoutsUnreadable(home, exclude) {
+  const dir = join(home, "layouts");
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.filter((n) => {
+    const file = join(dir, n);
+    try {
+      if (!isFile(file) || (exclude && exclude(n, () => readFileSync(file)))) return false;
+      JSON.parse(readFileSync(file, "utf8"));
+      return false;
+    } catch { return true; }
+  });
 }
 
 /** A name beside `path` nothing has, for a remove that stays undoable until the batch stands. */
@@ -86,12 +102,14 @@ function aside(path) {
  * - `mods`: the mod names checked (default: every mod folder the ops take out of mods/ for good);
  *   `modsDir`: that folder, when it is not <home>/mods (update.mjs takes any).
  * - `needed`: what an op taking a checked mod a layout needs does: "refuse" (with `ask`: the shown
- *   layout's blocks; the right-click menu's mod goes with a note), or "hold" (every file in layouts/,
+ *   layout's blocks; the right-click menu's mod goes with a note; without it: every file in layouts/,
+ *   `exclude` leaving some out, nothing done; a rollback's, #488), or "hold" (every file in layouts/,
  *   `exclude` leaving some out; for `renamed[mod]`, a rename's new name, `stranded(home, mod,
  *   renamed[mod])` instead: migrateHome's strandedLayouts, the files the migration cannot move):
  *   the op is dropped and the mod stays. Unset: not checked.
  * - `unknown`: with `ask` and no tree from it, "warn" logs each layout in layouts/ naming a checked
- *   mod (`skip`: file names left out) and goes on (fail open). Unset: nothing said.
+ *   mod (`skip`: file names left out) and goes on (fail open); with "refuse" and no `ask`, when no
+ *   layout refused, it logs the files in layouts/ that do not read and goes on. Unset: nothing said.
  * - `shownFile`: "refuse" refuses an op that removes or moves the file of the layout Herdr shows,
  *   decided on its name (`ask`'s `name`) alone, once `needed` has passed (its refusal, about a mod,
  *   comes first). Unset: not checked.
@@ -152,6 +170,26 @@ export function change(home, ops, options = {}) {
         decision.notes.push(line);
         log(line);
       }
+    }
+  } else if (needed === "refuse" && !ask && root && checked.length) {
+    // Herdr not asked (a rollback, #488): any file in layouts/ could be shown, so one naming a
+    // checked mod that leaves refuses, in heldModLine's wording; Herdr is not said to show it.
+    const naming = taken.filter((mod) => mod && checked.includes(mod)).map((mod) => ({ mod, layouts: layoutsShowing(root, mod, exclude) }))
+      .filter((n) => n.layouts.length);
+    if (naming.length) {
+      const [{ mod, layouts }] = naming;
+      const also = naming.slice(1).map((n) => n.mod);
+      const which = layouts.length === 1 ? `the ${layouts[0]} layout still names it` : `the layouts ${layouts.join(", ")} still name it`;
+      return { ...decision, refused: `${mod} would leave mods/, but ${which}${also.length ? ` (and a layout names ${also.join(", ")} too)` : ""}, `
+        + `and Herdr drops a layout whose mod is gone (plain Herdr instead). Take ${mod} out of ${layouts.length === 1 ? "that layout" : "those layouts"}`
+        + ` (switch layouts first, ctrl-shift-l, if Herdr shows one), then ${then}` };
+    }
+    const unread = unknown === "warn" ? layoutsUnreadable(root, exclude) : [];
+    if (unread.length) {
+      const line = `going on without knowing the layout Herdr shows (Herdr is not asked here, and layouts/${unread.join(", layouts/")} `
+        + `do${unread.length === 1 ? "es" : ""} not read): if one names ${checked.join(", ")} and Herdr shows it, Herdr drops it (plain Herdr instead)`;
+      decision.notes.push(line);
+      log(line);
     }
   } else if (needed === "hold" && root) {
     for (const [i, mod] of taken.entries()) {
