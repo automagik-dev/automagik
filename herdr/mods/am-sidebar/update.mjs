@@ -1094,13 +1094,13 @@ export function preflightKeys(appHome) {
  */
 export function writeKeys(appHome, keys) {
   const path = join(appHome, "keys.json");
-  const tmp = `${path}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  writeFileSync(tmp, `${JSON.stringify(keys, null, 2)}\n`, { flag: "wx" });
+  const keysTmp = `${path}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+  writeFileSync(keysTmp, `${JSON.stringify(keys, null, 2)}\n`, { flag: "wx" });
   try {
-    const r = change(appHome, [{ op: "replace", from: tmp, to: path }]);
+    const r = change(appHome, [{ op: "replace", from: keysTmp, to: path }]);
     if (r.refused) throw new Error(r.refused);
   } catch (error) {
-    removePath(tmp, { force: true });
+    removePath(keysTmp, { force: true });
     throw error;
   }
 }
