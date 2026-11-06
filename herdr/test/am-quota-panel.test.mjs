@@ -2,9 +2,13 @@
 // recorded and never spawned, Linux, so no Keychain item is ever asked for) and a fake proxy.
 // The switch itself is a fake module: what it writes is am-quota-switch.test.mjs's subject. Not
 // Herdr: the in-app check in the mod's RECIPE still applies.
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const FAKE_SWITCH = "data:text/javascript," + encodeURIComponent(`
@@ -23,7 +27,7 @@ registerHooks({
   },
 });
 
-const { state } = await import(stubs.herdr);
+const { state, finishRun } = await import(stubs.herdr);
 const { installs } = await import(FAKE_SWITCH);
 const { default: Panel, plain, records } = await import("../mods/am-quota/main.js");
 const { all, index, nodes, textOf } = await import(stubs["gpui-kit"]);
@@ -72,6 +76,10 @@ const RUNNER = `${state.appHome}/mods/am-sidebar/bin/run.sh`;
 async function panel({ config = { url: BASE, name: "lab" }, key = "example-key", active = { codex: { name: "codex-0a-ana-pro.json" } }, sidebar = true } = {}) {
   state.files = new Map();
   state.calls = [];
+  state.runs = [];
+  state.runAs = undefined;
+  state.prepares = [];
+  state.prepare = undefined;
   if (config) state.files.set(`${state.appHome}/cliproxy.json`, JSON.stringify(config));
   if (key) state.files.set(`${state.home}/.config/cliproxyapi/mgmt.key`, `${key}\n`);
   if (active) state.files.set(ACTIVE, JSON.stringify(active));
@@ -172,7 +180,7 @@ test("Switch to <email>, then the bots still on the old account, and Restart aft
   assert.match(text(root), /Restart 1 bot\? Press again to confirm/);
   nodes.get("restart-codex").click(null, cx);
   await cx.settle();
-  assert.deepEqual(state.calls.map((c) => c.slice(5)), [["restart", "orch", "--project", "/work/a", "--json"]]);
+  assert.deepEqual(state.calls.map((c) => c.slice(c.indexOf("restart"))), [["restart", "orch", "--project", "/work/a", "--json"]]);
   root = draw();
   assert.match(text(root), /Restarted 1: every Codex bot is on the new account/);
 });
@@ -199,7 +207,7 @@ test("a refused restart is named, and the others still run", async () => {
   nodes.get("restart-codex").click(null, cx);
   nodes.get("restart-codex").click(null, cx);
   await cx.settle();
-  assert.deepEqual(state.calls.map((c) => c.slice(5, 7)), [["restart", "a"]]);
+  assert.deepEqual(state.calls.map((c) => c.slice(c.indexOf("restart"), c.indexOf("restart") + 2)), [["restart", "a"]]);
   root = draw();
   assert.match(text(root), /Restarted 2: every Codex bot is on the new account/);
 });
@@ -263,6 +271,8 @@ const ticks = async () => { for (let i = 0; i < 20; i += 1) await new Promise((g
 // The hc a busy panel sees: `panes` (address → status, "gone", "broken" when hc get fails with no
 // not_found, or null for a pane reporting none), t5's helpers as its rows. Read each time, so a test changes them while a wait runs.
 const fakeHc = (panes, { outlives = [] } = {}) => (args) => {
+  // A restart's own terminals, by their label (#433): none still running.
+  if (args[0] === "ls" && args.includes("--label")) return { code: 0, stdout: JSON.stringify({ terminals: [] }), stderr: "" };
   if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ terminals: Object.keys(panes).filter((a) => a !== "t5").map((address) => ({ address, parent: "t5", state: "live" })) }), stderr: "" };
   const st = panes[args[1]];
   if (st === undefined || st === "gone") return { code: 3, stdout: "", stderr: JSON.stringify({ error: { kind: "not_found", message: "no terminal" } }) };
@@ -270,9 +280,8 @@ const fakeHc = (panes, { outlives = [] } = {}) => (args) => {
   return { code: 0, stdout: JSON.stringify({ address: args[1], state: "live", status: st === null ? null : { state: st }, die_with_parent: !outlives.includes(args[1]) }), stderr: "" };
 };
 // A panel with A refused as `answer`. Its restart again answers `then`, and hc wait `wait(terminal)`.
-// `probe`: how this Herdr answers an exec timeout that isn't a number: "runs" it (ignores the option,
-// like every release so far), "refuses" it (honours the option), or "fails" some other way.
-async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outlives = [], then = OK, wait = () => ({ code: 0, stdout: "{}", stderr: "" }), press = true, probe = "runs" } = {}) {
+// Each restart runs in a terminal of its own (#433), answered at once (am-quota-herdr.mjs runRestart).
+async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outlives = [], then = OK, wait = () => ({ code: 0, stdout: "{}", stderr: "" }), press = true } = {}) {
   const p = await panel();
   p.view.tool = "codex";
   p.view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
@@ -284,11 +293,6 @@ async function busyPanel({ answer = busyAnswer(), panes = { t5: "done" }, outliv
   let refused = false;
   state.exec = (command, args) => {
     if (command === "hc") return wait(args[1]);
-    if (command === "true") {
-      if (probe === "refuses") throw new Error("timeout must be a positive number of milliseconds");
-      if (probe === "fails") throw new Error("cannot run true");
-      return { code: 0, stdout: "", stderr: "" };
-    }
     if (!refused) { refused = true; return answer; }
     return typeof then === "function" ? then(args) : then;
   };
@@ -320,8 +324,9 @@ test("a bot mid-turn shows busy with Restart when idle: hc wait through exec und
   assert.deepEqual(waits(), [["hc", "wait", "t5", "--timeout", "450", "--json"]], "one wait, through exec (hc() stops at 30 s)");
   assert.deepEqual(optionsOf(waits()[0]), { timeout: 480000 }, "exec's own limit above hc's 450 s, below Herdr's 600 s cap");
   assert.equal(restarts().length, 2, "then one restart");
-  assert.deepEqual(secondRestart().slice(5), ["restart", "a", "--project", "/p", "--json"], "no helpers: no tree");
-  assert.deepEqual(optionsOf(secondRestart()), { timeout: 300000 }, "a restart outlasts exec's 30 s default");
+  assert.deepEqual(secondRestart().slice(secondRestart().indexOf("restart")), ["restart", "a", "--project", "/p", "--json"], "no helpers: no tree");
+  assert.equal(optionsOf(secondRestart()), null, "not through exec: in a terminal of its own (#433)");
+  assert.equal(state.runs.length, 2);
   root = draw();
   assert.match(text(root), /Restarted 1: every Codex bot is on the new account/);
 });
@@ -370,7 +375,7 @@ test("helpers all finished: the bot restarts with them at once, with no extra pr
   const tree = secondRestart();
   assert.deepEqual(tree.slice(tree.indexOf("restart")), ["restart", "a", "--project", "/p", "--tree", "--json"]);
   assert.ok(tree.includes("AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS=10000"), "the panel waited: the CLI's own wait is only a race guard");
-  assert.deepEqual(optionsOf(tree), { timeout: 600000 });
+  assert.equal(optionsOf(tree), null, "not through exec: in a terminal of its own (#433)");
   assert.match(text(draw()), /Restarted 1: every Codex bot is on the new account/);
   assert.doesNotMatch(text(draw()), /--[a-z]/);
 });
@@ -468,7 +473,7 @@ test("a helper with helpers of its own: no restart, and why, before the CLI is a
   const p = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes, press: false });
   const hcOf = state.hc;
   state.hc = (args) => {
-    if (args[0] !== "ls") return hcOf(args);
+    if (args[0] !== "ls" || args.includes("--label")) return hcOf(args);
     return { code: 0, stdout: JSON.stringify({ terminals: [{ address: "t7", parent: "t5", state: "live" }, { address: "t9", parent: "t7", state: "live" }] }), stderr: "" };
   };
   panes.t9 = "idle";
@@ -498,44 +503,261 @@ test("--tree exits 1 for a helper not run again though the bot restarted: restar
   assert.doesNotMatch(shown, /--[a-z]/);
 });
 
-test("--tree ended by Herdr's limit says it may have stopped part-way (#413)", async () => {
-  const then = () => { throw new Error("env took longer than 30 s and was stopped"); };
+test("a --tree restart whose terminal is gone with no answer says it may have stopped part-way (#433)", async () => {
+  // Only its restart: the next test's panel() calls this exec too, before busyPanel replaces it.
+  const then = (args) => { if (args.includes("restart")) state.runAs = "gone"; return OK; };
   const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done" }, then });
-  assert.ok(text(draw()).includes("A: env took longer than 30 s and was stopped. It may have stopped part-way: check whether A and its helpers are back, then restart what is missing from a terminal, not from here"), text(draw()));
+  const t = state.runs[1].address;
+  assert.ok(text(draw()).includes(`A: its restart's terminal ${t} is gone, with no answer from it. It may have stopped part-way: `
+    + "check whether A and its helpers are back, then restart what is missing from a terminal, not from here"), text(draw()));
+  assert.match(text(draw()), /Restart 1 bot/, "still listed");
 });
 
-const probes = () => state.calls.filter((c) => c[0] === "true");
 const THREE = { t5: "idle", t7: "done", t8: "idle", t9: "done" };
 
-test("cap: a Herdr that ignores exec's timeout restarts by itself with 2 helpers, not 3: it says why and how, never a flag (#413)", async () => {
+test("no helpers cap (#433): 3 helpers restart by themselves with --tree, in a terminal of their own; exec's timeout is never probed", async () => {
   const { draw } = await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE });
-  assert.deepEqual(probes(), [["true"]], "a real read of the running Herdr, once");
-  assert.deepEqual(state.execOptions[state.calls.indexOf(probes()[0])], { timeout: "probe" });
-  assert.equal(restarts().length, 1, "above the cap: no restart");
-  const shown = text(draw());
-  assert.ok(shown.includes("A is busy: this Herdr stops a restart at 30 s, too soon to bring back 3 helpers; nothing was restarted. Restart A from a terminal"), shown);
-  assert.doesNotMatch(shown, /--[a-z]/);
-  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { t5: "idle", t7: "done", t8: "idle" } });
-  assert.equal(probes().length, 0, "at the cap: nothing to ask");
-  assert.ok(secondRestart().includes("--tree"));
-});
-
-test("cap: a Herdr that honours exec's timeout has none; one that can't be read counts as ignoring it (#413)", async () => {
-  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE, probe: "refuses" });
-  assert.ok(secondRestart().includes("--tree"));
-  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: THREE, probe: "fails" });
-  assert.equal(restarts().length, 1, "unreadable: the safe side");
-});
-
-test("cap: above it there is no wait either; no helpers, no probe: today's restart (#413)", async () => {
-  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes: { ...THREE, t7: "working" } });
-  assert.equal(waits().length, 0, "nothing to wait for if it can't restart");
-  assert.equal(restarts().length, 1);
-  const { cx } = await busyPanel({ panes: { t5: "done" } });
-  nodes.get("idle-codex-a").click(null, cx);
-  await cx.settle();
-  assert.equal(probes().length, 0);
   assert.equal(restarts().length, 2);
+  assert.ok(secondRestart().includes("--tree"));
+  assert.equal(optionsOf(secondRestart()), null);
+  assert.deepEqual(state.calls.filter((c) => c[0] === "true"), [], "no probe of the running Herdr");
+  assert.match(text(draw()), /Restarted 1: every Codex bot is on the new account/);
+  assert.doesNotMatch(text(draw()), /30 s|from a terminal/);
+});
+
+test("no helpers cap (#433): with 3 helpers and one working, the panel waits for it, then restarts with --tree", async () => {
+  const panes = { ...THREE, t7: "working" };
+  await busyPanel({ answer: busyAnswer("helpers", HELPERS), panes, wait: () => { panes.t7 = "done"; return { code: 0, stdout: "{}", stderr: "" }; } });
+  assert.deepEqual(waits().map((w) => w[2]), ["t7"]);
+  assert.equal(restarts().length, 2);
+  assert.ok(secondRestart().includes("--tree"));
+});
+
+// #433: each restart runs in an hc terminal of its own, followed to its end. A panel with A to
+// restart: `hc(args)` answers hc ls and get (a restart's own terminal is t900), `wait(terminal)` hc
+// wait, `answer` the CLI. Not pressed: a test sets what it needs, then presses.
+async function runPanel({ runAs = "done", answer = OK, hc: hcFn = () => ({ code: 0, stdout: JSON.stringify({ terminals: [] }), stderr: "" }), wait = () => ({ code: 0, stdout: "{}", stderr: "" }) } = {}) {
+  const p = await panel();
+  p.view.tool = "codex";
+  p.view.switched.codex = { at: NOW, from: "ana@example.com · Pro", to: "bo@example.com · Pro",
+    look: { bots: [{ id: "a", name: "A", project: "/p" }], reliable: true } };
+  state.hcCalls = [];
+  state.calls = [];
+  state.execOptions = [];
+  state.runAs = runAs;
+  state.hc = hcFn;
+  p.pauses = 0;
+  p.view.pause = async (ms) => { p.pauses += 1; if (mock.timers.enabled) mock.timers.tick(ms); };
+  state.exec = (command, args) => (command === "hc" ? wait(args[1]) : answer);
+  p.draw();
+  p.press = async () => {
+    nodes.get("restart-codex").click(null, p.cx);
+    nodes.get("restart-codex").click(null, p.cx);
+    await p.cx.settle();
+    return text(p.draw());
+  };
+  return p;
+}
+const liveGet = (t, st = "live") => ({ code: 0, stdout: JSON.stringify({ address: t, state: st, status: null }), stderr: "" });
+const noRows = { code: 0, stdout: JSON.stringify({ terminals: [] }), stderr: "" };
+const PART_WAY = "It may have stopped part-way: check whether A is back, then restart what is missing from a terminal, not from here";
+/** Date.now under the test's control (node:test's mock timers), for the 5 min the panel follows a run. */
+async function withClock(fn) {
+  mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  mock.timers.enabled = true;
+  try {
+    return await fn();
+  } finally {
+    mock.timers.enabled = false;
+    mock.timers.reset();
+  }
+}
+
+test("a restart runs in an hc terminal of its own, removed once it ends: no parent, the bot's label, Herdr's environment for the CLI; not through exec (#433)", async () => {
+  const p = await runPanel();
+  const shown = await p.press();
+  assert.deepEqual(state.hcCalls[0], ["ls", "--label", "am-quota.restart=a", "--json"], "first: is one for A still running?");
+  assert.deepEqual(state.prepares, [["-c", state.prepares[0][1], "sh", "/stub-app/data/am-quota/runs", "PATH", "HOME", "NVM_DIR", "VIRTUAL_ENV", "HERMES_HOME"]],
+    "then, through exec: the folder made and Herdr's own values read");
+  const run = state.hcCalls[1];
+  const at = run.indexOf("--");
+  assert.deepEqual(run.slice(0, at + 3), ["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", "/stub-app", "--label", "am-quota.restart=a", "--", "sh", "-c"]);
+  const [, out, err, code, ...argv] = run.slice(at + 4);
+  assert.equal(run[at + 4], "sh");
+  const stem = out.replace(/\.out$/, "");
+  assert.match(stem, /^\/stub-app\/data\/am-quota\/runs\/a-\d+-[a-z0-9]+$/);
+  assert.deepEqual([err, code], [`${stem}.err`, `${stem}.code`]);
+  assert.deepEqual(argv, ["env", "-u", "NVM_DIR", "-u", "VIRTUAL_ENV", "-u", "HERMES_HOME", "HERDR_APP_HOME=/stub-app", "PATH=/herdr/bin:/usr/bin:/bin", "HOME=/stub-home",
+    "sh", RUNNER, "/stub-app/mods/am-sidebar/bin/automagik-herdr.mjs", "restart", "a", "--project", "/p", "--json"],
+    "the CLI sees Herdr's PATH and HOME, and none of the others herdr-core may have set");
+  assert.equal(waits().length, 0, "its answer was there at the first look");
+  assert.deepEqual(state.execOptions, [null], "the CLI is never run through exec");
+  assert.match(shown, /Restarted 1: every Codex bot is on the new account/);
+});
+
+test("before a restart: a runs folder that can't be made, or Herdr's environment unread, starts nothing and says so (#433)", async () => {
+  let p = await runPanel();
+  state.prepare = () => ({ code: 3, stdout: "", stderr: "mkdir: Permission denied" });
+  let shown = await p.press();
+  assert.ok(shown.includes("A: couldn't make /stub-app/data/am-quota/runs for its answer, so no restart was started"), shown);
+  assert.equal(state.runs.length, 0, "no terminal");
+  p = await runPanel();
+  state.prepare = () => { throw new Error("exec failed"); };
+  shown = await p.press();
+  assert.ok(shown.includes("A: couldn't read this app's environment for it, so no restart was started"), shown);
+  assert.equal(state.runs.length, 0);
+  // Values with no name, or names it didn't ask for, are no values.
+  p = await runPanel();
+  state.prepare = () => ({ code: 0, stdout: "PATH=/a:/b\nPATH=/second\nOTHER=x\nHOME=\n=y\nnoise\n", stderr: "" });
+  await p.press();
+  const argv = state.runs[0].args.slice(state.runs[0].args.indexOf("--") + 8);
+  assert.deepEqual(argv.slice(0, 11), ["env", "-u", "HOME", "-u", "NVM_DIR", "-u", "VIRTUAL_ENV", "-u", "HERMES_HOME", "HERDR_APP_HOME=/stub-app", "PATH=/a:/b"]);
+});
+
+test("a restart's terminal is followed: hc wait under 30 s through exec, then its answer from the files, a refusal included (#433)", async () => {
+  const hcFn = (args) => (args[0] === "get" ? liveGet(args[1]) : noRows);
+  const asked = [];
+  let p = await runPanel({ runAs: "live", hc: hcFn, wait: (t) => { asked.push(t); finishRun(state.runs[0]); return { code: 0, stdout: "{}", stderr: "" }; } });
+  let shown = await p.press();
+  assert.deepEqual(asked, ["t900"]);
+  assert.deepEqual(waits(), [["hc", "wait", "t900", "--timeout", "25", "--json"]]);
+  assert.deepEqual(optionsOf(waits()[0]), { timeout: 28000 }, "ends by itself on any Herdr");
+  assert.match(shown, /Restarted 1: every Codex bot is on the new account/);
+  const error = "t100 exited before its agent was up; t5 still runs A, untouched.";
+  p = await runPanel({ runAs: "live", hc: hcFn, answer: { code: 1, stdout: JSON.stringify({ error, terminal: "t100" }), stderr: `automagik-herdr: a warning\nautomagik-herdr: ${error}\n` },
+    wait: () => { finishRun(state.runs[0]); return { code: 0, stdout: "{}", stderr: "" }; } });
+  shown = await p.press();
+  assert.ok(shown.includes(`Restarted 0 of 1. Not restarted: A: ${error}`), shown);
+});
+
+test("a restart's terminal that ended or is gone with no answer is said, with what to check; once removed (--rm) its answer is read (#433)", async () => {
+  let p = await runPanel({ runAs: "live", hc: (args) => (args[0] === "get" ? liveGet(args[1], "finished") : noRows) });
+  let shown = await p.press();
+  assert.ok(shown.includes(`A: its restart in t900 ended with no answer. ${PART_WAY}`), shown);
+  assert.equal(waits().length, 0);
+  assert.match(shown, /Restart 1 bot/, "still listed");
+  const gone = { code: 3, stdout: "", stderr: JSON.stringify({ error: { kind: "not_found" } }) };
+  p = await runPanel({ runAs: "live", hc: (args) => (args[0] === "get" ? gone : noRows) });
+  shown = await p.press();
+  assert.ok(shown.includes(`A: its restart's terminal t900 is gone, with no answer from it. ${PART_WAY}`), shown);
+  // The usual end: the answer written, then the terminal removed, both between two looks.
+  p = await runPanel({ runAs: "live", hc: (args) => {
+    if (args[0] !== "get") return noRows;
+    finishRun(state.runs[0]);
+    return gone;
+  } });
+  shown = await p.press();
+  assert.match(shown, /Restarted 1: every Codex bot is on the new account/);
+});
+
+test("a restart still running after 5 min of wall time is said, where; a second press starts no second one (#433)", async () => {
+  await withClock(async () => {
+    let rows = [];
+    const hcFn = (args) => (args[0] === "get" ? liveGet(args[1]) : { code: 0, stdout: JSON.stringify({ terminals: rows }), stderr: "" });
+    const p = await runPanel({ runAs: "live", hc: hcFn, wait: () => { mock.timers.tick(25000); return { code: 0, stdout: "{}", stderr: "" }; } });
+    let shown = await p.press();
+    assert.equal(waits().length, 12, "12 waits of 25 s: 5 min");
+    assert.equal(p.pauses, 0, "a wait that took its time needs no pause");
+    assert.ok(shown.includes("A: its restart still runs in t900 after 5 min; the panel stopped following it, so how it ends isn't shown here. "
+      + "Check whether the bot is back once t900 is gone"), shown);
+    assert.ok(!shown.includes("part-way") && !shown.includes("hc read"), "it is running, not stopped, and it goes once it ends");
+    assert.match(shown, /Restart 1 bot/);
+    rows = [{ address: "t900", state: "live" }];
+    shown = await p.press();
+    assert.equal(state.runs.length, 1, "no second run");
+    assert.ok(shown.includes("A: its restart started earlier still runs in t900, so no second one was started"), shown);
+  });
+});
+
+test("waits that answer at once count by the clock, with a pause after each, not by how many there were (#433)", async () => {
+  await withClock(async () => {
+    const p = await runPanel({ runAs: "live", hc: (args) => (args[0] === "get" ? liveGet(args[1]) : noRows), wait: () => { throw new Error("hc wait failed"); } });
+    const shown = await p.press();
+    assert.equal(waits().length, 60, "5 s apart: 60 in 5 min");
+    assert.equal(p.pauses, 60, "a pause after each quick wait");
+    assert.ok(shown.includes("A: its restart still runs in t900 after 5 min"), shown);
+  });
+  await withClock(async () => {
+    const p = await runPanel({ runAs: "live", hc: (args) => (args[0] === "get" ? { code: 1, stdout: "", stderr: "hc: can't reach the server" } : noRows),
+      wait: () => { mock.timers.tick(25000); return { code: 0, stdout: "{}", stderr: "" }; } });
+    const shown = await p.press();
+    assert.ok(shown.includes("A: its restart may still run in t900 (hc can't say how it is) after 5 min"), shown);
+  });
+});
+
+test("a restart hc can't start, can't list, or can't place is said in plain words; nothing ran (#433)", async () => {
+  let p = await runPanel();
+  state.runFail = JSON.stringify({ error: { kind: "unavailable", message: "the server isn't running; pass --start to start it", hint: "hc server start" } });
+  let shown = await p.press();
+  delete state.runFail;
+  assert.ok(shown.includes("A: hc couldn't start its restart in a terminal of its own (the server isn't running); nothing was restarted"), shown);
+  assert.doesNotMatch(shown, /\{|--[a-z]|kind/, "no JSON and no flag");
+  assert.equal(restarts().length, 0, "nothing ran");
+  p = await runPanel();
+  state.runFail = "hc: can't reach the server";
+  shown = await p.press();
+  delete state.runFail;
+  assert.ok(shown.includes("A: hc couldn't start its restart in a terminal of its own (can't reach the server); nothing was restarted"), shown);
+  p = await runPanel();
+  state.runFail = "pass --cwd with a folder that exists";
+  shown = await p.press();
+  delete state.runFail;
+  assert.ok(shown.includes("A: hc couldn't start its restart in a terminal of its own; nothing was restarted"), shown);
+  p = await runPanel({ hc: () => ({ code: 1, stdout: "", stderr: "down" }) });
+  shown = await p.press();
+  assert.ok(shown.includes("A: hc can't list the restarts still running, so none was started"), shown);
+  assert.equal(state.runs.length, 0);
+  // No address in hc run's answer: found by its label, else said.
+  let lists = 0;
+  p = await runPanel({ runAs: "live", hc: (args) => {
+    if (args[0] === "get") { finishRun(state.runs[0]); return liveGet(args[1], "finished"); }
+    lists += 1;
+    return { code: 0, stdout: JSON.stringify({ terminals: lists > 1 ? [{ address: "t900", state: "live" }] : [] }), stderr: "" };
+  } });
+  state.runNoAddress = true;
+  shown = await p.press();
+  assert.match(shown, /Restarted 1: every Codex bot is on the new account/);
+  p = await runPanel({ runAs: "live" });
+  shown = await p.press();
+  delete state.runNoAddress;
+  assert.ok(shown.includes(`A: hc started its restart without saying in which terminal, and none was found. ${PART_WAY}`), shown);
+});
+
+test("the restart terminal's script and the prepare, under a real sh: the CLI's stdout, stderr and exit code in the files, the code last; old files go (#433)", async () => {
+  const p = await runPanel();
+  await p.press();
+  const run = state.hcCalls[1];
+  const script = run[run.indexOf("-c") + 1];
+  const prepare = state.prepares[0][1];
+  const root = mkdtempSync(join(tmpdir(), "am-quota-run-"));
+  try {
+    const runs = join(root, "a", "runs");
+    const env = { PATH: process.env.PATH, HOME: "/home/x", HERMES_HOME: "/h=1" };
+    const made = spawnSync("sh", ["-c", prepare, "sh", runs, "PATH", "HOME", "NVM_DIR", "HERMES_HOME"], { env, encoding: "utf8" });
+    assert.equal(made.status, 0);
+    assert.equal(made.stdout, `PATH=${process.env.PATH}\nHOME=/home/x\nHERMES_HOME=/h=1\n`, "set ones only, in order");
+    writeFileSync(join(root, "file"), "x");
+    assert.equal(spawnSync("sh", ["-c", prepare, "sh", join(root, "file", "runs"), "PATH"], { env }).status, 3, "a folder that can't be made: 3");
+    const stale = join(runs, "old.out");
+    const recent = join(runs, "recent.out");
+    writeFileSync(stale, "x");
+    writeFileSync(recent, "x");
+    const twoDays = (Date.now() - 2 * 24 * H) / 1000;
+    utimesSync(stale, twoDays, twoDays);
+    const files = ["a.out", "a.err", "a.code"].map((f) => join(runs, f));
+    const cli = 'printf "{\\"in\\":\\"%s\\"}" "${HC_TERMINAL_ID-none}"; echo "automagik-herdr: refused." >&2; exit 3';
+    const r = spawnSync("sh", ["-c", script, "sh", ...files, "sh", "-c", cli], { env: { ...process.env, HC_TERMINAL_ID: "t42" }, encoding: "utf8" });
+    assert.equal(r.status, 0);
+    assert.equal(readFileSync(files[0], "utf8"), '{"in":"none"}', "the CLI runs as under exec: not inside a pane of its own");
+    assert.equal(readFileSync(files[1], "utf8"), "automagik-herdr: refused.\n");
+    assert.equal(readFileSync(files[2], "utf8"), "3\n");
+    assert.match(r.stderr, /refused\./, "its screen shows what the CLI said");
+    assert.equal(existsSync(`${files[2]}.tmp`), false);
+    assert.equal(existsSync(stale), false, "a day old: gone");
+    assert.equal(existsSync(recent), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the wait is cancelable: pressed again, the wait's end restarts nothing; a retry press works; a reload holds no wait (#413)", async () => {

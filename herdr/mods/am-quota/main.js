@@ -35,17 +35,47 @@ const ARMED = 5000;
 const IDLE_WAIT_S = 450;
 const IDLE_EXEC_MS = 480_000;
 const IDLE_WAITS = 4;
-// One bot's restart through exec: room for the CLI's own waits (a new pane's 30 s, twice).
-const RESTART_EXEC_MS = 300_000;
-// A --tree restart: 65 s for the bot at worst, then up to 40 s per helper, one at a time (its old
-// pane's end 10 s, its new one 30 s), so Herdr's cap covers about 13 helpers. The panel has waited
-// already, so the CLI's own wait for a turn (10 min unless told) is only a guard against a race.
-const TREE_EXEC_MS = 600_000;
+// A restart runs in an hc terminal of its own (#433), not through exec: Herdr ends what exec runs at
+// its limit (30 s on a Herdr that ignores exec's timeout), which can be part-way through a restart.
+// The panel follows that terminal to its end and reads the CLI's answer from the files it leaves.
+// Each look: the answer's files, then hc get of the terminal, then one hc wait of RUN_WAIT_S (under
+// 30 s, so it ends by itself on any Herdr). The panel follows a restart RUN_FOLLOW_MS, plus
+// RUN_HELPER_MS per helper on a --tree one (65 s for the bot at worst, then 40 s per helper, one at
+// a time: its old pane's end 10 s, its new one 30 s), then says it still runs and where.
+const RUN_WAIT_S = 25;
+const RUN_WAIT_EXEC_MS = 28_000;
+const RUN_FOLLOW_MS = 300_000;
+const RUN_HELPER_MS = 40_000;
+// A wait that answers at once (hc refusing it, say) is followed by this pause, so a look is never a busy loop.
+const RUN_PAUSE_MS = 5_000;
+/** The label of a restart's terminal: the bot's id, so a second press finds a run still going. */
+const RUN_LABEL = "am-quota.restart";
+/** Where a restart's terminal leaves the CLI's stdout, stderr and exit code, under the app's data. */
+const RUNS = "data/am-quota/runs";
+// The restart terminal's program: `sh -c RUN_SCRIPT sh <out> <err> <code> <the CLI's argv…>`. The
+// paths and the argv are its arguments, never part of the script. Files older than a day go first.
+// The exit code is written last, through a rename, so a code read means the other two are whole.
+// HC_TERMINAL_ID is unset so the CLI runs as it does under exec: not inside a pane of its own. The
+// folder is made before (PREPARE_SCRIPT), so a folder that can't be made is said: nothing ran.
+const RUN_SCRIPT = [
+  'out=$1 err=$2 code=$3; shift 3',
+  'find "${out%/*}" -maxdepth 1 -type f -mmin +1440 -exec rm -f {} + 2>/dev/null',
+  'unset HC_TERMINAL_ID',
+  '"$@" >"$out" 2>"$err"; c=$?',
+  'cat "$err" >&2',
+  'printf "%s\\n" "$c" >"$code.tmp" && mv -f "$code.tmp" "$code"',
+].join("\n");
+// Run through exec before each restart, in Herdr's environment: `sh -c PREPARE_SCRIPT sh <runs
+// folder> <names…>` makes the folder (exit 3 when it can't) and prints NAME=value for each name set.
+const PREPARE_SCRIPT = 'mkdir -p -- "$1" || exit 3; shift; for n; do v=$(printenv -- "$n") && printf "%s=%s\\n" "$n" "$v"; done; exit 0';
+// What the CLI reads from its environment: PATH (its node through run.sh, hc, an agent's program and
+// the PATH a new pane gets), HOME, NVM_DIR (run.sh's nvm node), VIRTUAL_ENV (left off a pane's PATH)
+// and HERMES_HOME. A restart's terminal starts in herdr-core's environment, not Herdr's, so these are
+// passed as Herdr has them (one Herdr hasn't set is unset): the CLI runs as it did under exec.
+const CLI_ENV = ["PATH", "HOME", "NVM_DIR", "VIRTUAL_ENV", "HERMES_HOME"];
+// A --tree restart: the panel has waited already, so the CLI's own wait for a turn (10 min unless
+// told) is only a guard against a race.
 const TREE_TURN_WAIT_MS = 10_000;
-// On a Herdr that ignores exec's timeout, exec ends the CLI at 30 s, which can be mid-restart: the
-// most helpers an automatic restart may carry there. An estimate, never measured: about 8 s plus
-// 7 s per helper, so three would be 29 s of the 30.
-const SHORT_LIMIT_HELPERS = 2;
 /** The bot CLI, run the way the sidebar runs it (am-sidebar/launch.js runCli). */
 const SIDEBAR = "am-sidebar";
 
@@ -80,6 +110,55 @@ const noteText = (note) => note.replace(/(resume )?--[a-z][a-z-]*/g, "a resume")
  */
 const refusal = (r) => plain(typeof r?.out?.error === "string" && r.out.error.trim()
   ? r.out.error.trim() : String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "");
+/**
+ * The bot CLI's argv with --json, run the way the sidebar runs it (am-sidebar/launch.js runCli), or
+ * null when the sidebar mod (which carries the CLI) is not installed. `env`: more KEY=value words.
+ */
+async function cliArgv(args, env = [], unset = []) {
+  const dir = appHome().replace(/\/+$/, "");
+  const runner = `${dir}/mods/${SIDEBAR}/bin/run.sh`;
+  const there = await readTextFile(runner).then((t) => t !== null && t !== undefined, () => false);
+  if (!there) return null;
+  return ["env", ...unset.flatMap((n) => ["-u", n]), `HERDR_APP_HOME=${dir}`, ...env, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"];
+}
+/** What hc said when it failed, in plain words: its JSON error's message, else its last line, never a flag. */
+function hcSaid(r) {
+  const text = String(r?.stderr || r?.stdout || "").trim();
+  let said = text.split("\n").at(-1) ?? "";
+  try {
+    const e = JSON.parse(text)?.error;
+    if (typeof e?.message === "string" && e.message.trim()) said = e.message.trim();
+    else if (typeof e?.kind === "string") said = e.kind.replace(/_/g, " ");
+  } catch {}
+  // Up to the first clause that names a flag ("…; pass --start to start it"), then plain().
+  const clauses = said.replace(/^hc: /, "").split(/(?<=[;,])\s+/);
+  const flagged = clauses.findIndex((c) => /(^|[\s(])--[a-z]/.test(c));
+  const kept = flagged < 0 ? clauses : clauses.slice(0, flagged);
+  return plain(kept.join(" ").replace(/[;,.]\s*$/, "")).replace(/[.]$/, "");
+}
+/** A CLI run's { code, out: its --json stdout or null, err: stderr without the CLI's name }. */
+function cliAnswer(code, stdout, stderr) {
+  let out = null;
+  try {
+    out = JSON.parse(stdout ?? "");
+  } catch {}
+  return { code, out, err: String(stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+}
+/** Why a restart's terminal gave no answer; `partway`: it may have stopped part-way. */
+function runError(why, { partway = false } = {}) {
+  return Object.assign(new Error(why), { partway });
+}
+/** The live rows of `hc ls --json`'s stdout (a list, or { terminals }), each with an address. */
+function liveRows(stdout) {
+  let rows;
+  try {
+    rows = JSON.parse(stdout);
+  } catch {
+    return [];
+  }
+  const list = Array.isArray(rows) ? rows : rows?.terminals ?? [];
+  return list.filter((r) => r?.address && (r.state === undefined || r.state === "live"));
+}
 /** "2 min", from ms: what a wait really took. */
 const waited = (ms) => (ms < 60000 ? "under a minute" : `${Math.round(ms / 60000)} min`);
 /** The platform the panel runs on: `security` exists on macOS only. */
@@ -355,22 +434,134 @@ export default class AmQuota extends View {
   }
 
   /**
-   * The bot CLI with --json, as the sidebar runs it: { code, out, err }, or null when the sidebar
-   * mod (which carries the CLI) is not installed. `timeout` (ms): exec's limit, which ends the
-   * CLI when passed (30 s unless given, Herdr's cap 10 min); `env`: more KEY=value words for it.
+   * The bot CLI with --json through exec, as the sidebar runs it: { code, out, err }, or null when
+   * the sidebar mod (which carries the CLI) is not installed. Under exec's 30 s: a quick question
+   * only (ls); a restart goes through cliRun.
    */
-  async cli(args, { timeout, env = [] } = {}) {
+  async cli(args) {
+    const argv = await cliArgv(args);
+    if (!argv) return null;
+    const r = await exec(argv[0], argv.slice(1));
+    return cliAnswer(r?.code ?? 1, r?.stdout, r?.stderr);
+  }
+
+  /**
+   * The bot CLI with --json in an hc terminal of its own (#433), followed to its end: what cli()
+   * resolves, so outside exec's limit, or null when the sidebar mod is not installed. `label`: the
+   * bot's id, on the terminal; one still running for it refuses a second. `followMs`: how long the
+   * panel follows it. Throws a RunError when there is no answer: not started (nothing ran), its
+   * terminal gone or ended with none (`partway`: it may have stopped part-way), or still running.
+   */
+  async cliRun(args, { env = [], label, followMs }) {
+    if (!(await cliArgv(args))) return null;
     const dir = appHome().replace(/\/+$/, "");
-    const runner = `${dir}/mods/${SIDEBAR}/bin/run.sh`;
-    const there = await readTextFile(runner).then((t) => t !== null, () => false);
-    if (!there) return null;
-    const r = await exec("env", [`HERDR_APP_HOME=${dir}`, ...env, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"],
-      ...(timeout ? [{ timeout }] : []));
-    let out = null;
+    const mine = ["ls", "--label", `${RUN_LABEL}=${label}`, "--json"];
+    const before = await hc(mine);
+    if (before?.code !== 0) throw runError("hc can't list the restarts still running, so none was started");
+    const going = liveRows(before.stdout)[0];
+    if (going) throw runError(`its restart started earlier still runs in ${going.address}, so no second one was started`);
+    // Its own names: never a file an earlier run left, even one started in the same millisecond.
+    const base = `${dir}/${RUNS}/${slug(label)}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const files = { out: `${base}.out`, err: `${base}.err`, code: `${base}.code` };
+    const herdr = await this.prepare(`${dir}/${RUNS}`);
+    const argv = await cliArgv(args, [...CLI_ENV.filter((n) => n in herdr).map((n) => `${n}=${herdr[n]}`), ...env],
+      CLI_ENV.filter((n) => !(n in herdr)));
+    // --rm: hc removes it once it ends; its answer is in the files.
+    const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", dir, "--label", `${RUN_LABEL}=${label}`,
+      "--", "sh", "-c", RUN_SCRIPT, "sh", files.out, files.err, files.code, ...argv]);
+    if (r?.code !== 0) {
+      const said = hcSaid(r);
+      throw runError(`hc couldn't start its restart in a terminal of its own${said ? ` (${said})` : ""}; nothing was restarted`);
+    }
+    let terminal = null;
     try {
-      out = JSON.parse(r?.stdout ?? "");
+      terminal = JSON.parse(r.stdout).address ?? null;
     } catch {}
-    return { code: r?.code ?? 1, out, err: String(r?.stderr ?? "").replace(/^automagik-herdr: /gm, "").trim() };
+    // It may run anyway: found by its label.
+    if (typeof terminal !== "string" || !terminal) {
+      const after = await hc(mine).catch(() => null);
+      terminal = after?.code === 0 ? liveRows(after.stdout)[0]?.address ?? null : null;
+    }
+    if (!terminal) {
+      const got = await this.runAnswer(files);
+      if (got) return got;
+      throw runError("hc started its restart without saying in which terminal, and none was found", { partway: true });
+    }
+    return this.follow(terminal, files, followMs);
+  }
+
+  /**
+   * Before a restart, through exec (Herdr's environment): makes the runs folder and reads CLI_ENV as
+   * Herdr has them, { NAME: value } for each one set. Throws when either fails: nothing ran.
+   */
+  async prepare(folder) {
+    let r;
+    try {
+      r = await exec("sh", ["-c", PREPARE_SCRIPT, "sh", folder, ...CLI_ENV]);
+    } catch (err) {
+      r = { code: null, stderr: message(err) };
+    }
+    if (r?.code === 3) throw runError(`couldn't make ${folder} for its answer, so no restart was started`);
+    if (r?.code !== 0) throw runError("couldn't read this app's environment for it, so no restart was started");
+    const vars = {};
+    for (const line of String(r.stdout ?? "").split("\n")) {
+      const at = line.indexOf("=");
+      const name = line.slice(0, at);
+      if (at > 0 && CLI_ENV.includes(name) && !(name in vars) && line.slice(at + 1)) vars[name] = line.slice(at + 1);
+    }
+    return vars;
+  }
+
+  /** The CLI's answer a restart's terminal left (cli()'s shape), or null while its exit code isn't written. */
+  async runAnswer(files) {
+    const read = (path) => readTextFile(path).catch(() => null);
+    const code = await read(files.code);
+    if (code === null || code === undefined) return null;
+    const n = Number.parseInt(String(code).trim(), 10);
+    return cliAnswer(Number.isSafeInteger(n) ? n : 1, await read(files.out), await read(files.err));
+  }
+
+  /**
+   * Follows a restart's terminal until its answer is written (see RUN_WAIT_S). Its terminal gone or
+   * ended with no answer, or still running after `followMs`: a RunError, never a silent end.
+   */
+  async follow(terminal, files, followMs) {
+    const started = Date.now();
+    let quick = false;
+    for (;;) {
+      const got = await this.runAnswer(files);
+      if (got) return got;
+      if (quick) await this.pause(RUN_PAUSE_MS);
+      let pane;
+      let unread = false;
+      try {
+        pane = await this.paneGet(terminal);
+      } catch {
+        unread = true;
+      }
+      if (pane === null || (pane && pane.state && pane.state !== "live")) {
+        // The answer may land just before the terminal ends.
+        const late = await this.runAnswer(files);
+        if (late) return late;
+        throw runError(pane === null ? `its restart's terminal ${terminal} is gone, with no answer from it`
+          : `its restart in ${terminal} ended with no answer`, { partway: true });
+      }
+      // Wall time, not waits: a wait that answers at once is followed by a pause, never counted.
+      if (Date.now() - started >= followMs) {
+        throw runError(`its restart ${unread ? `may still run in ${terminal} (hc can't say how it is)` : `still runs in ${terminal}`} after `
+          + `${waited(Date.now() - started)}; the panel stopped following it, so how it ends isn't shown here. Check whether the bot is back once ${terminal} is gone`);
+      }
+      const asked = Date.now();
+      try {
+        await exec("hc", ["wait", terminal, "--timeout", String(RUN_WAIT_S), "--json"], { timeout: RUN_WAIT_EXEC_MS });
+      } catch {}
+      quick = Date.now() - asked < 1000;
+    }
+  }
+
+  /** A pause between looks at a restart's terminal (a test replaces it). */
+  pause(ms) {
+    return new Promise((go) => setTimeout(go, ms));
   }
 
   /** After a switch: the bots of that tool that started before it, by `automagik-herdr ls`. */
@@ -465,12 +656,13 @@ export default class AmQuota extends View {
    * when a helper wasn't run again, though the bot did restart: its new `terminal` with no `error`
    * says so. A refusal can carry a `terminal` too (a new pane that exited, a turn started again).
    */
-  async restartOne(bot, { tree = false } = {}) {
+  async restartOne(bot, { tree = false, helpers: count = 0 } = {}) {
     try {
       const args = ["restart", bot.id, "--project", bot.project, ...(tree ? ["--tree"] : [])];
-      // A restart waits up to 30 s for its new pane, twice when codex can't resume (#413): exec's
-      // 30 s default would end the CLI mid-restart.
-      const r = await this.cli(args, tree ? { timeout: TREE_EXEC_MS, env: [`AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS=${TREE_TURN_WAIT_MS}`] } : { timeout: RESTART_EXEC_MS });
+      // In a terminal of its own (#433): a restart waits up to 30 s for its new pane, twice when
+      // codex can't resume (#413), and a --tree one 40 s more per helper, past exec's limit.
+      const r = await this.cliRun(args, { label: bot.id, followMs: RUN_FOLLOW_MS + (tree ? count * RUN_HELPER_MS : 0),
+        env: tree ? [`AUTOMAGIK_HERDR_TREE_TURN_WAIT_MS=${TREE_TURN_WAIT_MS}`] : [] });
       const helpers = (Array.isArray(r?.out?.helpers) ? r.out.helpers : []).filter((h) => h?.error)
         .map((h) => `${bot.name}'s helper ${h.name ?? h.replaced}: ${plain(h.error)}`);
       if (r?.code === 0 || (tree && typeof r?.out?.terminal === "string" && r.out.error === undefined)) {
@@ -482,8 +674,9 @@ export default class AmQuota extends View {
         ? { bot, why, refused, terminal: r.out.terminal } : null;
       return { why, note: null, busy, helpers };
     } catch (err) {
-      // Herdr ended the CLI at its limit: a tree restart may have stopped part-way.
-      const why = tree ? `${message(err)}. It may have stopped part-way: check whether ${bot.name} and its helpers are back, then restart what is missing from a terminal, not from here` : message(err);
+      // Its terminal ended with no answer: the restart may have stopped part-way.
+      const back = tree ? `${bot.name} and its helpers are back` : `${bot.name} is back`;
+      const why = err?.partway ? `${message(err)}. It may have stopped part-way: check whether ${back}, then restart what is missing from a terminal, not from here` : message(err);
       return { why, note: null, busy: null, helpers: [] };
     }
   }
@@ -537,10 +730,6 @@ export default class AmQuota extends View {
       const now = await this.lookAt(entry.terminal);
       if (!live()) return;
       if (now.stop) return stop(now.stop);
-      if (now.helpers > SHORT_LIMIT_HELPERS && !(await this.honoursTimeout())) {
-        if (!live()) return;
-        return stop(`this Herdr stops a restart at 30 s, too soon to bring back ${now.helpers} helpers`, `. Restart ${entry.bot.name} from a terminal`);
-      }
       helpers = now.helpers;
       if (!now.working.length) break;
       most ??= IDLE_WAITS + now.helpers;
@@ -565,7 +754,7 @@ export default class AmQuota extends View {
     s.restarting = true;
     this.restarting = { ...this.restarting, [provider]: true };
     wake(cx);
-    const one = await this.restartOne(entry.bot, { tree: helpers > 0 });
+    const one = await this.restartOne(entry.bot, { tree: helpers > 0, helpers });
     s.restarting = false;
     delete this.restarting[provider];
     delete s.waiting[id];
@@ -582,23 +771,6 @@ export default class AmQuota extends View {
       s.look = { bots: left, reliable: left.length ? s.look.reliable : true };
     }
     wake(cx);
-  }
-
-  /**
-   * Whether the running Herdr honours exec's `timeout`: one that does refuses a timeout that isn't a
-   * number, before it runs anything; one that doesn't runs the harmless program. Any other answer
-   * counts as not, the safe side. Asked once: the running Herdr doesn't change under a panel.
-   */
-  async honoursTimeout() {
-    if (this.timeoutHonoured === undefined) {
-      try {
-        await exec("true", [], { timeout: "probe" });
-        this.timeoutHonoured = false;
-      } catch (err) {
-        this.timeoutHonoured = /timeout must be/.test(message(err));
-      }
-    }
-    return this.timeoutHonoured;
   }
 
   /**
