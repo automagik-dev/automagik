@@ -168,17 +168,34 @@ test("a command's streamed output is the card's output, and the question's title
   assert.equal(tool.output, 'acp-ok\n')
 })
 
-test("DSH's level becomes each agent's own mode: Manual, Auto, full access", () => {
-  const level = (policy, sandbox) => levelOf({ effectivePolicy: () => policy }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
-  const claude = AGENTS['acp-claude'].modeFor
-  const codex = AGENTS['acp-codex'].modeFor
-  assert.deepEqual(claude(level('ask', 'workspace-write')), ['default'])
-  assert.deepEqual(claude(level('never', 'workspace-write')), ['auto', 'default'])
-  assert.deepEqual(claude(level('never', 'danger-full-access')), ['bypassPermissions', 'default'])
-  assert.deepEqual(codex(level('ask', 'read-only')), ['read-only'])
-  assert.deepEqual(codex(level('ask', 'workspace-write')), ['workspace-write'])
-  assert.deepEqual(codex(level('never', 'workspace-write')), ['agent', 'workspace-write'])
-  assert.deepEqual(codex(level('never', 'danger-full-access')), ['agent-full-access', 'workspace-write'])
+// DSH's own presets (dsh-permission-presets): the stock catalog's two, plus Auto's fixed spec.
+// Manual is the stock workspace-write preset; Full access is danger-full-access with no prompts.
+const PRESET = Object.freeze({
+  manual: Object.freeze({ sandbox: 'workspace-write', approval: 'ask' }),
+  auto: Object.freeze({ sandbox: 'danger-full-access', approval: 'ask' }),
+  full: Object.freeze({ sandbox: 'danger-full-access', approval: 'never' }),
+})
+const levelOfPreset = ({ sandbox, approval }) => levelOf({ effectivePolicy: () => approval }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
+
+test("DSH's Manual preset (workspace-write, ask) stays Manual for every agent", () => {
+  const level = levelOfPreset(PRESET.manual)
+  assert.deepEqual(level, { sandbox: 'workspace-write', policy: 'ask', full: false, auto: false })
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['default'])
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['workspace-write'])
+})
+
+test("DSH's Auto preset (danger-full-access, ask) is Auto, not Manual", () => {
+  const level = levelOfPreset(PRESET.auto)
+  assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'ask', full: false, auto: true })
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['auto', 'default'])
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
+})
+
+test("DSH's Full access preset (danger-full-access, never) is full access, not Auto", () => {
+  const level = levelOfPreset(PRESET.full)
+  assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['bypassPermissions', 'default'])
+  assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent-full-access', 'workspace-write'])
 })
 
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
