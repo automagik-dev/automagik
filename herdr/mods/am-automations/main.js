@@ -27,10 +27,10 @@ const FINISHED = new Set(["done", "failed", "cancelled"]);
 // The sha256s are the release's checksums.txt, pinned here (macOS only, as part.json says).
 export const SCHEDULER = Object.freeze({
   repo: "DnzzL/herdr-automations",
-  version: "0.11.3",
+  version: "0.12.1",
   sha256: Object.freeze({
-    arm64: "e2fd68c52900fb966e4a28f171c68239de63d4a7068416af949b5f078167254b",
-    amd64: "16ead837e85aa3c9b29d3912d7183a70a44d8741e4eff1e8ae0229821221cfa5",
+    arm64: "7697a45b902bff14654355e1721ca588c2d3306050cbf201e5a497dc4f177819",
+    amd64: "890b53558b9a24e32fe093b58f0339808f85a8f15eca7452fe10b0b7f840597d",
   }),
 });
 /** The command that installs the scheduler to ~/.local/bin, hash-checked, for this Mac's `uname -m`
@@ -185,7 +185,8 @@ export default class Automations extends View {
       name: field(a.name, "issue-triage"), cron: field(a.cron, "0 9 * * 1-5"), repo: field(tilde(a.repo), "~/Projects/myapp"),
       model: field(a.model, "agent default"), timeout: field(String(a.timeout_minutes ?? 60), "60"),
       mcp: field(tilde(a.mcp_config), "optional: path to an MCP servers JSON"),
-      // #501: what the form doesn't edit goes back to put as it came (put replaces the whole entry).
+      // #501: what the form doesn't edit goes back to put as it came. Since v0.12.0 put keeps the
+      // keys it is not sent; sending them back stays harmless and keeps an older scheduler right.
       untouched: { catch_up_minutes: a.catch_up_minutes, disabled: a.disabled, workflow: a.workflow },
       // #501: the entry's own agent_args, kept as they are unless the person changes them here.
       // #498: a new entry starts on the automatic mode ("auto"); an existing one on "kept", its
@@ -225,7 +226,8 @@ export default class Automations extends View {
     };
   }
 
-  // The flags the run starts the agent with (#498, #501), as { agent_args } or {} for none.
+  // The flags the run starts the agent with (#498, #501), as { agent_args }, [] for none: since
+  // v0.12.0 put keeps a key it is not sent, so leaving it out would keep the old flags.
   // An existing entry the person did not touch here sends its own args back exactly. A template
   // run gets no flags from the panel (its command brings its own): its saved args go back as
   // they were. Otherwise: the chosen mode's permission flags, then the words of AGENT ARGS.
@@ -237,7 +239,7 @@ export default class Automations extends View {
     const args = f.template || (mode === "kept" && f.args.value() === f.argsLine) ? own
       : [...(mode === "kept" ? splitPermission(f.agent, own).perm : mode === "auto" ? autoArgs(f.agent) ?? [] : []),
         ...(same ? parseArgs(f.args.value()) : withoutPermission(parseArgs(f.args.value())))];
-    return args?.length ? { agent_args: args } : {};
+    return { agent_args: args ?? [] };
   }
 
   // Whether the form's agent is the one the entry was saved with (always, for a new entry).

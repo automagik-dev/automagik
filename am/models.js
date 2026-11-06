@@ -28,7 +28,24 @@ export const AGENTS = Object.freeze({
   hermes: { name: "Hermes", run: ["hermes"] },
   qoder: { name: "Qoder", run: ["qodercli"], match: ["qodercli"] },
   crush: { name: "Crush", run: ["crush"] },
+  // DSH in a pane (#598), through the dsh-tui command (the installer's shim, dshTui.mjs), which
+  // picks its own DSH profile: this pack names only the command. Interactive only (DSH 0.2.2-rc.1:
+  // `dsh-tui run` and `-p` exit 3, ADAPTER_UNAVAILABLE), and never with a permission, add-dir or
+  // approval flag: the profile on that machine sets its sandbox, and dsh-tui would read such a
+  // flag as prompt text. Its permission presets gate only the filesystem sandbox and the approval
+  // policy: network is unrestricted by design (the lead's ruling, as on the Mac), so the usual
+  // rules hold: no secret printed, no external post or production access without the owner.
+  "dsh-tui": { name: "dsh-TUI", run: ["dsh-tui"] },
 });
+
+// Agents whose model and effort come from elsewhere, never a launch flag (#598): a --model or
+// --effort for one (a bot's pin, a worker's, a bot's worker defaults) is refused with this line,
+// where any other agent with no such flag has it left out with a warning.
+const FIXED_MODEL = {
+  "dsh-tui": "dsh-TUI takes no --model or --effort: its DSH profile on the machine it runs on sets both.",
+};
+/** Why `agentKey` takes no --model or --effort (FIXED_MODEL), or null when it may. */
+export const modelRefusal = (agentKey) => FIXED_MODEL[agentKey] ?? null;
 
 /**
  * Agents that are gone, mapped to the one that replaces them (retired.js, the pack's one list):
@@ -301,7 +318,15 @@ export function effortArgs(agentKey, effort) {
 // trailing argument is an error).
 const PROMPT = {
   antigravity: (task) => ["-i", task],
+  "dsh-tui": (task) => ["--", plainPrompt(task)],
 };
+
+// dsh-tui's first prompt (a worker's task, a bot's briefing) goes after `--`, which DSH drops
+// before it parses the next word: text that starts with "-" (`--resume=x`, `-c`) would be read
+// as that option (#591 review N4). Such text gets a plain label in front; any other goes as it is.
+const PROMPT_LABEL = "Prompt:";
+/** `text` as a first prompt that never starts with "-": PROMPT_LABEL in front when it would. */
+export const plainPrompt = (text) => (/^\s*-/.test(String(text)) ? `${PROMPT_LABEL} ${text}` : String(text));
 
 /** The arguments that hand `agentKey` its first prompt `task`: the bare task unless PROMPT says otherwise. */
 export function promptArgs(agentKey, task) {
@@ -327,7 +352,16 @@ const RESUME = {
   kimi: (session) => (session ? [`--session=${session}`] : ["--continue"]),
   antigravity: (session) => (session ? ["--conversation", session] : ["--continue"]),
   hermes: (session) => (session ? ["--resume", session] : ["--continue"]),
+  // dsh-tui 0.19.0 (the DSH lane, #598): --resume <id>, else -c, the folder's last session.
+  "dsh-tui": (session) => (session ? ["--resume", session] : ["-c"]),
 };
+
+// The agents whose id-less resume needs a turn finished in the old pane first (#598): dsh-tui's
+// -c before any turn has ended there would pick up a session that isn't this pane's, or none.
+// Restart reads the old pane's hc turn counter; a missing one counts as none: a new conversation.
+const RESUME_AFTER_TURN = new Set(["dsh-tui"]);
+/** True when `agentKey`'s id-less resume needs a finished turn in the old pane (RESUME_AFTER_TURN). */
+export const resumeAfterTurn = (agentKey) => RESUME_AFTER_TURN.has(agentKey);
 
 // The agents whose id-less resume isn't limited to the folder (agy 1.5.0: "Continue the most
 // recent conversation"): any other bot on that agent, wherever it runs, may own that one.
@@ -364,6 +398,7 @@ const RESUMED = {
   kimi: { flags: ["--continue", "-c"], optional: ["--session", "-S"] },
   antigravity: { flags: ["--continue", "-c"], valued: ["--conversation", "-conversation"] },
   hermes: { flags: ["--continue"] },
+  "dsh-tui": { flags: ["-c", "--continue"], valued: ["--resume"] },
 };
 
 /**
@@ -408,23 +443,29 @@ export function withoutResume(agentKey, args) {
 // display.personality, else agent.system_prompt), and a codex -c replaces a developer_instructions
 // in config.toml: the CLI skips both then (ownPromptIn), so an owner's own prompt is never lost. `file` takes the briefing's
 // path, `text` its text, `env` names variables; `ours` tells this pack's own words apart from a
-// person's. An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and
-// kimi have no flag that appends).
+// person's. `hook`: it also takes the per-turn hook (Claude Code's UserPromptSubmit in the
+// project's .claude/settings.local.json); `ownConfig`: its briefing yields to a prompt its own config
+// file may set, which only this computer's is read for, so a linked machine's start leaves it out
+// (#582). An agent missing here gets no briefing at launch (agy, cursor-agent, opencode and kimi
+// have no flag that appends).
 export const BRIEFING_MARK = "<herdr-bot>";
 /** The folder, under an app home, that holds the briefings `file` agents are started with. */
 export const BRIEFINGS_DIR = "automagik-herdr/briefings";
 const ourText = (v) => String(v).startsWith(BRIEFING_MARK);
 const ourFile = (v) => String(v).includes(`/${BRIEFINGS_DIR}/`);
 const BRIEFING = {
-  claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile },
+  claude: { file: (path) => ["--append-system-prompt-file", path], names: ["--append-system-prompt-file"], ours: ourFile, hook: true },
   codex: {
     text: (t) => ["-c", `developer_instructions=${tomlString(t)}`], names: ["-c", "--config"],
-    ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK),
+    ours: (v) => /^developer_instructions\s*=/.test(String(v)) && String(v).includes(BRIEFING_MARK), ownConfig: true,
   },
   omp: { text: (t) => [`--append-system-prompt=${t}`], names: ["--append-system-prompt"], ours: ourText },
   pi: { text: (t) => ["--append-system-prompt", t], names: ["--append-system-prompt"], ours: ourText },
   grok: { text: (t) => ["--rules", t], names: ["--rules"], ours: ourText },
-  hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }) },
+  hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }), ownConfig: true },
+  // dsh-tui has no system-prompt flag and no hook (#598): the briefing is its first prompt, the
+  // last words of its command after `--` (plainPrompt), on every launch, a resumed one too.
+  "dsh-tui": { prompt: (t) => ["--", plainPrompt(t)], ours: (v) => ourText(String(v).replace(/^Prompt: /, "")) },
 };
 
 /**
@@ -465,11 +506,16 @@ function hermesPromptIn(text) {
   return false;
 }
 
-/** How `agentKey` takes a briefing at launch: "file", "text", "env", or null when it has no way. */
+/** How `agentKey` takes a briefing at launch: "file", "text", "env", "prompt" (its first prompt, last), or null when it has no way. */
 export function briefingWay(agentKey) {
   const b = BRIEFING[agentKey];
-  return b?.file ? "file" : b?.text ? "text" : b?.env ? "env" : null;
+  return b?.file ? "file" : b?.text ? "text" : b?.env ? "env" : b?.prompt ? "prompt" : null;
 }
+
+/** Whether `agentKey` takes the per-turn briefing hook (BRIEFING's `hook`). */
+export const briefingHook = (agentKey) => Boolean(BRIEFING[agentKey]?.hook);
+/** Whether `agentKey`'s briefing yields to a prompt in its own config file (BRIEFING's `ownConfig`). */
+export const briefingOwnConfig = (agentKey) => Boolean(BRIEFING[agentKey]?.ownConfig);
 
 /**
  * What starts `agentKey` with its briefing: { args, env }, `path` the briefing file (for a
@@ -482,6 +528,7 @@ export function briefingLaunch(agentKey, { path = null, text = null } = {}) {
   if (!text) return null;
   if (b?.text) return { args: b.text(text), env: {} };
   if (b?.env) return { args: [], env: b.env(text) };
+  if (b?.prompt) return { args: b.prompt(text), env: {} };
   return null;
 }
 
@@ -489,6 +536,11 @@ export function briefingLaunch(agentKey, { path = null, text = null } = {}) {
 export function withoutBriefing(agentKey, args) {
   const words = Array.isArray(args) ? args.map(String) : [];
   const b = BRIEFING[agentKey];
+  // A "prompt" agent's briefing is `-- <it>`, last; a first prompt of a person's own stays.
+  if (b?.prompt) {
+    const i = words.indexOf("--");
+    return i >= 0 && i + 1 < words.length && b.ours(words[i + 1]) ? [...words.slice(0, i), ...words.slice(i + 2)] : words;
+  }
   if (!b?.names) return words;
   const out = [];
   for (let i = 0; i < words.length; i += 1) {
@@ -505,13 +557,16 @@ export function withoutBriefing(agentKey, args) {
 /**
  * `argv` (a whole command) with `launch` (briefingLaunch) put in right after the agent's own
  * executable, before any subcommand (codex's `resume` takes its -c there), and any briefing it
- * already carried taken out. A command that doesn't run `agentKey` (a shell line) is left as it is.
+ * already carried taken out. A "prompt" agent's goes last instead (its first prompt), unless the
+ * command already carries a first prompt of its own. A command that doesn't run `agentKey` (a
+ * shell line) is left as it is.
  */
 export function withBriefing(agentKey, argv, launch, agents = AGENTS) {
   const words = Array.isArray(argv) ? argv.map(String) : [];
   if (agentKeyOfArgv(words, agents) !== agentKey) return words;
   const at = programAt(words);
   const rest = withoutBriefing(agentKey, words.slice(at + 1));
+  if (BRIEFING[agentKey]?.prompt) return [...words.slice(0, at + 1), ...rest, ...(rest.includes("--") ? [] : launch?.args ?? [])];
   return [...words.slice(0, at + 1), ...(launch?.args ?? []), ...rest];
 }
 

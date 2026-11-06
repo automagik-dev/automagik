@@ -308,9 +308,46 @@ machine through herdr-core (`hc file edit` with the text read, an exclusive crea
 file), so an edit made there since the form opened is refused, never overwritten. Its panes run
 there (`hc run --on`, addressed `machine/tN`) and show in this window, in a space of that
 machine on the project. The command a bot starts with is built here, from Herdr's agent table
-and your `programs.json`. What happened isn't shown for those bots yet, and a Claude bot there
-starts without its per-turn briefing until automagik-herdr is installed on that machine. A
-machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
+and your `programs.json`. A bot there gets the briefing a local start gives, written on that
+machine through herdr-core, in its app home: a Claude bot's briefing file (private, 0600) and,
+once automagik-herdr is installed there, its per-turn hook in that project's
+`.claude/settings.local.json` (until then it starts with a warning and no hook); an omp, pi or grok
+bot gets the briefing as text. A start never creates an app home on another machine, which may be
+shared: when that app home isn't a folder there, a Claude bot starts with one warning and no
+briefing file or hook. Codex and Hermes bots start there without it, since their own
+config, which may hold a prompt the briefing would replace, is only read on this computer. What
+happened isn't shown for those bots yet. A machine that isn't answering shows its bots as last
+seen, dimmed, and its menu says so.
+
+A project there can carry a pane-env file, `<project>/.herdr/pane-env` on that machine, for its
+bots' panes only: other panes there never read it. It takes two keys, one per line:
+
+```text
+PATH_PREPEND=/opt/node-22/bin:/opt/tools/bin
+HERDR_APP_HOME=/srv/bots/herdr-app
+```
+
+`PATH_PREPEND` puts those folders first on the PATH the agent is checked and started with (a
+chosen Node, say). `HERDR_APP_HOME` is the app home the pane gets (`HERDR_APP_HOME=` in its
+`/usr/bin/env` words) and the one its briefing file and hook use; without it, that machine's
+`~/.config/herdr-app`, either way only while that folder is there. Every folder is absolute, with
+no space at its start or end; blank lines and `#` comments are skipped. Another key, a relative
+folder or a line that isn't `KEY=value` leaves the whole file out with one warning, and the bot
+starts as it would without it, with no briefing file or hook: a file left out never falls back to
+the default app home. With no file, nothing changes.
+
+pane-env belongs to that machine: keep it out of git (add `.herdr/pane-env` to the checkout's
+`.git/info/exclude` there), since a committed one would apply on every machine the project is
+checked out on. A start on this computer never reads it.
+
+To move a project's bots onto a shared machine:
+
+1. Write `<project>/.herdr/pane-env` there, with `HERDR_APP_HOME` naming an app home that is
+   already there (yours, not the machine user's), and `PATH_PREPEND` if your bots need their own
+   Node.
+2. Start one bot: `automagik-herdr start <bot> --machine <machine> --project <folder there> --json`.
+3. Read its `warnings`: they should be empty. A `pane-env ... was left out` or `without its
+   briefing` warning names what to fix; fix it and restart the bot.
 
 Start and Restart there can take minutes when the machine answers slowly (every question to it
 has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so
