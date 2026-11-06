@@ -48,7 +48,7 @@ const BLOCKS: [string, string, string[]][] = [
   ['function laterLine(m, nl, indent, before, name, sep, props, tail, run, br, indicator, body, prefix, q, close, offset, string) {', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_TEXT = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js', 'unfold-events-dsh/src/window.js', 'unfold-settings-dsh/src/redact.js']],
   ['const SECRET_VALUES = [', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js']],
-  ...['const INVISIBLE_GATE =', 'const INVISIBLE =', 'const INVISIBLE_NAME =', 'const NAME_STEM =', 'export function nameText(s) {', 'export function redactText(s, open = false) {', "export function redact(value, key = '') {"].map(
+  ...['const INVISIBLE_GATE =', 'const INVISIBLE =', 'const INVISIBLE_NAME =', 'const NAME_STEM =', 'const INVISIBLE_EXPLICIT =', 'export function nameText(s) {', 'export function redactText(s, open = false) {', "export function redact(value, key = '') {"].map(
     (declaration): [string, string, string[]] => [declaration, 'unfold-mind-dsh/src/redact.js', REDACTION_COPIES],
   ),
   ['export function secretsIn(s, open = false) {', 'unfold-mind-dsh/src/redact.js', ['unfold-events-dsh/src/client/redact.js']],

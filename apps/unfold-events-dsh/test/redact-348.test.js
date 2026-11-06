@@ -267,7 +267,7 @@ test('served: a child key still arriving under a key line is never read as its v
 const EXPLICIT = CONTINUED_HIDDEN.filter(([, input]) => /(?:^|\n)[ \t]*(?:-[ \t]+)?\?[ \t]/.test(input))
 const masked = (text, kept) => kept.reduce((t, v) => t.split(v).join('[redacted]'), text)
 test('the browser copy remembers an explicit key\'s continued value at the end of the text, and a later bare occurrence is masked', () => {
-  assert.equal(EXPLICIT.length, 7, 'FA1-FA5, FL1 and FB1')
+  assert.equal(EXPLICIT.length, 16, 'FA1-FA5, FL1, FB1 and the nine #493 explicit-key rows')
   for (const [what, input] of EXPLICIT) {
     const kept = clientSecretsIn(input)
     assert.ok(kept.some((v) => v.includes(SECRET)), `${what}: remembered`)
