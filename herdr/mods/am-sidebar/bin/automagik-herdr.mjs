@@ -573,6 +573,17 @@ async function projectDefining(botId, folder) {
  * that defines the bot. The file is created, even empty, so it happens once.
  */
 async function importLabels(path) {
+  const found = await labelRows();
+  try {
+    await withLockAsync(ledgerLock(path), async () => {
+      if (existsSync(path)) return; // another CLI imported first
+      appendAttach(path, found, "ax");
+    });
+  } catch (e) { throw asCliError(e); }
+}
+
+/** The one-time import's rows (importLabels), worked out and not written. */
+async function labelRows() {
   const core = await coreId();
   const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state !== "finished");
   // One terminal hc fails to answer for is left out, never the whole import.
@@ -588,12 +599,7 @@ async function importLabels(path) {
     const project = await projectDefining(bot, pick.foreground?.cwd ?? pick.cwd);
     if (project) found.push(attachRow({ event: "attach", bot, project, terminal: pick.address, core, created_ms: pick.created_ms, by: "import" }));
   }
-  try {
-    await withLockAsync(ledgerLock(path), async () => {
-      if (existsSync(path)) return; // another CLI imported first
-      appendAttach(path, found, "ax");
-    });
-  } catch (e) { throw asCliError(e); }
+  return found;
 }
 
 /** End rows (by "sweep") for bindings hc no longer confirms, under the lock; a failure only warns. */
@@ -614,11 +620,14 @@ async function sweep(path, ended) {
 /**
  * The ledger's rows, the one-time import done first when there is no file. With no app home
  * (Herdr not set up here) nothing is imported or made: no rows, until a start or attach.
+ * readOnly (the import's dry run, #486): the one-time import's rows as it would write them,
+ * and no file made.
  */
-async function ledgerRows(path) {
+async function ledgerRows(path, readOnly = false) {
   const rows = readAttachFile(path);
   if (rows !== null) return rows;
   if (!existsSync(appHome())) return [];
+  if (readOnly) return labelRows();
   await importLabels(path);
   return readAttachFile(path) ?? [];
 }
@@ -629,16 +638,18 @@ let viewOnce = null;
  * byTerminal: Map address -> { binding, get } }. Every binding is checked with `hc get`;
  * one hc no longer confirms (finished, gone, or its id reused) is left out, and its end row
  * written. Once per run: commands that write the ledger decide again under its lock.
+ * readOnly (the import's dry run, #486, the run's first caller): the same view, with no
+ * one-time import written and no end row; the run's later calls get that view too.
  */
-export function attachView() {
+export function attachView({ readOnly = false } = {}) {
   viewOnce ??= (async () => {
     const path = attachPath(appHome());
-    const rows = await ledgerRows(path);
+    const rows = await ledgerRows(path, readOnly);
     const core = await coreId();
     const machines = await machinesNow();
     const { byKey } = foldAttach(rows);
     const { live, ended, unknown } = await confirmBindings([...byKey.values()], core, lookup, UNANSWERED, machines);
-    if (ended.length) await sweep(path, ended);
+    if (ended.length && !readOnly) await sweep(path, ended);
     // live: this computer's bindings by bot. liveAt / unknownAt: every binding by place and bot
     // (atKey; a linked machine's place is its core id, and a project's checkouts on two
     // machines share their bots' ids). byTerminal: by hc address ("lab/t8" for a machine's).
@@ -905,16 +916,18 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 labelled L= (default: squad) with an hc name and an agent in front
                                 becomes a bot of that name, attached to that pane. In each squad
                                 the captain (the pane labelled role=captain, else the one whose
-                                name or template ends in -cap or -captain) reports to the main
-                                bot and the others to their captain; a member's rank is its
-                                role= label when that is a rank, else its name's last word (dev,
-                                test, review, fix, pm). Prints the plan and changes nothing
-                                unless --apply, which prints it, then creates and attaches. A
-                                pane already playing its bot is left as it is, so a second run
-                                changes nothing. Any conflict (a pane playing or labelled for
-                                another bot, a bot of that name attached elsewhere or under
-                                another lead, a squad without one captain) refuses the whole
-                                import. Never starts, moves or restarts a pane
+                                name or template is the squad's name then -cap or -captain, as
+                                web-cap) reports to the main bot and the others to their
+                                captain; a member's rank is its role= label when that is a rank,
+                                else its name's last word (dev, test, review, fix, pm). Prints
+                                the plan and writes nothing, the attach ledger included, unless
+                                --apply, which prints it, then creates and attaches. A pane
+                                already playing its bot only gets its lost labels back, so a
+                                second run changes nothing. Any conflict (a pane playing or
+                                labelled for another bot, a bot of that name attached
+                                elsewhere, under another lead or of another agent, a squad
+                                without one captain) refuses the whole import. Never starts,
+                                moves or restarts a pane
   whois <terminal> | whois --bot <bot>   who plays where, by the attach ledger
   history <bot>                 what the bot did, by the attach and workers ledgers: its panes,
                                 starts, sessions (and the newest transcript) and workers
@@ -2895,12 +2908,22 @@ async function cmdDetach(opts, [ref]) {
 
 // ---- import (#232): a running hc team as bots ----
 
-// The squad's captain by its hc name or template, when no seat of the squad is labelled role=captain.
-const CAPTAIN_NAME = /(^|[-_.])(cap|captain)$/i;
+// The squad's captain by its hc name or template, when no seat of the squad is labelled
+// role=captain: the squad's name, a separator, then cap or captain (web-cap, web_captain), so
+// escape-cap is no captain of web, and a bare "cap" none at all (#486).
+const CAPTAIN_NAME = /^(.+)[-_.](cap|captain)$/i;
 // A member's rank by its name's last word, when its pane's role= label is not a rank.
 const RANK_WORDS = { dev: "dev", test: "tester", tester: "tester", qa: "tester", review: "reviewer", reviewer: "reviewer",
   fix: "fixer", fixer: "fixer", pm: "pm", int: "integrator", integrator: "integrator" };
 const byTerminal = (a, b) => a.terminal.localeCompare(b.terminal, undefined, { numeric: true });
+
+/** How a seat is its squad's captain by name (#486): "name", "template" or null; never a seat whose role= is another rank. */
+function captainByName(squad, seat) {
+  const role = seat.get.labels?.role;
+  if (RANKS.includes(role) && role !== "captain") return null;
+  const of = (n) => typeof n === "string" && CAPTAIN_NAME.exec(n.trim())?.[1].toLowerCase() === squad.toLowerCase();
+  return of(seat.name) ? "name" : of(seat.get.template) ? "template" : null;
+}
 
 function seatRank(get, name) {
   const role = get.labels?.role;
@@ -2914,9 +2937,10 @@ function seatRank(get, name) {
  * bot of its name, by the attach ledger), "attach" (that bot is defined and attached nowhere, as
  * a run cut short before its attaches leaves it) or "create" (then attach). Captains first, every
  * new bot is checked as create checks it against the file as the plan grows it; `raw` is that
- * file. Nothing is written here.
+ * file. Nothing is written here; readOnly (the dry run, #486) keeps the ledger view from
+ * writing too (attachView).
  */
-async function importPlan(project, label) {
+async function importPlan(project, label, { readOnly = false } = {}) {
   const { file } = project;
   const main = mainBotOf(file);
   const conflicts = [];
@@ -2930,7 +2954,7 @@ async function importPlan(project, label) {
     const g = await hcLookup(r.address);
     return g ? { ...g, address: g.address ?? r.address, name: g.name ?? r.name ?? null } : null;
   }))).filter((g) => g?.state === "live" && local(g.address) && typeof g.labels?.[label] === "string" && g.labels[label].trim());
-  const view = await attachView();
+  const view = await attachView({ readOnly });
   const agents = agentTable();
   const botName = (id) => { const b = file.bots.find((x) => x.id === id); return b ? `${b.name} (${b.id})` : `bot ${id}`; };
   const seats = [];
@@ -2942,7 +2966,18 @@ async function importPlan(project, label) {
     const at = `${terminal}${name ? ` (${name})` : ""}`;
     const held = view.byTerminal.get(terminal)?.binding ?? null;
     if (held) {
-      if (named && held.bot === named.id) { seats.push({ ...seat, action: "already", id: named.id, bot: named }); continue; }
+      if (named && held.bot === named.id) {
+        // Its labels as attach sets them (#486): lost ones come back by attaching again, which
+        // writes no ledger row for a pane that already plays its bot.
+        const have = get.labels ?? {};
+        const lead = leadIdOf(file, named.id);
+        let leadRows = [];
+        try { leadRows = lead ? await liveRows(lead) : []; } catch { leadRows = []; }
+        const relabel = [...(have[BOT_LABEL] !== named.id ? [`${BOT_LABEL}=${named.id}`] : []),
+          ...attachWords(file, named.id, { ...have, [BOT_LABEL]: named.id }, leadRows)];
+        seats.push({ ...seat, action: "already", id: named.id, bot: named, relabel });
+        continue;
+      }
       conflicts.push(`${at} already plays ${botName(held.bot)}; the import never takes another bot's pane. Detach that bot `
         + `first, or take ${label}= off the pane (hc label ${terminal} ${label}=).`);
       continue;
@@ -2974,6 +3009,11 @@ async function importPlan(project, label) {
         conflicts.push(`${at}: ${botName(named.id)} is ${named.kind === "main" ? "the main bot" : "planned"}, so the import can't make it a squad's seat.`);
         continue;
       }
+      if (named.agent && named.agent !== agent) {
+        conflicts.push(`${at} runs ${agent}, and ${botName(named.id)} is defined with agent ${named.agent}; the import never attaches `
+          + `a bot to another agent's pane. Edit it first (automagik-herdr edit ${named.id} --agent ${agent}), or give the seat another hc name.`);
+        continue;
+      }
       seats.push({ ...seat, agent, action: "attach", id: named.id, bot: named });
       continue;
     }
@@ -2989,7 +3029,8 @@ async function importPlan(project, label) {
   for (const squad of [...squads.keys()].sort()) {
     const all = squads.get(squad).sort(byTerminal);
     const labelled = all.filter((s) => s.get.labels?.role === "captain");
-    const caps = labelled.length ? labelled : all.filter((s) => CAPTAIN_NAME.test(s.name) || CAPTAIN_NAME.test(s.get.template ?? ""));
+    const caps = labelled.length ? labelled : all.filter((s) => captainByName(squad, s));
+    const by = labelled.length ? "role" : caps.length === 1 ? captainByName(squad, caps[0]) : null;
     if (caps.length !== 1) {
       conflicts.push(caps.length
         ? `Squad ${squad} has ${caps.length} captains (${caps.map((s) => `${s.terminal} ${s.name}`).join(", ")}); keep role=captain on one: hc label <terminal> role=captain.`
@@ -2998,6 +3039,7 @@ async function importPlan(project, label) {
     }
     for (const s of [caps[0], ...all.filter((x) => x !== caps[0])]) {
       s.captain = s === caps[0];
+      s.captainBy = s.captain ? by : null;
       s.lead = s.captain ? main : null;
       s.rank = s.captain ? "captain" : seatRank(s.get, s.name);
       if (!s.captain) s.leadSeat = caps[0];
@@ -3035,10 +3077,13 @@ async function importPlan(project, label) {
   return { seats: ordered, skipped, conflicts, raw };
 }
 
-/** A seat as the plan prints it; a new bot's id only once it is made. */
-const seatOut = (s, made) => ({ squad: s.squad, terminal: s.terminal, name: s.name, action: s.action, captain: s.captain,
+/** A seat as the plan prints it; a new bot's id only once it is made. captainBy: "role", "name", "template" or null. */
+const seatOut = (s, made) => ({ squad: s.squad, terminal: s.terminal, name: s.name, action: s.action, captain: s.captain, captainBy: s.captainBy ?? null,
   lead: s.captain ? (s.lead?.name ?? null) : s.leadSeat.name, rank: s.action === "create" ? s.rank : (s.bot.rank ?? null),
-  agent: s.agent ?? s.bot?.agent ?? null, id: s.action === "create" && !made ? null : s.id });
+  agent: s.agent ?? s.bot?.agent ?? null, id: s.action === "create" && !made ? null : s.id, relabel: s.relabel ?? [] });
+/** A seat --apply attaches: every one but a seat already playing its bot with all its labels (#486). */
+const importTodo = (s) => s.action !== "already" || s.relabel.length > 0;
+const CAPTAIN_BY = { role: " by role=captain", name: " by name", template: " by template" };
 
 function importText(plan, { key, label, apply }) {
   const lines = [`Import of the panes labelled ${label}= into ${key}${apply ? "" : " (dry run: nothing is changed)"}:`];
@@ -3046,14 +3091,14 @@ function importText(plan, { key, label, apply }) {
   let squad = null;
   for (const s of plan.seats) {
     if (s.squad !== squad) { squad = s.squad; lines.push(`  squad ${squad}`); }
-    const who = s.captain ? `captain, reports to ${s.lead?.name ?? "the main bot"}` : `member, lead ${s.leadSeat.name}${s.rank ? `, rank ${s.rank}` : ""}`;
-    lines.push(`    ${s.terminal}  ${s.action === "already" ? `${s.name} (${s.id}) already plays it: nothing to do`
+    const who = s.captain ? `captain${CAPTAIN_BY[s.captainBy] ?? ""}, reports to ${s.lead?.name ?? "the main bot"}` : `member, lead ${s.leadSeat.name}${s.rank ? `, rank ${s.rank}` : ""}`;
+    lines.push(`    ${s.terminal}  ${s.action === "already" ? `${s.name} (${s.id}) already plays it: ${s.relabel.length ? `its lost labels go back (${s.relabel.join(" ")})` : "nothing to do"}`
       : s.action === "attach" ? `attach ${s.name} (${s.id}), defined already`
         : `create ${s.name} (${who}, ${s.agent}), then attach`}`);
   }
   for (const k of plan.skipped) lines.push(`  skipped ${k.terminal}${k.name ? ` (${k.name})` : ""}: ${k.why}`);
   for (const c of plan.conflicts) lines.push(`  conflict: ${c}`);
-  const todo = plan.seats.filter((s) => s.action !== "already").length;
+  const todo = plan.seats.filter(importTodo).length;
   if (plan.conflicts.length) lines.push(`Nothing was changed: ${plan.conflicts.length} conflict(s) refuse the import.`);
   else if (!todo) lines.push("Nothing to do: every seat already plays its bot.");
   else if (!apply) lines.push(`Run it with --apply: ${todo} seat(s) to import.`);
@@ -3069,9 +3114,9 @@ async function cmdImport(opts) {
     throw new CliError(`Run the import in ${project.key}: attach reads ${under(project.key, BOTS_PATH)}, and from this worktree the bots `
       + `would go to ${under(project.dir, BOTS_PATH)}. Nothing was changed.`);
   }
-  const plan = await importPlan(project, label);
+  const plan = await importPlan(project, label, { readOnly: !opts.apply });
   const apply = Boolean(opts.apply) && !plan.conflicts.length;
-  const todo = plan.seats.filter((s) => s.action !== "already");
+  const todo = plan.seats.filter(importTodo);
   const out = { project: project.key, squadLabel: label, dryRun: !opts.apply, seats: plan.seats.map((s) => seatOut(s, false)),
     skipped: plan.skipped, conflicts: plan.conflicts, attached: [], stopped: null };
   if (plan.conflicts.length) {
@@ -3090,7 +3135,8 @@ async function cmdImport(opts) {
       try {
         const r = await cmdAttach({ project: opts.project, json: true }, [s.id, s.terminal]);
         out.attached.push({ id: s.id, name: s.name, terminal: s.terminal, created: s.action === "create", already: r.already, warnings: r.warnings });
-        if (!opts.json) process.stdout.write(`  ${s.name} (${s.id}) is now ${s.terminal}${s.action === "create" ? ", created" : ""}.\n`);
+        const now = s.action === "already" ? "is" : "is now";
+        if (!opts.json) process.stdout.write(`  ${s.name} (${s.id}) ${now} ${s.terminal}${s.action === "create" ? ", created" : s.action === "already" ? ", its labels back" : ""}.\n`);
       } catch (e) {
         if (!(e instanceof CliError)) throw e;
         out.stopped = { terminal: s.terminal, name: s.name, error: e.message };

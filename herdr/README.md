@@ -298,14 +298,24 @@ automagik-herdr update [--check | --rollback]
 - `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
   labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
   that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
-  the one whose name or template ends in `-cap` or `-captain`) reports to the main bot and the rest
-  to their captain. Without `--apply` it prints the plan and changes nothing; with it, it prints
-  the plan, writes every new bot at once and attaches each seat as `attach` does, never with
-  `--move`. A pane already playing its bot is left as it is, so a second run changes nothing, and
-  a bot defined but attached nowhere (a run cut short) is only attached. Any conflict refuses the
-  whole import, nothing written: a pane playing or labelled for another bot, a bot of the seat's
-  name attached elsewhere or under another lead, a squad without exactly one captain, a Claude
-  session outside the project, or no main bot. It never starts, moves or restarts a pane.
+  the one whose name or template is the squad's name, a separator and `cap` or `captain`, as
+  `web-cap` or `web_captain`; `escape-cap` is not web's captain, and a pane whose `role=` is
+  another rank is never one by name) reports to the main bot and the rest to their captain; the
+  plan says which rule picked it. Without `--apply` it prints the plan and writes nothing: no
+  bot, no label, and no attach ledger row (on a first run it works out the ledger's one-time
+  import from `bot=` labels without saving it, and writes no end row for a pane hc no longer
+  confirms). With `--apply` it prints the plan, writes every new bot at once and attaches each
+  seat as `attach` does, never with `--move`. So besides `bots.json` and the attach ledger, it
+  writes what `attach` and `create` write: the pane labels (`bot=`, `role=`, `category=`, a
+  copied `squad=`), one workers-ledger seat row per attach, the Claude briefing hook and its git
+  exclude line, the projects list, tidy's registry prune, and new `role=` labels on the panes of bots already there
+  whose role changes (a captain whose members are made in this run). A pane already playing its
+  bot gets back the labels `attach` sets that it has lost, with no ledger row, so a second run
+  changes nothing; a bot defined but attached nowhere (a run cut short) is only attached. Any
+  conflict refuses the whole import, nothing written: a pane playing or labelled for another bot,
+  a bot of the seat's name attached elsewhere, under another lead or defined with another agent
+  than the pane runs, a squad without exactly one captain, a Claude session outside the project,
+  or no main bot. It never starts, moves or restarts a pane.
 - Every command takes `--json` and `--project <folder>`. Without `--project`, the project is
   the one the current folder belongs to: its git main checkout, or outside git the nearest
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
