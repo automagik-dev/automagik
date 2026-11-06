@@ -1,15 +1,17 @@
 // The adapter against the fake agent over real stdio, driven the way DSH's agent loop drives a
 // model: stream a step, run the tool calls it ends on, stream the next step with the results.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { isAgentLoopRequest, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import { apply } from '../index.js'
+import { structuredNameOf } from '../src/host/acp.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
-import { Backchannel } from '../src/host/backchannel.js'
+import { AGENTS } from '../src/host/agents.js'
+import { Backchannel, offeredTools, presetOf } from '../src/host/backchannel.js'
 import { credentialShapes } from '../src/host/redact.js'
 import { BOUNDARY_KIND, crossed } from '../src/host/switch.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
@@ -487,16 +489,34 @@ test("with no effort, the model's own is asked for only without a default row, a
 // The fake agent connects the `dsh` MCP server itself, as both real adapters do, so these run
 // the real bridge and the real back-channel over stdio and loopback.
 
+// The fake agent's trace: the wire order of its session answers, the bridge's lists and re-lists.
+const traceEvents = path => (existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [])
+const waitFor = async (check, ms = 3_000) => {
+  const deadline = Date.now() + ms
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for the trace')
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
+
 const bridgeTools = () => [
   { name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: {} } },
   { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: {} } },
 ]
+// A tool the cordis preset mounts (`@deepseek-ai/dsh-tool-cordis`); the standard preset has none
+// of it, so the offered set tells which preset DSH composed for the Session.
+const cordisTools = () => [
+  { name: 'cordis_inspect_query', description: 'Inspect a cordis composition', parameters: { type: 'object', properties: {} } },
+]
 
-function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write', redactor, spec: extra = {}, trace, toolsOn = true } = {}) {
-  const session = Session.create('s1')
+// `preset` is the Session's DSH preset (RFC 0003): `standard` normally, `cordis` when the
+// Session is in creator mode. DSH records it in the creation header; its `agentPreset`
+// projection reads it back, which the fixture models directly.
+function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write', redactor, spec: extra = {}, trace, toolsOn = true, preset = 'standard' } = {}) {
+  const session = Session.create('s1', undefined, preset === 'standard' ? undefined : { version: 4, id: 's1', createdAt: 0, isSeeded: false, agentPreset: preset })
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
-  const definitions = bridgeTools()
+  const definitions = preset === 'cordis' ? [...bridgeTools(), ...cordisTools()] : bridgeTools()
   const asked = []
   const executed = []
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
@@ -523,7 +543,7 @@ function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write
         }
       }
       if (name === 'sandboxPolicy') return { resolve: () => ({ mode: sandbox }) }
-      if (name === 'agentPresets') return { presetForSession: () => 'standard' }
+      if (name === 'agentPresets') return { presetForSession: (target) => target?.header?.agentPreset ?? 'standard' }
       return undefined
     },
     logger: { warn: () => {}, info: () => {} },
@@ -628,7 +648,7 @@ test('every drift turn records and cancels on its own trace, with no card on eit
   }
 })
 
-test('a preset change on an agent that ignores list_changed refreshes by fork, closes the source, and revokes its bridge', async () => {
+test('probe (delivery 6): a fork continues the same conversation, closes the source, and leaves one bridge', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-fork-'))
   const trace = join(dir, 'trace.ndjson')
   const h = dshHost({ trace, spec: { refresh: 'fork' } })
@@ -637,6 +657,7 @@ test('a preset change on an agent that ignores list_changed refreshes by fork, c
     const first = await step(h.adapter, messages)
     assert.match(textIn(first), /turn 1/)
     const oldRecord = [...h.backchannel.records.values()][0]
+    const firstSession = traceEvents(trace).find(event => event.event === 'new-session')
     // The Session's preset now registers one more tool: a new signature.
     h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
     const second = await step(h.adapter, messages)
@@ -645,17 +666,171 @@ test('a preset change on an agent that ignores list_changed refreshes by fork, c
     assert.match(textIn(second), /The bridge said: ran bash/)
     // One bridge at a time: the source's credential is gone.
     assert.equal(h.backchannel.records.size, 1)
+    assert.equal(h.adapter.live.size, 1)
+    assert.equal(h.adapter.live.get('s1').bridge, [...h.backchannel.records.values()][0])
     // The OLD session's own URL, not the bare one: the path matches its Session and only the
     // revoked credential refuses it.
     const old = await fetch(h.backchannel.urlFor(oldRecord), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${oldRecord.credential}` }, body: JSON.stringify({ op: 'list' }) })
     assert.equal(old.status, 401)
-    // The ACP side: fork with the server set, then close of the source.
-    const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    // The ACP side: the fork carries the source's conversation, the source is closed, and the
+    // prompt after it goes to the forked session only.
+    const events = traceEvents(trace)
     const fork = events.find(event => event.event === 'fork')
+    assert.equal(fork.from, firstSession.sessionId)
+    assert.notEqual(fork.sessionId, fork.from)
     assert.deepEqual(fork.servers, ['dsh'])
-    assert.ok(events.some(event => event.event === 'close' && event.sessionId === fork.from))
+    const closeAt = events.findIndex(event => event.event === 'close' && event.sessionId === fork.from)
+    assert.ok(closeAt >= 0, 'the plugin closes the source session')
+    const prompts = events.filter(event => event.event === 'prompt')
+    const sourcePrompts = prompts.filter(event => event.sessionId === fork.from)
+    const forkPrompts = prompts.filter(event => event.sessionId === fork.sessionId)
+    // The same conversation: the fake carries its turn count, so the forked session answers
+    // turn 2, and the source is never prompted again.
+    assert.equal(sourcePrompts.length, 1)
+    assert.equal(sourcePrompts[0].turns, 1)
+    assert.equal(forkPrompts.length, 1)
+    assert.equal(forkPrompts[0].turns, 2)
+    assert.ok(closeAt < events.indexOf(forkPrompts[0]), 'the close comes before the forked prompt')
   } finally {
     h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe (delivery 6): a fork lists its bridge before the session answer, and a preset change before that answer is held', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-fork-order-'))
+  const trace = join(dir, 'trace.ndjson')
+  // The fork answer is held open, so the change below lands while the session does not exist.
+  const h = dshHost({ trace, spec: { refresh: 'fork' }, env: { FAKE_ACP_FORK_DELAY_MS: '2000' } })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    await step(h.adapter, messages)
+    const firstSession = traceEvents(trace).find(event => event.event === 'new-session')
+    const oldBridge = h.adapter.live.get('s1').bridge
+    h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
+    const running = step(h.adapter, messages)
+    // The refork mints the fork's bridge, the bridge lists and parks its long poll, and only
+    // then does the change land: still before session/fork answers.
+    await waitFor(() => (h.adapter.live.get('s1')?.bridge ?? oldBridge) !== oldBridge)
+    const next = h.adapter.live.get('s1').bridge
+    await waitFor(() => next.waiters.size > 0)
+    h.definitions.push({ name: 'late', description: 'Late', parameters: { type: 'object', properties: {} } })
+    assert.equal(h.backchannel.refresh(next), true)
+    assert.equal(traceEvents(trace).some(event => event.event === 'fork-answer'), false, 'the change landed before the fork answered')
+    const second = await running
+    assert.equal(second.at(-1).reason.kind, 'stop')
+    const forkId = () => traceEvents(trace).find(event => event.event === 'fork')?.sessionId
+    await waitFor(() => traceEvents(trace).some(event => event.event === 'relist' && event.sessionId === forkId()))
+    const events = traceEvents(trace)
+    const fork = events.find(event => event.event === 'fork')
+    const answerAt = events.findIndex(event => event.event === 'fork-answer' && event.sessionId === fork.sessionId)
+    const listedAt = events.findIndex(event => event.event === 'mcp-list' && event.server === 'dsh' && event.sessionId === fork.sessionId)
+    assert.ok(listedAt >= 0, "the fork's bridge listed its tools")
+    assert.ok(listedAt < answerAt, 'tools listed before session/fork answered')
+    // The first session/new had the same order: listed before its answer.
+    const newAt = events.findIndex(event => event.event === 'new-answer' && event.sessionId === firstSession.sessionId)
+    const firstListAt = events.findIndex(event => event.event === 'mcp-list' && event.server === 'dsh' && event.sessionId === firstSession.sessionId)
+    assert.ok(firstListAt >= 0 && firstListAt < newAt, 'tools listed before session/new answered')
+    // The held change is announced only after the answer, and the agent re-lists the new set.
+    const relistAt = events.findIndex(event => event.event === 'relist' && event.sessionId === fork.sessionId)
+    assert.ok(relistAt > answerAt, 'the announcement landed after the answer')
+    assert.deepEqual(events[relistAt].tools, ['bash', 'write', 'extra', 'late'])
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe (delivery 6): a fork whose bridge never lists fails the turn instead of continuing the chat', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-fork-nobridge-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ trace, spec: { refresh: 'fork', bridgeReadyMs: 250 }, env: { FAKE_ACP_FORK_SKIP_MCP: '1' } })
+  try {
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
+    await step(h.adapter, messages)
+    h.definitions.push({ name: 'extra', description: 'Extra', parameters: { type: 'object', properties: {} } })
+    const second = await step(h.adapter, messages)
+    assert.equal(second.at(-1).reason.kind, 'error')
+    assert.match(second.at(-1).reason.failure.message, /would not refresh its DSH tools/)
+    assert.equal(second.at(-1).reason.failure.code, 'acp_bridge_missing')
+    // Fail closed: the forked session never ran a turn, and no credential survives either.
+    const events = traceEvents(trace)
+    const fork = events.find(event => event.event === 'fork')
+    assert.equal(events.filter(event => event.event === 'prompt' && event.sessionId === fork.sessionId).length, 0)
+    assert.equal(events.filter(event => event.event === 'mcp-list' && event.sessionId === fork.sessionId).length, 0)
+    assert.equal(h.adapter.live.size, 0)
+    assert.equal(h.backchannel.records.size, 0)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('probe (delivery 6): the shell tool runs through the bridge, and a bridge that cannot offer it fails the turn closed', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-shell-'))
+  try {
+    // The Session's preset registers a shell tool (`bash`); the agent calls it over the bridge.
+    const served = dshHost({ trace: join(dir, 'served.ndjson') })
+    try {
+      const chunks = await step(served.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }])
+      assert.equal(chunks.at(-1).reason.kind, 'stop')
+      assert.match(textIn(chunks), /The bridge said: ran bash/)
+      const listed = traceEvents(join(dir, 'served.ndjson')).find(event => event.event === 'mcp-list' && event.server === 'dsh')
+      assert.ok(listed.tools.includes('bash'), 'the shell tool is in the bridge list')
+      assert.deepEqual(served.executed, ['bash'])
+      assert.equal(served.asked.length, 1)
+      assert.equal(served.asked[0].toolName, 'bash')
+    } finally {
+      served.close()
+    }
+    // The adapter skips the bridge (codex-acp does when the person's Codex config defines that
+    // name). The turn must fail before the prompt, not run with the agent's own shell and half
+    // the Session's set.
+    const skipped = dshHost({ trace: join(dir, 'skipped.ndjson'), env: { FAKE_ACP_SKIP_MCP: '1' }, spec: { bridgeReadyMs: 250 } })
+    try {
+      const chunks = await step(skipped.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }])
+      assert.equal(chunks.at(-1).reason.kind, 'error')
+      assert.equal(chunks.at(-1).reason.failure.code, 'acp_bridge_missing')
+      assert.equal(skipped.asked.length, 0)
+      assert.deepEqual(skipped.executed, [])
+      const events = traceEvents(join(dir, 'skipped.ndjson'))
+      // The bridge was requested in the server list, never listed, and the agent never ran.
+      assert.deepEqual(events.find(event => event.event === 'new-session').servers, ['dsh'])
+      assert.equal(events.filter(event => event.event === 'mcp-list').length, 0)
+      assert.equal(events.filter(event => event.event === 'prompt').length, 0, 'the agent was never prompted')
+    } finally {
+      skipped.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the bridge offers the Session preset: standard normally, cordis in creator mode', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-preset-'))
+  const standardTrace = join(dir, 'standard.ndjson')
+  const creatorTrace = join(dir, 'creator.ndjson')
+  const standard = dshHost({ trace: standardTrace })
+  const creator = dshHost({ preset: 'cordis', trace: creatorTrace })
+  try {
+    // The Session's preset decides what DSH mounts, so it decides what the bridge offers:
+    // no cordis tool outside creator mode, and the cordis preset's tool inside it.
+    assert.equal(presetOf(standard.ctx, standard.agent.session), 'standard')
+    assert.equal(presetOf(creator.ctx, creator.agent.session), 'cordis')
+    assert.deepEqual(offeredTools(standard.ctx, standard.agent).map(tool => tool.name), ['bash', 'write'])
+    assert.deepEqual(offeredTools(creator.ctx, creator.agent).map(tool => tool.name), ['bash', 'write', 'cordis_inspect_query'])
+    // The real bridge serves that set, and the creator-only tool runs through DSH.
+    await step(standard.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }] }])
+    const chunks = await step(creator.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge cordis_inspect_query' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.match(textIn(chunks), /The bridge said: ran cordis_inspect_query/)
+    assert.deepEqual(creator.executed, ['cordis_inspect_query'])
+    const listed = path => traceEvents(path).find(event => event.event === 'mcp-list' && event.server === 'dsh').tools
+    assert.deepEqual(listed(standardTrace), ['bash', 'write'])
+    assert.deepEqual(listed(creatorTrace), ['bash', 'write', 'cordis_inspect_query'])
+  } finally {
+    standard.close()
+    creator.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -957,9 +1132,17 @@ test('an agent answer is logged as said, and redacted at each provider crossing'
   }
 })
 
-test('an MCP call with no structured name (codex) draws no ACP card and asks nothing', async () => {
-  // codex-acp sends `name: null` + `_meta.is_mcp_tool_call` for an MCP call: acp-dsh cannot match
-  // it, so it must leave the call entirely to the bridge/server and draw no card.
+test('probe (delivery 6): codex\'s unstructured MCP calls stay unmatched — no card, no ask, no drift guess', async () => {
+  // The wire shapes the spike saw. Claude Code names the call (root or `_meta.claudeCode`);
+  // codex-acp sends `name: null` + `_meta.is_mcp_tool_call` and no name anywhere.
+  assert.equal(structuredNameOf({ sessionUpdate: 'tool_call', toolCallId: 'x', name: 'mcp__dsh__bash' }), 'mcp__dsh__bash')
+  assert.equal(structuredNameOf({ _meta: { claudeCode: { toolName: 'mcp__dsh__bash' } } }), 'mcp__dsh__bash')
+  assert.equal(structuredNameOf({ sessionUpdate: 'tool_call', toolCallId: 'x', name: null, _meta: { is_mcp_tool_call: true } }), undefined)
+  // The declaration behind that: acp-codex has no built-in-tool switch and no drift detector,
+  // because a name it could match is not proven; a refresh there is a fork.
+  assert.equal(AGENTS['acp-codex'].disableBuiltInTools, undefined)
+  assert.equal(AGENTS['acp-codex'].drift, undefined)
+  assert.equal(AGENTS['acp-codex'].refresh, 'fork')
   const h = dshHost({ spec: { refresh: 'fork' } })
   try {
     const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'mcp-call' }] }])
@@ -968,7 +1151,25 @@ test('an MCP call with no structured name (codex) draws no ACP card and asks not
     assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
     assert.equal(h.asked.length, 0)
     assert.equal(h.executed.length, 0)
+    // Marked as MCP by the update's own flag, never matched by a guessed name from its title.
+    const tool = h.adapter.live.get('s1').run.tools.get('mcp-1')
+    assert.equal(tool.mcp, true)
+    assert.equal(tool.structuredName, undefined)
+    assert.notEqual(tool.bridge, true, 'the call is not matched as the bridge either')
+    assert.equal(h.session.snapshotEvents().filter(event => event.type.startsWith('plugin:')).length, 0)
   } finally {
     h.close()
+  }
+  // Even a run that declares the drift detector records nothing here: with no structured name
+  // there is nothing to hold the call to, and inventing one would soften the declaration.
+  const drift = dshHost({ spec: { refresh: 'fork', drift: true } })
+  try {
+    const chunks = await step(drift.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'mcp-call' }] }])
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.equal(chunks.some(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+    assert.equal(drift.session.snapshotEvents().filter(event => event.type.startsWith('plugin:')).length, 0)
+    assert.equal(drift.adapter.live.get('s1').drifted, false)
+  } finally {
+    drift.close()
   }
 })

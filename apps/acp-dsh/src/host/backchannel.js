@@ -67,13 +67,15 @@ export function offeredTools(ctx, agent) {
     }))
 }
 
-/** A stable fingerprint of what the bridge would list: preset, level and every tool's schema. */
+/** A stable fingerprint of what the bridge would list: preset, level (Auto and Full included) and every tool's schema. */
 export function signatureOf(ctx, agent) {
   const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
   return JSON.stringify({
     preset: presetOf(ctx, agent?.session),
     sandbox: level.sandbox ?? null,
     approval: level.policy ?? null,
+    auto: level.auto === true,
+    full: level.full === true,
     tools: offeredTools(ctx, agent).map((tool) => [tool.name, tool.description, tool.inputSchema]),
   })
 }
@@ -376,9 +378,9 @@ export class Backchannel {
     const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
     // Full access never asks. Auto (DSH's `danger-full-access` sandbox with `ask`, answered by
     // auto-review) cannot review this call: auto-review reads the pending tool call from the
-    // model surface, and a bridge call is out-of-band (no assistant block), so its answerer fails
-    // closed. The bridge therefore does not ask there and routes the call through the pipeline;
-    // **limit:** auto-review does not see bridge calls on an Auto Session (stated in README/PR).
+    // model surface, and a bridge call is out-of-band (no assistant block), so the review fails
+    // closed and DSH refuses it (`AUTO_REVIEW_FAILED`, its body never executed). The bridge
+    // therefore does not ask there and routes the call through the pipeline.
     // Manual and every other asking level raise the one DSH dialog here.
     if (!level.full && !level.auto) {
       let outcome = 'unavailable'
