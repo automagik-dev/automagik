@@ -57,8 +57,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   that level (matched by id, else by name), replacing the target default DSH records on a model
   change; an effort DSH itself defaulted is not carried. A target with no reasoning levels,
   without that one, or whose levels cannot be read writes a notice row saying so and runs on its
-  own. A switch back before the agent has answered has no agent-run effort yet: the native
-  route's previous request stands.
+  own. A switch back before the agent has answered drops the agent's chosen level; the native
+  target's own default applies.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
