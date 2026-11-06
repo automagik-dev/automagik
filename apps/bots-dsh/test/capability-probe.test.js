@@ -41,9 +41,9 @@ const team = () => ({
 })
 const secret = { name: 'TOKEN', value: SECRET_VALUE, purpose: '', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 1 }
 
-async function setup() {
+async function setup(entries = [secret]) {
   const home = makeHome(team())
-  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ secrets: [secret] }))
+  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ secrets: entries }))
   const loader = { import: async () => ({ default: { name: 'mcp-client', apply() {} } }), unwrapExports: exports => exports.default }
   const ctx = fakeContext({ services: { loader } })
   const rt = createRuntime(ctx, { home, github: false, diagnosticsFile: false })
@@ -425,7 +425,8 @@ test('a challenge value is redacted before it is capped', async t => {
     ),
     error => {
       // The redactor runs first, so the challenge reads as the secret label; the header scrub
-      // has nothing left to replace (the accepted consequence: the label wins, no secret byte).
+      // has nothing left to replace (the accepted consequence: the label wins, no byte of the
+      // secret survives).
       assert.match(error.message, /WWW-Authenticate: Bearer \[secret:TOKEN\]/)
       assert.doesNotMatch(error.message, /\[header\]/)
       assert.doesNotMatch(error.message, new RegExp(SECRET_VALUE))
@@ -545,4 +546,48 @@ test('a cap after redaction cannot split a secret into surviving halves', async 
   assert.deepEqual(runsOf(saved.verification.reason, SECRET_VALUE), [])
   assert.equal(saved.verification.reason.includes('probe-'), false)
   assert.doesNotMatch(saved.verification.reason, /\[header\]/)
+})
+
+// #480: below WHOLE_VALUE the global redactor only matches a value that stands alone, so a
+// 4-7 character secret echoed between letters is never replaced; the header scrub then cuts the
+// echo around the header slice and leaves the secret's edges. The probe redacts every known
+// value anywhere instead, so the whole secret reads as its label and nothing is left to rebuild.
+const shortSecret = value => ({
+  name: 'TOKEN', value, purpose: '', scope: 'all', requestedBy: null, createdAt: 1, updatedAt: 1,
+})
+const shortEcho = async (t, value) => {
+  const inner = value.slice(1, -1)
+  const requests = []
+  const server = await serve((request, response) => {
+    requests.push(request.headers)
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`aaay${value}buzzz`)
+  })
+  t.after(() => server.close())
+  const env = await setup([shortSecret(value)])
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability(`short-${value.length}`, server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Probe-Header': inner,
+  }), { botId: 'chief' })
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0]['x-probe-header'], inner)
+  assert.equal(saved.verification.status, 'unverified')
+  assert.equal(saved.verification.reason, 'HTTP 500: aaay[secret:TOKEN]buzzz')
+  assert.equal(saved.verification.reason.includes('[header]'), false)
+  assert.equal(saved.verification.reason.includes(inner), false)
+  assert.deepEqual(runsOf(saved.verification.reason, value, 2), [])
+}
+
+test('a 4-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '4821')
+})
+
+test('a 6-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '935174')
+})
+
+test('a 7-character secret echoed inside letters is redacted whole by the probe', async t => {
+  await shortEcho(t, '6284917')
 })
