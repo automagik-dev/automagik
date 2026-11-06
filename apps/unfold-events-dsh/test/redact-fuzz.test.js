@@ -75,9 +75,11 @@ const timed = (fn, ceiling = FAST_MS) => {
 }
 
 // A slow path by construction: it burns SLOW_REFERENCE_MS of CPU, counting CPU time itself, so no
-// load can cut the burn short. The window's bound is a multiple of what this same run measures
-// here, so the bound travels with the machine and with the clock; the test at the end pins the
-// burn to what it claims, so a harness that misreads it fails rather than scaling every bound.
+// load can cut the burn short and its sample reads about 60 ms on any machine (it takes all five
+// samples, its burn being over the text ceiling). The window's bound is a multiple of that sample,
+// so a run whose process CPU reads high widens the bound, up to the backstop; the test at the end
+// pins the sample to what the burn claims, so a harness that misreads it fails rather than scaling
+// every bound.
 const SLOW_REFERENCE_MS = 60
 const slowReference = () => {
   const start = process.cpuUsage()
@@ -94,9 +96,11 @@ const slowRef = timed(slowReference)
 // The window runs redactText over every delta on top of its own row work, so it costs a multiple
 // of the text paths, and the exact multiple is not established: one Ryzen run under Node 24.9.0
 // measured 26.24 ms of CPU for it against 10.5-11.3 ms for the text paths (24.22.2: 26.30 ms), and
-// CI reported the row without its milliseconds. Its bound is therefore relative, WINDOW_MARGIN
-// times the slow reference above, capped by an absolute backstop sized from those numbers (7.6x
-// the measured window cost) with headroom. A quadratic rule at 80k characters is 6.4e9 steps,
+// CI reported the row without its milliseconds. Its bound is WINDOW_MARGIN times the slow
+// reference above, which is 3 x 60 ms of CPU, 180 ms, because that burn is fixed; the absolute
+// backstop (7.6x the measured window cost) caps a misread reference. The margin is wide on
+// purpose: the CI row's cost is unknown, so the bound gives up catching a 2-3x linear slowdown to
+// stop failing on a row it cannot explain; a quadratic rule at 80k characters is 6.4e9 steps,
 // seconds of CPU, far past either bound.
 const WINDOW_MARGIN = 3
 const WINDOW_BACKSTOP_MS = 200
