@@ -144,6 +144,7 @@ const EDGES = [
   ['an unclosed quote past 4096, block', `? "${PASS}${'x'.repeat(5000)}\n: |\n  ${VALUE}\n`, `? "${PASS}${'x'.repeat(5000)}\n: |\n  ${REDACTED}`],
   ['41 blanks after ? then a long name', `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: ${VALUE}\n`, `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: ${REDACTED}\n`],
   ['41 blanks after ? then a long name, block', `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: |\n  ${VALUE}\n`, `? ${' '.repeat(41)}${PASS}${'x'.repeat(17)}\n: |\n  ${REDACTED}`],
+  ['an unclosed quote with an inline value', `? "${PASS}: ${VALUE}\n`, `? "${PASS}: ${REDACTED}\n`],
 ]
 for (const [what, input, want] of EDGES) {
   test(`#509: the guard's edge over-hides, never serves (${what})`, () => {
