@@ -13,8 +13,12 @@
 # up to REMOTE_GATE_LOCK_TIMEOUT seconds, then gives up. Each step's full output goes to a log
 # folder; the screen gets one line per step and the counts. A test step passes only with exit 0,
 # a summary, at least one test, and no failed or cancelled test (as scripts/test-guard.mjs).
-# At the start, refs/remote-gate/* and log folders older than REMOTE_GATE_KEEP_DAYS go, and so
-# does a worktree whose gate is no longer running.
+# At the start, refs/remote-gate/* not fetched or used for REMOTE_GATE_KEEP_DAYS (a stamp per ref)
+# and log folders older than that go, and so does a worktree whose gate is surely gone.
+#
+# Needs Linux's GNU coreutils (mv -T, stat -c): a slot is claimed by renaming a folder that already
+# holds its owner, so no slot is ever seen without one. A gate's identity is its pid, its start
+# time in clock ticks (/proc/<pid>/stat) and the boot id: no time zone or clock step changes it.
 #
 # Environment (all optional):
 #   REMOTE_GATE_ENV            a file sourced first (PATH, NVM_DIR, the variables below)
@@ -33,9 +37,9 @@
 #   NVM_DIR                    where nvm keeps Node (default: $HOME/.nvm)
 #   CHROME_BIN                 bots-dsh's browser (default: one at a usual path, if any)
 #
-# What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, which writes real
-# quota state (the Mac never runs it either), and scripts/usagemeter-pin.mjs (it reads a release
-# over the network). Its static checks run once, on the first Node. A version like 24 is the
+# What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, by the owner's
+# rule that it never runs on our machines (CI still runs it), and scripts/usagemeter-pin.mjs (it
+# reads a release over the network). Its static checks run once, on the first Node. A version like 24 is the
 # newest one nvm has installed, not the newest released; the record names the exact one. bun is
 # whatever PATH has (CI pins 1.4.4); the record names it. The plugin gate does not fetch Omni for
 # welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,
@@ -128,20 +132,39 @@ started=$SECONDS
 
 load() { cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || uptime | sed 's/.*load averages*: //'; }
 
-# A process's identity: its pid and start time, so a reused pid never reads as the same owner.
-# ps sees every user's processes, so one this user may not signal (EPERM) still reads as alive.
-ident() {
-  local start
-  start=$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ') || return 1
-  [ -n "$start" ] || return 1
-  printf '%s %s\n' "$1" "$start"
-}
-me=$(ident $$) || die "ps can't read this process's start time"
+boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 
-# Whether an owner line (pid and start time) is a process that still runs.
+# A process's identity: its pid, its start time in clock ticks since boot and the boot id, so a
+# reused pid never reads as the same owner. The start time is field 20 after the LAST ')' of
+# /proc/<pid>/stat (the process name may hold spaces and ')'). Elsewhere, ps's start time in UTC.
+ident() {
+  local stat start
+  if stat=$(cat "/proc/$1/stat" 2>/dev/null) && [ -n "$stat" ]; then
+    start=$(printf '%s\n' "${stat##*)}" | awk '{ print $20 }')
+    if [[ $start =~ ^[0-9]+$ ]]; then
+      printf '%s ticks:%s boot:%s\n' "$1" "$start" "$boot_id"
+      return 0
+    fi
+  fi
+  start=$(TZ=UTC LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ') || return 1
+  [ -n "$start" ] || return 1
+  printf '%s utc:%s\n' "$1" "${start// /_}"
+}
+me=$(ident $$) || die "can't read this process's start time (/proc or ps)"
+
+# Whether an owner line is a gate that may still run. Its identity read again must match; when it
+# can't be read at all (hidepid, no ps), it counts as alive unless kill says no such process.
 alive() {
-  local pid=${1%% *}
-  [ -n "$1" ] && [ "$(ident "$pid" 2>/dev/null || true)" = "$1" ]
+  local pid=${1%% *} now
+  [ -n "$1" ] || return 1
+  if now=$(ident "$pid" 2>/dev/null); then
+    [ "$now" = "$1" ]
+    return
+  fi
+  case $(LC_ALL=C kill -0 "$pid" 2>&1) in
+    *'No such process'*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
@@ -191,17 +214,43 @@ slot_owner() {
 }
 
 # Takes a stale slot back. The move to a unique name lets one claimer win; the moved folder is
-# checked again, and one that is not the slot judged stale (made since) is put back.
+# checked again, and one that is not the slot judged stale (made since) is put back with mv -T,
+# which fails rather than nest it when a new slot took the name meanwhile. Such a folder stays
+# aside until its owner ends (sweep_stale).
 reclaim() {
   local dir=$1 judged=$2 moved
   moved=$lock_dir/.stale-${dir##*/}-$$-$RANDOM
-  mv "$dir" "$moved" 2>/dev/null || return 0
+  mv -T "$dir" "$moved" 2>/dev/null || return 0
   if [ "$(slot_owner "$moved")" != "$judged" ]; then
-    if [ ! -e "$dir" ]; then mv "$moved" "$dir" 2>/dev/null || true; fi
+    mv -T "$moved" "$dir" 2>/dev/null || true
     return 0
   fi
   say "took back ${dir##*/} (owner gone: $judged)"
   rm -rf "$moved"
+}
+
+# Folders set aside by reclaim or left by a claim that died: removed once their owner is gone.
+sweep_stale() {
+  local d owner
+  for d in "$lock_dir"/.stale-* "$lock_dir"/.new-*; do
+    [ -d "$d" ] || continue
+    owner=$(slot_owner "$d")
+    case $owner in
+      'none '*) if [ $(($(date +%s) - ${owner#none })) -gt "$lock_timeout" ]; then rm -rf "$d"; fi ;;
+      *) if ! alive "$owner"; then rm -rf "$d"; fi ;;
+    esac
+  done
+}
+
+# Claims one slot in one step: a folder holding the owner file is renamed to the slot's name.
+# rename(2) refuses a name that a folder with an owner already holds.
+claim() {
+  local dir=$1 new
+  new=$(mktemp -d "$lock_dir/.new-XXXXXX") || return 1
+  echo "$me" >"$new/owner"
+  if mv -T "$new" "$dir" 2>/dev/null; then return 0; fi
+  rm -rf "$new"
+  return 1
 }
 
 # One of the box's gate slots. A slot is stale when its owner (pid and start time) no longer runs,
@@ -210,10 +259,10 @@ slot_take() {
   local deadline=$((SECONDS + lock_timeout)) i dir owner waited=''
   mkdir -p "$lock_dir"
   while :; do
+    sweep_stale
     for i in $(seq 1 "$slots"); do
       dir=$lock_dir/slot-$i
-      if mkdir "$dir" 2>/dev/null; then
-        echo "$me" >"$dir/owner"
+      if [ ! -e "$dir" ] && claim "$dir"; then
         slot=$dir
         say "slot $i of $slots (pid $$)"
         return 0
@@ -246,14 +295,25 @@ remove_worktree() {
   return 1
 }
 
-# Old refs and logs, and worktrees left by a gate that is gone (killed, out of memory).
+# A ref's stamp, touched whenever a gate fetches or uses it: the sweep ages refs by it.
+stamp() {
+  mkdir -p "$base/ref-stamps"
+  touch "$base/ref-stamps/${1#refs/remote-gate/}"
+}
+
+# Old refs and logs, and worktrees left by a gate that is gone (killed, out of memory). A ref
+# with no stamp yet gets one now and is aged from there.
 sweep() {
-  local cutoff owner_file dir name commit_date
+  local cutoff owner_file dir name mark
   cutoff=$(($(date +%s) - keep_days * 86400))
-  git -C "$repo" for-each-ref --format='%(refname) %(committerdate:unix)' refs/remote-gate/ \
-    | while read -r name commit_date; do
-      if [ "$commit_date" -lt "$cutoff" ]; then git -C "$repo" update-ref -d "$name" || true; fi
-    done
+  git -C "$repo" for-each-ref --format='%(refname)' refs/remote-gate/ | while read -r name; do
+    mark=$base/ref-stamps/${name#refs/remote-gate/}
+    if [ ! -e "$mark" ]; then
+      stamp "$name"
+    elif [ "$(mtime "$mark")" -lt "$cutoff" ]; then
+      if git -C "$repo" update-ref -d "$name"; then rm -f "$mark"; fi
+    fi
+  done
   if [ -d "$base/logs" ]; then
     find "$base/logs" -mindepth 1 -maxdepth 1 -type d -mtime +"$keep_days" -exec rm -rf {} + || true
   fi
@@ -337,7 +397,9 @@ bun_counts() {
 # cancelled one fails the gate. Records one line: the counts, the time and the verdict.
 judge() {
   local label=$1 counts=$2 wall=$3 found tests pass fail skip todo cancelled why=''
-  read -r found tests pass fail skip todo cancelled _ <<<"$counts"
+  read -r found tests pass fail skip todo cancelled _ <<<"$counts" || true
+  found=${found:-0} tests=${tests:-0} pass=${pass:-0} fail=${fail:-0}
+  skip=${skip:-0} todo=${todo:-0} cancelled=${cancelled:-0}
   if [ "$found" -eq 0 ]; then
     why='no test summary'
   elif [ "$tests" -eq 0 ]; then
@@ -450,6 +512,7 @@ if [ "$kind" = pr ]; then
   git -C "$repo" -c gc.auto=0 fetch -q --no-write-fetch-head "$remote" \
     "+refs/pull/$ref/head:refs/remote-gate/pr-$ref"
   sha=$(git -C "$repo" rev-parse --verify "refs/remote-gate/pr-$ref^{commit}")
+  stamp "refs/remote-gate/pr-$ref"
 else
   if ! git -C "$repo" cat-file -e "$ref^{commit}" 2>/dev/null; then
     [ ${#ref} -eq 40 ] || die "$ref isn't in the clone: give the full 40-character sha to fetch it"
@@ -457,6 +520,7 @@ else
   fi
   sha=$(git -C "$repo" rev-parse --verify "$ref^{commit}")
   git -C "$repo" update-ref "refs/remote-gate/sha-$sha" "$sha"
+  stamp "refs/remote-gate/sha-$sha"
 fi
 mkdir -p "$wt_dir"
 target=$wt_dir/$gate-${sha:0:12}-$$
