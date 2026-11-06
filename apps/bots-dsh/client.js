@@ -896,6 +896,8 @@ var ZH = {
   "added {time}": "添加于 {time}",
   "last used {time}": "上次使用 {time}",
   "not used yet": "还没用过",
+  "Held: the saved value is shorter than {count} characters": "已暂停使用：保存的值不足 {count} 个字符",
+  "Held: nothing uses this key until you save a value of at least {count} characters.": "已暂停使用：在你保存至少 {count} 个字符的值之前，没有任何地方使用这个密钥。",
   "Delete {name}? Bots lose it at once.": "删除 {name}？Bot 会立刻失去它。",
   Keep: "保留",
   "Key name": "密钥名",
@@ -3888,7 +3890,17 @@ function SecretRow({ secret, roster, actions, run: run2, open, onToggle }) {
   }, [open]);
   const asker = secret.requestedBy ? roster.byId[secret.requestedBy]?.name ?? t("a deleted Bot") : t("you");
   const allowed2 = secret.scope === "all" ? [] : secret.scope.map((id) => roster.byId[id]).filter(Boolean);
-  const meta = [t("Asked by {name}", { name: asker }), t("added {time}", { time: when(secret.createdAt) }), secret.lastUsedAt ? t("last used {time}", { time: when(secret.lastUsedAt) }) : t("not used yet")].join(" · ");
+  const held = secret.held === true;
+  const heldLine = t(
+    "Held: the saved value is shorter than {count} characters",
+    { count: MIN_VALUE }
+  );
+  const state = held ? heldLine : secret.lastUsedAt ? t("last used {time}", { time: when(secret.lastUsedAt) }) : t("not used yet");
+  const meta = [
+    t("Asked by {name}", { name: asker }),
+    t("added {time}", { time: when(secret.createdAt) }),
+    state
+  ].join(" · ");
   return (0, import_react9.createElement)(
     "div",
     { className: "bt-secret-item", "data-open": open ? "" : void 0 },
@@ -3912,6 +3924,15 @@ function SecretRow({ secret, roster, actions, run: run2, open, onToggle }) {
       { className: "bt-secret-edit" },
       (0, import_react9.createElement)(ScopeEditor, { key: JSON.stringify(secret.scope), secret, roster, onSave: (scope) => run2(actions.secretUpdate(secret.name, { scope })) }),
       (0, import_react9.createElement)(PurposeEditor, { key: secret.purpose ?? "", secret, onSave: (purpose) => run2(actions.secretUpdate(secret.name, { purpose })) }),
+      held ? (0, import_react9.createElement)(
+        "div",
+        { className: "bt-secret-warn", role: "note" },
+        (0, import_react9.createElement)(WarnIcon),
+        t(
+          "Held: nothing uses this key until you save a value of at least {count} characters.",
+          { count: MIN_VALUE }
+        )
+      ) : null,
       (0, import_react9.createElement)(ValueEditor, { secret, onSave: (value) => run2(actions.secretSet({ name: secret.name, value })) }),
       (0, import_react9.createElement)(
         "div",
