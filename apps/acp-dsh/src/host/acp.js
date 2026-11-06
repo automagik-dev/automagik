@@ -5,9 +5,22 @@
 import { spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk'
+import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
 const TERMINAL = new Set(['completed', 'failed'])
+
+/**
+ * The structured tool name a call carries, when the adapter sends one: Claude Code puts it at
+ * the update's root and in `_meta.claudeCode.toolName` (the spike's wire). codex-acp sends none
+ * for an MCP call, so matching there stays unsupported until a name is proven.
+ */
+export function structuredNameOf(update) {
+  if (typeof update?.name === 'string' && update.name !== '') return update.name
+  const meta = update?._meta?.claudeCode
+  if (typeof meta?.toolName === 'string' && meta.toolName !== '') return meta.toolName
+  return undefined
+}
 
 // The text of ACP content: a content block, or a tool call's content items.
 export function contentText(content) {
@@ -35,7 +48,7 @@ export class AgentRun {
   }
 
   async start() {
-    const { command, args = [], env, cwd } = this.spec
+    const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
     const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
     this.child = child
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
@@ -61,12 +74,19 @@ export class AgentRun {
     }), stream)
     const ready = (async () => {
       this.init = await this.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
-      const session = await this.conn.newSession({ cwd, mcpServers: [] })
+      const session = await this.conn.newSession({
+        cwd,
+        mcpServers,
+        ...(sessionMeta === undefined ? {} : { _meta: sessionMeta }),
+      })
       this.sessionId = session.sessionId
       this.modes = session.modes
       this.options = session.configOptions ?? []
       // The model the agent started on: DSH's `default` model goes back to it.
       this.startModel = optionOf(this.options, 'model')?.currentValue
+      // The session exists (the spike's ordering rule for the bridge's first announcement) and
+      // a bridge that never listed its tools fails the turn here, before the prompt.
+      await this.spec.onReady?.(this)
     })()
     try {
       await Promise.race([ready, gone])
@@ -77,6 +97,39 @@ export class AgentRun {
       this.letGo()
     }
     return this
+  }
+
+  /**
+   * Replace this ACP session with a fork that carries the same conversation and the new server
+   * set, then close the source session: `acp-codex` ignores `tools/list_changed` and a new server
+   * list on resume, so this is how its tool set follows a preset or level change. Both bridges
+   * are the plugin's to end; the source's credential is revoked by the caller.
+   * @param {{ cwd: string, mcpServers: any[] }} options
+   * @returns {Promise<string>} the forked session id
+   */
+  async fork({ cwd, mcpServers }) {
+    if (typeof this.conn.unstable_forkSession !== 'function') throw new Error('it cannot fork its session')
+    const source = this.sessionId
+    const answer = await this.held(() => Promise.race([
+      this.conn.unstable_forkSession({ sessionId: source, cwd, mcpServers }),
+      this.gone,
+    ]))
+    this.sessionId = answer.sessionId
+    if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
+    if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
+    this.tools.clear()
+    // The fork's source is closed by us: the spike did not show the fork closing it, and a
+    // Session must never hold two bridges.
+    try {
+      if (typeof this.conn.closeSession === 'function') {
+        await this.held(() => Promise.race([this.conn.closeSession({ sessionId: source }), this.gone]))
+      }
+    } catch {
+      // A source session that will not close still ends with this process, which is disposed
+      // with the fork's Session.
+    }
+    await this.spec.onReady?.(this)
+    return this.sessionId
   }
 
   // Each request the agent has yet to answer holds the event loop; the last answer lets it go.
@@ -248,9 +301,27 @@ export class AgentRun {
       return known
     }
     const tool = { id: update.toolCallId, title: update.title ?? 'Tool', kind: update.kind ?? 'other', status: update.status ?? 'pending', content: update.content ?? [], locations: update.locations ?? [], rawInput: update.rawInput, rawOutput: update.rawOutput, listeners: new Set() }
+    this.markCall(tool, update)
     this.tools.set(tool.id, tool)
     this.push({ type: 'tool', id: tool.id })
     return tool
+  }
+
+  /** What an update says the call is: its structured name, whether it is MCP, the bridge's. */
+  markCall(tool, update) {
+    const name = structuredNameOf(update)
+    if (name !== undefined) tool.structuredName = name
+    if (update?._meta?.is_mcp_tool_call === true) tool.mcp = true
+    if (tool.structuredName !== undefined && tool.structuredName.startsWith('mcp__')) tool.mcp = true
+    if (isBridgeName(tool.structuredName)) tool.bridge = true
+    if (tool.noted !== true && (tool.structuredName !== undefined || tool.mcp === true)) {
+      tool.noted = true
+      try {
+        this.spec.onToolCall?.(tool)
+      } catch {
+        // Drift handling is the plugin's, not the run's: a throw must not stop the agent's call.
+      }
+    }
   }
 
   changeTool(tool, update) {
@@ -261,6 +332,7 @@ export class AgentRun {
     for (const key of ['title', 'kind', 'status', 'content', 'locations', 'rawInput', 'rawOutput', 'ended']) {
       if (update[key] !== undefined && update[key] !== null) tool[key] = update[key]
     }
+    this.markCall(tool, update)
     for (const listener of tool.listeners) listener()
   }
 
@@ -270,6 +342,14 @@ export class AgentRun {
     // The question's own title ("Run command?") names the question, not the call the card shows.
     const { title, ...details } = params.toolCall ?? {}
     this.changeTool(tool, { ...details, status: undefined })
+    // The bridge's call is not the mirror's: acp-dsh answers this ACP request itself with
+    // `allow-once` and raises no DSH dialog from it. The bridge's own `approval/request` is the
+    // one dialog the person sees (RFC 0003, amendment, "One dialog per call").
+    if (this.spec.dshTools === true && tool.bridge === true) {
+      const once = (params.options ?? []).find(option => option.kind === 'allow_once')
+        ?? (params.options ?? []).find(option => option.kind === 'allow_always')
+      return Promise.resolve(once === undefined ? { outcome: { outcome: 'cancelled' } } : { outcome: { outcome: 'selected', optionId: once.optionId } })
+    }
     return new Promise((resolve) => {
       let done = false
       const permission = {

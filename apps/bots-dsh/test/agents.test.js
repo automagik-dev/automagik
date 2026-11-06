@@ -90,9 +90,15 @@ async function nativeTransition(t) {
   const target = { id: 'picked', session: { id: 'picked', header: { id: 'picked', cwd: '/selected', isSeeded: false } }, preset: 'standard', boundary: { openTurnStartSeq: null, lastTurn: 0 } }
   const resolve = rt.resolveAgent
   rt.resolveAgent = async id => id === 'picked' ? target : resolve(id)
-  bench.ctx.sessionProjections = { stateOf: (session, key) => key === 'agentPreset' ? target.preset : key === 'turnBoundary' ? target.boundary : undefined }
+  // dsh 0.2.2 reads the turn boundary and the preset through their owning services.
+  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined, isOwnedBy: () => false }
   const selected = []
-  const presets = { list: async () => [{ id: 'cordis' }], select: async (live, preset) => { selected.push([live.session.id, preset]); live.preset = preset } }
+  const presets = {
+    list: async () => [{ id: 'cordis' }],
+    select: async (live, preset) => { selected.push([live.session.id, preset]); live.preset = preset },
+    // The owner reads the Session's recorded preset (the agent that carries it here).
+    presetForSession: session => session?.id === 'picked' ? target.preset : undefined,
+  }
   bench.ctx.provided.set('agentPresets', presets)
   return { ...bench, rt, bot, botId, entry, target, presets, selected, adopt: () => bench.call('bot-session-adopt', { botId, sessionId: 'picked', sourceSessionId: botId }) }
 }
@@ -102,7 +108,8 @@ test('native project association persists the exact selected root and stable ado
   const { rt, bot, botId, entry, home, created, archived, target } = bench
   const original = structuredClone(rt.state.agents[entry.id])
   const count = created.length
-  assert.equal((await bench.adopt()).ok, true)
+  const adopted = await bench.adopt()
+  assert.equal(adopted.ok, true, adopted.error?.message)
   assert.equal(rt.chatOf(botId), 'picked')
   assert.equal(rt.selfOf('picked'), botId)
   assert.equal(rt.agentOf('picked'), undefined)
@@ -170,10 +177,8 @@ test('native chained nonblank forks require each actual parent to become the cur
   }]))
   const resolve = bench.rt.resolveAgent
   bench.rt.resolveAgent = async id => forks.get(id) ?? resolve(id)
-  bench.ctx.sessionProjections.stateOf = (session, key) => {
-    const live = forks.get(session.id) ?? bench.target
-    return key === 'agentPreset' ? live.preset : key === 'turnBoundary' ? live.boundary : undefined
-  }
+  bench.ctx.agents.turnBoundaryOf = session => (forks.get(session.id) ?? bench.target).boundary
+  bench.presets.presetForSession = session => (forks.get(session.id) ?? bench.target).preset
   const associate = (sessionId, sourceSessionId) => bench.call('bot-session-adopt', { botId: bench.botId, sessionId, sourceSessionId })
   assert.equal((await associate('fork-c', 'picked')).ok, false, 'a skipped parent must never be accepted as a direct descendant')
   assert.equal((await associate('fork-b', 'picked')).ok, true)

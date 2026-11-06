@@ -1,10 +1,13 @@
 {
   "name": "automagik",
-  "version": "3.86.32",
+  "version": "3.88.2",
   "private": true,
   "description": "Automagik for DeepSeek Harness: the Bot team, the welcome, and the Automagik desktop app",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.9"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/automagik-dev/automagik.git"
@@ -15,7 +18,7 @@
     "version:next": "bun scripts/version.ts next"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.2-rc.1",
     "playwright-core": "1.58.2"
   }
 }

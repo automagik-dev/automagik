@@ -1,48 +1,51 @@
 # Português (Brasil) (`@automagik/locale-pt-br-dsh`)
 
-Brazilian Portuguese for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). DSH ships English and Chinese; this client plugin adds **Português (Brasil)** to Settings › General › Language and registers pt-BR dictionaries for the screens a first session shows. A browser whose first language is Portuguese opens DSH in it, unless a language was already picked in Settings.
+Brazilian Portuguese for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). DSH 0.2.2 ships Portuguese itself, as **Português**; this client plugin keeps a **Português (Brasil)** entry with the Bot team's own strings and the DSH strings DSH's copy gets wrong, and falls back to DSH's `pt` for everything else.
 
-## What it translates
+Supported runtime: **DSH 0.2.2-rc.1 or later** (`engines.dsh` is `>=0.2.2-rc.1 <0.3.0-0`). Earlier DSH releases have no `pt` to fall back to, and DSH refuses the install there.
 
-It uses the language-pack interface of DSH's locale service (`@deepseek-ai/dsh-client-locale`): `addLanguage({id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en'})`, then `register(namespace, 'pt-BR', dictionary)` for each namespace below. DSH looks a key up in pt-BR, then in English, so anything this pack doesn't translate stays in English, key by key.
+## Why two Portuguese entries
 
-| Screen | Namespaces |
-|---|---|
-| Shell and the Language row | `common`, `settings.locale` |
-| Sidebar and the session list | `sidebar`, `workspace` |
-| Composer | `conversation`, `model`, `slash.menu`, `command`, `reference` |
-| Messages | `chat` |
-| Approvals and questions | `approval`, `permission.access`, `question` |
-| Plugin pages | `pluginManager`, `pluginMarket`, `settings.plugins`, `settings.pluginInventory` |
-| Settings | `settings` (General), `settings.theme` |
-| The Bot team (`@automagik/bots-dsh`) | `omni-ui`: the sidebar, new chat, the transcript, questions, views, feedback and errors |
+DSH's `pt` copy is wrong on keys a reader sees: `chat.clock.md` is `{m}/{d}`, so 6 November shows as 11/6 (read as 11 June); `chat.number.groupSeparator` is `,`, so 1,234 reads as 1.234; the plan hint is left in English (`describe your task to generate plan`); `row.input`/`output` are `IN`/`OUT`; `auto.label` is `Auto review`; and several strings are mistranslated (`message.systemPrompt` "Alerta do sistema" for *system prompt*, `terminalRunning` "Correndo" for *running*, and others). A pack cannot override a namespace DSH already registers for `pt` — the second registration throws — so the corrected strings live under this pack's own `pt-BR` id, which falls back to DSH's `pt`.
 
-That is 19 of DSH 0.2.1-rc.4's 65 namespaces (1267 of its 2914 strings) and all 1287 of the Bot team's `omni-ui` keys. Not translated yet: the rest of Settings (models, account, agent loop, shell, subagents, web search, session log), the right sidebar and its previews, the trajectory and inspector views, and schedules and jobs. A plugin's title and description in the plugin pages come from that plugin's own package (its `locale/<lang>.json`, English from its `package.json`), not from a dictionary, so they stay in the languages the plugin ships. The welcome and the Bot team ship a pt-BR description; Genie, Omni channels and Omni canvases are packaged outside this repository and read in English until their packages ship one.
+Until the owner decides between fixing this upstream in DSH and accepting DSH's copy, the pack keeps its own entry: correctness over a single picker row. A reader who chose **Português (Brasil)** keeps that choice; a reader on DSH's **Português** gets DSH's copy.
 
-A few `omni-ui` keys hold their English text on purpose rather than a poor translation: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text, so a release cannot quietly fall back to English.
+## What it carries
+
+| Namespace | Keys | Why |
+|---|---|---|
+| `omni-ui` | all 1,450 | The Bot team's namespace, which DSH does not have; registered under `pt`, so both Portuguese entries read it |
+| `chat` | 7 | Date order, grouping separator, and two mistranslations |
+| `conversation` | 5 | Plan hint left in English, `IN`/`OUT`, query-runtime wording |
+| `permission.access` | 1 | `Auto review` |
+| `pluginManager` | 1 | "Correndo" (*jogging*) for a running plugin |
+
+The full diff against DSH 0.2.2-rc.1 measured 1,267 strings the pack used to carry: DSH's `pt` already translates 1,263 (500 identical, 763 worded differently); four no longer exist in 0.2.2. The pack now carries only the wrong ones above, and DSH supplies the rest through the fallback chain.
+
+`omni-ui` holds all 1,450 Bot team keys. A few keep their English text on purpose: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text.
 
 A plugin can add its own words to `omni-ui` through the Bot team's `addStrings` (Unfold session's model-menu messages, `apps/unfold-session-dsh/src/client/strings.js`); `scripts/copy-check.mjs` lists those modules in `OMNI_PLUGIN_STRINGS`, so their keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
 
-The welcome (`@automagik/welcome-dsh`) registers its own pt-BR, in its `welcome.team` namespace: the companion step, the team step, Connect AI with its sign-ins and the Claude Code and Codex rows (there and on their Settings page), and the step rail. Names stay as written, and so do the host's error messages and what a provider's own sign-in says. The Connect Omni step comes from `@automagik/omni-channels-dsh` and reads in English until that plugin ships its pt-BR.
+The welcome (`@automagik/welcome-dsh`) registers its pt-BR copy in its `welcome.team` namespace under both `pt-BR` and DSH's `pt`, so the onboarding reads in Portuguese whichever entry is active.
 
 ## Install
 
 1. Add the Automagik market to DSH's plugin market ([marketplace/README.md](../../marketplace/README.md) has the URL).
 2. Install **Português (Brasil)**. If DSH asks for a restart, restart it.
-3. Pick Português (Brasil) in Settings › General › Language, or open DSH in a browser set to Portuguese.
+3. Pick **Português (Brasil)** in Settings › General › Language, or open DSH in a browser set to Portuguese.
 
-The client declares `inject: ['locale']` and loads in DSH's first boot phase (`immediately`), so the language is in the list before the page draws. The host half does nothing. It needs no settings.
+The client declares `inject: ['locale']` and loads in DSH's first boot phase (`immediately`). The host half does nothing. It needs no settings.
 
 ## Develop
 
 ```sh
 bun run harness      # the pinned DSH release the tests and the linter run against
 bun run build        # client.js from src/client; commit it with the sources
-bun run test         # on Node: a fake locale service with only en and zh, then DSH's own LocaleRuntime
+bun run test         # on Node: a fake locale service, then DSH's own LocaleRuntime
 bun run lint
 node scripts/copy-check.mjs     # every pt-BR text against its English text and the copy rules
 ```
 
-A dictionary is `src/client/locales/pt-BR/<namespace>.json`, keyed as DSH's English dictionary is. The copy check keeps each DSH namespace whole (every English key of `test/en/<dsh version>.json` has a text, and no other key), each `omni-ui` key one the Bot team still has, and every `{placeholder}` in place. Its rules: Brazilian Portuguese, gender-neutral for the person, no article before Unfold, "clique" for a click, and "ambiente isolado" for a sandbox.
+`src/client/locales/pt-BR/omni-ui.json` is keyed by the Bot team's English text; the four DSH namespace files hold only the keys DSH's `pt` gets wrong. The copy check rejects a key outside its English dictionary, each `omni-ui` key the Bot team no longer has, and every `{placeholder}` that does not match its English text. Its rules: Brazilian Portuguese, gender-neutral for the person, no article before Unfold, "clique" for a click, and "ambiente isolado" for a sandbox.
 
-To move to a new DSH release, refresh `test/en/` from that release's English dictionaries and translate the keys the copy check reports missing.
+To move to a new DSH release, refresh `test/en/` from that release's English dictionaries and check the overrides still beat DSH's `pt`.

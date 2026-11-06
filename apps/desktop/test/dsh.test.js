@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
+import { appHome, backupSettings, backupSettingsOrLog, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
 import { batchSafe } from '../scripts/batch-spawn.mjs'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
@@ -52,6 +52,44 @@ test('the app keeps everything in one folder under ~/.automagik, apart from a ds
   // The person's PATH comes first; the usual tool folders follow (see toolDirs below).
   assert.ok(env.PATH.startsWith(`/bin${delimiter}`))
   assert.equal(dshEnv({ base: {}, home: '/a' }).ELECTRON_RUN_AS_NODE, undefined)
+})
+
+test('settings come back from a copy, once per dsh version, before an upgrade can move them', (t) => {
+  const scope = scratch(t, 'omni-desktop-settings-')
+  const dshHome = join(scope.root, 'dsh')
+  mkdirSync(dshHome, { recursive: true })
+  assert.equal(backupSettings({ dshHome, version: '0.2.2-rc.1' }), undefined, 'a fresh home has no settings to keep')
+  const settings = join(dshHome, 'settings.yaml')
+  writeFileSync(settings, 'ui-theme:\n  mode: dark\n')
+  const copy = backupSettings({ dshHome, version: '0.2.2-rc.1' })
+  assert.equal(copy, join(dshHome, 'profile-backups', 'settings-0.2.2-rc.1.yaml'))
+  assert.equal(readFileSync(copy, 'utf8'), 'ui-theme:\n  mode: dark\n', 'a copy, byte for byte')
+  assert.equal(readFileSync(settings, 'utf8'), 'ui-theme:\n  mode: dark\n', 'and a copy, not a move')
+  // A second launch under the same runtime does not duplicate it, even after dsh renamed its own file.
+  assert.equal(backupSettings({ dshHome, version: '0.2.2-rc.1' }), undefined)
+  renameSync(settings, `${settings}.imported`)
+  assert.equal(backupSettings({ dshHome, version: '0.2.2-rc.1' }), undefined)
+  assert.equal(readdirSync(join(dshHome, 'profile-backups')).length, 1)
+  assert.equal(existsSync(`${settings}.imported`), true, "dsh's own copy survives beside ours")
+  // The next runtime gets its own copy.
+  writeFileSync(settings, 'ui-theme:\n  mode: light\n')
+  assert.equal(backupSettings({ dshHome, version: '0.2.3-rc.1' }), join(dshHome, 'profile-backups', 'settings-0.2.3-rc.1.yaml'))
+  assert.equal(readdirSync(join(dshHome, 'profile-backups')).length, 2)
+})
+
+test('a settings copy that cannot be written is reported and leaves the home as it was', (t) => {
+  const scope = scratch(t, 'omni-desktop-settings-fail-')
+  const dshHome = join(scope.root, 'dsh')
+  mkdirSync(dshHome, { recursive: true })
+  const settings = join(dshHome, 'settings.yaml')
+  writeFileSync(settings, 'ui-theme:\n  mode: dark\n')
+  // Something that is not a folder takes profile-backups' place: the copy cannot be made.
+  writeFileSync(join(dshHome, 'profile-backups'), 'not a folder')
+  const log = []
+  assert.equal(backupSettingsOrLog({ dshHome, version: '0.2.2-rc.1', log: line => log.push(line) }), undefined)
+  assert.equal(log.length, 1)
+  assert.match(log[0], /^settings backup failed \(/)
+  assert.equal(readFileSync(settings, 'utf8'), 'ui-theme:\n  mode: dark\n', 'the file is not moved or changed')
 })
 
 test('resources come from the app when packaged and from build/ in a checkout', () => {

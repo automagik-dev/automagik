@@ -9,9 +9,9 @@ import { loadClient } from './load-client.js'
 const dictionaries = loadDictionaries()
 const { id, exports, requested } = loadClient()
 
-// The pack, applied as DSH applies it, to a fake locale service.
-function applied(options) {
-  const locale = fakeLocale(options)
+// The pack, applied as DSH 0.2.2 applies it: the locale service already lists DSH's pt entry.
+function applied(options = {}) {
+  const locale = fakeLocale({ portuguese: true, ...options })
   const ctx = fakeCtx(locale)
   exports.apply(ctx)
   return { locale, ctx }
@@ -28,45 +28,67 @@ test('client.js loads as the package, asks for no platform module and injects on
   assert.equal(typeof exports.apply, 'function')
 })
 
-test('a catalog with only en and zh gets pt-BR, whose fallback chain ends at en', () => {
-  const { locale } = applied()
-  assert.deepEqual(locale.getLocale().locales.map((entry) => entry.id), ['en', 'zh', 'pt-BR'])
-  assert.deepEqual({ ...locale.getLocale().locales[2] }, { id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
-  locale.setLocale('pt-BR')
-  assert.deepEqual(locale.chain(), ['pt-BR', 'en'])
+test('the pack carries omni-ui and corrected keys of five DSH namespaces', () => {
+  assert.deepEqual(Object.keys(dictionaries), ['chat', 'conversation', 'omni-ui', 'permission.access', 'pluginManager'])
+  assert.deepEqual(Object.keys(dictionaries.chat), [
+    'number.groupSeparator',
+    'clock.md',
+    'clock.ymd',
+    'message.systemPrompt',
+    'message.systemPromptUpdate',
+    'message.stepProcess.tools',
+    'message.context.instructions.updated',
+  ])
+  assert.deepEqual(Object.keys(dictionaries.conversation), ['hint.plan', 'placeholder.plan', 'row.input', 'row.output', 'tool.title.queryRuntime'])
+  assert.deepEqual(Object.keys(dictionaries['permission.access']), ['auto.label'])
+  assert.deepEqual(Object.keys(dictionaries.pluginManager), ['terminalRunning'])
 })
 
-test('a browser that asks for pt-BR, or for any Portuguese, opens in pt-BR; others keep their language', () => {
-  assert.equal(applied({ languages: ['pt-BR', 'en-US'] }).locale.getLocale().active, 'pt-BR')
-  assert.equal(applied({ languages: ['pt', 'en'] }).locale.getLocale().active, 'pt-BR')
-  assert.equal(applied({ languages: ['en-US'] }).locale.getLocale().active, 'en')
-  assert.equal(applied({ languages: ['zh-CN'] }).locale.getLocale().active, 'zh')
+test('the pack keeps both Portuguese entries while DSH\'s copy is wrong', () => {
+  const { locale } = applied({ languages: ['pt-BR'] })
+  assert.deepEqual(locale.getLocale().locales.map((entry) => entry.id), ['en', 'zh', 'pt', 'pt-BR'])
+  assert.deepEqual({ ...locale.getLocale().locales.at(-1) }, { id: 'pt-BR', label: 'Português (Brasil)', fallback: 'pt' })
+  assert.deepEqual(locale.chain(), ['pt-BR', 'pt', 'en'])
+  assert.equal(locale.getLocale().active, 'pt-BR')
 })
 
-test('every dictionary registers once, as pt-BR, after the language, and leaves on dispose', () => {
-  const { locale, ctx } = applied()
+test('omni-ui registers under DSH pt, so both Portuguese entries read it', () => {
+  const { locale } = applied({ languages: ['pt-BR'] })
   const registers = locale.calls.filter(([kind]) => kind === 'register')
-  assert.equal(locale.calls[0][0], 'addLanguage')
-  assert.deepEqual(registers.map(([, ns]) => ns), Object.keys(dictionaries))
-  for (const [, , form] of registers) assert.equal(form, 'pt-BR')
-  assert.equal(ctx.labels.length, 1 + Object.keys(dictionaries).length)
-  ctx.dispose()
-  assert.deepEqual(locale.getLocale().locales.map((entry) => entry.id), ['en', 'zh'])
-  assert.equal(locale.bind('sidebar')('session.new'), 'session.new')
+  assert.deepEqual(registers.map(([, ns, form]) => [ns, form]), [
+    ['chat', 'pt-BR'],
+    ['conversation', 'pt-BR'],
+    ['omni-ui', 'pt'],
+    ['permission.access', 'pt-BR'],
+    ['pluginManager', 'pt-BR'],
+  ])
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
+  locale.setLocale('pt')
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Bot principal')
 })
 
-test('a DSH namespace takes the pt-BR dictionary beside its own en and zh, and a missing key falls back to en', () => {
-  const locale = fakeLocale({ languages: ['pt-BR'] })
-  // DSH's sidebar registers its typed dictionaries (en and zh) on its own; a key the pack lacks.
-  locale.register('sidebar', { en: { 'session.new': 'New Session', 'only.en': 'Only in English' }, zh: { 'session.new': '新会话', 'only.en': '仅英文' } })
-  locale.register('common', { en: { cancel: 'Cancel' }, zh: { cancel: '取消' } })
-  const ctx = fakeCtx(locale)
-  exports.apply(ctx)
-  const t = locale.bind('sidebar')
-  assert.equal(t('session.new'), 'Nova sessão')
-  assert.equal(t('only.en'), 'Only in English')
-  assert.equal(t('cancel'), 'Cancelar')
-  assert.equal(t('no.such.key'), 'no.such.key')
+test('the corrected keys win on pt-BR and DSH pt fills everything else', () => {
+  const { locale } = applied({ languages: ['pt-BR'] })
+  locale.register('chat', 'pt', { 'clock.md': '{m}/{d}', 'number.groupSeparator': ',', 'other.key': 'DSH pt' })
+  const t = locale.bind('chat')
+  assert.equal(t('clock.md'), '{d}/{m}')
+  assert.equal(t('number.groupSeparator'), '.')
+  assert.equal(t('other.key'), 'DSH pt')
+  assert.equal(locale.bind('conversation')('hint.plan'), 'descreva sua tarefa para gerar um plano')
+})
+
+test('a browser that asks for pt-BR opens in pt-BR; a plain pt browser takes DSH\'s entry', () => {
+  assert.equal(applied({ languages: ['pt-BR', 'en-US'] }).locale.getLocale().active, 'pt-BR')
+  assert.equal(applied({ languages: ['pt', 'en-US'] }).locale.getLocale().active, 'pt')
+  assert.equal(applied({ languages: ['en-US'] }).locale.getLocale().active, 'en')
+})
+
+test('every dictionary registers once, as pt or pt-BR, and leaves on dispose', () => {
+  const { locale, ctx } = applied({ languages: ['en-US'] })
+  const registers = locale.calls.filter(([kind]) => kind === 'register')
+  assert.deepEqual(registers.map(([, ns]) => ns), Object.keys(dictionaries))
+  ctx.dispose()
+  assert.equal(locale.bind('omni-ui')('Main Bot'), 'Main Bot')
 })
 
 test('every dictionary holds text', () => {

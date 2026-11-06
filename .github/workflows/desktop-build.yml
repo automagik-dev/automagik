@@ -110,7 +110,7 @@ jobs:
           WINDOWS: ${{ inputs.windows }}
         run: |
           set -euo pipefail
-          include='{"target":"linux","os":"ubuntu-24.04"},{"target":"mac","os":"macos-14"}'
+          include='{"target":"linux","os":"ubuntu-24.04"},{"target":"mac","os":"macos-15"}'
           if [[ "${WINDOWS}" == true ]]; then
             include+=',{"target":"windows","os":"windows-latest"}'
           fi

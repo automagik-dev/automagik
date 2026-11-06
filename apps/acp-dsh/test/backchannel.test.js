@@ -1,0 +1,383 @@
+// The bridge→DSH leg and its probes (RFC 0003, amendment, deliveries 4 and 6): the credential
+// binds a request to its Session and is revoked with it; a missing or foreign one is refused; a
+// credential alone cannot approve; every DSH tool call enters DSH's approval service before it
+// runs, and auto-review refuses an out-of-band bridge call it cannot review; and the offered set
+// is the preset's, filtered by the Session's level.
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
+import { Backchannel, offeredTools, positionOf, recordDrift, signatureOf } from '../src/host/backchannel.js'
+import { TOOL_NAME } from '../src/host/tool.js'
+
+const TOOLS = [
+  { name: 'bash', description: 'Run a command', parameters: { type: 'object', properties: { command: { type: 'string' } } } },
+  { name: 'write', description: 'Write a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
+  { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
+]
+
+function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools } = {}) {
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 3 })
+  session.append('step/start', { turn: 3, step: 1 })
+  const agent = { session }
+  const asked = []
+  const executed = []
+  const ctx = {
+    agents: { turnBoundaryOf: () => ({ lastTurn: 3 }) },
+    get: (name) => {
+      if (name === 'tools') {
+        return {
+          definitions: () => definitions,
+          executable: toolName => definitions.find(definition => definition.name === toolName),
+          execute: async ({ calls }) => {
+            executed.push({ name: calls[0].name, arguments: calls[0].arguments })
+            return { results: [{ callId: calls[0].id, result: { content: [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }
+          },
+        }
+      }
+      if (name === 'approval') {
+        return {
+          effectivePolicy: () => policy,
+          request: async (request) => {
+            asked.push(request)
+            // The real service rejects every ask deterministically under `never`.
+            if (policy === 'never') return 'rejected'
+            return typeof answer === 'function' ? answer(request) : answer
+          },
+        }
+      }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode: sandbox }) }
+      if (name === 'agentPresets') return { presetForSession: () => preset }
+      return undefined
+    },
+  }
+  const backchannel = new Backchannel({ ctx })
+  return { ctx, agent, session, asked, executed, backchannel }
+}
+
+async function serve() {
+  const host_ = host()
+  const bc = host_.backchannel
+  await bc.listen()
+  const record = bc.mint({ sessionId: 's1', agent: host_.agent, name: 'Fake agent' })
+  // As after `session/new` in a real turn: the bridge may announce from now on.
+  bc.announce(record)
+  const post = async (op, body = {}, credential = record.credential, url = bc.urlFor(record)) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(credential === null ? {} : { authorization: `Bearer ${credential}` }) },
+      body: JSON.stringify({ op, ...body }),
+    })
+    return { status: response.status, body: await response.json() }
+  }
+  return { ...host_, bc, record, post }
+}
+
+test('a request without a credential, with another Session\'s, or after revocation is refused', async () => {
+  const h = await serve()
+  try {
+    assert.equal((await h.post('list', {}, null)).status, 401)
+    assert.equal((await h.post('list', {}, '')).status, 401)
+    // Another Session's credential, minted for a different Session in the same plugin instance.
+    // One Session's credential is refused on another Session's channel, even while it is live.
+    const foreign = h.bc.mint({ sessionId: 's2', agent: h.agent, name: 'Other' })
+    assert.equal((await h.post('list', {}, foreign.credential)).status, 401)
+    assert.equal((await h.post('list', {}, h.record.credential, h.bc.urlFor(foreign))).status, 401)
+    // A signature-identical but unknown value is refused too.
+    assert.equal((await h.post('list', {}, 'f'.repeat(64))).status, 401)
+    assert.equal((await h.post('list')).status, 200)
+    h.bc.revoke(h.record)
+    assert.equal((await h.post('list')).status, 401)
+    assert.equal((await h.post('call', { name: 'bash' })).status, 401)
+  } finally {
+    h.bc.dispose()
+  }
+})
+
+test('the bridge lists the preset\'s tools, never the mirror, and hides file writers in read-only', async () => {
+  const h = await serve()
+  try {
+    const listed = await h.post('list')
+    assert.deepEqual(listed.body.tools.map(tool => tool.name), ['bash', 'write', 'read'])
+    const readOnly = host({ sandbox: 'read-only', definitions: [...TOOLS, { name: TOOL_NAME, description: 'mirror', parameters: { type: 'object' } }] })
+    assert.deepEqual(offeredTools(readOnly.ctx, readOnly.agent).map(tool => tool.name), ['bash', 'read'])
+    // A conditional tool has no call outside a model step, so it is not offered either.
+    const conditional = { ...TOOLS[0], name: 'web_search' }
+    const withCondition = host()
+    withCondition.ctx.get('tools').executable = name => (name === 'web_search' ? undefined : TOOLS.find(tool => tool.name === name))
+    withCondition.ctx.get('tools').definitions = () => [...TOOLS, conditional]
+    assert.deepEqual(offeredTools(withCondition.ctx, withCondition.agent).map(tool => tool.name), ['bash', 'write', 'read'])
+  } finally {
+    h.bc.dispose()
+  }
+})
+
+test('a DSH tool call asks DSH before it runs, then writes the call and its result rows', async () => {
+  const h = await serve()
+  try {
+    const answer = await h.post('call', { name: 'bash', arguments: { command: 'echo hi' }, callId: 'bridge-1' })
+    assert.equal(answer.body.isError, false)
+    assert.deepEqual(answer.body.content, [{ type: 'text', text: 'ran bash' }])
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, 'bash')
+    assert.equal(h.asked[0].callId, 'bridge-1')
+    assert.equal(h.asked[0].agent, h.agent)
+    assert.match(h.asked[0].reason, /Fake agent: bash/)
+    assert.deepEqual(h.executed, [{ name: 'bash', arguments: '{"command":"echo hi"}' }])
+    const events = h.session.snapshotEvents()
+    const call = events.find(event => event.type === 'tool/call')
+    assert.deepEqual({ turn: call.data.turn, step: call.data.step, callId: call.data.callId, name: call.data.name }, { turn: 3, step: 1, callId: 'bridge-1', name: 'bash' })
+    const result = events.find(event => event.type === 'tool/result')
+    assert.equal(result.data.message.role, 'tool')
+    assert.equal(result.data.message.toolCallId, 'bridge-1')
+    assert.equal(result.surfaceOp, 'append')
+    assert.deepEqual(result.sourceEventSeqs, [call.seq])
+    // The order the person sees: the call row, then the question, then the result.
+    assert.ok(call.seq < result.seq)
+  } finally {
+    h.bc.dispose()
+  }
+})
+
+test('a refusal or an unavailable approval never runs the tool, and the agent gets an error', async () => {
+  for (const answer of ['rejected', 'unavailable', 'cancelled']) {
+    const run = host({ answer })
+    await run.backchannel.listen()
+    const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+    const response = await fetch(run.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'c1' }),
+    })
+    const body = await response.json()
+    assert.equal(body.isError, true)
+    assert.match(body.content[0].text, /bash/)
+    assert.equal(run.executed.length, 0, `${answer} never runs the tool`)
+    const result = run.session.snapshotEvents().find(event => event.type === 'tool/result')
+    assert.equal(result.data.message.isError, true)
+    run.backchannel.dispose()
+  }
+  // Under a non-Auto `never` the service rejects without prompting: the credential alone cannot
+  // approve. (Auto routes through the pipeline instead; the Auto test below covers it.)
+  const never = host({ policy: 'never', sandbox: 'read-only' })
+  await never.backchannel.listen()
+  const record = never.backchannel.mint({ sessionId: 's1', agent: never.agent, name: 'Fake agent' })
+  const response = await fetch(never.backchannel.urlFor(record), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` }, body: JSON.stringify({ op: 'call', name: 'bash' }) })
+  assert.equal((await response.json()).isError, true)
+  assert.equal(never.asked.length, 1)
+  assert.equal(never.executed.length, 0)
+  never.backchannel.dispose()
+})
+
+test('each level gates a bridge call as DSH gates its own tools: Manual asks, Full does not', async () => {
+  const runAt = async ({ sandbox, policy, answer = 'allowed-once' }) => {
+    const run = host({ sandbox, policy, answer })
+    await run.backchannel.listen()
+    const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+    run.backchannel.announce(record)
+    const response = await fetch(run.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'level-1' }),
+    })
+    const body = await response.json()
+    run.backchannel.dispose()
+    return { asked: run.asked, executed: run.executed, body, status: response.status }
+  }
+  // Manual: one DSH dialog, and the agent's answer (allow-once) lets it run.
+  const manual = await runAt({ sandbox: 'workspace-write', policy: 'ask' })
+  assert.equal(manual.status, 200)
+  assert.equal(manual.asked.length, 1)
+  assert.equal(manual.body.isError, false)
+  assert.deepEqual(manual.executed.map(entry => entry.name), ['bash'])
+  // Auto is not exercised here: this fixture's tools.execute is a recorder, so it cannot show
+  // DSH's gate. The real Auto stack (auto-review, the tools pipeline, the real Backchannel) is
+  // the next test.
+  // Full access: never asks, as DSH's own tools do not there.
+  const full = await runAt({ sandbox: 'danger-full-access', policy: 'never' })
+  assert.equal(full.asked.length, 0)
+  assert.equal(full.body.isError, false)
+  assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
+})
+
+test('Auto refuses a bridge call: the review fails closed, so the body never runs', async () => {
+  // The real stack: DSH's cordis context, its ToolsService and native executor (the pipeline
+  // that fires `tools/pre-execute`), the real auto-review plugin, and this Backchannel. The
+  // handler receives the bridge call, but a bridge call is out-of-band — no assistant block on
+  // the model surface — so the review cannot resolve it and fails closed.
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { ToolsService } = await import('@deepseek-ai/dsh-tools')
+  const native = await import('@deepseek-ai/dsh-tool-executor-native')
+  const autoReview = await import('@deepseek-ai/dsh-experimental-auto-review')
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools() {}, section() {} })
+  await ctx.plugin(ToolsService)
+  await ctx.plugin(native)
+  const executed = []
+  ctx.tools.register({
+    name: 'bash',
+    description: 'Run a command',
+    parameters: { type: 'object', properties: { command: { type: 'string' } } },
+    output: { schema: {}, render: () => [{ type: 'text', text: 'ran bash' }] },
+    async execute(args) {
+      executed.push(args)
+      return {}
+    },
+  })
+  const asked = []
+  let reviewerCalls = 0
+  ctx.provide('approval', { effectivePolicy: () => 'ask', overrideOf: () => 'ask', request: async (request) => { asked.push(request); return 'allowed-once' } })
+  // Auto's preset, as dsh-permission-presets reports it for the Session.
+  ctx.provide('permissionPresets', { current: () => 'auto', set() {}, registerAuto() {} })
+  // The reviewer's model: any call here is a review that ran.
+  ctx.provide('llm', { stream: () => { reviewerCalls++; return (async function* () {})() } })
+  ctx.provide('workingDirectory', { ensure: async () => process.cwd() })
+  ctx.provide('sessions', { list: () => [] })
+  ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access' }) })
+  ctx.provide('agentPresets', { presetForSession: () => 'standard' })
+  ctx.provide('agents', { turnBoundaryOf: () => ({ lastTurn: 3 }) })
+  autoReview.apply(ctx)
+  const dispatch = ctx.tools.execute.bind(ctx.tools)
+  let executeCalls = 0
+  ctx.tools.execute = (input) => {
+    executeCalls++
+    return dispatch(input)
+  }
+  const session = Session.create('s1')
+  session.append('turn/start', { turn: 3 })
+  session.append('step/start', { turn: 3, step: 1 })
+  session.append('request/header', { header: { config: { provider: 'deepseek-official', model: 'deepseek-v4' } } })
+  const agent = { session }
+  const backchannel = new Backchannel({ ctx })
+  await backchannel.listen()
+  const record = backchannel.mint({ sessionId: 's1', agent, name: 'Fake agent' })
+  try {
+    const response = await fetch(backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'auto-1' }),
+    })
+    const body = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(body.isError, true)
+    // The one place the fail-closed reason is pinned: `failed()` puts only name and code in the
+    // row's error info, so this text is the only proof the review failed on the missing surface.
+    assert.match(body.content[0].text, /the pending root call is missing from the current surface/)
+    // The gate saw the call and refused it with its own code, recorded on the Session.
+    const result = session.snapshotEvents().find(event => event.type === 'tool/result')
+    assert.equal(result.data.message.isError, true)
+    assert.deepEqual(result.data.error.info, { name: 'AutoReviewFailedError', code: 'AUTO_REVIEW_FAILED' })
+    assert.equal(asked.length, 0, 'the bridge raises no dialog on Auto')
+    assert.equal(reviewerCalls, 0, 'auto-review never reached its reviewer')
+    assert.equal(executeCalls, 1, 'the bridge called tools.execute once')
+    assert.deepEqual(executed, [], 'the tool body never ran')
+  } finally {
+    backchannel.dispose()
+    await ctx.root.fiber.dispose()
+  }
+})
+
+test('full access runs a DSH tool call with no dialog, as it does DSH\'s own tools', async () => {
+  const run = host({ sandbox: 'danger-full-access', policy: 'never' })
+  await run.backchannel.listen()
+  const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+  const response = await fetch(run.backchannel.urlFor(record), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+    body: JSON.stringify({ op: 'call', name: 'bash', arguments: {} }),
+  })
+  const body = await response.json()
+  assert.equal(body.isError, false)
+  assert.equal(run.asked.length, 0)
+  assert.equal(run.executed.length, 1)
+  run.backchannel.dispose()
+})
+
+test('a changed preset or level is a new signature, a new generation, and a waiting bridge is woken', async () => {
+  const h = await serve()
+  try {
+    let preset = 'standard'
+    let mode = 'workspace-write'
+    const original = h.ctx.get
+    h.ctx.get = (name) => {
+      if (name === 'agentPresets') return { presetForSession: () => preset }
+      if (name === 'sandboxPolicy') return { resolve: () => ({ mode }) }
+      return original(name)
+    }
+    const before = h.record.generation
+    // No change: the signature is stable.
+    assert.equal(h.bc.refresh(h.record), false)
+    const waiting = h.post('wait', { generation: h.record.generation, timeoutMs: 5_000 })
+    // A level change reaches the bridge as a new list.
+    mode = 'read-only'
+    assert.equal(h.bc.refresh(h.record), true)
+    const woken = await waiting
+    assert.ok(woken.body.generation > before)
+    assert.ok((await h.post('list')).body.generation > before)
+    // The preset is part of the same fingerprint: creator mode's cordis preset is a change too.
+    preset = 'cordis'
+    assert.equal(h.bc.refresh(h.record), true)
+    assert.equal(signatureOf(h.ctx, h.agent), h.record.signature)
+  } finally {
+    h.bc.dispose()
+  }
+})
+
+test('a revoked bridge wakes its long poll and ends its calls', async () => {
+  const h = await serve()
+  const waiting = h.post('wait', { generation: h.record.generation, timeoutMs: 10_000 })
+  // Wait until the poll is parked, so the revocation is what answers it.
+  const deadline = Date.now() + 2_000
+  while (h.record.waiters.size === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(h.record.waiters.size, 1)
+  h.bc.revoke(h.record)
+  const answer = await waiting
+  assert.equal(answer.body.closed, true)
+  assert.equal(h.bc.records.size, 0)
+  h.bc.dispose()
+})
+
+test('a credential revoked while its approval is pending never runs the tool and the caller is refused', async () => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const run = host({ answer: () => gate })
+  await run.backchannel.listen()
+  const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
+  run.backchannel.announce(record)
+  const pending = fetch(run.backchannel.urlFor(record), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+    body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'race-1' }),
+  })
+  // Revoke while the ask is parked, then let it resolve allowed-once: the late grant loses.
+  const deadline = Date.now() + 2_000
+  while (run.asked.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(run.asked.length, 1, 'the approval was pending')
+  run.backchannel.revoke(record)
+  release('allowed-once')
+  const response = await pending
+  assert.equal(response.status, 401)
+  assert.deepEqual(await response.json(), { error: 'refused' })
+  assert.equal(run.executed.length, 0, 'the tool body never ran after revocation')
+  // The call row was written before the ask; it is closed as an error, never left unanswered.
+  const rows = run.session.snapshotEvents()
+  assert.equal(rows.filter(event => event.type === 'tool/call').length, 1)
+  const result = rows.find(event => event.type === 'tool/result')
+  assert.ok(result, 'the revoked call has a result row')
+  assert.equal(result.data.message.isError, true)
+  assert.match(result.data.message.content[0].text, /revoked before bash ran/)
+  run.backchannel.dispose()
+})
+
+test('drift is a plugin record that replay can carry: plugin:acp-dsh/toolset-drift', () => {
+  const session = Session.create('s1')
+  assert.equal(recordDrift(session, { name: 'Bash', title: 'Bash: ls', provider: 'acp-claude' }), true)
+  const record = pluginRecordOf(session.snapshotEvents().at(-1))
+  assert.equal(record.type, 'plugin:acp-dsh/toolset-drift')
+  assert.deepEqual(record.data, { name: 'Bash', title: 'Bash: ls', provider: 'acp-claude' })
+})
+
+test('the turn position for the bridge\'s rows comes from the log the Session already committed', () => {
+  const h = host()
+  assert.deepEqual(positionOf(h.ctx, h.session), { turn: 3, step: 1 })
+})

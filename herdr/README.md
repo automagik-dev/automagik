@@ -524,7 +524,13 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   reviewers on other branches run in parallel. A refusal names the live worker, to check with
   `hc read` or end with `hc kill`. The check and the start run under one lock per worktree
   (`<app home>/automagik-herdr/worktree-<hash of its real path>.lock`); the lock and the check
-  are local, so workers on other machines are not counted.
+  are local, so workers on other machines are not counted. The check comes first: a refused
+  call, `hc ls` failing included, makes no worktree and writes no hook; so does a live
+  terminal in the worktree that `hc get` doesn't answer for within 5 s. The lock is kept
+  fresh while held, so a slow `hc` never lets a second call take it. A second call waits up
+  to 75 s for it, saying on stderr after 3 s which lock it waits for and its holder's pid.
+- **Warnings:** `worker` prints the bots file's warnings about the calling bot on stderr
+  first (a bad `worker` field is dropped, and its defaults with it); `--json` lists them.
 - **What runs:** `--agent`, `--model` and `--effort` for this task, else the bot's `worker`
   defaults in `.herdr/bots.json`, else the bot's own agent with that agent's defaults. A
   default model belongs to the default worker agent, so a task that picks another agent

@@ -259,3 +259,28 @@ test("x on a package whose own layout Herdr shows is refused before the question
   await cx.settle();
   assert.ok(!existsSync(join(s.appHome, "layouts", "scratchy.json")) && !existsSync(join(s.appHome, "mods", "scratch")));
 });
+
+// #491: with no layout from Herdr (no name, no tree) nothing can be checked, so a package's remove
+// goes on (fail open), and the panel's line says why, the package, what moved and which layouts name it.
+test("x on a package with no layout from Herdr removes it and the panel says why, naming the package and its mods", async (t) => {
+  const s = scratch(t);
+  const names = JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "scratch" } }] });
+  write(join(s.appHome, "layouts", "scratchy.json"), names);
+  write(join(s.appHome, "layouts", "work.json"), names);
+  write(join(s.appHome, "layouts", "broken.json"), `${names},`);
+  state.shared.set("am.mods.installed", [{ source: "someone/scratch", prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  await removeKey(view, cx, "scratch");
+  assert.equal(view.confirm?.text, "remove scratch and the keys it added? (y/n)");
+  await key(view, cx, "y");
+  assert.ok(!existsSync(join(s.appHome, "layouts", "scratchy.json")) && !existsSync(join(s.appHome, "mods", "scratch")));
+  assert.equal(view.message, "removed: scratch · removed the package someone/scratch without knowing the layout Herdr shows"
+    + " (no layout from Herdr, so the remove could not check it; is Herdr running?): moved mods/scratch, layouts/scratchy.json"
+    + " to the backup folder; the layouts scratchy, work name scratch. If Herdr shows the package's layout or one naming its"
+    + " mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)");
+  // The line is the panel's: render() draws the message under the list.
+  assert.ok(textOf(draw(view, cx)).includes(view.message), "the panel draws the line");
+});

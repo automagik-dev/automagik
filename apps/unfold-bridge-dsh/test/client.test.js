@@ -34,7 +34,7 @@ test('client.js is the build of src/client', async () => {
 })
 
 // DSH runs client.js as a classic script that hands a factory to its module loader.
-test('the client registers six slots and never conversation.approval.detail', () => {
+test('the client registers seven slots and never conversation.approval.detail', () => {
   const loads = []
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), { window: { __ModuleLoader__: { load: entry => loads.push(entry) } } })
   assert.equal(loads.length, 1)
@@ -64,6 +64,7 @@ test('the client registers six slots and never conversation.approval.detail', ()
     { name: 'sidebar.footer.action', id: 'unfold-board', order: 100, component: 'function' },
     { name: 'conversation.input.dock', id: 'unfold-dock', order: 50, component: 'function' },
     { name: 'settings.section', id: 'unfold-bridge', order: 900, label: 'Unfold', component: 'function' },
+    { name: 'settings.section.icon', id: 'unfold-bridge', order: 900, component: 'function' },
     { name: 'sidebar.footer.action', id: 'unfold-bridge.install', order: 110, component: 'function' },
   ])
   assert.ok(!registered.some(entry => entry.name === 'conversation.approval.detail'))

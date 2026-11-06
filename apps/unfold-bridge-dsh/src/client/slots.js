@@ -160,6 +160,12 @@ export function BoardButton({ snap, t, actions, wide }) {
     open ? h(BoardPanel, { snap, t, actions, onClose: () => setOpen(false) }) : null)
 }
 
+// The nav glyph DSH's Settings shows for the Unfold page (its settings.section.icon seat):
+// two arcs unfolding from the same line, in the shell's 16 px stroke style.
+export const SectionIcon = ({ size = 16 }) => h('svg', { className: 'ub-icon', viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': 'true' },
+  h('path', { d: 'M2 9.5c2.2-3.4 4-3.4 6 0s3.8 3.4 6 0', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round' }),
+  h('path', { d: 'M2 5.5c2.2-3.4 4-3.4 6 0s3.8 3.4 6 0', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', opacity: 0.55 }))
+
 const AppIcon = () => h('svg', { className: 'ub-icon', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
   h('rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }),
   h('path', { d: 'M8 5v5M5.8 7.8 8 10l2.2-2.2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 }))
