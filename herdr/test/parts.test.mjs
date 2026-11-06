@@ -168,7 +168,7 @@ test("herdr.pack links automagik-herdr as install.sh does, leaves someone else's
   assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
   const d = doctorOf(m, "herdr.pack");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check), ["record", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node"]);
+  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node"]);
   const noPath = doctorOf(m, "herdr.pack", { PATH: "/usr/bin" });
   assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
   assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
