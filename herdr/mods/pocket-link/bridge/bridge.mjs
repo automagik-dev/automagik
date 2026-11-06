@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import QRCode from 'qrcode'
 import { acceptOne, slots, throttle, rotateLog, routesFor, endRemoved, sessionName, ALPN } from './guard.mjs'
 import { ChatConnection, ChatEngines } from './chat.mjs'
+import { DshSource, withDsh } from './dsh-source.mjs'
 import { createEngine } from '../chat/engine.js'
 import { judgeCode, cancelCode, shortenCode, fingerprint } from './pairing.mjs'
 import { open as openState } from './state.mjs'
@@ -137,6 +138,9 @@ const appHome = () => (process.env.HERDR_APP_HOME?.startsWith('/') ? process.env
 const engines = new ChatEngines({
   make: name => createEngine({ home: homedir(), appHome: appHome(), hcPath: hcPath(), env: { ...process.env, HC_SESSION: name }, log }),
 })
+// The Automagik Bots' chats, read only, from bots-dsh's owner-only socket in the team home (#517);
+// absent, it lists nothing.
+const dsh = new DshSource({ log })
 
 // Admitted (a paired key) and its header read, by guard.mjs, on the chat route.
 async function chatRoute({ conn, bi, value, rest, peer: phone }) {
@@ -152,7 +156,7 @@ async function chatRoute({ conn, bi, value, rest, peer: phone }) {
   live.add(open)
   const close = phones.open(phone, device.name)
   chat = new ChatConnection({
-    engine,
+    engine: withDsh(engine, dsh),
     // The paired key guard.mjs admitted: a Retry after a reconnect is the same message, typed once.
     device: phone,
     // The promise lets chat.mjs count bytes not yet taken (MAX_UNSENT).
