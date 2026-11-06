@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
-import { BAR_HEIGHT, pageLayout, RADIUS, TABLE, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome } from '../src/frame.js'
+import { BAR_HEIGHT, pageLayout, RADIUS, TABLE, tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from '../src/frame.js'
 
 test('no system frame on either platform: a transparent frameless window on Linux, a hidden title bar on macOS', () => {
   assert.deepEqual(
@@ -35,6 +35,47 @@ test("dsh's page fills the window below the bar, with no border; its corners rou
   assert.deepEqual(pageLayout(size, { platform: 'linux', maximized: true }), { bounds: page, radius: 0 })
   assert.deepEqual(pageLayout(size, { platform: 'darwin', maximized: false }), { bounds: { x: 0, y: 0, ...size }, radius: 0 })
   assert.equal(pageLayout({ width: 4, height: 10 }, { platform: 'linux', maximized: false }).bounds.height, 0)
+})
+
+test('Linux resize follows the native window even when content bounds still report the previous size', () => {
+  let previous = { width: 1360, height: 860 }
+  // X11 can emit resize before its content view lays out, with no further resize
+  // event after that. Exercise maximize, restore, tiling, full screen and shrink.
+  for (const [width, height, maximized, fullScreen] of [
+    [1920, 1168, true, false],
+    [1360, 860, false, false],
+    [960, 1168, false, false],
+    [1920, 1200, false, true],
+    [720, 520, false, false],
+  ]) {
+    const window = {
+      getBounds: () => ({ x: 300, y: 32, width, height }),
+      getContentBounds: () => ({ x: 300, y: 32, ...previous }),
+      isMaximized: () => maximized,
+      isFullScreen: () => fullScreen,
+    }
+    const layout = windowPageLayout(window, { platform: 'linux' })
+    assert.deepEqual(layout, {
+      bounds: { x: 0, y: BAR_HEIGHT, width, height: height - BAR_HEIGHT },
+      radius: maximized || fullScreen ? 0 : RADIUS,
+    })
+    previous = { width, height }
+  }
+})
+
+test('macOS and Windows keep the content size instead of including native window insets', () => {
+  const window = {
+    getBounds: () => ({ x: 100, y: 50, width: 1400, height: 900 }),
+    getContentBounds: () => ({ x: 108, y: 58, width: 1384, height: 884 }),
+    isMaximized: () => false,
+    isFullScreen: () => false,
+  }
+  assert.deepEqual(windowPageLayout(window, { platform: 'darwin' }), {
+    bounds: { x: 0, y: 0, width: 1384, height: 884 }, radius: 0,
+  })
+  assert.deepEqual(windowPageLayout(window, { platform: 'win32' }), {
+    bounds: { x: 0, y: BAR_HEIGHT, width: 1384, height: 884 - BAR_HEIGHT }, radius: RADIUS,
+  })
 })
 
 test('the frame page can ask for the window buttons and the bar menu, and nothing else', () => {
