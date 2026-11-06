@@ -145,8 +145,11 @@ never red. Red is kept for errors (a failed read or switch).
   this way. A restart whose terminal ends or goes with no answer says it may have stopped part-way
   and what to check; one still running after about 5 minutes (40 s more per helper) is named with
   its terminal, and pressing again starts no second restart of that bot while it runs. The
-  restart's terminal (labelled `am-quota.restart=<bot>`) leaves its answer in
-  `data/am-quota/runs/` of the app home; files there older than a day go at the next restart. The panel never names a CLI flag:
+  restart's terminal (labelled `am-quota.restart=<bot>`, removed by hc once it ends) leaves its
+  answer in `data/am-quota/runs/` of the app home; files there older than a day go at the next
+  restart. That terminal starts in herdr-core's environment, so the CLI gets Herdr's own `PATH`,
+  `HOME`, `NVM_DIR`, `VIRTUAL_ENV` and `HERMES_HOME`, and finds node and the agents as it did
+  before. The panel never names a CLI flag:
   a refusal is shown without the clause that offers one. Without the sidebar mod there is no CLI: the banner says to run
   `automagik-herdr restart <bot>` instead.
 - **The refresh token is shared with the proxy.** Both sides hold the same one, and Anthropic rotates

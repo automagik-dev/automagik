@@ -57,7 +57,15 @@ export async function hc(args) {
   return state.hc(args);
 }
 // Each call's options (exec's { timeout }) in execOptions, beside its argv in calls.
+// The panel's prepare before a restart (#433): `sh -c 'mkdir -p -- "$1" || exit 3; …' sh <folder>
+// <names…>`, kept in state.prepares (not calls) and answered by state.prepare(args) when a test sets
+// it, else as a Herdr with PATH and HOME set: NAME=value lines.
+const PREPARED = { code: 0, stdout: "PATH=/herdr/bin:/usr/bin:/bin\nHOME=/stub-home\n", stderr: "" };
 export async function exec(command, args = [], options) {
+  if (command === "sh" && String(args[1] ?? "").startsWith('mkdir -p -- "$1" || exit 3;')) {
+    (state.prepares ??= []).push(args);
+    return state.prepare ? state.prepare(args) : PREPARED;
+  }
   state.calls.push([command, ...args]);
   (state.execOptions ??= []).push(options ?? null);
   return state.exec(command, args, options);

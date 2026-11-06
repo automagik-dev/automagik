@@ -55,16 +55,24 @@ const RUNS = "data/am-quota/runs";
 // The restart terminal's program: `sh -c RUN_SCRIPT sh <out> <err> <code> <the CLI's argv…>`. The
 // paths and the argv are its arguments, never part of the script. Files older than a day go first.
 // The exit code is written last, through a rename, so a code read means the other two are whole.
-// HC_TERMINAL_ID is unset so the CLI runs as it does under exec: not inside a pane of its own.
+// HC_TERMINAL_ID is unset so the CLI runs as it does under exec: not inside a pane of its own. The
+// folder is made before (PREPARE_SCRIPT), so a folder that can't be made is said: nothing ran.
 const RUN_SCRIPT = [
   'out=$1 err=$2 code=$3; shift 3',
-  'mkdir -p "${out%/*}" || exit 1',
   'find "${out%/*}" -maxdepth 1 -type f -mmin +1440 -exec rm -f {} + 2>/dev/null',
   'unset HC_TERMINAL_ID',
   '"$@" >"$out" 2>"$err"; c=$?',
   'cat "$err" >&2',
   'printf "%s\\n" "$c" >"$code.tmp" && mv -f "$code.tmp" "$code"',
 ].join("\n");
+// Run through exec before each restart, in Herdr's environment: `sh -c PREPARE_SCRIPT sh <runs
+// folder> <names…>` makes the folder (exit 3 when it can't) and prints NAME=value for each name set.
+const PREPARE_SCRIPT = 'mkdir -p -- "$1" || exit 3; shift; for n; do v=$(printenv -- "$n") && printf "%s=%s\\n" "$n" "$v"; done; exit 0';
+// What the CLI reads from its environment: PATH (its node through run.sh, hc, an agent's program and
+// the PATH a new pane gets), HOME, NVM_DIR (run.sh's nvm node), VIRTUAL_ENV (left off a pane's PATH)
+// and HERMES_HOME. A restart's terminal starts in herdr-core's environment, not Herdr's, so these are
+// passed as Herdr has them (one Herdr hasn't set is unset): the CLI runs as it did under exec.
+const CLI_ENV = ["PATH", "HOME", "NVM_DIR", "VIRTUAL_ENV", "HERMES_HOME"];
 // A --tree restart: the panel has waited already, so the CLI's own wait for a turn (10 min unless
 // told) is only a guard against a race.
 const TREE_TURN_WAIT_MS = 10_000;
@@ -106,12 +114,27 @@ const refusal = (r) => plain(typeof r?.out?.error === "string" && r.out.error.tr
  * The bot CLI's argv with --json, run the way the sidebar runs it (am-sidebar/launch.js runCli), or
  * null when the sidebar mod (which carries the CLI) is not installed. `env`: more KEY=value words.
  */
-async function cliArgv(args, env = []) {
+async function cliArgv(args, env = [], unset = []) {
   const dir = appHome().replace(/\/+$/, "");
   const runner = `${dir}/mods/${SIDEBAR}/bin/run.sh`;
   const there = await readTextFile(runner).then((t) => t !== null && t !== undefined, () => false);
   if (!there) return null;
-  return ["env", `HERDR_APP_HOME=${dir}`, ...env, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"];
+  return ["env", ...unset.flatMap((n) => ["-u", n]), `HERDR_APP_HOME=${dir}`, ...env, "sh", runner, `${dir}/mods/${SIDEBAR}/bin/automagik-herdr.mjs`, ...args, "--json"];
+}
+/** What hc said when it failed, in plain words: its JSON error's message, else its last line, never a flag. */
+function hcSaid(r) {
+  const text = String(r?.stderr || r?.stdout || "").trim();
+  let said = text.split("\n").at(-1) ?? "";
+  try {
+    const e = JSON.parse(text)?.error;
+    if (typeof e?.message === "string" && e.message.trim()) said = e.message.trim();
+    else if (typeof e?.kind === "string") said = e.kind.replace(/_/g, " ");
+  } catch {}
+  // Up to the first clause that names a flag ("…; pass --start to start it"), then plain().
+  const clauses = said.replace(/^hc: /, "").split(/(?<=[;,])\s+/);
+  const flagged = clauses.findIndex((c) => /(^|[\s(])--[a-z]/.test(c));
+  const kept = flagged < 0 ? clauses : clauses.slice(0, flagged);
+  return plain(kept.join(" ").replace(/[;,.]\s*$/, "")).replace(/[.]$/, "");
 }
 /** A CLI run's { code, out: its --json stdout or null, err: stderr without the CLI's name }. */
 function cliAnswer(code, stdout, stderr) {
@@ -430,8 +453,7 @@ export default class AmQuota extends View {
    * terminal gone or ended with none (`partway`: it may have stopped part-way), or still running.
    */
   async cliRun(args, { env = [], label, followMs }) {
-    const argv = await cliArgv(args, env);
-    if (!argv) return null;
+    if (!(await cliArgv(args))) return null;
     const dir = appHome().replace(/\/+$/, "");
     const mine = ["ls", "--label", `${RUN_LABEL}=${label}`, "--json"];
     const before = await hc(mine);
@@ -441,10 +463,14 @@ export default class AmQuota extends View {
     // Its own names: never a file an earlier run left, even one started in the same millisecond.
     const base = `${dir}/${RUNS}/${slug(label)}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const files = { out: `${base}.out`, err: `${base}.err`, code: `${base}.code` };
-    const r = await hc(["run", "--bg", "--json", "--no-parent", "--cwd", dir, "--label", `${RUN_LABEL}=${label}`,
+    const herdr = await this.prepare(`${dir}/${RUNS}`);
+    const argv = await cliArgv(args, [...CLI_ENV.filter((n) => n in herdr).map((n) => `${n}=${herdr[n]}`), ...env],
+      CLI_ENV.filter((n) => !(n in herdr)));
+    // --rm: hc removes it once it ends; its answer is in the files.
+    const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", dir, "--label", `${RUN_LABEL}=${label}`,
       "--", "sh", "-c", RUN_SCRIPT, "sh", files.out, files.err, files.code, ...argv]);
     if (r?.code !== 0) {
-      const said = String(r?.stderr || r?.stdout || "").trim().split("\n").at(-1);
+      const said = hcSaid(r);
       throw runError(`hc couldn't start its restart in a terminal of its own${said ? ` (${said})` : ""}; nothing was restarted`);
     }
     let terminal = null;
@@ -464,6 +490,28 @@ export default class AmQuota extends View {
     return this.follow(terminal, files, followMs);
   }
 
+  /**
+   * Before a restart, through exec (Herdr's environment): makes the runs folder and reads CLI_ENV as
+   * Herdr has them, { NAME: value } for each one set. Throws when either fails: nothing ran.
+   */
+  async prepare(folder) {
+    let r;
+    try {
+      r = await exec("sh", ["-c", PREPARE_SCRIPT, "sh", folder, ...CLI_ENV]);
+    } catch (err) {
+      r = { code: null, stderr: message(err) };
+    }
+    if (r?.code === 3) throw runError(`couldn't make ${folder} for its answer, so no restart was started`);
+    if (r?.code !== 0) throw runError("couldn't read this app's environment for it, so no restart was started");
+    const vars = {};
+    for (const line of String(r.stdout ?? "").split("\n")) {
+      const at = line.indexOf("=");
+      const name = line.slice(0, at);
+      if (at > 0 && CLI_ENV.includes(name) && !(name in vars) && line.slice(at + 1)) vars[name] = line.slice(at + 1);
+    }
+    return vars;
+  }
+
   /** The CLI's answer a restart's terminal left (cli()'s shape), or null while its exit code isn't written. */
   async runAnswer(files) {
     const read = (path) => readTextFile(path).catch(() => null);
@@ -479,9 +527,8 @@ export default class AmQuota extends View {
    */
   async follow(terminal, files, followMs) {
     const started = Date.now();
-    const most = Math.ceil(followMs / (RUN_WAIT_S * 1000)) + 4;
     let quick = false;
-    for (let looks = 1; ; looks += 1) {
+    for (;;) {
       const got = await this.runAnswer(files);
       if (got) return got;
       if (quick) await this.pause(RUN_PAUSE_MS);
@@ -499,9 +546,10 @@ export default class AmQuota extends View {
         throw runError(pane === null ? `its restart's terminal ${terminal} is gone, with no answer from it`
           : `its restart in ${terminal} ended with no answer`, { partway: true });
       }
-      if (looks >= most || Date.now() - started >= followMs) {
+      // Wall time, not waits: a wait that answers at once is followed by a pause, never counted.
+      if (Date.now() - started >= followMs) {
         throw runError(`its restart ${unread ? `may still run in ${terminal} (hc can't say how it is)` : `still runs in ${terminal}`} after `
-          + `${waited(Date.now() - started)}; the panel stopped following it, so how it ends isn't shown here (hc read ${terminal} shows it)`);
+          + `${waited(Date.now() - started)}; the panel stopped following it, so how it ends isn't shown here. Check whether the bot is back once ${terminal} is gone`);
       }
       const asked = Date.now();
       try {

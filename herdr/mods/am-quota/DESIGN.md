@@ -150,17 +150,26 @@ are added there, never on the Mac; the panel is a personal tool for people who r
   start time makes the split unreliable, so then all of that tool's running bots are listed and the
   banner says so. Restart is a second press within five seconds, then `automagik-herdr restart
   <bot> --project <key>` per bot, sequentially, never `--force`, each in an hc terminal of its own
-  (#433, `cliRun`): `hc run --bg --no-parent --label am-quota.restart=<bot> -- sh -c RUN_SCRIPT sh
-  <out> <err> <code> <the CLI's argv>`, so no exec limit applies (released Herdr ends exec's
-  programs at 30 s, which can be part-way through a restart). The script writes the CLI's stdout,
+  (#433, `cliRun`): `hc run --bg --rm --no-parent --label am-quota.restart=<bot> -- sh -c RUN_SCRIPT
+  sh <out> <err> <code> <the CLI's argv>`, so no exec limit applies (released Herdr ends exec's
+  programs at 30 s, which can be part-way through a restart). `--rm`: hc removes it once it ends.
+  First, through exec (Herdr's environment), `prepare` makes the runs folder (one that can't be made:
+  nothing ran, said) and reads `CLI_ENV` (PATH, HOME, NVM_DIR, VIRTUAL_ENV, HERMES_HOME: all the CLI
+  reads from its environment that differs by where it runs). The CLI's argv sets those Herdr has
+  and unsets (`env -u`) those it hasn't, because the terminal starts in herdr-core's environment,
+  which need not be Herdr's. So run.sh finds node as under exec (PATH, else the nvm folder under
+  HOME or NVM_DIR, Homebrew, bun), and so do the CLI's `programPath` and `launchPath` for hc and the
+  agents (PATH, `~/.local/bin`, node's own folder). The script writes the CLI's stdout,
   stderr and exit code to `<app home>/data/am-quota/runs/`, the code last through a rename, and
   runs the CLI with `HC_TERMINAL_ID` unset, as under exec. The panel follows it: each look reads
   the code file, then `hc get` of the terminal, then one `hc wait <it> --timeout 25` through
   `exec(…, { timeout: 28000 })`, under 30 s so it ends by itself on any Herdr (a wait that answers
-  at once is followed by a 5 s pause). An answer is read as `cli()` reads exec's. The terminal
-  gone or ended with no answer: it may have stopped part-way, said with what to check. Still
-  running after 5 min (plus 40 s per helper for `--tree`): said, with its terminal, and a run
-  still listed under the bot's label refuses a second one. hc run refused: nothing ran, said. A
+  at once is followed by a 5 s pause). An answer is read as `cli()` reads exec's; the terminal
+  gone (`--rm`) with its answer written is the usual end. The terminal gone or ended with no
+  answer: it may have stopped part-way, said with what to check. Still running after 5 min of wall
+  time (plus 40 s per helper for `--tree`): said, with its terminal, and a run still listed under
+  the bot's label refuses a second one. hc run refused: nothing ran, said in hc's own message
+  (`hcSaid`: no JSON, no clause naming a flag). A
   refusal is shown per bot: the
   --json `error` (a new pane that exited names its agent's last line, `cause`), else stderr's
   last line, never its first (warnings come first). A busy refusal (--json `refused`: working or
