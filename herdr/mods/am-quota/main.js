@@ -7,10 +7,11 @@
 // Writes: only when the person presses Switch or Use: Codex's credential file, through ./switch.js,
 // with a backup, 0600, temp + atomic rename, and never a token in a log, a notify, shared state or
 // an error message. Claude is never installed from the proxy, and nothing here reads or writes a
-// Claude Keychain item (#453, docs/local-logins.md); until the Claude card lists the logins signed
-// in on this Mac, it offers no switch. After a
-// switch, Restart runs `automagik-herdr restart <bot>` for the bots still on the old account,
-// once the person confirms.
+// Claude Keychain item or credential (#453, docs/local-logins.md): the Claude card lists the logins
+// signed in on this Mac (./logins.js), and its Use, Add login and Remove login write only
+// <app home>/claude-logins.json, which new Claude launches read. After a switch, Restart runs
+// `automagik-herdr restart <bot>` for the bots still on the old account or login, once the person
+// confirms.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, theme, appHome, home, readTextFile, window as appWindow, writeTextFile } from "herdr";
@@ -19,7 +20,8 @@ import { credentialTarget, tokenIdentity, TARGETS } from "./translate.js";
 import { install } from "./switch.js";
 import { claim, release } from "./lock.js";
 import { payloadDir, sweepScript } from "./write.js";
-import { TOOLS, instanceName, openUrl, staleBots, toolView, who } from "./view.js";
+import { TOOLS, instanceName, loginsView, offLogin, openUrl, runningBots, staleBots, toolView, who } from "./view.js";
+import { DEFAULT_LOGIN, PROBE_MS, bounded, loginName, matchReal, paneLogin, presentVars, probeLogin, readRecord, signedOut, typed, writeRecord } from "./logins.js";
 
 const POLL = 60000;
 /** How often the installed credential's identity is re-read. It is a token-bearing item; the
@@ -163,7 +165,7 @@ function liveRows(stdout) {
 }
 /** "2 min", from ms: what a wait really took. */
 const waited = (ms) => (ms < 60000 ? "under a minute" : `${Math.round(ms / 60000)} min`);
-/** The platform the panel runs on: `security` exists on macOS only. */
+/** The platform the panel runs on, for the command that opens a URL (`open` on macOS). */
 const platform = () => {
   try {
     return appWindow()?.platform ?? "macos";
@@ -232,6 +234,8 @@ export default class AmQuota extends View {
     this.switched = {};     // provider → the last switch: { at, from, to, look, result }
     this.armed = null;      // "restart:<provider>" waiting for its second click
     this.restarting = {};   // provider → true while its bots restart (lock.claim reads it)
+    this.logins = null;     // Claude's logins on this Mac: { record, probes, vars, at } (#453)
+    this.loginNote = null;  // the last Add or Remove that worked
     this.seen = 0;          // last render; a hidden copy stops polling
     this.hidden = false;
     this.sampler = new QuotaSampler();
@@ -284,6 +288,8 @@ export default class AmQuota extends View {
   reload(cx) {
     const seq = (this.seq ?? 0) + 1;
     this.seq = seq;
+    this.readLogins(cx, { force: !this.logins || this.forceLogins });
+    this.forceLogins = false;
     cx.spawn(async (cx) => {   // one read of the proxy; the newest wins
       const { config, key, env } = await this.settings();
       if (seq !== this.seq) return;
@@ -348,8 +354,71 @@ export default class AmQuota extends View {
     }
   }
 
+  /**
+   * Claude's logins on this Mac (#453): the record on every read (one small file), and each
+   * login looked at (its folder, `claude auth status`, Herdr's credential variables) when the
+   * panel opens, after a switch, on ↻, when the record lists other logins, and at most every five
+   * minutes. One round at a time: a round asked for while one runs is queued behind it, never
+   * started beside it, and a record read never throws a round away. Logins are looked at side by
+   * side, each check bounded (logins.js PROBE_MS), so a round always lands, a login that didn't
+   * answer saying so.
+   */
+  readLogins(cx, { force = false } = {}) {
+    cx.spawn(async (cx) => {
+      const record = await readRecord(appHome(), readTextFile);
+      const want = [{ id: DEFAULT_LOGIN, dir: null }, ...record.logins];
+      const had = this.logins;
+      const same = (probes) => probes?.length === want.length && want.every((l, i) => probes[i].id === l.id && probes[i].dir === l.dir);
+      if (had && same(had.probes)) this.logins = { ...had, record };
+      if (!force && had && same(had.probes) && Date.now() - had.at < IDENTITY_EVERY) return wake(cx);
+      if (this.probing) {
+        this.probeAgain = true;
+        return wake(cx);
+      }
+      this.probing = true;
+      try {
+        const ms = this.probeMs ?? PROBE_MS;
+        const where = await this.whereClaude(ms);
+        const io = { exec, home: home(), readTextFile, where, ms };
+        const [probes, vars] = await Promise.all([Promise.all(want.map((l) => probeLogin(l, io))), presentVars(exec, ms)]);
+        // The record read again: the probes are for `want`, so another set of logins goes round again.
+        const now = await readRecord(appHome(), readTextFile);
+        const sameNow = now.logins.length === record.logins.length && now.logins.every((l, i) => l.id === record.logins[i].id && l.dir === record.logins[i].dir);
+        this.logins = { record: sameNow ? now : record, probes, vars, at: Date.now() };
+        if (!sameNow) this.probeAgain = true;
+      } finally {
+        this.probing = false;
+        wake(cx);
+        if (this.probeAgain) {
+          this.probeAgain = false;
+          this.readLogins(cx, { force: true });
+        }
+      }
+    });
+  }
+
+  /**
+   * Where a launch finds claude, from the CLI (`launch-path claude`): { program, path }, with
+   * program null when launches can't find it; undefined when the CLI can't say (no sidebar mod, or
+   * no answer), and the probes then use AUTH_SCRIPT.
+   */
+  async whereClaude(ms) {
+    const argv = await cliArgv(["launch-path", "claude"]);
+    if (!argv) return undefined;
+    const r = await bounded(exec, argv[0], argv.slice(1), ms);
+    try {
+      const out = JSON.parse(r?.stdout ?? "");
+      if (r.code === 0 && (out.program === null || (typeof out.program === "string" && typeof out.path === "string"))) return out;
+    } catch {}
+    return undefined;
+  }
+
   /** The card for one tool, from the last read. */
   view(provider) {
+    if (provider === "claude") {
+      return loginsView({ record: this.logins?.record ?? null, probes: this.logins?.probes ?? null, accounts: this.accounts ?? [],
+        now: Date.now(), source: instanceName(this.config), home: home(), vars: this.logins?.vars ?? null });
+    }
     return toolView({
       provider, accounts: this.accounts ?? [], record: this.active[provider] ?? null,
       badge: this.badges[provider] ?? null, now: Date.now(), source: instanceName(this.config),
@@ -394,9 +463,142 @@ export default class AmQuota extends View {
     });
   }
 
+  /**
+   * Use (#453): new Claude launches get login `id`. One write of claude-logins.json's `use`,
+   * with the snapshot the panel read (a change made since is never overwritten); no credential
+   * is touched. Only a row the card offers Use on: never while the record is bad.
+   */
+  useLogin(id, cx) {
+    const v = this.view("claude");
+    const target = v.rows.find((r) => r.id === id);
+    if (!target?.use) return;
+    const refused = claim(this, "claude", null, `switching new Claude launches to ${target.who}…`);
+    if (refused) {
+      this.switchError = refused;
+      wake(cx);
+      return;
+    }
+    this.switchError = null;
+    const { record } = this.logins;
+    cx.spawn(async (cx) => {
+      wake(cx);
+      try {
+        await writeRecord(appHome(), { use: id, logins: record.logins }, record.text, writeTextFile);
+        this.armed = null;
+        this.switched.claude = { at: Date.now(), from: v.current?.who ?? null, to: target.who, login: id, look: "loading" };
+        this.findBots("claude", cx);
+      } catch (err) {
+        this.switchError = `New Claude launches were not switched: claude-logins.json changed since the panel read it, or couldn't be written (${message(err).slice(0, 80)})`;
+      } finally {
+        release(this);
+        this.readLogins(cx, { force: true });
+        wake(cx);
+      }
+    });
+  }
+
+  /**
+   * Add login (#453 section 7): records the next slot once its folder passes the form rule and
+   * `claude auth status` there says signed in. The person made the folder and signed in; the
+   * panel runs neither.
+   */
+  addLogin(cx) {
+    const slot = this.view("claude").add;
+    if (!slot) return;
+    const name = loginName(slot.id);
+    const refused = claim(this, "claude", null, `checking ${name}…`);
+    if (refused) {
+      this.switchError = refused;
+      wake(cx);
+      return;
+    }
+    this.switchError = null;
+    this.loginNote = null;
+    const { record } = this.logins;
+    cx.spawn(async (cx) => {
+      wake(cx);
+      try {
+        const ms = this.probeMs ?? PROBE_MS;
+        const p = await probeLogin(slot, { exec, home: home(), readTextFile, where: await this.whereClaude(ms), ms });
+        if (p.problem) throw new Error(`its ${p.problem}: make it first, as the steps say`);
+        if (p.status.state !== "in") throw new Error("claude auth status there doesn't say signed in: sign in first, as the steps say");
+        if (p.status.configDirectory && p.status.configDirectory.replace(/\/+$/, "") !== slot.dir) throw new Error(`settings move ${name} to another folder`);
+        await writeRecord(appHome(), { use: record.use, logins: [...record.logins, { id: slot.id, dir: slot.dir }] }, record.text, writeTextFile);
+        this.loginNote = `${name} added${p.email ? `: ${p.email}` : ""}. Press Use on it to start new Claude launches there.`;
+      } catch (err) {
+        this.switchError = `${name} wasn't added: ${message(err)}`;
+      } finally {
+        release(this);
+        this.readLogins(cx, { force: true });
+        wake(cx);
+      }
+    });
+  }
+
+  /**
+   * Remove login (#453 section 7), on a second press: refused for the login in use, while it is
+   * still signed in (its logout is the person's, in a terminal), and while any pane's launch argv
+   * names its folder by value. Drops it from the record; its folder and files stay.
+   */
+  removeLogin(id, cx) {
+    const row = this.view("claude").rows.find((r) => r.id === id);
+    if (!row?.remove) return;
+    const key = `remove:${id}`;
+    if (this.armed !== key) {
+      this.armed = key;
+      cx.timer.after(ARMED, (cx) => {
+        if (this.armed === key) {
+          this.armed = null;
+          wake(cx);
+        }
+      });
+      wake(cx);
+      return;
+    }
+    this.armed = null;
+    const refused = claim(this, "claude", null, `checking ${row.name}…`);
+    if (refused) {
+      this.switchError = refused;
+      wake(cx);
+      return;
+    }
+    this.switchError = null;
+    this.loginNote = null;
+    const { record } = this.logins;
+    cx.spawn(async (cx) => {
+      wake(cx);
+      try {
+        // Asked again at the press, never from the last look: only a JSON loggedIn: false lets it go.
+        const ms = this.probeMs ?? PROBE_MS;
+        const out = await signedOut({ id, dir: row.dir }, { exec, home: home(), where: await this.whereClaude(ms), ms });
+        if (!out.ok) throw new Error(out.why);
+        const ls = await hc(["ls", "--json"]);
+        if (ls?.code !== 0) throw new Error("hc can't list the panes, so the panel can't tell whether one still runs on it");
+        const reads = await Promise.all(liveRows(ls.stdout).map((r) => this.paneGet(r.address).then((g) => ({ r, g }), () => ({ r, g: undefined }))));
+        const lost = reads.find((x) => x.g === undefined);
+        if (lost) throw new Error(`hc can't read ${lost.r.address}, so the panel can't tell whether it runs on ${row.name}`);
+        const ons = await Promise.all(reads.map((x) => (x.g ? matchReal(paneLogin(x.g.argv, record.logins), record.logins, exec, ms) : null)));
+        const named = (pick) => reads.filter((_x, i) => pick(ons[i])).map((x) => x.r.name ?? x.r.address);
+        const on = named((o) => o?.id === id);
+        if (on.length) throw new Error(`${on.join(", ")} still ${on.length === 1 ? "runs" : "run"} on it: restart or stop ${on.length === 1 ? "it" : "them"} first`);
+        // A folder under home that no login lists may be this one by another spelling: refused too.
+        const odd = named((o) => typeof o?.unknown === "string" && o.unknown.startsWith(`${home().replace(/\/+$/, "")}/`));
+        if (odd.length) throw new Error(`${odd.join(", ")} ${odd.length === 1 ? "runs" : "run"} on a login folder the panel can't match to a login: restart or stop ${odd.length === 1 ? "it" : "them"} first`);
+        await writeRecord(appHome(), { use: record.use, logins: record.logins.filter((l) => l.id !== id) }, record.text, writeTextFile);
+        this.loginNote = `${row.name} removed from the panel. Its folder stays; delete it by hand if you want.`;
+      } catch (err) {
+        this.switchError = `${row.name} wasn't removed: ${message(err)}`;
+      } finally {
+        release(this);
+        this.readLogins(cx, { force: true });
+        wake(cx);
+      }
+    });
+  }
+
   /** The machine the writers act on: the runtime's files and shell, the clients' environment. */
   io() {
-    return { home: home(), appHome: appHome(), env: this.env, platform: platform(), exec, readTextFile, writeTextFile };
+    return { home: home(), appHome: appHome(), env: this.env, exec, writeTextFile };
   }
 
   /**
@@ -550,7 +752,10 @@ export default class AmQuota extends View {
     return new Promise((go) => setTimeout(go, ms));
   }
 
-  /** After a switch: the bots of that tool that started before it, by `automagik-herdr ls`. */
+  /**
+   * After a switch: the bots still on the old one, by `automagik-herdr ls`. Codex: those started
+   * before it. Claude (#453 section 3): those whose pane's launch argv names another login, by value.
+   */
   findBots(provider, cx) {
     const s = this.switched[provider];
     cx.spawn(async (cx) => {
@@ -559,7 +764,15 @@ export default class AmQuota extends View {
         if (this.switched[provider] !== s) return;
         if (!r) s.look = "no-cli";
         else if (r.code !== 0 || !r.out) s.look = { error: refusal(r) || `automagik-herdr ls failed (exit ${r.code})` };
-        else s.look = staleBots(r.out, provider, s.at);
+        else if (provider !== "claude") s.look = staleBots(r.out, provider, s.at);
+        else {
+          const bots = runningBots(r.out, "claude");
+          const logins = this.logins?.record?.logins ?? [];
+          const ons = await Promise.all(bots.map((b) => this.paneGet(b.terminal).then(
+            (g) => (g ? matchReal(paneLogin(g.argv, logins), logins, exec) : null), () => ({ why: "hc can't read its pane" }))));
+          if (this.switched[provider] !== s) return;
+          s.look = offLogin(bots, ons, s.login);
+        }
       } catch (err) {
         if (this.switched[provider] === s) s.look = { error: message(err) };
       }
@@ -874,9 +1087,11 @@ export default class AmQuota extends View {
   banner(t, provider) {
     const s = this.switched[provider];
     const label = TOOLS[provider];
+    const byLogin = provider === "claude";
+    const old = byLogin ? "login" : "account";
     const box = v_flex().id(`switched-${provider}`).mx(14).p(10).gap(6).rounded(9).bg(t.selected ?? t.raised)
       .child(h_flex().gap(6).items_center()
-        .child(div().flex_1().min_w(0).font_semibold().text_size(12.5).child(`${label} is now on ${s.to}`))
+        .child(div().flex_1().min_w(0).font_semibold().text_size(12.5).child(byLogin ? `New ${label} launches use ${s.to}` : `${label} is now on ${s.to}`))
         .child(div().id(`switched-close-${provider}`).px(4).rounded(5).text_color(t.dim).cursor_pointer()
           .hover((x) => x.text_color(t.foreground)).on_click((_e, cx) => {
             delete this.switched[provider];
@@ -885,24 +1100,27 @@ export default class AmQuota extends View {
           }).child("×")));
     const hint = (text) => box.child(div().text_size(11).text_color(t.dim).child(text));
     const look = s.look;
-    if (look === "loading") hint("New bots start on it. Looking for bots still on the old account…");
-    else if (look === "no-cli") hint(`New bots start on it. Bots already running keep the old account until restarted: automagik-herdr restart <bot>.`);
+    if (look === "loading") hint(`New bots start on it. Looking for bots still on the old ${old}…`);
+    else if (look === "no-cli") hint(`New bots start on it. Bots already running keep the old ${old} until restarted: automagik-herdr restart <bot>.`);
     else if (look?.error) hint(`New bots start on it. The panel couldn't list the bots (${look.error}); restart the ones that use ${label} to move them.`);
-    else if (!look.bots.length) hint(s.result ? `Restarted ${s.result.done}: every ${label} bot is on the new account.` : `New bots start on it. No running ${label} bot started before the switch.`);
+    else if (!look.bots.length) {
+      hint(s.result ? `Restarted ${s.result.done}: every ${label} bot is on the new ${old}.`
+        : byLogin ? `New bots start on it. Every running ${label} bot is on it already.` : `New bots start on it. No running ${label} bot started before the switch.`);
+    }
     else {
       const n = look.bots.length;
-      hint(look.reliable
-        ? `New bots start on it. ${n === 1 ? "This one started earlier and still uses" : `These ${n} started earlier and still use`} ${s.from ?? "the old login"}:`
+      hint(byLogin ? `New bots start on it. ${n === 1 ? "This one runs" : `These ${n} run`} on another login, by how ${n === 1 ? "it was" : "they were"} launched:`
+        : look.reliable ? `New bots start on it. ${n === 1 ? "This one started earlier and still uses" : `These ${n} started earlier and still use`} ${s.from ?? "the old login"}:`
         : `New bots start on it. The panel can't tell which of these ${n} ${label} bots started before the switch, so it lists them all:`);
       const chips = h_flex().gap(4).flex_wrap();
       const shown = look.bots.slice(0, 6);
-      for (const b of shown) chips.child(div().px(6).h(18).flex().items_center().rounded(5).bg(t.raised).text_size(10.5).child(b.name));
+      for (const b of shown) chips.child(div().px(6).h(18).flex().items_center().rounded(5).bg(t.raised).text_size(10.5).child(b.on ? `${b.name} · ${b.on}` : b.name));
       if (n > shown.length) chips.child(div().px(6).h(18).flex().items_center().rounded(5).bg(t.raised).text_size(10.5).child(`+${n - shown.length}`));
       box.child(chips);
       const armed = this.armed === `restart:${provider}`;
       const what = `Restart ${n} bot${n === 1 ? "" : "s"}`;
       box.child(this.button(t, `restart-${provider}`, s.restarting ? "Restarting…" : armed ? `${what}? Press again to confirm` : what,
-        (_e, cx) => this.restartBots(provider, cx), { primary: true, small: "Each one resumes its conversation on the new account where it can" }));
+        (_e, cx) => this.restartBots(provider, cx), { primary: true, small: `Each one resumes its conversation on the new ${old} where it can` }));
       const busy = s.result?.busy ?? [];
       if (s.result?.failed.length || busy.length) {
         hint(`Restarted ${s.result.done} of ${s.result.done + s.result.failed.length + busy.length}. Not restarted:`);
@@ -938,11 +1156,57 @@ export default class AmQuota extends View {
     now.child(div().text_size(12).text_color(this.tone(t, v.sentence.tone)).child(v.sentence.text));
     if (v.primary) {
       const target = v.primary.account;
-      now.child(this.button(t, `primary-${v.provider}`, v.primary.label, (_e, cx) => this.use(v.provider, target, cx),
+      const go = v.provider === "claude" ? (_e, cx) => this.useLogin(v.primary.row.id, cx) : (_e, cx) => this.use(v.provider, target, cx);
+      now.child(this.button(t, `primary-${v.provider}`, v.primary.label, go,
         { primary: true, small: v.primary.why }));
     }
     if (v.fine) now.child(div().text_size(10.5).text_color(t.dim).child(v.fine));
     return now;
+  }
+
+  /** A line in a tone: bad (red), warn (amber) or none (dim). */
+  said(t, line) {
+    return div().text_size(10.5).text_color(line.tone === "bad" ? t.blocked : this.tone(t, line.tone)).child(line.text);
+  }
+
+  /** A command shown for the person to run in a terminal, never run by the panel. */
+  shownCommand(t, text) {
+    return div().px(6).py(3).rounded(5).bg(t.background ?? t.raised).text_size(10.5).font_family("JetBrains Mono").child(text);
+  }
+
+  /** The Claude card's lists (#453): the logins on this Mac, the proxy's accounts not here, Add login. */
+  loginList(t, v, source) {
+    const list = v_flex().mx(6).gap(2);
+    list.child(div().px(8).pt(2).text_size(10.5).text_color(t.dim).child(`${v.label} logins on this Mac`));
+    for (const r of v.rows) {
+      const line = h_flex().gap(6).items_center().child(div().flex_1().min_w(0).truncate().text_size(12).child(r.who));
+      if (r.inUse) line.child(this.pill(t, { text: "In use", tone: "good" }));
+      if (r.use) line.child(this.button(t, `login-use-${slug(r.id)}`, "Use", (_e, cx) => this.useLogin(r.id, cx)));
+      if (r.remove) {
+        line.child(this.button(t, `login-remove-${slug(r.id)}`, this.armed === `remove:${r.id}` ? "Remove? Press again" : "Remove",
+          (_e, cx) => this.removeLogin(r.id, cx)));
+      }
+      const el = v_flex().id(`login-${slug(r.id)}`).px(8).py(6).gap(4).rounded(7).hover((s) => s.bg(t.hover)).child(line);
+      if (r.usage.tracked) el.child(this.bar(t, r.usage));
+      el.child(this.meta(t, r.usage));
+      for (const l of r.lines) el.child(this.said(t, l));
+      if (r.signIn) el.child(this.shownCommand(t, r.signIn));
+      list.child(el);
+    }
+    if (v.notHere.length) {
+      list.child(div().px(8).pt(6).text_size(10.5).text_color(t.dim).child(`On your CLIProxyAPI, not signed in here (${source})`));
+      for (const n of v.notHere) {
+        list.child(v_flex().id(`not-here-${slug(n.account.id)}`).px(8).py(6).gap(4).child(div().text_size(12).child(n.who)).child(this.meta(t, n.usage)));
+      }
+    }
+    if (v.add) {
+      const box = v_flex().id("login-add").px(8).pt(6).gap(4)
+        .child(div().text_size(10.5).text_color(t.dim).child(`To add ${loginName(v.add.id)}: make ${typed(v.add.dir, home())} and its links (the mod's docs/local-logins.md, "The second sign-in"), sign in from a terminal, then press Add.`))
+        .child(this.shownCommand(t, v.add.signIn))
+        .child(this.button(t, "login-add-button", `Add ${loginName(v.add.id)}`, (_e, cx) => this.addLogin(cx)));
+      list.child(box);
+    }
+    return list;
   }
 
   row(t, v, r) {
@@ -984,12 +1248,13 @@ export default class AmQuota extends View {
         .child(div().text_size(11).text_color(t.dim).child("Keeps your bots working when a plan hits its limit")))
       .child(div().id("am-refresh").px(4).rounded(5).text_color(t.dim).cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click((_e, cx) => this.reload(cx)).child("↻")));
+        .on_click((_e, cx) => { this.forceLogins = true; this.reload(cx); }).child("↻")));
     root.child(this.segment(t));
 
     const lines = v_flex().px(14).pt(8).gap(4).text_size(11.5);
     if (this.busy) lines.child(div().text_color(t.dim).child(this.busy));
     if (this.switchError) lines.child(div().text_color(t.blocked).child(this.switchError));
+    if (this.loginNote && this.tool === "claude") lines.child(div().text_color(t.dim).child(this.loginNote));
     if (this.error) lines.child(div().text_color(t.blocked).child(this.error));
     if (this.quotaError && this.accounts) {
       lines.child(div().text_color(t.working).child(`${source} didn't send usage (${this.quotaError}), so no account's use is known right now`));
@@ -997,7 +1262,21 @@ export default class AmQuota extends View {
     root.child(lines);
 
     const body = v_flex().flex_1().min_h(0).overflow_y_scrollbar().pt(6).pb(10).gap(10);
+    const claude = this.tool === "claude" ? this.view("claude") : null;
+    if (claude?.problem) {
+      // One red line naming the problem; no switch until it is fixed (section 2). The CLI never repairs it.
+      body.child(div().id("logins-problem").mx(14).text_size(12).text_color(t.blocked)
+        .child(`claude-logins.json ${claude.problem}: new Claude launches start on the default login until it is fixed`));
+    }
+    for (const e of claude?.envLines ?? []) body.child(div().mx(14).text_size(11).text_color(t.working).child(e));
     if (this.setup) body.child(div().mx(14).text_size(12).text_color(t.dim).child(this.setupText()));
+    if (claude?.rows.length) {
+      if (this.switched.claude) body.child(this.banner(t, "claude"));
+      body.child(this.card(t, claude));
+      body.child(this.loginList(t, claude, source));
+    } else if (this.setup) {
+      // the setup line above says what is missing
+    } else if (claude) body.child(div().mx(14).text_size(12).text_color(t.dim).child("Reading the logins on this Mac…"));
     else if (!this.accounts) body.child(div().mx(14).text_size(12).text_color(t.dim).child(this.error ? "" : `Reading ${source}…`));
     else {
       const v = this.view(this.tool);
@@ -1015,7 +1294,8 @@ export default class AmQuota extends View {
     const url = openUrl(this.config);
     const foot = h_flex().flex_none().px(14).py(10).gap(10).items_center().border_t(1).border_color(t.border)
       .child(div().flex_1().min_w(0).text_size(11).text_color(t.dim)
-        .child(`Accounts come from your CLIProxyAPI${this.config ? `, ${source}` : ""}. To add one, sign in to it there.`));
+        .child(claude ? `Claude logins are the ones signed in on this Mac; usage comes from your CLIProxyAPI${this.config ? `, ${source}` : ""}.`
+          : `Accounts come from your CLIProxyAPI${this.config ? `, ${source}` : ""}. To add one, sign in to it there.`));
     if (url) {
       foot.child(this.button(t, "am-open-proxy", `Open ${source}`, () => {
         exec(platform() === "macos" ? "open" : "xdg-open", [url]).catch(() => {});

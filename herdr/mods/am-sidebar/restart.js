@@ -56,13 +56,15 @@ export function paneCommand(get) {
   return { argv };
 }
 
+/** `cmd` with its quoted text ('…', "…", a backslash-escaped character) blanked out: what sh reads as syntax. */
+const unquoted = (cmd) => cmd.replace(/\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*"/g, (q) => (q[0] === "\\" ? "__" : "''"));
 /**
  * Whether words can go after shell command `cmd` as its last command's arguments: not when it
  * ends in a separator (`;`, `&`, `|`, which would make them a command of their own) or has a
- * comment (`#` after a blank, which would swallow them). One that already passes "$@" on takes
- * them as they are.
+ * comment (`#` after a blank, which would swallow them), each outside quotes (a quoted `"issue
+ * #12"` is an argument, not a comment). One that already passes "$@" on takes them as they are.
  */
-export const takesWords = (cmd) => cmd.includes(ARGS.trim()) || !(/[;&|]\s*$/.test(cmd) || /(^|\s)#/.test(cmd));
+export const takesWords = (cmd) => cmd.includes(ARGS.trim()) || !(/[;&|]\s*$/.test(unquoted(cmd)) || /(^|\s)#/.test(unquoted(cmd)));
 
 /**
  * `command` (paneCommand) with `words` after it: argv for hc run; null when a shell command

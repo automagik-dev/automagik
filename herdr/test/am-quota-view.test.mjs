@@ -2,7 +2,7 @@
 // Example accounts only; no proxy, no Keychain, no file.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { instanceName, openUrl, resetText, staleBots, toolView, usage, who } from "../mods/am-quota/view.js";
+import { instanceName, loginsView, offLogin, openUrl, resetText, staleBots, toolView, usage, who } from "../mods/am-quota/view.js";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z");
 const H = 3600000;
@@ -216,4 +216,50 @@ test("the dot follows the bar: amber from 85% used even while the account lasts"
   assert.equal(v.dot, "warn");
   const calm = acct("ana", { used: 84, resetH: 20, prev: 84 });
   assert.equal(toolView({ provider: "codex", accounts: [calm], record: rec(calm), badge: IN_USE, now: NOW }).dot, "good");
+});
+
+// ---- the Claude card from the logins on this Mac (#453) ----
+
+const probe = (id, email, extra = {}) => ({ id, dir: id === "default" ? null : `/h/.claude-${id}`, problem: null, unlinked: [], email,
+  status: { state: "in", email, authMethod: "claude.ai", configDirectory: id === "default" ? "/h/.claude" : `/h/.claude-${id}` }, ...extra });
+const RECORD = { text: "{}", use: "default", logins: [{ id: "2", dir: "/h/.claude-2" }, { id: "3", dir: "/h/.claude-3" }], problem: null };
+
+test("loginsView (#453): policy.choose over the local logins only, by email; a proxy account not here is never a pick", () => {
+  const ana = acct("ana", { provider: "claude", plan: null, win: "seven_day", used: 95, prev: 80, resetH: 60 });
+  const bo = acct("bo", { provider: "claude", plan: null, win: "seven_day", used: 10, resetH: 40 });
+  const cy = acct("cy", { provider: "claude", plan: null, win: "seven_day", used: 1, resetH: 2 });
+  const v = loginsView({ record: RECORD, probes: [probe("default", "ANA@example.com"), probe("2", "bo@example.com"), probe("3", "dee@example.com")],
+    accounts: [ana, bo, cy], now: NOW, source: "lab", home: "/h" });
+  assert.equal(v.state, "low");
+  assert.equal(v.current.id, "default", "matched by email, any case");
+  assert.equal(v.primary.row.id, "2", "the local login with room, never cy (not signed in here)");
+  assert.equal(v.primary.label, "Use bo@example.com");
+  assert.deepEqual(v.notHere.map((n) => n.account.id), [cy.id]);
+  assert.deepEqual(v.rows.map((r) => [r.id, r.use, r.usage.text]), [["default", false, "95% used"], ["2", true, "10% used"], ["3", true, "usage not tracked"]]);
+  // A bad record: the same logins, nothing offered.
+  const bad = loginsView({ record: { ...RECORD, problem: "is not valid JSON", logins: [] }, probes: [probe("default", "ana@example.com")], accounts: [ana, bo], now: NOW, home: "/h" });
+  assert.equal(bad.problem, "is not valid JSON");
+  assert.equal(bad.primary, null);
+  assert.equal(bad.add, null);
+  assert.ok(bad.rows.every((r) => !r.use && !r.remove));
+});
+
+test("offLogin (#453): the Claude bots not on the chosen login, by what their launch argv names; a gone pane drops out", () => {
+  const bots = ["a", "b", "c", "d", "e"].map((id) => ({ id, name: id.toUpperCase(), project: "/p" }));
+  const ons = [{ id: "default" }, { id: "2" }, null, { why: "hc can't read its pane" }, { unknown: "/x" }];
+  assert.deepEqual(offLogin(bots, ons, "2"), { bots: [{ id: "a", name: "A", project: "/p", on: "the default login" },
+    { id: "d", name: "D", project: "/p", on: "hc can't read its pane" }, { id: "e", name: "E", project: "/p", on: "an unknown login (/x)" }], reliable: true });
+});
+
+test("loginsView (#453): a login whose sign-in is outranked, or that didn't answer, gets no Use and is never the pick", () => {
+  const bo = acct("bo", { provider: "claude", plan: null, win: "seven_day", used: 10, resetH: 40 });
+  const ana = acct("ana", { provider: "claude", plan: null, win: "seven_day", used: 95, prev: 80, resetH: 60 });
+  const keyed = probe("2", "bo@example.com");
+  keyed.status = { ...keyed.status, authMethod: "api_key" };
+  const v = loginsView({ record: RECORD, probes: [probe("default", "ana@example.com"), keyed, { ...probe("3", null), status: { state: "late" } }],
+    accounts: [ana, bo], now: NOW, home: "/h" });
+  assert.deepEqual(v.rows.map((r) => [r.id, r.use]), [["default", false], ["2", false], ["3", false]]);
+  assert.equal(v.primary, null, "the outranked login is not offered as the move either");
+  assert.ok(v.rows[1].lines.some((l) => l.text === "an API key outranks this sign-in"));
+  assert.ok(v.rows[2].lines.some((l) => /didn't answer in time/.test(l.text)));
 });

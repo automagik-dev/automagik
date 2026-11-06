@@ -29,7 +29,7 @@ had no quota.
 | Client | Where it reads | What a switch writes |
 |---|---|---|
 | Codex | `$CODEX_HOME/auth.json`, default `~/.codex/auth.json` | that file, translated from the proxy's flat form (`access_token, refresh_token, id_token, account_id, last_refresh`) to Codex's `{OPENAI_API_KEY: null, auth_mode: "chatgpt", last_refresh, tokens: {…}}` |
-| Claude Code | its own sign-in on this Mac | **nothing.** A Claude login is never downloaded from the proxy or installed, and the mod never reads, writes or deletes a Claude Keychain item (#453, `docs/local-logins.md`). Until the Claude card lists the logins signed in on this Mac, it shows the proxy's usage and offers no switch |
+| Claude Code | its own sign-in on this Mac | **nothing.** A Claude login is never downloaded from the proxy or installed, and the mod never reads, writes or deletes a Claude Keychain item (#453, `docs/local-logins.md`). The Claude card lists the logins signed in on this Mac and its Use writes only `<app home>/claude-logins.json` |
 
 **Why Claude left the switch (#453).** Copying a proxy login into the Mac's Keychain put one grant
 in two places. Anthropic rotates the refresh token on use, so the two holders signed each other
