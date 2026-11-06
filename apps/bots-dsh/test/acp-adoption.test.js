@@ -210,6 +210,22 @@ test('dshTools off is the 2026-11-03 behaviour: no Bot moves', async (t) => {
   assert.equal(state.claudeAcpMoved, undefined)
 })
 
+test('an installed but signed-out Claude still moves: the probe never asks the CLI', async (t) => {
+  // Stated for the default flip: the move asks the bridge, the adapter and the route, never the
+  // sign-in. The Bots move and their turns fail with Claude Code's own sign-in error.
+  const signedOut = {
+    ...readyAcp(),
+    status: async () => ({ agents: [{
+      id: 'acp-claude', connector: { state: 'ready' }, model: { listed: true }, signedIn: false,
+    }] }),
+  }
+  const host = await start(seed(), { acp: signedOut })
+  t.after(host.stop)
+  await host.call('state', {})
+  await until(() => host.saved().claudeAcpMoved === true, { label: 'the team moved' })
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+})
+
 test('a bridge whose probes do not pass, or an adapter that is not installed, moves nothing', async (t) => {
   for (const acp of [
     { ...readyAcp(), bridge: () => ({ on: true, probesPass: false }) },
