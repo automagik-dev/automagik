@@ -424,10 +424,125 @@ test('a challenge value is redacted before it is capped', async t => {
       { botId: 'chief' },
     ),
     error => {
-      assert.match(error.message, /WWW-Authenticate: Bearer \[header\]/)
+      // The redactor runs first, so the challenge reads as the secret label; the header scrub
+      // has nothing left to replace (the accepted consequence: the label wins, no secret byte).
+      assert.match(error.message, /WWW-Authenticate: Bearer \[secret:TOKEN\]/)
+      assert.doesNotMatch(error.message, /\[header\]/)
       assert.doesNotMatch(error.message, new RegExp(SECRET_VALUE))
       assert.doesNotMatch(error.message, /x{200}/)
       return true
     },
   )
+})
+
+// The edge the tester found: the sent header value is a substring of the secret. Scrubbing the
+// header first cuts the secret around it, so redaction can no longer see the secret and its
+// prefix and suffix stay in the answer. Every clean() here redacts first.
+const runsOf = (text, value, size = 4) => {
+  const found = []
+  for (let i = 0; i + size <= value.length; i += size) {
+    const run = value.slice(i, i + size)
+    if (text.includes(run)) found.push(run)
+  }
+  return found
+}
+
+test('a header value inside the secret echoes the label, never the secret edges', async t => {
+  // The server reflects the whole secret (it has it from Authorization); the configured header
+  // only carries a piece of it.
+  const inner = SECRET_VALUE.slice(6, 22)
+  const server = await serve((_request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`reflected ${SECRET_VALUE}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(capability('leaky', server.url, {
+      Authorization: 'Bearer $DSH_SECRET_TOKEN',
+      'X-Probe-Header': inner,
+    }), { botId: 'chief' }),
+    error => {
+      assert.match(error.message, /body: reflected \[secret:TOKEN\]\)/)
+      assert.deepEqual(runsOf(error.message, SECRET_VALUE), [])
+      assert.equal(error.message.includes('probe-'), false)
+      assert.equal(error.message.includes(inner), false)
+      assert.doesNotMatch(error.message, /\[header\]/)
+      return true
+    },
+  )
+  assert.equal(live(env).leaky, undefined)
+})
+
+test('a header that embeds a whole secret reads as the label, not as [header]', async t => {
+  const server = await serve(async (request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`got ${request.headers['x-api-key']}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('wrapped', server.url, { 'X-Api-Key': 'k-$DSH_SECRET_TOKEN-z' }),
+      { botId: 'chief' },
+    ),
+    error => {
+      assert.match(error.message, /body: got k-\[secret:TOKEN\]-z\)/)
+      assert.doesNotMatch(error.message, /\[header\]/)
+      assert.deepEqual(runsOf(error.message, SECRET_VALUE), [])
+      return true
+    },
+  )
+  assert.equal(live(env).wrapped, undefined)
+})
+
+test('a header value with no secret overlap is still scrubbed to [header]', async t => {
+  const server = await serve(async (request, response) => {
+    response.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="fake"' })
+    response.end(`got ${request.headers['x-probe-header']}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  await assert.rejects(
+    env.rt.capabilitySave(
+      capability('plain', server.url, { 'X-Probe-Header': HEADER_VALUE }),
+      { botId: 'chief' },
+    ),
+    error => {
+      assert.match(error.message, /body: got \[header\]\)/)
+      assert.equal(error.message.includes(HEADER_VALUE), false)
+      return true
+    },
+  )
+  assert.equal(live(env).plain, undefined)
+})
+
+test('a cap after redaction cannot split a secret into surviving halves', async t => {
+  // The secret starts 186 characters in, so its original span crosses the 200-character cap;
+  // the configured header carries a slice of it that also crosses the cap.
+  const filler = 'y'.repeat(186)
+  const inner = SECRET_VALUE.slice(6, 24)
+  const server = await serve((_request, response) => {
+    response.writeHead(500, { 'Content-Type': 'text/plain' })
+    response.end(`${filler}${SECRET_VALUE}${'z'.repeat(40)}`)
+  })
+  t.after(() => server.close())
+  const env = await setup()
+  t.after(() => env.dispose())
+
+  const saved = await env.rt.capabilitySave(capability('capped', server.url, {
+    Authorization: 'Bearer $DSH_SECRET_TOKEN',
+    'X-Probe-Header': inner,
+  }), { botId: 'chief' })
+  assert.match(saved.verification.reason, /^HTTP 500: y{186}\[secret:TOKEN\]$/)
+  assert.equal(saved.verification.reason.slice('HTTP 500: '.length).length, 200)
+  assert.deepEqual(runsOf(saved.verification.reason, SECRET_VALUE), [])
+  assert.equal(saved.verification.reason.includes('probe-'), false)
+  assert.doesNotMatch(saved.verification.reason, /\[header\]/)
 })

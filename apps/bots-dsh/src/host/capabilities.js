@@ -311,12 +311,16 @@ export function install(rt) {
     } catch (error) {
       return { checkedAt, status: 'unverified', reason: rt.redactSecrets(String(error?.message ?? error)).slice(0, PROBE_REASON_CHARS) }
     }
-    // Header values go first: a value that embeds a secret reads as [header], not as a label
-    // inside the secret. The redactor then covers everything else, before any truncation.
+    // The redactor goes first, over the whole text: a secret is replaced whole, wherever it
+    // sits. Scrub the sent header values only after that, and only where a secret did not
+    // already cover them: scrubbing first would cut a secret around a header value that is a
+    // substring of it and leave that secret's prefix and suffix behind. A header that embeds
+    // a secret therefore reads as [secret:NAME], not [header] — no secret byte survives, the
+    // label is secondary. Truncation happens only after both, so a cap cannot split a secret.
     const clean = (text) => {
-      let out = String(text ?? '')
+      let out = rt.redactSecrets(String(text ?? ''))
       for (const value of sent) out = out.split(value).join('[header]')
-      return rt.redactSecrets(out).replace(/\s+/g, ' ').trim()
+      return out.replace(/\s+/g, ' ').trim()
     }
     let response
     try {
