@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,5 +80,45 @@ func TestHistoryCarriesDurationAndSeen(t *testing.T) {
 	r := runs[0]
 	if r.Terminal != "t7" || !r.Seen || r.Seconds != 240 {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+// The panel fills its close_workspace control from ls --json, so the listing carries the key for
+// every entry; an entry that never names it reads as never, the default the loader applies.
+func TestListCarriesCloseWorkspace(t *testing.T) {
+	setup(t, `automations:
+  - name: triage
+    cron: "0 9 * * 1-5"
+    repo: /x
+    prompt: p
+    close_workspace: on-success
+  - name: digest
+    cron: "0 17 * * 5"
+    repo: /x
+    prompt: p
+`)
+	l, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Automations []map[string]any `json:"automations"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Automations) != 2 {
+		t.Fatalf("got %d automations in %s", len(got.Automations), raw)
+	}
+	want := map[string]string{"triage": "on-success", "digest": "never"}
+	for _, entry := range got.Automations {
+		name, _ := entry["name"].(string)
+		if close, _ := entry["close_workspace"].(string); close != want[name] {
+			t.Errorf("%s: close_workspace is %q in %s", name, close, raw)
+		}
 	}
 }
