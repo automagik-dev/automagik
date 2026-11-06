@@ -1,6 +1,6 @@
 {
   "name": "@automagik/acp-dsh",
-  "version": "3.87.3",
+  "version": "3.88.0",
   "description": "Agents over ACP (Agent Client Protocol) as DeepSeek Harness models: a Session on one streams the agent's words, shows its tool calls as DSH tool cards and asks through DSH's approval dialog",
   "keywords": [
     "dsh-plugin",
@@ -46,6 +46,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/schemastery": "*"
   },

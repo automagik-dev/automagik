@@ -11705,7 +11705,7 @@ function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
 
 // src/client/redact.js
 var CREDENTIAL_MARK = "[hidden]";
-var CREDENTIALS = [
+var CREDENTIALS = Object.freeze([
   [/\bsk-[A-Za-z0-9_*.-]{6,}/g, "sk-[hidden]"],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}/g, CREDENTIAL_MARK],
   [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, CREDENTIAL_MARK],
@@ -11728,11 +11728,34 @@ var CREDENTIALS = [
   [/(\b[A-Z0-9_]*(?:NPM_TOKEN|AUTH_TOKEN)["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"',}]+)/gi, `$1${CREDENTIAL_MARK}`],
   [/(\bhttps?:\/\/)[^/\s]+@/gi, `$1${CREDENTIAL_MARK}@`],
   [/(["']?(?:api[_-]?key|authorization|x-api-key|password|secret)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi, `$1${CREDENTIAL_MARK}`]
-];
+]);
 function redactText(text) {
   let out = String(text ?? "");
   for (const [pattern, replacement] of CREDENTIALS) out = out.replace(pattern, replacement);
   return out;
+}
+function credentialShapes(text) {
+  return typeof text === "string" ? redactText(text) : text;
+}
+function redactorFor(ctx) {
+  const team = (() => {
+    try {
+      return ctx?.get?.("omniTeam");
+    } catch {
+      return void 0;
+    }
+  })();
+  const saved = typeof team?.redactSecrets === "function" ? team.redactSecrets : void 0;
+  return (text) => {
+    if (typeof text !== "string") return text;
+    const shaped = credentialShapes(text);
+    if (saved === void 0) return shaped;
+    try {
+      return String(saved.call(team, shaped) ?? shaped);
+    } catch {
+      return shaped;
+    }
+  };
 }
 
 // src/client/acp-agents.js
