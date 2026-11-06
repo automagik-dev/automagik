@@ -1,0 +1,205 @@
+// dsh-tui as an agent row (#598): Start, Restart and workers run it as the DSH lane fixed it
+// (DSH 0.2.2-rc.1, dsh-tui 0.19.0). An interactive pane only, never a permission, add-dir or
+// approval flag (the dsh-tui profile on that machine supplies the sandbox); the briefing, or a
+// worker's task, is the first prompt after `--` and never starts with "-" (DSH drops a bare `--`
+// and parses the next word: #591 review N4); `--resume <id>` when the session is known, `-c` only
+// after a finished turn (the old pane's hc turn counter), nothing on --fresh; no --model and no
+// --effort. Fake hc and scratch homes only: the real hc and window are never touched.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// A namespace, so each test fails on its own where a name is missing (the fail-before run on dev).
+import * as models from "../mods/am-sidebar/models.js";
+import { restartPlan } from "../mods/am-sidebar/restart.js";
+import { workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
+import { readJsonLines } from "./log-lines.mjs";
+
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
+const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+const BRIEF = "<herdr-bot>\nYou are Genie.\n</herdr-bot>";
+const ID = "b-genieaaaaa";
+const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+const { AGENTS, BRIEFING_MARK, agentKeyOfArgv, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, canResume, promptArgs,
+  resumeArgs, resumesById, withBriefing, withoutBriefing, withoutResume } = models;
+const modelRefusal = (agent) => models.modelRefusal(agent);
+const resumeAfterTurn = (agent) => models.resumeAfterTurn(agent);
+
+// ---- the row (models.js) ----
+
+test("dsh-tui is an agent Herdr starts as plain dsh-tui; no hook, no own-config prompt, no model or effort flag", () => {
+  assert.deepEqual(AGENTS["dsh-tui"].run, ["dsh-tui"]);
+  assert.equal(agentKeyOfArgv(["dsh-tui"]), "dsh-tui");
+  assert.equal(agentKeyOfArgv(["/usr/bin/env", "PATH=/bin", "dsh-tui", "--resume", SID]), "dsh-tui");
+  assert.equal(briefingWay("dsh-tui"), "prompt");
+  assert.deepEqual([briefingHook("dsh-tui"), briefingOwnConfig("dsh-tui")], [false, false]);
+  assert.match(modelRefusal("dsh-tui"), /^dsh-TUI takes no --model or --effort: its model and effort come from the dsh-tui profile on the machine it runs on\.$/);
+  assert.equal(modelRefusal("claude"), null);
+  assert.equal(modelRefusal("omp"), null);
+});
+
+test("dsh-tui's briefing is the last words, after --, once; a reused command's old brief goes, its resume words stay before it", () => {
+  const launch = briefingLaunch("dsh-tui", { text: BRIEF });
+  assert.deepEqual(launch, { args: ["--", BRIEF], env: {} });
+  assert.deepEqual(withBriefing("dsh-tui", ["dsh-tui"], launch), ["dsh-tui", "--", BRIEF]);
+  assert.deepEqual(withBriefing("dsh-tui", ["dsh-tui", "--resume", SID], launch), ["dsh-tui", "--resume", SID, "--", BRIEF]);
+  const old = `${BRIEFING_MARK}\nan older brief`;
+  assert.deepEqual(withBriefing("dsh-tui", ["dsh-tui", "-c", "--", old], launch), ["dsh-tui", "-c", "--", BRIEF]);
+  assert.deepEqual(withoutBriefing("dsh-tui", ["--resume", SID, "--", old]), ["--resume", SID]);
+  // A person's own first prompt is theirs: only this pack's brief is taken out.
+  assert.deepEqual(withoutBriefing("dsh-tui", ["--", "my own prompt"]), ["--", "my own prompt"]);
+  // No launch (a file that couldn't be written, say): the old brief still goes, nothing in its place.
+  assert.deepEqual(withBriefing("dsh-tui", ["dsh-tui", "--", old], null), ["dsh-tui"]);
+  // Every other agent keeps its place: right after the executable.
+  assert.deepEqual(withBriefing("omp", ["omp", "--continue"], briefingLaunch("omp", { text: BRIEF })), ["omp", `--append-system-prompt=${BRIEF}`, "--continue"]);
+});
+
+test("dsh-tui's first prompt never starts with \"-\": DSH would read it as a flag (#591 review N4)", () => {
+  for (const text of ["--resume=x do this", "-c", "  -p hi", "-"]) {
+    const [dashes, prompt] = briefingLaunch("dsh-tui", { text }).args;
+    assert.equal(dashes, "--");
+    assert.doesNotMatch(prompt, /^\s*-/, text);
+    assert.ok(prompt.endsWith(text), "the text itself, whole, after a plain label");
+    const [d2, task] = promptArgs("dsh-tui", text);
+    assert.equal(d2, "--");
+    assert.doesNotMatch(task, /^\s*-/, text);
+    assert.ok(task.endsWith(text));
+  }
+  assert.deepEqual(promptArgs("dsh-tui", "fix the login bug"), ["--", "fix the login bug"], "a plain task is passed as it is");
+  assert.deepEqual(promptArgs("omp", "-c"), ["-c"], "other agents unchanged");
+});
+
+test("dsh-tui resumes by id with --resume, else -c only after a finished turn; a reused command's resume words go", () => {
+  assert.equal(canResume("dsh-tui"), true);
+  assert.equal(resumesById("dsh-tui"), true);
+  assert.deepEqual(resumeArgs("dsh-tui", SID), ["--resume", SID]);
+  assert.deepEqual(resumeArgs("dsh-tui", null), ["-c"]);
+  assert.equal(resumeAfterTurn("dsh-tui"), true);
+  assert.equal(resumeAfterTurn("claude"), false);
+  assert.deepEqual(withoutResume("dsh-tui", ["--resume", SID, "-c", "--continue", "--resume=x", "--", BRIEF]), ["--", BRIEF]);
+  const bot = { agent: "dsh-tui" };
+  assert.deepEqual(restartPlan({ bot, run: ["dsh-tui"], runningAgent: "dsh-tui", session: SID }).argv, ["dsh-tui", "--resume", SID]);
+  assert.deepEqual(restartPlan({ bot, run: ["dsh-tui"], runningAgent: "dsh-tui", session: SID, fresh: true }).argv, ["dsh-tui"]);
+});
+
+test("a dsh-tui worker: its task is the prompt after --; --model or --effort is refused, not dropped", () => {
+  const bot = { name: "Genie", agent: "dsh-tui" };
+  const plan = workerPlan(bot, {});
+  assert.deepEqual([plan.agent, plan.argv, plan.warnings], ["dsh-tui", ["dsh-tui"], []]);
+  const args = workerArgs({ botId: ID, branch: "b", cwd: "/w", parent: "t1", agent: "dsh-tui", argv: plan.argv, task: "-c fix it" });
+  const tail = args.slice(args.lastIndexOf("dsh-tui"));
+  assert.equal(tail[1], "--");
+  assert.doesNotMatch(tail[2], /^\s*-/);
+  assert.equal(tail.length, 3);
+  for (const pick of [{ model: "deepseek-v4" }, { effort: "high" }]) {
+    assert.match(workerPlan(bot, pick).error, /^dsh-TUI takes no --model or --effort/, JSON.stringify(pick));
+  }
+  // A bot's worker defaults name a model or effort: refused for dsh-tui too, never silently dropped.
+  assert.match(workerPlan({ ...bot, worker: { effort: "high" } }, {}).error, /^dsh-TUI takes no --model or --effort/);
+  // Other agents keep warn-and-drop.
+  const kimi = workerPlan({ name: "K", agent: "kimi" }, { effort: "high" });
+  assert.equal(kimi.error, undefined);
+  assert.match(kimi.warnings.join(), /has no effort flag/);
+});
+
+// ---- the CLI: start and restart a dsh-tui bot (fake hc) ----
+
+function scene(t, { terminals = [] } = {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-dshtui-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
+  for (const d of [project, bin, home, join(app, "mods/am-sidebar")]) mkdirSync(d, { recursive: true });
+  execFileSync("git", ["init", "-q", "--template=", project]);
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), "#!/bin/sh\necho \"no window in tests\" >&2\nexit 1\n");
+  exe(join(bin, "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
+  mkdirSync(join(project, ".herdr"));
+  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [
+    { id: ID, name: "Genie", kind: "main", look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "dsh-tui" },
+  ] }, null, 2)}\n`);
+  const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
+  writeFileSync(statePath, JSON.stringify({ terminals: terminals.map((x) => ({ cwd: project, ...x })), next: 100 }));
+  writeFileSync(logPath, "");
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
+  const cli = (args) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
+    return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
+  };
+  const runs = () => readJsonLines(logPath).filter((c) => c[0] === "run");
+  return { root, project, app, cli, runs };
+}
+/** The agent's words in an hc run call: after `--`, past `/usr/bin/env` and its VAR= words. */
+const agentWords = (run) => {
+  const w = run.slice(run.indexOf("--") + 1);
+  if (w[0] !== "/usr/bin/env") return w;
+  let i = 1;
+  while (i < w.length && (/^[A-Z_]+=/.test(w[i]) || w[i] === "-u")) i += w[i] === "-u" ? 2 : 1;
+  return w.slice(i);
+};
+/** Genie's live dsh-tui pane t5, idle, after `turn` turns; `session` its agent.session label. */
+const pane = (s, { turn, session = null } = {}) => ({ address: "t5", name: "genie", state: "live", created_ms: 1700000000005, parent: null,
+  labels: { bot: ID, role: "main", ...(session ? { "agent.session": session } : {}) }, ...(turn === undefined ? {} : { turn }),
+  foreground: { argv: ["dsh-tui", "--", BRIEF], cwd: s.project, name: "dsh-tui" }, status: { app: "dsh-tui", state: "idle" } });
+const withPane = (t, opts) => {
+  const s = scene(t);
+  const statePath = join(s.root, "hc.json");
+  writeFileSync(statePath, JSON.stringify({ terminals: [{ cwd: s.project, ...pane(s, opts) }], next: 100 }));
+  assert.equal(s.cli(["attach", "Genie", "t5"]).code, 0);
+  return s;
+};
+
+test("start a dsh-tui bot: plain dsh-tui, its briefing after --; no permission, add-dir, approval, model or effort flag", (t) => {
+  const s = scene(t);
+  const r = s.cli(["start", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(s.runs()[0]);
+  assert.deepEqual(words.slice(0, 2), ["dsh-tui", "--"]);
+  assert.equal(words.length, 3);
+  assert.match(words[2], /^<herdr-bot>\n[^]*You are Genie, this project's main bot/);
+  assert.equal(words.some((w) => /^--(permission|add-dir|approval|model|effort|sandbox)/.test(w)), false, words.join(" "));
+});
+
+test("edit a dsh-tui bot's --model: refused with one clear line, nothing written", (t) => {
+  const s = scene(t);
+  const before = readFileSync(join(s.project, ".herdr/bots.json"), "utf8");
+  const r = s.cli(["edit", "Genie", "--model", "deepseek-v4"]);
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /dsh-TUI takes no --model or --effort: its model and effort come from the dsh-tui profile on the machine it runs on\./);
+  assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before);
+});
+
+test("restart a dsh-tui bot with a known session: dsh-tui --resume <id> -- <brief>; --fresh: no resume words", (t) => {
+  const s = withPane(t, { turn: 3, session: SID });
+  const r = s.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(s.runs().at(-1));
+  assert.deepEqual(words.slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
+  assert.match(words[4], /^<herdr-bot>\n/);
+  assert.equal(words.length, 5, "the brief once, last");
+  const f = withPane(t, { turn: 3, session: SID });
+  assert.equal(f.cli(["restart", "Genie", "--fresh", "--json"]).code, 0);
+  const fresh = agentWords(f.runs().at(-1));
+  assert.deepEqual(fresh.slice(0, 2), ["dsh-tui", "--"]);
+  assert.equal(fresh.some((w) => w === "-c" || w === "--continue" || w.startsWith("--resume")), false, fresh.join(" "));
+});
+
+test("restart a dsh-tui bot with no session id: -c after a finished turn; with none (turn 0 or no counter) a new conversation, said", (t) => {
+  const done = withPane(t, { turn: 2 });
+  const r = done.cli(["restart", "Genie", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(agentWords(done.runs().at(-1)).slice(0, 3), ["dsh-tui", "-c", "--"]);
+  for (const turn of [0, undefined, "2"]) {
+    const s = withPane(t, { turn });
+    const out = s.cli(["restart", "Genie", "--json"]);
+    assert.equal(out.code, 0, out.err);
+    const words = agentWords(s.runs().at(-1));
+    assert.deepEqual(words.slice(0, 2), ["dsh-tui", "--"], `turn ${turn}: ${words.join(" ")}`);
+    assert.match(out.err, /dsh-TUI has no finished turn in t5 to continue, so Genie starts on a new conversation/, `turn ${turn}`);
+  }
+});
