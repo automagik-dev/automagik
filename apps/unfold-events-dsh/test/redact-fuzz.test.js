@@ -63,48 +63,50 @@ function fuzzCases(seed = SEED, count = 200) {
 // time, never remove it, so a rule that is slow in every run stays slow in every sample.
 const FAST_MS = 50
 const FAST_TRIES = 5
+const sample = (fn) => {
+  const t0 = process.cpuUsage()
+  fn()
+  const used = process.cpuUsage(t0)
+  return (used.user + used.system) / 1000
+}
 const timed = (fn, ceiling = FAST_MS) => {
   let best = Infinity
-  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) {
-    const t0 = process.cpuUsage()
-    fn()
-    const used = process.cpuUsage(t0)
-    best = Math.min(best, (used.user + used.system) / 1000)
-  }
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
   return best
 }
+// The reference sets a bound, so it always takes all five samples.
+const fixedWork = (fn) => Math.min(...Array.from({ length: FAST_TRIES }, () => sample(fn)))
 
-// A slow path by construction: it burns SLOW_REFERENCE_MS of CPU, counting CPU time itself, so no
-// load can cut the burn short and its sample reads about 60 ms on any machine (it takes all five
-// samples, its burn being over the text ceiling). The window's bound is a multiple of that sample,
-// so a run whose process CPU reads high widens the bound, up to the backstop; the test at the end
-// pins the sample to what the burn claims, so a harness that misreads it fails rather than scaling
-// every bound.
-const SLOW_REFERENCE_MS = 60
-const slowReference = () => {
-  const start = process.cpuUsage()
-  let spin = 0
-  for (;;) {
-    spin += 1
-    if ((spin & 0x3ff) !== 0) continue
-    const used = process.cpuUsage(start)
-    if (used.user + used.system >= SLOW_REFERENCE_MS * 1000) return spin
+// The reference is a fixed amount of the same work: redactText over one 80k text of the fuzz's own
+// pieces, built once from a fixed seed. It runs the same code path over a fixed N pieces, never the
+// fuzz texts, so its cost is linear in that input (40k, 80k and 160k characters measured 100, 98
+// and 98 ns per character) and every run pays exactly that work. A slower machine or a slower clock
+// raises the reference and the window's bound together: it is not a time constant.
+const REFERENCE_TEXT = (() => {
+  let state = 0x531 >>> 0
+  const rand = () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), state | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296
   }
-}
-const slowRef = timed(slowReference)
+  const parts = []
+  for (let n = 0; n < 80_000; ) {
+    const piece = PIECES[Math.floor(rand() * PIECES.length)]
+    parts.push(piece)
+    n += piece.length
+  }
+  return parts.join('')
+})()
 
-// The window runs redactText over every delta on top of its own row work, so it costs a multiple
-// of the text paths, and the exact multiple is not established: one Ryzen run under Node 24.9.0
-// measured 26.24 ms of CPU for it against 10.5-11.3 ms for the text paths (24.22.2: 26.30 ms), and
-// CI reported the row without its milliseconds. Its bound is WINDOW_MARGIN times the slow
-// reference above, which is 3 x 60 ms of CPU, 180 ms, because that burn is fixed; the absolute
-// backstop (7.6x the measured window cost) caps a misread reference. The margin is wide on
-// purpose: the CI row's cost is unknown, so the bound gives up catching a 2-3x linear slowdown to
-// stop failing on a row it cannot explain; a quadratic rule at 80k characters is 6.4e9 steps,
-// seconds of CPU, far past either bound.
-const WINDOW_MARGIN = 3
+// The window runs redactText over every delta on top of its own row work, so it costs a multiple of
+// the reference: 1.89-1.96x measured here (Node 22.23.2) and 2.32-2.50x on the Ryzen numbers (26.24
+// ms against 10.5-11.3 ms, Node 24.9.0/24.22.2). WINDOW_MARGIN sits above both, and a 2x regression
+// of the window path fails on either (3.8x here, 4.6-5.0x on Ryzen); the absolute backstop caps a
+// run whose reference reads too low. A quadratic rule at 80k characters is 6.4e9 steps, seconds of
+// CPU, far past either.
+const WINDOW_MARGIN = 3.5
 const WINDOW_BACKSTOP_MS = 200
-const WINDOW_BOUND_MS = Math.min(WINDOW_MARGIN * slowRef, WINDOW_BACKSTOP_MS)
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
@@ -119,23 +121,18 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   for (const [, text] of cases) for (const [, run] of PATHS) run(text)
   const [windowPath, windowRun] = PATHS[PATHS.length - 1]
   const textPaths = PATHS.slice(0, -1)
+  const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
+  const bound = Math.min(WINDOW_MARGIN * referenceMs, WINDOW_BACKSTOP_MS)
+  const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   for (const [shape, text] of cases) {
     for (const [path, run] of textPaths) {
       const ms = timed(() => run(text))
       const detail = `${path}: ${shape}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
       assert.ok(ms < FAST_MS, detail)
     }
-    const windowMs = timed(() => windowRun(text), WINDOW_BOUND_MS)
-    const margin = `${WINDOW_MARGIN} x slow reference ${slowRef.toFixed(1)} ms`
+    const windowMs = timed(() => windowRun(text), bound)
     const detail = `${windowPath}: ${shape}: ${windowMs.toFixed(1)} ms of CPU, ` +
-      `bound ${WINDOW_BOUND_MS.toFixed(1)} ms (${margin}; backstop ${WINDOW_BACKSTOP_MS} ms)`
-    assert.ok(windowMs <= WINDOW_BOUND_MS, detail)
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${WINDOW_BACKSTOP_MS} ms)`
+    assert.ok(windowMs <= bound, detail)
   }
-})
-
-// The window's bound is only meaningful if this run can see the slow reference for what it is: a
-// harness that read the burn as less than FAST_MS would shrink every bound with it.
-test('the slow reference burns what its bound claims', () => {
-  const detail = `slow reference ${slowRef.toFixed(1)} ms of CPU, burn ${SLOW_REFERENCE_MS} ms`
-  assert.ok(slowRef >= SLOW_REFERENCE_MS, detail)
 })
