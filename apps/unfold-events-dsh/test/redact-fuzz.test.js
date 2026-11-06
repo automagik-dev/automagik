@@ -108,11 +108,13 @@ const REFERENCE_TEXT = (() => {
 // the reference: 2.31-2.44x over five runs here (Node 24.13.1), 3.51x once under load, 2.32-2.50x
 // on the Ryzen numbers (26.24 ms against 10.5-11.3 ms, Node 24.9.0/24.22.2) and 2.36x on the Fixer
 // head. WINDOW_MARGIN 4.5 sits 1.8x above the 2.50x worst, and a 2x regression of the window path
-// still fails (4.9x against 4.5). The backstop is on the reference, not on the bound: on a slower
-// runner the window scales with it, but a shared rule gone quadratic makes the reference itself
-// exceed it, and no multiple of a reference that high may pass.
+// still fails (4.9x against 4.5). The absolute backstop caps how far a slow reference may widen
+// the bound: 400 ms sits 1.7x above the worst observed runner reading (mind's stream 225.8-233.2 ms
+// at a 30.3-30.6 ms reference) and only binds when 4.5 x reference passes it. A shared rule gone
+// quadratic still fails: the text ceiling catches it on the rule pass, and the window runs past the
+// cap.
 const WINDOW_MARGIN = 4.5
-const BACKSTOP_MS = 200
+const BACKSTOP_MS = 400
 
 const catalog = loadCatalog()
 const push = (text) => new EventWindow(catalog, { limit: 20 }).push({ v: 2, id: 'g:1', producer: 'g', seq: 1, t_ns: 1, source: 'guest', kind: 'agent_delta', response_id: 'rK', text })
@@ -130,9 +132,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a window that measured nothing.
   assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(1)} ms of CPU`)
-  assert.ok(referenceMs <= BACKSTOP_MS,
-    `reference sample is ${referenceMs.toFixed(1)} ms of CPU, backstop ${BACKSTOP_MS} ms`)
-  const bound = WINDOW_MARGIN * referenceMs
+  const bound = Math.min(WINDOW_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   const slowest = new Map()
   const noteSlowest = (path, ms, shape) => {
@@ -147,7 +147,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
     }
     const windowMs = timed(() => windowRun(text), bound)
     const detail = `${windowPath}: ${shape}: ${windowMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms on the reference)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(windowMs <= bound, detail)
     noteSlowest(windowPath, windowMs, shape)
   }

@@ -188,13 +188,13 @@ const REFERENCE_TEXT = (() => {
 // The window runs redactText over each delta and puts its rows and change payloads together on top,
 // so it costs a multiple of the reference: 1.29x measured here (worst of this adversarial set, Node
 // 24.13.1). The window reads only its keep, so a 160k input costs no more than a 16k one.
-// WINDOW_MARGIN matches the fuzz window's 4.5, 3.5x above that 1.29x. The backstop is on the
-// reference, not on the bound: a shared rule gone quadratic makes the reference itself exceed it,
-// and no multiple of a reference that high may pass. A quadratic rule at 80k characters is 6.4e9
-// steps, seconds of CPU, far past the bound or the backstop. The text paths keep the absolute
-// ceiling: they are the plain rule pass over fixed-size inputs, with no per-path constant to scale.
+// WINDOW_MARGIN matches the fuzz window's 4.5, 3.5x above that 1.29x. The absolute backstop
+// (400 ms, as in the fuzz guards) caps how far a slow reference may widen the bound; a quadratic
+// rule at 80k characters is 6.4e9 steps, seconds of CPU, far past the bound or the backstop. The
+// text paths keep the absolute ceiling: they are the plain rule pass over fixed-size inputs, with
+// no per-path constant to scale.
 const WINDOW_MARGIN = 4.5
-const BACKSTOP_MS = 200
+const BACKSTOP_MS = 400
 
 const catalog = loadCatalog()
 let seq = 0
@@ -260,9 +260,7 @@ test('80k characters of adversarial input stay fast, in the window and the brows
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a window that measured nothing.
   assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
-  assert.ok(referenceMs <= BACKSTOP_MS,
-    `reference sample is ${referenceMs} ms of CPU, backstop ${BACKSTOP_MS} ms`)
-  const bound = WINDOW_MARGIN * referenceMs
+  const bound = Math.min(WINDOW_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${WINDOW_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   const textPaths = [
     ['the window rules', redactText],
@@ -277,7 +275,7 @@ test('80k characters of adversarial input stay fast, in the window and the brows
     }
     const windowMs = timed(() => rig().push(text), bound)
     const detail = `${what}: the window: ${windowMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms on the reference)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(windowMs <= bound, detail)
   }
 })

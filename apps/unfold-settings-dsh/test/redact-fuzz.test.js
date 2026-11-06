@@ -108,11 +108,12 @@ const REFERENCE_TEXT = (() => {
 // SERVED_MARGIN 3 sits 1.49x above that CI reading and 1.94x above the local worst: a 2x
 // regression of either reading (3.10x local, 4.04x on CI) still fails, while a regression smaller
 // than 1.49x of the CI reading is the trade for clearing the runner's spread.
-// The backstop is on the reference, not on the bound: on a slower runner the served path scales
-// with it, but a shared rule gone quadratic makes the reference itself exceed it, and no multiple
-// of a reference that high may pass.
+// The absolute backstop caps how far a slow reference may widen the bound: 400 ms sits 1.7x above
+// the worst observed runner reading (mind's stream 225.8-233.2 ms at a 30.3-30.6 ms reference) and
+// only binds when 3 x reference passes it. A shared rule gone quadratic still fails: the text
+// ceiling catches it on the rule pass, and the served path runs past the cap.
 const SERVED_MARGIN = 3
-const BACKSTOP_MS = 200
+const BACKSTOP_MS = 400
 
 const PATHS = [['redactText', redactText], ['redact', (text) => redact({ host: { note: text } })]]
 
@@ -128,9 +129,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a served value that measured nothing.
   assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(1)} ms of CPU`)
-  assert.ok(referenceMs <= BACKSTOP_MS,
-    `reference sample is ${referenceMs.toFixed(1)} ms of CPU, backstop ${BACKSTOP_MS} ms`)
-  const bound = SERVED_MARGIN * referenceMs
+  const bound = Math.min(SERVED_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${SERVED_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   const slowest = new Map()
   const noteSlowest = (path, ms, shape) => {
@@ -145,7 +144,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
     }
     const servedMs = timed(() => servedRun(text), bound)
     const detail = `${servedPath}: ${shape}: ${servedMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms on the reference)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(servedMs <= bound, detail)
     noteSlowest(servedPath, servedMs, shape)
   }

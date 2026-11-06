@@ -117,11 +117,13 @@ const REFERENCE_TEXT = (() => {
 // measured 233.2 ms against a 30.6 ms reference and failed the old 200 ms bound (#513).
 // STREAM_MARGIN 10 sits 1.31x above that worst CI reading. The trade: a 2x regression of the stream
 // on a quiet machine (8.5x) stays inside the bound, while the text ceiling catches a shared
-// quadratic key rule. The backstop is on the reference, not on the bound: on a slower runner the
-// stream scales with it, but a shared rule gone quadratic makes the reference itself exceed it, and
-// no multiple may pass.
+// quadratic key rule. The absolute backstop caps how far a slow reference may widen the bound:
+// 400 ms sits 1.7x above the worst observed stream reading (225.8 and 233.2 ms at 30.3-30.6 ms
+// references, the #513 reds) and only binds when 10 x reference passes it (a reference above 40 ms,
+// 1.3x above the worst observed). A shared rule gone quadratic still fails: the text ceiling
+// catches it on the rule pass, and the stream runs past the cap.
 const STREAM_MARGIN = 10
-const BACKSTOP_MS = 200
+const BACKSTOP_MS = 400
 
 function push(text) {
   const mind = new MindStream({ now: () => 1 })
@@ -148,9 +150,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
   const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
   // A zero sample would make the bound zero and pass a stream that measured nothing.
   assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(1)} ms of CPU`)
-  assert.ok(referenceMs <= BACKSTOP_MS,
-    `reference sample is ${referenceMs.toFixed(1)} ms of CPU, backstop ${BACKSTOP_MS} ms`)
-  const bound = STREAM_MARGIN * referenceMs
+  const bound = Math.min(STREAM_MARGIN * referenceMs, BACKSTOP_MS)
   const margin = `${STREAM_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
   const slowest = new Map()
   const noteSlowest = (path, ms, shape) => {
@@ -178,7 +178,7 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
     }
     const streamMs = timed(() => streamRun(text), bound)
     const detail = `${streamPath}: ${shape}: ${streamMs.toFixed(1)} ms of CPU, ` +
-      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms on the reference)`
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${BACKSTOP_MS} ms)`
     assert.ok(streamMs <= bound, detail)
     noteSlowest(streamPath, streamMs, shape)
   }
