@@ -504,9 +504,14 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
 
   const binDir = binDirOf(env);
   const onPanePath = String(pane.path ?? "").split(delimiter).includes(binDir);
-  add("dsh-tui-path", onPanePath,
-    `${binDir} is ${onPanePath ? "" : "not "}on the PATH Herdr panes get (${pane.login ? `login shell ${pane.shell}` : "this process; no login shell answer"})${onPanePath ? "" : "; Herdr's + menu checks its own PATH too, so restart Herdr after adding it"}`,
-    `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ${pane.config}`);
+  // A PATH that lacks ~/.local/bin is a note while nothing is installed (the opt-in was not
+  // taken), not a broken install: exit 2, never 1. Installed, it is a real break.
+  checks.push({
+    check: "dsh-tui-path",
+    ok: onPanePath || !installed,
+    detail: `${binDir} is ${onPanePath ? "" : "not "}on the PATH Herdr panes get (${pane.login ? `login shell ${pane.shell}` : "this process; no login shell answer"})${onPanePath ? "" : "; Herdr's + menu checks its own PATH too, so restart Herdr after adding it"}`,
+    fix: onPanePath ? null : `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ${pane.config}`,
+  });
 
   const guide = read(join(env.HOME || homedir(), ".dsh-tui", "onboarding.json"));
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");

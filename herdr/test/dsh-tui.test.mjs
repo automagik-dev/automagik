@@ -144,6 +144,10 @@ test("doctor states dsh, the tui profile and the shim honestly, before and after
   assert.match(none.checks.find((c) => c.check === "dsh").detail, /not found on the PATH Herdr panes get/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-profile").detail, /not installed/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-shim").detail, /not installed/);
+  const noPath = doctorDshTui({ env: missing.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/sh", config: "~/.profile", login: true } });
+  assert.equal(noPath.code, 2, "nothing installed and ~/.local/bin off PATH is still not applicable, never broken");
+  assert.equal(noPath.checks.find((c) => c.check === "dsh-tui-path").ok, true);
+  assert.match(noPath.checks.find((c) => c.check === "dsh-tui-path").fix, />> ~\/\.profile$/);
 
   const s = scene(t);
   const before = doctorDshTui({ env: s.env });
