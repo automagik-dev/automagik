@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // A fake ACP agent for tests. Each prompt: two text chunks, one shell-like tool call that asks
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
-// calls; one that says "hang" waits until it is cancelled.
+// calls; one that says "hang" waits until it is cancelled; one that says "bridge <tool>" calls
+// that tool on the `dsh` MCP server it was given and reports what it answered; one that says
+// "drift" announces a built-in tool call (a call `tools: []` should have removed) and waits.
+//
+// It connects every `mcpServers` entry of `session/new` itself, as both real adapters do, so the
+// plugin's bridge is exercised over real stdio. With FAKE_ACP_SKIP_MCP=1 it connects none, as
+// codex-acp does when the person's own Codex config already defines that server name.
 //
 // Like Claude Code's and Codex's adapters it offers its models and each model's efforts as
 // session config options (categories `model` and `thought_level`, the effort list rebuilt per
@@ -9,6 +15,8 @@
 // FAKE_ACP_NO_OPTIONS=1 in its environment it offers none, as an older agent would. Its effort
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
 // out, as Codex's does.
+import { spawn } from 'node:child_process'
+import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 import { AgentSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk'
 
@@ -19,6 +27,13 @@ const MODELS = [
 ]
 const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
 const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
+const SKIP_MCP = process.env.FAKE_ACP_SKIP_MCP === '1'
+// A test can read what the client asked for (its servers, a fork, a close) from this file.
+const TRACE = process.env.FAKE_ACP_TRACE
+const trace = (entry) => {
+  if (TRACE === undefined) return
+  try { appendFileSync(TRACE, `${JSON.stringify({ pid: process.pid, ...entry })}\n`) } catch {}
+}
 
 function configOptions(session) {
   const model = MODELS.find(entry => entry.value === session.model)
@@ -29,18 +44,99 @@ function configOptions(session) {
   return options
 }
 
+// One MCP server as an agent's adapter would use it: newline-delimited JSON-RPC over its stdio.
+function connect(server) {
+  const env = { ...process.env, ...Object.fromEntries((server.env ?? []).map(({ name, value }) => [name, value])) }
+  const child = spawn(server.command, server.args ?? [], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+  child.stdin.on('error', () => {})
+  let seq = 0
+  const pending = new Map()
+  let buffer = ''
+  child.stdout.setEncoding('utf8')
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.trim() === '') continue
+      let message
+      try { message = JSON.parse(line) } catch { continue }
+      if (message.id === undefined) continue
+      const waiter = pending.get(message.id)
+      if (waiter === undefined) continue
+      pending.delete(message.id)
+      waiter(message)
+    }
+  })
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = ++seq
+    pending.set(id, (message) => (message.error === undefined ? resolve(message.result) : reject(new Error(message.error.message))))
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+  })
+  const notify = (method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`)
+  const ready = (async () => {
+    await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake-agent', version: '1' } })
+    notify('notifications/initialized', {})
+    const listed = await request('tools/list', {})
+    return Array.isArray(listed?.tools) ? listed.tools : []
+  })()
+  return { name: server.name, child, request, tools: ready, close: () => { try { child.stdin.end() } catch {} ; try { child.kill('SIGTERM') } catch {} } }
+}
+
+async function attach(session, servers) {
+  session.mcp = new Map()
+  if (SKIP_MCP) return
+  for (const server of servers ?? []) {
+    const connection = connect(server)
+    session.mcp.set(server.name, connection)
+    await connection.tools.catch(() => [])
+  }
+}
+
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
 const sessions = new Map()
+let created = 0
 
-new AgentSideConnection(conn => ({
+function newSession(sessionId, cwd) {
+  const session = { cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort, mcp: new Map() }
+  sessions.set(sessionId, session)
+  return session
+}
+
+const implementation = {
   async initialize() {
     return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: false }, authMethods: [] }
   },
   async newSession(params) {
-    const sessionId = `fake-${sessions.size + 1}`
-    const session = { cwd: params.cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort }
-    sessions.set(sessionId, session)
+    const sessionId = `fake-${++created}`
+    trace({ event: 'new-session', sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
+    const session = newSession(sessionId, params.cwd)
+    await attach(session, params.mcpServers)
     return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+  },
+  async unstable_forkSession(params) {
+    const source = sessions.get(params.sessionId)
+    if (source === undefined) throw RequestError.invalidParams(undefined, `Unknown session: ${params.sessionId}`)
+    const sessionId = `fake-${++created}`
+    const session = newSession(sessionId, params.cwd ?? source.cwd)
+    // The fork continues the same conversation: the fake carries its turn count (the point the
+    // plugin's refresh relies on) and the agent's mode.
+    session.turns = source.turns
+    session.model = source.model
+    session.effort = source.effort
+    session.forkedFrom = params.sessionId
+    trace({ event: 'fork', from: params.sessionId, sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
+    await attach(session, params.mcpServers)
+    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+  },
+  async closeSession({ sessionId }) {
+    trace({ event: 'close', sessionId })
+    const session = sessions.get(sessionId)
+    if (session !== undefined) {
+      session.closed = true
+      for (const connection of session.mcp.values()) connection.close()
+    }
+    return {}
   },
   async setSessionConfigOption({ sessionId, configId, value }) {
     const session = sessions.get(sessionId)
@@ -79,6 +175,60 @@ new AgentSideConnection(conn => ({
       if (!session.cancelled) await new Promise((resolve) => { session.wake = resolve })
       return { stopReason: 'cancelled' }
     }
+    // A tool call the agent should not be able to make with `tools: []`: the plugin's drift
+    // detector records it and cancels on this trace.
+    if (/drift/.test(said)) {
+      const toolCallId = `drift-${session.turns}`
+      await update({ sessionUpdate: 'tool_call', toolCallId, name: 'Bash', title: 'Bash: rm -rf build', kind: 'execute', status: 'pending', rawInput: { command: 'rm -rf build' } })
+      if (!session.cancelled) await new Promise((resolve) => { session.wake = resolve })
+      return { stopReason: 'cancelled' }
+    }
+    // The adapter's own deferred-tool loader, seen with `tools: []`: it is not a DSH tool.
+    if (/toolsearch/.test(said)) {
+      const toolCallId = `search-${session.turns}`
+      await update({ sessionUpdate: 'tool_call', toolCallId, name: 'ToolSearch', title: 'ToolSearch', kind: 'other', status: 'pending', rawInput: { query: 'select:mcp__dsh__bash' } })
+      await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'found bash' } }] })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' I found it.' } })
+      return { stopReason: 'end_turn' }
+    }
+    // A tool call on the `dsh` bridge, by the name Claude Code puts on the wire. With "permit"
+    // the call first asks session/request_permission, as Claude Code does in Manual; without it
+    // the call runs with no ACP-level request at all, as it would in Auto.
+    const bridged = /bridge(-permit)? (\S+)/.exec(said)
+    if (bridged !== null) {
+      const permit = bridged[1] === '-permit'
+      const name = bridged[2]
+      const connection = session.mcp.get('dsh')
+      const toolCallId = `bridge-${session.turns}`
+      const structured = `mcp__dsh__${name}`
+      const toolCall = { toolCallId, name: structured, title: structured, kind: 'other', status: 'pending', rawInput: {}, _meta: { claudeCode: { toolName: structured } } }
+      await update({ sessionUpdate: 'tool_call', ...toolCall })
+      let permitted = 'not-asked'
+      if (permit) {
+        const answer = await conn.requestPermission({
+          sessionId,
+          toolCall,
+          options: [
+            { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+          ],
+        })
+        permitted = answer.outcome.outcome === 'selected' ? answer.outcome.optionId : answer.outcome.outcome
+        if (permitted === 'cancelled') return { stopReason: 'cancelled' }
+      }
+      let text = 'the bridge is not connected'
+      if (connection !== undefined) {
+        try {
+          const answer = await connection.request('tools/call', { name, arguments: {} })
+          text = (answer.content ?? []).map(block => block.text ?? '').join('\n') || '(no text)'
+        } catch (error) {
+          text = `bridge failed: ${error?.message ?? error}`
+        }
+      }
+      await update({ sessionUpdate: 'tool_call_update', toolCallId, status: session.cancelled ? 'failed' : 'completed', content: [{ type: 'content', content: { type: 'text', text } }] })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` The bridge said: ${text} (permit ${permitted})` } })
+      return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
+    }
     const calls = /twice/.test(said) ? 2 : 1
     for (let n = 1; n <= calls; n++) {
       const toolCallId = `call-${session.turns}-${n}`
@@ -104,4 +254,6 @@ new AgentSideConnection(conn => ({
     }
     return { stopReason: 'end_turn' }
   },
-}), stream)
+}
+
+const conn = new AgentSideConnection(() => implementation, stream)

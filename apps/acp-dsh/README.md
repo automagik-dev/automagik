@@ -21,12 +21,30 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   Session's model, then its effort (the model first: the efforts are that model's). No effort
   leaves the agent's own. A model or effort the agent does not offer fails the turn, naming what
   it offers.
-- **DSH tool cards and approvals.** The agent runs its own tools. Each tool call it makes ends
-  the model step with a call to `acp_tool`, a tool registered in that agent's scope only. DSH
-  writes the `tool/call` and `tool/result` rows and draws the card (a terminal for a command, a
-  diff for an edit, the generic card otherwise). When the agent asks permission for the call,
-  `acp_tool` asks DSH's approval service (`approval/asked`, `approval/decided`) and gives the
-  agent DSH's answer.
+- **DSH tool cards and approvals.** With `dshTools` off (the default), the agent runs its own
+  tools. Each tool call it makes ends the model step with a call to `acp_tool`, a tool registered
+  in that agent's scope only. DSH writes the `tool/call` and `tool/result` rows and draws the
+  card (a terminal for a command, a diff for an edit, the generic card otherwise). When the agent
+  asks permission for the call, `acp_tool` asks DSH's approval service
+  (`approval/asked`, `approval/decided`) and gives the agent DSH's answer.
+- **DSH's own tools over the bridge (`dshTools`).** On, the agent gets the Session's preset tool
+  set (standard, or cordis in creator mode) over one stdio MCP server per ACP session, named
+  `dsh` and spawned by the adapter with that session's arguments. The bridge has no port; it
+  reaches this plugin over a loopback back-channel with a per-session credential
+  (`DSH_BRIDGE_CREDENTIAL`), which binds a request to its Session and is revoked with the
+  bridge. Every DSH tool call is approved in DSH under the Session's level before it runs,
+  whatever the agent's own allow rules or hooks say, and the bridge writes the `tool/call` and
+  `tool/result` rows the chat shows. `acp-claude` runs with its built-in tools off
+  (`_meta.disableBuiltInTools`); a structured call that is not an MCP name is recorded as
+  `plugin:acp-dsh/toolset-drift` and its turn is cancelled — the detector runs at every session
+  start, and it detects and cancels because the update arrives after the call began.
+  `acp-codex` stays a two-tool-set session (its adapter has no such switch) and, until a
+  structured name is proven in its tool calls, draws no ACP card for an MCP call. The person's
+  own MCP servers load beside the bridge with their own tools and sign-ins. A tool-list change
+  (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
+  plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
+  (`acp_bridge_missing`) before the prompt. A Session that moves between providers carries its
+  transcript, redacted, and each crossing writes a provider-boundary row.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model
@@ -61,6 +79,10 @@ live settings: switching one (from the welcome's Connect AI, its Settings page *
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
+
+`dshTools` (default off, live) is the bridge, its DSH approval, the drift detector and live
+switching above. Off is the behaviour without it: each agent keeps its own tools and its own
+approvals. Turning it off is the rollback; a running Session keeps the transcript it has.
 
 `sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the
 model that writes a Session's title on an agent's chat when DSH's default model is an agent
