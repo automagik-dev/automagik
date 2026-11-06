@@ -27,11 +27,7 @@ const NO_ANSWER = "Herdr does not answer, layout files readable";
 const NOTHING = "no layout can be read";
 const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
-const NEW_FAIL_OPEN = "new gap: the remove fails open without saying why";
-const EXPECTED_FAIL = {
-  [`package remove | ${NO_ANSWER}`]: NEW_FAIL_OPEN,
-  [`package remove | ${NOTHING}`]: NEW_FAIL_OPEN,
-};
+const EXPECTED_FAIL = {};
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const makeCx = () => {
