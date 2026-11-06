@@ -298,6 +298,7 @@ test('a multi-part Bot\'s Details opened via Rename expands the part header, and
   await act(() => key('Escape'))
   assert.equal(ui.getSnapshot().details, 'bot', 'Escape in the rename field cancels editing, not the details')
   assert.equal(toggle().getAttribute('aria-expanded'), 'true')
+  focused(reopened.querySelector('.bt-drawer-name'), 'Escape gives focus back to the Bot\'s name button, not the toggle')
   reopened.focus()
   await act(() => key('Escape'))
   assert.equal(ui.getSnapshot().details, null, 'Escape closes the details')
@@ -327,4 +328,100 @@ test('a multi-part Bot\'s memory pill follows its Bot id, not the part', async (
   await act(() => pill.click())
   assert.deepEqual(opened, ['bot'], 'the pill opens the Bot\'s memory')
   assert.deepEqual(toggled, [], 'and never toggles the details')
+})
+
+// #338: Escape in the Rename field cancels. It saves nothing (not through the field's blur
+// either), keeps the details open, and gives focus back to the name button, not <body> or
+// the Details trigger. Enter still saves the typed name.
+test('Escape cancels a rename and gives focus back to the name button; Enter still saves', async (t) => {
+  const { window, document, root, key, focused, BotPanel } = mount(t)
+  const named = { ...roster, roomsById: { ...roster.roomsById, group: { id: 'group', name: 'Team', named: true, members: [] } } }
+  const updates = []
+  let leaving = false
+  const actions = {
+    closeOverlay: () => { leaving = true; render() },
+    updateRoom: async (id, patch) => { updates.push(['room', id, { ...patch }]) },
+    updateBot: async (id, patch) => { updates.push(['bot', id, { ...patch }]) },
+  }
+  const render = () => root.render(React.createElement(BotPanel, { pane: { id: 'group', view: 'details' }, leaving, roster: named, actions, ...panelProps }))
+  const trigger = document.querySelector('[data-details-subject="group"]')
+  trigger.focus()
+  await act(render)
+  const panel = document.querySelector('.bt-panel')
+  const type = async (value) => {
+    const input = panel.querySelector('input[aria-label="Group name"]')
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value)
+    await act(() => input.dispatchEvent(new window.Event('input', { bubbles: true })))
+  }
+  await act(() => panel.querySelector('.bt-drawer-name').click())
+  focused(panel.querySelector('input[aria-label="Group name"]'), 'Rename focuses the name field')
+  await type('Draft name')
+  await act(() => key('Escape'))
+  await tick()
+  assert.equal(panel.querySelector('input[aria-label="Group name"]'), null, 'Escape ends editing')
+  const button = panel.querySelector('.bt-drawer-name')
+  assert.ok(button, 'the name button is back')
+  assert.equal(button.textContent, 'Team', 'the shown name is unchanged')
+  assert.equal(leaving, false, 'Escape in the rename field does not close the details')
+  assert.ok(document.querySelector('.bt-panel') === panel && !panel.hasAttribute('inert'), 'the details stay open')
+  assert.notEqual(document.activeElement, document.body, 'focus does not fall to <body>')
+  assert.notEqual(document.activeElement, trigger, 'the Details trigger does not take the focus')
+  focused(button, 'Escape gives focus back to the name button')
+  await act(() => document.querySelector('#composer').focus())
+  assert.deepEqual(updates, [], 'a cancelled rename saves nothing, also after focus moves on')
+
+  await act(() => button.click())
+  await type('Renamed')
+  await act(() => key('Enter'))
+  await tick()
+  assert.equal(panel.querySelector('input[aria-label="Group name"]'), null, 'Enter ends editing')
+  assert.deepEqual(updates, [['room', 'group', { name: 'Renamed' }]], 'Enter saves the typed name once')
+  assert.equal(leaving, false, 'Enter does not close the details')
+})
+
+// Issue #337: the memory notice reuses the pill, which used to copy the Details state into
+// its own aria-expanded. Only the Details button may expose it; the pill's arrow reads
+// data-expanded instead.
+test('only the Details button exposes aria-expanded; the memory pill carries data-expanded for its arrow', async (t) => {
+  const { document, root, HeaderPill, createSource, indexRoster } = mount(t)
+  const h = React.createElement
+  const team = indexRoster({ bots: [{ id: 'bot', name: 'Omni', sessionId: 'bot' }], rooms: [] })
+  const shown = { ...roster, ...team, memory: true }
+  const news = { bot: { seen: Date.now(), at: Date.now() } }
+  const opened = []
+  const actions = new Proxy({ beginVisit() {}, endVisit() {}, openMemory: id => opened.push(id) },
+    { get: (known, name) => known[name] ?? (() => {}) })
+  for (const [view, expanded] of [['details', 'true'], ['chat', 'false']]) {
+    const ui = createSource({ visits: {}, details: 'bot', view, renaming: false, tab: null })
+    const useUi = select => React.useSyncExternalStore(ui.subscribe, () => select(ui.getSnapshot()))
+    await act(() => root.render(h(HeaderPill, {
+      sessionId: 'bot', useRoster: hook(shown), useSessions: hook({ byId: {} }), useSessionStatus: hook(new Map()),
+      useSession: hook({}), useActivity: hook({}), useMemoryNews: hook(news), useTurnClock: hook({}), useUi,
+      useLive: hook({}), useWork: hook({}), actions,
+    })))
+    const headerNode = document.querySelector('.bt-head')
+    assert.ok(headerNode, `${view}: the real header renders`)
+    const pill = headerNode.querySelector('.bt-pill[data-memory="updated"]')
+    assert.ok(pill, `${view}: the memory notice shows`)
+    const details = headerNode.querySelector('.bt-head-details[data-details-subject="bot"]')
+    assert.ok(details, `${view}: the Details button shows beside it`)
+    const exposed = [...headerNode.querySelectorAll('[aria-expanded]')]
+    const names = exposed.map(node => node.className).join(', ')
+    assert.equal(exposed.length, 1,
+      `${view}: exactly one header element carries aria-expanded, not ${names}`)
+    assert.ok(exposed[0] === details, `${view}: and it is the Details button`)
+    assert.equal(details.tagName, 'BUTTON',
+      `${view}: the expanded control is the real Details button`)
+    assert.equal(details.getAttribute('aria-expanded'), expanded)
+    assert.equal(details.getAttribute('aria-controls'), 'bt-conversation-panel')
+    assert.equal(headerNode.hasAttribute('aria-expanded'), false,
+      `${view}: the header itself exposes no expanded state`)
+    assert.equal(pill.tagName, 'BUTTON', `${view}: the memory pill is the button beside it`)
+    assert.equal(pill.hasAttribute('aria-expanded'), false, `${view}: the memory pill exposes no expanded state`)
+    assert.equal(pill.hasAttribute('aria-controls'), false, `${view}: the memory pill controls no pane`)
+    assert.equal(pill.getAttribute('data-expanded'), expanded, `${view}: the pill's arrow still reads the Details state`)
+    assert.match(pill.getAttribute('aria-label'), /^Memory updated\. Open Omni/)
+  }
+  await act(() => document.querySelector('[data-memory="updated"]').click())
+  assert.deepEqual(opened, ['bot'], 'the memory pill still opens the memory')
 })

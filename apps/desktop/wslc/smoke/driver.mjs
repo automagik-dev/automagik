@@ -4,6 +4,7 @@
 // (with a relay URL on RELAY_PORT and TOKEN), and stands in for the relay at the far end of each
 // tunnel: a connection that says "hello <token>" hears "relay <token>" back.
 import { FrameReader, encode } from '../lib/frame.mjs'
+import { maskSecrets } from './redact.mjs'
 
 export const TOKEN = 'ab'.repeat(32)
 export const RELAY_PORT = 9222
@@ -18,6 +19,9 @@ export class FakeElectron {
     this.protocolError = null
     this.#waiters = new Set()
     this.exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal, at: Date.now() })))
+    // 'close' follows both stdio pipes being drained and closed, so `stderr` is complete. 'exit'
+    // alone can beat the last chunk, and stdout's frame must not race stderr's launch line.
+    this.closed = new Promise(resolve => child.once('close', () => this.exited.then(resolve)))
     const reader = new FrameReader(frame => this.#take(frame), (error) => { this.protocolError = error })
     child.stdout.on('data', chunk => reader.push(chunk))
     child.stderr.on('data', (chunk) => { this.stderr += chunk.toString('utf8') })
@@ -63,7 +67,14 @@ export class FakeElectron {
       }
       const timer = setTimeout(() => {
         this.#waiters.delete(look)
-        reject(new Error(`no ${what} within ${ms} ms; frames: ${JSON.stringify(this.frames).slice(-2000)}; stderr: ${this.stderr.slice(-2000)}`))
+        // This message reaches the smoke's public log and its run summary through the FAIL line,
+        // and both parts carry the token: a `ready` frame's URL and stderr's launch line. Mask each
+        // part before its 2000-character cut: masking the cut would drop the key (`token=` or
+        // `/devtools/browser/`) and leave the value unmatched, while a cut of the masked text can
+        // only clip a `[redacted]` placeholder, never the token.
+        const frames = maskSecrets(JSON.stringify(this.frames)).slice(-2000)
+        const stderr = maskSecrets(this.stderr).slice(-2000)
+        reject(new Error(`no ${what} within ${ms} ms; frames: ${frames}; stderr: ${stderr}`))
       }, ms)
       if (!look()) this.#waiters.add(look)
     })
@@ -74,11 +85,15 @@ export class FakeElectron {
     return this.waitFor(frame => frame.type === 'ipc' && frame.message?.type === type, ms, `ipc ${type}`).then(frame => frame.message)
   }
 
-  /** Closes the launcher's stdin; answers how it exited and how long after the close it took. */
+  /**
+   * Closes the launcher's stdin; answers how it exited and how long after the close it took.
+   * Waits for 'close', not just 'exit': then both pipes have delivered everything, so a reader
+   * may compare what came on one with what came on the other.
+   */
   async close() {
     const at = Date.now()
     this.child.stdin.end()
-    const { code, signal, at: end } = await this.exited
+    const { code, signal, at: end } = await this.closed
     return { code, signal, ms: end - at }
   }
 }

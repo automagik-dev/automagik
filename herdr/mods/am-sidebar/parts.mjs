@@ -11,10 +11,14 @@
 //                      0012, D34). uninstall: the whole pack, as install.sh --uninstall does, plus the
 //                      briefing hooks, the hooks' entry point, the pack's keys and its command link.
 //                      The folders go to the kept set (<app home>/automagik-herdr/.prev) unless --purge.
+//                      Refused, with nothing changed, while a block of the layout Herdr shows names a
+//                      pack mod (guardLayouts, #420).
 //   herdr.am-<mod>     install: the pack, then the mod switched back on. uninstall: switched off
 //                      (moved to mods-disabled/, as the mod manager does); an update keeps it off.
 //                      The sidebar refuses while the CLI link or the briefing entry point still runs
 //                      code in its folder (sidebarCarries), and stops refusing once am's copies do.
+//                      Any of them refuses while a block of the layout Herdr shows names it (Herdr
+//                      would drop that layout for plain Herdr; guardLayouts, #414).
 //   herdr.layout       install: the pack, then the automagik layout put back if it was removed.
 //                      uninstall: the layout removed while it is the pack's copy (layout=removed).
 // Never written: Herdr's shared.json or data/, Pocket Link (mods/pocket-link) or its LaunchAgent,
@@ -30,7 +34,10 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
-import { OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker } from "./release.js";
+import {
+  HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
+} from "./release.js";
+import { change, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
 export const NODE_MIN = "22.7.0";
@@ -236,7 +243,7 @@ export function install(ctx, part, source) {
       if (!record.mods.includes(part.mod)) throw new Error(`mods/${part.mod} is not the pack's (a folder of your own is left alone; install.sh --adopt replaces it)`);
       const live = join(ctx.modsDir, part.mod), off = join(ctx.offDir, part.mod);
       if (!exists(live) && exists(off) && !isLink(off)) {
-        renameSync(off, live);
+        change(ctx.appHome, [{ op: "move", from: off, to: live }]);
         ctx.log(`switched ${part.mod} back on (mods-disabled/ → mods/)`);
         changed = true;
       }
@@ -267,6 +274,31 @@ export function install(ctx, part, source) {
 
 // ---- uninstall ----
 
+/**
+ * The layout Herdr shows, read as install.sh's shown_layout reads it ("layout" in `herdr-app
+ * status`), and its tree from <app home>/layouts/<name>.json: `{ name, tree, why }`. `tree` is null
+ * and `why` says so when Herdr gives no layout (no herdr-app, Herdr not running), a name that is
+ * not a plain file name in layouts/ (a path: never read, #420), or its file is not there or unreadable.
+ */
+export function shownLayout(ctx) {
+  const r = ctx.exec("herdr-app", ["status"], { env: ctx.env, timeout: 10_000 });
+  const name = r.code === 0 ? (/"layout"\s*:\s*"([^"]*)"/.exec(r.stdout)?.[1] ?? null) : null;
+  if (!name) return { name: null, tree: null, why: r.missing ? "no herdr-app" : "herdr-app status gave no layout: is Herdr running?" };
+  if (!/^[^/\\]+$/.test(name) || name === "." || name === "..") {
+    return { name, tree: null, why: `Herdr shows the layout "${name}", a name with a path, so no file in ${join(ctx.appHome, "layouts")} was read` };
+  }
+  const file = join(ctx.appHome, "layouts", `${name}.json`);
+  if (!isFile(file)) return { name, tree: null, why: `Herdr shows ${name}, and ${file} is not there` };
+  try {
+    return { name, tree: JSON.parse(readFileSync(file, "utf8")), why: null };
+  } catch (e) {
+    return { name, tree: null, why: `${file} is unreadable (${e.message})` };
+  }
+}
+
+/** The layout Herdr shows, as layoutSafe.mjs change() asks it. */
+const asking = (ctx) => () => shownLayout(ctx);
+
 /** A mod switched off: mods/<m> → mods-disabled/<m>, where Herdr never looks and an update keeps it. */
 function switchOff(ctx, part) {
   const record = readMarker(ctx.modsDir);
@@ -277,8 +309,15 @@ function switchOff(ctx, part) {
   if (isLink(live)) return { ok: true, changed: false, detail: `mods/${part.mod} is a link (a checkout?): left alone` };
   if (exists(live)) {
     if (exists(off)) throw new Error(`${off} is in the way: move it, then uninstall again`);
-    mkdirSync(ctx.offDir, { recursive: true });
-    renameSync(live, off);
+    // Before a pack mod leaves mods/ (#414), as the mod manager's off and remove (#305): refused while
+    // a block of the shown layout names it, since Herdr would drop that layout and show plain Herdr;
+    // a right-click menu's mod goes, with a note. With no shown layout to read (shownLayout's `why`),
+    // it goes as the mod manager's does (fail open), never silently: each layout in layouts/ whose
+    // blocks name it is listed, with what to do if Herdr shows it.
+    const r = change(ctx.appHome, [{ op: "move", from: live, to: off, mkdir: true }], {
+      ask: asking(ctx), needed: "refuse", unknown: "warn", then: "uninstall it", log: ctx.log,
+    });
+    if (r.refused) throw new Error(r.refused);
     ctx.log(`switched ${part.mod} off (mods/ → mods-disabled/): an update keeps it off; \`am install ${part.id}\` switches it back on`);
     changed = true;
   }
@@ -286,7 +325,12 @@ function switchOff(ctx, part) {
   return { ok: true, changed, detail: `${part.mod} is off` };
 }
 
-/** The layout out while it is still the pack's copy; the record says removed, so no update adds it back. */
+/**
+ * The layout out while it is still the pack's copy; the record says removed, so no update adds it back.
+ * Refused while Herdr shows it (#430, as the mod manager's package remove, #420): Herdr would drop the
+ * layout it shows for plain Herdr. The shown layout's name decides; when it cannot be read
+ * (shownLayout's `why`), the layout goes (fail open), and the log says why and how to switch back.
+ */
 function removeLayout(ctx) {
   const record = readMarker(ctx.modsDir);
   if (!record) return { ok: true, changed: false, detail: "the pack is not installed: nothing to do" };
@@ -297,8 +341,13 @@ function removeLayout(ctx) {
     if (!isFile(ref) || !readFileSync(live).equals(readFileSync(ref))) {
       return { ok: true, changed: false, detail: `${live} differs from the pack's: it is yours, left as it is` };
     }
-    rmSync(live);
-    ctx.log(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
+    // #448 stays open here: a live file inside a linked layouts/ is removed through the link.
+    const r = change(ctx.appHome, [{ op: "remove", path: live }], { ask: asking(ctx), shownFile: "refuse", then: "uninstall it" });
+    if (r.refused) throw new Error(r.refused);
+    const { shown } = r;
+    ctx.log(shown.name
+      ? `removed ${live}`
+      : `removed ${live} without knowing the layout Herdr shows (${shown.why}); if Herdr shows it, switch layouts (ctrl-shift-l)${switchCommand(null)}`);
     changed = true;
   }
   if (record.layout !== "removed") { writeMarker(ctx.modsDir, { ...record, layout: "removed" }); changed = true; }
@@ -324,25 +373,31 @@ function uninstallPack(ctx, { purge }) {
   const ownEntry = packEntry(ctx);
 
   const live = join(ctx.appHome, PACK_LAYOUT), ref = join(state, "automagik.json");
-  if (record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref))) {
-    rmSync(live);
-    lines.push(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
-  }
-
+  const dropLayout = record.layout === "added" && isFile(live) && !isLink(live) && isFile(ref) && readFileSync(live).equals(readFileSync(ref));
   // The record's folders, wherever they are (mods/, or mods-disabled/ for one switched off).
   const next = fresh(state, ".prev-next-");
-  mkdirSync(next, { recursive: true });
   const moved = [];
   const movedOff = [];
+  const ops = dropLayout ? [{ op: "remove", path: live }] : [];
   for (const m of record.mods.filter(packFolder)) {
     const on = join(ctx.modsDir, m), off = join(ctx.offDir, m);
     const at = isLink(on) ? null : exists(on) ? on : exists(off) && !isLink(off) ? off : null;
     if (isLink(on)) lines.push(`left ${on}: it is a link, not a folder this install put there`);
     if (!at) continue;
-    renameSync(at, join(next, m));
+    ops.push({ op: "move", from: at, to: join(next, m) });
     moved.push(m);
     if (at === off) movedOff.push(m);
   }
+  // Before anything leaves (#420): refused while the shown layout's blocks name a pack mod in mods/;
+  // with no shown layout, each other layout naming one is listed (fail open). Open here, for PR B:
+  // #450 (a linked mod folder is not checked, and the shown layout's own file is not refused) and
+  // #448 (the pack's layout inside a linked layouts/ is removed through the link).
+  const r = change(ctx.appHome, ops, {
+    ask: asking(ctx), needed: "refuse", unknown: "warn", then: "uninstall the pack", pack: true,
+    skip: dropLayout ? [basename(PACK_LAYOUT)] : [], log: ctx.log, prepare: () => mkdirSync(next, { recursive: true }),
+  });
+  if (r.refused) throw new Error(r.refused);
+  if (dropLayout) lines.unshift(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
   // A folder already kept (one a rollback moved out) stays kept beside them.
   if (moved.length && isFile(join(prev, ".pack"))) {
     const kept = readFileSync(join(prev, ".pack"), "utf8").match(/^mods=(.*)$/m)?.[1].split(",").map((s) => s.trim()).filter(packFolder) ?? [];
@@ -370,7 +425,10 @@ function uninstallPack(ctx, { purge }) {
   // What the person had before: each adopted folder comes back where mods/ is free.
   for (const a of record.adopted) {
     const from = join(state, a.path), to = join(ctx.modsDir, a.mod);
-    if (isDir(from) && !isLink(from) && !exists(to)) { renameSync(from, to); lines.push(`put back ${to}, the one that was there before the install`); }
+    if (isDir(from) && !isLink(from) && !exists(to)) {
+      change(ctx.appHome, [{ op: "move", from, to }]);
+      lines.push(`put back ${to}, the one that was there before the install`);
+    }
   }
 
   if (ownEntry) {
@@ -384,7 +442,7 @@ function uninstallPack(ctx, { purge }) {
   lines.push(...unlinkCommands(ctx));
   rmSync(markerOf(ctx.modsDir), { force: true });
   // The hooks journal is the pack's only while the entry point is; the layout reference always is.
-  if (purge) for (const f of [...(ownEntry ? ["hooks-journal.json"] : []), "automagik.json"]) rmSync(join(state, f), { force: true });
+  if (purge) for (const f of [...(ownEntry ? ["hooks-journal.json"] : []), "automagik.json", HELD_FILE]) rmSync(join(state, f), { force: true });
   if (record.usagemeter || Object.keys(record.usagemeterOn).length) {
     lines.push("left usagemeter where it is (~/.local/bin/usagemeter, and linked machines): it is its own part");
   }

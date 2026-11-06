@@ -54,7 +54,14 @@ function start() {
     call: async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
       method: 'POST', body: JSON.stringify({ endpoint, payload }),
     }))).json(),
-    stop: () => rmSync(home, { recursive: true, force: true, maxRetries: 5 }),
+    stop: async () => {
+      // Every hold change saves the team in the background (browser.js), and a failed
+      // endpoint logs in the background too (channel.js -> diagnostics.js). The
+      // runtime's effect cleanups settle both writers and release the state lock, so
+      // the home is removed only after nothing writes to it.
+      await ctx.dispose()
+      rmSync(home, { recursive: true, force: true })
+    },
   }
 }
 
@@ -319,7 +326,7 @@ test('browser-give-back restores the hold when the Bot cannot be told', async (t
   failFlush(new Error('flush failed'))
   const failed = await call('browser-give-back', { botId: 'b2', callId: 'call-1', outcome: 'done' })
   assert.equal(failed.ok, false)
-  assert.match(failed.error.message, /flush failed/)
+  assert.equal(failed.error.message, 'Something went wrong (Error).')
   assert.deepEqual(rt.browserChannel.holdOf('b2'), BOT_HOLD)
 
   failFlush(undefined)

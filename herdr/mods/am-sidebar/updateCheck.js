@@ -4,7 +4,7 @@
 // "no update", tried again after RETRY_MS. Pure: no `herdr` import (exec is passed in), so
 // `node --test` runs it; main.js wires it to Herdr's exec, timer and notify. Apache-2.0.
 
-import { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS, autoHold, noticeText } from "./release.js";
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS, autoHold, heldModLine, noticeText } from "./release.js";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, RETRY_MS };
 
@@ -184,6 +184,19 @@ function autoOf(value) {
   return { on: a.on, managed: a.managed, skip: typeof a.skip === "string" ? a.skip : null, why: typeof a.why === "string" ? a.why : null };
 }
 
+/** The mods an install held for a layout (update.mjs `installed.held`, #420, #432), as far as they read. */
+const heldOf = (value) => (Array.isArray(value)
+  ? value.filter((h) => typeof h?.mod === "string" && Array.isArray(h.layouts) && h.layouts.length > 0 && h.layouts.every((l) => typeof l === "string"))
+  : []);
+
+/** The held list in release.js HELD_FILE's `text`, for `version` only: another release's says nothing about this one. */
+export function heldFrom(text, version) {
+  try {
+    const file = JSON.parse(text);
+    return file?.version === version ? heldOf(file.held) : [];
+  } catch { return []; }
+}
+
 /**
  * An install's answer (`node update.mjs apply`) as STATE_KEY fields over the `state` before it:
  * `{ kind: "installed", from, current, latest }` when a release went in; the check's own answer
@@ -195,7 +208,8 @@ export function applyPatch(result, state, now) {
   const version = answer?.installed?.version;
   if (result?.code === 0 && typeof version === "string") {
     return { kind: "installed", from: answer.current ?? state.current ?? null, current: version, latest: version, update: null,
-      why: null, applyError: null, at: now, restartBots: Array.isArray(answer.notice) && answer.notice.length > 0 };
+      why: null, applyError: null, at: now, restartBots: Array.isArray(answer.notice) && answer.notice.length > 0,
+      heldMods: heldOf(answer.installed.held) };
   }
   // An install on its own that update.mjs held back (the setting, a rollback's skip, another run):
   // nothing happened and nothing is wrong; the check's answer stands.
@@ -334,14 +348,14 @@ export const RELOAD_GRACE_MS = 30_000;
 
 /**
  * At a build's init, what its own VERSION means for the last install: `{ ready: true, from,
- * restartBots }` to announce now (the old build recorded it), `{ ready: false, from, id }` while
+ * restartBots, held }` to announce now (the old build recorded it), `{ ready: false, from, id }` while
  * the old build's lock is on it (wait for its answer, up to LANDING_WAIT_MS), or null.
  */
 export function landing(state, version, now) {
   if (typeof version !== "string" || version === "" || state?.announced === version) return null;
   const landed = objectOr(state?.landed, null);
   if (landed?.version === version && typeof landed.at === "number" && now - landed.at < LANDING_MS) {
-    return { ready: true, from: landed.from ?? null, restartBots: landed.restartBots === true };
+    return { ready: true, from: landed.from ?? null, restartBots: landed.restartBots === true, held: heldOf(landed.held) };
   }
   const busy = objectOr(state?.busy, null);
   if (busy?.what === "apply" && busy.announce === true && busy.to === version && typeof busy.since === "number" && now - busy.since < LANDING_MS) {
@@ -351,16 +365,18 @@ export function landing(state, version, now) {
 }
 
 /** The notice after Herdr reloaded the mods into `version`. Bots are herdr-core's terminals: a mod
- *  reload doesn't touch them. A moved briefing hook (rare: the sidebar's folder renamed) does. */
-export function landedNotice(version, from, restartBots = false) {
+ *  reload doesn't touch them. A moved briefing hook (rare: the sidebar's folder renamed) does.
+ *  `held`: the mods this install left in mods/ for a layout, each said with what retires it. */
+export function landedNotice(version, from, restartBots = false, held = []) {
   const back = from ? ` \`automagik-herdr update --rollback\` puts ${from} back.` : "";
   return { title: `Automagik Herdr updated to ${version}`, level: "success",
     body: (restartBots ? "Your bots kept running; restart each Claude bot (automagik-herdr restart <bot>) so it gets its briefing again."
-      : "Your bots kept running.") + back };
+      : "Your bots kept running.") + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") + back };
 }
 
 /** The old build's notice when Herdr did not reload the mods within RELOAD_GRACE_MS. */
-export function noReloadNotice(version) {
+export function noReloadNotice(version, held = []) {
   return { title: `Automagik Herdr updated to ${version}`, level: "success",
-    body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version." };
+    body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version."
+      + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") };
 }

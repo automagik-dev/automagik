@@ -176,7 +176,7 @@ test('view-reply claims the card, refuses a stale or invalid answer, and restore
   failFlush(new Error('flush failed'))
   const failed = await call('view-reply', { sessionId: 'writer', viewId: pending.id, action: 'pick', values: { selected: ['B', 'A'] } })
   assert.equal(failed.ok, false)
-  assert.match(failed.error.message, /flush failed/)
+  assert.equal(failed.error.message, 'Something went wrong (Error).')
   assert.equal(sent.length, 1)
   assert.equal((await team()).views['writer-now'].id, pending.id)
   sent.length = 0

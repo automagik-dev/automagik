@@ -84,7 +84,9 @@ their blocks from (see [Wiring](#wiring-your-layout)); or switch to the `automag
 Add options after `bash -s --`: `--yes` answers every question, `--version 3.58.0` installs that
 Automagik release (one that carries the pack), `--adopt` takes over same-named mods,
 `--uninstall` moves the pack out of `mods/`, puts back what it adopted and removes the layout if
-the installer added it and you haven't changed it.
+the installer added it and you haven't changed it. It is refused, with nothing moved, while the
+layout Herdr shows uses a pack mod: switch layouts first (ctrl-shift-l, or
+`herdr-app do layout.switch '{"name":"main"}'`).
 
 It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
 meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
@@ -140,7 +142,10 @@ The installer:
 - replaces the `automagik` layout while it is the unchanged one those releases shipped;
 - renames the pack mods your own layouts and `keys.json` name, each file backed up first in
   `automagik-herdr/backup/layouts-<date>/` (a mod you installed yourself keeps its name until
-  `--adopt`), and prints what a layout of yours still lacks;
+  `--adopt`), and prints what a layout of yours still lacks. A layout it cannot rewrite (a link,
+  whose target is yours, or a shape it does not read) keeps its old folder in `mods/` beside the
+  new one, said on every run, until you name the new folder in it or take the block out; the next
+  update then retires the old folder;
 - points the `automagik-herdr` link at `am-sidebar`'s command;
 - moves the bots' briefing hooks to a fixed path and lists, at the end of its run, every file it
   rewrote. A Claude session already running in one of those projects keeps the old hook and gets
@@ -194,7 +199,11 @@ a place in a team, and keeps that team in front of every agent and of you.
   once, never again each turn. Its team's live state, each member's status and latest report,
   is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
   once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
-  bot's instructions reaches it at its next `automagik-herdr restart`.
+  bot's instructions reaches it at its next `automagik-herdr restart`. Claude Code's `/restart`
+  refuses a session started with that briefing (`--append-system-prompt-file`), so the briefing
+  tells every bot, whatever its agent, to point you to `automagik-herdr restart <bot>` (run in
+  the project's folder, or with `--project`; it keeps the bot's agent and model) or the bot's
+  Restart instead of its agent's own restart command.
 - **Typed notes when blocked.** A member started under its lead's pane makes herdr-core type
   its `blocked`, `error` and exit notes into the lead's pane, so the lead wakes up.
 - **Any harness.** Bots run Claude Code, Codex, Antigravity, Kimi, Oh My Pi or any agent Herdr
@@ -231,6 +240,20 @@ and your `programs.json`. What happened isn't shown for those bots yet, and a Cl
 starts without its per-turn briefing until automagik-herdr is installed on that machine. A
 machine that isn't answering shows its bots as last seen, dimmed, and its menu says so.
 
+Start and Restart there can take minutes when the machine answers slowly (every question to it
+has its own bound; the CLI's worst case is about 6 min for a start and 9.5 min for a restart), so
+the sidebar runs them with Herdr's longest exec timeout, 10 min. A Herdr that doesn't take an exec
+timeout ends a mod's programs at 30 s, which could land after the new pane started: a pane with no
+attach row, or after a restart two panes on one session. On such a Herdr, or one that can't say,
+Start still runs, with that 30 s as its deadline: just before it would ask for a new space, and
+again just before `hc run`, it checks what is left, and starts nothing when too little is left to
+finish (20 s and 16 s; the calls after `hc run` then get 5 s each). A space made for it stays.
+Restart isn't run there: after `hc run` it can still wait 30 s for the agent. Either way the
+sidebar names the command to run from a terminal instead
+(`automagik-herdr start <bot> --project <folder> --machine <machine>`, or `restart`), where
+no limit applies. When Herdr ends the CLI anyway, the sidebar says it may have stopped part-way and
+what to check (`automagik-herdr whois --bot`, `hc ls`).
+
 On its first load the pack switches Herdr to the Automagik theme, light or dark following the
 system. Both halves are listed in Herdr's Settings, and a theme you pick later stays: the pack
 switches it once and never again. The theme files it copies into Herdr's `themes/` folder are
@@ -257,6 +280,7 @@ automagik-herdr start <bot> [--space ID] [--tab ID]
 automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
+automagik-herdr import --from-hc [--squad-label L] [--apply]
 automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr history <bot>
 automagik-herdr brief <bot>
@@ -266,6 +290,17 @@ automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
 automagik-herdr update [--check | --rollback]
 ```
 
+- `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
+  labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
+  that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
+  the one whose name or template ends in `-cap` or `-captain`) reports to the main bot and the rest
+  to their captain. Without `--apply` it prints the plan and changes nothing; with it, it prints
+  the plan, writes every new bot at once and attaches each seat as `attach` does, never with
+  `--move`. A pane already playing its bot is left as it is, so a second run changes nothing, and
+  a bot defined but attached nowhere (a run cut short) is only attached. Any conflict refuses the
+  whole import, nothing written: a pane playing or labelled for another bot, a bot of the seat's
+  name attached elsewhere or under another lead, a squad without exactly one captain, a Claude
+  session outside the project, or no main bot. It never starts, moves or restarts a pane.
 - Every command takes `--json` and `--project <folder>`. Without `--project`, the project is
   the one the current folder belongs to: its git main checkout, or outside git the nearest
   folder at or above it holding `.herdr/bots.json`. A folder named with `--project` is the
@@ -291,7 +326,17 @@ automagik-herdr update [--check | --rollback]
   connected, its rows stay as they were (`status` `unknown`), never ended. A project's checkouts on two
   machines share their bots' ids, so a bot is per machine: `--machine` acts only on that machine's
   pane in that project, never on this computer's same-id bot, and `whois --bot <bot>` answers for
-  this computer unless given `--machine M`. A session id the pane carries is resumed by id
+  this computer unless given `--machine M`. The pane's PATH comes from that machine's login shell,
+  asked once with a 10 s bound (herdr-core may run as a service that never read `~/.profile`), plus
+  the PATH hc runs programs with, `~/.local/bin` and `~/.bun/bin`. When the PATH hc runs programs
+  with already finds the agent, that PATH goes first, so a working machine keeps the same agent and
+  interpreter; otherwise the login shell's goes first. The agent and the interpreter on
+  its `#!/usr/bin/env` line are checked under that same PATH before anything starts. A broken
+  copy on the PATH hc runs programs with (one whose interpreter isn't there) still goes first and
+  is refused by name, even when the login shell's PATH holds a working copy: remove or fix that
+  copy. A login shell
+  that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
+  text. A session id the pane carries is resumed by id
   (`--resume`); with none, `restart` refuses unless `--force`, as the agent's own "latest" may be a
   conversation started there by hand. A pane that reports
   no status to hc (Hermes) can't say whether it is waiting for an approval, so `restart` refuses
@@ -307,12 +352,16 @@ automagik-herdr update [--check | --rollback]
   pane's tab; with none open, `start` opens one on the project folder (`--space` picks the
   space instead, `--tab` a tab in it). The sidebar's Start passes the space only. A space
   opened this way (by `start` or the sidebar's Start) comes with a shell in its first tab:
-  that tab is closed (`tab.close`, never confirmed for the person) once the bot shows in its
-  own tab there, and only while that shell is known to be the tab's one pane (a mod pane
-  counts) with the shell itself in front, idle, so the space is never left empty and nothing
-  else is closed. The sidebar's Start knows the panes; `start` from the command line only
-  when `herdr-app ls` gives a tab's pane count, which it doesn't today, so the tab is left for
-  now. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
+  that tab is closed (`tab.close`, not `confirmed`: Herdr asks the person only before it
+  closes a space's last tab, and the bot's tab is always left) once the bot shows in its own
+  tab there, and only while that shell is known to be the tab's one pane (a mod pane counts)
+  with the shell itself in front, idle, and no job of its own running (`sleep 99 &` left at
+  the prompt keeps it: its child processes are asked with `pgrep -P`, and an answer that
+  can't be read keeps it too), so the space is never left empty and nothing else is closed.
+  The sidebar's Start knows the panes. `start` from the command line, `--machine` too, reads
+  them from `herdr-app ls`, which counts no mod pane: it closes the tab only when it saw that
+  shell, right after its own `space.new`, as the new space's one tab and that tab's one
+  terminal. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
   the new pane (5000 by default); `0` turns this tab setup off.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the

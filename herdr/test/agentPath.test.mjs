@@ -7,9 +7,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { besideDirs, envInterpreter, interpreterPath, safe } from "../mods/am-sidebar/agentPath.mjs";
+import { agentOnMachine, besideDirs, envInterpreter, interpreterPath, loginPathAsk, loginPathOf, safe } from "../mods/am-sidebar/agentPath.mjs";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
+import { readJsonLines } from "./log-lines.mjs";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
@@ -267,7 +268,7 @@ function codexProject(t, extra = [], { terminals = [], env: more = {} } = {}) {
   const path = `${bin}:${s.empty}`;
   const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1", ...more };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
-  const run = () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((c) => c[0] === "run");
+  const run = () => readJsonLines(log).find((c) => c[0] === "run");
   return { s, prefix, path, cli, run };
 }
 
@@ -313,4 +314,135 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
   assert.equal(argv.filter((w) => w.startsWith("developer_instructions=")).length, 1, "never twice after a restart");
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
   assert.equal(seat.status, 0, seat.stderr);
+});
+
+// ---- an agent on a linked machine (#425): the real sh scripts, here, with a stand-in login shell ----
+
+const LOGIN = new URL("./fake-login-shell", import.meta.url).pathname;
+/** agentOnMachine's exec, as hc exec runs a program there: a service's PATH (login.hc comes first on it), the machine's HOME. */
+const service = (s, login = {}) => async (command, args) => {
+  const r = spawnSync(command, args, { encoding: "utf8", env: { HOME: s.env.HOME, PATH: `${login.hc ? `${login.hc}:` : ""}/usr/bin:/bin`, SHELL: LOGIN,
+    FAKE_LOGIN_PATH: login.path ?? "", FAKE_LOGIN_NOISE: login.noise ?? "", FAKE_LOGIN_EXIT: login.exit ?? "" } });
+  return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+};
+
+test("loginPathOf: this call's markers only, the last pair, one line, absolute folders once each", () => {
+  const said = (p) => "m-from" + p + "\nm-to";
+  assert.equal(loginPathOf("Welcome\n" + said("/a:/b"), "m"), "/a:/b");
+  assert.equal(loginPathOf(said("/old") + "\n" + said("/a"), "m"), "/a", "a profile that echoed one earlier");
+  assert.equal(loginPathOf(said("/a:rel:.:~/x::/a:/b"), "m"), "/a:/b");
+  assert.equal(loginPathOf(said("/a\nrm -rf /"), "m"), null, "two lines are no PATH");
+  assert.equal(loginPathOf(said("rel:."), "m"), null);
+  assert.equal(loginPathOf(said("/" + "a".repeat(20000)), "m"), null);
+  assert.equal(loginPathOf("m-from/a", "m"), null);
+  assert.equal(loginPathOf("no markers", "m"), null);
+  assert.equal(loginPathOf(said("/a"), "other"), null);
+  assert.equal(loginPathOf(undefined, "m"), null);
+});
+
+test("loginPathAsk reads PATH through /usr/bin/env, which a NixOS-like system has, and never /usr/bin/printenv", () => {
+  assert.match(loginPathAsk("m"), /\/usr\/bin\/env printenv PATH/);
+  assert.doesNotMatch(loginPathAsk("m"), /\/usr\/bin\/printenv/);
+});
+
+test("agentOnMachine: an agent hc's PATH doesn't find gets the login shell's PATH first, hc's and the user folders after, nothing lost", async (t) => {
+  const s = scratch(t);
+  const tools = join(s.root, "tools");
+  exe(join(tools, "codex"), "#!/bin/sh\n");
+  mkdirSync(join(s.env.HOME, ".local/bin"), { recursive: true });
+  const got = await agentOnMachine(service(s, { path: tools + ":/usr/bin:/bin" }), "codex");
+  assert.deepEqual(got, { state: "found", path: [tools, "/usr/bin", "/bin", join(s.env.HOME, ".local/bin")].join(":"), file: join(tools, "codex"), login: true });
+});
+
+/** Which fakenode a PATH runs an agent under: what really runs, not what the check says. */
+const runs = (path, agent) => spawnSync("/usr/bin/env", ["PATH=" + path, agent], { env: {}, encoding: "utf8" });
+
+test("agentOnMachine: hc's PATH finds the agent and the login shell's shadows it with a broken copy: hc's copy, never a refusal", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin"), login = join(s.root, "login-bin");
+  exe(join(hc, "codex"), "#!/bin/sh\necho hc copy\n");
+  exe(join(login, "codex"), "#!/usr/bin/env no-such-runtime\n");
+  const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
+  assert.deepEqual(got, { state: "found", path: [hc, "/usr/bin", "/bin", login].join(":"), file: join(hc, "codex"), login: true });
+  assert.equal(runs(got.path, "codex").stdout, "hc copy\n");
+});
+
+test("agentOnMachine: hc's PATH finds the agent and its interpreter and the login shell's shadows the interpreter: hc's runs, never a dead launch", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin"), login = join(s.root, "login-bin");
+  exe(join(hc, "codex"), "#!/usr/bin/env fakenode\n");
+  exe(join(hc, "fakenode"), "#!/bin/sh\necho hc interpreter\n");
+  exe(join(login, "fakenode"), "#!/bin/sh\nexit 1\n");
+  const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
+  assert.deepEqual([got.state, got.file], ["found", join(hc, "codex")]);
+  const ran = runs(got.path, "codex");
+  assert.deepEqual([ran.status, ran.stdout], [0, "hc interpreter\n"]);
+});
+
+test("agentOnMachine: an agent only the login shell finds stays login-first, so its interpreter wins over hc's", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin"), login = join(s.root, "login-bin");
+  exe(join(hc, "fakenode"), "#!/bin/sh\necho hc interpreter\n");
+  exe(join(login, "codex"), "#!/usr/bin/env fakenode\n");
+  exe(join(login, "fakenode"), "#!/bin/sh\necho login interpreter\n");
+  const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
+  assert.deepEqual(got, { state: "found", path: [login, "/usr/bin", "/bin", hc].join(":"), file: join(login, "codex"), login: true });
+  assert.equal(runs(got.path, "codex").stdout, "login interpreter\n");
+});
+
+test("agentOnMachine: an absolute agent hc can run keeps hc's PATH first; a login folder after it stays one word, never evaluated", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin"), canary = join(s.root, "ran");
+  const odd = join(s.root, "a b$(touch " + canary.replaceAll("/", "_") + ")");
+  mkdirSync(odd, { recursive: true });
+  exe(join(s.root, "own/codex"), "#!/bin/sh\n");
+  const got = await agentOnMachine(service(s, { hc, path: odd + ":/usr/bin:/bin" }), join(s.root, "own/codex"));
+  assert.equal(got.state, "found");
+  assert.deepEqual(got.path.split(":").slice(0, 4), [hc, "/usr/bin", "/bin", odd]);
+  assert.equal(existsSync(canary), false);
+});
+
+test("agentOnMachine: npm's layout reached through a link puts <prefix>/bin on the PATH, so its node is found", async (t) => {
+  const s = scratch(t);
+  const prefix = npmPrefix(s.root);
+  const links = join(s.env.HOME, ".local/bin");
+  mkdirSync(links, { recursive: true });
+  symlinkSync(join(prefix, "bin/codex"), join(links, "codex"));
+  const got = await agentOnMachine(service(s, { exit: "1" }), "codex");
+  assert.deepEqual([got.state, got.login], ["found", false]);
+  assert.ok(got.path.split(":").includes(join(prefix, "bin")), got.path);
+  assert.equal(spawnSync("/usr/bin/env", ["PATH=" + got.path, "sh", "-c", 'command -v node'], { encoding: "utf8" }).stdout.trim(), join(prefix, "bin/node"));
+});
+
+test("agentOnMachine: a name and a PATH are data: nothing in them is ever evaluated", async (t) => {
+  const s = scratch(t);
+  const canary = join(s.root, "ran");
+  const evil = "x$(touch " + canary + ")";
+  const odd = join(s.root, "a b$(touch " + canary.replaceAll("/", "_") + ")");
+  exe(join(odd, "codex"), "#!/bin/sh\n");
+  const ran = await agentOnMachine(service(s, { path: odd + ":/usr/bin:/bin" }), "codex");
+  assert.deepEqual([ran.state, ran.file], ["found", join(odd, "codex")]);
+  assert.deepEqual(await agentOnMachine(service(s), evil), { state: "missing", login: true });
+  assert.deepEqual(await agentOnMachine(service(s), "`touch " + canary + "`"), { state: "missing", login: true });
+  assert.deepEqual(await agentOnMachine(service(s), "true"), { state: "missing", login: true }, "a shell builtin is no agent");
+  assert.equal(existsSync(canary), false);
+});
+
+test("agentOnMachine: no answer is away, a timed-out login shell is not, and the interpreter is checked on the same PATH", async (t) => {
+  const s = scratch(t);
+  const away = async () => ({ code: -1, stdout: "", stderr: "hc: vm stopped answering" });
+  assert.deepEqual(await agentOnMachine(away, "codex"), { state: "away", why: "hc: vm stopped answering" });
+  const calls = [];
+  const slow = async (command, args, o) => { calls.push(o.timeout); return calls.length === 1 ? { code: -1, stdout: "", stderr: "timed out after 7 s" } : service(s)(command, args); };
+  assert.deepEqual(await agentOnMachine(slow, "no-such-agent", { wait: 7 }), { state: "missing", login: "timed out" });
+  assert.deepEqual(calls, [7, 7]);
+  // A profile that kills its own shell: hc answers with no exit code, and the machine is still there.
+  let asks = 0;
+  const killed = async (command, args) => (asks++ === 0 ? { code: -1, stdout: "", stderr: "" } : service(s)(command, args));
+  assert.deepEqual(await agentOnMachine(killed, "no-such-agent"), { state: "missing", login: false });
+  exe(join(s.env.HOME, ".bun/bin/omp"), "#!/usr/bin/env bun\n");
+  assert.deepEqual(await agentOnMachine(service(s), "omp"), { state: "no-interpreter", file: join(s.env.HOME, ".bun/bin/omp"), interpreter: "bun", login: true });
+  assert.equal((await agentOnMachine(service(s, { exit: "1" }), "omp")).login, false);
+  runtime(join(s.env.HOME, ".bun/bin/bun"), "1.2.3");
+  assert.equal((await agentOnMachine(service(s), "omp")).state, "found");
 });

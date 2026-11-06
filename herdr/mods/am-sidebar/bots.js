@@ -6,7 +6,7 @@
 // Files go through readTextFile/writeTextFile, folders through exec.
 
 import { spaces, exec, readTextFile, writeTextFile, watchFolder, shared, setShared, home, appHome, hc, terminals, notify } from "herdr";
-import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, projectOf, paneKeyOf, parseBots, checkBots, listedProjects, writeFolderOf } from "./model.js";
+import { BOT_LABEL, BOTS_PATH, PROJECTS_FILE, botsText, projectOf, paneKeyOf, parseBots, checkBots, listedProjects, writeFolderOf } from "./model.js";
 import { relabel, relabelPlan, relabelWarning } from "./launchArgs.js";
 import { TimedOut, discover, machineGate } from "./discover.js";
 import { writeRemoteText } from "./remoteFile.js";
@@ -300,7 +300,7 @@ export async function writeBots(projectKey, file, expected, machine = null, { di
   const errors = checkBots(file, before);
   if (errors.length) throw new Error(`Not saved: ${errors.join("; ")}`);
   if (machine) {
-    await writeRemoteText(remoteIo, machine, under(projectKey, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
+    await writeRemoteText(remoteIo, machine, under(projectKey, BOTS_PATH), botsText(file, expected), expected);
     keys.clear();
     rememberProject(projectKey, machine);
     return { relabel: Promise.resolve({ done: [], failed: [], unchecked: [] }) };
@@ -311,7 +311,8 @@ export async function writeBots(projectKey, file, expected, machine = null, { di
     const r = await exec("mkdir", ["-p", herdr]);
     if (r.code !== 0) throw new Error(`Couldn't make ${herdr}: ${r.stderr.trim()}`);
   }
-  await writeTextFile(under(dir, BOTS_PATH), `${JSON.stringify(file, null, 2)}\n`, expected);
+  // Indented as the file is, or as the key's where a worktree has none yet (#230).
+  await writeTextFile(under(dir, BOTS_PATH), botsText(file, expected ?? before), expected);
   keys.clear(); // a folder outside git may belong to this project now
   rememberProject(projectKey, null);
   // Not awaited: the save is done; the labels follow on their own (A16).

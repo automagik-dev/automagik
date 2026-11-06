@@ -4,6 +4,7 @@
 // Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`; files are read through an injected
 // `read(path) => string | null`, so `node --test` runs it and the CLI and the mod share it.
 // Apache-2.0.
+import { LEGACY_AGENTS } from "./retired.js";
 
 /**
  * The agents people start, keyed as Herdr's shipped programs table keys them (the table in
@@ -30,12 +31,11 @@ export const AGENTS = Object.freeze({
 });
 
 /**
- * Agents that are gone, mapped to the one that replaces them. Google ended Gemini CLI for
- * individuals (2026-11-02: "migrate to the Antigravity suite"), so a bot or a typed --agent
- * naming `gemini` runs Antigravity (`agy`). Herdr's own table still lists gemini; the
- * bot form leaves these keys out of its picker.
+ * Agents that are gone, mapped to the one that replaces them (retired.js, the pack's one list):
+ * a bot or a typed --agent naming `gemini` runs Antigravity (`agy`). Herdr's own table still
+ * lists gemini; the bot form leaves these keys out of its picker.
  */
-export const LEGACY_AGENTS = Object.freeze({ gemini: "antigravity" });
+export { LEGACY_AGENTS };
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 

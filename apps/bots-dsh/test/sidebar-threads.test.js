@@ -190,9 +190,32 @@ test('a task a Bot started is listed under that Bot, not under Tasks; a DSH bot 
   const rows = find(team([tasks, site]).tree, named('AgentRow')).map(row => row.type(row.props).props.children)
   const listed = Object.fromEntries(rows.map(([head, list]) => [head.props['aria-label'], find(list, named('AgentSessionRow')).map(node => node.props.session.id).sort()]))
   assert.deepEqual(listed, { Tasks: ['from-gone'], Site: ['one', 'two'] })
-  // Without a task whose Bot is gone, there is no Tasks row.
+  // Without a Session no other list shows, there is no Tasks row.
   const [alone] = find(team([{ ...tasks, sessions: ['from-pip'] }]).tree, named('AgentRow'))
   assert.equal(alone.type(alone.props), null)
+})
+
+test('a stopped task past the Live rail is listed under Tasks, by its record, saying how it ended', () => {
+  const HOUR = 60 * 60_000
+  const ended = (title, hours, status = 'stopped') => ({ from: 'pip', title, at: NOW - 30 * HOUR, endedAt: NOW - hours * HOUR, status })
+  const tasks = {
+    one: ended('Newest', 1), two: ended('Second', 2), three: ended('Third', 3),
+    fourth: ended('Wish: Fix Claude wish permission denial reporting', 4), old: ended('Ended long ago', 7),
+    broke: ended('Broke', 8, 'failed'), running: task('pip', 'Still on it', 5),
+  }
+  const record = { id: 'tasks', kind: 'tasks', name: 'Tasks', sessions: Object.keys(tasks), createdAt: 3 }
+  const [row] = find(sidebar({ tasks, agents: [record] }).tree, named('AgentRow'))
+  const rows = find(row.type(row.props), named('AgentSessionRow'))
+  assert.deepEqual(rows.map(node => node.props.session.id), ['fourth', 'old', 'broke'])
+  const line = (node) => {
+    const body = node.type(node.props)
+    return [textOf(find(body, each => each.props?.className === 'bt-agent-sub-title')), textOf(find(body, each => each.props?.className === 'bt-agent-sub-time'))]
+  }
+  assert.deepEqual(rows.map(line), [
+    ['Wish: Fix Claude wish permission denial reporting', 'Stopped'],
+    ['Ended long ago', 'Stopped'],
+    ['Broke', 'Failed'],
+  ])
 })
 
 test('an ended task card says how it ended: a failed one names why, a stopped one is not finished', () => {

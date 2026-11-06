@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
-import { STAGE_CSS } from '../src/client/stage.js'
+import { CONVERSATION_MARK, STAGE_CSS } from '../src/client/stage.js'
+import { browserGuard } from './browser-guard.js'
 
 // Requires the dev/harness dependency install; reads its supported DSH InputBar CSS,
 // not a second layout model. This does not inspect or modify the installed GUI.
@@ -22,14 +23,13 @@ const { outputFiles } = await build({
 const module = { exports: {} }
 runInNewContext(outputFiles[0].text, { module, exports: module.exports, require: () => ({}) })
 const botCss = module.exports.CONVERSATION_CSS
-const executablePath = process.env.CHROME_BIN ?? (process.platform === 'darwin'
-  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/chromium')
 
 // This is a layout fixture, NOT an end-to-end replacement for the shell's editor.
-// Bot mode installs CONVERSATION_CSS and ComposerPlus; a native wish installs neither.
+// Bot mode's conversation group marks the page and installs CONVERSATION_CSS and ComposerPlus;
+// a native wish mounts no conversation group, so it has none of the three.
 function fixture(bot, running, stage = STAGE_CSS, hero = false) {
   const cls = name => `${prefix}_${name}`
-  return `<style>
+  return `${bot ? `<html ${CONVERSATION_MARK}>` : ''}<style>
     :root{--dsh-composer-card-max-width:748px;--dsh-composer-text-max-height:240px;--dsw-font-family:Arial}
     *{box-sizing:border-box}body{margin:0}main{height:600px;display:flex;flex-direction:column;justify-content:flex-end;padding:16px}
     ${hostCss}\n${bot ? botCss : ''}\n${stage}
@@ -49,30 +49,24 @@ function fixture(bot, running, stage = STAGE_CSS, hero = false) {
 }
 
 // dev before #88: the same six rules without the marker.
-const UNSCOPED = STAGE_CSS.replaceAll(':has(.bt-plus)', '')
+const MARKED = `html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]`
+const UNSCOPED = STAGE_CSS.replaceAll(MARKED, 'html body [data-composer-card][data-composer-card]')
 
-test('all six structural stage rules require the Bot composer ownership marker', () => {
+test('all six structural stage rules require the Bot conversation group marker', () => {
+  assert.equal(CONVERSATION_MARK, 'data-bt-conversation')
   assert.notEqual(UNSCOPED, STAGE_CSS)
-  const structural = STAGE_CSS.split('\n').filter(rule => rule.startsWith('html body [data-composer-card][data-composer-card]'))
+  const structural = STAGE_CSS.split('\n').filter(rule => /^html(\[[^\]]+\])? body \[data-composer-card\]\[data-composer-card\]/.test(rule))
   assert.equal(structural.length, 6)
-  for (const rule of structural) assert.ok(rule.startsWith('html body [data-composer-card][data-composer-card]:has(.bt-plus)'), rule)
+  for (const rule of structural) assert.ok(rule.startsWith(MARKED), rule)
+  assert.doesNotMatch(STAGE_CSS, /:has\(\.bt-plus\)/, 'no structural rule waits for the "+" inside the card (#322)')
   assert.match(STAGE_CSS, /html body \[data-composer-card\]\{background:/, 'cosmetics remain available to native sessions')
 })
 
 test('stage leaves native wish geometry intact; Bot controls keep their two-row layout', async t => {
-  // CI must run the browser half (#323): its job sets CHROME_BIN and installs playwright-core
-  // (a dependency of this package), so a missing browser or module there is a broken job.
-  if (!existsSync(executablePath)) {
-    if (process.env.CI) assert.fail(`Browser layout check found no browser at ${executablePath} (CHROME_BIN=${process.env.CHROME_BIN ?? 'unset'}); CI must run it`)
-    return t.skip('Browser layout check requires CHROME_BIN; structural check still runs')
-  }
-  let chromium
-  try { ({ chromium } = await import('playwright-core')) } catch (error) {
-    if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error
-    if (process.env.CI) assert.fail(`Browser layout check cannot import playwright-core (${error.message}); CI's bun install must provide it`)
-    return t.skip('Browser layout check requires the root bun install (playwright-core)')
-  }
-  const browser = await chromium.launch({ executablePath, headless: true })
+  // CI must run the browser half (#323, #364): the shared guard fails there, never skips.
+  const guard = await browserGuard()
+  if (guard.skip) return t.skip(guard.skip)
+  const browser = await guard.chromium.launch({ executablePath: guard.executablePath, headless: true })
   t.after(() => browser.close())
   const page = await browser.newPage()
   for (const width of [390, 1200]) {

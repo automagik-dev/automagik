@@ -81,6 +81,21 @@ test("restartRefusal: a working pane, then helpers that die with it; outliving h
   assert.equal(restartRefusal({ name: "Genie", old: idle }), null);
 });
 
+test("restartRefusal onMachine (#437): helpers there are ended by hand, never --tree or --force; a working one is waited for first", () => {
+  const idle = { address: "vm/t5", status: { state: "idle" } };
+  const done = { address: "vm/t7", state: "live", die_with_parent: true, status: { state: "done" } };
+  const busy = { address: "vm/t9", state: "live", die_with_parent: true, status: { state: "working" } };
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [done], onMachine: true }),
+    "vm/t5 has a helper that ends with it: vm/t7. Restarting helpers on a linked machine isn't built yet, so nothing was restarted. "
+    + "End its pane (hc kill vm/t7) and restart Genie again.");
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [done, busy], onMachine: true }),
+    "vm/t5 has helpers that end with it: vm/t7, vm/t9. Restarting helpers on a linked machine isn't built yet, so nothing was restarted. "
+    + "Wait for vm/t9 to finish, then end each one's pane (hc kill vm/t7, hc kill vm/t9) and restart Genie again.");
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [{ ...done, die_with_parent: false }], onMachine: true }), null);
+  assert.equal(restartRefusal({ name: "Genie", old: idle, helpers: [done], onMachine: true, force: true }), null);
+  assert.match(restartRefusal({ name: "Genie", old: { ...idle, status: { state: "working" } }, onMachine: true }), /Genie is working in vm\/t5/);
+});
+
 test("carriedLabels keeps the old pane's squad and its mark; sessionOf reads agent.session", () => {
   assert.deepEqual(carriedLabels({ labels: { bot: "b", squad: "s1", "automagik-herdr.squad": "s1", "herdr.space": "sp" } }),
     { squad: "s1", "automagik-herdr.squad": "s1" });

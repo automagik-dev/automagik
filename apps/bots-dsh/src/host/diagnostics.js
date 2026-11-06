@@ -14,6 +14,9 @@ import { format } from 'node:util'
 export const KEEP = 200
 const LOG_MAX_BYTES = 1 << 20
 const STACK_LINES = 8
+// A real V8 frame: `    at fn (/path/file.js:12:34)`, `    at /path/file.js:12:34`,
+// `    at fn (native)`, also with `async ` or `new `. The position is required.
+const FRAME = /^\s+at (?:async |new )?(?:.+?)(?:\(([^()]*):\d+:\d+\)|:native\)| \(native\)|([^()]*):\d+:\d+)$/
 const TEXT_MAX = 2000
 export const REPORT_ENTRIES = 20
 export const ISSUES_URL = 'https://github.com/automagik-dev/automagik/issues/new'
@@ -162,8 +165,10 @@ export function install(rt) {
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined && value !== null && value !== '') entry[key] = typeof value === 'string' ? clean(value) : value
     }
-    // Frames only: the first line repeats the message, which is already the text.
-    const frames = typeof stack === 'string' ? stack.split('\n').filter(line => /^\s+at /.test(line)).slice(0, STACK_LINES).map(line => line.trim()) : []
+    // Frames only: the first line repeats the message, which is already the text. A
+    // frame ends in a position (`:line:column`) or `:native`; a message line that only
+    // starts with "at" is not one, so it cannot smuggle its text into the log.
+    const frames = typeof stack === 'string' ? stack.split('\n').filter(line => FRAME.test(line)).slice(0, STACK_LINES).map(line => line.trim()) : []
     if (frames.length > 0) entry.stack = clean(frames.join('\n'))
     fresh.push(entry)
     if (fresh.length > KEEP) fresh = fresh.slice(-KEEP)
@@ -174,7 +179,7 @@ export function install(rt) {
   const warn = (template, ...args) => {
     const error = args.find(arg => arg instanceof Error)
     const line = clean(format(template, ...args.map(arg => (arg instanceof Error ? errorText(arg) : arg))))
-    const frames = typeof error?.stack === 'string' ? error.stack.split('\n').filter(item => /^\s+at /.test(item)).slice(0, STACK_LINES).map(item => item.trim()) : []
+    const frames = typeof error?.stack === 'string' ? error.stack.split('\n').filter(item => FRAME.test(item)).slice(0, STACK_LINES).map(item => item.trim()) : []
     ctx.logger.warn('%s', line)
     console.error(`[ds-bot] ${line}${frames.length > 0 ? `\n${clean(frames.join('\n'))}` : ''}`)
     note({

@@ -286,11 +286,14 @@ else if (a[0] === "label" && fx.terminals[a[1]]) {
   require("fs").renameSync(tmp, process.env.FAKE_HC);
   out({ address: t.address, labels: t.labels });
 }
-else { process.stderr.write("not_found"); process.exit(1); }
+else { process.stderr.write(JSON.stringify({ error: { kind: "not_found", message: "no such terminal" } })); process.exit(3); }
 };
 // fx.slow: addresses or label values whose calls hang (a machine that doesn't answer). Each hung
 // call logs "hung" when it starts and "answered" if it is ever let finish (FAKE_HC + ".slow").
-const slow = (fx.slow ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
+const names = (list) => (list ?? []).some((x) => a.includes(x) || a.some((y) => y.endsWith("=" + x)));
+// fx.fail: the same, for calls that fail at once (exit 1, not hc's not_found): a run that broke.
+if (names(fx.fail)) { process.stderr.write("fake hc: this call failed"); process.exit(1); }
+const slow = names(fx.slow);
 const log = (what) => require("fs").appendFileSync(process.env.FAKE_HC + ".slow", what + " " + a.join(" ") + "\\n");
 if (slow) { log("hung"); setTimeout(() => { log("answered"); answer(); }, Number(process.env.FAKE_HC_HANG_MS)); } else answer();
 `;
@@ -330,16 +333,18 @@ async function scratch(t) {
   // The app home is a scratch one unless a test names its own (the script's own is the repo's).
   // What the hook printed per terminal is forgotten before each call, so each is a first turn,
   // unless `keep` (the once-only tests below).
-  const brief = async (env, input, { keep = false } = {}) => {
+  // `feed(child)`, in place of `input`: the test writes stdin itself (in parts, or never closed).
+  const brief = async (env, input, { keep = false, feed = null, timeout = 0 } = {}) => {
     const options = {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
         HERDR_BRIEFING_TIME_SCALE: String(SCALE), HERDR_APP_HOME: join(root, "app"), ...env },
+      timeout,
     };
     if (!keep) try { rmSync(join(options.env.HERDR_APP_HOME, "automagik-herdr", "briefed"), { recursive: true, force: true }); } catch {}
-    if (input === undefined) return run(RUNTIME, [SCRIPT], options);
+    if (input === undefined && !feed) return run(RUNTIME, [SCRIPT], options);
     return new Promise((resolve, reject) => {
       const child = execFile(RUNTIME, [SCRIPT], options, (e, stdout, stderr) => (e ? reject(e) : resolve({ stdout, stderr })));
-      child.stdin.end(input);
+      if (feed) feed(child); else child.stdin.end(input);
     });
   };
   return { root, main, tree, bin, brief };
@@ -470,6 +475,78 @@ syncBuiltinESMExports();
   assert.equal(fx.terminals.t1.labels["agent.session"], "s-late", "the session in the input was joined");
 });
 
+// A large pasted prompt on a starved machine (#336): the JSON is bigger than the pipe buffer
+// (64 KB), so it comes in several reads, and the 300 ms window closes between them. The stall
+// holds the hook 600 ms (Atomics.wait, no loop) so nothing is read in the window. The preload
+// then prints MARK from an immediate queued after the window's own, so it runs once the hook has
+// decided (dev's hook has destroyed stdin by then): only then is the rest of the JSON sent.
+test("briefing.mjs: a JSON over the pipe buffer is read whole when the window closes between reads", async (t) => {
+  if (!/^node/.test(RUNTIME.split("/").pop())) return t.skip("the stall is a node --import preload");
+  const { root, tree, brief } = await scratch(t);
+  const MARK = "<input window closed>\n";
+  const stall = join(root, "stall.mjs");
+  writeFileSync(stall, `import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const real = cp.execFile;
+let once = false;
+cp.execFile = function (command, ...rest) {
+  if (command === "git" && !once) { once = true; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600); }
+  return real.call(this, command, ...rest);
+};
+syncBuiltinESMExports();
+const later = globalThis.setTimeout;
+globalThis.setTimeout = function (fn, ms, ...rest) {
+  if (ms !== 300) return later.call(this, fn, ms, ...rest);
+  return later.call(this, () => { fn(...rest); setImmediate(() => process.stderr.write(${JSON.stringify(MARK)})); }, ms);
+};
+`);
+  const input = JSON.stringify({ session_id: "s-big", hook_event_name: "UserPromptSubmit", prompt: "x".repeat(200_000) });
+  assert.ok(input.length > 128 * 1024);
+  const head = input.slice(0, 100_000);
+  const feed = (child) => {
+    child.stdin.on("error", () => {}); // dev's hook closes stdin early: EPIPE here
+    let err = "";
+    child.stderr.on("data", (d) => {
+      const sent = err.includes(MARK);
+      err += d;
+      if (!sent && err.includes(MARK)) child.stdin.end(input.slice(head.length));
+    });
+    child.stdin.write(head);
+  };
+  const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, NODE_OPTIONS: `--import ${stall}` }, undefined, { feed });
+  assert.equal(r.stderr, MARK);
+  assert.match(r.stdout, /You are Genie/);
+  const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  assert.equal(fx.terminals.t1.labels["agent.session"], "s-big", "the session in the whole JSON was joined");
+});
+
+// Over the 1 MB cap, the input is no input: what was read is not parsed. Here the cut text would
+// parse (a whole object, then whitespace), so a hook that parses it joins "s-over".
+test("briefing.mjs: an input over the 1 MB cap is no input, even when its cut text would parse", async (t) => {
+  const { root, tree, brief } = await scratch(t);
+  const input = `${JSON.stringify({ session_id: "s-over", hook_event_name: "UserPromptSubmit" })}${" ".repeat(1_100_000)}`;
+  const feed = (child) => {
+    child.stdin.on("error", () => {}); // the hook stops reading at the cap: EPIPE here
+    child.stdin.end(input);
+  };
+  const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree }, undefined, { feed });
+  assert.equal(r.stderr, "");
+  assert.match(r.stdout, /You are Genie/);
+  const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
+  assert.equal(fx.terminals.t1.labels["agent.session"], undefined);
+});
+
+// A caller that writes but never closes stdin: the hook no longer stops reading at 300 ms once
+// something came, so its own bound (GUARD_MS, unscaled here) must still end it. A pane with no
+// project returns before waiting for the input, and the entry point clears its guard then.
+test("briefing.mjs: a caller that writes and never closes stdin still lets the hook exit", async (t) => {
+  const { brief } = await scratch(t);
+  const feed = (child) => child.stdin.write(JSON.stringify({ session_id: "s-open" }).slice(0, 10));
+  const r = await brief({ HC_TERMINAL_ID: "t5", HERDR_BRIEFING_TIME_SCALE: "1" }, undefined, { feed, timeout: 4 * GUARD_MS });
+  assert.equal(r.stdout, "");
+  assert.equal(r.stderr, "");
+});
+
 test("briefing.mjs: agent.transcript only in ~/.claude/projects; no second row", async (t) => {
   const { root, tree, brief } = await scratch(t);
   const app = join(root, "app");
@@ -584,6 +661,36 @@ test("briefing.mjs: a member whose machine doesn't answer shows unreachable, and
   assert.match(stdout, /Solo \(bot b-ffffffffff, Docs\): unreachable \(hc gave no answer in time\)\./);
   assert.match(stdout, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
   assert.ok(stdout.trimEnd().endsWith("</herdr-bot>"));
+});
+
+test("briefing.mjs: a read that fails at once shows unreachable, never not running; hc's not_found still is (#345)", async (t) => {
+  const { root, main, brief } = await scratch(t);
+  const fxPath = join(root, "hc.json");
+  const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+  const as = async (fail) => {
+    writeFileSync(fxPath, JSON.stringify({ ...fx, fail }));
+    const r = await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: main });
+    assert.equal(r.stderr, "");
+    assert.match(r.stdout, /Solo \(bot b-ffffffffff, Docs\): finished \(done\) at t4\./, "the other reads still count");
+    return r.stdout;
+  };
+  // The captain's label query fails fast (no time budget runs out): not "not running".
+  const ls = await as([ID.cap]);
+  assert.match(ls, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
+  assert.doesNotMatch(ls, /Captain[^\n]*not running/);
+  // Its newest pane's hc get fails: unreachable, not its older pane t7.
+  const get = await as(["t2"]);
+  assert.match(get, /Captain \(bot b-bbbbbbbbbb, Squad lead\): unreachable/);
+  assert.doesNotMatch(get, /Captain[^\n]*(not running|at t7)/);
+  // A pane hc answers not_found for (the ledger's binding outlived it) still reads as not running.
+  for (const x of Object.values(fx.terminals)) x.state = "live";
+  const ledger = join(root, "app", "automagik-herdr", "attach.jsonl");
+  mkdirSync(dirname(ledger), { recursive: true });
+  const row = (bot, terminal, created) => JSON.stringify({ v: 1, event: "attach", bot, project: main, terminal, core: "fakecore",
+    created_ms: created, machine: null, at: "2026-11-02T00:00:00.000Z", by: "attach" });
+  writeFileSync(ledger, `${row(ID.main, "t1", 1000)}\n${row(ID.cap, "t40", 5000)}\n${row(ID.solo, "t4", 1000)}\n`);
+  chmodSync(ledger, 0o600);
+  assert.match(await as([]), /Captain \(bot b-bbbbbbbbbb, Squad lead\): not running\./);
 });
 
 test("briefing.mjs: the main bot, from a worktree session, reads the main checkout's file and its team", async (t) => {
@@ -775,6 +882,17 @@ test("launch text: who, role, instructions, how it works, lead and team by id; n
   assert.match(text, /Instructions:\nReview every PR\./);
   assert.match(text, /automagik-herdr worker/);
   assert.match(text, /run `automagik-herdr brief b-bbbbbbbbbb`/, "the live state is one command away");
+  // #428: a restart goes through Herdr, never the agent's own restart command, in English and pt-BR.
+  const restart = /runs `automagik-herdr restart b-bbbbbbbbbb` in this project's folder \(or with --project <that folder>\), which keeps your agent and model, or uses Restart in your bot's menu in the Herdr sidebar, not your agent's own restart command\./;
+  assert.match(text, restart);
+  assert.match(text, /In pt-BR: "Para me reiniciar, rode `automagik-herdr restart b-bbbbbbbbbb` na pasta deste projeto \(ou com --project <essa pasta>\), que mantém meu agente e modelo/);
+  assert.doesNotMatch(text, /Claude|\/restart/, "the same text reaches codex, omp, pi, grok and hermes bots");
+  for (const agent of ["codex", "omp", "pi", "grok", "hermes"]) {
+    const other = launchBriefingText({ self: { ...byId(f, ID.cap), agent }, file: f });
+    assert.match(other, restart, agent);
+    assert.doesNotMatch(other, /Claude|\/restart/, agent);
+  }
+  assert.doesNotMatch(briefingText({ self: byId(f, ID.cap), file: f }), /automagik-herdr restart/, "an attached pane can /restart");
   assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\).*hc ls --label bot=b-aaaaaaaaaa/s);
   assert.match(text, /- Dev \(bot b-cccccccccc/);
   assert.doesNotMatch(text, /Studio|idle|working|not running|untrusted-report|helpers/, "planned bots and live state stay out");

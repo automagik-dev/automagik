@@ -10,6 +10,7 @@ import { dateLocale, t } from './i18n.js'
 import { SPRING_POP, SPRING_SHAPE, spring } from './motion.js'
 import { useDockHold } from './card-hold.js'
 import { heldCardKey } from './sources.js'
+import { GITHUB_FIELDS, githubPermissions, githubTokenUrl } from '../shared/github-token.js'
 
 const MIN_VALUE = 4
 const NONE = {}
@@ -79,6 +80,20 @@ function SecretHead({ bot, title, detail, name, onClose }) {
     onClose ? h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Cancel the request'), title: t('Cancel'), onClick: onClose }, h(CloseIcon)) : null)
 }
 
+// How to make the GitHub token a Bot asked for (#316): GitHub's new fine-grained token page,
+// pre-filled with the expiration and the permissions of the declared work, and the fields to
+// check there. GitHub's field names stay as GitHub shows them; the sentences are translated.
+export function GitHubSteps({ bot, work }) {
+  return h('div', { className: 'bt-secret-steps', role: 'note' },
+    h('ol', null,
+      h('li', null, h('a', { href: githubTokenUrl(work), target: '_blank', rel: 'noopener noreferrer' }, t("Open GitHub's new fine-grained token page."))),
+      h('li', null, t('Under “{field}”, choose “{value}”.', { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days })),
+      h('li', null, t('Under “{field}”, choose “{value}” and pick the ones {bot} works on.', { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name })),
+      h('li', null, t('Under “{field}”, set only these:', { field: GITHUB_FIELDS.permissions }),
+        h('ul', null, githubPermissions(work).map(entry => h('li', { key: entry.name }, h('code', null, `${entry.label}: ${entry.access}`))))),
+      h('li', null, t('Click “{button}”, copy it and paste it below.', { button: GITHUB_FIELDS.generate }))))
+}
+
 export function SecretCard({ sessionId, bot, request, roster, actions, inline = false }) {
   const [value, setValue] = useState('')
   const [scope, setScope] = useState('all')
@@ -114,6 +129,7 @@ export function SecretCard({ sessionId, bot, request, roster, actions, inline = 
       name: request.name,
       onClose: busy ? undefined : cancel,
     }),
+    filling && Array.isArray(request.github) && request.github.length > 0 ? h(GitHubSteps, { bot, work: request.github }) : null,
     request.kind === 'allow' ? h('div', { className: 'bt-secret-saved' }, h(KeyIcon), t('Saved for {scope}', { scope: scopeLabel(secret?.scope, roster) })) : null,
     filling ? h('div', { className: 'bt-secret-body' },
       h('label', { className: 'bt-q-field bt-secret-field' }, h(MaskedInput, { value, onChange: next => { hold(); setValue(next) }, onEnter: save, label: t('Value of {name}', { name: request.name }), autoFocus: replacing })),
@@ -232,12 +248,21 @@ function ValueEditor({ secret, onSave }) {
       : replaced ? h('div', { className: 'bt-set-hint bt-secret-ok', role: 'status' }, h(CheckIcon), t('Replaced. Bots get the new value from their next command.')) : null)
 }
 
-function SecretRow({ secret, roster, actions, run, open, onToggle }) {
+export function SecretRow({ secret, roster, actions, run, open, onToggle }) {
   const [confirm, setConfirm] = useState(false)
   useEffect(() => { if (!open) setConfirm(false) }, [open])
   const asker = secret.requestedBy ? roster.byId[secret.requestedBy]?.name ?? t('a deleted Bot') : t('you')
   const allowed = secret.scope === 'all' ? [] : secret.scope.map(id => roster.byId[id]).filter(Boolean)
-  const meta = [t('Asked by {name}', { name: asker }), t('added {time}', { time: when(secret.createdAt) }), secret.lastUsedAt ? t('last used {time}', { time: when(secret.lastUsedAt) }) : t('not used yet')].join(' · ')
+  // A held key is in the list but used nowhere (the loader holds a hand-edited value below
+  // the write floor), so the row says why instead of claiming it is merely unused.
+  const held = secret.held === true
+  const heldLine = t('Held: the saved value is shorter than {count} characters',
+    { count: MIN_VALUE })
+  const state = held ? heldLine
+    : secret.lastUsedAt ? t('last used {time}', { time: when(secret.lastUsedAt) })
+      : t('not used yet')
+  const meta = [t('Asked by {name}', { name: asker }),
+    t('added {time}', { time: when(secret.createdAt) }), state].join(' · ')
   return h('div', { className: 'bt-secret-item', 'data-open': open ? '' : undefined },
     h('button', { type: 'button', className: 'bt-set-row bt-secret-summary', 'aria-expanded': open, onClick: onToggle },
       h('span', { className: 'bt-set-copy' },
@@ -250,6 +275,9 @@ function SecretRow({ secret, roster, actions, run, open, onToggle }) {
     open ? h('div', { className: 'bt-secret-edit' },
       h(ScopeEditor, { key: JSON.stringify(secret.scope), secret, roster, onSave: scope => run(actions.secretUpdate(secret.name, { scope })) }),
       h(PurposeEditor, { key: secret.purpose ?? '', secret, onSave: purpose => run(actions.secretUpdate(secret.name, { purpose })) }),
+      held ? h('div', { className: 'bt-secret-warn', role: 'note' }, h(WarnIcon),
+        t('Held: nothing uses this key until you save a value of at least {count} characters.',
+          { count: MIN_VALUE })) : null,
       h(ValueEditor, { secret, onSave: value => run(actions.secretSet({ name: secret.name, value })) }),
       h('div', { className: 'bt-secret-row-actions' },
         confirm
@@ -322,6 +350,11 @@ export const SECRET_CSS = `
 @keyframes bt-secret-in{from{opacity:0;transform:translateY(-2px)}}
 .bt-secret-saved{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
 .bt-secret-note{font-size:12px;line-height:17px;color:var(--bt-ink-3)}
+.bt-secret-steps{font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
+.bt-secret-steps ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:3px}
+.bt-secret-steps ul{margin:2px 0 0;padding-left:16px}
+.bt-secret-steps a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.bt-secret-steps code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-note code,.bt-secret-about code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-warn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:12px;line-height:16px;color:#b25e09;background:color-mix(in srgb,#f59e0b 12%,transparent)}
 .bt-secret-error{font-size:12px;line-height:16px;color:var(--bt-danger)}

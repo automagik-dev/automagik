@@ -17,10 +17,11 @@
 // state.connectBefore: raw lines printed before any answer (a notification, a broken line);
 // state.connectAnswer: a raw line printed in place of every answer.
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendLine, readJsonLines } from "./log-lines.mjs";
 
 const args = process.argv.slice(2);
-appendFileSync(process.env.HC_FAKE_LOG, `${JSON.stringify(args)}\n`);
+appendLine(process.env.HC_FAKE_LOG, JSON.stringify(args));
 const state = JSON.parse(readFileSync(process.env.HC_FAKE_STATE, "utf8"));
 // The CLI runs several hc calls at once: a save writes a file of its own beside the state and
 // renames it over it (atomic in one folder), so another call never reads one half written.
@@ -33,9 +34,12 @@ const out = (x) => process.stdout.write(`${JSON.stringify(x)}\n`);
 const fail = (msg, code = 1) => { process.stderr.write(`${msg}\n`); process.exit(code); };
 const words = args.filter((a) => a !== "--json");
 const find = (t) => state.terminals.find((x) => x.address === t || x.name === t);
+// The log, read once: other calls append to it at the same time, so only its complete lines
+// (log-lines.mjs, #421). This call's own line is among them: it was written whole above.
+const logged = readJsonLines(process.env.HC_FAKE_LOG);
 // The call's number (lines in the log so far), and at every call the sessions (agent.session or
 // revive.session labels) live in more than one pane then, appended to $HC_FAKE_STATE.doubles.
-const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).length;
+const callNo = logged.length;
 {
   const by = new Map();
   for (const x of state.terminals.filter((y) => y.state === "live")) {
@@ -43,7 +47,7 @@ const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(
     if (id) by.set(id, [...(by.get(id) ?? []), x.address]);
   }
   for (const [session, panes] of by) {
-    if (panes.length > 1) appendFileSync(`${process.env.HC_FAKE_STATE}.doubles`, `${JSON.stringify({ call: callNo, word: words[0], session, panes })}\n`);
+    if (panes.length > 1) appendLine(`${process.env.HC_FAKE_STATE}.doubles`, JSON.stringify({ call: callNo, word: words[0], session, panes }));
   }
 }
 // endTurnOn: { word, nth } on a terminal: its turn ends when the nth `hc <word>` call happens
@@ -51,11 +55,10 @@ const callNo = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(
 // the CLI looks at it. As hc does, the end types a note into its parent (state.notes) when that
 // parent still runs, and the parent's agent takes a short turn of its own.
 {
-  const lines = readFileSync(process.env.HC_FAKE_LOG, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   let changed = false;
   for (const t of state.terminals) {
     const due = t.endTurnOn;
-    if (!due || lines.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
+    if (!due || logged.filter((a) => a.filter((w) => w !== "--json")[0] === due.word).length < due.nth) continue;
     delete t.endTurnOn;
     changed = true;
     if (t.state !== "live" || t.status?.state !== "working") continue;
@@ -196,7 +199,10 @@ switch (words[0]) {
     // state.runAs: "shell" (the agent never comes in front), "exit" (it ends at once) or
     // "flaky" (its agent is in front for one hc get, then it exits); state.runAsFor[name]: the
     // same, for the run of that name only.
-    const runAs = state.runAsFor?.[name] ?? state.runAs;
+    // state.runQueue: [{ runAs, screen }], one taken per run first (a first try exits, the next stays up).
+    const queued = Array.isArray(state.runQueue) && state.runQueue.length ? state.runQueue.shift() : null;
+    const runAs = queued ? queued.runAs : state.runAsFor?.[name] ?? state.runAs;
+    const runScreen = queued ? queued.screen : state.runScreen;
     const shell = runAs === "shell";
     // state.workingOnRun: terminals whose agent starts a turn when this run happens (once).
     for (const a of state.workingOnRun ?? []) { const w = find(a); if (w) w.status = { ...(w.status ?? {}), state: "working" }; }
@@ -209,7 +215,9 @@ switch (words[0]) {
       argv: launch, template: template?.name ?? null,
       pid: 9000 + n, foreground: { argv: shell ? ["zsh"] : argv, cwd, pid: 5000 + n }, // state.noStatus: programs that report no status to hc (hermes): status null.
       status: (state.noStatus ?? []).includes(program) ? null : { app: program === "claude" ? "claude-code" : program, state: "working" },
-      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}) });
+      ...(runAs === "flaky" ? { exitAfterGets: 1 } : {}),
+      // state.runScreen: what the new pane's screen holds (hc read), its agent's last words, say.
+      ...(typeof runScreen === "string" ? { screen: runScreen } : {}) });
     // state.onRunWrite: { path, text }: a file edit that lands while this run happens.
     if (state.onRunWrite) writeFileSync(state.onRunWrite.path, state.onRunWrite.text);
     save();
@@ -262,8 +270,15 @@ switch (words[0]) {
     // state.execUnanswered: programs whose call gets no answer (the machine dropped mid-call).
     if ((state.execUnanswered ?? []).includes(argv[0])) fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } }));
     if (argv[0] === "uname") { out({ code: 0, stdout: b64(`${m.uname}\n`), stderr: "", timed_out: false }); break; }
+    // state.execTimedOut: words whose call hc ends at its --timeout (a login shell that never answers);
+    // state.execTimedOutAfterMs: how long that answer takes to come back over the link, really waited.
+    if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { if (state.execTimedOutAfterMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.execTimedOutAfterMs); out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
+    // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
+    // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
     const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",
-      env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin` } });
+      env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin`,
+        SHELL: new URL("./fake-login-shell", import.meta.url).pathname, FAKE_LOGIN_PATH: m.login?.path ?? "",
+        FAKE_LOGIN_NOISE: m.login?.noise ?? "", FAKE_LOGIN_EXIT: m.login?.exit ?? "" } });
     // state.loseExecAnswer: a program (by name) ran there, then the link dropped: unavailable, as hc says.
     if (state.loseExecAnswer && state.loseExecAnswer === argv[0]) { delete state.loseExecAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
     out({ code: r.status ?? -1, stdout: b64(r.stdout), stderr: b64(r.stderr), timed_out: false });

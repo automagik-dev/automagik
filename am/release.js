@@ -72,6 +72,71 @@ export const USAGEMETER = Object.freeze({
 });
 /** The one layout the pack ships, beside the mod folders in the tarball. */
 export const PACK_LAYOUT = "layouts/automagik.json";
+
+// `am uninstall herdr.<mod>` (parts.mjs switchOff) asks the shown layout as the mod manager does
+// before a mod goes off or out (#305, #414): these two are mods/am-mods/core.js's, byte for byte (a
+// test keeps them equal), since the pack's entries never load another mod's files. `layoutNeeds`:
+// the mods a layout tree names, `blocks` (Herdr drops a layout whose block names a mod missing from
+// mods/) and the root's `terminal_menu` (Herdr only warns and shows its own menu). `layoutGuard`:
+// `refuse` for a block's mod, `note` for the menu's, null for the rest.
+export function layoutNeeds(tree) {
+  const blocks = new Set();
+  const seen = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (typeof node.content?.mod === "string") blocks.add(node.content.mod);
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(tree);
+  const menu = typeof tree?.terminal_menu === "string" ? tree.terminal_menu : null;
+  return { blocks, menu };
+}
+
+export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
+  const { blocks, menu } = layoutNeeds(tree);
+  const layout = name ? `the ${name} layout` : "the shown layout";
+  if (blocks.has(mod)) {
+    return { refuse: `${mod} stays on: ${layout} shows it, and Herdr drops a layout whose mod is off`
+      + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+  }
+  if (menu === mod) return { note: `${layout}'s right-click menu: Herdr's own menu shows instead` };
+  return null;
+}
+
+// `am uninstall herdr.layout` (parts.mjs removeLayout, #430) asks as the mod manager's package remove
+// does (#420): core.js's packageLayoutGuard, byte for byte (the same test keeps it equal).
+export function packageLayoutGuard({ name, layouts, then = "remove it" }) {
+  if (typeof name !== "string" || !name) return null;
+  const own = (layouts ?? []).find((l) => typeof l === "string" && l.toLowerCase() === `${name.toLowerCase()}.json`);
+  if (!own) return null;
+  return { refuse: `the ${name} layout is this package's (layouts/${own}) and Herdr shows it: removing the package takes it away`
+    + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+}
+
+/**
+ * What an update says of a mod it held in mods/ because a layout names it (update.mjs applyUpdate
+ * `held`, #420): in its log, in `automagik-herdr update` and in the notice after an install. `renamed`:
+ * a rename's old folder, held while a layout the migration cannot move names it (#432); with `gone`,
+ * one already out of mods/ (an update before #432 retired it), so that layout shows plain Herdr.
+ */
+export function heldModLine({ mod, renamed, gone, layouts }, version) {
+  if (typeof renamed !== "string") {
+    const which = layouts.length === 1 ? `the ${layouts[0]} layout shows it` : `the layouts ${layouts.join(", ")} show it`;
+    return `Kept mods/${mod}: ${version} no longer ships it, but ${which}, and Herdr drops a layout whose mod is gone (plain Herdr instead). `
+      + "Take its block out of each of those layouts, or remove them, and the next update retires it. "
+      + "Switching layouts does not retire it: every file in layouts/ is scanned.";
+  }
+  const which = layouts.length === 1 ? `the ${layouts[0]} layout still names it` : `the layouts ${layouts.join(", ")} still name it`;
+  if (gone === true) {
+    return `mods/${mod} is gone (it is ${renamed} now), but ${which}, and ${version} cannot rewrite it (a link, or a shape it does not read), `
+      + `so Herdr shows plain Herdr instead of it. Name ${renamed} in each of them, or take the block out.`;
+  }
+  return `Kept mods/${mod} beside mods/${renamed}: ${which}, ${version} cannot rewrite it (a link, or a shape it does not read), `
+    + `and Herdr drops a layout whose mod is gone (plain Herdr instead). The copy kept is the earlier release's code and gets no `
+    + `updates while it is held. Name ${renamed} in each of them, or take the block out, and the next update retires mods/${mod}.`;
+}
+
 /** sha256 of the bots-only layout v0.2.0–v0.2.2 installed: only that copy is replaced (D8). */
 export const V020_LAYOUT_SHA256 = "5a479f72db788826acb2413df7d32721fbbb9fd070caaf1c7096c6b84778a8a3";
 /** The pack's keys (the repository's keys.json, which a test keeps equal): merged only where free. */
@@ -241,6 +306,12 @@ export const noticeText = (update) =>
  * waits for a newer one. The mod, update.mjs and the CLI all read it through parseAuto.
  */
 export const AUTO_FILE = "auto-update.json";
+/**
+ * Beside the record: `{ version, held }`, the mods the last install held for a layout (#420), for the
+ * new build's notice. update.mjs writes it after the swap, since the build that asked for the install
+ * usually never hears back (updateCheck.js), and removes it when an install holds nothing.
+ */
+export const HELD_FILE = "held-mods.json";
 
 /** The setting as `{ on, skip }`: on unless the file says `"auto": false`; skip a version or null. */
 export function parseAuto(text) {

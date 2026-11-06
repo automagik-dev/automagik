@@ -116,6 +116,22 @@ export function swapProblem(swap) {
 }
 
 /**
+ * The indentation `text` was written with: its first indented line's, none for one line
+ * (the shared registry's rule, apps/bots-dsh/src/shared/registry.js indentOf).
+ */
+export function indentOf(text) {
+  const found = /\n([ \t]+)\S/.exec(String(text ?? ""));
+  if (found) return found[1];
+  return String(text ?? "").trim().includes("\n") ? "  " : "";
+}
+
+/**
+ * A bots.json text for `raw`, indented as `like` is (the text the edit started from; a project's
+ * formatter may want tabs, #230), two spaces for a new file (`like` null), with a final newline.
+ */
+export const botsText = (raw, like = null) => `${JSON.stringify(raw, null, like === null ? "  " : indentOf(like))}\n`;
+
+/**
  * Reads a definitions file for showing it. Throws when the text is not a version-1 file
  * at all (not JSON, no `bots` array, another version). Inside it, an entry with no usable
  * id or name, a repeated id or an unknown kind is left out; anything else is kept and

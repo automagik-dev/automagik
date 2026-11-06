@@ -3,7 +3,7 @@
 // `u` on a pack mod running the pack's own `automagik-herdr update` (a fake command here).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { registerHooks } from "node:module";
@@ -55,6 +55,7 @@ function scratch(t) {
   state.appHome = appHome;
   state.shared.clear?.();
   ui.props = {};
+  ui.layout = null;
   return { appHome, calls };
 }
 
@@ -126,4 +127,135 @@ test("u on a pack mod asks, then runs automagik-herdr update in this app home; n
   // d on a pack mod says how the pack checks itself; it never clones to compare.
   await key(view, cx, "d");
   assert.match(view.message, /Automagik Herdr checks its own files/);
+});
+
+// #305: Herdr drops a layout whose block names a mod missing from mods/ ("needs mods that aren't
+// here") and shows plain Herdr. The switch reads the shown layout (layout(), shared("layout")): the
+// stock one here, from the repo, never an app home's.
+const STOCK_LAYOUT = JSON.parse(readFileSync(new URL("../../herdr-layout/layouts/automagik.json", import.meta.url), "utf8"));
+async function shownLayout(t) {
+  const s = scratch(t);
+  ui.layout = STOCK_LAYOUT;
+  state.shared.set("layout", "automagik");
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  const flip = async (name) => { view.toggle(view.mods.find((m) => m.name === name), cx); await cx.settle(); };
+  const on = (name) => existsSync(join(s.appHome, "mods", name, "mod.json"));
+  const off = (name) => existsSync(join(s.appHome, core.OFF_DIR, name, "mod.json"));
+  return { view, flip, on, off };
+}
+
+test("off on a mod the shown layout's blocks name is refused, naming the layout; the folder stays", async (t) => {
+  const { view, flip, on, off } = await shownLayout(t);
+  for (const name of ["am-sidebar", "am-footer", "am-status"]) {
+    await flip(name);
+    assert.ok(on(name) && !off(name), `${name} stays in mods/`);
+    assert.match(view.message, new RegExp(`^${name} stays on: the automagik layout shows it`));
+    assert.ok(view.mods.find((m) => m.name === name).enabled);
+  }
+});
+
+test("off on a mod the shown layout doesn't name moves it as before", async (t) => {
+  const { view, flip, on, off } = await shownLayout(t);
+  for (const name of ["scratch", "am-quota"]) {
+    await flip(name);
+    assert.ok(!on(name) && off(name), `${name} moved to ${core.OFF_DIR}/`);
+    assert.equal(view.message, `${name} off · its folder moved to ${core.OFF_DIR}/`);
+  }
+  await flip("scratch");
+  assert.ok(on("scratch"), "and back on");
+});
+
+test("a mod the layout names that is already off turns on; the right-click menu's mod turns off with a note", async (t) => {
+  const { view, flip, on, off } = await shownLayout(t);
+  assert.ok(off("am-tabs"), "am-tabs starts off in this home");
+  await flip("am-tabs");
+  assert.ok(on("am-tabs") && !off("am-tabs"));
+  assert.equal(view.message, "am-tabs on");
+  // terminal_menu: Herdr warns and falls back to its own "menu", the layout stays.
+  await flip("am-markdown");
+  assert.ok(off("am-markdown"));
+  assert.match(view.message, /^am-markdown off · its folder moved to mods-disabled\/ · it was the automagik layout's right-click menu: Herdr's own menu shows instead$/);
+});
+
+// #414: remove (x) asks the shown layout as off does, before its y/n question: a mod a block names
+// stays where it is; the right-click menu's goes, with the note; the rest go as before.
+const removeKey = async (view, cx, name) => { select(view, name); await key(view, cx, "x"); };
+
+test("x on a mod the shown layout's blocks name is refused before the question; the folder stays", async (t) => {
+  const { view, on } = await shownLayout(t);
+  const cx = makeCx();
+  for (const name of ["am-sidebar", "am-footer", "am-status"]) {
+    await removeKey(view, cx, name);
+    assert.equal(view.confirm, null, `${name}: no y/n question`);
+    assert.match(view.message, new RegExp(`^${name} stays on: the automagik layout shows it`));
+    assert.match(view.message, /Switch layouts first \(ctrl-shift-l\), then remove it$/);
+    assert.ok(on(name), `${name} stays in mods/`);
+  }
+  // A layout switched while the question was open: remove() asks again.
+  await removeKey(view, cx, "scratch");
+  ui.layout = { id: "root", children: [{ id: "s", content: { mod: "scratch" } }] };
+  state.shared.set("layout", "mine");
+  await key(view, cx, "y");
+  assert.match(view.message, /^scratch stays on: the mine layout shows it/);
+  assert.ok(on("scratch"));
+});
+
+test("x on a mod the shown layout doesn't name removes it as before; the menu's mod goes with a note", async (t) => {
+  const { view, on } = await shownLayout(t);
+  const cx = makeCx();
+  for (const name of ["scratch", "am-quota"]) {
+    await removeKey(view, cx, name);
+    assert.equal(view.confirm?.text, `remove the folder mods/${name}? (y/n)`);
+    await key(view, cx, "y");
+    assert.ok(!on(name), `${name} left mods/`);
+    assert.equal(view.message, `removed: ${name}`);
+  }
+  // terminal_menu: Herdr warns and falls back to its own menu; the layout stays.
+  await removeKey(view, cx, "am-markdown");
+  await key(view, cx, "y");
+  assert.ok(!on("am-markdown"));
+  assert.equal(view.message, "removed: am-markdown · it was the automagik layout's right-click menu: Herdr's own menu shows instead");
+  // A mod that is already off is not in the layout's way: am-tabs, a block of it, goes.
+  await removeKey(view, cx, "am-tabs");
+  assert.match(view.confirm?.text ?? "", /^remove /);
+});
+
+test("x with no layout to read (layout() gives nothing) removes as before", async (t) => {
+  const { view, on } = await shownLayout(t);
+  ui.layout = null;
+  const cx = makeCx();
+  await removeKey(view, cx, "am-footer");
+  await key(view, cx, "y");
+  assert.ok(!on("am-footer"));
+  assert.equal(view.message, "removed: am-footer");
+});
+
+// #420: a package's remove moves its own layouts aside (core.uninstall), so one Herdr shows is
+// refused before the question, as a block's mod is; once another layout shows, it goes as before.
+test("x on a package whose own layout Herdr shows is refused before the question; the layout stays", async (t) => {
+  const s = scratch(t);
+  write(join(s.appHome, "layouts", "scratchy.json"), JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] }));
+  state.shared.set("am.mods.installed", [{ source: "someone/scratch", prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
+  ui.layout = { id: "root", children: [{ id: "p", content: { mod: "pane" } }] };
+  state.shared.set("layout", "scratchy");
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  assert.ok(view.mods.find((m) => m.name === "scratch")?.record, "scratch is the package's");
+  await removeKey(view, cx, "scratch");
+  assert.equal(view.confirm, null, "no y/n question");
+  assert.match(view.message, /^the scratchy layout is this package's \(layouts\/scratchy\.json\) and Herdr shows it: .*Switch layouts first \(ctrl-shift-l\), then remove it$/);
+  assert.ok(existsSync(join(s.appHome, "layouts", "scratchy.json")) && existsSync(join(s.appHome, "mods", "scratch", "mod.json")));
+  // Another layout shown: the package goes, its layout with it.
+  state.shared.set("layout", "automagik");
+  ui.layout = STOCK_LAYOUT;
+  await removeKey(view, cx, "scratch");
+  assert.match(view.confirm?.text ?? "", /^remove scratch and the keys it added\? \(y\/n\)$/);
+  await key(view, cx, "y");
+  await cx.settle();
+  assert.ok(!existsSync(join(s.appHome, "layouts", "scratchy.json")) && !existsSync(join(s.appHome, "mods", "scratch")));
 });

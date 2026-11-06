@@ -2,6 +2,7 @@
 // block, an npx/uvx command, a URL) goes to the Main Bot, which sets it up with
 // save_capability. Keys in it never reach a model: each is saved as a secret first and the
 // text carries $DSH_SECRET_<NAME> in its place, the reference save_capability expands.
+import { allowPlace } from './places.js'
 
 const SECRETISH = /(key|token|secret|password|passwd|pass|auth|bearer|credential|cookie)/i
 // Values that are clearly not a key: placeholders, references, booleans, short words.
@@ -47,7 +48,7 @@ export const mcpRequest = text => [
   'Add this MCP server as a shared capability with save_capability.',
   'Work out a short name, whether it is a local command (stdio) or a URL (streamable-http), and a one-line description from what I pasted.',
   'Keys are already saved as secrets and appear as $DSH_SECRET_<NAME>: keep those references exactly. If it needs a key I did not give, ask me for it with a secret card instead of guessing.',
-  'Then tell me in one line what you added, and whether I must allow it in settings.',
+  `Then tell me in one line what you added. If I must allow it, tell me to do it in ${allowPlace()}, in exactly those words.`,
   '',
   '<<<',
   text.trim(),

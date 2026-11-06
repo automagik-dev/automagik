@@ -221,6 +221,7 @@ const BRANCHES = [
   ['stop_bot', { args: { bot: 'Writer' } }, /Stopped.*Writer/],
   ['create_bot', { args: { name: 'Writer' } }, /Created.*Writer/],
   ['update_bot', { args: { name: 'Writer' } }, /Updated.*Writer/],
+  ['delete_bot', { args: { bot: 'Writer' } }, /Deleted.*Writer/],
   ['group_relay', { content: { replies: [{ botId: 'writer', text: 'Relay reply.' }] } }, /Writer.*Relay reply\./],
   ['create_group', { content: 'Created group "Ops" with Writer.' }, /Created group.*Ops/],
   ['update_group', { content: 'Updated "Ops".' }, /Updated group.*Ops/],
@@ -236,7 +237,7 @@ const BRANCHES = [
 const rosterFor = callId => team({ questions: { chief: question(callId) }, secretRequests: { chief: [request(callId)] } })
 
 test('every call ToolCell draws shows the same nested in a PTC program as on its own', () => {
-  assert.equal(BRANCHES.length, 15)
+  assert.equal(BRANCHES.length, 16)
   for (const [name, options, expected] of BRANCHES) {
     const native = shown(call(name, 'direct', options), { roster: rosterFor('direct') })
     assert.match(native, expected, `${name} on its own`)

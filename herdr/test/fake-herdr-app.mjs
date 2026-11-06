@@ -8,16 +8,22 @@
 // that tab is there, else in a new tab of its own (id `tb-<address>`). `tab.move` (index from 1),
 // `tab.rename` and `tab.close` change the window. With `place: true`, space.new's shell is a
 // terminal of the fake hc too (live, the shell itself in front, its foreground pid the
-// terminal's; `shellBusy: true`: vim in front, another pid). The tabs have Herdr's real ls shape
+// terminal's; `shellBusy: true`: vim in front, another pid; `shellJob: true`: at its prompt with a
+// job left running, a child pid for fake-pgrep.mjs; `shellUnknown: true`: children pgrep can't
+// tell, exit 3; `shellPgrepError: true`: pgrep failing with exit 1 and an error; `shellPgrepKilled: true`: pgrep
+// killed before it exits, as at its timeout). space.new with a `machine` makes that machine's space: its shell is `<machine>/t-shN`
+// to hc and in ls (as the bot's panes there), and space.new prints it bare (`t-shN`): neither
+// shape is documented, so the CLI takes either. The tabs have Herdr's real ls shape
 // (id, name, active, terminals: no pane count, no mod panes) unless `paneCounts: true` gives
 // each a `panes` count; `modInSpare: true` then counts a mod pane beside the shell (as a count
 // only). `probe: <path>` records, on every `do`, whether that file exists then (state.probed).
 // The real window is never touched.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendLine } from "./log-lines.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
 const statePath = process.env.HERDR_APP_FAKE_STATE;
-appendFileSync(process.env.HERDR_APP_FAKE_LOG, `${JSON.stringify([command, ...rest])}\n`);
+appendLine(process.env.HERDR_APP_FAKE_LOG, JSON.stringify([command, ...rest]));
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 if (state.down) {
   process.stderr.write("herdr-app: no window is open\n");
@@ -56,13 +62,16 @@ if (command === "do" && rest[0] === "space.new") {
       tabs: [{ id: "tb-rival", name: "1", active: true, terminals: [{ terminal: "t-rival", pane: "p-rival" }] }] });
   }
   const count = state.paneCounts ? { panes: state.modInSpare ? 2 : 1 } : {};
-  state.spaces.push({ id: `sp-new${n}`, name: args.name ?? "", folder: args.folder ?? "", machine: null, active: true,
-    tabs: [{ id: `tb-new${n}`, name: "1", active: true, terminals: [{ terminal: `t-sh${n}`, pane: `p-new${n}` }], ...count }] });
+  const machine = args.machine || null;
+  const shell = machine ? `${machine}/t-sh${n}` : `t-sh${n}`;
+  state.spaces.push({ id: `sp-new${n}`, name: args.name ?? "", folder: args.folder ?? "", machine, active: true,
+    tabs: [{ id: `tb-new${n}`, name: "1", active: true, terminals: [{ terminal: shell, pane: `p-new${n}` }], ...count }] });
   if (state.place && process.env.HC_FAKE_STATE) {
     const hcState = JSON.parse(readFileSync(process.env.HC_FAKE_STATE, "utf8"));
     const fg = state.shellBusy ? { argv: ["vim", "notes.md"], cwd: args.folder, pid: 9100 + n } : { argv: ["-zsh"], cwd: args.folder, pid: 9000 + n };
-    hcState.terminals.push({ address: `t-sh${n}`, name: `t-sh${n}`, cwd: args.folder, state: "live", parent: null, created_ms: 1, labels: {},
-      pid: 9000 + n, foreground: fg, status: { app: "zsh", state: "idle" } });
+    const children = state.shellUnknown ? null : state.shellPgrepError ? "exit1" : state.shellPgrepKilled ? "killed" : state.shellJob ? [String(9500 + n)] : [];
+    hcState.terminals.push({ address: shell, name: `t-sh${n}`, cwd: args.folder, state: "live", parent: null, created_ms: 1, labels: {},
+      pid: 9000 + n, foreground: fg, status: { app: "zsh", state: "idle" }, children });
     writeFileSync(process.env.HC_FAKE_STATE, JSON.stringify(hcState));
   }
   writeFileSync(statePath, JSON.stringify(state));

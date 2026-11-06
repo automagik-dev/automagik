@@ -393,6 +393,27 @@ export function install(rt) {
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'delete_bot',
+    description: 'Main Bot only. Delete a Bot from the team for good, only when the user explicitly asks to delete that Bot. Its memory and conversations are archived, its secrets are deleted, and it leaves every group chat; its tasks go on without it and its folder stays on disk. A Main Bot cannot be deleted, and neither can an adopted DSH bot.',
+    parameters: {
+      bot: { type: 'string', required: true, description: 'Exact Bot name from list_bots; this Bot is permanently removed from the team' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const self = rt.selfOf(exec.agent?.id)
+      if (!rt.isMain(self)) refuse('Only a Main Bot can delete Bots.')
+      const target = rt.findBot(args.bot)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      if (target.id === self) refuse('You cannot delete yourself.')
+      // The same host deletion the sidebar's Delete calls: its own checks refuse a Main Bot
+      // and an adopted DSH bot, and it removes membership, secrets and archived sessions.
+      await rt.deleteBot(target.id)
+      return `Deleted ${target.name}. Its memory and conversations are archived, its secrets are deleted, and it has left every group chat. Its tasks go on without it and its folder stays on disk.`
+    },
+  }))
+
   // DSH's working_directory changes a Session's folder in place, and the next part starts in
   // the Bot's working folder again. A Bot that changes to a folder outside its working folder
   // sets its working folder instead, with update_bot's checks, and goes on in a fresh part
@@ -844,10 +865,13 @@ export function install(rt) {
       if (!rt.botOf(self)) return 'Only Bots on the team can use save_capability.'
       try {
         const item = await rt.capabilitySave(args, { botId: self })
+        const verdict = item.verification?.status === 'verified' ? ' (verified)'
+          : item.verification?.status === 'unverified' ? ` (unverified${item.verification.reason ? `: ${item.verification.reason}` : ''})`
+            : ''
         const approval = item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
-          ? ' The user must allow this MCP server in Omni settings before it can work.'
+          ? ` The user must allow this MCP server before it can work: in ${rt.allowPlace()} (name it in exactly these words).`
           : ''
-        return `Saved ${item.name}. Bots with it attached use the change from their next message.${approval}`
+        return `Saved ${item.name}${verdict}. Bots with it attached use the change from their next message.${approval}`
       } catch (error) { return error.message }
     },
   }))
@@ -887,7 +911,7 @@ export function install(rt) {
             : attached ? [attached] : []
           const approvals = members
             .filter(item => item.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
-            .map(item => ` The user must allow ${item.name} in Omni settings before it can work.`)
+            .map(item => ` The user must allow ${item.name} before it can work: in ${rt.allowPlace()} (name it in exactly these words).`)
             .join('')
           return `${verb} ${args.name} ${args.bot ? `to ${result.bot}` : 'to yourself'}. Changes apply from ${result.bot}'s next message.${endpoint === 'attach' ? approvals : ''}`
         } catch (error) { return error.message }

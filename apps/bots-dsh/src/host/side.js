@@ -5,10 +5,11 @@
 // live in one file (<home>/side/<botId>.json), not in state.json; only the host
 // that owns the team writes them.
 import { randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ASIDE_LIMIT } from './constants.js'
-import { EMPTY_ERROR, RESTART_ERROR, TOOL_ERROR, callAside, locatePrivate, snapshotOf } from './btw.js'
+import { EMPTY_ERROR, RESTART_ERROR, TOOL_ERROR, callAside, failureKind, locatePrivate, modelFailure, snapshotOf } from './btw.js'
 import { replaceFile } from './files.js'
 
 // The mock model recognizes a side question by this first line.
@@ -185,7 +186,7 @@ export function install(rt) {
   }
 
   const abandoned = botId => disposing || dropped.has(botId) || rt.botOf(botId) === undefined
-  const stopError = (botId) => new Error(disposing && !dropped.has(botId) && rt.botOf(botId) !== undefined ? 'Omni is stopping.' : 'Unknown Bot')
+  const stopError = (botId) => refusal(disposing && !dropped.has(botId) && rt.botOf(botId) !== undefined ? 'Omni is stopping.' : 'Unknown Bot')
 
   // Wait until every targeted flight has left. A call still inside resolveAgent
   // has no `done` yet; yielding lets it notice disposal and drop the slot.
@@ -252,9 +253,11 @@ export function install(rt) {
       }
     } catch (error) {
       if (signal.aborted || entry.status !== 'answering' || !alive(botId, chat, entry)) return
-      const message = error?.message ?? String(error)
-      rt.warn('ds-bot: side for %s failed: %s', botId, message)
-      if (settle(botId, chat, entry, { status: 'failed', error: message, answer: '' })) await persist(botId)
+      // The provider's message may quote the request, its endpoint or its key, so the
+      // card and the log say the kind only.
+      const kind = failureKind(error)
+      rt.warn('ds-bot: side for %s failed (%s)', botId, kind)
+      if (settle(botId, chat, entry, { status: 'failed', error: modelFailure(error, 'The side question failed'), answer: '' })) await persist(botId)
     }
   }
 
@@ -277,8 +280,8 @@ export function install(rt) {
     let chat
     if (typeof chatId === 'string' && chatId !== '') {
       chat = list.find(item => item.id === chatId)
-      if (chat === undefined) throw new Error(CHAT_ERROR)
-      if (answering(chat)) throw new Error(BUSY_ERROR)
+      if (chat === undefined) throw refusal(CHAT_ERROR)
+      if (answering(chat)) throw refusal(BUSY_ERROR)
     } else if (recent === true) {
       // `/side` reuses the freshest chat whose last entry is not still answering.
       chat = [...list]
@@ -295,7 +298,7 @@ export function install(rt) {
       if (abandoned(botId)) throw stopError(botId)
       const snapshot = snapshotOf(agent.session, ctx.get?.('sessionProjections'))
       const route = snapshot.header?.config
-      if (!route?.provider || !route?.model) throw new Error('This Bot has not called a model yet. Send a normal message first.')
+      if (!route?.provider || !route?.model) throw refusal('This Bot has not called a model yet. Send a normal message first.')
       if (chat === undefined) {
         chat = newChat(botId)
         list.push(chat)
@@ -303,7 +306,7 @@ export function install(rt) {
       }
       // `recent` only skips an answering last entry; a stale answering entry
       // anywhere else still holds the chat for one question at a time.
-      if (answering(chat)) throw new Error(BUSY_ERROR)
+      if (answering(chat)) throw refusal(BUSY_ERROR)
       const entry = { id, question, answer: '', status: 'answering', createdAt: Date.now() }
       chat.entries.push(entry)
       chat.updatedAt = entry.createdAt
@@ -311,7 +314,7 @@ export function install(rt) {
       // Unload keeps the saved entry for the next owner. Deletion already removed it.
       if (abandoned(botId) || !alive(botId, chat, entry)) {
         if (disposing && !dropped.has(botId) && alive(botId, chat, entry)) return { chatId: chat.id, entryId: id }
-        throw new Error('Unknown Bot')
+        throw refusal('Unknown Bot')
       }
       const done = complete(botId, chat, entry, snapshot, controller.signal).finally(() => untrack(id))
       const flight = flights.get(id)
@@ -338,7 +341,7 @@ export function install(rt) {
       const chat = list.find(item => item?.id === chatId)
       if (chat === undefined) continue
       const entry = (chat.entries ?? []).find(item => item?.id === entryId)
-      if (entry === undefined) throw new Error(ENTRY_ERROR)
+      if (entry === undefined) throw refusal(ENTRY_ERROR)
       if (entry.status !== 'answering') return { answering: false }
       entry.status = 'cancelled'
       entry.finishedAt = Date.now()
@@ -347,7 +350,7 @@ export function install(rt) {
       await persist(botId)
       return { answering: true }
     }
-    throw new Error(CHAT_ERROR)
+    throw refusal(CHAT_ERROR)
   }
 
   // Closing a chat drops it whole: any call in it aborts, then the chat leaves
@@ -392,7 +395,8 @@ export function install(rt) {
 
   // Channel can be installed without the roster (the thinking route test). The
   // full runtime always has deleteBot, and that is the path that must drop chats: the
-  // roster runs this after its checks, once the Bot is out of its groups (#366).
+  // roster runs this after its checks, once the Bot is out of its groups (#366) and its
+  // Sessions are released, so a failed release keeps the chats (#376).
   if (typeof rt.beforeBotDelete === 'function') rt.beforeBotDelete(dropBot)
 
   const sideJoin = id => flights.get(id)?.done ?? Promise.resolve()

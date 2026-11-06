@@ -48,6 +48,11 @@ const ADVERSARIAL = {
   'line starts': '\n '.repeat(40_000),
   'escaped JSON run': '\\"token\\": \\"x\\" '.repeat(5_000),
   'YAML keys': '\npassword: |'.repeat(6_700),
+  'YAML block, LF, stray CRs': `password: |\n  ${'a line\r'.repeat(10_000)}`,
+  'YAML block, CRLF, stray CRs and LFs': `password: |\r\n  ${'a line\ra line\n'.repeat(5_000)}`,
+  'YAML block, CR, stray LFs': `password: |\r  ${'a line\n'.repeat(10_000)}`,
+  'YAML block, LF, stray CRs at line starts': `password: |\n${'\r  a line\n'.repeat(7_000)}`,
+  'YAML block, CR, stray LF blank lines': `password: |${'\r\n'.repeat(40_000)}`,
   'names mid-line': 'a password: '.repeat(6_700),
   'an explicit key line of names, then its colon line': `? ${'a password '.repeat(6_700)}\n:\n`,
   'explicit key lines': '? password\n:\n'.repeat(8_000),
@@ -113,7 +118,17 @@ const FORMS = [
   ['--key=value', (k) => `tool --${k}=${JOINED}`, 'bare'], ['--key="value"', (k, v) => `tool --${k}="${v}"`],
   ['key: value, bare', (k) => `${k}: ${JOINED}`, 'bare'],
   ['escaped JSON', (k, v) => `{\\"${k}\\": \\"${v}\\"}`],
-  ['YAML >', (k, v) => `\n${k}: >\n  ${v}\n  ${PHRASE}\nnext: shown`], ['YAML |', (k, v) => `\n  ${k}: |-\n    ${v}\n\n    ${PHRASE}\n  next: shown`],
+  // A YAML block with LF, CRLF or lone CR line ends.
+  ...[['', '\n'], [', CRLF', '\r\n'], [', CR', '\r']].flatMap(([eol, n]) => [
+    [`YAML >${eol}`, (k, v) => `${n}${k}: >${n}  ${v}${n}  ${PHRASE}${n}next: shown`],
+    [`YAML |${eol}`, (k, v) => `${n}  ${k}: |-${n}    ${v}${n}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
+  // A stray line end the key line does not use, inside the block: part of the value (#346).
+  ...[['LF', '\n', 'CR', '\r'], ['CRLF', '\r\n', 'CR', '\r'], ['CRLF', '\r\n', 'LF', '\n'], ['CR', '\r', 'LF', '\n']].flatMap(([eol, n, stray, s]) => [
+    [`YAML |, ${eol}, a stray ${stray} mid-line`, (k, v) => `${n}${k}: |${n}  ${v}${s}${PHRASE}${n}next: shown`],
+    [`YAML >, ${eol}, a stray ${stray} at a line start`, (k, v) => `${n}${k}: >${n}  ${v}${n}${s}  ${PHRASE}${n}next: shown`],
+    [`YAML |-, ${eol}, a stray ${stray} on a blank line`, (k, v) => `${n}  ${k}: |-${n}    ${v}${n}${s}${n}    ${PHRASE}${n}  next: shown`],
+  ]),
   ['key = value', (k) => `${k} = ${JOINED}`, 'bare'], ['key : "value"', (k, v) => `${k} : "${v}"`], ['{"key" : "value"}', (k, v) => `{"${k}" : "${v}"}`],
   // YAML anchors and tags before the value (#348).
   ['key: &a !!str "value"', (k, v) => `${k}: &a !!str "${v}"`], ['key: !!str value, bare', (k) => `${k}: !!str ${JOINED}`, 'bare'],
@@ -200,13 +215,32 @@ test('fields named for a pass count are kept; fields named for a pass are hidden
 })
 
 test('a YAML block longer than the 16 KiB bound, streamed a line at a time: no word of it is shown', () => {
-  for (const key of ['password', 'dbPassword']) {
-    const r = rig()
-    r.push(`config:\n  ${key}: |\n`)
-    for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line)
-    assert.deepEqual(leaked(r.served()), [], key)
-    r.push('next: shown')
-    assert.match(r.served(), /next: shown/, key)
+  for (const [eol, n] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const r = rig()
+      r.push(`config:${n}  ${key}: |${n}`)
+      for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line.replace(/\n$/, n))
+      assert.deepEqual(leaked(r.served()), [], `${key}, ${eol}`)
+      r.push('next: shown')
+      assert.match(r.served(), /next: shown/, `${key}, ${eol}`)
+    }
+  }
+})
+
+// A stray line end the key line does not use is part of the value, also when a delta ends on one:
+// the bound keeps an indented block line, so the unindented rest of that line stays hidden (#346).
+test('a YAML block streamed past the 16 KiB bound with stray line ends: no word of it is shown', () => {
+  for (const [eol, n, s] of [['LF', '\n', '\r'], ['CRLF', '\r\n', '\r'], ['CRLF', '\r\n', '\n'], ['CR', '\r', '\n']]) {
+    for (const key of ['password', 'dbPassword']) {
+      const what = `${key}, ${eol} key, a stray ${JSON.stringify(s)}`
+      const r = rig()
+      r.push(`config:${n}  ${key}: |${n}`)
+      for (const line of [...YAML_LINES, ...YAML_LINES]) r.push(line.replace(/\n$/, s))
+      r.push(`${PHRASE}${n}`)
+      assert.deepEqual(leaked(r.served()), [], what)
+      r.push('next: shown')
+      assert.match(r.served(), /next: shown/, what)
+    }
   }
 })
 

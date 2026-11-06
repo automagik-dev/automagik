@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { encodeUrlComponent } from './secrets.js'
 import { own } from './store.js'
 
@@ -6,11 +7,22 @@ const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client'
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const SECRET_REFERENCE = /\$DSH_SECRET_([A-Z][A-Z0-9_]*)/g
 const ENSURE_TIMEOUT_MS = 15_000
+// One initialize request, as the mount sends it. The SDK's reconnect budget is not a probe:
+// a save that retried would leave the user waiting on a server that already refused.
+const PROBE_TIMEOUT_MS = 10_000
+const PROBE_EXCERPT_CHARS = 200
+const PROBE_REASON_CHARS = 300
+const PROBE_BODY = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'automagik-bots-dsh', version: '1' } },
+})
 
 export function validateCapabilityName(value) {
   const name = String(value ?? '').trim()
   if (name.length > 32 || !NAME.test(name) || name === 'github') {
-    throw new Error('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
+    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
   }
   return name
 }
@@ -19,17 +31,17 @@ export function expandCapabilityNames(capabilities, library) {
   const expanded = new Set()
   for (const name of capabilities ?? []) {
     const item = own(library, name)
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     if (item.kind === 'pack') {
       for (const childName of item.items ?? []) {
         const child = own(library, childName)
-        if (!child || !['mcp', 'skill'].includes(child.kind)) throw new Error(`Pack ${name} refers to an unavailable capability ${childName}.`)
+        if (!child || !['mcp', 'skill'].includes(child.kind)) throw refusal(`Pack ${name} refers to an unavailable capability ${childName}.`)
         expanded.add(childName)
       }
     } else if (item.kind === 'mcp' || item.kind === 'skill') {
       expanded.add(name)
     } else {
-      throw new Error(`Capability ${name} has an unknown kind.`)
+      throw refusal(`Capability ${name} has an unknown kind.`)
     }
   }
   return expanded
@@ -38,13 +50,13 @@ export function expandCapabilityNames(capabilities, library) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const strings = value => {
   if (value === undefined) return []
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error('Arguments must be a list of text values.')
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw refusal('Arguments must be a list of text values.')
   return [...value]
 }
 const stringMap = (value, label) => {
   if (value === undefined) return {}
   if (value === null || typeof value !== 'object' || Array.isArray(value)
-    || Object.values(value).some(item => typeof item !== 'string')) throw new Error(`${label} must contain text values.`)
+    || Object.values(value).some(item => typeof item !== 'string')) throw refusal(`${label} must contain text values.`)
   return Object.fromEntries(Object.entries(value))
 }
 
@@ -71,7 +83,7 @@ export function install(rt) {
   }
   const writeCheck = () => {
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) throw new Error(readOnly)
+    if (readOnly !== undefined) throw refusal(readOnly)
   }
   const allowedToEdit = (item, botId) => rt.isMain(botId) || item.createdBy === botId
   const usedByOthers = (name, botId) => Object.values(state.bots).some(bot => bot.id !== botId
@@ -81,17 +93,17 @@ export function install(rt) {
     }))
   // A creator that is not a Main Bot could otherwise rewrite what a Main Bot runs.
   const editCheck = (item, botId, verb) => {
-    if (!allowedToEdit(item, botId)) throw new Error(`Only ${item.createdBy ? 'its creator or a Main Bot' : 'a Main Bot'} can ${verb} ${item.name}.`)
-    if (!rt.isMain(botId) && usedByOthers(item.name, botId)) throw new Error(`Another Bot uses ${item.name}, so only a Main Bot can ${verb} it.`)
+    if (!allowedToEdit(item, botId)) throw refusal(`Only ${item.createdBy ? 'its creator or a Main Bot' : 'a Main Bot'} can ${verb} ${item.name}.`)
+    if (!rt.isMain(botId) && usedByOthers(item.name, botId)) throw refusal(`Another Bot uses ${item.name}, so only a Main Bot can ${verb} it.`)
   }
   const itemInput = (body, { botId, ui }) => {
     const name = validateCapabilityName(body.name)
     const kind = body.kind
-    if (!['mcp', 'skill', 'pack'].includes(kind)) throw new Error('Choose an MCP server, skill, or pack.')
+    if (!['mcp', 'skill', 'pack'].includes(kind)) throw refusal('Choose an MCP server, skill, or pack.')
     const items = ensureLibrary()
     const previous = own(items, name)
     if (previous && !ui) editCheck(previous, botId, 'change')
-    if (previous && previous.kind !== kind) throw new Error('A capability cannot change its kind. Delete it and save a new one.')
+    if (previous && previous.kind !== kind) throw refusal('A capability cannot change its kind. Delete it and save a new one.')
     const now = Date.now()
     const item = {
       name,
@@ -105,7 +117,7 @@ export function install(rt) {
       const transport = body.transport === 'streamable-http' ? 'streamable-http' : 'stdio'
       if (transport === 'stdio') {
         const command = String(body.command ?? '').trim()
-        if (command === '') throw new Error('Enter a command for the MCP server.')
+        if (command === '') throw refusal('Enter a command for the MCP server.')
         const args = strings(body.args)
         const env = stringMap(body.env, 'Environment variables')
         const changed = !previous || previous.kind !== 'mcp' || previous.transport !== 'stdio'
@@ -115,8 +127,8 @@ export function install(rt) {
         const url = String(body.url ?? '').trim()
         try {
           const parsed = new URL(url)
-          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error()
-        } catch { throw new Error('Enter a valid HTTP or HTTPS URL.') }
+          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw refusal()
+        } catch { throw refusal('Enter a valid HTTP or HTTPS URL.') }
         Object.assign(item, { transport, url, headers: stringMap(body.headers, 'Headers'), approved: true })
       }
     } else if (kind === 'skill') {
@@ -125,17 +137,22 @@ export function install(rt) {
       const names = [...new Set(strings(body.items))]
       for (const childName of names) {
         const child = own(items, childName)
-        if (!child || !['mcp', 'skill'].includes(child.kind)) throw new Error(`Packs can include only saved MCP servers and skills. ${childName} is not one.`)
+        if (!child || !['mcp', 'skill'].includes(child.kind)) throw refusal(`Packs can include only saved MCP servers and skills. ${childName} is not one.`)
       }
       item.items = names
     }
-    items[name] = item
     return item
   }
   const capabilitySave = async (body, options = {}) => {
     await rt.load()
     writeCheck()
     const item = itemInput(body ?? {}, options)
+    if (item.kind === 'mcp' && item.transport === 'streamable-http') {
+      item.verification = options.ui && body?.unverified === true
+        ? { checkedAt: new Date().toISOString(), status: 'unverified' }
+        : await probeHttpCapability(item, options.botId)
+    }
+    ensureLibrary()[item.name] = item
     await rt.save()
     return item
   }
@@ -144,7 +161,7 @@ export function install(rt) {
     writeCheck()
     const items = ensureLibrary()
     const item = own(items, String(name ?? ''))
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     if (!ui) editCheck(item, botId, 'delete')
     delete items[item.name]
     for (const pack of Object.values(items)) if (pack.kind === 'pack') pack.items = (pack.items ?? []).filter(child => child !== item.name)
@@ -156,12 +173,12 @@ export function install(rt) {
     await rt.load()
     writeCheck()
     const caller = rt.botOf(callerId)
-    if (!caller) throw new Error('Only Bots on the team can change capabilities.')
+    if (!caller) throw refusal('Only Bots on the team can change capabilities.')
     const target = targetRef ? rt.findBot(targetRef) : caller
-    if (!target) throw new Error(`No Bot named ${targetRef}.`)
-    if (target.id !== caller.id && !rt.isMain(callerId)) throw new Error('Only a Main Bot can change another Bot’s capabilities.')
+    if (!target) throw refusal(`No Bot named ${targetRef}.`)
+    if (target.id !== caller.id && !rt.isMain(callerId)) throw refusal('Only a Main Bot can change another Bot’s capabilities.')
     const item = own(ensureLibrary(), String(name ?? ''))
-    if (!item) throw new Error(`No capability named ${name}.`)
+    if (!item) throw refusal(`No capability named ${name}.`)
     await setAttached(target, item.name, endpoint === 'attach')
     return { bot: target.name, attached: endpoint === 'attach' }
   }
@@ -243,7 +260,7 @@ export function install(rt) {
     if (!pluginPromise) {
       pluginPromise = (async () => {
         const loader = ctx.get?.('loader')
-        if (typeof loader?.import !== 'function') throw new Error('This DSH cannot load MCP servers.')
+        if (typeof loader?.import !== 'function') throw refusal('This DSH cannot load MCP servers.')
         const exports = await loader.import(MCP_CLIENT)
         return loader.unwrapExports?.(exports) ?? exports?.default ?? exports
       })()
@@ -252,7 +269,7 @@ export function install(rt) {
   }
   function secretFor(name, botId) {
     const value = rt.canUseSecret(name, botId) ? rt.secretValue(name) : undefined
-    if (value === undefined) throw new Error(`Secret ${name} is missing or unavailable for this Bot.`)
+    if (value === undefined) throw refusal(rt.secretHeldReason?.(name) ?? `Secret ${name} is missing or unavailable for this Bot.`)
     return value
   }
   function resolveValues(values, botId) {
@@ -268,6 +285,87 @@ export function install(rt) {
     if (item.kind === 'skill') return { name: item.name, description: item.description, content: item.content }
     if (item.transport === 'stdio') return { transport: 'stdio', serverName: item.name, command: item.command, args: resolveList(item.args, botId), env: resolveValues(item.env, botId), failOnStartupError: true }
     return { transport: 'streamable-http', serverName: item.name, url: resolveUrl(item.url, botId), headers: resolveValues(item.headers, botId), failOnStartupError: true }
+  }
+  // A Bot resolves only the secrets it may use; the operator saving from Settings resolves a
+  // stored secret only when some Bot could use it, and the value only ever goes to the URL.
+  const probeSecret = (name, botId) => {
+    const usable = botId === undefined
+      ? Object.values(state.bots).some(bot => rt.canUseSecret(name, bot.id))
+      : rt.canUseSecret(name, botId)
+    const value = usable ? rt.secretValue(name) : undefined
+    if (value === undefined) throw refusal(rt.secretHeldReason?.(name) ?? `Secret ${name} is missing or unavailable${botId === undefined ? '' : ' for this Bot'}.`)
+    return value
+  }
+  // One initialize POST, with the headers the mount would send. Redact before truncating, so a
+  // secret cut at the excerpt edge cannot survive as a fragment.
+  const probeHttpCapability = async (item, botId) => {
+    const checkedAt = new Date().toISOString()
+    let url
+    let headers
+    let sent
+    try {
+      const resolved = resolveProbeHeaders(item.headers, botId)
+      sent = Object.values(resolved).filter(value => value !== '').sort((a, b) => b.length - a.length)
+      url = String(item.url).replace(SECRET_REFERENCE, (_match, name) => encodeUrlComponent(probeSecret(name, botId)))
+      headers = { ...resolved, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
+    } catch (error) {
+      return { checkedAt, status: 'unverified', reason: rt.redactSecrets(String(error?.message ?? error)).slice(0, PROBE_REASON_CHARS) }
+    }
+    // The redactor goes first, over the whole text, and here it replaces every known value
+    // wherever it sits, even a 4-7 character one inside a run of letters: a stored secret is
+    // replaced whole, so no edge of it can survive. Scrub the sent header values only after
+    // that, and only where a secret did not already cover them: scrubbing first would cut a
+    // secret around a header value that is a substring of it and leave that secret's prefix
+    // and suffix behind. A header that embeds a secret therefore reads as [secret:NAME], not
+    // [header]; the label is secondary. Truncation happens only after both, so a cap cannot
+    // split a secret.
+    const clean = (text) => {
+      let out = rt.redactSecretsAnywhere(String(text ?? ''))
+      for (const value of sent) out = out.split(value).join('[header]')
+      return out.replace(/\s+/g, ' ').trim()
+    }
+    let response
+    try {
+      // Never follow a redirect: the second origin would receive the headers, and a GET would
+      // hide a POST the capability never made. One request, and a 3xx is the verdict.
+      response = await fetch(url, {
+        method: 'POST', headers, body: PROBE_BODY, redirect: 'manual',
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      })
+    } catch (error) {
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError'
+      const reason = timedOut ? `timed out after ${PROBE_TIMEOUT_MS / 1000}s` : `could not reach the server: ${clean(error?.message ?? error)}`
+      return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+    }
+    if (response.status >= 300 && response.status < 400) {
+      try { await response.body?.cancel() } catch { /* the status is the verdict */ }
+      const reason = `HTTP ${response.status} (a redirect is not followed)`
+      return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+    }
+    if (response.status === 401 || response.status === 403) {
+      let excerpt = ''
+      try { excerpt = clean(await response.text()).slice(0, PROBE_EXCERPT_CHARS) } catch { /* the status is the verdict */ }
+      const challenge = clean(response.headers.get('www-authenticate') ?? '')
+        .slice(0, PROBE_EXCERPT_CHARS) || '(none)'
+      throw refusal(`Not saved: ${item.name} answered HTTP ${response.status} (WWW-Authenticate: ${challenge}; body: ${excerpt || '(empty)'}). A capability stores headers only and has no sign-in flow. To keep it anyway, use Save unverified in Settings > Capabilities.`)
+    }
+    if (response.ok) {
+      try { await response.body?.cancel() } catch { /* the status is the verdict */ }
+      return { checkedAt, status: 'verified' }
+    }
+    let reason = `HTTP ${response.status}`
+    try {
+      const excerpt = clean(await response.text()).slice(0, PROBE_EXCERPT_CHARS)
+      if (excerpt !== '') reason += `: ${excerpt}`
+    } catch { /* the status is the verdict */ }
+    return { checkedAt, status: 'unverified', reason: reason.slice(0, PROBE_REASON_CHARS) }
+  }
+  const resolveProbeHeaders = (values, botId) => {
+    const resolved = {}
+    for (const [key, raw] of Object.entries(values ?? {})) {
+      resolved[key] = String(raw).replace(SECRET_REFERENCE, (_match, name) => probeSecret(name, botId))
+    }
+    return resolved
   }
   const disposeMount = async mount => {
     if (mount?.fiber) await Promise.resolve().then(() => mount.fiber.dispose()).catch(() => {})
@@ -461,7 +559,7 @@ export function install(rt) {
       await rt.load()
       writeCheck()
       const item = own(library(), String(body.name ?? ''))
-      if (!item || item.kind !== 'mcp' || item.transport !== 'stdio') throw new Error(`No unapproved stdio MCP named ${body.name}.`)
+      if (!item || item.kind !== 'mcp' || item.transport !== 'stdio') throw refusal(`No unapproved stdio MCP named ${body.name}.`)
       item.approved = true
       item.updatedAt = Date.now()
       await rt.save()
@@ -471,12 +569,12 @@ export function install(rt) {
       await rt.load()
       writeCheck()
       const bot = rt.botOf(String(body.botId ?? ''))
-      if (!bot) throw new Error('Unknown Bot')
+      if (!bot) throw refusal('Unknown Bot')
       const name = String(body.name ?? '')
-      if (!own(library(), name)) throw new Error(`No capability named ${name}.`)
+      if (!own(library(), name)) throw refusal(`No capability named ${name}.`)
       return setAttached(bot, name, body.attached === true)
     }
-    throw new Error('Unknown capability operation.')
+    throw refusal('Unknown capability operation.')
   }
   const secretsChanged = rt.secretsChanged
   rt.secretsChanged = () => {

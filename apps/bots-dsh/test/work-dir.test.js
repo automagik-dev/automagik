@@ -129,9 +129,6 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-// #354's harness knob: WORK_DIR_TEST_DELAY_MS=2500 stalls the fresh part's model hook in
-// the model-during-handoff test, as a loaded runner does. Unset, nothing waits.
-const INJECTED_DELAY_MS = Number(process.env.WORK_DIR_TEST_DELAY_MS ?? 0)
 
 test('until fails at its ceiling when the condition never holds', async () => {
   await assert.rejects(until(() => false, { label: 'never', ms: 50 }),
@@ -618,24 +615,134 @@ test('a fresh part runs on the Bot\'s model, not on the earlier part\'s last req
   assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'v4-pro']])
 })
 
-test('a model the user picks while the fresh part is made reaches the fresh part', async (t) => {
-  const env = await start({ llm: MODELS, team: onModel('deepseek/flash') })
+// #412: the model change and the part switch race at one point — whether the Bot's chat
+// is still the earlier part when the change lands. Each test below pins one order with a
+// promise settled by hand (#366), and checks the Bot and the fresh part after both calls;
+// nothing polls, sleeps or retries. The switch is the user's "New conversation", which
+// runs the same `moveOn` as a folder change and has no folder to re-check afterwards. The
+// 5 s test timeout only fails a hang — a seam the product moved away — never a slow run.
+const deferred = () => {
+  let finish
+  const promise = new Promise((resolve) => { finish = resolve })
+  return { promise, release: (value) => finish(value) }
+}
+// The fresh part's permission is applied before it can become the Bot's; holding that
+// resolve holds the promotion. `next` is the promise the next `s1` resolve waits for.
+const holdPromotion = (env) => {
+  const hold = { next: undefined }
+  const resolveAgent = env.ctx.sessionController.resolveAgent
+  env.ctx.sessionController.resolveAgent = async (sessionId) => {
+    if (sessionId === 's1' && hold.next !== undefined) {
+      const waiting = hold.next
+      hold.next = undefined
+      await waiting
+    }
+    return resolveAgent(sessionId)
+  }
+  return hold
+}
+// The switch has moved once it archived the earlier part: the last step it awaits.
+const watchSwitch = (env, moved) => {
+  const archive = env.ctx.workspaceRegistry.archiveSession
+  env.ctx.workspaceRegistry.archiveSession = async (sessionId, options) => {
+    const result = await archive(sessionId, options)
+    if (sessionId === 'b') moved.release()
+    return result
+  }
+}
+
+test('a model the user picks while the fresh part is made reaches it when the pick lands on the part still the Bot\'s', { timeout: 5_000 }, async (t) => {
+  const preset = 'workspace-write'
+  const promotion = deferred()
+  const moved = deferred()
+  const team = onModel('deepseek/flash')
+  const env = await start({
+    llm: MODELS,
+    services: {
+      permissionPresets: {
+        catalog: () => ({ options: [{ value: preset, name: preset }], defaultPreset: preset }),
+        resolve: (name) => { if (name !== preset) throw new Error(`permission: unknown preset "${name}"`) },
+        set: () => {},
+      },
+    },
+    team: { ...team, bots: { ...team.bots, b: { ...team.bots.b, permission: preset } } },
+  })
   t.after(env.stop)
   const selected = recordSelections(env)
+  const hold = holdPromotion(env)
+  watchSwitch(env, moved)
+  const update = deferred()
+  let picked = false
   const select = env.ctx.sessionController.selectModel
   env.ctx.sessionController.selectModel = async (request) => {
     await select(request)
-    if (request.sessionId !== 's1' || selected.length > 1) return
-    if (INJECTED_DELAY_MS > 0) await new Promise(resolve => setTimeout(resolve, INJECTED_DELAY_MS))
-    // The user switches models after the fresh part got the old one, before it is the Bot's.
-    void env.call('update-bot', { id: 'b', model: 'deepseek/v4-pro' })
-    await until(() => env.state().bots.b.model === 'deepseek/v4-pro', { label: 'the Bot saved v4-pro', t })
+    // The fresh part has just taken the old model; the user picks the new one now.
+    if (request.sessionId !== 's1' || picked) return
+    picked = true
+    // The fresh part's permission comes next, and the switch waits there: the Bot's
+    // chat is still the earlier part while the change lands.
+    hold.next = promotion.promise
+    update.release(env.call('update-bot', { id: 'b', model: 'deepseek/v4-pro' }))
   }
-  assert.equal((await env.call('update-bot', { id: 'b', workDir: env.project })).ok, true)
-  await until(() => env.state().bots.b.sessionId === 's1', { label: 's1 is the Bot\'s part', t })
-  await until(() => selected.some(([sessionId, model]) => sessionId === 'b' && model === 'v4-pro'),
-    { label: 'v4-pro selected on b', t })
-  await until(() => handoffOf(env.agentOf('s1')) !== undefined, { label: 's1 got the handoff', t })
+
+  assert.equal((await env.call('bot-fresh', { id: 'b' })).ok, true)
+  const updateBot = await update.promise
+  assert.equal((await updateBot).ok, true)
+  assert.deepEqual(selected.filter(([sessionId]) => sessionId === 'b'), [['b', 'v4-pro']])
+  assert.equal(env.state().bots.b.sessionId, 'b')
+  assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash']])
+
+  promotion.release()
+  await moved.promise
+  assert.equal(env.state().bots.b.model, 'deepseek/v4-pro')
+  assert.equal(env.state().bots.b.sessionId, 's1')
+  // The switch read the Bot's model again before the fresh part became its chat, and
+  // put the pick on the fresh part: the model of the earlier part's last request did not win.
+  assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash'], ['s1', 'v4-pro']])
+})
+
+test('a model the user picks while the fresh part is made reaches it when the pick is applied once the fresh part is the Bot\'s', { timeout: 5_000 }, async (t) => {
+  // The pick is taken in the same window, but the catalog read its own call needs waits
+  // until the handoff has gone: by then the fresh part is the Bot's chat, so the change
+  // lands there without the switch having to read the Bot's model again.
+  const catalog = deferred()
+  let gated = false
+  let held = false
+  const moved = deferred()
+  const env = await start({
+    llm: {
+      ...MODELS,
+      listModels: async () => {
+        if (gated && !held) { held = true; await catalog.promise }
+        return MODELS.listModels()
+      },
+    },
+    team: onModel('deepseek/flash'),
+  })
+  t.after(env.stop)
+  const selected = recordSelections(env)
+  watchSwitch(env, moved)
+  const update = deferred()
+  let picked = false
+  const select = env.ctx.sessionController.selectModel
+  env.ctx.sessionController.selectModel = async (request) => {
+    await select(request)
+    if (request.sessionId !== 's1' || picked) return
+    picked = true
+    gated = true
+    update.release(env.call('update-bot', { id: 'b', model: 'deepseek/v4-pro' }))
+  }
+
+  assert.equal((await env.call('bot-fresh', { id: 'b' })).ok, true)
+  await moved.promise
+  assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash']])
+  catalog.release()
+  const updateBot = await update.promise
+  assert.equal((await updateBot).ok, true)
+  assert.equal(env.state().bots.b.model, 'deepseek/v4-pro')
+  assert.equal(env.state().bots.b.sessionId, 's1')
+  // The change reached the fresh part as the Bot's own chat, not the earlier part.
+  assert.deepEqual(selected.filter(([sessionId]) => sessionId === 'b'), [])
   assert.deepEqual(selected.filter(([sessionId]) => sessionId === 's1'), [['s1', 'flash'], ['s1', 'v4-pro']])
 })
 

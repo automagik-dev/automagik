@@ -3,9 +3,11 @@
 // their shell, tool results lose it before they are saved, and every model request
 // has it replaced by [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { chmod, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { GITHUB_TOKEN_DAYS, GITHUB_WORK, cleanGitHubWork, githubPermissions, isGitHubTokenName } from '../shared/github-token.js'
 import { replaceFile } from './files.js'
 import { output } from './tools.js'
 
@@ -24,6 +26,15 @@ export const envName = name => `${ENV_PREFIX}${name}`
 export const canUse = (secret, botId) => secret !== undefined && botId !== undefined
   && (secret.scope === 'all' || (Array.isArray(secret.scope) && secret.scope.includes(botId)))
 
+// A value below the write floor can only reach the store by hand-editing secrets.json, and
+// nothing can use it safely: the redactor cannot match a 1-3 character value (it sits inside
+// ordinary words), so it would leak wherever it appeared. Such an entry is held instead of
+// dropped: it stays in the file and in the list (with a warning naming the floor) and no path
+// hands it out, so a hand-edited secret cannot ride along unredactable. Trimming matches the
+// write path, which stores the trimmed value.
+const held = secret => secret !== undefined && typeof secret.value === 'string' && secret.value.trim().length < MIN_VALUE
+const heldReason = name => `Secret ${name} is held: its saved value is shorter than ${MIN_VALUE} characters, so it is never used. Save a new value with at least ${MIN_VALUE} characters.`
+
 export function normalizeName(raw) {
   return String(raw ?? '').trim().replace(/^\$(env:)?/i, '').replace(/^DSH_SECRET_/i, '').replace(/[\s-]+/g, '_').toUpperCase()
 }
@@ -35,7 +46,10 @@ export const encodeUrlComponent = value => encodeURIComponent(value).replace(/[!
 
 // One function that replaces every known value in a string, longest first so a value
 // that contains another is replaced whole. JSON-escaped and URL-encoded forms are covered too.
-export function redactor(entries) {
+// `wholeWords: false` matches a short value inside a word as well: the global policy keeps the
+// lookarounds so a PIN does not hit ordinary words, while a caller that renders only a small,
+// already-quoted answer (the capability probe) pays over-redaction instead of leaking an edge.
+export function redactor(entries, { wholeWords = true } = {}) {
   const pairs = []
   for (const { name, value } of entries) {
     if (typeof value !== 'string' || value.length < MIN_VALUE) continue
@@ -54,7 +68,9 @@ export function redactor(entries) {
   const labels = new Map()
   for (const [value, label] of pairs) if (!labels.has(value)) labels.set(value, label)
   const quote = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const pattern = new RegExp(pairs.map(([value, , short]) => (short ? `(?<![\\p{L}\\p{N}])${quote(value)}(?![\\p{L}\\p{N}])` : quote(value))).join('|'), 'gu')
+  const word = value => `(?<![\\p{L}\\p{N}])${quote(value)}(?![\\p{L}\\p{N}])`
+  const parts = pairs.map(([value, , short]) => (short && wholeWords ? word(value) : quote(value)))
+  const pattern = new RegExp(parts.join('|'), 'gu')
   return (text) => {
     if (typeof text !== 'string' || !pairs.some(([value]) => text.includes(value))) return text
     return text.replace(pattern, match => labels.get(match) ?? match)
@@ -95,10 +111,13 @@ export function install(rt) {
   let loaded = null
   let writing = Promise.resolve()
   let redact = text => text
+  let redactAnywhere = text => text
   let refreshEnv = () => {}
 
   const changed = () => {
-    redact = redactor([...secrets.values()])
+    const entries = [...secrets.values()]
+    redact = redactor(entries)
+    redactAnywhere = redactor(entries, { wholeWords: false })
     refreshEnv()
     rt.secretsChanged?.()
   }
@@ -114,6 +133,9 @@ export function install(rt) {
   // would lose every key in it. While `blocked` holds the reason nothing is written,
   // and each load reads the file again (a busy file may only be briefly unreadable).
   let blocked
+  // A reading host reloads on every request, so a held value is reported once per change,
+  // not once per read.
+  let heldWarned = ''
   // Reads may overlap (each load of an unreadable file starts one). Only the newest may change
   // the store: an older one that lands late (it opened what was there before) would undo it,
   // clearing a key just saved or blocking a file just fixed; it waits for the newest instead.
@@ -134,6 +156,7 @@ export function install(rt) {
       if (error?.code === 'ENOENT') {
         blocked = undefined
         secrets.clear()
+        heldWarned = ''
       } else {
         blocked = reason(error)
         rt.warn('ds-bot: unreadable secrets file %s (%s)', path, blocked)
@@ -156,6 +179,7 @@ export function install(rt) {
         await copyFile(path, backup)
         blocked = undefined
         secrets.clear()
+        heldWarned = ''
         rt.warn('ds-bot: unreadable secrets file %s; backed up as %s', path, backup)
       } catch (error) {
         blocked = reason(error)
@@ -166,8 +190,12 @@ export function install(rt) {
     }
     blocked = undefined
     secrets.clear()
+    const heldNames = []
     for (const entry of parsed.secrets) {
       if (!SECRET_NAME.test(entry?.name ?? '') || typeof entry.value !== 'string') continue
+      // Named, not silently dropped: the entry stays in the map (and the file) but is used
+      // nowhere until a value of at least MIN_VALUE characters is saved.
+      if (held(entry)) heldNames.push(entry.name)
       secrets.set(entry.name, {
         name: entry.name,
         value: entry.value,
@@ -180,14 +208,19 @@ export function install(rt) {
       })
     }
     if (!loadedReadOnly) await chmod(path, 0o600).catch(() => {})
+    const heldNotice = heldNames.join(',')
+    if (heldNotice !== heldWarned) {
+      heldWarned = heldNotice
+      for (const name of heldNames) rt.warn('ds-bot: secret %s in %s is held: its saved value is shorter than the %d-character minimum; nothing uses it until a longer value is saved', name, path, MIN_VALUE)
+    }
     changed()
   }
 
   // Resolves once secrets.json holds the current map; rejects when the write failed.
   const persist = () => {
-    if (blocked !== undefined) return Promise.reject(new Error(`The secrets file ${path} could not be read (${blocked}). Omni does not change it; fix or move the file and reload.`))
+    if (blocked !== undefined) return Promise.reject(refusal(`The secrets file could not be read (${blocked}). Omni does not change it; fix or move it and reload.`))
     const readOnly = rt.readOnly()
-    if (readOnly !== undefined) return Promise.reject(new Error(readOnly))
+    if (readOnly !== undefined) return Promise.reject(refusal(readOnly))
     const snapshot = JSON.stringify({ version: 1, secrets: [...secrets.values()] }, null, 2)
     const job = writing.then(async () => {
       await mkdir(home, { recursive: true })
@@ -268,7 +301,7 @@ export function install(rt) {
     for (const [botId, list] of Object.entries(state.secretRequests ?? {})) {
       for (const request of list) {
         if (request.status !== 'pending' || request.name !== name || request === except) continue
-        if (canUse(secret, botId)) {
+        if (canUse(secret, botId) && !held(secret)) {
           settle(botId, request, 'saved')
           notes.push([botId, savedNote(name, `The user saved ${name}, and you may use it now.`)])
         } else {
@@ -286,21 +319,21 @@ export function install(rt) {
   }
 
   const cleanValue = (raw) => {
-    if (typeof raw !== 'string') throw new Error('Type the key first')
+    if (typeof raw !== 'string') throw refusal('Type the key first')
     const value = raw.trim()
-    if (value.length < MIN_VALUE) throw new Error(`A key must have at least ${MIN_VALUE} characters`)
-    if (value.length > MAX_VALUE) throw new Error(`A key can have at most ${MAX_VALUE} characters`)
+    if (value.length < MIN_VALUE) throw refusal(`A key must have at least ${MIN_VALUE} characters`)
+    if (value.length > MAX_VALUE) throw refusal(`A key can have at most ${MAX_VALUE} characters`)
     return value
   }
   const cleanScope = (raw) => {
     if (raw === 'all') return 'all'
-    if (!Array.isArray(raw)) throw new Error('Choose every Bot or a list of Bots')
+    if (!Array.isArray(raw)) throw refusal('Choose every Bot or a list of Bots')
     return [...new Set(raw.filter(id => typeof id === 'string' && rt.botOf(id) !== undefined))]
   }
   const pendingRequest = (id) => {
     const found = findRequest(String(id ?? ''))
-    if (found === undefined) throw new Error('This request is gone')
-    if (found.request.status !== 'pending') throw new Error('This request was already answered')
+    if (found === undefined) throw refusal('This request is gone')
+    if (found.request.status !== 'pending') throw refusal('This request was already answered')
     return found
   }
 
@@ -312,6 +345,7 @@ export function install(rt) {
     createdAt: secret.createdAt,
     updatedAt: secret.updatedAt,
     ...(secret.lastUsedAt !== undefined ? { lastUsedAt: secret.lastUsedAt } : {}),
+    ...(held(secret) ? { held: true } : {}),
   })
   const secretsView = () => [...secrets.values()].sort((a, b) => a.name.localeCompare(b.name)).map(secretView)
 
@@ -344,7 +378,7 @@ export function install(rt) {
         return secretView(secrets.get(request.name))
       }
       const name = normalizeName(body.name)
-      if (!SECRET_NAME.test(name)) throw new Error('A name uses capitals, digits, and underscores, and starts with a letter')
+      if (!SECRET_NAME.test(name)) throw refusal('A name uses capitals, digits, and underscores, and starts with a letter')
       const existing = secrets.get(name)
       secrets.set(name, {
         name,
@@ -363,7 +397,8 @@ export function install(rt) {
     async 'secret-allow'(body) {
       const { botId, request } = pendingRequest(body.requestId)
       const secret = secrets.get(request.name)
-      if (secret === undefined) throw new Error(`${request.name} is not saved yet`)
+      if (secret === undefined) throw refusal(`${request.name} is not saved yet`)
+      if (held(secret)) throw refusal(heldReason(request.name))
       if (!canUse(secret, botId)) secret.scope = [...new Set([...secret.scope, botId])]
       secret.updatedAt = Date.now()
       settle(botId, request, 'allowed')
@@ -381,7 +416,7 @@ export function install(rt) {
     },
     async 'secret-update'(body) {
       const secret = secrets.get(normalizeName(body.name))
-      if (secret === undefined) throw new Error('No such key')
+      if (secret === undefined) throw refusal('No such key')
       if (body.scope !== undefined) secret.scope = cleanScope(body.scope)
       if (typeof body.purpose === 'string') secret.purpose = body.purpose.trim().slice(0, 300)
       secret.updatedAt = Date.now()
@@ -392,7 +427,7 @@ export function install(rt) {
     },
     async 'secret-delete'(body) {
       const name = normalizeName(body.name)
-      if (!secrets.delete(name)) throw new Error('No such key')
+      if (!secrets.delete(name)) throw refusal('No such key')
       const notes = []
       reconcile(name, notes)
       await commit(notes)
@@ -422,6 +457,10 @@ export function install(rt) {
     }
   }
 
+  // What the card asks GitHub for, so the Bot words the same ask and never a broader one.
+  const githubAsk = work => work.length === 0 ? ''
+    : ` It shows the steps to make a fine-grained GitHub token with ${githubPermissions(work).map(entry => `${entry.label}: ${entry.access}`).join(', ')}, for ${GITHUB_TOKEN_DAYS} days. Do not ask for other permissions.`
+
   const callerOf = exec => rt.selfOf(exec.agent?.session?.header?.id ?? exec.agent?.id)
 
   ctx.tools.register(defineTool({
@@ -429,7 +468,8 @@ export function install(rt) {
     description: 'Ask the user for a key, token, or password through a secure card in your own chat. The user types it into the card; you never see the value. It reaches your shell as an environment variable. When the key is already saved for you, this only tells you its variable. Showing a card ends your turn; a note arrives when the user saves or cancels.',
     parameters: {
       name: { type: 'string', required: true, description: 'Key name in capitals, digits, and underscores, e.g. GITHUB_TOKEN' },
-      purpose: { type: 'string', required: true, description: 'One short line for the user: what you need it for' },
+      purpose: { type: 'string', required: true, description: 'One short line for the user: what you need it for. For GitHub, leave the permissions out: the card lists them' },
+      github: { type: 'array', items: { type: 'string', enum: Object.keys(GITHUB_WORK) }, description: 'For a GitHub token (GITHUB_TOKEN, GH_TOKEN), required: the work you will do with it. edit_code to push commits, open_prs to open or update pull requests, read_code, read_prs, read_issues, edit_issues. The card shows the user how to make a fine-grained token with only the permissions this work needs' },
     },
     output,
     async execute(args, exec) {
@@ -440,8 +480,16 @@ export function install(rt) {
       if (bot === undefined) return 'Only Bots on the team can use request_secret.'
       const name = normalizeName(args.name)
       if (!SECRET_NAME.test(name)) return 'Name the key with capitals, digits, and underscores, starting with a letter (for example GITHUB_TOKEN).'
-      const secret = secrets.get(name)
+      const { work, unknown } = cleanGitHubWork(args.github)
+      if (unknown.length > 0) return `Unknown GitHub work: ${unknown.join(', ')}. Pass github with ${Object.keys(GITHUB_WORK).join(', ')}.`
+      const stored = secrets.get(name)
+      // A held entry is invisible to a Bot: asking again shows the fill card, so the user
+      // can replace the unredactable value.
+      const secret = held(stored) ? undefined : stored
       if (canUse(secret, bot.id)) return `${name} is already saved and you may use it: ${usage(name)}. You cannot see the value; never print it.`
+      // A new GitHub token is made for declared work only (#316), so the card never asks for a
+      // broader one; a saved key is only allowed or replaced.
+      if (secret === undefined && work.length === 0 && isGitHubTokenName(name)) return `Say what you will do with ${name}: pass github with ${Object.keys(GITHUB_WORK).join(', ')} (edit_code and open_prs to push commits and open pull requests). The card then asks for only the permissions that work needs.`
       if (rt.groupOwners.has(id)) return 'Secret cards only work in your own chat. Tell the group you will ask the user in your own chat, and call request_secret there.'
       if (!rt.chatOwners.has(id)) return 'Secret cards only work in your current own chat.'
       const readOnly = rt.readOnly()
@@ -461,6 +509,7 @@ export function install(rt) {
         name,
         purpose: String(args.purpose ?? '').trim().slice(0, 300),
         kind: secret ? 'allow' : 'fill',
+        ...(work.length > 0 ? { github: work } : {}),
         status: 'pending',
         askedAt: now,
       })
@@ -469,7 +518,7 @@ export function install(rt) {
       exec.concludeTurn?.()
       return secret
         ? `The card asking the user to let you use ${name} is on screen. A note arrives when the user answers; you will not see the value.`
-        : `The card asking the user for ${name} is on screen. A note arrives when the user saves or cancels; you will not see the value.`
+        : `The card asking the user for ${name} is on screen.${githubAsk(work)} A note arrives when the user saves or cancels; you will not see the value.`
     },
   }))
 
@@ -486,7 +535,13 @@ export function install(rt) {
       if (secrets.size === 0) return 'No keys are saved yet. Ask for one with request_secret.'
       return [
         'Saved keys (values are never shown):',
-        ...secretsView().map(secret => `- ${secret.name}${secret.purpose ? ` — ${secret.purpose}` : ''} — for ${scopeText(secret.scope)} — ${canUse(secrets.get(secret.name), self) ? `you may use it as $${envName(secret.name)}` : 'you may not use it; ask with request_secret'}`),
+        ...secretsView().map((secret) => {
+          const stored = secrets.get(secret.name)
+          const use = held(stored)
+            ? `held: its saved value is shorter than ${MIN_VALUE} characters, so nothing uses it; save a new value`
+            : canUse(stored, self) ? `you may use it as $${envName(secret.name)}` : 'you may not use it; ask with request_secret'
+          return `- ${secret.name}${secret.purpose ? ` — ${secret.purpose}` : ''} — for ${scopeText(secret.scope)} — ${use}`
+        }),
       ].join('\n')
     },
   }))
@@ -533,7 +588,7 @@ export function install(rt) {
     const values = {}
     let used = false
     for (const secret of secrets.values()) {
-      if (!canUse(secret, botId)) continue
+      if (held(secret) || !canUse(secret, botId)) continue
       values[envName(secret.name)] = secret.value
       if (command.includes(envName(secret.name))) {
         secret.lastUsedAt = Date.now()
@@ -550,7 +605,7 @@ export function install(rt) {
     let unregister = null
     let declared = ''
     refreshEnv = () => {
-      const list = [...secrets.values()].sort((a, b) => a.name.localeCompare(b.name))
+      const list = [...secrets.values()].filter(secret => !held(secret)).sort((a, b) => a.name.localeCompare(b.name))
       const key = list.map(secret => `${secret.name}\u0000${secret.purpose}`).join('\n')
       if (key === declared) return
       unregister?.()
@@ -589,11 +644,13 @@ export function install(rt) {
 
   Object.assign(rt, {
     secretsView,
-    secretValue: name => secrets.get(name)?.value,
-    canUseSecret: (name, botId) => canUse(secrets.get(name), botId),
+    secretValue: name => (held(secrets.get(name)) ? undefined : secrets.get(name)?.value),
+    canUseSecret: (name, botId) => !held(secrets.get(name)) && canUse(secrets.get(name), botId),
+    secretHeldReason: name => (held(secrets.get(name)) ? heldReason(name) : undefined),
     secretEndpoint,
     forgetBotSecrets,
     loadSecrets,
     redactSecrets: text => redact(text),
+    redactSecretsAnywhere: text => redactAnywhere(text),
   })
 }

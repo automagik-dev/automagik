@@ -28,10 +28,30 @@ export const runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? 
   .map(([sessionId, task]) => ({ sessionId, ...task }))
   .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
 
-// The Sessions a DSH bot's row lists: all of a DSH bot's, and of the tasks record only the
-// tasks whose Bot is gone (a Bot's own tasks show under its row and in its chat).
-export const agentRowSessions = (agent, roster) => (agent.kind !== 'tasks' ? agent.sessions
-  : agent.sessions.filter(id => roster?.byId?.[roster.tasks?.[id]?.from] === undefined))
+const ENDED_SHOWN = 3
+const ENDED_FOR_MS = 6 * 60 * 60 * 1000
+export const endOf = task => task.endedAt ?? task.at ?? 0
+
+// The ended tasks the Live rail lists, newest end first: a Bot's, three at most, six hours
+// at most.
+export const railEnded = (roster, now) => Object.entries(roster?.tasks ?? {})
+  .filter(([, task]) => roster.byId?.[task.from] !== undefined && task.status !== 'working' && now - endOf(task) < ENDED_FOR_MS)
+  .sort(([, a], [, b]) => endOf(b) - endOf(a))
+  .slice(0, ENDED_SHOWN)
+
+// The Sessions a DSH bot's row lists: all of a DSH bot's. Of the tasks record, what the
+// sidebar has no other place for: a Session with no record, a task whose Bot is gone and,
+// given the clock, an ended task the rail no longer lists. A Bot's threads are its running
+// tasks, so without that last one a stopped task is in no list at all (#164).
+export const agentRowSessions = (agent, roster, now) => {
+  if (agent.kind !== 'tasks') return agent.sessions
+  const inRail = new Set(now === undefined ? [] : railEnded(roster, now).map(([id]) => id))
+  return agent.sessions.filter((id) => {
+    const task = roster?.tasks?.[id]
+    if (roster?.byId?.[task?.from] === undefined) return true
+    return now !== undefined && task.status !== 'working' && !inRail.has(id)
+  })
+}
 
 // Whether a task's Session waits for the user: DSH's approval or question card is up there,
 // or the team's host noted an approval the task waits on (approvals.js `taskId`).

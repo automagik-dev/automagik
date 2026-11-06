@@ -17,13 +17,13 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button, Scrollbar } from "gpui-base";
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify } from "herdr";
 import * as fs from "fs/promises";
-import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, parseBots, newBotId, applyBotEdit } from "./model.js";
+import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, botsText, parseBots, newBotId, applyBotEdit } from "./model.js";
 import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
 import { discoverProjects, editFolderOf, folderExists, keyOf, ownKeyOf, projectOfFolder, untrackedIn, writeBots } from "./bots.js";
-import { attachBot, startBot, liveTerminalOf, runCli, sleepOf } from "./launch.js";
+import { attachBot, startBot, liveTerminalOf, machineCli, runCli, sleepOf } from "./launch.js";
 import { historyLines, menuItems } from "./inspect.js";
 import { clickActionOf } from "./rows.js";
 import { openWorkerTab, workerClick } from "./workerTab.js";
@@ -440,8 +440,9 @@ export class BotForm {
     this.forceable = null;
     this.freshable = null;
     cx.spawn(async (cx) => {
-      let r;
-      r = restartAnswer(await runCli(restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, machine: project.machine ?? null })));
+      // On a linked machine: past Herdr's 30 s exec limit, or refused where Herdr has only that (#444).
+      const args = restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, machine: project.machine ?? null });
+      const r = restartAnswer(await (project.machine ? machineCli(args, "restart") : runCli(args)));
       this.busy = false;
       if (r.refused) {
         this.error = r.refused;
@@ -535,7 +536,7 @@ export class BotForm {
         // The row shows the main checkout's file (Q16): the menu stays, saying where it went.
         // Its snapshot is now the text written, so another Save works.
         const saved = applyBotEdit(raw, entry, newCategory);
-        const now = `${JSON.stringify(saved, null, 2)}\n`;
+        const now = botsText(saved, expected ?? text); // the text writeBots wrote
         this.promptBase = { ...this.promptBase, text: now, expected: now, raw: saved, file: parseBots(now).file, state };
         this.promptNotice = this.worktreeNote(dir, key, untracked, true);
         this.busy = false;
@@ -601,19 +602,19 @@ export class BotForm {
     const list = this.mode === "attach" || this.mode === "pick" || this.mode === "menu";
     const title = { attach: `Attach ${this.p.terminal} as a bot`, pick: "Bots", menu: this.p.name }[this.mode] ?? "Bots";
     const body = this.mode === "menu" ? this.menuBody(t) : this.listBody(t);
-    // The body scrolls with overflow_y_scroll, not overflow_y_scrollbar: a popup is as tall as
-    // its content (its height only the most), and the scrollbar's wrapper gives the body no
-    // height of its own there, so the menu, pick and attach popups drew only the title and
-    // Cancel (#239, seen in a live Herdr). Its bar is placed beside it instead (#241): a
-    // relative wrapper holds the scroll area, in flow, and Scrollbar.vertical paired with it by
-    // name, the only absolute element, so the items' height still reaches the popup. Past the
-    // popup's height the wrapper shrinks (min_h(0)) and the area, its full size, scrolls with a
-    // painted bar; in a dialog (Attach from the command palette) it still fills (flex_1).
+    // A popup is as tall as its content, its height only the most (openOverlay), and a live
+    // Herdr showed what keeps the body's height there. A scroll area sized as a share of its
+    // wrapper (size_full) measures 0 in it: overflow_y_scrollbar's wrapper (#239) and #327's
+    // relative wrapper both drew only the title and Cancel (#397). A scroll area that is a flex
+    // item itself (flex_1().min_h(0).overflow_y_scroll(), #239's fix) takes its items' height.
+    // So the wrapper is a flex column and the area is that item; the bar, paired by name and
+    // the only absolute element, fills the wrapper (#241). Past the popup's height both shrink
+    // (min_h(0)) and the area scrolls; in a dialog (Attach from the command palette) both fill.
     return v_flex().id("bot-form").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).items_center().border_b(1).border_color(t.border).child(div().font_semibold().child(title)))
-      .child(div().relative().flex_1().min_h(0)
-        .child(div().id("bot-form-body").size_full().overflow_y_scroll().child(body))
+      .child(v_flex().relative().flex_1().min_h(0)
+        .child(div().id("bot-form-body").flex_1().min_h(0).overflow_y_scroll().child(body))
         .child(Scrollbar.vertical("bot-form-body").absolute().inset_0()))
       .child(v_flex().flex_none().px(14).py(10).gap(8).border_t(1).border_color(t.border)
         .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.ansi1).child(this.error)))

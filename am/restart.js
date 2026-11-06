@@ -214,9 +214,12 @@ export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state ==
  * A pane mid-turn would have the turn cut in half; a helper hc ends with its parent
  * (die_with_parent, as a worker is) would end with it. --tree (`tree`) restarts those helpers
  * under the new pane (one mid-turn is waited for before anything starts: the CLI's treeIdle).
- * --force (`force`) overrides all.
+ * --force (`force`) overrides all. `onMachine`: the pane is on a linked machine, where --tree isn't
+ * built yet (#437): the way out for helpers is to wait for a working one, end each pane by hand
+ * (a finished worker's pane stays open), then restart, never --tree, nor --force (it drops the
+ * other checks too).
  */
-export function restartRefusal({ name, old, helpers = [], force = false, tree = false }) {
+export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false }) {
   if (force) return null;
   if (old?.status?.state === "working") {
     return `${name} is working in ${old.address}; restarting now would cut its turn in half. Wait until it is idle, or pass --force.`;
@@ -225,6 +228,13 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
   if (tree) return null;
   if (doomed.length) {
     const one = doomed.length === 1;
+    if (onMachine) {
+      const working = doomed.filter((h) => h.status?.state === "working").map((h) => h.address);
+      return `${old.address} has ${one ? "a helper that ends" : "helpers that end"} with it: ${doomed.map((h) => h.address).join(", ")}. `
+        + `Restarting helpers on a linked machine isn't built yet, so nothing was restarted. `
+        + (working.length ? `Wait for ${working.join(", ")} to finish, then end` : "End")
+        + ` ${one ? "its pane" : "each one's pane"} (${doomed.map((h) => `hc kill ${h.address}`).join(", ")}) and restart ${name} again.`;
+    }
     return `${old.address} has ${one ? "a helper that ends" : "helpers that end"} with it: ${doomed.map((h) => h.address).join(", ")}. `
       + `Let ${one ? "it" : "them"} finish, pass --tree to restart ${one ? "it" : "them"} too (resumed, under the new pane), `
       + `or pass --force to end ${one ? "it" : "them"} with the pane.`;
@@ -354,6 +364,8 @@ export function restartAnswer(r) {
     return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
   }
   if (r?.code === 0 && r.out?.running) return { refused: `It is already running in ${r.out.running}.`, forceable: false, freshable: false };
+  // Not run, or ended by Herdr (launch.js machineCli, #444): neither --force nor --fresh is the answer.
+  if (r?.asIs) return { refused: r.err, forceable: false, freshable: false };
   // The CLI's refusal is its last stderr line (warnings come before it).
   const refused = String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
   return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };

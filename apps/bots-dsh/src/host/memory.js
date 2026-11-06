@@ -24,6 +24,7 @@
 // provider's prefix cache holds; a fresh part, or a checkpoint (which breaks the cache
 // anyway), freezes it anew.
 import { createHash, randomUUID } from 'node:crypto'
+import { refusal } from './refusal.js'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { appendFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -195,14 +196,19 @@ export function removeLink(lines, topic) {
 
 const squash = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
 
-// The entry a request means: the one with that exact text, else every entry that
-// contains it.
+// The entries a request means: every entry with that exact text, else every entry
+// that contains it. More than one exact match is a duplicate (a replace, an import, a
+// hand edit), which no text tells apart; findOne refuses it rather than pick the first.
 export function matchEntries(entries, wanted) {
   const key = squash(cleanEntry(wanted))
   if (key === '') return []
-  const exact = entries.find(entry => squash(entry.text) === key)
-  if (exact !== undefined) return [exact]
-  return entries.filter(entry => squash(entry.text).includes(key))
+  // Both sides are cleaned the same way: a bullet an entry's text starts with is
+  // formatting, so comparing the cleaned request with the stored text as it is
+  // would keep that entry from ever matching itself.
+  const text = entry => squash(cleanEntry(entry.text))
+  const exact = entries.filter(entry => text(entry) === key)
+  if (exact.length > 0) return exact
+  return entries.filter(entry => text(entry).includes(key))
 }
 
 const KEY_PATTERNS = [
@@ -471,7 +477,7 @@ export function install(rt) {
       renewMemory: () => {},
       archiveBotMemory: async () => {},
       archiveGroupMemory: async () => {},
-      memoryEndpoint: async () => { throw new Error('Memory is turned off on this host') },
+      memoryEndpoint: async () => { throw refusal('Memory is turned off on this host') },
       memoryNews: () => ({}),
       memoryReviews: () => 0,
       memoryReviewStatus: () => ({ enabled: false, allowed: false, pending: false, running: false }),
@@ -816,7 +822,17 @@ export function install(rt) {
     const found = matchEntries(allEntries(pool), wanted)
     const given = `the text given (${String(wanted ?? '').length} chars)`
     if (found.length === 0) throw missing(`No entry in ${label}${topic !== undefined ? ' in that topic' : ''} matches ${given}. recall shows what is saved.`)
-    if (found.length > 1) throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
+    if (found.length > 1) {
+      // Identical text cannot be told apart by it: a topic names one only when no
+      // file holds two. Never pick the first, which may be the other.
+      if (found.every(entry => squash(entry.text) === squash(found[0].text))) {
+        const files = new Set(found.map(entry => entry.file.file))
+        throw missing(files.size === found.length
+          ? `${capital(given)} matches ${found.length} entries with identical text in ${label}; name the topic it is in (topic). recall shows what is saved.`
+          : `${capital(given)} matches ${found.length} entries with identical text in ${label}; there is no way to tell them apart by text, so nothing changed. recall shows what is saved.`)
+      }
+      throw missing(`${capital(given)} matches ${found.length} entries in ${label}; quote more of the one you mean. recall shows what is saved.`)
+    }
     return found[0]
   }
 
@@ -1374,11 +1390,11 @@ export function install(rt) {
   function panelOf(body) {
     if (body.roomId !== undefined && body.roomId !== null) {
       const room = rt.roomOf(String(body.roomId))
-      if (room === undefined) throw new Error('Unknown group chat')
+      if (room === undefined) throw refusal('Unknown group chat')
       return { id: room.id, name: room.name, group: true, keeper: keeperOf(room), tag: { sessionId: room.id, kind: 'memory' }, scopes: { group: groupScope(room.id) } }
     }
     const bot = rt.botOf(String(body.botId ?? ''))
-    if (bot === undefined) throw new Error('Unknown Bot')
+    if (bot === undefined) throw refusal('Unknown Bot')
     return { id: bot.id, name: bot.name, group: false, keeper: bot, tag: { sessionId: rt.chatOf(bot.id), kind: 'memory' }, scopes: { own: ownScope(bot.id), team: TEAM } }
   }
   const panelBody = panel => (panel.group ? { roomId: panel.id } : { botId: panel.id })
@@ -1435,9 +1451,9 @@ export function install(rt) {
 
   async function memoryAsk(body) {
     const panel = panelOf(body)
-    if (panel.keeper === undefined) throw new Error('No Bot is left in this group chat')
+    if (panel.keeper === undefined) throw refusal('No Bot is left in this group chat')
     const text = String(body.text ?? '').trim().slice(0, ASK_TEXT_MAX)
-    if (text === '') throw new Error('Type a question or a change first')
+    if (text === '') throw refusal('Type a question or a change first')
     const numbered = await settled(() => Object.entries(panel.scopes).flatMap(([tag, scope]) => allEntries(loadScope(scope)).map(entry => ({ ...entry, scope: tag }))))
     const answer = parseAsk(await botShot(panel.keeper, askSystem(panel.group), askRequest({ name: panel.name, group: panel.group, numbered, language: languageNow(), text }), panel.tag))
     const meta = { source: 'memory panel', by: 'user', added: today() }
@@ -1850,7 +1866,7 @@ export function install(rt) {
     if (endpoint === 'memory-view') return memoryView(body)
     if (endpoint === 'memory-ask') return memoryAsk(body)
     if (endpoint === 'memory-forget') return memoryForget(body)
-    throw new Error(`Unknown endpoint ${endpoint}`)
+    throw refusal(`Unknown endpoint ${endpoint}`)
   }
 
   Object.assign(rt, {

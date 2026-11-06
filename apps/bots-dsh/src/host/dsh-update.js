@@ -7,6 +7,7 @@
 // newest release it finds, so the client offers it only when that release is
 // the verified one.
 import { spawn } from 'node:child_process'
+import { refusal } from './refusal.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -143,8 +144,8 @@ export function install(rt) {
   /** Swap an npm-installed DSH for the verified version; the answer comes back through `check`. */
   function start() {
     if (status.phase === 'installing') return view()
-    if (!enabled || target === null || blocked()) throw new Error('No DSH update is available')
-    if (status.kind !== 'npm') throw new Error('This DSH updates with its app')
+    if (!enabled || target === null || blocked()) throw refusal('No DSH update is available')
+    if (status.kind !== 'npm') throw refusal('This DSH updates with its app')
     const chosen = target
     Object.assign(status, { phase: 'installing', error: null })
     const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'

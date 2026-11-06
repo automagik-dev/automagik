@@ -18,6 +18,7 @@ import {
 import { apply, plan, pending, revert } from "../mods/am-sidebar/migrateHome.mjs";
 import { CATALOG_URL, parseMarker } from "../mods/am-sidebar/release.js";
 import { migrateRefs, revertRefs, setupHome } from "../mods/am-sidebar/update.mjs";
+import { heldFrom, landedNotice } from "../mods/am-sidebar/updateCheck.js";
 import { catalogUrl } from "../mods/am-mods/core.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -682,4 +683,92 @@ test("a layout block of an absorbed mod is reported as removable", (t) => {
   writeJson(join(s.home, "layouts", "icons.json"), { id: "r", children: [{ id: "icons", content: { mod: "space-icon" } }, LAYOUT.children[0]] });
   const r = migrateRefs({ modsDir: s.mods });
   assert.ok(r.skipped.some((x) => /icons\.json: space-icon$/.test(x.item) && /space-icon is part of am-sidebar now, so this shows nothing: you can remove it/.test(x.reason)));
+});
+
+test("#387: workspace-status becomes am-status only in a layout showing the pack, placed once, while am-status is on", (t) => {
+  const s = scratch(t);
+  for (const m of ["am-sidebar", "am-status"]) modFolder(join(s.mods, m));
+  write(join(s.state, "installed-by-install.sh"), "version=1.0.0\nmods=am-sidebar,am-status\nlayout=kept\nbefore=none\n");
+  const sidebar = { id: "spaces", type: "block", content: { mod: "am-sidebar" } };
+  const herdr = (id = "status") => ({ id, type: "block", content: { mod: "workspace-status" } });
+  const layouts = {
+    "automagik.json": { id: "root", children: [herdr()] }, // the pack's own name: swapped even without the sidebar
+    "one.json": { id: "root", children: [sidebar, herdr()] },
+    "twice.json": { id: "root", children: [sidebar, herdr("a"), herdr("b")] }, // which one? left, and said why
+    "plain.json": { id: "root", children: [herdr()] }, // plain Herdr's: left
+    "both.json": { id: "root", children: [sidebar, herdr(), { id: "am", content: { mod: "am-status" } }] }, // already placed
+    // A rename too: the file is written as JSON, so the swap line claims nothing about the rest.
+    "renamed.json": { id: "root", children: [{ id: "old", content: { mod: "spaces-agents" } }, herdr()] },
+  };
+  for (const [name, layout] of Object.entries(layouts)) writeJson(join(s.home, "layouts", name), layout);
+  writeJson(join(s.home, "keys.json"), { global: { "cmd-s": "workspace-status.toggle" } });
+  const p = plan(s.home);
+  assert.deepEqual(p.layouts.map((l) => l.file.split("/").at(-1)), ["automagik.json", "one.json", "renamed.json"]);
+  assert.deepEqual(p.layouts[1].edits, [
+    { pointer: "/children/1/content/mod", id: "status", field: "content.mod", before: "workspace-status", after: "am-status", dropIn: true },
+  ]);
+  assert.deepEqual(p.layouts.map((l) => l.inPlace), [true, true, false]);
+  assert.equal(p.keysFile, null, "keys.json never follows a drop-in");
+  assert.deepEqual(p.left, [], "nothing to report: workspace-status is Herdr's, not a renamed folder");
+  assert.deepEqual(p.held.map((h) => h.item.split("/").at(-1)), ["twice.json"]);
+  assert.match(p.held[0].reason, /^it places Herdr's workspace-status 2 times, so am-status \(the status bar .*\) was not swapped in/);
+  // Switched off first, on the same files (mods-disabled/, not mods/): a layout naming it would show plain Herdr.
+  rmSync(join(s.mods, "am-status"), { recursive: true });
+  modFolder(join(s.home, "mods-disabled", "am-status"));
+  const off = plan(s.home);
+  assert.deepEqual(off.layouts.flatMap((l) => l.edits).filter((e) => e.dropIn), [], "no swap while am-status is off");
+  assert.deepEqual(off.held, [], "nothing held either: the pack's mod is off by choice");
+  // Then the planned rewrites (apply writes what plan read, whatever mods/ holds now).
+  const r = apply(p, { backupDir: join(s.state, "backup", "layouts-t") });
+  const said = (name) => r.done.filter((l) => l.includes(`/layouts/${name} `) || l.includes(`/layouts/${name}:`));
+  assert.match(said("one.json")[0], /^swapped Herdr's workspace-status for am-status in .*: .*; nothing else in the file changed \(the original is in /);
+  assert.equal(said("renamed.json").length, 2, "the rename's line and the swap's");
+  assert.ok(said("renamed.json").every((l) => !/nothing else in the file changed/.test(l)), said("renamed.json").join("\n"));
+});
+
+// #432: an old folder update.mjs held for a layout it cannot move (the record lists both names)
+// does not stop the rest from following the rename; a person's own old folder still does.
+test("activeRenames: a held old folder beside its recorded am-* folder still renames; a person's own is kept", () => {
+  const here = new Set(["am-sidebar", "auto-tabs", "am-tabs"]);
+  const held = activeRenames(new Set(["am-sidebar", "auto-tabs", "am-tabs"]), (n) => here.has(n));
+  assert.equal(held.active["auto-tabs"], "am-tabs");
+  assert.ok(!held.kept.includes("auto-tabs"));
+  const theirs = activeRenames(new Set(["am-sidebar", "am-tabs"]), (n) => here.has(n));
+  assert.equal(theirs.active["auto-tabs"], undefined);
+  assert.ok(theirs.kept.includes("auto-tabs"));
+});
+
+test("a layout the migration cannot move off a gone old folder is said on every run, never silent", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  writeJson(join(s.home, "layouts", "odd.json"), { id: "r", children: { s: { content: { mod: "spaces-agents" } } } });
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const p = plan(s.home);
+  const held = p.held.map((h) => [h.item.split("/").at(-1), h.reason]);
+  assert.deepEqual(held.map(([f]) => f), ["mine.json", "odd.json"]);
+  assert.ok(held.every(([, why]) => /it names spaces-agents, which is gone, and this migration cannot move it to am-sidebar, so Herdr shows plain Herdr/.test(why)), held.join("\n"));
+  const lines = [];
+  migrateRefs({ modsDir: s.mods, log: (l) => lines.push(l) });
+  assert.equal(lines.filter((l) => /cannot move it to am-sidebar/.test(l)).length, 2, lines.join("\n"));
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
+});
+
+test("an install says a layout stranded on a renamed folder already gone, with the install and in held-mods.json", (t) => {
+  const s = scratch(t);
+  renamedHome(s);
+  const outside = join(s.root, "dotfiles");
+  writeJson(join(outside, "mine.json"), LAYOUT);
+  mkdirSync(join(s.home, "layouts"));
+  symlinkSync(join(outside, "mine.json"), join(s.home, "layouts", "mine.json"));
+  const r = s.cli("install", "--from", amPack(s.root, "0.3.1", ["am-sidebar"]), "--version", "0.3.1");
+  assert.equal(r.code, 0, r.log);
+  const gone = { mod: "spaces-agents", renamed: "am-sidebar", gone: true, layouts: ["mine"] };
+  assert.deepEqual(r.out.installed.held, [gone]);
+  assert.match(r.log, /mods\/spaces-agents is gone \(it is am-sidebar now\), but the mine layout still names it, and 0\.3\.1 cannot rewrite it/);
+  const note = heldFrom(read(join(s.state, "held-mods.json")), "0.3.1");
+  assert.deepEqual(note, [gone]);
+  assert.match(landedNotice("0.3.1", "0.3.0", false, note).body, /mods\/spaces-agents is gone \(it is am-sidebar now\).*so Herdr shows plain Herdr instead of it/);
+  assert.deepEqual(readJson(join(outside, "mine.json")), LAYOUT, "a link's target is the person's");
 });

@@ -4,15 +4,17 @@
 // after), which `revert` reads to undo exactly those edits and nothing the person changed since.
 // Backups: <backupDir>/layouts/<name>.json and <backupDir>/keys.json, the files as they were.
 // It writes only <home>/layouts/*.json and <home>/keys.json, never through a link (a link is
-// the person's: reported and left), never shared.json (Herdr owns it: the mods' shims carry the
+// the person's: reported and left, and read only to see what it names), never shared.json (Herdr owns it: the mods' shims carry the
 // shared keys) and never a folder in mods/ (update.mjs moves those). Node only; the rules live
 // in migrate.js. Apache-2.0.
 
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { parseMarker } from "./release.js";
-import { ABSORBED, PATH_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, own, rewriteKeys, rewriteLayout } from "./migrate.js";
+import { isDeepStrictEqual } from "node:util";
+import { layoutNeeds, parseMarker } from "./release.js";
+import { change } from "./layoutSafe.mjs";
+import { ABSORBED, DROP_INS, DROP_IN_GAINS, PATH_RENAMES, RENAMES, SHARED_RENAMES, activeRenames, own, rewriteKeys, rewriteLayout } from "./migrate.js";
 
 export { KEY_RENAMES, RENAMES } from "./migrate.js";
 
@@ -20,14 +22,35 @@ const lstat = (path) => { try { return lstatSync(path); } catch { return null; }
 const exists = (path) => lstat(path) !== null;
 const isLink = (path) => Boolean(lstat(path)?.isSymbolicLink());
 const readJson = (path) => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; } };
-/** Written beside `path` under a fresh name, created exclusively (never through a planted file or link), then renamed over it. */
-function writeAtomic(path, text) {
+/**
+ * Written beside `path` under a fresh name, created exclusively (never through a planted file or
+ * link), then renamed over it: a layout's rewrite is one of layoutSafe.mjs change()'s replaces
+ * (`home`, the app home), as the journal and keys.json are.
+ */
+function writeAtomic(path, text, home = null) {
   const tmp = `${path}.am-tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   writeFileSync(tmp, text, { flag: "wx" });
-  try { renameSync(tmp, path); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  try { change(home, [{ op: "replace", from: tmp, to: path }]); } catch (error) { change(home, [{ op: "remove", path: tmp, force: true }]); throw error; }
 }
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const why = (error) => String(error?.message ?? error).split("\n")[0];
+/** The pack's own layout's name in layouts/ (release.js PACK_LAYOUT). */
+const PACK_LAYOUT_NAME = "automagik.json";
+
+/**
+ * `text` with each drop-in edit made where it stands, so the rest of the person's file stays byte
+ * for byte (#387): null when an edit's `"mod": "<before>"` is not in the text exactly once, or the
+ * result does not read back as `layout` (then the file is written as JSON, like any rewrite).
+ */
+export function inPlace(text, edits, layout) {
+  let out = text;
+  for (const e of edits) {
+    const re = new RegExp(`("mod"\\s*:\\s*)${JSON.stringify(e.before).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g");
+    if ((out.match(re) ?? []).length !== 1) return null;
+    out = out.replace(re, (_, key) => `${key}${JSON.stringify(e.after)}`);
+  }
+  try { return isDeepStrictEqual(JSON.parse(out), layout) ? out : null; } catch { return null; }
+}
 export const JOURNAL = "journal.json";
 const REVERTED = "journal.reverted.json";
 
@@ -40,16 +63,45 @@ function writable(home, file) {
 }
 
 /**
+ * The files in <home>/layouts/ with a block still naming `old` once the migration to `now` has
+ * done all it can, so Herdr would drop them for plain Herdr without `old` in mods/ (#432): a link
+ * or anything under a linked layouts/ (read, never written), or a shape rewriteLayout refuses or
+ * does not walk. Decided on `old` alone, so update.mjs can ask before the folder moves. A file
+ * that does not parse names nothing, as in #420: Herdr cannot show it with or without the folder.
+ */
+export function strandedLayouts(home, old, now) {
+  const dir = join(resolve(home), "layouts");
+  let names = [];
+  try { names = readdirSync(dir).filter((n) => n.endsWith(".json")).sort(); } catch { return []; }
+  return names.map((n) => join(dir, n)).filter((file) => {
+    try {
+      const parsed = readJson(file);
+      if (parsed === undefined || !layoutNeeds(parsed).blocks.has(old)) return false;
+      if (isLink(dir) || isLink(file)) return true;
+      const moved = rewriteLayout(parsed, { [old]: now });
+      return !moved || layoutNeeds(moved.layout).blocks.has(old);
+    } catch { return false; }
+  });
+}
+
+/**
  * What the migration would do on app home `home`, from what is on disk and the ownership record:
- * `{ home, folders, layouts, keys, shared, paths, left }`.
+ * `{ home, folders, layouts, keys, shared, paths, left, held, stranded }`.
  * - folders: [old, new] for record-listed old folders still in mods/ (update.mjs moves them when a
  *   release ships the new name; the migration itself never moves a mod);
- * - layouts: `{file, edits, body}` per layout naming a renamed folder;
+ * - layouts: `{file, edits, body, inPlace}` per layout naming a renamed folder, or showing the pack
+ *   with Herdr's block a drop-in replaces (DROP_INS, #387: only while the pack's mod is in mods/);
+ *   `inPlace`: the body is the file's own text with only the swapped values changed;
  * - keys: [before, after] actions and sections in keys.json (`edits` and `body` on `keysFile`);
  * - shared: [old, new] keys shared.json still has only under the old name (read, never written:
  *   the mods copy them on their first load);
  * - paths: [old, new] app-home paths to copy;
- * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape).
+ * - left: `{item, reason}` for references not rewritten (a kept folder, a link, an unknown shape);
+ * - held: `{item, reason}` for a drop-in not swapped in because the layout places Herdr's block
+ *   more than once (#387), or a layout it cannot move off a renamed folder (strandedLayouts, #432):
+ *   said on every run until the person changes it;
+ * - stranded: `{mod, renamed, gone, layouts}` per renamed folder strandedLayouts finds (layouts: their
+ *   names without .json; gone: the old folder is out of mods/), for update.mjs to say with the install.
  */
 export function plan(home) {
   home = resolve(home);
@@ -59,7 +111,9 @@ export function plan(home) {
   const owned = new Set(record?.mods ?? []);
   const present = (name) => exists(join(modsDir, name));
   const { active } = activeRenames(owned, present);
-  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [] };
+  // Switched off (mods-disabled/) is not present: a layout naming an off mod shows plain Herdr.
+  const dropIns = Object.fromEntries(Object.entries(DROP_INS).filter(([, to]) => owned.has(to) && present(to)));
+  const out = { home, folders: [], layouts: [], keys: [], keysFile: null, shared: [], paths: [], left: [], held: [], stranded: [] };
   // A reference is reported only when its folder is someone else's or gone with no successor;
   // one naming a pack folder not renamed yet is simply not due.
   const report = (file) => ({ mod, ref }) => {
@@ -85,13 +139,31 @@ export function plan(home) {
     if (isLink(file)) { linked(file); continue; }
     try {
       const parsed = readJson(file);
-      const result = parsed === undefined ? null : rewriteLayout(parsed, active);
+      const result = parsed === undefined ? null : rewriteLayout(parsed, active, { dropIns, pack: name === PACK_LAYOUT_NAME });
       if (!result) { out.left.push({ item: file, reason: "not a layout this migration recognises: left as it is" }); continue; }
       result.left.forEach(report(file));
-      if (result.edits.length) out.layouts.push({ file, edits: result.edits, body: json(result.layout) });
+      for (const h of result.held) {
+        const gains = own(DROP_IN_GAINS, h.to);
+        out.held.push({ item: file, reason: `it places Herdr's ${h.from} ${h.count} times, so ${h.to}${gains ? ` (${gains})` : ""} was not swapped in: keep one of them and run the install again, or name ${h.to} in the one you want` });
+      }
+      if (result.edits.length) {
+        const swapOnly = result.edits.every((e) => e.dropIn);
+        const text = swapOnly ? inPlace(readFileSync(file, "utf8"), result.edits, result.layout) : null;
+        out.layouts.push({ file, edits: result.edits, body: text ?? json(result.layout), inPlace: text !== null });
+      }
     } catch (error) {
       out.left.push({ item: file, reason: `could not be read as a layout (${why(error)}): left as it is` });
     }
+  }
+
+  for (const old of Object.keys(RENAMES)) {
+    const now = own(active, old);
+    if (!now) continue;
+    const reason = present(old) ? `it names ${old}, and this migration cannot move it to ${now}, so mods/${old} stays: name ${now} in it, or take the block out, and the next update retires mods/${old}`
+      : `it names ${old}, which is gone, and this migration cannot move it to ${now}, so Herdr shows plain Herdr instead of it: name ${now} in it, or take the block out`;
+    const files = strandedLayouts(home, old, now);
+    for (const file of files) out.held.push({ item: file, reason });
+    if (files.length) out.stranded.push({ mod: old, renamed: now, gone: !present(old), layouts: files.map((f) => basename(f, ".json")) });
   }
 
   const keysFile = join(home, "keys.json");
@@ -167,8 +239,15 @@ export function apply(p, { backupDir, onJournal = () => {} }) {
   for (const f of files) {
     try {
       if (!writable(home, f.file)) throw new Error("it became a link");
-      writeAtomic(f.file, f.body);
-      done.push(`rewrote ${f.file} (${f.edits.length} ${f.edits.length === 1 ? "edit" : "edits"}; the original is in ${backupDir})`);
+      writeAtomic(f.file, f.body, home);
+      const swaps = f.edits.filter((e) => e.dropIn);
+      const renames = f.edits.length - swaps.length;
+      if (renames) done.push(`rewrote ${f.file} (${renames} ${renames === 1 ? "edit" : "edits"}; the original is in ${backupDir})`);
+      for (const e of swaps) {
+        const gains = own(DROP_IN_GAINS, e.after);
+        const rest = f.inPlace ? "; nothing else in the file changed" : "";
+        done.push(`swapped Herdr's ${e.before} for ${e.after} in ${f.file}${gains ? `: ${gains}` : ""}${rest} (the original is in ${backupDir})`);
+      }
     } catch (error) {
       skipped.push({ item: f.file, reason: `not rewritten (${why(error)}): left as it was` });
     }
@@ -221,16 +300,23 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
       if (!layout || typeof layout !== "object") { skipped.push({ item: file, reason: "gone or unreadable" }); continue; }
       let changed = 0;
       const stay = [];
+      const undone = [];
       for (const e of Array.isArray(edits) ? edits : []) {
         if (typeof e?.before !== "string" || typeof e.after !== "string") continue;
         if (!due(e)) { stay.push(e); continue; }
         const node = nodeOf(layout, e);
         const holder = e.field === "content.mod" ? node?.content : node;
         const key = e.field === "content.mod" ? "mod" : "terminal_menu";
-        if (holder && typeof holder === "object" && holder[key] === e.after) { holder[key] = e.before; changed += 1; }
+        if (holder && typeof holder === "object" && holder[key] === e.after) { holder[key] = e.before; changed += 1; undone.push({ before: e.after, after: e.before, field: e.field }); }
         else skipped.push({ item: `${file}: ${e.pointer}`, reason: `no longer ${e.after}: left as it is` });
       }
-      if (changed) { writeAtomic(file, json(layout)); restored.push(file); }
+      if (changed) {
+        // Only content.mod values, each found once: edited in the text, so the rest of the file
+        // keeps its bytes (#387); anything else is written as JSON.
+        const text = undone.every((u) => u.field === "content.mod") ? inPlace(readFileSync(file, "utf8"), undone, layout) : null;
+        writeAtomic(file, text ?? json(layout), home);
+        restored.push(file);
+      }
       if (stay.length) kept.layouts.push({ file, edits: stay });
     } catch (error) {
       // Not written: every edit of this file stays in the journal for the next revert.
@@ -259,7 +345,7 @@ export function revert(backupDir, { home = dirname(dirname(dirname(resolve(backu
             keys[before.section][before.key] = before.action;
             changed += 1;
           }
-          if (changed) { writeAtomic(file, json(keys)); restored.push(file); }
+          if (changed) { writeAtomic(file, json(keys), home); restored.push(file); }
         } else skipped.push({ item: file, reason: "gone or unreadable" });
       } catch (error) {
         skipped.push({ item: file, reason: `not restored (${why(error)})` });

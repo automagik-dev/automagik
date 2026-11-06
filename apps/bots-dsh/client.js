@@ -215,6 +215,10 @@ var ZH = {
   Connection: "连接方式",
   "Local command": "本地命令",
   "HTTP server": "HTTP 服务",
+  Verified: "已验证",
+  Unverified: "未验证",
+  "Unverified: {reason}": "未验证：{reason}",
+  "Save unverified": "保存为未验证",
   Command: "命令",
   "Arguments (one per line)": "参数（每行一个）",
   "Environment (JSON)": "环境变量（JSON）",
@@ -770,6 +774,8 @@ var ZH = {
   "Asking another Bot": "询问其他 Bot",
   "Stopping {name}": "叫停 {name}",
   "Stopping another Bot": "叫停其他 Bot",
+  "Deleting {name}": "删除 {name}",
+  "Deleting another Bot": "删除其他 Bot",
   "Creating {name}": "创建 {name}",
   "Updating {name}": "更新 {name}",
   "Checking the team": "查看团队",
@@ -806,6 +812,7 @@ var ZH = {
   "Couldn't message {name}": "没能给 {name} 发消息",
   Messaged: "已发消息给",
   "Couldn't stop {name}": "没能叫停 {name}",
+  "Couldn't delete {name}": "没能删除 {name}",
   Stopped: "已叫停",
   Created: "已创建",
   Updated: "已更新",
@@ -854,6 +861,12 @@ var ZH = {
   "This page is not on HTTPS: the key crosses the network unencrypted.": "这个页面不是 HTTPS：密钥会以明文经过网络。",
   "Let {bot} use {name}?": "允许 {bot} 使用 {name}？",
   "{name} needs a key": "{name} 需要一个密钥",
+  // The steps of a GitHub token card (#316); GitHub's own field names fill the slots.
+  "Open GitHub's new fine-grained token page.": "打开 GitHub 新建细粒度令牌的页面。",
+  "Under “{field}”, choose “{value}”.": "在“{field}”中选择“{value}”。",
+  "Under “{field}”, choose “{value}” and pick the ones {bot} works on.": "在“{field}”中选择“{value}”，并选出 {bot} 要处理的仓库。",
+  "Under “{field}”, set only these:": "在“{field}”中只设置这些：",
+  "Click “{button}”, copy it and paste it below.": "点击“{button}”，复制令牌并粘贴到下方。",
   "Saved for {scope}": "已保存，可用范围：{scope}",
   "Value of {name}": "{name} 的值",
   "{bot} never sees the value. It reaches {bot}'s shell as ": "{bot} 永远看不到这个值。它会作为下面的环境变量进入 {bot} 的 shell：",
@@ -883,6 +896,8 @@ var ZH = {
   "added {time}": "添加于 {time}",
   "last used {time}": "上次使用 {time}",
   "not used yet": "还没用过",
+  "Held: the saved value is shorter than {count} characters": "已暂停使用：保存的值不足 {count} 个字符",
+  "Held: nothing uses this key until you save a value of at least {count} characters.": "已暂停使用：在你保存至少 {count} 个字符的值之前，没有任何地方使用这个密钥。",
   "Delete {name}? Bots lose it at once.": "删除 {name}？Bot 会立刻失去它。",
   Keep: "保留",
   "Key name": "密钥名",
@@ -1413,6 +1428,8 @@ var ZH = {
   "{from} wants to stop {to}": "{from} 想停止 {to}",
   "{from} wants to add {name} to the team": "{from} 想把 {name} 加入团队",
   "{from} wants to change {name}": "{from} 想修改 {name}",
+  "{from} wants to delete {to}": "{from} 想删除 {to}",
+  "Deleting archives its memory and conversations, removes it from the team and groups, and deletes its secrets.": "删除会归档它的记忆和对话，把它移出团队和群聊，并删除它的密钥。",
   "{from} wants to post in {group}": "{from} 想在 {group} 里发言",
   "{from} wants to remember this": "{from} 想记住这件事",
   "{from} wants to forget this": "{from} 想忘掉这件事",
@@ -3030,7 +3047,7 @@ var import_react6 = require("react");
 var STATES = ["idle", "thinking", "searching", "working", "sending", "orbit", "waiting", "alert", "done", "failed", "review", "sleeping"];
 var WORK = ["thinking", "searching", "working", "sending", "orbit"];
 var botState = (running2, activity, alert, { failed = false, unread = false } = {}) => alert ? "alert" : running2 ? WORK.includes(activity) ? activity : "working" : failed ? "failed" : activity === "waiting" ? "waiting" : unread ? "review" : "idle";
-var toolState = (name) => /^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? "sending" : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? "searching" : "working";
+var toolState = (name) => /^(message_bot|stop_bot|create_bot|update_bot|delete_bot|create_group|update_group|delete_group|post_to_group)$/.test(name) ? "sending" : /search|fetch|browse|read|grep|glob|list|recall/i.test(name) ? "searching" : "working";
 function useGaze(ref, enabled) {
   (0, import_react6.useEffect)(() => {
     if (!enabled) return void 0;
@@ -3514,6 +3531,50 @@ function useDockHold(sessionId, kind, requestId, actions, inline) {
   };
 }
 
+// src/shared/github-token.js
+var GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new";
+var GITHUB_TOKEN_DAYS = 30;
+var GITHUB_FIELDS = {
+  expiration: "Expiration",
+  days: `${GITHUB_TOKEN_DAYS} days`,
+  repositoryAccess: "Repository access",
+  onlySelected: "Only select repositories",
+  permissions: "Permissions > Repository permissions",
+  generate: "Generate token"
+};
+var GITHUB_WORK = {
+  read_code: ["contents", "read"],
+  edit_code: ["contents", "write"],
+  read_prs: ["pull_requests", "read"],
+  open_prs: ["pull_requests", "write"],
+  read_issues: ["issues", "read"],
+  edit_issues: ["issues", "write"]
+};
+var PERMISSIONS = { contents: "Contents", pull_requests: "Pull requests", issues: "Issues" };
+var ACCESS = { read: "Read-only", write: "Read and write" };
+function cleanGitHubWork(raw) {
+  const given = raw === void 0 || raw === null ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+  return {
+    work: Object.keys(GITHUB_WORK).filter((tag) => given.includes(tag)),
+    unknown: [...new Set(given.filter((tag) => !Object.hasOwn(GITHUB_WORK, tag)))]
+  };
+}
+function githubPermissions(work) {
+  const levels = /* @__PURE__ */ new Map();
+  for (const tag of cleanGitHubWork(work).work) {
+    const [name, level] = GITHUB_WORK[tag];
+    if (levels.get(name) !== "write") levels.set(name, level);
+  }
+  return Object.keys(PERMISSIONS).filter((name) => levels.has(name)).map((name) => ({ name, label: PERMISSIONS[name], level: levels.get(name), access: ACCESS[levels.get(name)] }));
+}
+function githubTokenUrl(work) {
+  const params = new URLSearchParams({ expires_in: String(GITHUB_TOKEN_DAYS) });
+  for (const { name, level } of githubPermissions(work)) params.set(name, level);
+  return `${GITHUB_TOKEN_PAGE}?${params}`;
+}
+var GITHUB_TOKEN_NAME = /^(?:GITHUB|GH)_(?:TOKEN|PAT|ACCESS_TOKEN|PERSONAL_ACCESS_TOKEN|API_TOKEN|OAUTH_TOKEN)$/;
+var isGitHubTokenName = (name) => GITHUB_TOKEN_NAME.test(String(name ?? ""));
+
 // src/client/secret-card.js
 var import_react9 = require("react");
 var MIN_VALUE = 4;
@@ -3599,6 +3660,26 @@ function SecretHead({ bot, title, detail, name, onClose }) {
     onClose ? (0, import_react9.createElement)("button", { type: "button", className: "bt-q-x", "aria-label": t("Cancel the request"), title: t("Cancel"), onClick: onClose }, (0, import_react9.createElement)(CloseIcon)) : null
   );
 }
+function GitHubSteps({ bot, work }) {
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "bt-secret-steps", role: "note" },
+    (0, import_react9.createElement)(
+      "ol",
+      null,
+      (0, import_react9.createElement)("li", null, (0, import_react9.createElement)("a", { href: githubTokenUrl(work), target: "_blank", rel: "noopener noreferrer" }, t("Open GitHub's new fine-grained token page."))),
+      (0, import_react9.createElement)("li", null, t("Under “{field}”, choose “{value}”.", { field: GITHUB_FIELDS.expiration, value: GITHUB_FIELDS.days })),
+      (0, import_react9.createElement)("li", null, t("Under “{field}”, choose “{value}” and pick the ones {bot} works on.", { field: GITHUB_FIELDS.repositoryAccess, value: GITHUB_FIELDS.onlySelected, bot: bot.name })),
+      (0, import_react9.createElement)(
+        "li",
+        null,
+        t("Under “{field}”, set only these:", { field: GITHUB_FIELDS.permissions }),
+        (0, import_react9.createElement)("ul", null, githubPermissions(work).map((entry) => (0, import_react9.createElement)("li", { key: entry.name }, (0, import_react9.createElement)("code", null, `${entry.label}: ${entry.access}`))))
+      ),
+      (0, import_react9.createElement)("li", null, t("Click “{button}”, copy it and paste it below.", { button: GITHUB_FIELDS.generate }))
+    )
+  );
+}
 function SecretCard({ sessionId, bot, request, roster, actions, inline = false }) {
   const [value, setValue] = (0, import_react9.useState)("");
   const [scope, setScope] = (0, import_react9.useState)("all");
@@ -3640,6 +3721,7 @@ function SecretCard({ sessionId, bot, request, roster, actions, inline = false }
       name: request.name,
       onClose: busy ? void 0 : cancel
     }),
+    filling && Array.isArray(request.github) && request.github.length > 0 ? (0, import_react9.createElement)(GitHubSteps, { bot, work: request.github }) : null,
     request.kind === "allow" ? (0, import_react9.createElement)("div", { className: "bt-secret-saved" }, (0, import_react9.createElement)(KeyIcon), t("Saved for {scope}", { scope: scopeLabel(secret?.scope, roster) })) : null,
     filling ? (0, import_react9.createElement)(
       "div",
@@ -3808,7 +3890,17 @@ function SecretRow({ secret, roster, actions, run: run2, open, onToggle }) {
   }, [open]);
   const asker = secret.requestedBy ? roster.byId[secret.requestedBy]?.name ?? t("a deleted Bot") : t("you");
   const allowed2 = secret.scope === "all" ? [] : secret.scope.map((id) => roster.byId[id]).filter(Boolean);
-  const meta = [t("Asked by {name}", { name: asker }), t("added {time}", { time: when(secret.createdAt) }), secret.lastUsedAt ? t("last used {time}", { time: when(secret.lastUsedAt) }) : t("not used yet")].join(" · ");
+  const held = secret.held === true;
+  const heldLine = t(
+    "Held: the saved value is shorter than {count} characters",
+    { count: MIN_VALUE }
+  );
+  const state = held ? heldLine : secret.lastUsedAt ? t("last used {time}", { time: when(secret.lastUsedAt) }) : t("not used yet");
+  const meta = [
+    t("Asked by {name}", { name: asker }),
+    t("added {time}", { time: when(secret.createdAt) }),
+    state
+  ].join(" · ");
   return (0, import_react9.createElement)(
     "div",
     { className: "bt-secret-item", "data-open": open ? "" : void 0 },
@@ -3832,6 +3924,15 @@ function SecretRow({ secret, roster, actions, run: run2, open, onToggle }) {
       { className: "bt-secret-edit" },
       (0, import_react9.createElement)(ScopeEditor, { key: JSON.stringify(secret.scope), secret, roster, onSave: (scope) => run2(actions.secretUpdate(secret.name, { scope })) }),
       (0, import_react9.createElement)(PurposeEditor, { key: secret.purpose ?? "", secret, onSave: (purpose) => run2(actions.secretUpdate(secret.name, { purpose })) }),
+      held ? (0, import_react9.createElement)(
+        "div",
+        { className: "bt-secret-warn", role: "note" },
+        (0, import_react9.createElement)(WarnIcon),
+        t(
+          "Held: nothing uses this key until you save a value of at least {count} characters.",
+          { count: MIN_VALUE }
+        )
+      ) : null,
       (0, import_react9.createElement)(ValueEditor, { secret, onSave: (value) => run2(actions.secretSet({ name: secret.name, value })) }),
       (0, import_react9.createElement)(
         "div",
@@ -3924,6 +4025,11 @@ var SECRET_CSS = `
 @keyframes bt-secret-in{from{opacity:0;transform:translateY(-2px)}}
 .bt-secret-saved{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
 .bt-secret-note{font-size:12px;line-height:17px;color:var(--bt-ink-3)}
+.bt-secret-steps{font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
+.bt-secret-steps ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:3px}
+.bt-secret-steps ul{margin:2px 0 0;padding-left:16px}
+.bt-secret-steps a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.bt-secret-steps code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-note code,.bt-secret-about code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .bt-secret-warn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:12px;line-height:16px;color:#b25e09;background:color-mix(in srgb,#f59e0b 12%,transparent)}
 .bt-secret-error{font-size:12px;line-height:16px;color:var(--bt-danger)}
@@ -4661,7 +4767,19 @@ var duration = (ms) => {
   return minutes < 60 ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 var runningTasksOf = (roster, botId) => Object.entries(roster.tasks ?? {}).filter(([, task]) => task.from === botId && task.status === "working").map(([sessionId, task]) => ({ sessionId, ...task })).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-var agentRowSessions = (agent, roster) => agent.kind !== "tasks" ? agent.sessions : agent.sessions.filter((id) => roster?.byId?.[roster.tasks?.[id]?.from] === void 0);
+var ENDED_SHOWN = 3;
+var ENDED_FOR_MS = 6 * 60 * 60 * 1e3;
+var endOf = (task) => task.endedAt ?? task.at ?? 0;
+var railEnded = (roster, now) => Object.entries(roster?.tasks ?? {}).filter(([, task]) => roster.byId?.[task.from] !== void 0 && task.status !== "working" && now - endOf(task) < ENDED_FOR_MS).sort(([, a], [, b]) => endOf(b) - endOf(a)).slice(0, ENDED_SHOWN);
+var agentRowSessions = (agent, roster, now) => {
+  if (agent.kind !== "tasks") return agent.sessions;
+  const inRail = new Set(now === void 0 ? [] : railEnded(roster, now).map(([id]) => id));
+  return agent.sessions.filter((id) => {
+    const task = roster?.tasks?.[id];
+    if (roster?.byId?.[task?.from] === void 0) return true;
+    return now !== void 0 && task.status !== "working" && !inRail.has(id);
+  });
+};
 var waitsForUser = (status, sessionId) => status?.get(sessionId)?.pendingInteraction !== void 0;
 var approvalFor = (work, sessionId) => (work?.approvals ?? []).some((entry) => entry.taskId === sessionId);
 var taskState = (task, waiting) => {
@@ -8098,6 +8216,11 @@ html body :is(.bt-connect,.bt-you){border:0;border-radius:var(--st-r-menu);backg
 html body .bt-connect:hover{background:var(--st-tag)}
 html body :is(.bt-menu-label,.bt-list-label,.bt-section-label){font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink-2)}
 `;
+var CONVERSATION_MARK = "data-bt-conversation";
+function markConversation(root = document.documentElement) {
+  root.setAttribute(CONVERSATION_MARK, "");
+  return () => root.removeAttribute(CONVERSATION_MARK);
+}
 var CONTROLS = `
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button){border:1px solid var(--st-line-2);border-radius:10px;background:transparent;box-shadow:none;font-weight:600;transition:background-color .16s ease}
 html body :is(.bt-soft,.bt-q-btn,.bt-pill,.bt-model-chip,.bt-head button):hover:not(:disabled){background:var(--bt-hover)}
@@ -8108,13 +8231,15 @@ html body :is(.bt-state,.bt-token){border:1px solid var(--st-line);background:va
 html body .bt-state[aria-pressed=true]{background:var(--st-lilac);color:var(--st-lilac-ink)}
 html body [class*="_composerStack"] [data-composer-card][data-composer-card]{max-width:min(760px,100%)!important;margin-inline:auto!important}
 html body [class*="_composerStack"] [data-queue-dock]{max-width:calc(760px - 2*var(--dsh-composer-dock-inset,8px))!important}
+html body [class*="_composerStack"] :is([data-goal-bar],[data-goal-bar]>*,[data-testid="todo-panel"],[data-composer-dock]:has(.bt-btw),.bt-btw-dock){max-width:calc(760px - 4*var(--dsh-composer-dock-inset,8px))}
+html body [class*="_composerStack"] [data-composer-dock]:has(.bt-btw){width:calc(100% - 4*var(--dsh-composer-dock-inset,8px))}
 html body [data-composer-card]{background:var(--st-raised)!important;border:1px solid var(--st-line)!important;border-radius:18px!important;box-shadow:var(--st-hollow)!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus){flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [data-composer-input]{min-height:40px!important}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus) [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
-html body [data-composer-card][data-composer-card]:has(.bt-plus)>[data-slot="conversation.input.attachments"]{order:-1!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]{flex-wrap:wrap!important;row-gap:6px!important;padding:10px 10px 8px 12px!important;border-radius:18px!important;min-height:0!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-input-scroll]{order:0!important;flex:1 1 100%!important;padding:2px 4px 4px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [data-composer-input]{min-height:40px!important}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_tools"]{order:1!important;align-self:center!important;display:flex;align-items:center;gap:6px;min-width:28px;min-height:28px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card] [class*="_trailing"]{order:2!important;align-self:center!important;margin-left:auto!important;display:flex;align-items:center;gap:6px}
+html[${CONVERSATION_MARK}] body [data-composer-card][data-composer-card]>[data-slot="conversation.input.attachments"]{order:-1!important}
 html body [data-composer-card]:focus-within{border-color:var(--st-ring)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--st-ring) 14%,transparent)!important}
 html body [data-composer-card] button[class*="_primary"],html body .bt-voice{background:var(--st-cyan)!important;color:var(--st-cyan-ink)!important;box-shadow:var(--st-clay)!important;border:0!important}
 html body :is(.bt-plus,.bt-mic){background:transparent;box-shadow:none;color:var(--bt-ink-2)}
@@ -9133,6 +9258,10 @@ function toolActivity(name, arg, findBot2, self) {
       const target = findBot2(arg("name")) ?? findBot2(arg("bot")) ?? (arg("bot") ? void 0 : self);
       return { label: t("Updating {name}", { name: target?.name ?? t("a Bot") }), state: "sending" };
     }
+    case "delete_bot": {
+      const target = findBot2(arg("bot"));
+      return { label: target ? t("Deleting {name}", { name: target.name }) : t("Deleting another Bot"), state: "sending" };
+    }
     case "list_bots":
       return { label: t("Checking the team"), state: "searching" };
     case "read_group_chat":
@@ -9342,7 +9471,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     })
   );
 }
-var DRAWN = /* @__PURE__ */ new Set(["start_task", "message_bot", "stop_bot", "create_bot", "update_bot", "group_relay", "create_group", "update_group", "delete_group", "post_to_group", "ask_user", "request_secret", "ask_user_question", "read_group_chat", "remember", "forget", "show_view", "browser_handoff", "generate_image"]);
+var DRAWN = /* @__PURE__ */ new Set(["start_task", "message_bot", "stop_bot", "create_bot", "update_bot", "delete_bot", "group_relay", "create_group", "update_group", "delete_group", "post_to_group", "ask_user", "request_secret", "ask_user_question", "read_group_chat", "remember", "forget", "show_view", "browser_handoff", "generate_image"]);
 var CARDS = /* @__PURE__ */ new Set(["ask_user", "request_secret", "show_view", "browser_handoff"]);
 function callTree(root) {
   const calls = [];
@@ -9397,6 +9526,12 @@ function renderCall(call2, { sessionId, roster, actions, useUi, useWork, useSess
     case "update_bot": {
       const target = findBot2(arg("name")) ?? findBot2(arg("bot")) ?? (arg("bot") ? void 0 : self);
       return done && target ? (0, import_react22.createElement)(EventLine, { prefix: t("Updated"), bots: [target], onOpen: (bot) => actions.openSession(bot.id) }) : null;
+    }
+    case "delete_bot": {
+      const name = arg("bot") ?? "…";
+      if (!done) return null;
+      if (call2.isError) return (0, import_react22.createElement)("div", { className: "bt-event" }, t("Couldn't delete {name}", { name }));
+      return (0, import_react22.createElement)("div", { className: "bt-event" }, (0, import_react22.createElement)("span", null, t("Deleted")), (0, import_react22.createElement)("span", null, name));
     }
     case "group_relay":
       return (0, import_react22.createElement)(GroupReplies, { sessionId, callId: call2.callId, done, content: call2.content, roster, actions, useUi, useWork });
@@ -9482,8 +9617,6 @@ function LiveTab({ useRoster, ...props }) {
   const roster = useRoster((value) => value);
   return (0, import_react23.createElement)(LiveRail, { ...props, roster });
 }
-var ENDED_SHOWN = 3;
-var ENDED_FOR_MS = 6 * 60 * 60 * 1e3;
 function liveOf(work, roster, now = Date.now()) {
   const byId = roster?.byId ?? {};
   const roomsById = roster?.roomsById ?? {};
@@ -9509,18 +9642,22 @@ function liveOf(work, roster, now = Date.now()) {
       working.push({ key: `room:${roomId}:${doing.botId}`, bot: byId[doing.botId], phrase: workPhrase(doing), place: roomsById[roomId]?.name, open: roomId });
     }
   }
-  const ended = [];
   for (const [sessionId, task] of Object.entries(tasks)) {
     const bot = byId[task.from];
-    if (!bot) continue;
-    if (task.status === "working") {
-      if (!waitingTasks.has(sessionId)) working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t("Task"), task: true, at: task.at, open: sessionId });
-    } else if (now - (task.endedAt ?? task.at ?? 0) < ENDED_FOR_MS) {
-      ended.push({ key: `end:${sessionId}`, bot, title: task.title ?? t("Task"), status: task.status, label: endLabel(task), at: task.endedAt ?? task.at ?? 0, open: sessionId });
+    if (bot && task.status === "working" && !waitingTasks.has(sessionId)) {
+      working.push({ key: `task:${sessionId}`, bot, phrase: task.title ?? t("Task"), task: true, at: task.at, open: sessionId });
     }
   }
-  ended.sort((a, b) => b.at - a.at);
-  return { needs, working, ended: ended.slice(0, ENDED_SHOWN) };
+  const ended = railEnded(roster, now).map(([sessionId, task]) => ({
+    key: `end:${sessionId}`,
+    bot: byId[task.from],
+    title: task.title ?? t("Task"),
+    status: task.status,
+    label: endLabel(task),
+    at: endOf(task),
+    open: sessionId
+  }));
+  return { needs, working, ended };
 }
 function liveSummary({ needs, working }) {
   const parts = [];
@@ -10140,9 +10277,9 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-swap{color:var(--bt-ink-3);font-size:12px}
 .bt-pill-go{flex:none;display:inline-flex;align-items:center;justify-content:flex-end;width:0;margin-left:-8px;overflow:hidden;opacity:0;filter:blur(6px);transform:translateX(-6px);color:var(--bt-ink-2);transition:width ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},margin-left ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},transform ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},opacity .18s ease,filter .18s ease}
 .bt-pill-go svg{flex:none;transition:transform ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
-.bt-pill:hover .bt-pill-go,.bt-pill:focus-visible .bt-pill-go,.bt-pill[aria-expanded=true] .bt-pill-go{width:18px;margin-left:0;opacity:1;filter:none;transform:none}
-.bt-pill[aria-expanded=true] .bt-pill-go svg{transform:rotate(180deg)}
-.bt-pill[data-memory=updated]:is(:hover,:focus-visible,[aria-expanded=true]) .bt-pill-go{width:0;margin-left:-8px;opacity:0;filter:blur(6px);transform:translateX(-6px)}
+.bt-pill:hover .bt-pill-go,.bt-pill:focus-visible .bt-pill-go,.bt-pill[data-expanded=true] .bt-pill-go{width:18px;margin-left:0;opacity:1;filter:none;transform:none}
+.bt-pill[data-expanded=true] .bt-pill-go svg{transform:rotate(180deg)}
+.bt-pill[data-memory=updated]:is(:hover,:focus-visible,[data-expanded=true]) .bt-pill-go{width:0;margin-left:-8px;opacity:0;filter:blur(6px);transform:translateX(-6px)}
 @media (prefers-reduced-motion:reduce){.bt-pill,.bt-pill-go,.bt-pill-go svg{transition:none!important}.bt-pill-go{filter:none}.bt-pill:active{transform:none}}
 
 /* The width settings: the share of the column a bubble may take, and the flat text. */
@@ -10976,8 +11113,10 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 [class*="_root"]:has(> [data-composer-card]){padding:0 11px 13px 16px!important}
 /* DSH centres its queued-message dock on the stack with a 16px clearance each side; the card
    above sits in that 16/11 root, so the dock follows it: the card's width less the two insets,
-   moved onto the card's axis (#91). */
+   moved onto the card's axis (#91). The goal bar and the todo panel sit in the stack too, four
+   insets narrower than the card, so they follow it the same way (issue 363). */
 [class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) [data-queue-dock]{width:calc(100% - 27px - 2*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
+[class*="_composerStack"]:has([class*="_root"]>[data-composer-card]) :is([data-goal-bar],[data-testid="todo-panel"]){width:calc(100% - 27px - 4*var(--dsh-composer-dock-inset,8px));translate:2.5px 0}
 [class*="_root"]:has(> [data-composer-card])>[data-composer-card]{max-width:min(992px,100%)!important}
 [data-composer-card]>[class*="_row"]{display:contents!important}
 [data-composer-card] [class*="_tools"]{order:1!important;flex:none!important;align-self:flex-end!important;margin:0!important}
@@ -11013,7 +11152,9 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 @keyframes bt-icon-swap{from{opacity:0;transform:scale(.5) rotate(-30deg)}}
 [data-composer-card] button[class*="_primary"] svg{width:14px;height:14px}
 [data-composer-card] button[class*="_primary"]:disabled{display:none!important}
-body:not([data-bt-advanced]) [data-composer-dock]{display:none!important}
+/* The dock's display is one decision, so the case the show rule below covers is excluded
+   here: hiding it too left (0,2,1) against (0,2,0), both !important, and the hide won (issue 404). */
+body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:none!important}
 .bt-native-head{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-native-head .bt-head-details{position:static}
 .bt-native-note{display:flex;flex-wrap:wrap;gap:6px;font:12px/18px var(--bt-font);color:var(--bt-ink-2)}
@@ -11860,12 +12001,12 @@ function AgentSessionRow({ session, agent, actions, renaming, index }) {
       }
     },
     (0, import_react27.createElement)("span", { className: "bt-agent-sub-title" }, session.title),
-    (0, import_react27.createElement)("span", { className: "bt-agent-sub-time" }, session.at > 0 ? relativeShort(session.at) : "")
+    (0, import_react27.createElement)("span", { className: "bt-agent-sub-time" }, [session.ended, session.at > 0 ? relativeShort(session.at) : ""].filter(Boolean).join(" · "))
   );
 }
 function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi, wide, marked }) {
-  const own = agentRowSessions(agent, roster);
   const tasks = agent.kind === "tasks";
+  const own = agentRowSessions(agent, roster, useMinute(tasks));
   const name = tasks ? t("Tasks") : agent.name;
   const info = useSessions((list) => JSON.stringify(own.map((id) => {
     const row = list.byId[id];
@@ -11884,12 +12025,16 @@ function AgentRow({ agent, roster, actions, useSessions, useSessionStatus, useUi
     unread: map.get(id)?.completionUnread === true
   }))));
   const statuses = Object.fromEntries(JSON.parse(statusInfo).map((entry) => [entry.id, entry]));
-  const sessions = JSON.parse(info).map((session) => ({
-    ...session,
-    running: statuses[session.id]?.running ?? session.running,
-    unread: statuses[session.id]?.unread ?? false,
-    title: session.title === "" ? t("New session") : session.title
-  }));
+  const sessions = JSON.parse(info).map((session) => {
+    const task = tasks ? roster.tasks?.[session.id] : void 0;
+    return {
+      ...session,
+      running: statuses[session.id]?.running ?? session.running,
+      unread: statuses[session.id]?.unread ?? false,
+      title: session.title === "" ? task?.title ?? t("New session") : session.title,
+      ended: task === void 0 || task.status === "working" ? void 0 : endLabel({ status: task.status })
+    };
+  });
   const renaming = useUi((value) => value.renameAgent);
   const active = sessions.some((session) => session.active);
   const running2 = sessions.some((session) => session.running);
@@ -12707,12 +12852,14 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   return (0, import_react28.createElement)(
     "div",
     { className: native ? "bt-native-head" : "bt-head" },
+    // The pill's arrow reads data-expanded: aria-expanded belongs to the Details button alone,
+    // so the memory notice exposes no expanded state to assistive tech.
     pill ? (0, import_react28.createElement)(
       "button",
       {
         type: "button",
         className: "bt-pill",
-        "aria-expanded": away ? void 0 : detailsOpen,
+        "data-expanded": away ? void 0 : detailsOpen,
         "data-memory": memoryNotice ? "updated" : void 0,
         "aria-label": away ? t("Back to chat") : memoryNotice ? t("Memory updated. Open {name}'s memory", { name: roster.byId[changed]?.name ?? name }) : t("View conversation details"),
         title: away ? name : void 0,
@@ -14763,6 +14910,9 @@ var SCHEDULE_CSS = `
 }
 `;
 
+// src/client/places.js
+var allowPlace = () => [t("Settings"), t("Capabilities"), t("Allow")].join(" > ");
+
 // src/client/mcp-paste.js
 var SECRETISH = /(key|token|secret|password|passwd|pass|auth|bearer|credential|cookie)/i;
 var placeholder = (value) => /^\$|^\$\{|<.*>|your[-_ ]|xxx|\.\.\.|^(true|false|null)$/i.test(value) || value.length < 8 || /\s/.test(value);
@@ -14799,7 +14949,7 @@ var mcpRequest = (text2) => [
   "Add this MCP server as a shared capability with save_capability.",
   "Work out a short name, whether it is a local command (stdio) or a URL (streamable-http), and a one-line description from what I pasted.",
   "Keys are already saved as secrets and appear as $DSH_SECRET_<NAME>: keep those references exactly. If it needs a key I did not give, ask me for it with a secret card instead of guessing.",
-  "Then tell me in one line what you added, and whether I must allow it in settings.",
+  `Then tell me in one line what you added. If I must allow it, tell me to do it in ${allowPlace()}, in exactly those words.`,
   "",
   "<<<",
   text2.trim(),
@@ -14838,10 +14988,12 @@ function Field({ label, value, onChange, multiline = false, disabled = false, pl
 }
 function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
   const [error, setError] = (0, import_react36.useState)("");
+  const [unverified, setUnverified] = (0, import_react36.useState)(null);
   const set = (key, value) => setDraft((previous) => ({ ...previous, [key]: value }));
   const submit = async (event) => {
     event.preventDefault();
     setError("");
+    setUnverified(null);
     let payload;
     try {
       payload = { name: draft.name.trim(), kind: draft.kind, description: draft.description };
@@ -14862,6 +15014,17 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     }
     try {
       await actions.saveCapability(payload);
+      onClose();
+    } catch (failure) {
+      const message = failure?.message ?? String(failure);
+      setError(message);
+      if (payload.transport === "streamable-http" && /HTTP (?:401|403)/.test(message)) setUnverified(payload);
+    }
+  };
+  const saveUnverified = async () => {
+    setError("");
+    try {
+      await actions.saveCapability({ ...unverified, unverified: true });
       onClose();
     } catch (failure) {
       setError(failure?.message ?? String(failure));
@@ -14922,6 +15085,7 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
     (0, import_react36.createElement)(
       "div",
       { className: "bt-connector-form-row" },
+      unverified ? (0, import_react36.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: saveUnverified }, t("Save unverified")) : null,
       (0, import_react36.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onClose }, t("Cancel")),
       (0, import_react36.createElement)("button", { type: "submit", className: "bt-soft bt-soft-sm" }, draft.originalName ? t("Save changes") : t("Add capability"))
     )
@@ -14929,7 +15093,8 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
 }
 function CapabilityRow({ item, onEdit, onDelete, onApprove, confirming }) {
   const detail = item.kind === "pack" ? `${t("Pack")}: ${(item.items ?? []).join(", ") || t("No items")}` : item.kind === "mcp" ? item.transport === "stdio" ? t("Local command") : t("HTTP server") : t("Skill");
-  const secondary = item.kind === "pack" ? [item.description, (item.items ?? []).join(", ") || t("No items")].filter(Boolean).join(" · ") : item.description || detail;
+  const verification = item.kind === "mcp" && item.transport === "streamable-http" && item.verification ? item.verification.status === "verified" ? t("Verified") : item.verification.reason ? t("Unverified: {reason}", { reason: item.verification.reason }) : t("Unverified") : void 0;
+  const secondary = item.kind === "pack" ? [item.description, (item.items ?? []).join(", ") || t("No items"), verification].filter(Boolean).join(" · ") : [item.description || detail, verification].filter(Boolean).join(" · ");
   return (0, import_react36.createElement)(
     "div",
     { className: "bt-connector" },
@@ -16184,7 +16349,7 @@ var VOICE_SETTINGS_CSS = `
 // src/client/team-approval.js
 var import_react43 = require("react");
 var teamToolOf = (name) => String(name ?? "").replace(/^mcp__dsh__/, "");
-var TEAM_TOOLS = /* @__PURE__ */ new Set(["message_bot", "start_task", "stop_bot", "create_bot", "update_bot", "create_group", "update_group", "delete_group", "post_to_group", "group_relay", "remember", "forget", "save_capability", "delete_capability", "show_view"]);
+var TEAM_TOOLS = /* @__PURE__ */ new Set(["message_bot", "start_task", "stop_bot", "create_bot", "update_bot", "delete_bot", "create_group", "update_group", "delete_group", "post_to_group", "group_relay", "remember", "forget", "save_capability", "delete_capability", "show_view"]);
 var isTeamApproval = (pending) => pending?.kind === "approval" && TEAM_TOOLS.has(teamToolOf(pending.toolName));
 function argsOf(reason) {
   try {
@@ -16210,6 +16375,8 @@ function approvalView(toolName2, args, from) {
       return { title: t("{from} wants to add {name} to the team", { from: who, name: text(args.name) || t("a Bot") }), quote: text(args.instructions), rows: rows2(["role", "model"]) };
     case "update_bot":
       return { title: t("{from} wants to change {name}", { from: who, name: text(args.name) || text(args.to) || t("a Bot") }), quote: text(args.instructions), rows: rows2(["role", "model"]) };
+    case "delete_bot":
+      return { title: t("{from} wants to delete {to}", { from: who, to: text(args.bot) || t("another Bot") }), to: text(args.bot), note: t("Deleting archives its memory and conversations, removes it from the team and groups, and deletes its secrets."), rows: [] };
     case "post_to_group":
     case "group_relay":
       return { title: t("{from} wants to post in {group}", { from: who, group: text(args.group) || text(args.to) || t("a group chat") }), quote: text(args.message) || text(args.text), rows: [] };
@@ -16550,7 +16717,7 @@ function CommandPalette({ start: start2, token, roster, actions, useSessions }) 
     }))
   ];
   if (people.length) sections.push([t("Bots"), people]);
-  const agents = (roster.agents ?? []).filter((agent) => agent.kind === "tasks" ? agentRowSessions(agent, roster).length > 0 && matchesName(t("Tasks")) : matchesName(agent.name) || matchesName("DSH bot")).map((agent) => ({
+  const agents = (roster.agents ?? []).filter((agent) => agent.kind === "tasks" ? agentRowSessions(agent, roster, Date.now()).length > 0 && matchesName(t("Tasks")) : matchesName(agent.name) || matchesName("DSH bot")).map((agent) => ({
     key: agent.id,
     avatar: (0, import_react44.createElement)("span", { className: "bt-palette-agent" }, agent.kind === "tasks" ? (0, import_react44.createElement)(TasksIcon, { size: 18 }) : (0, import_react44.createElement)(TerminalIcon)),
     title: agent.kind === "tasks" ? t("Tasks") : agent.name,
@@ -21037,6 +21204,13 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
   const [view, setView] = (0, import_react62.useState)(startTab === "settings" && (owner || room2) ? "settings" : "overview");
   const [editing, setEditing] = (0, import_react62.useState)(Boolean(startRenaming && (roster.byId[sessionId] || roster.roomsById[sessionId])));
   const [draftName, setDraftName] = (0, import_react62.useState)(roster.byId[sessionId]?.name ?? (roster.roomsById[sessionId]?.named ? roster.roomsById[sessionId].name : ""));
+  const cancelledRename = (0, import_react62.useRef)(false);
+  const nameButton = (0, import_react62.useRef)(null);
+  (0, import_react62.useEffect)(() => {
+    if (editing || !cancelledRename.current) return;
+    cancelledRename.current = false;
+    nameButton.current?.focus();
+  }, [editing]);
   const [copied, setCopied] = (0, import_react62.useState)(false);
   const [error, setError] = (0, import_react62.useState)("");
   const glide = useGlide(tab);
@@ -21129,15 +21303,18 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
         "aria-label": bot ? t("Bot name") : t("Group name"),
         placeholder: room2 ? t("Name after members") : void 0,
         onChange: (event) => setDraftName(event.target.value),
-        onBlur: saveName,
+        onBlur: () => {
+          if (!cancelledRename.current) void saveName();
+        },
         onKeyDown: (event) => {
           if (event.key === "Enter") void saveName();
           if (event.key === "Escape") {
             event.stopPropagation();
+            cancelledRename.current = true;
             setEditing(false);
           }
         }
-      }) : (0, import_react62.createElement)("button", { type: "button", className: "bt-drawer-name", "aria-label": t("Rename {name}", { name: current }), title: t("Rename"), onClick: () => {
+      }) : (0, import_react62.createElement)("button", { ref: nameButton, type: "button", className: "bt-drawer-name", "aria-label": t("Rename {name}", { name: current }), title: t("Rename"), onClick: () => {
         setDraftName(room2 && !room2.named ? "" : current);
         setEditing(true);
       } }, current),
@@ -23842,7 +24019,7 @@ function apply(ctx) {
   const pull = async () => {
     const order = ++pulls;
     const known = roster.getSnapshot();
-    const value = await call("state", { since: known.revision, models: known.modelsKey ?? "", locale: language() });
+    const value = await call("state", { since: known.revision, models: known.modelsKey ?? "", locale: language(), allowPlace: allowPlace() });
     if (order < applied) return;
     applied = order;
     const nextActivity = JSON.stringify(value.activity ?? {});
@@ -24090,7 +24267,7 @@ function apply(ctx) {
   const agentSessions = (agentId) => {
     const snapshot = roster.getSnapshot();
     const agent = snapshot.agentsById[agentId];
-    const ids = agent === void 0 ? [] : [...agentRowSessions(agent, snapshot)];
+    const ids = agent === void 0 ? [] : [...agentRowSessions(agent, snapshot, Date.now())];
     for (const [id, owner] of pendingAdopt) if (owner === agentId && !ids.includes(id)) ids.push(id);
     return ids;
   };
@@ -24636,6 +24813,9 @@ function apply(ctx) {
     };
   };
   const installConversation = () => [
+    // First on, last off: the page mark the Stage composer rules key on (stage.js), so a Bot
+    // composer card is two-row from its first paint, before DSH mounts its input slots (#322).
+    () => markConversation(),
     () => installUserTimes(),
     () => installCompiledStyles(COMPOSER_PACK_CSS, "composer-packs"),
     () => installCompiledStyles(CONVERSATION_CSS, "conversation"),

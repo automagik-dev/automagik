@@ -21,7 +21,9 @@
 # lists every folder it put in mods/; only those are ever replaced. Any other folder is left
 # alone, or with --adopt moved to automagik-herdr/backup/ first. Pocket Link is never touched.
 # It merges the pack's free keys, points the mod manager at the catalog, adds the `automagik`
-# layout (replacing only v0.2's unchanged copy), runs `herdr-app check` on each mod, and links
+# layout (replacing only v0.2's unchanged copy; in a kept one, or one of the person's own showing
+# the sidebar, Herdr's workspace-status block becomes am-status, and it says so), runs
+# `herdr-app check` on each mod, and links
 # the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
 # token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
 # over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
@@ -70,6 +72,8 @@ main() {
   BIN_DIR=$HOME/.local/bin
   LINK=$BIN_DIR/automagik-herdr
   NODE_MIN=22.7
+  # How long `herdr-app status` may take: a Herdr that does not answer never holds up a run.
+  STATUS_SECONDS=10
   # The Herdr this pack runs in is herdrdev's (D27): bundle id dev.herdr.app on macOS, herdr-app on
   # Linux, installed by its own installer. Another app named Herdr (Herdr UI, penso/herdr-gpui:
   # so.pen.herdr-gpui) is a different app and never counts.
@@ -115,7 +119,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; STATUS_SECONDS=${AUTOMAGIK_HERDR_STATUS_SECONDS:-$STATUS_SECONDS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
     esac
   fi
 
@@ -132,7 +136,8 @@ Automagik Herdr installer
 
   install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
                                        install or update the pack and the automagik-herdr command
-  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before
+  install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before;
+                                       refused while the layout Herdr shows names a pack mod
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
@@ -203,11 +208,29 @@ cli_target() {
 }
 
 # The layout Herdr shows ("layout" in `herdr-app status`); empty when herdr-app or its status
-# is unavailable.
+# is unavailable, or gives no answer within $STATUS_SECONDS (macOS has no `timeout`).
 shown_layout() {
   command -v herdr-app >/dev/null 2>&1 || return 0
-  st=$(herdr-app status </dev/null 2>/dev/null) || return 0
-  printf '%s\n' "$st" | sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  st=$(mktemp) || return 0
+  herdr-app status </dev/null >"$st" 2>/dev/null &
+  asked=$!
+  # Nothing of the watchdog's stays on stdout: callers read this function through $(…), which would
+  # wait for its sleep. Stopped, it stops its sleep too, so no run leaves one behind.
+  (
+    nap=
+    trap '[ -z "$nap" ] || { kill "$nap"; wait "$nap"; }; exit 0' TERM
+    sleep "$STATUS_SECONDS" &
+    nap=$!
+    wait "$nap" || true
+    kill "$asked" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  watchdog=$!
+  rc=0
+  wait "$asked" || rc=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  if [ "$rc" = 0 ]; then sed -n 's/.*"layout"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$st" | head -n 1; fi
+  rm -f "$st"
 }
 
 # The sidebar mod has place "none": it shows only in a layout that names it. While Herdr shows
@@ -281,6 +304,57 @@ mods_said() {
   printf '%s' "$said"
 }
 
+# Before --uninstall moves anything (#420), as `am uninstall herdr.pack` does: refused while a
+# block ("mod": "<m>") of the layout Herdr shows names a pack mod in mods/ ($1, the record's
+# list), since Herdr would drop that layout and show plain Herdr. With no layout to read (no
+# herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
+# whose blocks name one ($2: the pack's own layout file when this run removes it, left out).
+layout_guard() {
+  shown=$(shown_layout)
+  why=
+  case $shown in
+    '') why="no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in ${STATUS_SECONDS}s" ;;
+    */*|.|..) why="Herdr shows the layout \"$shown\", a name with a path, so no file in $APP_HOME/layouts was read" ;;
+    *) [ -f "$APP_HOME/layouts/$shown.json" ] || why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there" ;;
+  esac
+  set -f
+  IFS=,
+  on=
+  for m in $1; do
+    case $m in ''|pocket-link|*[!a-z0-9-]*) continue ;; esac
+    if [ -d "$MODS/$m" ] && [ ! -L "$MODS/$m" ]; then on="${on:+$on,}$m"; fi
+  done
+  named=
+  if [ -z "$why" ]; then
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$APP_HOME/layouts/$shown.json"; then named="${named:+$named, }$m"; fi
+    done
+  fi
+  unset IFS
+  set +f
+  if [ -n "$named" ]; then
+    # The command names main, so it does nothing while main is the layout in the way.
+    how="ctrl-shift-l, or herdr-app do layout.switch '{\"name\":\"main\"}'"
+    if [ "$shown" = main ]; then how=ctrl-shift-l; fi
+    fail "the pack stays: the $shown layout shows $named, and Herdr drops a layout whose mod is gone (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
+  fi
+  [ -n "$why" ] && [ -n "$on" ] || return 0
+  for f in "$APP_HOME"/layouts/*.json; do
+    if [ ! -f "$f" ] || [ "$f" = "$2" ]; then continue; fi
+    has=
+    set -f
+    IFS=,
+    for m in $on; do
+      if grep -q "\"mod\"[[:space:]]*:[[:space:]]*\"$m\"" "$f"; then has="${has:+$has, }$m"; fi
+    done
+    unset IFS
+    set +f
+    [ -n "$has" ] || continue
+    name=${f##*/}
+    say "Uninstalling the pack without knowing the layout Herdr shows ($why): your layout ${name%.json} ($f) shows $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+  done
+}
+
 switch_hint() {
   [ "$HINT" = yes ] || return 0
   say "To show the Automagik sidebar, switch Herdr to the automagik layout; the sidebar appears after this:"
@@ -300,7 +374,11 @@ uninstall() {
   fi
   # The automagik layout goes only when this script added it and it is still the pack's own
   # (cmp): an edited one, or one copied by hand, stays.
-  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then
+  drop=
+  if [ "$(mark_get layout)" = added ] && [ -f "$LAYOUT" ] && [ -f "$ref" ] && cmp -s "$LAYOUT" "$ref"; then drop=$LAYOUT; fi
+  # Nothing moves while the shown layout's blocks name a pack mod (#420).
+  layout_guard "$mods" "$drop"
+  if [ -n "$drop" ]; then
     rm -f "$LAYOUT"
     say "Removed the automagik layout ($LAYOUT). If Herdr shows it, switch back: herdr-app do layout.switch '{\"name\":\"main\"}'"
   fi
@@ -722,14 +800,20 @@ install() {
   # Only the installer's files come out here, to run them; update.mjs then lists every entry,
   # stages every folder beside mods/, checks again, keeps the replaced set and swaps, and the
   # migration (migrate.js, migrateHome.mjs) moves layouts and keys onto renamed folders, and
-  # migrateHooks.mjs (with briefingText.mjs, model.js and its models.js) the briefing hooks onto a
-  # fixed path.
+  # migrateHooks.mjs (with briefingText.mjs, model.js, its models.js and their retired.js) the
+  # briefing hooks onto a fixed path; layoutSafe.mjs is the one door update.mjs and the migration
+  # move folders and layouts through.
   mkdir "$TMP/x"
   side=${PACK##*/}
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/update.mjs" "$side/release.js" "$side/migrate.js" \
     "$side/migrateHome.mjs" "$side/migrateHooks.mjs" "$side/briefingText.mjs" "$side/model.js" "$side/models.js" \
     </dev/null 2>/dev/null || fail "$TGZ lacks $side's updater files: nothing was installed."
-  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js; do
+  # retired.js: models.js imports it since #224; layoutSafe.mjs: update.mjs and migrateHome.mjs
+  # import it since #431's PR A. An older release (--version) neither has nor needs them.
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/retired.js" </dev/null >/dev/null 2>&1 || :
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/layoutSafe.mjs" </dev/null >/dev/null 2>&1 || :
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs; do
+    case $f in retired.js|layoutSafe.mjs) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;; esac
     { [ -f "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ]; } || fail "$TGZ: $side/$f is not a plain file: nothing was installed."
   done
   rc=0

@@ -14,6 +14,7 @@ import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-side
 import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { baseCandidates, branchNamesTask, branchSlug, parseWorktrees, readLedger, runsTemplate, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
+import { readJsonLines } from "./log-lines.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -78,11 +79,11 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     execFile(process.execPath, [CLI, ...args], { cwd: project, env: { ...env, HC_TERMINAL_ID: from }, encoding: "utf8" },
       (e, out, err) => resolve({ code: e ? e.code : 0, out, err }));
   });
-  const calls = () => readFileSync(logPath, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const calls = () => readJsonLines(logPath);
   const runs = () => calls().filter((c) => c[0] === "run");
   const setWindow = (w) => writeFileSync(appState, JSON.stringify(w));
   const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
-  const appDos = () => readFileSync(appLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c[0] === "do")
+  const appDos = () => readJsonLines(appLog).filter((c) => c[0] === "do")
     .map((c) => [c[1], JSON.parse(c[2])]);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const ledger = () => { const p = join(app, "automagik-herdr/workers.jsonl"); return existsSync(p) ? readLedger(readFileSync(p, "utf8")) : []; };
