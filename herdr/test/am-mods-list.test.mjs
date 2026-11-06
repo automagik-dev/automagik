@@ -166,9 +166,11 @@ test("layoutGuard: a block's mod is refused with the layout's name; the menu's o
 
 // #414: `am uninstall herdr.<mod>` (parts.mjs) asks with release.js's copy, since the pack's entries
 // never load another mod's files: both functions byte for byte as the mod manager's.
-test("layoutNeeds and layoutGuard: release.js's copies are core.js's, byte for byte", () => {
+// #430: `am uninstall herdr.layout` asks with release.js's packageLayoutGuard the same way.
+test("layoutNeeds, layoutGuard and packageLayoutGuard: release.js's copies are core.js's, byte for byte", () => {
   assert.equal(String(release.layoutNeeds), String(core.layoutNeeds));
   assert.equal(String(release.layoutGuard), String(core.layoutGuard));
+  assert.equal(String(release.packageLayoutGuard), String(core.packageLayoutGuard));
 });
 
 test("layoutGuard: `then` names what follows the switch; off is the default", () => {
@@ -186,4 +188,7 @@ test("packageLayoutGuard: the package's own layout that Herdr shows is refused; 
   assert.equal(core.packageLayoutGuard({ name: "automagik", layouts: ["mine.json"] }), null);
   assert.equal(core.packageLayoutGuard({ name: null, layouts: ["mine.json"] }), null, "no layout shown: nothing to guard");
   assert.equal(core.packageLayoutGuard({ name: "mine", layouts: undefined }), null, "a record with no layouts");
+  // `then` names what follows the switch; remove is the default (the mod manager's).
+  const un = core.packageLayoutGuard({ name: "Mine", layouts: ["mine.json"], then: "uninstall it" }).refuse;
+  assert.equal(un, g.refuse.replace(/remove it$/, "uninstall it"));
 });

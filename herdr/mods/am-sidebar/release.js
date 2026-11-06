@@ -104,6 +104,16 @@ export function layoutGuard({ name, tree, mod, then = "turn it off" }) {
   return null;
 }
 
+// `am uninstall herdr.layout` (parts.mjs removeLayout, #430) asks as the mod manager's package remove
+// does (#420): core.js's packageLayoutGuard, byte for byte (the same test keeps it equal).
+export function packageLayoutGuard({ name, layouts, then = "remove it" }) {
+  if (typeof name !== "string" || !name) return null;
+  const own = (layouts ?? []).find((l) => typeof l === "string" && l.toLowerCase() === `${name.toLowerCase()}.json`);
+  if (!own) return null;
+  return { refuse: `the ${name} layout is this package's (layouts/${own}) and Herdr shows it: removing the package takes it away`
+    + ` (plain Herdr instead). Switch layouts first (ctrl-shift-l), then ${then}` };
+}
+
 /**
  * What an update says of a mod it held in mods/ because a layout names it (update.mjs applyUpdate
  * `held`, #420): in its log, in `automagik-herdr update` and in the notice after an install. `renamed`:

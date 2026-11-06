@@ -36,6 +36,7 @@ import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker, layoutGuard, layoutNeeds,
+  packageLayoutGuard,
 } from "./release.js";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
 
@@ -306,6 +307,10 @@ function layoutsNaming(ctx, mods, skip = []) {
   });
 }
 
+/** What a refusal adds after "Switch layouts first": the command, left out while main is shown (it names main). */
+const switchCommand = (shown) => (typeof shown === "string" && shown.toLowerCase() === "main" ? ""
+  : `; from a terminal: herdr-app do layout.switch '{"name":"main"}'`);
+
 /**
  * Before pack mods leave mods/ (#414, #420), as the mod manager's off and remove (#305): refused while
  * a block of the shown layout names one, since Herdr would drop that layout and show plain Herdr; a
@@ -323,9 +328,7 @@ function guardLayouts(ctx, mods, { pack = false, skip = [] } = {}) {
     const refused = guards.filter((g) => g.refuse);
     const also = refused.slice(1).map((g) => g.mod);
     if (refused.length) {
-      // The command names main, so it does nothing while main is the layout in the way.
-      const command = shown.name === "main" ? "" : `; from a terminal: herdr-app do layout.switch '{"name":"main"}'`;
-      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}${command}`);
+      throw new Error(`${refused[0].refuse}${also.length ? ` (its blocks name ${also.join(", ")} too)` : ""}${switchCommand(shown.name)}`);
     }
     for (const g of guards) if (g.note) ctx.log(`${g.mod} was ${g.note}`);
     return;
@@ -360,7 +363,12 @@ function switchOff(ctx, part) {
   return { ok: true, changed, detail: `${part.mod} is off` };
 }
 
-/** The layout out while it is still the pack's copy; the record says removed, so no update adds it back. */
+/**
+ * The layout out while it is still the pack's copy; the record says removed, so no update adds it back.
+ * Refused while Herdr shows it (#430, as the mod manager's package remove, #420): Herdr would drop the
+ * layout it shows for plain Herdr. The shown layout's name decides; when it cannot be read
+ * (shownLayout's `why`), the layout goes (fail open), and the log says why and how to switch back.
+ */
 function removeLayout(ctx) {
   const record = readMarker(ctx.modsDir);
   if (!record) return { ok: true, changed: false, detail: "the pack is not installed: nothing to do" };
@@ -371,8 +379,13 @@ function removeLayout(ctx) {
     if (!isFile(ref) || !readFileSync(live).equals(readFileSync(ref))) {
       return { ok: true, changed: false, detail: `${live} differs from the pack's: it is yours, left as it is` };
     }
+    const shown = shownLayout(ctx);
+    const guard = packageLayoutGuard({ name: shown.name, layouts: [basename(PACK_LAYOUT)], then: "uninstall it" });
+    if (guard) throw new Error(`${guard.refuse}${switchCommand(shown.name)}`);
     rmSync(live);
-    ctx.log(`removed ${live}; if Herdr shows it, switch back: herdr-app do layout.switch '{"name":"main"}'`);
+    ctx.log(shown.name
+      ? `removed ${live}`
+      : `removed ${live} without knowing the layout Herdr shows (${shown.why}); if Herdr shows it, switch layouts (ctrl-shift-l)${switchCommand(null)}`);
     changed = true;
   }
   if (record.layout !== "removed") { writeMarker(ctx.modsDir, { ...record, layout: "removed" }); changed = true; }
