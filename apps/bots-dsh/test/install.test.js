@@ -102,7 +102,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on agent/status',
     'on llm/stream',
     'on agent/request-error',
-    'on agent/request (prepend)',
+    'on session/event',
     'on llm/stream',
     'on agent/status',
     'tool generate_image',
