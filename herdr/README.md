@@ -349,6 +349,7 @@ automagik-herdr import --from-hc [--squad-label L] [--apply]
 automagik-herdr whois <terminal> | whois --bot <bot>
 automagik-herdr history <bot>
 automagik-herdr brief <bot>
+automagik-herdr forget <project>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
@@ -357,6 +358,15 @@ automagik-herdr meter install [--machine M | --linked | --local] | meter uninsta
 automagik-herdr dsh-tui install | update | uninstall | doctor
 ```
 
+- `forget <project>` takes a project's folder off this CLI's project list (#229): only that
+  entry, under the list's lock. Its folder, worktrees, bots file and panes stay as they are; a
+  project not on the list is refused and the list left as it was. `ls --all` and the sidebar
+  also show the sidebar's own remembered projects (each one it started a bot or wrote bots in),
+  which only the sidebar changes: it forgets one once its `.herdr/bots.json` is gone. When the
+  sidebar remembers the project too, `forget` still takes it off its own list and says on stderr
+  that it stays shown until then (`--json`: `sidebar_remembers`). `start`, `restart`, `attach`
+  and `create` already take off an entry whose folder is gone (tidy's registry prune) and say
+  so in one line when the command succeeds.
 - `import --from-hc` turns a running hc team into bots (#232): each live pane on this computer
   labelled `squad=` (or `--squad-label L`) with an hc name and an agent in front becomes a bot of
   that name, attached to that pane. Per squad, the captain (the pane labelled `role=captain`, else
