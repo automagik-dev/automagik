@@ -15,6 +15,21 @@ const MOCK = fileURLToPath(new URL('../dev/mock-llm.mjs', import.meta.url))
 const PATCHES = fileURLToPath(new URL('../../desktop/runtime/patches', import.meta.url))
 const MODULES = join(process.env.DSH_HARNESS, 'node_modules')
 const BIN = join(MODULES, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+// The runtime patches target one DSH. Another installed RC may still match their file hashes
+// (versions: false) but does not return the patched route, so the run would fail on undefined
+// llmProvider: skip instead, naming both versions.
+const targets = [...new Set(JSON.parse(readFileSync(join(PATCHES, 'patches.json'), 'utf8')).map(entry => entry.dsh))]
+const installed = (() => {
+  try {
+    return JSON.parse(readFileSync(join(MODULES, '@deepseek-ai', 'dsh', 'package.json'), 'utf8')).version
+  } catch {
+    return undefined
+  }
+})()
+const skip = !existsSync(BIN)
+  ? `needs an installed harness: no @deepseek-ai/dsh/lib/bin.js in ${MODULES} (bun run harness)`
+  : targets.includes(installed) ? undefined
+    : `needs dsh ${targets.join(' or ')}, which the runtime patches target; this harness is dsh ${installed ?? 'unknown'} (bun run harness installs the pin)`
 const HOOK = `import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 const swap = new Map(JSON.parse(process.env.TEAM_PATCHED))
@@ -95,7 +110,7 @@ const results = (events, tool) => events.filter(event => event.type === 'tool_re
   && events.some(call => call.type === 'tool_call' && call.callId === event.callId && call.tool === tool))
 const routes = rows => Object.fromEntries(rows.map(({ target, llmProvider, model, reasoningEffort }) => [target, { llmProvider, model, reasoningEffort }]))
 
-test('fresh teammates keep their own LLM route through follow-ups and a cold resume', { timeout: 120_000, skip: !existsSync(BIN) && 'needs an installed harness (bun run harness)' }, async (t) => {
+test('fresh teammates keep their own LLM route through follow-ups and a cold resume', { timeout: 120_000, skip }, async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'dsb-teammates-'))
   t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5 }))
   // The harness may hold another RC of the same files; their hashes are what the patch checks.
