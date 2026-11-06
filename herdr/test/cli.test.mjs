@@ -69,6 +69,9 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
     const r = spawnSync(RUNTIME, [CLI, ...args], { cwd, env: { ...env, ...extra }, input, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
+  const cliAsync = (args, { env: extra = {} } = {}) => new Promise((resolve) => {
+    execFile(RUNTIME, [CLI, ...args], { cwd: project, env: { ...env, ...extra }, encoding: "utf8" }, (e, out, err) => resolve({ code: e ? e.code : 0, out, err }));
+  });
   const calls = () => readJsonLines(logPath);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const appCalls = () => readJsonLines(appLog);
@@ -76,7 +79,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
+  return { root, project, app, home, cli, cliAsync, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -2105,6 +2108,22 @@ test("restart --tree #453: the bot's own -u launch reused under login 2; a Claud
   assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
 });
 
+test("restart --tree #453: a Claude helper's by-hand line under a bad record carries login A's words and says why (review Low 2)", (t) => {
+  const s = restartScene(t);
+  writeFileSync(join(s.app, "claude-logins.json"), "{ not json");
+  const st = s.hcState();
+  const wa = join(s.root, "wa");
+  mkdirSync(wa);
+  st.terminals.push({ ...term("t8", { parent: "t5", cwd: wa }), name: "rev-9", die_with_parent: true, argv: ["claude", "--model", "m"] });
+  st.failRun = ["rev-9"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 1);
+  const line = r.json().helpers[0].by_hand;
+  assert.ok(pastedLine(t, line).join(" ").includes("/usr/bin/env -u CLAUDE_CONFIG_DIR PATH="), line);
+  assert.match(r.err, new RegExp(`  ${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n(.*\\n)*.*# claude-logins\\.json: is not valid JSON; started on the default login`));
+});
+
 // ---- restart --tree: shared folders and failure paths (#256 review) ----
 
 /** Genie's t5 with six codex helpers of one template in one folder (as t2p6's integrators), each with `labels(n)`. */
@@ -2767,4 +2786,30 @@ test("import gives a seat already playing its bot its lost labels back, with no 
   assert.equal(readFileSync(ledgerPath(s.app), "utf8"), workersBefore, "no workers-ledger row");
   assert.match(s.cli(["import", "--from-hc"]).out, /Nothing to do: every seat already plays its bot\./);
   assert.deepEqual(paneMoves(s), []);
+});
+
+test("launch-path #453: where a launch finds a program and the PATH its pane gets; nulls when none has it", (t) => {
+  const s = scene(t);
+  const r = s.cli(["launch-path", "claude"]);
+  assert.equal(r.code, 0, r.err);
+  const { program, path } = r.json();
+  assert.equal(program, join(s.root, "bin", "claude"), "the stand-in, found by PATH as a launch finds it");
+  assert.ok(path.split(":").includes(join(s.root, "bin")) && path.split(":").includes("/usr/bin"), path);
+  assert.deepEqual(s.cli(["launch-path", "no-such-agent-453"]).json(), { program: null, path: null });
+  assert.equal(s.cli(["launch-path"]).code, 2);
+  assert.equal(s.cli(["launch-path", "-x"]).code, 2);
+});
+
+test("start #225/#223: the ledger lock stays fresh across a slow hc run, so two starts at once start the bot once", async (t) => {
+  const s = scene(t);
+  s.seed(team());
+  // hc run answers after 0.6 s, past a 400 ms stale limit: a lock not kept fresh is taken over by
+  // the waiting start, which finds no binding yet and starts the bot again. Short, so the
+  // waiting start's 3 s ledger-lock wait has room under load.
+  exe(join(s.root, "bin/hc"), `#!/bin/sh\nif [ "$1" = run ]; then sleep 0.6; fi\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  const env = { AUTOMAGIK_HERDR_LOCK_STALE_MS: "400" };
+  const both = await Promise.all([s.cliAsync(["start", "Genie"], { env }), s.cliAsync(["start", "Genie"], { env })]);
+  assert.equal(s.calls().filter((c) => c[0] === "run").length, 1, both.map((r) => r.err).join("\n"));
+  assert.deepEqual(both.map((r) => r.code), [0, 0], both.map((r) => r.err).join("\n"));
+  assert.ok(both.some((r) => /Genie is already running in t100\./.test(r.out)), both.map((r) => r.out).join("\n"));
 });

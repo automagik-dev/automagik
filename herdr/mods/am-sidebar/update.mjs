@@ -59,7 +59,7 @@ import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
 import {
   apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, revertedLayouts, strandedLayouts,
 } from "./migrateHome.mjs";
-import { change } from "./layoutSafe.mjs";
+import { change, removePath } from "./layoutSafe.mjs";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
@@ -362,7 +362,7 @@ export function carryPrivate(from, to) {
   for (const name of readdirSync(from)) {
     if (!privateName(name)) continue;
     const src = join(from, name), dst = join(to, name);
-    rmSync(dst, { recursive: true, force: true });
+    removePath(dst, { recursive: true, force: true }); // a kept set's own .state may be a link, dangling too
     if (isLink(src)) symlinkSync(readlinkSync(src), dst);
     else cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
     carried += 1;
@@ -773,6 +773,8 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
       swapAll(modsDir, moves, rename, {
         needed: "hold", mods: inMods.map((r) => r.mod), exclude: replacedLayout(modsDir), stranded: strandedLayouts, prepare,
         renamed: Object.fromEntries(inMods.filter((r) => r.renamed).map((r) => [r.mod, r.renamed])),
+        // A mod that leaves while a layout that does not parse names it in its text: said (#489).
+        unknown: "warn", log,
       });
     } catch (error) {
       restoreSet(modsDir, old);
@@ -1225,9 +1227,10 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
   const to = isFile(wrapper) ? wrapper : mjs;
   if (now === to || (old && !isFile(to))) return null;
   const tmp = join(binDir, `.${CLI_LINK}.relink-${process.pid}`);
-  rmSync(tmp, { force: true });
+  // A leftover tmp link (a killed run, the same pid since) may dangle: unlinked, never followed (#550).
+  removePath(tmp, { force: true });
   symlinkSync(to, tmp);
-  try { renameSync(tmp, link); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  try { renameSync(tmp, link); } catch (error) { removePath(tmp, { force: true }); throw error; }
   return { link, from, to };
 }
 

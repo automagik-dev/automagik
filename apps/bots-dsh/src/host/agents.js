@@ -600,7 +600,9 @@ export function install(rt) {
         const parent = header?.parentSession === undefined ? undefined : ctx.agents?.get?.(header.parentSession)
         if (session?.id !== sessionId || header === undefined || header.origin === 'subagent'
           || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) throw refusal('Only a root Session can join a Bot')
-        const boundary = ctx.sessionProjections.stateOf(session, 'turnBoundary')
+        // dsh 0.2.2 deprecates ctx.sessionProjections.stateOf(session, key); the loop
+        // registry owns this unit and exposes it directly.
+        const boundary = ctx.agents?.turnBoundaryOf?.(session)
         const blank = boundary !== undefined && boundary.openTurnStartSeq === null && boundary.lastTurn === 0
         const fork = header.parentSession === sourceSessionId && header.isSeeded === true
         if (!blank && !fork) throw refusal('Only a blank Session or a fork of the current Bot can join')
@@ -609,7 +611,7 @@ export function install(rt) {
       const preset = await servedPreset(bot.profile, { strict: true })
       validate()
       eligible()
-      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) {
+      if (preset !== undefined && ctx.get('agentPresets')?.presetForSession?.(session) !== preset) {
         const presets = ctx.get('agentPresets')
         if (typeof presets?.select !== 'function') throw refusal('Native preset selection is unavailable')
         await presets.select(live, preset)
@@ -617,7 +619,10 @@ export function install(rt) {
       }
       validate()
       eligible()
-      if (preset !== undefined && ctx.sessionProjections.stateOf(session, 'agentPreset') !== preset) throw refusal('Native preset selection did not persist')
+      const persisted = ctx.get('agentPresets')?.presetForSession?.(session)
+      if (preset !== undefined && persisted !== preset) {
+        throw refusal('Native preset selection did not persist')
+      }
       const previous = { sessionId: bot.sessionId, segments: bot.segments }
       bot.segments = [...(bot.segments ?? []), { sessionId: sourceSessionId, endedAt: Date.now() }]
       bot.sessionId = sessionId
@@ -769,6 +774,11 @@ export function install(rt) {
     // so its session/created listener could not. Before the first turn, as the model is.
     await rt.applyTaskPermission(sessionId, live.session)
       .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // The Session existed before this task record did, so the tool deny list could not be
+    // resolved then (a task is a task only once it is written down). Apply it now, before
+    // the first turn, to the same agent the turn will use.
+    await rt.applyToolDeny?.(caller, [sessionId])
+      .catch(error => rt.warn('ds-bot: the task keeps tools %s denies: %s', caller?.name ?? from, error?.message ?? error))
     // DSH's turn loop reads every input's source: the instructions arrive as the user's.
     live.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
     await ctx.sessions.flush(live.session)

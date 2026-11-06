@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -483,7 +483,7 @@ test("a command link the person pointed elsewhere is never replaced or removed; 
   assert.equal(readlinkSync(s.link), join(s.mods, "other-mod", "bin", "cli.mjs"));
   // The pack's own command path (an earlier install's, even dangling) is ours: replaced, then removed.
   assert.equal(s.run("--uninstall").code, 0);
-  rmSync(s.link);
+  unlinkSync(s.link); // dangling here: Node 24.9's rmSync leaves a dangling link in place
   symlinkSync(join(s.pack, "bin", "automagik-herdr.mjs"), s.link);
   assert.equal(s.run("--yes").code, 0);
   assert.equal(readlinkSync(s.link), cliTarget(s));
@@ -1747,6 +1747,47 @@ test("--uninstall with no layout to read goes on, naming the person's layouts th
   assert.match(r.out, /Uninstalling the pack without knowing the layout Herdr shows \(Herdr shows the layout "\.\.\/elsewhere", a name with a path, so no file in .*layouts was read\): your layout main-agents \(.*main-agents\.json\) shows am-sidebar, and Herdr drops/);
   assert.doesNotMatch(r.out, /your layout automagik /, "the pack's own copy, removed with it, is not listed");
   assert.equal(existsSync(s.pack), false);
+});
+
+test("#487: --uninstall with no answer from Herdr names the pack's own layout it removes, why, and its mods, Node or not", (t) => {
+  const said = /Removing the pack's own layout \S+\/layouts\/automagik\.json without knowing the layout Herdr shows \(no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in \d+s\), so it may be the one shown: its text names ((?:am-[a-z-]+, )*am-[a-z-]+), which leave mods\/ with the pack\. If Herdr shows it, Herdr drops it \(plain Herdr instead\): switch layouts \(ctrl-shift-l\), or run this installer again to put the pack back\./;
+  for (const node of [true, false]) {
+    const s = scratch(t);
+    s.publish("9.9.0");
+    assert.equal(s.run("--yes").code, 0);
+    // No Node: one on PATH that fails, as an older one does (the shell path, nothing parsed).
+    if (!node) exe(join(s.bin, "node"), "#!/bin/sh\nexit 1\n");
+    const r = s.run("--uninstall");
+    assert.equal(r.code, 0, r.err);
+    const names = r.out.match(said)?.[1].split(", ");
+    assert.ok(names, `node: ${node}\n${r.out}`);
+    for (const m of ["am-sidebar", "am-tabs"]) assert.ok(names.includes(m), names.join(", "));
+    assert.match(r.out, node ? /through its updater/ : /Removing the pack with this script \(no Node 22\.7 or later\)\./);
+    assert.equal(existsSync(join(s.appHome, "layouts", "automagik.json")), false);
+  }
+  // A linked layouts/ (the person's folder, #448) keeps it: said as kept, with why and its mods.
+  const k = scratch(t);
+  k.publish("9.9.0");
+  assert.equal(k.run("--yes").code, 0);
+  const layouts = join(k.appHome, "layouts"), theirs = join(k.root, "their-layouts");
+  cpSync(layouts, theirs, { recursive: true });
+  rmSync(layouts, { recursive: true });
+  symlinkSync(theirs, layouts);
+  const kept = k.run("--uninstall");
+  assert.equal(kept.code, 0, kept.err);
+  const keptNames = kept.out.match(/Keeping the pack's own layout \S+\/layouts\/automagik\.json without knowing the layout Herdr shows \(no layout from herdr-app status: [^)]*\): \S+\/layouts is a link, your own folder, so it stays, but its text names ((?:am-[a-z-]+, )*am-[a-z-]+), which leave mods\/ with the pack\./)?.[1].split(", ");
+  assert.ok(keptNames?.includes("am-tabs"), kept.out);
+  assert.doesNotMatch(kept.out, /Removing the pack's own layout/);
+  assert.ok(existsSync(join(theirs, "automagik.json")));
+  // Herdr answered with a name (a path, not this file): not said.
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  s.addHerdrApp();
+  s.show("../elsewhere");
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /pack's own layout/);
 });
 
 test("--uninstall doesn't wait for a herdr-app status that never answers", (t) => {

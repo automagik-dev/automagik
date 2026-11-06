@@ -27,13 +27,7 @@ const NO_ANSWER = "Herdr does not answer, layout files readable";
 const NOTHING = "no layout can be read";
 const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
-const NEW_FAIL_OPEN = "new gap: the remove fails open without saying why";
-const NEW_UPDATE_MOD = "new gap: an update that stops shipping the shown layout's mod moves it aside";
-const EXPECTED_FAIL = {
-  ...Object.fromEntries(SHAPES.map((s) => [`package update dropping the shown layout's mod | ${s}`, NEW_UPDATE_MOD])),
-  [`package remove | ${NO_ANSWER}`]: NEW_FAIL_OPEN,
-  [`package remove | ${NOTHING}`]: NEW_FAIL_OPEN,
-};
+const EXPECTED_FAIL = {};
 
 const write = (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); };
 const makeCx = () => {
@@ -185,6 +179,14 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
         const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
         assert.deepEqual(rec.layouts, kept ? ["scratchy.json"] : [], `the record's layouts (${shape})`);
       }
+      // #490: the mod it kept stays in the record, so the next update after a switch moves it aside.
+      if (route === "package update dropping the shown layout's mod") {
+        const kept = shape !== NO_ANSWER && shape !== NOTHING;
+        const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
+        assert.deepEqual(rec.mods, kept ? ["other", "scratch"] : ["other"], `the record's mods (${shape})`);
+        // With no answer and the files readable, the message names the layout that names the mod.
+        if (shape === NO_ANSWER) assert.match(said, /moved mods\/scratch .*; the scratchy layout names it/);
+      }
     });
   }
 }
@@ -199,4 +201,18 @@ test("package update dropping the shown layout, then a switch and a second updat
   assert.equal(existsSync(join(m.appHome, "layouts", "scratchy.json")), false, `moved aside once another layout shows: ${said}`);
   const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
   assert.deepEqual(rec.layouts, []);
+});
+
+test("package update dropping the shown layout's mod, then a switch and a second update: it is moved aside then (#490)", async (t) => {
+  const m = machine(t, "plain folder", { layout: true, mod: "other" });
+  const first = await update(m);
+  assert.ok(existsSync(join(m.appHome, "mods", "scratch", "mod.json")), "kept while the shown layout names it");
+  assert.match(first.said, /kept mods\/scratch: this update no longer ships it, but the scratchy layout shows it/);
+  state.shared.set("layout", "main");
+  ui.layout = { id: "root", children: [] };
+  const { said } = await update(m);
+  assert.equal(existsSync(join(m.appHome, "mods", "scratch")), false, `moved aside once another layout shows: ${said}`);
+  assert.ok(existsSync(join(m.appHome, "mods", "other", "main.js")), "the shipped mod stays");
+  const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
+  assert.deepEqual(rec.mods, ["other"]);
 });

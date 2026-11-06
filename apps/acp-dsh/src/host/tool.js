@@ -65,7 +65,7 @@ const changed = (tool, signal) => new Promise((resolve) => {
 })
 
 /**
- * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any }} host
+ * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any, permissionPresets?(): any }} host
  */
 export function mirrorTool(host) {
   return defineTool({
@@ -144,25 +144,32 @@ function sandboxOf(session, sandboxPolicy) {
 }
 
 /** The Session's level: its sandbox mode, its approval policy, and whether that is full access. */
-export function levelOf(approval, session, sandboxPolicy) {
+export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
   let policy
   let sandbox
+  let preset
   try {
     policy = approval?.effectivePolicy?.(session)
     sandbox = sandboxOf(session, sandboxPolicy)
+    preset = permissionPresets?.current?.(session)
   } catch {}
-  // DSH's presets: Full access is no prompts and no sandbox; Auto is no prompts in the workspace sandbox.
-  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'never' && sandbox === 'workspace-write' }
+  // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Auto is
+  // `ask` with no sandbox (AUTO_PRESET_SPEC), and Manual is the stock `ask` + workspace-write.
+  // A Session's Auto row wins over the effective policy: dsh-subagent pins a child to `never` so
+  // its reviewer's denials stay final, and reading only that policy would report the child as
+  // full access, bypassing the Auto review the row promises.
+  if (preset === 'auto') return { sandbox, policy, full: false, auto: true }
+  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'ask' && sandbox === 'danger-full-access' }
 }
 
 // Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's
 // own: DSH's approval service would reject them unasked under its `never` policy.
-export const fullAccess = (approval, session, sandboxPolicy) => levelOf(approval, session, sandboxPolicy).full
+export const fullAccess = (approval, session, sandboxPolicy, permissionPresets) => levelOf(approval, session, sandboxPolicy, permissionPresets).full
 
 async function ask(host, live, tool, exec) {
   const approval = host.approval()
   if (!approval || !exec.agent) return 'unavailable'
-  if (fullAccess(approval, exec.agent.session, host.sandboxPolicy?.())) return 'allowed-once'
+  if (fullAccess(approval, exec.agent.session, host.sandboxPolicy?.(), host.permissionPresets?.())) return 'allowed-once'
   const asking = tool.permission?.title
   const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
   try {

@@ -590,6 +590,12 @@ function BoardButton({ snap, t, actions, wide }) {
     open ? (0, import_react.createElement)(BoardPanel, { snap, t, actions, onClose: () => setOpen(false) }) : null
   );
 }
+var SectionIcon = ({ size = 16 }) => (0, import_react.createElement)(
+  "svg",
+  { className: "ub-icon", viewBox: "0 0 16 16", width: size, height: size, "aria-hidden": "true" },
+  (0, import_react.createElement)("path", { d: "M2 9.5c2.2-3.4 4-3.4 6 0s3.8 3.4 6 0", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round" }),
+  (0, import_react.createElement)("path", { d: "M2 5.5c2.2-3.4 4-3.4 6 0s3.8 3.4 6 0", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round", opacity: 0.55 })
+);
 var AppIcon = () => (0, import_react.createElement)(
   "svg",
   { className: "ub-icon", viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" },
@@ -782,7 +788,9 @@ var SLOTS = [
   ["conversation.input.dock", { id: "unfold-dock", order: 50 }, Dock],
   // The nav label is "Unfold" in every language, so it never needs registering again on a
   // locale change.
-  ["settings.section", { id: "unfold-bridge", order: 900, label: "Unfold" }, SettingsSection]
+  ["settings.section", { id: "unfold-bridge", order: 900, label: "Unfold" }, SettingsSection],
+  // DSH 0.2.2 renders a nav icon for a section whose id matches this seat's registration.
+  ["settings.section.icon", { id: "unfold-bridge", order: 900 }, SectionIcon]
 ];
 var INSTALL_SLOT = ["sidebar.footer.action", { id: "unfold-bridge.install", order: 110 }];
 var inject = ["slots"];

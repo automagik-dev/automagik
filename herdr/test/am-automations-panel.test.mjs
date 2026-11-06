@@ -165,3 +165,382 @@ test("a non-retired automation: no retired pill, its agent picked as before; a n
     assert.equal(view.entry().agent, "claude");
   }
 });
+
+// ---- the stub scheduler (#501, #498) ----
+// A stand-in herdr-automations in a temp home's ~/.local/bin: it records every argv and every
+// put's JSON, and keeps its entries in a fake automations.yaml (JSON, which YAML reads) in that
+// home. Its put replaces the whole entry, as v0.11.3's config.Put does (edit.go). Only the stub
+// and `sh` (the panel's stdin hand-over) really run; any other program, the real scheduler's
+// bare name included, is refused, so no test can reach a real config.
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+
+const STUB = String.raw`
+const fs = require("node:fs"), path = require("node:path");
+const home = process.env.STUB_HOME, args = process.argv.slice(2);
+const yaml = path.join(home, ".config/herdr-automations/automations.yaml");
+const read = () => JSON.parse(fs.readFileSync(yaml, "utf8"));
+const out = (x) => process.stdout.write(JSON.stringify(x));
+let input = "";
+if (args[0] === "put") input = fs.readFileSync(0, "utf8");
+fs.appendFileSync(path.join(home, "argv.jsonl"), JSON.stringify({ argv: args, input }) + "\n");
+if (args[0] === "version") process.stdout.write("0.11.3\n");
+else if (args[0] === "ls") out({ automations: read(), invalid: [], scheduler: { pid: 1 }, paused: false });
+else if (args[0] === "history") out([]);
+else if (args[0] === "put") {
+  const entry = JSON.parse(input), list = read();
+  const at = args[1] === "--original" ? list.findIndex((a) => a.name === args[2]) : -1;
+  if (!args.includes("--dry-run")) {
+    if (at >= 0) list[at] = entry; else list.push(entry);
+    fs.writeFileSync(yaml, JSON.stringify(list, null, 2));
+  }
+  out({ next: ["2026-11-09T09:00:00Z"] });
+} else { process.stderr.write("stub: not offered: " + args.join(" ")); process.exit(2); }
+`;
+
+function stubScheduler(automations) {
+  const dir = mkdtempSync(join(tmpdir(), "am-automations-"));
+  mkdirSync(join(dir, ".local/bin"), { recursive: true });
+  mkdirSync(join(dir, ".config/herdr-automations"), { recursive: true });
+  const bin = join(dir, ".local/bin/herdr-automations");
+  writeFileSync(bin, `#!${process.execPath}\n${STUB}`);
+  chmodSync(bin, 0o755);
+  const yaml = join(dir, ".config/herdr-automations/automations.yaml");
+  writeFileSync(yaml, JSON.stringify(automations, null, 2));
+  state.home = dir;
+  state.exec = (command, args) => new Promise((resolve) => {
+    if (command !== "sh" && command !== bin) { resolve({ code: 127, stdout: "", stderr: `cannot run ${command}: refused` }); return; }
+    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir } }, (err, stdout, stderr) =>
+      resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
+  });
+  const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  return {
+    dir, bin,
+    saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, raw: c.input, entry: JSON.parse(c.input) })),
+    yaml: () => JSON.parse(readFileSync(yaml, "utf8")),
+    done: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+const handArgs = ["--sandbox", "workspace-write", "-c", "model_reasoning_effort=high"];
+
+test("an edit that changes only the prompt keeps hand-written agent_args exactly (#501)", async () => {
+  const s = stubScheduler([{ ...nightly("codex"), agent_args: handArgs }]);
+  try {
+    state.agents = [{ key: "codex", installed: true, run: ["codex"] }];
+    const { view, cx } = await panel();
+    assert.equal(view.bin, s.bin, "the stub, found in the temp home");
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    view.save(cx);
+    await cx.settle();
+    const saved = s.saves();
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0].argv, ["put", "--original", "nightly"]);
+    assert.equal(saved[0].entry.prompt, "p, said again");
+    assert.deepEqual(saved[0].entry.agent_args, handArgs, "sent to put as they were");
+    assert.deepEqual(s.yaml()[0].agent_args, handArgs, "and still in the config after the put");
+  } finally { s.done(); }
+});
+
+test("an edit of a paused automation keeps it paused (#501)", async () => {
+  const s = stubScheduler([{ ...nightly("claude"), disabled: true }]);
+  try {
+    state.agents = [{ key: "claude", installed: true, run: ["claude"] }];
+    const { view, cx } = await panel();
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    view.save(cx);
+    await cx.settle();
+    const saved = s.saves();
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].entry.disabled, true, "sent to put still paused");
+    assert.equal(s.yaml()[0].disabled, true, "and still paused in the config");
+  } finally { s.done(); }
+});
+
+// ---- permission modes (#498) and the other fields put would erase (#501) ----
+const { AUTO_ARGS, addressesIn, addressWarning, argsText, modeOf, parseArgs, splitPermission, templateMode } =
+  await import("../mods/am-automations/modes.js");
+const ALL = [{ key: "claude", installed: true, run: ["claude"] }, { key: "codex", installed: true, run: ["codex"] }, { key: "pi", installed: true, run: ["pi"] }];
+const TEMPLATES = { templates: [
+  { name: "reviewer-opus", command: 'env PATH="$HOME/.local/bin:$PATH" claude --dangerously-skip-permissions --model claude-opus-5-5' },
+  { name: "dev-sol", command: "codex --no-daemon --dangerously-bypass-approvals-and-sandbox -m gpt-6.1-sol" },
+  { name: "plain", command: "pi --model x" },
+] };
+
+/** A panel on the stub scheduler with every agent installed and the fake hc's templates. */
+async function stubPanel(automations) {
+  const s = stubScheduler(automations);
+  state.agents = ALL;
+  state.hc = async (args) => (args.join(" ") === "templates --json"
+    ? { code: 0, stdout: JSON.stringify(TEMPLATES), stderr: "" } : { code: 2, stdout: "", stderr: "fake hc: not offered" });
+  const p = await panel();
+  return { s, ...p };
+}
+
+/** Fills a new automation's name, repo and prompt, then picks `agent` by its pill. */
+async function fillNew(view, cx, draw, agent, prompt = "tidy up") {
+  view.edit(null, cx);
+  await cx.settle();
+  view.form.name.type("job", cx);
+  view.form.repo.type("/r", cx);
+  view.form.prompt.type(prompt, cx);
+  draw().get(`f-agent-${agent}`).click({}, cx);
+  await cx.settle();
+}
+
+async function saveIt(view, cx) { view.save(cx); await cx.settle(); }
+
+test("the automatic flags: codex skips approvals and sandbox, claude its permission prompts, pi none", () => {
+  assert.deepEqual(AUTO_ARGS.codex, ["--dangerously-bypass-approvals-and-sandbox"]);
+  assert.deepEqual(AUTO_ARGS.claude, ["--dangerously-skip-permissions"]);
+  assert.equal(AUTO_ARGS.pi, undefined);
+});
+
+for (const [agent, flag] of [["codex", "--dangerously-bypass-approvals-and-sandbox"], ["claude", "--dangerously-skip-permissions"]]) {
+  test(`a new ${agent} automation saves with its automatic flag, and the form says so (#498)`, async () => {
+    const { s, view, cx, draw } = await stubPanel([]);
+    try {
+      await fillNew(view, cx, draw, agent);
+      const n = draw();
+      assert.match(textOf(n.get("f-mode-auto")), new RegExp(flag), "the Automatic pill names the flag");
+      assert.match(textOf(n.get("f-mode-now")), /^Runs automatic/);
+      assert.ok(!n.has("f-mode-kept"), "a new entry has no saved args to keep");
+      await saveIt(view, cx);
+      const saved = s.saves();
+      assert.equal(saved.length, 1);
+      assert.deepEqual(saved[0].argv, ["put"]);
+      assert.equal(saved[0].entry.agent, agent);
+      assert.deepEqual(saved[0].entry.agent_args, [flag]);
+      assert.deepEqual(s.yaml()[0].agent_args, [flag]);
+    } finally { s.done(); }
+  });
+}
+
+test("a new pi automation: no automatic mode, the form says so, and it saves no flags", async () => {
+  const { s, view, cx, draw } = await stubPanel([]);
+  try {
+    await fillNew(view, cx, draw, "pi");
+    const n = draw();
+    assert.ok(!n.has("f-mode-auto"));
+    assert.equal(textOf(n.get("f-mode-none")), "pi has no known automatic mode: it runs with its own default.");
+    await saveIt(view, cx);
+    assert.equal(s.saves()[0].entry.agent_args, undefined);
+  } finally { s.done(); }
+});
+
+test("turning a new automation down to Agent default saves no automatic flag; extra words still go", async () => {
+  const { s, view, cx, draw } = await stubPanel([]);
+  try {
+    await fillNew(view, cx, draw, "codex");
+    draw().get("f-mode-default").click({}, cx);
+    view.form.args.type('-c "model_reasoning_effort=high"', cx);
+    await saveIt(view, cx);
+    assert.deepEqual(s.saves()[0].entry.agent_args, ["-c", "model_reasoning_effort=high"]);
+  } finally { s.done(); }
+});
+
+test("an existing entry with no agent_args shows 'agent default' and stays without after a prompt-only edit", async () => {
+  const { s, view, cx, draw } = await stubPanel([nightly("codex")]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    const n = draw();
+    assert.equal(textOf(n.get("f-mode-kept")), "As saved: agent default");
+    assert.equal(border(n.get("f-mode-kept")), "#accent", "picked: nothing is migrated on load");
+    assert.equal(s.saves().length, 0, "opening the form saves nothing");
+    view.form.prompt.type("p, said again", cx);
+    await saveIt(view, cx);
+    const saved = s.saves();
+    assert.equal(saved.length, 1);
+    assert.ok(!("agent_args" in saved[0].entry), "no agent_args sent");
+    assert.ok(!("agent_args" in s.yaml()[0]), "none in the config");
+  } finally { s.done(); }
+});
+
+test("an existing entry shows its hand-written mode, and picking Automatic adds the flag and keeps its other words", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("codex"), agent_args: handArgs }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    assert.equal(textOf(draw().get("f-mode-kept")), "As saved: sandbox workspace-write");
+    assert.equal(view.form.args.value(), "-c model_reasoning_effort=high", "the extra words, without the permission flags");
+    draw().get("f-mode-auto").click({}, cx);
+    await saveIt(view, cx);
+    assert.deepEqual(s.saves()[0].entry.agent_args, ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"]);
+  } finally { s.done(); }
+});
+
+test("an existing automatic entry turned down to Agent default loses only the permission flag", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), agent_args: ["--dangerously-skip-permissions", "--verbose"] }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    draw().get("f-mode-default").click({}, cx);
+    await saveIt(view, cx);
+    assert.deepEqual(s.saves()[0].entry.agent_args, ["--verbose"]);
+  } finally { s.done(); }
+});
+
+test("catch_up_minutes and workflow go back to put as they came (#501)", async () => {
+  const wf = { name: "wf", cron: "0 9 * * *", repo: "/r", workspace: "root", agent: "claude", workflow: "nightly-review", catch_up_minutes: -1, timeout_minutes: 30 };
+  const { s, view, cx } = await stubPanel([{ ...nightly("claude"), catch_up_minutes: 15 }, wf]);
+  try {
+    for (const name of ["nightly", "wf"]) {
+      view.edit(name, cx);
+      await cx.settle();
+      view.form.timeout.type("45", cx);
+      await saveIt(view, cx);
+    }
+    const [a, b] = s.saves();
+    assert.equal(a.entry.catch_up_minutes, 15);
+    assert.equal(b.entry.catch_up_minutes, -1);
+    assert.equal(b.entry.workflow, "nightly-review");
+    assert.equal(s.yaml()[0].catch_up_minutes, 15);
+    assert.equal(s.yaml()[1].workflow, "nightly-review");
+  } finally { s.done(); }
+});
+
+test("a template run shows its command's mode, and the panel adds no flags to it", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ name: "rev", cron: "0 9 * * *", repo: "/r", workspace: "worktree", template: "reviewer-opus", prompt: "p", timeout_minutes: 60 }]);
+  try {
+    assert.match(textOf(draw().get("auto-rev")), /automatic \(skips permissions\) \(template\)/, "the list row shows it");
+    view.edit("rev", cx);
+    await cx.settle();
+    const n = draw();
+    assert.ok(!n.has("f-mode-auto") && !n.has("f-args"), "no mode pills and no args for a template");
+    assert.match(textOf(n.get("f-mode-template")), /^reviewer-opus: automatic \(skips permissions\)\. .*adds none/);
+    view.form.prompt.type("p2", cx);
+    await saveIt(view, cx);
+    assert.ok(!("agent_args" in s.saves()[0].entry));
+    await fillNew(view, cx, draw, "codex");
+    draw().get("f-agent-template:dev-sol").click({}, cx);
+    await saveIt(view, cx);
+    assert.ok(!("agent_args" in s.saves()[1].entry), "a new template entry gets no automatic flag either");
+  } finally { s.done(); }
+});
+
+test("the detail view and the list row show the saved mode", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("codex"), agent_args: ["--dangerously-bypass-approvals-and-sandbox"] }]);
+  try {
+    assert.match(textOf(draw().get("auto-nightly")), /automatic \(no approvals, no sandbox\)$/);
+    view.view = { kind: "detail", name: "nightly" };
+    assert.match(textOf(view.render(cx)), /Permissions\s*automatic \(no approvals, no sandbox\)/);
+  } finally { s.done(); }
+});
+
+test("modeOf, templateMode and the args line", () => {
+  assert.equal(modeOf("claude", []), "agent default");
+  assert.equal(modeOf("claude", undefined), "agent default");
+  assert.equal(modeOf("claude", ["--permission-mode", "acceptEdits"]), "permission mode acceptEdits");
+  assert.equal(modeOf("claude", ["--permission-mode=plan"]), "permission mode plan");
+  assert.equal(modeOf("codex", ["--full-auto"]), "full auto (sandboxed)");
+  assert.equal(modeOf("codex", ["-a", "never", "-s", "workspace-write"]), "approvals never · sandbox workspace-write");
+  assert.equal(modeOf("pi", ["--model", "x"]), "agent default");
+  assert.equal(templateMode("omp --auto-approve --model m"), "automatic (auto-approve)");
+  assert.equal(templateMode("pi --model x"), "agent default");
+  assert.equal(templateMode("./run-thing"), "not known (no agent in its command)");
+  assert.deepEqual(splitPermission("codex", ["-c", "x", "-s", "read-only", "--yolo"]), { perm: ["-s", "read-only", "--yolo"], rest: ["-c", "x"] });
+  const words = ["-c", 'a b', 'say "hi"', "plain"];
+  assert.equal(argsText(words), '-c "a b" "say \\"hi\\"" plain');
+  assert.deepEqual(parseArgs(argsText(words)), words);
+  assert.deepEqual(parseArgs("  one 'two three'  "), ["one", "two three"]);
+});
+
+test("the address check: terminal addresses caught, words, ids, versions, URLs and branches left alone", () => {
+  for (const [text, want] of [["ask t3q1 to merge", ["t3q1"]], ["send it to t35n.", ["t35n"]], ["on build-box/t9 first", ["build-box/t9"]],
+    ["(t10d)", ["t10d"]], ["t3q1 and t3q1 then t2n3", ["t3q1", "t2n3"]]]) assert.deepEqual(addressesIn(text), want, text);
+  for (const text of ["the", "test the tab", "to", "b-6jrz4bmxml", "v0.11.3", "https://example.com/t3q1", "http://h/t9/x",
+    "feature/t3q1-fix", "fix/herdr-498-t3", "origin/t10d-x", "t-shirt", "at3q1", "T3Q1"]) assert.deepEqual(addressesIn(text), [], text);
+  assert.equal(addressWarning("no address here"), null);
+  assert.equal(addressWarning("ping t35n"), "t35n is a terminal address; it changes on restart. Name the bot instead (its name or b-… id).");
+});
+
+test("a prompt naming a terminal warns in the form and still saves (#498)", async () => {
+  const { s, view, cx, draw } = await stubPanel([]);
+  try {
+    await fillNew(view, cx, draw, "claude", "ask t35n to clean up");
+    assert.match(textOf(draw().get("f-address")), /^t35n is a terminal address/);
+    await saveIt(view, cx);
+    assert.equal(s.saves().length, 1, "saved all the same");
+    assert.equal(s.yaml()[0].prompt, "ask t35n to clean up");
+  } finally { s.done(); }
+});
+
+// ---- review fixes on #505 ----
+
+test("hand-written args with the permission flag in the middle go back byte for byte (#501)", async () => {
+  const middle = ["-c", "model_reasoning_effort=high", "--sandbox", "workspace-write", "--add-dir", "/work/a b", "-c", "x=1"];
+  const { s, view, cx } = await stubPanel([{ ...nightly("codex"), agent_args: middle }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(saved.raw.includes(`"agent_args":${JSON.stringify(middle)}`), "the same words, in the same order, byte for byte");
+    assert.equal(JSON.stringify(s.yaml()[0].agent_args), JSON.stringify(middle));
+  } finally { s.done(); }
+});
+
+test("switching an existing entry's agent drops the old agent's permission flags and lands on Agent default", async () => {
+  const own = ["--verbose", "--dangerously-skip-permissions", "--add-dir", "/work"];
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), agent_args: own }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    assert.equal(textOf(draw().get("f-mode-kept")), "As saved: automatic (skips permissions)");
+    draw().get("f-agent-codex").click({}, cx);
+    await cx.settle();
+    let n = draw();
+    assert.ok(!n.has("f-mode-kept"), "no As saved pill for another agent's args");
+    assert.equal(border(n.get("f-mode-default")), "#accent", "Agent default is picked, never Automatic");
+    assert.equal(border(n.get("f-mode-auto")), "#border");
+    assert.equal(textOf(n.get("f-mode-now")), "Runs agent default: codex --verbose --add-dir /work");
+    // Back to the saved agent: its own args, exactly, once more.
+    draw().get("f-agent-claude").click({}, cx);
+    await cx.settle();
+    n = draw();
+    assert.equal(border(n.get("f-mode-kept")), "#accent");
+    assert.deepEqual(view.entry().agent_args, own);
+    draw().get("f-agent-codex").click({}, cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.equal(saved.entry.agent, "codex");
+    assert.deepEqual(saved.entry.agent_args, ["--verbose", "--add-dir", "/work"], "no claude flag handed to codex");
+  } finally { s.done(); }
+});
+
+test("a template entry switched to an agent keeps no permission flags from its saved args", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ name: "rev", cron: "0 9 * * *", repo: "/r", workspace: "worktree",
+    template: "reviewer-opus", agent_args: ["--dangerously-skip-permissions", "--verbose"], prompt: "p", timeout_minutes: 60 }]);
+  try {
+    view.edit("rev", cx);
+    await cx.settle();
+    draw().get("f-agent-codex").click({}, cx);
+    await cx.settle();
+    assert.equal(border(draw().get("f-mode-default")), "#accent");
+    await saveIt(view, cx);
+    assert.deepEqual(s.saves()[0].entry.agent_args, ["--verbose"]);
+  } finally { s.done(); }
+});
+
+test("a template list hc could not give is not kept: the next refresh asks again", async () => {
+  const s = stubScheduler([{ name: "rev", cron: "0 9 * * *", repo: "/r", workspace: "worktree", template: "reviewer-opus", prompt: "p", timeout_minutes: 60 }]);
+  try {
+    state.agents = ALL;
+    let up = false;
+    state.hc = async () => (up ? { code: 0, stdout: JSON.stringify(TEMPLATES), stderr: "" } : { code: 1, stdout: "", stderr: "hc: no server" });
+    const { view, cx, draw } = await panel();
+    assert.match(textOf(draw().get("auto-rev")), /not known \(hc lists no such template\)/, "first read failed");
+    up = true;
+    await cx.ticks[0](cx);
+    await cx.settle();
+    assert.match(textOf(draw().get("auto-rev")), /automatic \(skips permissions\) \(template\)/, "asked again and shown");
+  } finally { s.done(); }
+});

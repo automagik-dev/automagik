@@ -14672,6 +14672,10 @@ function timingText(task) {
     }
     case "cron":
       return `${t("On the schedule {expression}", { expression: task.expression })}${zone}`;
+    case "rrule": {
+      const rule = String(task.rrule ?? "").split("\n").find((line) => line.startsWith("RRULE:")) ?? task.rrule ?? "";
+      return t("On the schedule {expression}", { expression: rule.replace(/^RRULE:/, "") });
+    }
     default:
       return "";
   }

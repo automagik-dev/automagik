@@ -29,6 +29,15 @@ const AVATAR_PARAM = {
   description: 'Profile picture: a local image path (a relative path starts in your working folder) or a data URL. PNG, JPEG, WebP, or GIF; square, 256x256 recommended, up to 120 KB. Images are not resized.',
 }
 const WORKING_DIRECTORY_TOOL = 'working_directory'
+// The tools a Bot never gets: absent from its surface on every Session it speaks from — its
+// chat, group Sessions, earlier parts, task runs — and refused by the executor if a call
+// reaches it anyway. A name this DSH does not serve refuses the save, so a typo cannot leave
+// the tool the person meant to remove on the Bot.
+const DENY_TOOLS_PARAM = {
+  type: 'array',
+  items: { type: 'string' },
+  description: 'Tools this Bot never gets, by exact name and case (for example omni_send, bash, write): a hard read-only list enforced on every Session of the Bot, not an instruction. A name this DSH does not serve refuses the save. An empty list clears it. It is the Bot\'s own setting, so only the Main Bot may set it for another Bot.',
+}
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -67,7 +76,8 @@ export function install(rt) {
         const hosted = rt.hostOwned?.(bot) === true
         const model = hosted ? undefined : bot.appliedModel ?? bot.model
         const answering = hosted ? rt.hostAnsweringOf?.(bot) : undefined
-        const tags = [bot.role, model ? `model ${model}` : '', answering ? `answers with ${answering}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
+        const denied = Array.isArray(bot.denyTools) && bot.denyTools.length > 0 ? `denies ${bot.denyTools.join(', ')}` : ''
+        const tags = [bot.role, model ? `model ${model}` : '', answering ? `answers with ${answering}` : '', bot.workDir ? `works in ${bot.workDir}` : '', denied, rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
         const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
         const now = bot.id === self ? '' : `\n  now: ${rt.statusOf(bot.id)}`
         return `- ${bot.name}${tags ? ` (${tags})` : ''}${job}${now}`
@@ -308,6 +318,8 @@ export function install(rt) {
       effort: { type: 'string', description: 'Thinking level for the model, as list_bot_models shows it. Only when the user names one.' },
       work_dir: WORK_DIR_PARAM,
       avatar: AVATAR_PARAM,
+      deny_tools: DENY_TOOLS_PARAM,
+      denyTools: DENY_TOOLS_PARAM,
     },
     output,
     async execute(args, exec) {
@@ -323,6 +335,7 @@ export function install(rt) {
         const creator = callerBot(exec)
         const served = creator?.model && (await rt.catalog()).some(entry => entry.ref === creator.model)
         const model = args.model || (served ? creator.model : undefined)
+        const denyTools = args.deny_tools ?? args.denyTools
         // Only the parameters declared above reach createBot. Its other options (an
         // existing Session to adopt, a Main Bot, a copy, a held model, a kind) are the
         // host's and the user's to give, never a model's: an undeclared argument is dropped.
@@ -336,6 +349,8 @@ export function install(rt) {
           workDir,
           avatar: avatar === undefined ? undefined : { image: avatar },
           createdBy: creator?.id,
+          // Only when asked: an older call keeps the exact payload it had.
+          ...(denyTools === undefined ? {} : { denyTools }),
         })
         // A level taken from the creator is said, so the creator knows what the Bot may do.
         const inherited = creator && rt.permissionCatalog() && bot.permission ? ` Permission inherited from ${creator.name} (${bot.permission}).` : ''
@@ -359,6 +374,8 @@ export function install(rt) {
       model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id' },
       effort: { type: 'string', description: 'Thinking level for the Bot\'s model, as list_bot_models shows; an empty string returns to the model\'s default' },
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
+      deny_tools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
+      denyTools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
     },
     output,
     async execute(args, exec) {
@@ -383,7 +400,9 @@ export function install(rt) {
         // does: setting one keeps a custom character, and clearing removes only the image.
         // They are read here, after the waits above, so a change made meanwhile stays.
         const avatar = image === undefined ? undefined : { ...rt.botOf(bot.id)?.avatar, image }
-        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(moving ? { workDir: workDir ?? '' } : {}) }, self, exec.agent?.id)
+        // `denyTools` needs no other field, so a list-only change is a patch of its own.
+        const denyTools = args.deny_tools ?? args.denyTools
+        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(moving ? { workDir: workDir ?? '' } : {}), ...(denyTools === undefined ? {} : { denyTools }) }, self, exec.agent?.id)
         if (!moving) return `Updated ${next.name}.`
         const folder = workDir ?? 'the team workspace'
         return bot.id === caller.id ? `Updated ${next.name}. From your next step on, you work in ${folder}.` : `Updated ${next.name}. It now works in ${folder}.`

@@ -60,7 +60,10 @@ All of it in English (the rest of the pack is; there is no locale mechanism to s
   shows (`shared("layout")`) keeps that file in `layouts/` and in the record, and says so (#431):
   the review marks it, the message names it; the next update after a switch moves it aside. With
   no shown layout to read, it is moved aside as any other the update drops, and the message names
-  it and says why.
+  it and says why. Its mod twin (#490): a mod the update stops shipping that the shown layout's
+  blocks name stays in `mods/` (a link stays a link) and in the record, the same way; with no
+  shown layout to read, it is moved aside and the message says why and names each layout in
+  `layouts/` whose blocks name it.
 - **Records** of what the manager installed live in shared `"am.mods.installed"` (copied once on load from its
   name before the rename, `migrate.js` SHARED_RENAMES; source,
   prefix, commit, mods, layouts, keys added, risks seen). Update and remove work off them.

@@ -63,28 +63,56 @@ function fuzzCases(seed = SEED, count = 200) {
 const [UPPER, LOWER] = ['s3cretPlantedUpper9', 's3cretPlantedLower9']
 const PLANTED = ` SVCTOKEN=${UPPER} db_password=${LOWER}`
 
-// Speed is one catastrophic ceiling, CEILING_MS, on the best of TRIES runs of each path: noise
-// only slows a run, and a rule gone catastrophic is slow every time. It sits far above any healthy
-// run: on Node 22 and 24, idle and under 16 and 36 busy loops, the slowest healthy case (the
-// stream on 80k random pieces) took at most 227 ms, 22 times under it. The ratio to the same path
-// on BASE_TEXT (84k characters no rule backtracks on) is only reported, never asserted.
-// The backtracking KEY= rule that 110ccf82 replaced hides the same text, so it is a speed-only
-// regression, and shared runners cannot tell it from load: put back, 40k `APIKEY` then `= x`
-// takes 504 ms on the stream idle and 952 ms in secretsIn under 36 loops, both under the ceiling,
-// and only the ratio line shows it (over 100 times the baseline). key-names.test.js times that
-// shape at 80k and 160k against 50 ms.
-const TRIES = 10
-const CEILING_MS = 5_000
-const BASE_TEXT = 'word x9 = "a" \\t token\n'.repeat(3_500)
-const best = (run, text) => {
-  let ms = Infinity
-  for (let i = 0; i < TRIES; i++) {
-    const t0 = performance.now()
-    run(text)
-    ms = Math.min(ms, performance.now() - t0)
-  }
-  return ms
+// A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
+// wall-clock sample includes the time this process waits for a CPU, which a shared runner adds by
+// the hundred milliseconds. The best of five runs drops one that caught a background compile or a
+// collection; noise can add CPU time, never remove it, so a rule that is slow in every run stays
+// slow in every sample.
+const FAST_MS = 50
+const FAST_TRIES = 5
+const sample = (fn) => {
+  const t0 = process.cpuUsage()
+  fn()
+  const used = process.cpuUsage(t0)
+  return (used.user + used.system) / 1000
 }
+const timed = (fn, ceiling = FAST_MS) => {
+  let best = Infinity
+  for (let i = 0; i < FAST_TRIES && best >= ceiling; i++) best = Math.min(best, sample(fn))
+  return best
+}
+// The reference sets a bound, so it always takes all five samples.
+const fixedWork = (fn) => Math.min(...Array.from({ length: FAST_TRIES }, () => sample(fn)))
+
+// The reference is a fixed amount of the same work: redactText over one 80k text of the fuzz's own
+// pieces, built once from a fixed seed. It runs the same code path over a fixed N pieces, never the
+// fuzz texts, so its cost is linear in that input (40k, 80k and 160k characters measured 117, 106
+// and 109 ns per character) and every run pays exactly that work. A slower machine or a slower
+// clock raises the reference and the stream's bound together: it is not a time constant.
+const REFERENCE_TEXT = (() => {
+  let state = 0x531 >>> 0
+  const rand = () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), state | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296
+  }
+  const parts = []
+  for (let n = 0; n < 80_000; ) {
+    const piece = PIECES[Math.floor(rand() * PIECES.length)]
+    parts.push(piece)
+    n += piece.length
+  }
+  return parts.join('')
+})()
+
+// The stream runs redactText over each delta and builds its row, sentence and audit work on top,
+// so it costs a multiple of the reference: 4.74x measured here (worst of the 200 cases, Node
+// 24.13.1). STREAM_MARGIN sits 1.7x above it, and a 2x regression of the stream path fails (9.5x);
+// the absolute backstop caps how far a reference that reads high can widen the bound. A quadratic
+// rule at 80k characters is 6.4e9 steps, seconds of CPU, far past either.
+const STREAM_MARGIN = 8
+const STREAM_BACKSTOP_MS = 200
 
 function push(text) {
   const mind = new MindStream({ now: () => 1 })
@@ -100,11 +128,26 @@ const PATHS = [
 ]
 
 test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted secret, fast, on every path', (t) => {
-  for (const [path, run, shown] of PATHS) {
-    const base = best(run, BASE_TEXT)
-    let slowest = { ms: 0, note: '' }
-    for (const [shape, plain] of fuzzCases()) {
-      const text = plain + PLANTED
+  const cases = fuzzCases()
+  // Warm-up, not measured: a cold process pays to compile each rule's regular expressions, grow
+  // its buffers and climb V8's tiers once, and that setup is not a text's cost. The pass runs the
+  // same texts through the same paths, so a rule that is slow on a shape is still slow on the
+  // measured pass; only the one-time cold cost of a new process is left out.
+  for (const [, plain] of cases) for (const [, run] of PATHS) run(plain + PLANTED)
+  const [streamPath, streamRun, streamShown] = PATHS[PATHS.length - 1]
+  const textPaths = PATHS.slice(0, -1)
+  const referenceMs = fixedWork(() => redactText(REFERENCE_TEXT))
+  // A zero sample would make the bound zero and pass a stream that measured nothing.
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs} ms of CPU`)
+  const bound = Math.min(STREAM_MARGIN * referenceMs, STREAM_BACKSTOP_MS)
+  const margin = `${STREAM_MARGIN} x reference ${referenceMs.toFixed(1)} ms`
+  const slowest = new Map()
+  const noteSlowest = (path, ms, shape) => {
+    if (ms > (slowest.get(path)?.ms ?? 0)) slowest.set(path, { ms, shape })
+  }
+  for (const [shape, plain] of cases) {
+    const text = plain + PLANTED
+    for (const [path, run, shown] of textPaths) {
       const note = `${path}: ${shape}`
       if (shown) {
         for (const out of shown(run(text))) for (const secret of [UPPER, LOWER]) assert.ok(!out.includes(secret), `${note} shows ${secret}`)
@@ -112,10 +155,24 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters hides every planted 
         const found = run(text)
         for (const secret of [UPPER, LOWER]) assert.ok(found.some((v) => v.includes(secret)), `${note} misses ${secret}`)
       }
-      const ms = best(run, text)
-      assert.ok(ms < CEILING_MS, `${note} took ${ms.toFixed(1)} ms, over the ${CEILING_MS} ms ceiling`)
-      if (ms > slowest.ms) slowest = { ms, note }
+      const ms = timed(() => run(text))
+      const detail = `${note}: ${ms.toFixed(1)} ms of CPU, ceiling ${FAST_MS} ms`
+      assert.ok(ms < FAST_MS, detail)
+      noteSlowest(path, ms, shape)
     }
-    t.diagnostic(`${slowest.note}: slowest, ${slowest.ms.toFixed(1)} ms, ${(slowest.ms / base).toFixed(1)} times the baseline's ${base.toFixed(1)} ms`)
+    for (const out of streamShown(streamRun(text))) {
+      for (const secret of [UPPER, LOWER]) {
+        assert.ok(!out.includes(secret), `${streamPath}: ${shape} shows ${secret}`)
+      }
+    }
+    const streamMs = timed(() => streamRun(text), bound)
+    const detail = `${streamPath}: ${shape}: ${streamMs.toFixed(1)} ms of CPU, ` +
+      `bound ${bound.toFixed(1)} ms (${margin}; backstop ${STREAM_BACKSTOP_MS} ms)`
+    assert.ok(streamMs <= bound, detail)
+    noteSlowest(streamPath, streamMs, shape)
+  }
+  for (const [path, { ms, shape }] of slowest) {
+    t.diagnostic(`${path}: slowest ${ms.toFixed(1)} ms of CPU, ` +
+      `${(ms / referenceMs).toFixed(2)} times the reference — ${shape}`)
   }
 })

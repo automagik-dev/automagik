@@ -10,6 +10,7 @@ import * as diagnostics from './src/host/diagnostics.js'
 import * as extend from './src/host/extend.js'
 import * as store from './src/host/store.js'
 import * as models from './src/host/models.js'
+import * as acpAdoption from './src/host/acp-adoption.js'
 import * as providers from './src/host/providers.js'
 import * as permissions from './src/host/permissions.js'
 import * as turns from './src/host/turns.js'
@@ -19,6 +20,7 @@ import * as delivery from './src/host/delivery.js'
 import * as roster from './src/host/roster.js'
 import * as folders from './src/host/folders.js'
 import * as agents from './src/host/agents.js'
+import * as toolDeny from './src/host/tool-deny.js'
 import * as prompt from './src/host/prompt.js'
 import * as timeContext from './src/host/time-context.js'
 import * as tools from './src/host/tools.js'
@@ -45,6 +47,7 @@ import * as fallback from './src/host/fallback.js'
 import * as channel from './src/host/channel.js'
 import * as feed from './src/host/feed.js'
 import * as appManifest from './src/host/app-manifest.js'
+import * as pocketChat from './src/host/pocket-chat.js'
 
 export { COLORS } from './src/host/constants.js'
 
@@ -55,7 +58,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // the functions other modules call; they call them through `rt` at run time, never during
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
-const MODULES = [diagnostics, extend, store, models, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, appManifest]
+const MODULES = [diagnostics, extend, store, models, acpAdoption, providers, permissions, turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen, avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage, update, dshUpdate, thinking, feed, channel, appManifest, pocketChat]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks
 // (src/host/extend.js): Omni's channels and automations (@automagik/omni-channels-dsh),
