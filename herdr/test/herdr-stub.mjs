@@ -44,10 +44,13 @@ export function setShared(key, value) { state.setSharedCalls += 1; state.shared.
 // exec's `timeout` as Herdr takes it: each call's in state.execTimeouts ({ command, timeout }). A
 // timeout that isn't a number is answered by state.timeoutProbe: "honours" (unset; a Herdr that
 // takes a timeout refuses it before running anything), "ignores" (one that doesn't: it runs the
-// program) or "unreadable" (any other failure).
+// program) or "unreadable" (any other failure). state.execFault(command, args): an error exec
+// rejects with in place of running it (Herdr ending a program at its limit), or nothing.
 export function exec(command, args = [], { cwd, on, timeout } = {}) {
   state.calls.push({ kind: "exec", command, args, cwd, on: on ?? null });
   if (timeout !== undefined) (state.execTimeouts ??= []).push({ command, timeout });
+  const fault = state.execFault?.(command, args);
+  if (fault) return Promise.reject(fault);
   if (timeout !== undefined && typeof timeout !== "number") {
     const probe = state.timeoutProbe ?? "honours";
     if (probe === "honours") return Promise.reject(new Error("timeout must be a positive number of milliseconds"));

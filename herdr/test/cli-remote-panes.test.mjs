@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
+import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -57,8 +58,8 @@ function scene(t, { terminals = [], tui = true } = {}) {
     AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   // Run from a pane (t1), as a bot would: hc run's default parent is the calling terminal.
   env.HC_TERMINAL_ID = "t1";
-  const cli = (args) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: "utf8" });
+  const cli = (args, more = {}) => {
+    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env: { ...env, ...more }, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const on = ["--machine", "vm", "--project", project];
@@ -543,4 +544,23 @@ test("start --machine: a machine that stops answering is refused as unreachable,
   assert.doesNotMatch(r.err, /isn't installed/);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
   assert.equal(execs(s).filter((c) => c.includes("sh")).length, 1, "no second wait on a machine that is away");
+});
+
+test("start --machine under the sidebar's 30 s deadline (#444): too little left -> nothing started, the terminal command; enough -> started", (t) => {
+  const s = scene(t);
+  // The margin: hc run and at most two more calls at DEADLINE_CALL_MS each, 1 s for the row and the exit.
+  assert.equal(DEADLINE_MARGIN_MS, 3 * DEADLINE_CALL_MS + 1000);
+  const late = s.cli(["start", "Atlas", ...s.on], { AUTOMAGIK_HERDR_DEADLINE: String(Date.now() + 5000) });
+  assert.equal(late.code, 1, late.err);
+  assert.match(late.err, /Only \d s of this Herdr's 30 s limit for the sidebar's programs was left, and starting Atlas on vm needs 20 s to finish once its pane starts, so nothing was started\. /);
+  assert.ok(late.err.trim().endsWith(`Start it from a terminal: automagik-herdr start ${ATLAS} --project ${s.project} --machine vm`), late.err);
+  assert.equal((DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) / 1000, 20);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+  assert.deepEqual(s.rows(), []);
+  // With the whole 30 s ahead the start goes on: hc run there, and its row.
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"], { AUTOMAGIK_HERDR_DEADLINE: String(Date.now() + 30_000) });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().terminal, "t100");
+  assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
+  assert.deepEqual(s.rows().map((x) => [x.event, x.terminal, x.machine]), [["attach", "t100", "vm"]]);
 });
