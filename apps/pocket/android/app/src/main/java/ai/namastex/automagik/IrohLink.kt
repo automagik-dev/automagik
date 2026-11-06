@@ -54,6 +54,8 @@ class IrohTransport(val input: InputStream, val output: OutputStream, private va
 object IrohLink {
     private val SESSION = "herdr-pocket/1".toByteArray()
     private val PAIR = "herdr-pocket/pair/1".toByteArray()
+    /** Pocket Link's chat route (RFC 0015): an older bridge does not offer it. */
+    val CHAT = "herdr-pocket/chat/1".toByteArray()
     private val lock = Mutex()
     private var endpoint: Endpoint? = null
 
@@ -88,9 +90,9 @@ object IrohLink {
     }
 
     /** Opens a session to a paired desktop's core; [scope] carries the stream pumps and ends with the connection. */
-    suspend fun open(context: Context, ticket: String, session: String, scope: CoroutineScope): IrohTransport {
+    suspend fun open(context: Context, ticket: String, session: String, scope: CoroutineScope, alpn: ByteArray = SESSION): IrohTransport {
         val ep = endpoint(context)
-        val conn = try { withTimeout(30_000) { ep.connect(EndpointTicket.fromString(ticket).endpointAddr(), SESSION) } }
+        val conn = try { withTimeout(30_000) { ep.connect(EndpointTicket.fromString(ticket).endpointAddr(), alpn) } }
             catch (e: TimeoutCancellationException) { forget(ep); throw e }
         val bi = conn.openBi()
         val send = bi.send(); val recv = bi.recv()

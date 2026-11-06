@@ -23,6 +23,21 @@ const backupDir = (appHome) => `${appHome}/automagik-herdr/backup`;
 const stagingDir = (appHome) => `${appHome}/automagik-herdr/staging`;
 const present = async (io, path) => (await io.exec("test", ["-e", path])).code === 0;
 
+/**
+ * The refusal of a linked mods/ (#494): `mods` is a link to `target`, the person's folder, so the
+ * manager moves nothing in or out through it. The words of layoutSafe.mjs linkedModsLine, which
+ * this file (inside Herdr, through its io) cannot load.
+ */
+export const linkedModsLine = (mods, target) => `mods/ (${mods}) is a link to ${target}, your own folder, not one this install made: `
+  + "nothing is moved through it, and the folders in it stay as they are. Put that folder in the link's place (a plain mods/), then run this again";
+
+/** linkedModsLine while `<appHome>/mods` is a link, else null. */
+export async function linkedModsRefusal(io, appHome) {
+  const mods = `${appHome}/mods`;
+  if ((await io.exec("test", ["-L", mods])).code !== 0) return null;
+  return linkedModsLine(mods, (await run(io, "readlink", [mods])).trim());
+}
+
 /** Moves a folder or file aside, stamped, and returns where it went: never a delete. */
 async function moveAside(io, appHome, path, name) {
   await run(io, "mkdir", ["-p", backupDir(appHome)]);
@@ -223,6 +238,9 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
   const badName = plan.mods.find((m) => !MOD_NAME.test(m)) ?? plan.layouts.find((l) => !LAYOUT_NAME.test(l));
   if (badName) throw new Error(`name refused: ${badName} (mod folders are lowercase, a-z 0-9 -)`);
+  // Before anything is staged or moved: nothing goes in or out through a linked mods/ (#494).
+  const linked = await linkedModsRefusal(io, appHome);
+  if (linked) throw new Error(linked);
   await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
   const staged = [];
   try {
@@ -319,6 +337,9 @@ export async function checkMods(io, appHome, mods) {
 // the action the package added: one the person rebound since then stays.
 export async function uninstall(io, { appHome, record }) {
   if (record.mods.some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
+  // Before any mod, layout or key goes: nothing leaves through a linked mods/ (#494).
+  const linked = await linkedModsRefusal(io, appHome);
+  if (linked) throw new Error(linked);
   for (const m of record.mods) {
     const p = `${appHome}/mods/${m}`;
     if (await present(io, p)) await moveAside(io, appHome, p, m);
@@ -496,6 +517,10 @@ export async function setEnabled(io, { appHome, name, enabled }) {
   if (!name || /\//.test(name)) throw new Error(`not a mod name: ${name}`);
   // Off means "moved to mods-disabled/", which would strand a pairing key that lives in .state/.
   if (isPocketLink(name)) throw new Error(POCKET_LINK_REFUSAL);
+  // On or off, the move goes in or out of mods/: never through a linked one (#494). A switched-off
+  // mod is still listed (mods-disabled/ is not the link), so this is reachable from the panel.
+  const linked = await linkedModsRefusal(io, appHome);
+  if (linked) throw new Error(linked);
   const to = enabled ? "mods" : OFF_DIR;
   await run(io, "mkdir", ["-p", `${appHome}/${to}`]);
   await run(io, "mv", [`${appHome}/${onOff(!enabled)}/${name}`, `${appHome}/${to}/${name}`]);

@@ -37,8 +37,9 @@ import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } fro
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
 } from "./release.js";
-import { change, removePath, switchCommand } from "./layoutSafe.mjs";
+import { change, linkedModsLine, removePath, switchCommand } from "./layoutSafe.mjs";
 import { appHomeOf, binDirOf, markerOf, offDirOf, placeLayout, prevSetOf, readMarker, readVersion, stateDirOf, writeMarker } from "./update.mjs";
+import { dshTuiPresence } from "./dshTui.mjs";
 
 export const NODE_MIN = "22.7.0";
 /** What a herdr part's id names: `herdr.pack`, `herdr.<pack mod>`, `herdr.layout`. */
@@ -243,7 +244,8 @@ export function install(ctx, part, source) {
       if (!record.mods.includes(part.mod)) throw new Error(`mods/${part.mod} is not the pack's (a folder of your own is left alone; install.sh --adopt replaces it)`);
       const live = join(ctx.modsDir, part.mod), off = join(ctx.offDir, part.mod);
       if (!exists(live) && exists(off) && !isLink(off)) {
-        change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        const r = change(ctx.appHome, [{ op: "move", from: off, to: live }]);
+        if (r.refused) throw new Error(r.refused);
         ctx.log(`switched ${part.mod} back on (mods-disabled/ → mods/)`);
         changed = true;
       }
@@ -372,6 +374,10 @@ function uninstallPack(ctx, { purge }) {
   const record = readMarker(ctx.modsDir);
   if (!record) return { ok: true, changed: false, detail: "the pack is not installed: nothing to do" };
   if (record.v1) throw new Error("this pack was installed by v0.2's installer: run install.sh --uninstall");
+  // A linked mods/ (#494) refuses before anything, as install.sh --uninstall does: change() refuses
+  // only an op in mods/, and with every pack mod switched off the first batch has none, so the
+  // layout and folders would go before an adopted folder's put-back into mods/ is refused.
+  if (isLink(ctx.modsDir)) throw new Error(linkedModsLine(resolve(ctx.modsDir), readlinkSync(ctx.modsDir)));
   const state = stateDirOf(ctx.modsDir);
   const prev = prevSetOf(ctx.modsDir);
   const lines = [];
@@ -434,7 +440,8 @@ function uninstallPack(ctx, { purge }) {
   for (const a of record.adopted) {
     const from = join(state, a.path), to = join(ctx.modsDir, a.mod);
     if (isDir(from) && !isLink(from) && !exists(to)) {
-      change(ctx.appHome, [{ op: "move", from, to }]);
+      const r = change(ctx.appHome, [{ op: "move", from, to }]);
+      if (r.refused) throw new Error(r.refused);
       lines.push(`put back ${to}, the one that was there before the install`);
     }
   }
@@ -522,7 +529,7 @@ export function doctor(ctx, part) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ part: part.id, check, ok, detail, fix: ok ? null : fix });
   // Healthy, with a note and the command that changes it: never a reason for am to roll an install back.
-  const note = (check, detail, fix) => checks.push({ part: part.id, check, ok: true, detail, fix });
+  const note = (check, detail, fix = null) => checks.push({ part: part.id, check, ok: true, detail, fix });
   const done = (code) => ({ code: code ?? (checks.every((c) => c.ok) ? 0 : 1), checks });
   const reinstall = `am install ${part.id}`;
   if (ctx.platform !== "darwin") { add("os", true, `not applicable: Automagik Herdr runs on macOS (Herdr is a Mac app); this is ${ctx.platform}`); return done(2); }
@@ -588,6 +595,16 @@ export function doctor(ctx, part) {
     else note("path", `${ctx.binDir} is not on PATH: run automagik-herdr by its full path, or add it`, `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`);
     const nodeOk = compareVersions(ctx.nodeVersion, NODE_MIN) >= 0;
     add("node", nodeOk, `node ${ctx.nodeVersion}${nodeOk ? "" : `: the command needs ${NODE_MIN} or later`}`, "brew install node");
+    // DSH as a Herdr agent (dsh-TUI, #561) is opt-in, so its absence is a note, never a broken pack.
+    // The dedicated `automagik-herdr dsh-tui doctor` carries the fix commands.
+    const dsh = dshTuiPresence({ env: ctx.env });
+    note("dsh-tui", dsh.dsh ? `dsh is ${dsh.dsh}` : "dsh is not on this process's PATH: dsh-TUI is skipped (install DSH Desktop or @deepseek-ai/dsh)");
+    note("dsh-tui-profile", dsh.profile
+      ? `the tui profile is there${dsh.pinned ? " (pinned to the pack's dsh-TUI)" : " (not the pack's pin)"}${dsh.owned ? " (added by this installer)" : " (not added by this installer)"}`
+      : "not installed (opt-in: `automagik-herdr dsh-tui install`)");
+    note("dsh-tui-shim", dsh.shimOurs ? `${dsh.shim} (exec dsh --profile tui -- "$@")`
+      : dsh.shimExists ? `${dsh.shim} is not this installer's`
+        : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
   }
 
   if (part.kind === "layout") {
