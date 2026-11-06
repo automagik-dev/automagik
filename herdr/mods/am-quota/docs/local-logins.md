@@ -67,7 +67,7 @@ is never derived from an email.
 writes it, and the bot CLI reads it:
 
 ```json
-{ "use": "2", "logins": [ { "id": "2", "dir": "/absolute/home/.claude-2" } ] }
+{ "use": "2", "logins": [ { "id": "2", "dir": "/home/you/.claude-2" } ] }
 ```
 
 - `use` is `"default"` (login A) or a listed `id`. The default login is implicit and never listed.
