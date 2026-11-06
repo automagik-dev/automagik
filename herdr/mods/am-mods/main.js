@@ -270,9 +270,14 @@ export default class ModManager extends View {
     }
     await this.work(cx, `removing ${mod.name}…`, async () => {
       if (mod.record) {
+        // No shown layout to read (#491): the guards had nothing to check, so the remove says so,
+        // with the layouts naming its mods (read before uninstall() moves them aside).
+        const shown = shared("layout");
+        const naming = typeof shown === "string" && shown ? {} : await core.layoutsNamingMods(io, appHome(), mod.record.mods);
         await core.uninstall(io, { appHome: appHome(), record: mod.record });
         saveRecords(records().filter((x) => x !== mod.record && !(x.source === mod.record.source && x.prefix === mod.record.prefix)));
         this.message = `removed: ${mod.record.mods.join(", ")}`;
+        for (const l of core.packageRemoveLines({ record: mod.record, shown, naming })) this.message += ` · ${l}`;
       } else {
         await core.removeLocal(io, { appHome: appHome(), name: mod.name, symlink: mod.symlink, path: mod.path });
         this.message = mod.symlink ? `link ${mod.name} removed (the folder it points to stays)` : `removed: ${mod.name}`;

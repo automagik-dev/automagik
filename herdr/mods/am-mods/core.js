@@ -618,6 +618,25 @@ export function retiredModLines({ retired, held, shown, naming = {} }) {
   });
 }
 
+// After a package's remove (#491): with no shown layout to read (`shown` none: Herdr gave no name),
+// packageLayoutGuard and layoutGuard had nothing to check, so the remove went on (fail open). Said
+// with that reason: the package (its source, as the list names it), the mods and its own layouts
+// uninstall() moved aside, and the layouts in layouts/ naming those mods (`naming`,
+// layoutsNamingMods, read before the move). A name read: nothing (the guards checked it).
+export function packageRemoveLines({ record, shown, naming = {} }) {
+  if (typeof shown === "string" && shown !== "") return [];
+  const pkg = `${record.source}${record.prefix ? `/${record.prefix}` : ""}`;
+  const moved = [...record.mods.map((m) => `mods/${m}`), ...(record.layouts ?? []).map((l) => `layouts/${l}`)];
+  const named = record.mods.flatMap((m) => {
+    const names = naming[m] ?? [];
+    if (!names.length) return [];
+    return [names.length === 1 ? `the ${names[0]} layout names ${m}` : `the layouts ${names.join(", ")} name ${m}`];
+  });
+  return [`removed the package ${pkg} without knowing the layout Herdr shows (no layout from Herdr, so the remove could not check it;`
+    + ` is Herdr running?): moved ${moved.join(", ")} to the backup folder${named.length ? `; ${named.join("; ")}` : ""}.`
+    + " If Herdr shows the package's layout or one naming its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)"];
+}
+
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
 // (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
 export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {

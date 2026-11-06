@@ -192,3 +192,26 @@ test("packageLayoutGuard: the package's own layout that Herdr shows is refused; 
   const un = core.packageLayoutGuard({ name: "Mine", layouts: ["mine.json"], then: "uninstall it" }).refuse;
   assert.equal(un, g.refuse.replace(/remove it$/, "uninstall it"));
 });
+
+// #491: with no shown layout to read the remove goes on (fail open) and says why, naming the
+// package, every mod and own layout it moved aside, and the layouts naming those mods.
+test("packageRemoveLines: no name from Herdr says why, the package, its mods and layouts; a name read says nothing", () => {
+  const record = { source: "someone/tools", prefix: "pkgs/scratch", mods: ["scratch", "pane"], layouts: ["scratchy.json"], keys: [] };
+  const naming = { scratch: ["scratchy", "work"], pane: ["scratchy"] };
+  for (const shown of [undefined, null, ""]) {
+    assert.deepEqual(core.packageRemoveLines({ record, shown, naming }), [
+      "removed the package someone/tools/pkgs/scratch without knowing the layout Herdr shows (no layout from Herdr, so the remove"
+      + " could not check it; is Herdr running?): moved mods/scratch, mods/pane, layouts/scratchy.json to the backup folder;"
+      + " the layouts scratchy, work name scratch; the scratchy layout names pane. If Herdr shows the package's layout or one"
+      + " naming its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)",
+    ], String(shown));
+  }
+  // No layout names its mods (or none parses): the reason, the package and what moved are still said.
+  assert.deepEqual(core.packageRemoveLines({ record: { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: [] }, shown: null }), [
+    "removed the package someone/scratch without knowing the layout Herdr shows (no layout from Herdr, so the remove could not"
+    + " check it; is Herdr running?): moved mods/scratch to the backup folder. If Herdr shows the package's layout or one naming"
+    + " its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)",
+  ]);
+  // A name read: the guards checked it, nothing to say.
+  assert.deepEqual(core.packageRemoveLines({ record, shown: "automagik", naming }), []);
+});
