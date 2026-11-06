@@ -141,6 +141,15 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
   above the window (an event bigger than the window goes when credit is full); 8 subscriptions
   per connection; 2 hc sessions per phone at once; 16 terminals per session. Session names are
   hc's (letters, digits, `_`, `.`, `-`), never only dots.
+- **Automagik Bots' chats (#517).** Beside the terminals, `chat.list` also lists the Automagik
+  Bots' own chats, as `dsh:<botId>` with `chat: "session"`, read from the Bot plugin's
+  read-only socket in the team's home (`~/.automagik/bots/pocket/chat.sock`, or under
+  `$AUTOMAGIK_BOTS_HOME`). The bridge uses that socket only when it and its folder are this
+  account's alone (no group or other access) and it says it is read-only; otherwise nothing is
+  listed. These chats only read: their rows come from the Bot's DSH Session log (a cursor is
+  `dsh:<session>:<seq>`), and `chat.send`, `chat.sendHeld`, `chat.cancelHeld`, `chat.answer` and
+  `chat.interrupt` on them are `refused` (`read-only`). An approval or a question shows as a row
+  without buttons that says "Answer on the computer". Terminal chats are unchanged.
 
 ## For other mods
 
