@@ -1,7 +1,7 @@
 {
   "name": "@automagik/locale-pt-br-dsh",
   "version": "3.86.30",
-  "description": "Brazilian Portuguese for DeepSeek Harness 0.2.2 and later. DSH ships Portuguese itself; this pack adds the Bot team's Portuguese (omni-ui) under DSH's own language and keeps a saved pt-BR choice working. Anything it doesn't translate stays in English",
+  "description": "Brazilian Portuguese for DeepSeek Harness 0.2.2 and later: the Bot team's Portuguese (omni-ui) and the DSH strings DSH's own pt gets wrong (date order, number grouping, plan hint, mistranslations), under a pt-BR entry that falls back to DSH's pt. Correctness over a single picker entry until DSH fixes its copy",
   "keywords": [
     "dsh-plugin",
     "deepseek-harness",
@@ -64,7 +64,7 @@
         "en": "Português (Brasil)"
       },
       "description": {
-        "en": "Brazilian Portuguese for DSH 0.2.2 and later. DSH ships Portuguese itself, in Settings › General › Language and across the app; this pack adds the Bot team's own Portuguese under DSH's language. One Portuguese entry, and a pt-BR choice saved before the upgrade keeps working. Requires DeepSeek Harness 0.2.2 or later. Anything it doesn't translate stays in English."
+        "en": "Brazilian Portuguese for DSH 0.2.2 and later. DSH ships Portuguese itself; this pack adds the Bot team's Portuguese, and keeps a pt-BR entry for the DSH strings DSH's copy gets wrong: date order (Nov 6 shown as 11/6), the thousands separator, the English plan hint, and several mistranslations. It falls back to DSH's Portuguese for everything else. Requires DeepSeek Harness 0.2.2 or later."
       },
       "category": "automagik",
       "keywords": [

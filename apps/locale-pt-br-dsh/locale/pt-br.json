@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Português (Brasil)",
-    "description": "Português do Brasil para o DSH 0.2.2 ou mais recente: o DSH já traz as próprias telas em português; este pacote acrescenta o português do time de Bots sobre ele. O resto continua em inglês."
+    "description": "Português do Brasil para o DSH 0.2.2 ou mais recente: o português do time de Bots e uma entrada pt-BR que corrige o português do próprio DSH onde ele erra (ordem da data, separador de milhar, dica de plano, traduções erradas). O restante vem do pt do DSH."
   }
 }

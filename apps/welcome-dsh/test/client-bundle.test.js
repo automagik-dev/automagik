@@ -48,7 +48,7 @@ test('client.js registers its three onboarding steps on settings.onboarding, in 
   assert.deepEqual(effects, ['omni-ai: stage styles', 'omni-ai: team step copy', "omni-ai: the table over DSH's first frame", 'omni-ai: omni-companion on the rail', 'omni-ai: omni-team on the rail', 'omni-ai: omni-connect-ai on the rail', 'omni-ai: Claude Code and Codex in Settings'])
   // The team step's copy goes to DSH's locale service as welcome.team.
   runs.get('omni-ai: team step copy')()
-  assert.deepEqual(registers, [['welcome.team', ['en', 'pt-BR']]])
+  assert.deepEqual(registers, [['welcome.team', ['en', 'pt', 'pt-BR']]])
   assert.deepEqual(injected, ['settings.onboarding', 'settings.onboarding', 'settings.onboarding'])
   assert.deepEqual(registered, [
     { name: 'settings.onboarding', id: 'omni-companion', order: -300, component: 'function' },

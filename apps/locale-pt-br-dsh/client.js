@@ -3,38 +3,40 @@ window.__ModuleLoader__.load({
   id: '@automagik/locale-pt-br-dsh',
   factory: () => {
 const createPack = function createPack(dictionaries) {
+  const language = { id: 'pt-BR', label: 'Português (Brasil)', fallback: 'pt' }
   return {
     inject: ['locale'],
     apply(ctx) {
-      const hasDshPortuguese = () => ctx.locale.getLocale().locales.some((entry) => entry.id === 'pt')
+      ctx.effect(() => ctx.locale.addLanguage(language), 'locale-pt-br: language')
       for (const [namespace, dictionary] of Object.entries(dictionaries)) {
+        // DSH owns every DSH namespace under `pt`; only the Bot team's own namespace is safe
+        // there, and it serves both entries through the fallback chain.
+        const id = namespace === 'omni-ui' ? 'pt' : language.id
         ctx.effect(
-          () => ctx.locale.register(namespace, 'pt', dictionary),
+          () => ctx.locale.register(namespace, id, dictionary),
           `locale-pt-br: ${namespace}`,
         )
-      }
-      moveSavedChoice()
-
-      // A saved pt-BR choice is an exact id to DSH's locale runtime. DSH's own id is `pt`, so
-      // rewrite the stored choice through the runtime's only preference write, before anything
-      // reads it; no second Portuguese entry is registered.
-      function moveSavedChoice() {
-        ctx.inject(['configForms'], (scope) => {
-          const host = scope.configForms.get('locale')
-          if (!host || typeof host.getSnapshot !== 'function' || typeof host.subscribe !== 'function') return
-          const move = () => {
-            if (host.getSnapshot()?.value?.preference !== 'pt-BR') return
-            if (!hasDshPortuguese()) return
-            ctx.locale.setLocale('pt')
-          }
-          ctx.effect(() => host.subscribe(move), 'locale-pt-br: saved choice')
-          move()
-        })
       }
     },
   }
 }
 const pack = createPack({
+  "chat": {
+    "number.groupSeparator": ".",
+    "clock.md": "{d}/{m}",
+    "clock.ymd": "{d}/{m}/{y}",
+    "message.systemPrompt": "Prompt do sistema",
+    "message.systemPromptUpdate": "Atualização do prompt do sistema",
+    "message.stepProcess.tools": "Chamando ferramentas",
+    "message.context.instructions.updated": "atualizadas"
+  },
+  "conversation": {
+    "hint.plan": "descreva sua tarefa para gerar um plano",
+    "placeholder.plan": "descreva sua tarefa para gerar um plano",
+    "row.input": "ENTRADA",
+    "row.output": "SAÍDA",
+    "tool.title.queryRuntime": "Consultar o runtime"
+  },
   "omni-ui": {
     "Channels": "Canais",
     "connected": "conectados",
@@ -1486,6 +1488,12 @@ const pack = createPack({
     "Has a computer: ask it for code, files and commands.": "Tem computador: peça código, arquivos e comandos.",
     "Works in your Omni channels: ask it to read, send or answer messages there.": "Trabalha nos seus canais do Omni: peça para ler, enviar ou responder mensagens lá.",
     "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo."
+  },
+  "permission.access": {
+    "auto.label": "Revisão automática"
+  },
+  "pluginManager": {
+    "terminalRunning": "Rodando"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

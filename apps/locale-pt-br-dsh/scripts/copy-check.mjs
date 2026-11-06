@@ -1,7 +1,7 @@
 // The copy check: every pt-BR text of the pack, against its English text and the copy rules.
 // - A DSH namespace the pack carries holds only keys of its English dictionary (test/en, at the
-//   DSH release the tests run on). DSH 0.2.2 owns every DSH namespace, so the pack carries none
-//   of them; the rule is here so one cannot creep back.
+//   DSH release the tests run on). The pack carries corrected subsets of five DSH namespaces
+//   while DSH's own pt is wrong; every key there must still be a real DSH key.
 // - `omni-ui` is the Bot team's (apps/bots-dsh): its keys are the English text, and each key the
 //   pack translates is still one of them.
 // - A text keeps the {placeholders} of its English text.
