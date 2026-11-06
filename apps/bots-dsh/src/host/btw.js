@@ -77,18 +77,22 @@ const anchorProjection = {
 let anchorHandle
 
 function registerAnchor(ctx) {
-  const register = (projections) => {
+  // dsh 0.2.2 acquires a unit asynchronously: await the thenable register() returns and keep
+  // its handle for the life of the host; every read goes through that handle. The callback is
+  // async on purpose, and a refused registration is reported and stepped over.
+  const register = async (projections) => {
     if (typeof projections?.register !== 'function') return
-    Promise.resolve(projections.register(anchorProjection)).then(
-      (handle) => { anchorHandle = handle },
-      (error) => ctx.logger?.warn?.('ds-bot: the anchor projection was not registered: %s', error),
-    )
+    try {
+      anchorHandle = await projections.register(anchorProjection)
+    } catch (error) {
+      ctx.logger?.warn?.('ds-bot: the anchor projection was not registered: %s', error)
+    }
   }
   if (typeof ctx.inject === 'function') {
-    ctx.inject(['sessionProjections'], (projectionCtx) => { register(projectionCtx.sessionProjections) })
+    ctx.inject(['sessionProjections'], (projectionCtx) => { void register(projectionCtx.sessionProjections) })
     return
   }
-  register(ctx.get?.('sessionProjections'))
+  void register(ctx.get?.('sessionProjections'))
 }
 
 function anchorState(session, projections) {
