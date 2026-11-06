@@ -6,27 +6,44 @@
 #   remote-gate.sh --sha 1a2b3c4 plugin bots-dsh   a plugin's install, lint and node --test
 #   remote-gate.sh --sha 1a2b3c4 bun          the repository's bun run check
 #
-# The ref is fetched read-only from REMOTE_GATE_REMOTE into refs/remote-gate/, checked out in a
-# detached worktree, and the worktree is removed on any exit (git worktree remove --force, then
+# Only the named ref is fetched from REMOTE_GATE_REMOTE, into refs/remote-gate/ (a pull request's
+# head, or one commit by its full sha when the clone lacks it); no other ref changes. It is
+# checked out in a detached worktree, removed on any exit (git worktree remove --force, then
 # prune). At most REMOTE_GATE_SLOTS gates run at once (mkdir slots); a gate waits for a free slot
 # up to REMOTE_GATE_LOCK_TIMEOUT seconds, then gives up. Each step's full output goes to a log
-# folder that is kept; the screen gets one line per step and the counts.
+# folder; the screen gets one line per step and the counts. A test step passes only with exit 0,
+# a summary, at least one test, and no failed or cancelled test (as scripts/test-guard.mjs).
+# At the start, refs/remote-gate/* and log folders older than REMOTE_GATE_KEEP_DAYS go, and so
+# does a worktree whose gate is no longer running.
 #
 # Environment (all optional):
 #   REMOTE_GATE_ENV            a file sourced first (PATH, NVM_DIR, the variables below)
 #   REMOTE_GATE_REPO           the clone (default: the checkout holding this script)
-#   REMOTE_GATE_BASE           worktrees, locks and logs (default: <repo>/.remote-gate)
+#   REMOTE_GATE_BASE           worktrees, locks and logs (default: <repo>-gate, beside the clone,
+#                              so a worktree never resolves imports from the clone's node_modules)
 #   REMOTE_GATE_REMOTE         remote to fetch from (default: origin)
 #   REMOTE_GATE_SLOTS          gates at once (default: 3)
 #   REMOTE_GATE_LOCK_TIMEOUT   seconds to wait for a slot (default: 1800)
+#   REMOTE_GATE_GIT_TIMEOUT    seconds to wait for the clone's fetch lock (default: 600)
+#   REMOTE_GATE_KEEP_DAYS      days to keep refs/remote-gate/* and logs (default: 7)
 #   REMOTE_GATE_NODE_VERSIONS  herdr gate's Node versions, nvm-installed (default: "24 22 24.9.0")
 #   REMOTE_GATE_PLUGIN_NODE    Node for the plugin and bun gates (default: 24.9, as CI)
-#   REMOTE_GATE_TEST_CONCURRENCY  herdr node --test concurrency (default: 8)
+#   REMOTE_GATE_TEST_CONCURRENCY  herdr node --test concurrency (default: 8; Node's own default
+#                              is one less than the cores, too many beside other work)
 #   NVM_DIR                    where nvm keeps Node (default: $HOME/.nvm)
+#   CHROME_BIN                 bots-dsh's browser (default: one at a usual path, if any)
 #
-# The herdr gate leaves out test/am-quota-write.test.mjs and scripts/usagemeter-pin.mjs (it
-# reads a release over the network). The plugin gate does not fetch Omni for welcome-dsh, and
-# runs the browser layout check only where CHROME_BIN names a browser.
+# What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, which writes real
+# quota state (the Mac never runs it either), and scripts/usagemeter-pin.mjs (it reads a release
+# over the network). Its static checks run once, on the first Node. A version like 24 is the
+# newest one nvm has installed, not the newest released; the record names the exact one. bun is
+# whatever PATH has (CI pins 1.4.4); the record names it. The plugin gate does not fetch Omni for
+# welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,
+# and says so; with one it sets CHROME_BIN and CI as CI does.
+#
+# Signals: bash runs a trap only once the running command returns, so a TERM to this script
+# waits for the step in progress (a test run can take minutes) before the cleanup; a terminal's
+# ctrl-C reaches the whole process group and stops the step at once.
 set -euo pipefail
 # As on a Mac and on CI's runners. Under a 002 umask (one group per user, common on Linux) the
 # tests' fixture files come out group-writable, and the worker refuses to read those.
@@ -70,28 +87,64 @@ case $gate in
   *) usage ;;
 esac
 
+say() { printf 'remote-gate: %s\n' "$*"; }
+die() {
+  say "$*" >&2
+  exit 1
+}
+
 script_dir=$(cd "$(dirname "$0")" && pwd)
 repo=${REMOTE_GATE_REPO:-$(git -C "$script_dir" rev-parse --show-toplevel)}
-base=${REMOTE_GATE_BASE:-$repo/.remote-gate}
+repo=$(cd "$repo" && pwd) || die "no clone at $repo"
+base=${REMOTE_GATE_BASE:-$repo-gate}
+mkdir -p "$base"
+base=$(cd "$base" && pwd)
 remote=${REMOTE_GATE_REMOTE:-origin}
 slots=${REMOTE_GATE_SLOTS:-3}
 lock_timeout=${REMOTE_GATE_LOCK_TIMEOUT:-1800}
+git_timeout=${REMOTE_GATE_GIT_TIMEOUT:-600}
+keep_days=${REMOTE_GATE_KEEP_DAYS:-7}
 node_versions=${REMOTE_GATE_NODE_VERSIONS:-24 22 24.9.0}
 plugin_node=${REMOTE_GATE_PLUGIN_NODE:-24.9}
 concurrency=${REMOTE_GATE_TEST_CONCURRENCY:-8}
-nvm_dir=${NVM_DIR:-$HOME/.nvm}
+if [ -n "${NVM_DIR:-}" ]; then
+  nvm_dir=$NVM_DIR
+elif [ -n "${HOME:-}" ]; then
+  nvm_dir=$HOME/.nvm
+else
+  die "neither NVM_DIR nor HOME is set: set NVM_DIR to nvm's folder"
+fi
 lock_dir=$base/locks
 git_lock=$lock_dir/git
+wt_dir=$base/worktrees
 
 slot=''
 wt=''
+wt_owner=''
 held_git=''
 failed=0
 summary=()
 started=$SECONDS
 
-say() { printf 'remote-gate: %s\n' "$*"; }
 load() { cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || uptime | sed 's/.*load averages*: //'; }
+
+# A process's identity: its pid and start time, so a reused pid never reads as the same owner.
+# ps sees every user's processes, so one this user may not signal (EPERM) still reads as alive.
+ident() {
+  local start
+  start=$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ') || return 1
+  [ -n "$start" ] || return 1
+  printf '%s %s\n' "$1" "$start"
+}
+me=$(ident $$) || die "ps can't read this process's start time"
+
+# Whether an owner line (pid and start time) is a process that still runs.
+alive() {
+  local pid=${1%% *}
+  [ -n "$1" ] && [ "$(ident "$pid" 2>/dev/null || true)" = "$1" ]
+}
+
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
 
 # The newest nvm-installed Node matching a version prefix (24, 24.9, 24.9.0), as its bin folder.
 node_bin() {
@@ -106,44 +159,70 @@ node_bin() {
   printf '%s/bin\n' "$best"
 }
 
-# A short mutex for the clone's fetch and worktree bookkeeping, shared by every slot.
+# The clone's lock for fetches and worktree bookkeeping, shared by every slot. One left by a gate
+# that is gone is never taken over: it is reported with the command that clears it.
 git_lock_take() {
-  local deadline=$((SECONDS + 120))
+  local deadline=$((SECONDS + git_timeout)) owner
+  mkdir -p "$lock_dir"
   until mkdir "$git_lock" 2>/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-      say "the clone's git lock ($git_lock) is held for 120 s; remove it if no gate is running" >&2
+      owner=$(cat "$git_lock/owner" 2>/dev/null || true)
+      if alive "$owner"; then
+        say "the clone's git lock is held by a running gate (pid ${owner%% *}) for over $git_timeout s" >&2
+      else
+        say "the clone's git lock is older than $git_timeout s and its gate is gone (owner: ${owner:-none})." >&2
+        say "If no gate is running, clear it: rm -rf '$git_lock'" >&2
+      fi
       return 1
     fi
     sleep 1
   done
+  echo "$me" >"$git_lock/owner"
   held_git=1
 }
 git_lock_drop() {
-  if [ -n "$held_git" ]; then rmdir "$git_lock" 2>/dev/null || true; fi
+  if [ -n "$held_git" ]; then rm -rf "$git_lock"; fi
   held_git=''
 }
 
-# One of the box's gate slots. A slot whose owner is gone (its pid no longer runs) is reclaimed.
+# A slot's owner line, or its folder's age as "none <mtime>" when it has no owner file yet.
+slot_owner() {
+  if [ -f "$1/owner" ]; then cat "$1/owner" 2>/dev/null || true; else echo "none $(mtime "$1")"; fi
+}
+
+# Takes a stale slot back. The move to a unique name lets one claimer win; the moved folder is
+# checked again, and one that is not the slot judged stale (made since) is put back.
+reclaim() {
+  local dir=$1 judged=$2 moved
+  moved=$lock_dir/.stale-${dir##*/}-$$-$RANDOM
+  mv "$dir" "$moved" 2>/dev/null || return 0
+  if [ "$(slot_owner "$moved")" != "$judged" ]; then
+    if [ ! -e "$dir" ]; then mv "$moved" "$dir" 2>/dev/null || true; fi
+    return 0
+  fi
+  say "took back ${dir##*/} (owner gone: $judged)"
+  rm -rf "$moved"
+}
+
+# One of the box's gate slots. A slot is stale when its owner (pid and start time) no longer runs,
+# or when it has no owner file and is older than the wait.
 slot_take() {
-  local deadline=$((SECONDS + lock_timeout)) i dir pid again waited=''
+  local deadline=$((SECONDS + lock_timeout)) i dir owner waited=''
   mkdir -p "$lock_dir"
   while :; do
     for i in $(seq 1 "$slots"); do
       dir=$lock_dir/slot-$i
       if mkdir "$dir" 2>/dev/null; then
-        echo $$ >"$dir/pid"
+        echo "$me" >"$dir/owner"
         slot=$dir
         say "slot $i of $slots (pid $$)"
         return 0
       fi
-      pid=$(cat "$dir/pid" 2>/dev/null || true)
-      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-        again=$(cat "$dir/pid" 2>/dev/null || true)
-        if [ "$again" = "$pid" ]; then
-          say "reclaiming slot $i from gone pid $pid"
-          rm -rf "$dir"
-        fi
-      fi
+      owner=$(slot_owner "$dir")
+      case $owner in
+        'none '*) if [ $(($(date +%s) - ${owner#none })) -gt "$lock_timeout" ]; then reclaim "$dir" "$owner"; fi ;;
+        *) if ! alive "$owner"; then reclaim "$dir" "$owner"; fi ;;
+      esac
     done
     if [ "$SECONDS" -ge "$deadline" ]; then
       say "all $slots slots busy for $lock_timeout s; giving up" >&2
@@ -157,20 +236,59 @@ slot_take() {
   done
 }
 
+remove_worktree() {
+  local dir=$1
+  if git -C "$repo" worktree remove --force "$dir" 2>/dev/null || { rm -rf "$dir" && [ ! -e "$dir" ]; }; then
+    git -C "$repo" worktree prune
+    return 0
+  fi
+  git -C "$repo" worktree prune
+  return 1
+}
+
+# Old refs and logs, and worktrees left by a gate that is gone (killed, out of memory).
+sweep() {
+  local cutoff owner_file dir name commit_date
+  cutoff=$(($(date +%s) - keep_days * 86400))
+  git -C "$repo" for-each-ref --format='%(refname) %(committerdate:unix)' refs/remote-gate/ \
+    | while read -r name commit_date; do
+      if [ "$commit_date" -lt "$cutoff" ]; then git -C "$repo" update-ref -d "$name" || true; fi
+    done
+  if [ -d "$base/logs" ]; then
+    find "$base/logs" -mindepth 1 -maxdepth 1 -type d -mtime +"$keep_days" -exec rm -rf {} + || true
+  fi
+  for owner_file in "$wt_dir"/*.owner; do
+    [ -f "$owner_file" ] || continue
+    dir=${owner_file%.owner}
+    if ! alive "$(cat "$owner_file" 2>/dev/null || true)"; then
+      if remove_worktree "$dir"; then
+        rm -f "$owner_file"
+        say "removed ${dir##*/}, left by a gate that is gone"
+      else
+        say "could not remove ${dir##*/}, left by a gate that is gone" >&2
+      fi
+    fi
+  done
+  git -C "$repo" worktree prune
+}
+
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   set +e
-  git_lock_drop
+  cd / || true
   if [ -n "$wt" ]; then
-    cd / || true
-    git_lock_take || true
-    git -C "$repo" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
-    git -C "$repo" worktree prune
-    git_lock_drop
-    say "worktree removed"
+    if [ -z "$held_git" ]; then git_lock_take; fi
+    if remove_worktree "$wt"; then
+      rm -f "$wt_owner"
+      say "worktree removed"
+    else
+      say "the worktree $wt could not be removed; the next gate's sweep tries again" >&2
+      [ "$rc" -ne 0 ] || rc=1
+    fi
   fi
-  if [ -n "$slot" ] && [ "$(cat "$slot/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$slot"; fi
+  git_lock_drop
+  if [ -n "$slot" ] && [ "$(cat "$slot/owner" 2>/dev/null)" = "$me" ]; then rm -rf "$slot"; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -187,36 +305,49 @@ step() {
   if [ "$rc" -ne 0 ]; then
     failed=1
     if grep -qE '^not ok ' "$log"; then
-      grep -E '^not ok ' "$log" | head -n 20
-      grep -m 3 -A 8 -E '^not ok ' "$log" | grep -E '^ +(location|error):|^    [^ ]' | head -n 12 \
-        | sed 's/^/  | /'
+      grep -E '^not ok ' "$log" | head -n 20 || true
+      { grep -m 3 -A 8 -E '^not ok ' "$log" | grep -E '^ +(location|error):|^    [^ ]' | head -n 12 \
+        | sed 's/^/  | /'; } || true
     else
-      tail -n 25 "$log" | sed 's/^/  | /'
+      tail -n 25 "$log" | sed 's/^/  | /' || true
     fi
   fi
   return 0
 }
 
 # Counts from node --test output, TAP (# tests 12) or spec (a glyph, tests 12); the last one wins.
+# Prints "found tests pass fail skip todo cancelled", found 0 when there is no summary.
 node_counts() {
   LC_ALL=C awk '/^[^ \t]/ && NF == 3 && $2 ~ /^(tests|pass|fail|skipped|todo|cancelled)$/ \
-         && $3 ~ /^[0-9]+$/ && $1 !~ /^[[:alnum:]]/ { c[$2] = $3 }
-       END { printf "tests=%d pass=%d fail=%d skip=%d todo=%d cancelled=%d", \
-         c["tests"], c["pass"], c["fail"], c["skipped"], c["todo"], c["cancelled"] }' "$1"
+         && $3 ~ /^[0-9]+$/ && $1 !~ /^[[:alnum:]]/ { c[$2] = $3; found = 1 }
+       END { printf "%d %d %d %d %d %d %d\n", found, c["tests"], c["pass"], c["fail"], \
+         c["skipped"], c["todo"], c["cancelled"] }' "$1"
 }
 
-# Counts from bun test's summary (" 12 pass", "Ran 14 tests across 3 files.").
+# Counts from bun test's summary (" 12 pass", "Ran 14 tests across 3 files."), in node_counts'
+# order with the file count last; found 0 without the "Ran" line.
 bun_counts() {
-  awk '$1 ~ /^[0-9]+$/ && NF == 2 && $2 ~ /^(pass|fail|skip|todo)$/ { c[$2] = $1 }
-       $1 == "Ran" && $3 ~ /^tests?$/ && $4 == "across" { t = $2; f = $5 }
-       END { printf "files=%d tests=%d pass=%d fail=%d skip=%d todo=%d", \
-         f, t, c["pass"], c["fail"], c["skip"], c["todo"] }' "$1"
+  LC_ALL=C awk '$1 ~ /^[0-9]+$/ && NF == 2 && $2 ~ /^(pass|fail|skip|todo)$/ { c[$2] = $1 }
+       $1 == "Ran" && $3 ~ /^tests?$/ && $4 == "across" { t = $2; f = $5; found = 1 }
+       END { printf "%d %d %d %d %d %d 0 %d\n", found, t, c["pass"], c["fail"], c["skip"], \
+         c["todo"], f }' "$1"
 }
 
-record() {
-  local line=$1
-  summary+=("$line")
-  say "$line"
+# Judges a test step by its counts as well as its exit code: no summary, no test, or a failed or
+# cancelled one fails the gate. Records one line: the counts, the time and the verdict.
+judge() {
+  local label=$1 counts=$2 wall=$3 found tests pass fail skip todo cancelled why=''
+  read -r found tests pass fail skip todo cancelled _ <<<"$counts"
+  if [ "$found" -eq 0 ]; then
+    why='no test summary'
+  elif [ "$tests" -eq 0 ]; then
+    why='no tests ran'
+  elif [ "$fail" -gt 0 ] || [ "$cancelled" -gt 0 ]; then
+    why="$fail failed, $cancelled cancelled"
+  fi
+  if [ -n "$why" ]; then failed=1; fi
+  summary+=("$label tests=$tests pass=$pass fail=$fail skip=$skip todo=$todo cancelled=$cancelled wall=${wall}s${why:+ FAIL ($why)}")
+  say "${summary[${#summary[@]} - 1]}"
 }
 
 herdr_syntax() {
@@ -247,7 +378,7 @@ gate_herdr() {
     t0=$SECONDS
     step "test-node-$ver" env PATH="$bin:$PATH" node --test --test-reporter=tap \
       --test-concurrency="$concurrency" "${files[@]}"
-    record "gate=herdr node=$ver files=${#files[@]} $(node_counts "$logs/test-node-$ver.log") wall=$((SECONDS - t0))s"
+    judge "gate=herdr node=$ver files=${#files[@]}" "$(node_counts "$logs/test-node-$ver.log")" $((SECONDS - t0))
   done
   bin=$(node_bin "${node_versions%% *}")
   export PATH="$bin:$PATH"
@@ -260,13 +391,33 @@ gate_herdr() {
   step am-copies node ../scripts/am-copies.mjs --check
 }
 
+# bots-dsh's browser: CHROME_BIN when set, else one at a usual path; empty when none.
+browser() {
+  local b
+  for b in "${CHROME_BIN:-}" /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium \
+    /usr/bin/chromium-browser /snap/bin/chromium; do
+    if [ -n "$b" ] && [ -x "$b" ]; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
+}
+
 gate_plugin() {
-  local dir=$wt/apps/$app bin n t0
-  [ -f "$dir/package.json" ] || { say "no plugin at apps/$app" >&2; return 1; }
+  local dir=$wt/apps/$app bin n t0 chrome layout
+  [ -f "$dir/package.json" ] || die "no plugin at apps/$app"
   cd "$dir"
   bin=$(node_bin "$plugin_node")
   export PATH="$bin:$PATH"
-  unset CI GITHUB_ACTIONS
+  chrome=$(browser)
+  if [ -n "$chrome" ]; then
+    export CHROME_BIN=$chrome CI=true
+    layout="layout=$chrome"
+  else
+    unset CHROME_BIN CI GITHUB_ACTIONS
+    layout='layout=skipped'
+    say "layout check skipped (CHROME_BIN unset): no browser found, CI unset"
+  fi
   step install bun install --frozen-lockfile
   if grep -q '"harness"' package.json && [ ! -d dev/harness/node_modules ]; then
     step harness bun run harness
@@ -276,40 +427,47 @@ gate_plugin() {
   n=$(find test -maxdepth 1 -name '*.test.js' | wc -l | tr -d ' ')
   t0=$SECONDS
   step test bun run test
-  record "gate=plugin app=$app node=$(node --version) files=$n $(node_counts "$logs/test.log") wall=$((SECONDS - t0))s"
+  judge "gate=plugin app=$app node=$(node --version) files=$n $layout" "$(node_counts "$logs/test.log")" $((SECONDS - t0))
 }
 
 gate_bun() {
-  local bin t0
+  local bin t0 counts
   cd "$wt"
   bin=$(node_bin "$plugin_node")
   export PATH="$bin:$PATH"
   step install bun install --frozen-lockfile --ignore-scripts
   t0=$SECONDS
   step check bun run check
-  record "gate=bun node=$(node --version) bun=$(bun --version) $(bun_counts "$logs/check.log") wall=$((SECONDS - t0))s"
+  counts=$(bun_counts "$logs/check.log")
+  judge "gate=bun node=$(node --version) bun=$(bun --version) files=${counts##* }" "$counts" $((SECONDS - t0))
 }
 
 slot_take
 
 git_lock_take
+sweep
 if [ "$kind" = pr ]; then
   git -C "$repo" -c gc.auto=0 fetch -q --no-write-fetch-head "$remote" \
     "+refs/pull/$ref/head:refs/remote-gate/pr-$ref"
   sha=$(git -C "$repo" rev-parse --verify "refs/remote-gate/pr-$ref^{commit}")
 else
   if ! git -C "$repo" cat-file -e "$ref^{commit}" 2>/dev/null; then
-    git -C "$repo" -c gc.auto=0 fetch -q --no-write-fetch-head "$remote"
-  fi
-  if ! git -C "$repo" cat-file -e "$ref^{commit}" 2>/dev/null && [ ${#ref} -eq 40 ]; then
-    git -C "$repo" -c gc.auto=0 fetch -q --no-write-fetch-head "$remote" "$ref"
+    [ ${#ref} -eq 40 ] || die "$ref isn't in the clone: give the full 40-character sha to fetch it"
+    git -C "$repo" -c gc.auto=0 fetch -q --no-write-fetch-head "$remote" "+$ref:refs/remote-gate/sha-$ref"
   fi
   sha=$(git -C "$repo" rev-parse --verify "$ref^{commit}")
   git -C "$repo" update-ref "refs/remote-gate/sha-$sha" "$sha"
 fi
-mkdir -p "$base/worktrees"
-wt=$base/worktrees/$gate-${sha:0:12}-$$
-git -C "$repo" worktree add -q --detach "$wt" "$sha"
+mkdir -p "$wt_dir"
+target=$wt_dir/$gate-${sha:0:12}-$$
+wt_owner=$target.owner
+echo "$me" >"$wt_owner"
+if ! git -C "$repo" worktree add -q --detach "$target" "$sha"; then
+  remove_worktree "$target" || true
+  rm -f "$wt_owner"
+  die "git worktree add failed for $sha"
+fi
+wt=$target
 git_lock_drop
 
 logs=$base/logs/$gate-${sha:0:12}-$(date +%Y%m%d-%H%M%S)-$$
