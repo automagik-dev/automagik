@@ -245,3 +245,20 @@ test("an edit that changes only the prompt keeps hand-written agent_args exactly
     assert.deepEqual(s.yaml()[0].agent_args, handArgs, "and still in the config after the put");
   } finally { s.done(); }
 });
+
+test("an edit of a paused automation keeps it paused (#501)", async () => {
+  const s = stubScheduler([{ ...nightly("claude"), disabled: true }]);
+  try {
+    state.agents = [{ key: "claude", installed: true, run: ["claude"] }];
+    const { view, cx } = await panel();
+    view.edit("nightly", cx);
+    await cx.settle();
+    view.form.prompt.type("p, said again", cx);
+    view.save(cx);
+    await cx.settle();
+    const saved = s.saves();
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].entry.disabled, true, "sent to put still paused");
+    assert.equal(s.yaml()[0].disabled, true, "and still paused in the config");
+  } finally { s.done(); }
+});
