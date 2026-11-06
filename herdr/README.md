@@ -580,7 +580,19 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   effort, or its template (`--json`: the same as data, with `role` and `template`).
 - **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
   once the task merges. The bot's briefing says so. As an hc child, a worker
-  also ends when its bot's program ends; its worktree and branch stay.
+  also ends when its bot's program ends; its branch stays.
+- **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
+  (`git worktree remove --force`, then `git worktree prune`) once every worker that ran in it
+  has ended, done or killed, and no live terminal works in it. Each `worker` call does it
+  after its own start, at most 5 worktrees and about 20 s per call; `automagik-herdr reap`
+  does all of them at once. A worktree with uncommitted changes, or with commits on no remote
+  branch, is kept, with one line naming its path and why; commits on no remote are no reason
+  once `gh pr list --head <branch>` shows its pull requests all merged or closed (a squash
+  merge). gh missing or failing keeps it. A worktree only given to a worker (`--worktree`, a
+  branch's existing worktree) is never removed. Outcomes go to
+  `<app home>/automagik-herdr/worker-reap.jsonl` (`{ worktree, result: "removed" | "kept" |
+  "failed" | "gone", why, at }`), never to the workers ledger; a kept worktree is looked at
+  again on each call, and its line is said again only when its reason changes.
 - **Ledger:** `worker`, `start` and `attach` append one row per terminal to
   `<app home>/automagik-herdr/workers.jsonl`: `{ event: "start", kind: "worker" | "seat",
   terminal, pid, botId, task, worktree, agent, model, effort, template, role, branch, project,

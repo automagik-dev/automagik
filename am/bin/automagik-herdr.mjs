@@ -31,9 +31,10 @@ import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingLaunch, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, ownPromptIn, resolveAgent, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
-  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, sessionRow, parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
+  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
+  parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
-  writesWorktree } from "../workers.js";
+  workLeft, writesWorktree } from "../workers.js";
 import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
   sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
@@ -1045,7 +1046,15 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 the worker is named <id>-<role>, a --branch must contain the
                                 id, and --lead (default: this bot; a reviewer or fixer must
                                 pass it) is the task's lead bot. A bot with a worker.swap
-                                runs it on about one task in three, by rule
+                                runs it on about one task in three, by rule. Each call then
+                                removes up to 5 worktrees this command made whose workers
+                                have all ended (reap)
+  reap                          remove every worktree a worker call made whose workers have
+                                all ended (killed or done), then git worktree prune. Kept, with
+                                one line naming the path and why: uncommitted changes, or
+                                commits on no remote unless gh lists the branch's pull
+                                requests as merged or closed. A worktree only given to a worker
+                                (--worktree, a branch's existing one) is never removed
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back;
                                 an update then runs meter install where you agreed to it
@@ -3676,6 +3685,161 @@ async function workerTabSetup(terminal, botTerminal, name) {
   return null;
 }
 
+// ---- worktree cleanup (#567) ----
+
+/** A worker call's sweep removes at most this many worktrees, and starts no new check after this long. */
+const REAP_MAX = 5;
+const REAP_BUDGET_MS = 20_000;
+/** How long the sweep waits for gh's list of a branch's pull requests. */
+const GH_TIMEOUT = 5000;
+/** How long one git worktree remove may take (a large tree). */
+const REMOVE_TIMEOUT = 120_000;
+
+/** The cleanup file's rows ([] when it can't be read). */
+function reapRows() {
+  try { return readLedger(readText(reapPath(appHome())) ?? ""); } catch { return []; }
+}
+/** Appends a cleanup row; a warning, or null. */
+function appendReap(row) {
+  const path = reapPath(appHome());
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const fd = openSync(path, "a", 0o600);
+    try { writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+    return null;
+  } catch (e) {
+    return `couldn't record the cleanup of ${row.worktree} in ${path}: ${e?.message ?? e}`;
+  }
+}
+/** hc's terminals from `hc ls [--all] --json`, or null when hc failed or printed no list. */
+async function hcTerminals(all) {
+  const r = await hc(["ls", ...(all ? ["--all"] : []), "--json"]);
+  if (r.code !== 0) return null;
+  try { const list = JSON.parse(r.stdout)?.terminals; return Array.isArray(list) ? list : null; } catch { return null; }
+}
+/** The local terminals among `terms` that haven't finished and whose cwd is `dir` or inside it. */
+function liveIn(terms, dir) {
+  return terms.filter((t) => {
+    if (!local(t?.address) || t.state === "finished" || typeof t.cwd !== "string") return false;
+    const cwd = t.cwd.startsWith("~/") ? `${home()}${t.cwd.slice(1)}` : t.cwd;
+    const real = nativeDir(cwd) ?? cwd;
+    return real === dir || real.startsWith(`${dir}/`);
+  });
+}
+const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
+
+/** The branch's pull requests as gh lists them ([{ state }]), or null when gh is missing or fails. */
+async function pullRequestsOf(branch, cwd) {
+  const gh = programPath("gh");
+  if (!gh || !branch) return null;
+  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state", "--limit", "20"],
+    { cwd, timeout: GH_TIMEOUT });
+  if (r.code !== 0) return null;
+  try { const list = JSON.parse(r.stdout); return Array.isArray(list) ? list : null; } catch { return null; }
+}
+
+/**
+ * One candidate, under its worktree's lock: looked at again for a live terminal (a worker
+ * started in it since the sweep's hc ls), then checked for work (workLeft) and removed with
+ * git worktree remove --force, then git worktree prune. Never throws: { result, why }, result
+ * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
+ * or hc failure keeps it (fails closed).
+ */
+async function reapOne(c) {
+  const path = c.worktree;
+  const now = await hcTerminals(false);
+  if (!now) return { result: "waiting" };
+  if (liveIn(now, path).length) return { result: "waiting" };
+  const common = await runProgram("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: path });
+  if (common.code !== 0) return { result: "kept", why: `git can't read it: ${firstLine(common)}` };
+  const main = c.project && isDir(c.project) ? c.project : dirname(common.stdout.trim());
+  const status = await runProgram("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: path });
+  if (status.code !== 0) return { result: "kept", why: `git status failed: ${firstLine(status)}` };
+  const changes = status.stdout.split("\n").filter(Boolean).length;
+  let unpushed = 0;
+  let prs = null;
+  let branch = null;
+  if (!changes) {
+    const count = await runProgram("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path });
+    unpushed = Number(count.stdout.trim());
+    if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
+    branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || c.branch;
+    if (unpushed > 0) prs = await pullRequestsOf(branch, main);
+  }
+  const why = workLeft({ changes, unpushed, prs, branch });
+  if (why) return { result: "kept", why };
+  const rm = await runProgram("git", ["worktree", "remove", "--force", path], { cwd: main, timeout: REMOVE_TIMEOUT });
+  await runProgram("git", ["worktree", "prune"], { cwd: main });
+  if (rm.code !== 0) return { result: "failed", why: `git worktree remove failed: ${firstLine(rm)}` };
+  return { result: "removed", why: null };
+}
+
+/**
+ * The sweep (#567): every worktree a worker call made (reapCandidates) whose start rows'
+ * terminals have all ended, finished or gone in `hc ls --all`, killed or done alike, and in
+ * which no live local terminal works, is removed unless it holds work (reapOne). A worktree only
+ * given to a worker is never a candidate. One sweep at a time (a held lock: none now); a
+ * worktree whose worker lock is held is left for later. At most `max` removals, and no new
+ * check once `budget` ms have passed. hc failing skips the sweep. Each new outcome is a row in
+ * the cleanup file and a line (`every`: a line for every kept or failed one, even unchanged).
+ * Never throws: { removed, kept, failed, waiting, more, lines }.
+ */
+async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
+  const out = { removed: [], kept: [], failed: [], waiting: 0, more: 0, lines: [] };
+  try {
+    const candidates = reapCandidates(workerLedgerRows(), reapRows());
+    if (!candidates.length) return out;
+    const lockDir = dirname(ledgerPath(appHome()));
+    mkdirSync(lockDir, { recursive: true });
+    let token;
+    const lock = `${lockDir}/worker-reap.lock`;
+    try { token = await takeLockAsync(lock, 0); } catch { return out; }
+    const stop = keepFresh(lock, token);
+    try {
+      const terms = await hcTerminals(true);
+      if (!terms) { out.lines.push("worktree cleanup skipped: hc ls --all failed"); return out; }
+      const start = Date.now();
+      for (const c of candidates) {
+        if (out.removed.length >= max || Date.now() - start > budget) { out.more += 1; continue; }
+        if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
+        const path = c.worktree;
+        let done;
+        if (!isDir(path)) {
+          if (c.project && isDir(c.project)) await runProgram("git", ["worktree", "prune"], { cwd: c.project });
+          done = { result: "gone", why: null };
+        } else if (liveIn(terms, path).length) {
+          done = { result: "waiting" };
+        } else {
+          try {
+            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c), { wait: 0 });
+          } catch { done = { result: "waiting" }; }
+        }
+        if (done.result === "waiting") { out.waiting += 1; continue; }
+        const changed = c.last?.result !== done.result || c.last?.why !== (done.why ?? null);
+        if (changed) { const unrecorded = appendReap(reapRow({ worktree: path, ...done })); if (unrecorded) out.lines.push(unrecorded); }
+        if (done.result === "removed") { out.removed.push(path); out.lines.push(`removed ${path}: its workers ended`); }
+        if (done.result === "kept") out.kept.push({ worktree: path, why: done.why });
+        if (done.result === "failed") out.failed.push({ worktree: path, why: done.why });
+        if ((done.result === "kept" || done.result === "failed") && (changed || every)) {
+          out.lines.push(`${done.result === "kept" ? "kept" : "couldn't remove"} ${path}: ${done.why}`);
+        }
+      }
+      if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (automagik-herdr reap)`);
+    } finally { stop(); dropLock(lock, token); }
+  } catch (e) {
+    out.lines.push(`worktree cleanup failed: ${e?.message ?? e}`);
+  }
+  return out;
+}
+
+async function cmdReap(opts, rest) {
+  if (rest.length) throw new CliError("reap takes no arguments.", 2);
+  const r = await reapWorktrees({ max: Infinity, budget: Infinity, every: true });
+  const { lines, ...out } = r;
+  if (opts.json) { report(lines.filter((l) => !l.startsWith("removed ") && !l.startsWith("kept ") && !l.startsWith("couldn't remove "))); return out; }
+  return lines.length ? lines.join("\n") : "No finished worker's worktree to remove.";
+}
+
 async function cmdWorker(opts, rest) {
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
@@ -3855,6 +4019,9 @@ async function cmdWorker(opts, rest) {
     const why = await workerTabSetup(terminal, me.address, workerTabName({ branch: place.branch, name: started.name }));
     if (why) warnings.push(why);
   }
+  // The worktrees earlier workers made, once they have all ended (#567): after this worker
+  // started, outside its locks, capped, and never failing the call.
+  warnings.push(...(await reapWorktrees()).lines);
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv,
@@ -4107,7 +4274,7 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, worker: cmdWorker, meter: cmdMeter, doc: cmdDoc };
+  tidy: cmdTidy, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, doc: cmdDoc };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */

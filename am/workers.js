@@ -332,6 +332,64 @@ export function readLedger(text) {
   return rows;
 }
 
+// ---- worktree cleanup (#567): <app home>/automagik-herdr/worker-reap.jsonl ----
+//
+// A worker's created worktree is removed once its workers have ended. What the sweep did with
+// each one is kept in a file of its own, never in the workers ledger (its readers and shapes
+// stay as they are): { worktree, result: "removed" | "kept" | "failed" | "gone", why, at }.
+
+export const REAP_FILE = "automagik-herdr/worker-reap.jsonl";
+export const reapPath = (appHome) => `${String(appHome).replace(/\/+$/, "")}/${REAP_FILE}`;
+
+/** A cleanup row: what the sweep did with `worktree`, and why (null when there is nothing to say). */
+export const reapRow = ({ worktree, result, why, at }) => ({ worktree, result, why: orNull(why), at: stamp(at) });
+
+/**
+ * The worktrees a sweep looks at, from the workers ledger's `rows` and the cleanup file's
+ * `reaps`: each path a worker start row says this command made (`created: true`), as
+ * { worktree, project, branch, terminals, last }. `terminals`: every start row's terminal on
+ * that path since its newest created row (a restart's new pane, a later worker given the same
+ * worktree), all of which must have ended. `last`: the newest cleanup row for it since then
+ * ({ result, why }), else null. A path already removed or gone is left out; one only ever
+ * given (`created: false`: --worktree, a branch's existing worktree) is never in the list.
+ */
+export function reapCandidates(rows, reaps = []) {
+  const by = new Map();
+  for (const r of rows) {
+    if (r?.event !== "start" || typeof r.worktree !== "string" || !r.worktree) continue;
+    if (r.kind === "worker" && r.created === true) {
+      by.set(r.worktree, { worktree: r.worktree, project: orNull(r.project), branch: orNull(r.branch), terminals: [], since: String(r.at ?? ""), last: null });
+    }
+    const c = by.get(r.worktree);
+    if (c && typeof r.terminal === "string" && r.terminal) c.terminals.push(r.terminal);
+  }
+  for (const r of reaps) {
+    const c = typeof r?.worktree === "string" ? by.get(r.worktree) : null;
+    if (c && String(r.at ?? "") >= c.since) c.last = { result: r.result, why: r.why ?? null };
+  }
+  return [...by.values()].filter((c) => c.last?.result !== "removed" && c.last?.result !== "gone")
+    .map(({ since, ...c }) => c);
+}
+
+/**
+ * Why a worktree with no live worker is kept, or null when it may go: `changes`, the lines of
+ * `git status --porcelain`; `unpushed`, the commits on no remote branch; `prs`, the branch's pull
+ * requests as gh lists them ([{ state }]), or null when gh couldn't say. Commits on no remote
+ * keep it unless the branch has pull requests and every one is MERGED or CLOSED (a squash
+ * merge leaves its commits on no remote once the branch is deleted).
+ */
+export function workLeft({ changes, unpushed, prs = null, branch = null }) {
+  if (changes > 0) return "uncommitted changes";
+  if (unpushed > 0) {
+    if (Array.isArray(prs) && prs.length && prs.every((p) => p?.state === "MERGED" || p?.state === "CLOSED")) return null;
+    const commits = `${unpushed} ${unpushed === 1 ? "commit" : "commits"} on no remote`;
+    if (!branch) return `${commits} (no branch to look up a pull request for)`;
+    if (prs === null) return `${commits}; gh couldn't tell whether ${branch} has a merged or closed pull request`;
+    return prs.length ? `${commits}; ${branch} has an open pull request` : `${commits}; ${branch} has no pull request`;
+  }
+  return null;
+}
+
 /**
  * What the briefing hook does about a Claude session: `get` is `hc get` of its terminal,
  * `input` the hook's stdin text, `resolve(path)` the transcript folder rule: a real path when
