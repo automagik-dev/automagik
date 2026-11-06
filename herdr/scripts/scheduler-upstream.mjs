@@ -4,18 +4,21 @@
 // byte-identical to that tag's tarball minus those exclusions. It fetches the tarball into a temp
 // folder (gh api, or codeload over https), compares every path the exclusion list leaves in, checks
 // LICENSE-upstream against the tarball's LICENSE, and prints each differing, missing or extra path.
+// The fork's own patch (issue #498) is listed under UPSTREAM.md's "Local changes": those files may
+// differ and print as patched (a new file there prints as added); an unlisted difference still fails.
 //
 //   node herdr/scripts/scheduler-upstream.mjs --tag v0.12.1 [--dir herdr/scheduler]
 //
-// Exit 0 when identical to upstream minus the exclusions, 1 on any difference, 2 when the tag's
-// tarball cannot be read. The exclusion list is read from --dir's UPSTREAM.md ("## Excluded upstream
-// paths", the fenced block under it), so the note and the check cannot drift. Plain Node, no
-// dependencies (it runs with this repository's tooling, not the pack's). Apache-2.0.
+// Exit 0 when identical to upstream minus the exclusions (the Local changes listed), 1 on any other
+// difference, 2 when the tag's tarball cannot be read. Both lists come from --dir's UPSTREAM.md
+// ("## Excluded upstream paths", "## Local changes", the fenced block under each), so the note and
+// the check cannot drift. Plain Node, no dependencies (it runs with this repository's tooling, not
+// the pack's). Apache-2.0.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = "DnzzL/herdr-automations";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -48,7 +51,7 @@ function walk(root) {
 }
 
 /** An exclusion as a pattern over relative paths: `dir/`, `path`, `docs/*.gif`, `**` any depth. */
-function matcher(glob) {
+export function matcher(glob) {
   const folder = glob.endsWith("/");
   const body = folder ? glob.slice(0, -1) : glob;
   let source = "";
@@ -63,7 +66,7 @@ function matcher(glob) {
 }
 
 /** The exclusion list UPSTREAM.md names, as { pattern, test }. */
-function exclusions(dir) {
+export function exclusions(dir) {
   const note = join(dir, "UPSTREAM.md");
   if (!existsSync(note)) throw new Error(`${note}: not found`);
   const after = readFileSync(note, "utf8").split(/^## Excluded upstream paths\s*$/m)[1];
@@ -90,57 +93,97 @@ async function tarball(tag, into) {
   return file;
 }
 
-/** Compares dir against the tag's tarball; returns 0 identical, 1 any difference. */
-async function check(tag, dir) {
+/** The paths UPSTREAM.md lists under "## Local changes": the fork's patch, one path per line. */
+export function localChanges(dir) {
+  const note = join(dir, "UPSTREAM.md");
+  if (!existsSync(note)) throw new Error(`${note}: not found`);
+  const after = readFileSync(note, "utf8").split(/^## Local changes\s*$/m)[1];
+  if (!after) return [];
+  const block = /```[^\n]*\n([\s\S]*?)```/.exec(after.split(/^## /m)[0]);
+  if (!block) throw new Error(`${note}: no fenced list under "## Local changes"`);
+  return block[1].split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => {
+    const path = line.split(/\s+—\s+/)[0].trim();
+    if (!path || path.startsWith("/") || path.split("/").includes("..")) throw new Error(`${note}: not a relative path under "## Local changes": ${line}`);
+    return path;
+  });
+}
+
+/**
+ * Compares the extracted tarball at source with dir: every path the exclusions leave in must be
+ * byte-identical, unless "Local changes" lists it (patched), and a listed path upstream does not
+ * have is an addition (added). Anything else is a problem. Returns the counts and both lists.
+ */
+export function compare(source, dir) {
   const excluded = exclusions(dir);
   const skip = (path) => excluded.some((entry) => entry.test.test(path));
+  const listed = new Set(localChanges(dir));
+  const upstream = walk(source);
+  const expected = upstream.filter((path) => !skip(path));
+  const local = walk(dir);
+  const here = new Set(local);
+  const patched = [];
+  const added = [];
+  const problems = [];
+  for (const path of expected) {
+    if (!here.has(path)) { problems.push({ kind: "missing", path }); continue; }
+    if (readFileSync(join(source, path)).equals(readFileSync(join(dir, path)))) continue;
+    if (listed.has(path)) patched.push(path);
+    else problems.push({ kind: "differs", path });
+  }
+  for (const path of local) {
+    if (expected.includes(path) || OURS.has(path) || path === LICENSE_COPY) continue;
+    if (listed.has(path)) added.push(path);
+    else problems.push({ kind: "extra", path });
+  }
+  // The pack keeps upstream's notice under its own name too; it is a copy, not ours to edit.
+  if (expected.includes("LICENSE")) {
+    if (!here.has(LICENSE_COPY)) problems.push({ kind: "missing", path: LICENSE_COPY, note: "the upstream LICENSE, under the pack's convention" });
+    else if (!readFileSync(join(source, "LICENSE")).equals(readFileSync(join(dir, LICENSE_COPY)))) problems.push({ kind: "differs", path: LICENSE_COPY, note: "from upstream LICENSE" });
+  }
+  for (const path of listed) {
+    if (!here.has(path) && !upstream.includes(path)) problems.push({ kind: "missing", path, note: "listed as a local change, but neither upstream nor here" });
+  }
+  return { compared: expected.length, excluded: upstream.length - expected.length, patched: patched.sort(), added: added.sort(), problems };
+}
+
+/** Compares dir against the tag's tarball; returns 0 identical (patches included), 1 any difference. */
+async function check(tag, dir) {
   const tmp = mkdtempSync(join(tmpdir(), "scheduler-upstream-"));
   try {
     const archive = await tarball(tag, tmp);
     const source = join(tmp, "upstream");
     mkdirSync(source);
     execFileSync("tar", ["-xzf", archive, "-C", source, "--strip-components=1"], { stdio: ["ignore", "ignore", "inherit"] });
-    const upstream = walk(source);
-    const expected = upstream.filter((path) => !skip(path));
-    const local = walk(dir);
-    const here = new Set(local);
-    const differences = [];
-    for (const path of expected) {
-      if (!here.has(path)) differences.push(`missing: ${path}`);
-      else if (!readFileSync(join(source, path)).equals(readFileSync(join(dir, path)))) differences.push(`differs: ${path}`);
-    }
-    for (const path of local) {
-      if (expected.includes(path) || OURS.has(path)) continue;
-      if (path === LICENSE_COPY) {
-        const licence = join(source, "LICENSE");
-        if (!existsSync(licence)) throw new Error(`${tag}'s tarball has no LICENSE for ${LICENSE_COPY}`);
-        if (!readFileSync(licence).equals(readFileSync(join(dir, path)))) differences.push(`differs: ${path} (from upstream LICENSE)`);
-      } else {
-        differences.push(`extra: ${path}`);
+    const result = compare(source, dir);
+    const patterns = exclusions(dir).map((entry) => entry.pattern).join(", ");
+    console.log(`scheduler-upstream: ${tag}, ${result.compared} upstream path(s) compared, ${result.excluded} excluded (${patterns})`);
+    for (const path of result.patched) console.log(`patched: ${path} (listed under Local changes)`);
+    for (const path of result.added) console.log(`added: ${path} (listed under Local changes)`);
+    if (result.problems.length > 0) {
+      for (const problem of result.problems.sort((a, b) => a.path.localeCompare(b.path))) {
+        console.error(`${problem.kind}: ${problem.path}${problem.note ? ` (${problem.note})` : ""}`);
       }
-    }
-    if (!here.has(LICENSE_COPY)) differences.push(`missing: ${LICENSE_COPY} (the upstream LICENSE, under the pack's convention)`);
-    console.log(`scheduler-upstream: ${tag}, ${expected.length} upstream path(s) compared, ${upstream.length - expected.length} excluded (${excluded.map((entry) => entry.pattern).join(", ")})`);
-    if (differences.length > 0) {
-      for (const difference of differences.sort()) console.error(difference);
-      console.error(`scheduler-upstream: ${differences.length} difference(s) from ${tag}`);
+      console.error(`scheduler-upstream: ${result.problems.length} difference(s) from ${tag}`);
       return 1;
     }
-    console.log(`scheduler-upstream: ${JSON.stringify(dir)} is byte-identical to ${tag} minus the exclusions`);
+    console.log(`scheduler-upstream: ${JSON.stringify(dir)} is byte-identical to ${tag} minus the exclusions, with ${result.patched.length + result.added.length} listed local change(s)`);
     return 0;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-let status;
-try {
-  const tag = option("--tag");
-  if (!tag) throw new Error(USAGE);
-  if (!/^[0-9A-Za-z][0-9A-Za-z._/-]*$/.test(tag)) throw new Error(`not a tag: ${tag}`);
-  status = await check(tag, resolve(option("--dir") ?? join(ROOT, "herdr", "scheduler")));
-} catch (error) {
-  console.error(`scheduler-upstream: ${error.message}`);
-  status = 2;
+// Imported by its test, run by a person or the Reviewer: only the direct invocation checks anything.
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  let status;
+  try {
+    const tag = option("--tag");
+    if (!tag) throw new Error(USAGE);
+    if (!/^[0-9A-Za-z][0-9A-Za-z._/-]*$/.test(tag)) throw new Error(`not a tag: ${tag}`);
+    status = await check(tag, resolve(option("--dir") ?? join(ROOT, "herdr", "scheduler")));
+  } catch (error) {
+    console.error(`scheduler-upstream: ${error.message}`);
+    status = 2;
+  }
+  process.exit(status);
 }
-process.exit(status);

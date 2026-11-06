@@ -31,6 +31,7 @@ type Automation struct {
 	Repo           string           `json:"repo"`
 	Workspace      config.Workspace `json:"workspace"`
 	WorkspaceID    string           `json:"workspace_id,omitempty"`
+	CloseWorkspace string           `json:"close_workspace,omitempty"`
 	Agent          string           `json:"agent,omitempty"`
 	Model          string           `json:"model,omitempty"`
 	Template       string           `json:"template,omitempty"`
@@ -83,7 +84,8 @@ func List() (Listing, error) {
 	for _, a := range cfg.Automations {
 		entry := Automation{
 			Name: a.Name, Cron: a.Cron, Repo: a.Repo, Workspace: a.Workspace, WorkspaceID: a.WorkspaceID,
-			Agent: a.Agent, Model: a.Model, Template: a.Template, Prompt: a.Prompt, Workflow: a.Workflow,
+			CloseWorkspace: string(a.CloseWorkspace),
+			Agent:          a.Agent, Model: a.Model, Template: a.Template, Prompt: a.Prompt, Workflow: a.Workflow,
 			MCPConfig: a.MCPConfig, AgentArgs: a.AgentArgs, TimeoutMinutes: a.TimeoutMinutes,
 			CatchUpMinutes: a.CatchUpMinutes, Disabled: a.Disabled, Line: a.Line,
 		}
