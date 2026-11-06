@@ -422,7 +422,7 @@ export function apply(ctx) {
   const agentSessions = (agentId) => {
     const snapshot = roster.getSnapshot()
     const agent = snapshot.agentsById[agentId]
-    const ids = agent === undefined ? [] : [...agentRowSessions(agent, snapshot)]
+    const ids = agent === undefined ? [] : [...agentRowSessions(agent, snapshot, Date.now())]
     for (const [id, owner] of pendingAdopt) if (owner === agentId && !ids.includes(id)) ids.push(id)
     return ids
   }

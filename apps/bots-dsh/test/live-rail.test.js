@@ -151,3 +151,45 @@ test('the rail keeps a working wish past the host cap, newest ends first, three 
     ['wish', 'Wish: Fix Claude wish permission denial reporting'],
   ])
 })
+
+// #164. A stopped task of a living Bot is not a thread (threads are running tasks) and the
+// rail's window is by design, so the row under Tasks is the one place left for it. These
+// call agentRowSessions with the clock, as the sidebar, the palette and the row's own
+// actions do.
+test('an ended task older than six hours or fourth-newest leaves the rail for the Tasks row', () => {
+  const now = 10 * HOUR
+  const ended = (title, endedAt) => ({ from: 'genie', status: 'stopped', title, at: 0, endedAt })
+  const tasks = {
+    a: ended('Event-driven Omni 1', now - 1 * HOUR),
+    b: ended('Event-driven Omni 2', now - 2 * HOUR),
+    c: ended('Bug 2 at the source', now - 3 * HOUR),
+    fourth: ended('Wish: Fix Claude wish permission denial reporting', now - 4 * HOUR),
+    stale: ended('Ended long ago', now - 7 * HOUR),
+    running: { from: 'genie', status: 'working', title: 'Still on it', at: now - 30 * HOUR },
+  }
+  const tasksRecord = { id: 'a:tasks', kind: 'tasks', sessions: [...Object.keys(tasks), 'forgotten'] }
+  const team = { ...roster, tasks }
+  assert.deepEqual(plain(liveOf({}, team, now).ended.map(item => item.open)), ['a', 'b', 'c'])
+  assert.deepEqual(plain(agentRowSessions(tasksRecord, team, now)), ['fourth', 'stale', 'forgotten'])
+  // Six hours on, what the rail let go of is under Tasks: at no time is it in neither.
+  const later = now + 6 * HOUR
+  assert.deepEqual(plain(liveOf({}, team, later).ended.map(item => item.open)), [])
+  assert.deepEqual(plain(agentRowSessions(tasksRecord, team, later)), ['a', 'b', 'c', 'fourth', 'stale', 'forgotten'])
+})
+
+test('a task still working stays out of the Tasks row and keeps no age limit in the rail', () => {
+  const now = 40 * HOUR
+  const tasks = { cut: { from: 'genie', status: 'working', title: 'Cut by a restart', at: now - 30 * HOUR } }
+  const tasksRecord = { id: 'a:tasks', kind: 'tasks', sessions: ['cut'] }
+  const live = liveOf({}, { ...roster, tasks }, now)
+  assert.deepEqual(plain(live.working.map(item => item.open)), ['cut'])
+  assert.deepEqual(plain(live.ended), [])
+  assert.deepEqual(plain(agentRowSessions(tasksRecord, { ...roster, tasks }, now)), [])
+})
+
+test('a stopped task whose Session has no record is listed with nothing invented for it', () => {
+  const tasksRecord = { id: 'a:tasks', kind: 'tasks', sessions: ['no-record'] }
+  const team = { ...roster, tasks: {} }
+  assert.deepEqual(plain(liveOf({}, team, 10 * HOUR).ended), [])
+  assert.deepEqual(plain(agentRowSessions(tasksRecord, team, 10 * HOUR)), ['no-record'])
+})
