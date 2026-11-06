@@ -265,14 +265,18 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   const auth = Buffer.from('deploybot:secretpass').toString('base64')
   const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
   const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
+  const quotedKey = 'quoted-secret-123456'
+  const quotedAuth = 'quoted-auth-secret=='
+  const envToken = 'env-token-secret'
+  const npmConfig = 'npm-config-secret'
   const store = new AdapterStore({
     home,
     latest: async () => '1.0.0',
-    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}`) },
+    install: async () => { throw new Error(`npm ERR! 401 token=${token}\nnpm ERR! path ${homeLog}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! token ${npmToken}\nnpm ERR! secret ${url}\n{"_authToken": "${quotedKey}"}\n{"//registry.npmjs.org/:_auth": "${quotedAuth}"}\nNPM_TOKEN=${envToken}\nnpm_config__authToken=${npmConfig}`) },
   })
   await assert.rejects(store.update(adapter, bin))
   const failure = store.lastFailure(adapter)
-  for (const raw of [token, npmToken, auth, 'secretpass', homedir()]) {
+  for (const raw of [token, npmToken, auth, 'secretpass', homedir(), quotedKey, quotedAuth, envToken, npmConfig]) {
     assert.ok(!failure.diagnostic.includes(raw), `the diagnostic hides ${raw}`)
     assert.ok(!failure.message.includes(raw), `the short message hides ${raw}`)
     assert.ok(!readFileSync(failure.logPath, 'utf8').includes(raw), `the log hides ${raw}`)
@@ -281,6 +285,10 @@ test('a failed install redacts credentials and writes an owner-only log', async 
   assert.match(failure.diagnostic, /_authToken=\[hidden\]/)
   assert.match(failure.diagnostic, /https:\/\/\[hidden\]@registry\.npmjs\.org/)
   assert.match(failure.diagnostic, /~\/\.npm\/_logs\//)
+  assert.match(failure.diagnostic, /_authToken["']?:\s*\[hidden\]/)
+  assert.match(failure.diagnostic, /_auth["']?:\s*\[hidden\]/)
+  assert.match(failure.diagnostic, /NPM_TOKEN=\[hidden\]/)
+  assert.match(failure.diagnostic, /npm_config__authToken=\[hidden\]/)
   const mode = statSync(failure.logPath).mode & 0o777
   assert.equal(mode, 0o600)
   assert.equal(statSync(join(home, 'logs')).mode & 0o777, 0o700)

@@ -260,6 +260,10 @@ test('the client redactor alone removes every shared shape', () => {
     'ghp_abcdefghijklmnopqrstuvwx',
     'abcdefgh12345678',
     'abcdef123456',
+    'quoted-secret-123456',
+    'quoted-auth-secret==',
+    'env-token-secret',
+    'npm-config-secret',
   ]
   const raw = [
     `npm_${'abcdefghijklmnopqrstuvwx'}`,
@@ -269,6 +273,10 @@ test('the client redactor alone removes every shared shape', () => {
     'ghp_abcdefghijklmnopqrstuvwx',
     'Bearer abcdefgh12345678',
     '?token=abcdef123456',
+    '"_authToken": "quoted-secret-123456"',
+    '"//registry.npmjs.org/:_auth": "quoted-auth-secret=="',
+    'NPM_TOKEN=env-token-secret',
+    'npm_config__authToken=npm-config-secret',
   ].join(' ')
   const text = ui.redactText(raw)
   for (const value of secrets) assert.ok(!text.includes(value), `hides ${value}`)
@@ -292,13 +300,14 @@ test('npm credentials and an absolute home are redacted in the answer and the ro
   const auth = Buffer.from('deploybot:secretpass').toString('base64')
   const url = 'https://deploybot:secretpass@registry.npmjs.org/pkg'
   const homeLog = `${homedir()}/.npm/_logs/2026-11-06T00_00_00_000Z-debug-0.log`
-  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}`
-  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} ${url}`, diagnostic } })])
+  const quoted = 'quoted-secret-123456'
+  const diagnostic = `npm ERR! token ${npmToken}\nnpm ERR! _authToken=${auth}\nnpm ERR! fetch ${url}\nnpm ERR! path ${homeLog}\n{"_authToken": "${quoted}"}\nNPM_TOKEN=env-token-secret`
+  const acp = fakeAcp([agent('acp-codex', { connector: { state: 'failed', error: `_authToken=${auth} {"_authToken": "${quoted}"} ${url}`, diagnostic } })])
   const fake = host({ acp })
   const { value } = await fake.handle('acp')
   const connector = value.agents[0].connector
   const text = textOf(rowOf(value.agents[0], acpOf([])))
-  for (const raw of [npmToken, auth, 'secretpass', homedir()]) {
+  for (const raw of [npmToken, auth, 'secretpass', homedir(), quoted, 'env-token-secret']) {
     assert.ok(!connector.error.includes(raw), `the error hides ${raw}`)
     assert.ok(!connector.diagnostic?.includes(raw), `the diagnostic hides ${raw}`)
     assert.ok(!text.includes(raw), `the row hides ${raw}`)
