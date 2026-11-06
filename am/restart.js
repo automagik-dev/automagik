@@ -145,10 +145,10 @@ const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 /**
  * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2, D1):
  * a flag by name with its value masked (`--model=***`), a flag's separate value folded into it
- * whatever it starts with (`--k v`, `--k -v`), a short flag with its value joined on cut to its
- * first two characters (`-kV` is `-k=***`), an env assignment as `NAME=***`, and a bare word (a
- * program, a prompt, a positional argument) left out, so no value can reach a line. `--` ends
- * the options.
+ * whatever it starts with (`--k v`, `--k -v`; a long flag starts a flag of its own), a short
+ * flag with its value joined on cut to its first two characters (`-kV` is `-k=***`), an env
+ * assignment as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left
+ * out, so no value can reach a line. `--` ends the options.
  */
 function launchTokens(words) {
   const list = Array.isArray(words) ? words.map(String) : [];
@@ -161,8 +161,10 @@ function launchTokens(words) {
       if (eq > 0) { out.push({ key: w.slice(0, eq), text: `${w.slice(0, eq)}=${MASK}`, value: w.slice(eq + 1) }); continue; }
       // A short flag with its value joined on: `-kV`, `-kSECRET`.
       if (!w.startsWith("--") && w.length > 2) { out.push({ key: w.slice(0, 2), text: `${w.slice(0, 2)}=${MASK}`, value: w.slice(2) }); continue; }
-      // A word after a flag is its value, whatever it starts with: `--k v`, `--k -v`.
-      const next = i + 1 < list.length && list[i + 1] !== "--" ? list[i + 1] : undefined;
+      // A word after a flag is its value, whatever it starts with: `--k v`, `--k -v`. A long
+      // flag is a flag of its own (`--tui --proxy=...`), so a boolean doesn't swallow it.
+      const following = list[i + 1];
+      const next = following !== undefined && following !== "--" && !following.startsWith("--") ? following : undefined;
       out.push({ key: w, text: next === undefined ? w : `${w}=${MASK}`, value: next ?? "" });
       if (next !== undefined) i += 1;
       continue;
