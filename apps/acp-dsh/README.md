@@ -52,7 +52,13 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
   dialog), Full access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
-  native provider — and each crossing writes a provider-boundary row the chat shows.
+  native provider — and each crossing writes a provider-boundary row the chat shows. The
+  reasoning effort the Session ran on crosses with it, both ways, when the target model offers
+  that level (matched by id, else by name), replacing the target default DSH records on a model
+  change; an effort DSH itself defaulted is not carried. A target with no reasoning levels,
+  without that one, or whose levels cannot be read writes a notice row saying so and runs on its
+  own. A switch back before the agent has answered drops the agent's chosen level; the native
+  target's own default applies.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
   model that answers on its own, without the agent's effort. That is DSH's default model

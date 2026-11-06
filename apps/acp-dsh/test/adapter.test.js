@@ -987,6 +987,52 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
   }
 })
 
+test('the plugin wiring carries effort both ways on a model selection', async () => {
+  const handlers = []
+  const offs = []
+  const appended = []
+  let previous = { provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high' }
+  const session = {
+    requestHeader: () => ({ config: previous }),
+    append: (type, data) => { appended.push({ type, data }) },
+  }
+  const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      resolveModelInfo: async () => ({ reasoning: levels }),
+    },
+    agents: { get: () => undefined },
+    on: (event, handler) => {
+      if (event === 'session/event') handlers.push(handler)
+      return () => {}
+    },
+    effect: (execute) => { offs.push(execute()) },
+    logger: { warn() {}, info() {} },
+    get: () => undefined,
+  }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: true })
+  const select = async (data) => {
+    for (const handler of handlers) handler(session, { type: 'model/selection', data })
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  try {
+    await select({ provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'low' })
+    assert.deepEqual(appended.at(-1), {
+      type: 'model/selection',
+      data: { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' },
+    })
+    previous = { provider: 'acp-fake', model: 'fake-large', reasoningEffort: 'high' }
+    appended.length = 0
+    await select({ provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'low' })
+    assert.deepEqual(appended.at(-1).data, {
+      provider: 'deepseek-official', model: 'deepseek-v4', reasoningEffort: 'high',
+    })
+  } finally {
+    for (const off of offs) off()
+  }
+})
+
 test('switching away and back resumes the agent session with dshTools off, and starts clean with it on', async () => {
   const off = dshHost({ toolsOn: false })
   try {

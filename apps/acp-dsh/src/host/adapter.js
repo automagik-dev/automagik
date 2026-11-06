@@ -462,9 +462,15 @@ export class AcpAdapter extends LlmAdapter {
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
       try {
-        await choose(live.run, options.model, options.reasoningEffort, () => agent.catalog?.ownEffort(options.model))
+        await choose(
+          live.run, options.model, options.reasoningEffort,
+          () => agent.catalog?.ownEffort(options.model),
+        )
       } catch (error) {
-        return yield finish('error', `${agent.name} would not take ${options.model}${options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''}: ${error?.message ?? error}`)
+        const at = options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''
+        const reason = error?.message ?? error
+        const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
+        return yield finish('error', why)
       }
       try {
         await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))))
