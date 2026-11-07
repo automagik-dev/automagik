@@ -75,21 +75,6 @@ class Blocks {
 
 const textOf = content => (typeof content === 'string' ? content : (content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n'))
 
-/**
- * The route provider a Session's agent resolves to: its model choice (a recorded selection,
- * else its options), then the agent's own options. A live option may be a getter or a
- * `{ get() }` reference; a plain value is what tests see.
- * @param {any} agent
- * @returns {string | undefined}
- */
-export function providerOf(agent) {
-  const selected = agent?.model?.current?.()?.provider
-  if (typeof selected === 'string' && selected !== '') return selected
-  const option = agent?.options?.provider
-  const provider = typeof option?.get === 'function' ? option.get() : option
-  return typeof provider === 'string' && provider !== '' ? provider : undefined
-}
-
 /** The source kind of the row that says a new agent session does not see the chat before it. */
 export const NOTICE_KIND = 'acp-session'
 
@@ -232,31 +217,26 @@ export class AcpAdapter extends LlmAdapter {
     this.live = new Map()
     this.scoped = new WeakSet()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
-    // A new chat's first model step lists its tools after `agent/created`: register the
-    // mirror tool there for this adapter's routes only, so DSH's own Sessions never see it.
-    // The stream's `scope()` stays as the fallback for an agent this event missed.
-    this.ctx.on?.('agent/created', ({ agent } = {}) => {
-      if (this.agents.has(this.providerOf(agent))) this.registerMirror(agent)
-    })
+    // A new chat's first model step lists its tools after `agent/created`: register the mirror
+    // tool there in every agent's own scope, with the step condition that admits it only on
+    // this adapter's routes. A chat is created on DSH's default route and may be picked to an
+    // ACP one before its first prompt, so a create-time check would miss that first step. The
+    // stream's `scope()` stays as the fallback for an agent this event missed.
+    this.ctx.on?.('agent/created', ({ agent } = {}) => this.registerMirror(agent))
   }
 
   /**
-   * The route provider a Session's agent resolves to; see the module's `providerOf`.
-   * @param {any} agent
-   * @returns {string | undefined}
-   */
-  providerOf(agent) {
-    return providerOf(agent)
-  }
-
-  /**
-   * Put the mirror tool in the Session agent's own scope, once: no other Session's model
-   * sees it. A missing agent is a no-op; `scope()` decides what that means for a turn.
+   * Put the mirror tool in the Session agent's own scope, once, with the condition DSH
+   * evaluates when it resolves a step's tools: admitted only while the step's provider is one
+   * of this adapter's routes. No model selection means no admission, never a throw. A missing
+   * agent is a no-op; `scope()` decides what that means for a turn.
    * @param {any} agent
    */
   registerMirror(agent) {
     if (agent === undefined || this.scoped.has(agent)) return
-    agent.ctx.tools.register(this.tool)
+    agent.ctx.tools.register(this.tool, {
+      when: ({ modelSelection }) => this.agents.has(modelSelection?.provider),
+    })
     this.scoped.add(agent)
   }
 

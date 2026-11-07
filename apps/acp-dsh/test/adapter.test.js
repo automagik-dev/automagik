@@ -36,19 +36,43 @@ function host({ answer = 'allowed-once' } = {}) {
     h.log?.push(data)
     return { seq: appended.length }
   }
-  // One Session's agent: its own scoped tools, and the provider its model selection resolves to.
+  // One Session's agent: its own scoped tools, each with the step condition it registered.
   const addAgent = (id, provider = 'acp-fake') => {
     const tools = new Map()
     const names = []
+    const conditions = new Map()
     const agent = {
       session: { id, header: { cwd }, append },
       model: { current: () => ({ provider, model: 'default' }) },
       options: { provider },
-      ctx: { tools: { register: (def) => { assert.ok(!tools.has(def.name), 'registered once'); names.push(def.name); tools.set(def.name, def); return () => tools.delete(def.name) } } },
+      ctx: {
+        tools: {
+          register: (def, options = {}) => {
+            assert.ok(!tools.has(def.name), 'registered once')
+            names.push(def.name)
+            tools.set(def.name, def)
+            conditions.set(def.name, options.when)
+            return () => { tools.delete(def.name); conditions.delete(def.name) }
+          },
+        },
+      },
     }
     agents.set(id, agent)
-    scopes.set(id, { tools, names })
+    scopes.set(id, { tools, names, conditions })
     return agent
+  }
+  // What dsh-agent-loop's preStep resolves before the adapter streams a step: the scope's
+  // visible tools whose registration condition admits this step's model selection, the way
+  // dsh-tools' ToolsService.resolve evaluates `when`.
+  const admit = async (id, modelSelection) => {
+    const { tools, conditions } = scopes.get(id)
+    const admitted = new Map()
+    for (const [name, definition] of tools) {
+      const when = conditions.get(name)
+      const context = { agent: agents.get(id), modelSelection, signal: new AbortController().signal }
+      if (when === undefined || await when(context)) admitted.set(name, definition)
+    }
+    return admitted
   }
   const agent = addAgent('s1')
   const ctx = {
@@ -65,6 +89,7 @@ function host({ answer = 'allowed-once' } = {}) {
     agent,
     agents,
     addAgent,
+    admit,
     tools: scopes.get('s1').tools,
     toolsOf: id => scopes.get(id).tools,
     namesOf: id => scopes.get(id).names,
@@ -374,22 +399,18 @@ test('an agent that cannot start fails the step with its reason', async () => {
 test('a fresh Session\'s first mirrored call resolves from agent/created, in its own scope only', async () => {
   const h = host()
   try {
-    // Another Session on the same route (the event may reach it later), DSH's own Session on
-    // another provider, and one whose route is readable only from its live options reference.
+    // Another Session on the same route (the event may reach it later), and DSH's own Session
+    // on another provider: registration is per agent, and the step condition admits only ACP.
     const second = h.addAgent('s2')
     const native = h.addAgent('native', 'deepseek-official')
-    const byOption = h.addAgent('by-option')
-    byOption.model = { current: () => undefined }
-    byOption.options = { provider: { get: () => 'acp-fake' } }
 
     // What DSH does when it creates the agent: announce it, then resolve the first step's tools.
     h.emit('agent/created', { agent: h.agent })
     h.emit('agent/created', { agent: native })
-    h.emit('agent/created', { agent: byOption })
 
     // The first step's admitted set, as dsh-agent-loop's preStep resolves it before streaming.
     // Pre-fix it has no acp_tool: scope() only registers it once this stream has begun.
-    const admitted = new Map(h.tools)
+    const admitted = await h.admit('s1', { provider: 'acp-fake', model: 'default' })
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
     const first = await step(h.adapter, messages)
     assert.equal(first.at(-1).reason.kind, 'tool-calls')
@@ -400,12 +421,13 @@ test('a fresh Session\'s first mirrored call resolves from agent/created, in its
     // pre-fix behaviour this test fails here with `unknown tool "acp_tool"` (UNKNOWN_TOOL).
     if (tool === undefined) throw new ToolNotFoundError(call.name)
 
-    // It is in this agent's first-step set, and in no other Session's scope; the route check
-    // keeps DSH's own Sessions out, while model.current() and the live options both resolve.
+    // It is in this agent's first-step set, and the registration is per agent; the step
+    // condition keeps DSH's own steps out (and a step with no model selection sees nothing),
+    // while an agent whose event never fired keeps no tool at all.
     assert.ok(h.tools.has(TOOL_NAME))
     assert.deepEqual(h.namesOf('s2'), [])
-    assert.deepEqual(h.namesOf('native'), [])
-    assert.ok(h.toolsOf('by-option').has(TOOL_NAME), 'the live options provider names the route')
+    assert.deepEqual([...await h.admit('native', { provider: 'deepseek-official', model: 'deepseek-flash' })], [])
+    assert.deepEqual([...await h.admit('native', undefined)], [])
 
     // DSH executes the call from that admitted set: the mirror tool waits for the agent's call
     // and asks DSH's approval service about it (the approval pair for this exact call).
@@ -446,6 +468,51 @@ test('a fresh Session\'s first mirrored call resolves from agent/created, in its
     assert.equal(end.reason.failure.code, 'acp_agent_missing')
     assert.match(end.reason.failure.message, /gone/)
     assert.ok(end.reason.failure.message.length > 0)
+  } finally {
+    h.close()
+  }
+})
+
+// #661's coverage gap: `session.create` takes no model, so a new chat starts on DSH's default
+// route and `agent/created` sees that provider. The person picks an ACP route (or a live switch
+// moves there) before the first prompt; the step's own model selection is what decides admission.
+test('a Session created on a DSH route then picked to an ACP route has acp_tool in step 1', async () => {
+  const h = host()
+  try {
+    // `session.create` starts on `agentDefaultModel`: this agent exists on that route when DSH
+    // announces it.
+    const late = h.addAgent('late', 'deepseek-official')
+    h.emit('agent/created', { agent: late })
+    // The picker (`agent.model.select`) or a live switch moves it to the ACP route before the
+    // first prompt, and DSH records the new selection.
+    late.model = { current: () => ({ provider: 'acp-fake', model: 'default' }) }
+    late.options = { provider: 'acp-fake' }
+
+    // Step 1's admitted set, as dsh-agent-loop's preStep resolves it before streaming. At
+    // 1d2524e8 the listener only registered agents already on an ACP route, so this is empty
+    // and the mirrored call below is UNKNOWN_TOOL.
+    const admitted = await h.admit('late', { provider: 'acp-fake', model: 'default' })
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
+    const request = markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 'late', messages })
+    const chunks = []
+    for await (const chunk of h.adapter.stream(request)) chunks.push(chunk)
+    assert.equal(chunks.at(-1).reason.kind, 'tool-calls')
+    const call = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')?.block
+    assert.equal(call?.name, TOOL_NAME)
+    const tool = admitted.get(call.name)
+    if (tool === undefined) throw new ToolNotFoundError(call.name)
+
+    // It resolves from step 1's set: the mirrored call runs through DSH's approval, from this
+    // Session's own agent scope.
+    const args = JSON.parse(call.arguments)
+    const value = await tool.execute(args, { agent: late, callId: call.id, signal: new AbortController().signal })
+    assert.equal(value.status, 'completed')
+    assert.deepEqual(tool.output.render(args, value), [{ type: 'text', text: 'hello 1' }])
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, TOOL_NAME)
+    assert.equal(h.asked[0].callId, call.id)
+    assert.equal(h.asked[0].agent, late)
+    assert.deepEqual(h.namesOf('late'), [TOOL_NAME], 'registered in its own scope, once')
   } finally {
     h.close()
   }
