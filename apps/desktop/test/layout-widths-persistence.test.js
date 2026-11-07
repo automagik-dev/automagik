@@ -270,6 +270,8 @@ test('patches.json pins the real 0.2.2-rc.1 file to the desktop runtime', () => 
   assert.match(patchText, /WIDTHS_KEY = "dsh\.layout\.widths"/)
   assert.match(patchText, /sidebar: saved\.sidebar/)
   assert.match(patchText, /sidebar = d\.layoutInfo\.sidebar === 0 \? lastSidebar : 0/)
+  assert.match(patchText, /normalizeRightbar/)
+  assert.doesNotMatch(patchText, /clampWidth\(d\.layoutInfo\.rightbar/, 'a viewport change must not clamp the preference')
   const development = readFileSync(join(APP, 'docs', 'DEVELOPMENT.md'), 'utf8')
   assert.match(development, /`layout-widths-persistence\.patch`/)
   assert.match(development, /Delete it in the DSH release whose ui-layout persists the panel widths itself/)
@@ -296,6 +298,27 @@ test('a reload restores the sidebar and rightbar widths from dsh.layout.widths',
   assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 500 })
 })
 
+test('a stored object with one field restores it and defaults the other', async (t) => {
+  await t.test('sidebar only', async (t) => {
+    const { layout } = await openStore(t, { innerWidth: 1200, raw: JSON.stringify({ sidebar: 380 }) })
+    assert.equal(layout().sidebar, 380)
+    assert.equal(layout().rightbar, null)
+  })
+  await t.test('rightbar only', async (t) => {
+    const { layout } = await openStore(t, { innerWidth: 1200, raw: JSON.stringify({ rightbar: 500 }) })
+    assert.equal(layout().sidebar, 280)
+    assert.equal(layout().rightbar, 500)
+  })
+})
+
+test('restore and save round a stored width the same way', async (t) => {
+  const { instance, layout, storage } = await openStore(t, { innerWidth: 1200, raw: JSON.stringify({ sidebar: 380.4, rightbar: 500.6 }) })
+  assert.equal(layout().sidebar, 380)
+  assert.equal(layout().rightbar, 501)
+  instance.actions.setSidebar(400.4)
+  assert.deepEqual(storage.saved(), { sidebar: 400, rightbar: 501 }, 'the save writes the restored rounding')
+})
+
 test('toggleSidebar collapses to 0 and reopens at the last positive width, not 280', async (t) => {
   const { instance, layout } = await openStore(t, { innerWidth: 1200, raw: JSON.stringify({ sidebar: 380, rightbar: 500 }) })
   const info = layout()
@@ -311,13 +334,13 @@ test('toggleSidebar collapses to 0 and reopens at the last positive width, not 2
   assert.equal(info.sidebar, 400, 'reopen uses the last positive width the store set')
 })
 
-test('setViewportWidth re-clamps the restored rightbar and persists the re-clamped value', async (t) => {
-  const { instance, layout, storage } = await openStore(t, { innerWidth: 800, raw: JSON.stringify({ sidebar: 380, rightbar: 500 }) })
-  assert.equal(layout().rightbar, 500, '500 is inside the 800px frame range (max 560)')
-  instance.actions.setViewportWidth(630)
-  assert.equal(layout().rightbar, 441, '630 * 0.7 = 441')
-  assert.equal(layout().viewportWidth, 630)
-  assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 441 })
+test('setViewportWidth keeps the rightbar preference and writes nothing', async (t) => {
+  const { instance, layout, storage } = await openStore(t, { innerWidth: 600, raw: JSON.stringify({ sidebar: 380, rightbar: 500 }) })
+  assert.equal(layout().rightbar, 500, 'the store keeps 500 even though a 600px frame displays at most 420')
+  instance.actions.setViewportWidth(1400)
+  assert.equal(layout().rightbar, 500, 'the 500px preference displays again on the wider frame')
+  assert.equal(layout().viewportWidth, 1400)
+  assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 500 }, 'a viewport change persists nothing')
   assert.deepEqual([...storage.values.keys()], [KEY], 'only dsh.layout.widths is written')
 })
 
@@ -339,8 +362,8 @@ test('a restored rightbar does not reopen the closed panel', async (t) => {
   assert.equal(layout().rightbarTrack, false)
   assert.equal(layout().rightbarFullscreen, false)
   instance.actions.setViewportWidth(600)
-  assert.equal(layout().rightbar, 420, '600 * 0.7 = 420')
-  assert.equal(layout().rightbarShown, false, 'a re-clamp does not show the panel')
+  assert.equal(layout().rightbar, 500, 'the renderer clamps the display to 420; the store keeps the preference')
+  assert.equal(layout().rightbarShown, false, 'a resize does not show the panel')
   assert.equal(layout().rightbarTrack, false)
 })
 
@@ -350,10 +373,17 @@ test('out-of-range stored widths clamp up to the minimums', async (t) => {
   assert.equal(layout().rightbar, 300)
 })
 
-test('out-of-range stored widths clamp down to the maximums', async (t) => {
+test('a hand-stored sidebar 0 means no preference and restores as 280', async (t) => {
+  const { layout, storage } = await openStore(t, { innerWidth: 1200, raw: JSON.stringify({ sidebar: 0, rightbar: 500 }) })
+  assert.equal(layout().sidebar, 280, 'the runtime collapse is never stored, so 0 restores the default')
+  assert.equal(layout().rightbar, 500)
+  assert.deepEqual(storage.saved(), { sidebar: 0, rightbar: 500 }, 'restore writes nothing')
+})
+
+test('out-of-range stored widths clamp the sidebar but keep the rightbar preference', async (t) => {
   const { instance, layout } = await openStore(t, { innerWidth: 1000, raw: JSON.stringify({ sidebar: 9999, rightbar: 99999 }) })
   assert.equal(layout().sidebar, 420)
-  assert.equal(layout().rightbar, 700, '1000 * 0.7 = 700')
+  assert.equal(layout().rightbar, 99999, 'the renderer clamps the display to 700; the store keeps the preference')
 })
 
 test('stored values of the wrong type fall back to 280 and null', async (t) => {
@@ -428,8 +458,8 @@ test('the sidebar/rightbar clamps and the 45% first open are unchanged', async (
   assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 840 })
 
   instance.actions.setViewportWidth(400)
-  assert.equal(layout().rightbar, 300, 'a 400px frame still allows the 300px minimum, not 400 * 0.7')
-  assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 300 })
+  assert.equal(layout().rightbar, 840, 'a narrower frame changes only the display, not the preference')
+  assert.deepEqual(storage.saved(), { sidebar: 380, rightbar: 840 }, 'a resize persists nothing')
   instance.actions.setViewportWidth(1200)
-  assert.equal(layout().rightbar, 300, 'widening does not regrow the persisted preference')
+  assert.equal(layout().rightbar, 840, 'the wide frame displays the preference again')
 })

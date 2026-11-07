@@ -1,19 +1,38 @@
 --- a/@deepseek-ai/dsh-client-ui-layout/lib/client.js
 +++ b/@deepseek-ai/dsh-client-ui-layout/lib/client.js
-@@ -25,6 +25,47 @@
+@@ -25,6 +25,66 @@
  		function clampWidth(px, min, max) {
  			return Math.min(max, Math.max(min, Math.round(px)));
  		}
 +		/** Per-browser key for the two panel widths the store keeps across plugin reloads. */
 +		const WIDTHS_KEY = "dsh.layout.widths";
 +		/**
-+		* Read the persisted panel widths, clamped to the panel contract. A missing
-+		* value, a storage or parse error, or a value of the wrong type falls back to
-+		* the contract defaults.
-+		* @param viewport - available frame width in px, for the right panel's range.
++		* Normalize a stored or chosen sidebar width. 0 is the runtime collapse, never a
++		* preference, so a hand-stored 0 (or another non-positive or non-finite value)
++		* restores as the contract default instead of the 264px minimum.
++		* @param px - stored or chosen width in px.
++		* @returns the width to keep, 264-420.
++		*/
++		function normalizeSidebar(px) {
++			return typeof px === "number" && Number.isFinite(px) && px > 0 ? clampWidth(px, 264, 420) : 280;
++		}
++		/**
++		* Normalize a stored or chosen right panel width. The viewport range is a display
++		* concern: the renderer clamps the preference to 300..viewport * RIGHTBAR_MAX_RATIO,
++		* so a width chosen on a wider frame survives a narrower one and displays unchanged
++		* when the frame widens again. null means no preference (the first open picks 45%).
++		* @param px - stored or chosen width in px.
++		* @returns the rounded width, at least 300, or null.
++		*/
++		function normalizeRightbar(px) {
++			return typeof px === "number" && Number.isFinite(px) && px > 0 ? Math.max(300, Math.round(px)) : null;
++		}
++		/**
++		* Read the persisted panel widths. A missing value, a storage or parse error, or a
++		* value of the wrong type falls back to the contract defaults.
 +		* @returns the sidebar width and the right panel width preference (null = none).
 +		*/
-+		function readSavedWidths(viewport) {
++		function readSavedWidths() {
 +			const fallback = {
 +				sidebar: 280,
 +				rightbar: null
@@ -21,38 +40,38 @@
 +			try {
 +				const saved = JSON.parse(globalThis.localStorage?.getItem(WIDTHS_KEY) ?? "");
 +				if (saved === null || typeof saved !== "object") return fallback;
-+				const sidebar = saved.sidebar;
-+				const rightbar = saved.rightbar;
 +				return {
-+					sidebar: typeof sidebar === "number" && Number.isFinite(sidebar) ? clampWidth(sidebar, 264, 420) : 280,
-+					rightbar: typeof rightbar === "number" && Number.isFinite(rightbar) && rightbar > 0 ? clampWidth(rightbar, 300, Math.max(300, viewport * RIGHTBAR_MAX_RATIO)) : null
++					sidebar: normalizeSidebar(saved.sidebar),
++					rightbar: normalizeRightbar(saved.rightbar)
 +				};
 +			} catch {
 +				return fallback;
 +			}
 +		}
 +		/**
-+		* Persist the panel widths the store now uses. 0 is a temporary collapse, not a
-+		* preference, so it is stored as null and the last positive rightbar width stays.
++		* Persist the panel widths the store now uses, normalized exactly as restore reads
++		* them, so the store reads back what it wrote. The write is synchronous and tiny:
++		* one key, one panel drag at a time, and the latest drag position is already stored
++		* if the client goes away (a debounce would need a flush the store has no hook for).
 +		* @param sidebar - sidebar width preference in px.
 +		* @param rightbar - right panel width preference in px (null = default).
 +		*/
 +		function saveWidths(sidebar, rightbar) {
 +			try {
 +				globalThis.localStorage?.setItem(WIDTHS_KEY, JSON.stringify({
-+					sidebar: clampWidth(sidebar, 264, 420),
-+					rightbar: typeof rightbar === "number" && Number.isFinite(rightbar) && rightbar > 0 ? rightbar : null
++					sidebar: normalizeSidebar(sidebar),
++					rightbar: normalizeRightbar(rightbar)
 +				}));
 +			} catch {}
 +		}
  		/**
  		* Solve the three column widths for one viewport frame.
  		* @param viewport - available frame width in px.
-@@ -442,14 +483,17 @@
+@@ -442,14 +502,17 @@
  		* @returns the store handle (spec + type + identity + factory in one).
  		*/
  		function createLayoutStore() {
-+			const saved = readSavedWidths(window.innerWidth);
++			const saved = readSavedWidths();
 +			let lastSidebar = saved.sidebar;
 +			const persist = (d) => saveWidths(d.layoutInfo.sidebar || lastSidebar, d.layoutInfo.rightbar);
  			return (0, _deepseek_ai_dsh_client_store.defineStore)({
@@ -68,7 +87,7 @@
  						rightbarShown: false,
  						rightbarTrack: false,
  						rightbarFullscreen: false,
-@@ -467,26 +511,37 @@
+@@ -467,26 +530,31 @@
  					setSidebar: (d, px) => {
  						d.layoutInfo.rightbarInstant = false;
  						d.layoutInfo.sidebar = clampWidth(px, 264, 420);
@@ -86,13 +105,7 @@
  						d.layoutInfo.rightbarInstant = false;
  						if (d.layoutInfo.viewportWidth < 1024 !== width < 1024 || d.layoutInfo.viewportWidth < 768 !== width < 768) d.layoutInfo.narrowExpanded = false;
  						d.layoutInfo.viewportWidth = width;
-+						if (d.layoutInfo.rightbar !== null) {
-+							const rightbar = clampWidth(d.layoutInfo.rightbar, 300, Math.max(300, width * RIGHTBAR_MAX_RATIO));
-+							if (rightbar !== d.layoutInfo.rightbar) {
-+								d.layoutInfo.rightbar = rightbar;
-+								persist(d);
-+							}
-+						}
++						// The renderer clamps the rightbar preference for display; a resize must not rewrite it.
  					},
  					setRightbar: (d, px) => {
  						d.layoutInfo.rightbarInstant = false;
