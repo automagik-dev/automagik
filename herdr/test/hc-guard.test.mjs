@@ -1,13 +1,14 @@
 // The deny-by-default hc guard (#624, stopgap C): every allowed verb passes to a stub hc
 // unchanged; every refused verb is one stderr line naming #624, #628 and #631 and never calls it;
-// send is scoped to the caller's team; the dsh-tui worker run shape is exact. Hermetic: a temp
-// app home, a temp project and a stub hc on PATH; the real hc is never run. No escape route
-// (an absolute hc path, a raw socket, `hc connect`) is tested here: the guard is a guardrail,
-// not a boundary.
+// send is scoped to the caller's team, widened for a pm, integrator or fixer caller to any bot
+// the project lists (its workers do not inherit it), and the declared lead chain reaches a
+// planned lead; the dsh-tui worker run shape is exact. Hermetic: a temp app home, a temp project
+// and a stub hc on PATH; the real hc is never run. No escape route (an absolute hc path, a raw
+// socket, `hc connect`) is tested here: the guard is a guardrail, not a boundary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -257,6 +258,178 @@ test("a worker's team is the main checkout's, not a bots file in its worktree", 
   })}\n`);
   const r = guardRun(s, ["send", "t100", "report"], { HC_TERMINAL_ID: "t110" });
   assert.equal(r.status, 0, r.stderr);
+});
+
+// ---- send: the shared coordination roles and the declared lead chain ----
+
+const SHARED_ID = {
+  pm: "b-gggggggggg", integrator: "b-hhhhhhhhhh", fixer: "b-iiiiiiiiii",
+  capB: "b-jjjjjjjjjj", devB: "b-kkkkkkkkkk", testerB: "b-llllllllll",
+  plain: "b-mmmmmmmmmm", planned: "b-nnnnnnnnnn", unlisted: "b-oooooooooo",
+  capOrch: "b-pppppppppp", capMissing: "b-qqqqqqqqqq",
+};
+const plannedBot = (id, extra = {}) => ({
+  id, name: id, kind: "member", look: { character: "star", colour: "blue" }, role: "r",
+  instructions: "i", planned: { wave: 3 }, ...extra,
+});
+const sharedTeam = () => {
+  const file = team();
+  file.bots.push(
+    bot(SHARED_ID.pm, "member", { name: "PM", rank: "pm", lead: ID.main }),
+    bot(SHARED_ID.integrator, "member", { name: "Integrator", rank: "integrator", lead: ID.main }),
+    bot(SHARED_ID.fixer, "member", { name: "Fixer", rank: "fixer", lead: ID.main }),
+    bot(SHARED_ID.capB, "member", { name: "Captain B", rank: "captain", lead: ID.main }),
+    bot(SHARED_ID.devB, "member", { name: "Dev B", rank: "dev", lead: SHARED_ID.capB }),
+    bot(SHARED_ID.testerB, "member", { name: "Tester B", rank: "tester", lead: ID.main }),
+    bot(SHARED_ID.plain, "member", { name: "Plain", lead: ID.main }),
+    plannedBot(SHARED_ID.planned, { name: "Orchestrator" }),
+    bot(SHARED_ID.capOrch, "member", { name: "Captain Orch", rank: "captain", lead: SHARED_ID.planned }),
+    bot(SHARED_ID.capMissing, "member", { name: "Captain Missing", rank: "captain", lead: SHARED_ID.unlisted }),
+  );
+  return file;
+};
+
+/**
+ * The base scene plus the shared roles, another squad, a planned listed bot and an unlisted
+ * bot. The shared-role pane labels carry the same rank bots.json does, so a mutant that reads
+ * role= still passes the ordinary rows and only the forged-label row catches it.
+ */
+function sharedScene(t) {
+  const s = scene(t);
+  writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(sharedTeam(), null, 2)}\n`);
+  const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+  const add = (address, labels, extra = {}) => {
+    state.terminals.push({ address, name: address, state: "live" });
+    state.get[address] = get(address, labels, { cwd: s.project, name: address, ...extra });
+  };
+  add("t200", { bot: SHARED_ID.pm, role: "pm" });
+  add("t201", { bot: SHARED_ID.integrator, role: "integrator" });
+  add("t202", { bot: SHARED_ID.fixer, role: "fixer" });
+  add("t203", { bot: SHARED_ID.capB, role: "captain" });
+  add("t204", { bot: SHARED_ID.planned });
+  add("t205", { bot: SHARED_ID.devB, role: "dev" });
+  add("t206", { bot: SHARED_ID.testerB, role: "tester" });
+  add("t207", { bot: SHARED_ID.plain });
+  add("t208", { bot: ID.dev, role: "pm" }, { name: "forged" });
+  add("t209", { bot: SHARED_ID.unlisted });
+  add("t210", { bot: SHARED_ID.capOrch, role: "captain" });
+  add("t211", { "worker.of": SHARED_ID.pm }, { cwd: s.worktree, parent: "t200" });
+  add("t212", { "worker.of": SHARED_ID.integrator }, { cwd: s.worktree, parent: "t201" });
+  add("t213", { "worker.of": SHARED_ID.fixer }, { cwd: s.worktree, parent: "t202" });
+  add("t214", { bot: SHARED_ID.capMissing, role: "captain" });
+  writeFileSync(s.statePath, JSON.stringify(state));
+  const bind = (terminal, id) => ({ v: 1, event: "attach", bot: id, project: s.project, terminal, core: "core",
+    created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" });
+  const rows = [
+    ["t200", SHARED_ID.pm], ["t201", SHARED_ID.integrator], ["t202", SHARED_ID.fixer],
+    ["t203", SHARED_ID.capB], ["t205", SHARED_ID.devB], ["t206", SHARED_ID.testerB],
+    ["t207", SHARED_ID.plain], ["t208", ID.dev], ["t210", SHARED_ID.capOrch],
+    ["t214", SHARED_ID.capMissing],
+  ];
+  const ledger = join(s.app, "automagik-herdr", "attach.jsonl");
+  appendFileSync(ledger, rows.map(([terminal, id]) => `${JSON.stringify(bind(terminal, id))}\n`).join(""));
+  chmodSync(ledger, 0o600);
+  return s;
+}
+
+test("pm, integrator and fixer callers send to any listed bot outside their team", (t) => {
+  const s = sharedScene(t);
+  const cases = [
+    ["t200", "t203", "a captain of another squad"], ["t200", "t201", "another shared role"],
+    ["t200", "t204", "a planned listed bot"],
+    ["t201", "t203", "a captain of another squad"], ["t201", "t200", "another shared role"],
+    ["t201", "t204", "a planned listed bot"],
+    ["t202", "t203", "a captain of another squad"], ["t202", "t200", "another shared role"],
+    ["t202", "t201", "another shared role"],
+  ];
+  for (const [caller, target, why] of cases) {
+    writeFileSync(s.logPath, "");
+    const args = ["send", target, "sync"];
+    const r = guardRun(s, args, { HC_TERMINAL_ID: caller });
+    assert.equal(r.status, 0, `${caller} -> ${target} (${why}): ${r.stderr}`);
+    assert.deepEqual(calls(s).filter((argv) => argv[0] === "send"), [args], `${caller} -> ${target} (${why}) arrives once, unchanged`);
+  }
+});
+
+test("another rank sending sideways to a listed bot outside its team is refused", (t) => {
+  const s = sharedScene(t);
+  const cases = [
+    ["t203", "t204", "captain"], ["t205", "t200", "dev"],
+    ["t206", "t201", "tester"], ["t207", "t204", "no rank"],
+  ];
+  for (const [caller, target, rank] of cases) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, ["send", target, "hi"], { HC_TERMINAL_ID: caller });
+    assertRefused(r);
+    assert.equal(calls(s).some((argv) => argv[0] === "send"), false, `${rank} -> ${target} never reaches send`);
+  }
+});
+
+test("a worker of a pm, integrator or fixer bot does not inherit the widening", (t) => {
+  const s = sharedScene(t);
+  const cases = [["t211", "t203"], ["t212", "t200"], ["t213", "t204"]];
+  for (const [caller, target] of cases) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, ["send", target, "hi"], { HC_TERMINAL_ID: caller });
+    assertRefused(r);
+    assert.equal(calls(s).some((argv) => argv[0] === "send"), false, `${caller} -> ${target} never reaches send`);
+  }
+});
+
+test("the rank comes from bots.json, not the caller pane's role= label", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["send", "t203", "hi"], { HC_TERMINAL_ID: "t208" });
+  assertRefused(r);
+  assert.equal(calls(s).some((argv) => argv[0] === "send"), false, "a forged role=pm on a dev bot's pane never widens send");
+});
+
+test("a pm caller cannot send to a pane whose bot= is not listed", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["send", "t209", "hi"], { HC_TERMINAL_ID: "t200" });
+  assertRefused(r);
+  assert.equal(calls(s).some((argv) => argv[0] === "send"), false, "an unlisted bot= target never reaches send");
+});
+
+test("the widening is send only: keys is refused and kill/rm keep today's unscoped pass", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const keys = guardRun(s, ["keys", "t203", "enter"], { HC_TERMINAL_ID: "t200" });
+  assertRefused(keys);
+  assert.deepEqual(calls(s), [], "keys never reaches hc");
+  // #636 leaves kill and rm unscoped (#628 owns that scope); the widening does not touch them.
+  for (const args of [["kill", "t203"], ["rm", "t203"]]) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, args, { HC_TERMINAL_ID: "t200" });
+    assert.equal(r.status, 0, `${args[0]} is unchanged: ${r.stderr}`);
+    assert.ok(calls(s).some((argv) => same(argv, args)), `${args[0]} arrives unchanged`);
+  }
+});
+
+test("a captain reaches its declared lead even when that lead is planned", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const args = ["send", "t204", "status"];
+  const r = guardRun(s, args, { HC_TERMINAL_ID: "t210" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s).filter((argv) => argv[0] === "send"), [args]);
+});
+
+test("a captain with a declared lead still cannot send sideways to another squad's captain", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["send", "t203", "hi"], { HC_TERMINAL_ID: "t210" });
+  assertRefused(r);
+  assert.equal(calls(s).some((argv) => argv[0] === "send"), false);
+});
+
+test("a declared lead id not listed in bots.json adds nothing", (t) => {
+  const s = sharedScene(t);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["send", "t209", "hi"], { HC_TERMINAL_ID: "t214" });
+  assertRefused(r);
+  assert.equal(calls(s).some((argv) => argv[0] === "send"), false, "an unlisted declared lead never names a target");
 });
 
 // ---- machine targets, and label on the caller's own workers ----
