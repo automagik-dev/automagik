@@ -48,7 +48,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
-    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
+    for f in /bin/bash /bin/dash /bin/rm /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
       | awk '/=>/ {print $3}' | sort -u > /tmp/libs; \
     while read -r lib; do \
       case "$lib" in \
@@ -56,7 +56,7 @@ RUN set -eux; \
       esac; \
       cp -L "$lib" /out/lib/; \
     done < /tmp/libs; \
-    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /out/bin/; \
+    cp /bin/bash /bin/dash /bin/rm /usr/bin/git /usr/bin/rg /out/bin/; \
     ln -s /bin/dash /out/bin/sh; \
     cp -a /usr/lib/git-core /out/git-core; \
     cp -a /usr/share/git-core /out/git-core-share; \
@@ -83,6 +83,7 @@ LABEL org.opencontainers.image.title="Automagik server" \
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /out/bin/dash /bin/dash
 COPY --from=tools /out/bin/sh /bin/sh
+COPY --from=tools /out/bin/rm /bin/rm
 USER root
 RUN rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian
 
