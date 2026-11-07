@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Test
 
 /** Reading an agent's menu off its screen, on synthetic screens shaped like Claude Code's and Codex's prompts. */
@@ -189,6 +191,43 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assertEquals(1, middle.cursor)
         assertEquals(listOf("up", "enter"), Prompt.keys(middle, 0))
         assertEquals(listOf("down", "enter"), Prompt.keys(middle, 2))
+    }
+
+    /**
+     * A fake core for [Prompt.choose]: the agent blocked on [permissionAtYes]; after terminal.keys its status becomes
+     * [landing] (null: the key is reported typed but the prompt stays, as on the phone when the tap did nothing).
+     */
+    private fun tapped(landing: String?): Pair<String, List<String>> {
+        var status = JSONObject().put("state", "blocked").put("kind", "permission").put("msg", "approve Bash: make build")
+        val calls = mutableListOf<String>()
+        var clock = 0L
+        val outcome = runBlocking {
+            Prompt.choose({ m, p ->
+                calls += m
+                when (m) {
+                    "terminal.get" -> JSONObject().put("address", p.getString("terminal")).put("status", status).put("turn", 3)
+                    "terminal.read" -> JSONObject().put("text", permissionAtYes)
+                    "terminal.keys" -> { if (landing != null) status = JSONObject().put("state", landing); JSONObject().put("status", "blocked").put("turn", 3) }
+                    else -> error(m)
+                }
+            }, "t1", "approve Bash: make build", Prompt.menu(permissionAtYes)!!.options, 0, "Yes", pause = { clock += it }, clock = { clock })
+        }
+        return outcome to calls
+    }
+
+    @Test fun aKeyTheAgentTookSaysYouChose() {
+        val (outcome, calls) = tapped(landing = "working")
+        assertEquals("You chose: Yes", outcome)
+        assertEquals(listOf("terminal.get", "terminal.read", "terminal.keys", "terminal.get"), calls)
+    }
+
+    @Test fun aKeyTypedButNotTakenSaysNotTakenNeverYouChose() {
+        val (outcome, calls) = tapped(landing = null)
+        assertEquals("Not taken: answer on the Mac.", outcome)
+        assertFalse(Teams.sent(outcome))
+        // Pressed once, then read back until VERIFY_MS ran out: never pressed again.
+        assertEquals(1, calls.count { it == "terminal.keys" })
+        assertTrue(calls.count { it == "terminal.get" } > 2)
     }
 
     @Test fun theButtonsAreTheSameWhereverTheCursorIs() {

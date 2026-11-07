@@ -240,6 +240,16 @@ class ChatTest {
         assertEquals("The question changed; nothing was pressed.", Chat.answerNotice(j("""{"ok":false,"reason":"changed"}""")))
         assertEquals(Chat.ANSWER_ON_COMPUTER, Chat.answerNotice(j("""{"state":"refused","ok":false,"reason":"read-only"}""")))
         assertEquals("Stopped partway: the question moved on. Finish in the terminal.", Chat.answerNotice(j("""{"ok":false,"reason":"stopped","sent":true}""")))
+        // Keys sent but the dialog stayed past the bridge's read-back: not taken, never a success.
+        assertEquals("Not taken: answer on the Mac.", Chat.answerNotice(j("""{"ok":true,"pressed":"uncertain","sent":true}""")))
+    }
+
+    @Test fun aPendingRowSaysAnsweredOnlyWhenTheBridgeSawItTaken() {
+        val s = Chat.State("t1", connected = true)
+        val row = Chat.Row("approval:c1", "approval", open = true)
+        assertEquals("Answered.", ChatActions.pendingNote(s, row.copy(why = "answered")))
+        assertEquals("Not taken: answer on the Mac.", ChatActions.pendingNote(s, row.copy(why = "not-taken")))
+        assertEquals(Chat.ANSWER_IN_TERMINAL, ChatActions.pendingNote(s, row))
     }
 
     @Test fun chatTabOnlyForAgentsTheBridgeReads() {

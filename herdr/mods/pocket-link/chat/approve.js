@@ -79,13 +79,16 @@ export function approvalRow(state, { turn, segment = 0 }) {
  * Answer an approval row the person tapped. `read()` gives the facts fresh (terminal.get,
  * terminal.read, the transcript's open calls). Keys are pressed only when the row still matches.
  * @param {{ hc: any, address: string, rowId: string, choice: string, read(): Promise<any>,
- *   timers?: typeof realTimers, verifyMs?: number }} a
+ *   timers?: typeof realTimers, verifyMs?: number, note?: object }} a
+ *   note: filled for the bridge's log line: typed (herdr-core's status and turn when the key went
+ *   in) and final (the last status read: state, kind, turn)
  * @returns {Promise<{ ok: true, pressed: 'done' | 'uncertain', sent: true } | { ok: false, reason: string, sent?: true }>}
  *   sent: terminal.keys was called, whatever came back (a timeout may still have typed the key)
  */
-export async function answerApproval({ hc, address, rowId, choice, read, timers = realTimers, verifyMs = VERIFY_MS }) {
+export async function answerApproval({ hc, address, rowId, choice, read, timers = realTimers, verifyMs = VERIFY_MS, note = {} }) {
   let facts
   try { facts = await read() } catch { return { ok: false, reason: 'unavailable' } }
+  note.final = { state: facts.status?.state, kind: facts.status?.kind, turn: facts.status?.turn }
   const state = approvalState(facts)
   if (!state) return { ok: false, reason: 'closed' }
   if (!state.call || approvalRow(state, { turn: 0 }).id !== rowId) return { ok: false, reason: 'changed' }
@@ -96,6 +99,7 @@ export async function answerApproval({ hc, address, rowId, choice, read, timers 
   try {
     typed = await hc.call('terminal.keys', { terminal: address, keys, caller: null })
   } catch (e) { return { ok: false, reason: e?.kind ?? 'unavailable', sent: true } }
+  note.typed = { status: typed?.status, turn: typed?.turn }
   // herdr-core says when the key went in: not at that dialog's status and turn, it may have
   // answered something else.
   if ((typeof typed?.status === 'string' && typed.status !== 'blocked') ||
@@ -107,6 +111,7 @@ export async function answerApproval({ hc, address, rowId, choice, read, timers 
   for (;;) {
     let t
     try { t = await hc.call('terminal.get', { terminal: address }) } catch { break }
+    note.final = { state: t?.status?.state, kind: t?.status?.kind, turn: t?.turn }
     if (t?.status?.state !== 'blocked') return { ok: true, pressed: 'done', sent: true }
     if (Date.now() >= deadline) break
     await new Promise((r) => timers.setTimeout(r, 250))

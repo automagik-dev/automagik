@@ -15,6 +15,8 @@ object Chat {
     const val DSH_PREFIX = "dsh:"
     const val ANSWER_ON_COMPUTER = "Answer on the computer"
     const val ANSWER_IN_TERMINAL = "Answer in the terminal"
+    /** A key sent, but the prompt was still there when read back: never shown as answered. */
+    const val NOT_TAKEN = "Not taken: answer on the Mac."
     const val UPDATE_LINK = "Update Pocket Link on this computer for chat"
     const val DRAFT_WARNING = "Sends your half-typed terminal text with it"
     const val NO_CHAT = "This terminal has no chat. Herdr shows Claude, Codex and omp terminals as chats."
@@ -135,7 +137,7 @@ object Chat {
     /** What the chat says after an approval tap (chat.answer's answer, approve.js reasons); null for a plain success. */
     fun answerNotice(a: JSONObject): String? = when {
         a.optString("reason") == "read-only" -> ANSWER_ON_COMPUTER
-        a.optBoolean("ok") -> if (a.optString("pressed") == "uncertain") "Pressed. Check the terminal that it took." else null
+        a.optBoolean("ok") -> if (a.optString("pressed") == "uncertain") NOT_TAKEN else null
         else -> when (a.optString("reason")) {
             "changed" -> "The question changed; nothing was pressed."
             "closed", "no-such-row" -> "That question is already closed."
@@ -235,6 +237,9 @@ object ChatActions {
 
     /** What an approval or question without buttons says instead. */
     fun passive(s: Chat.State) = if (s.readOnly) Chat.ANSWER_ON_COMPUTER else Chat.ANSWER_IN_TERMINAL
+
+    /** What a pending row without buttons says: answered (the bridge saw it taken), not taken, or [passive]. */
+    fun pendingNote(s: Chat.State, row: Chat.Row) = when (row.why) { "answered" -> "Answered."; "not-taken" -> Chat.NOT_TAKEN; else -> passive(s) }
 }
 
 /**

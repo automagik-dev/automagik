@@ -201,14 +201,29 @@ test('a double tap from one client presses once', async () => {
   engine.close()
 })
 
-test('a retry after uncertain is refused while the status stays blocked; the row loses its buttons', async () => {
+test('keys sent but the dialog stays (uncertain): the row says not-taken, never answered; a retry is refused', async () => {
   const { engine, a, row, writes } = await approvalSetup({ landing: null })
   assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: true, pressed: 'uncertain', sent: true })
   await settle()
   assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'deny' }), { ok: false, reason: 'answered' })
   assert.equal(writes().length, 1)
   const last = a.events.filter((e) => e.type === 'approval').at(-1).row
-  assert.deepEqual([last.choices, last.why], [[], 'answered'])
+  assert.deepEqual([last.choices, last.why], [[], 'not-taken'])
+  engine.close()
+})
+
+test('every chat.answer logs one line: the terminal and row as sent, the choice, the result, what keys and the read-back saw', async () => {
+  const { engine, a, row } = await approvalSetup({ landing: null })
+  const logs = []
+  engine.log = (m) => logs.push(m)
+  await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' })
+  await engine.answer(a.me, 't1', { row: row.id, choice: 'allow' })
+  await engine.answer({}, 't1\nforged', { row: 'r', choice: 'allow' })
+  assert.deepEqual(logs, [
+    'chat.answer terminal="t1" row="approval:1:2.0" choice="allow" ok=true reason=- pressed=uncertain sent=true typed=blocked/0 final=blocked/permission/0',
+    'chat.answer terminal="t1" row="approval:1:2.0" choice="allow" ok=false reason=answered pressed=- sent=false typed=- final=-',
+    'chat.answer terminal="t1\\nforged" row="r" choice="allow" ok=false reason=not-watching pressed=- sent=false typed=- final=-'
+  ])
   engine.close()
 })
 
@@ -499,14 +514,14 @@ test('a question not on the screen, a choice out of range or free text on a mult
   engine.close(); m.engine.close()
 })
 
-test('an answered question is not pressed twice while the status stays blocked', async () => {
+test('a question answered uncertain (still up after the read-back) is not-taken, and not pressed twice', async () => {
   const { engine, a, row, writes } = await questionSetup()
   assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: '1' })).pressed, 'uncertain')
   await settle()
   assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '1' }), { ok: false, reason: 'answered' })
   assert.equal(writes().length, 1)
   const last = a.events.filter((e) => e.type === 'question').at(-1).row
-  assert.deepEqual([last.answerable, last.why], [false, 'answered'])
+  assert.deepEqual([last.answerable, last.why], [false, 'not-taken'])
   engine.close()
 })
 

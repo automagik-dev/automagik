@@ -117,13 +117,15 @@ export function questionSteps(state, choice, text) {
 /**
  * Answer a question row the person tapped: each step only while the same question is open.
  * @param {{ hc: any, address: string, rowId: string, choice: string, text?: string, read(): Promise<any>,
- *   timers?: typeof realTimers, stepMs?: number, verifyMs?: number }} a
+ *   timers?: typeof realTimers, stepMs?: number, verifyMs?: number, note?: object }} a
+ *   note: filled for the bridge's log line, as answerApproval's (typed, final)
  * @returns {Promise<{ ok: true, pressed: 'done' | 'uncertain', sent: true } | { ok: false, reason: string, sent?: true }>}
  *   reason 'stopped': some keys went in, then the question moved on; finish in the terminal
  */
-export async function answerQuestion({ hc, address, rowId, choice, text, read, timers = realTimers, stepMs = NATIVE_CHAT_SUBMIT_DELAY_MS, verifyMs = VERIFY_MS }) {
+export async function answerQuestion({ hc, address, rowId, choice, text, read, timers = realTimers, stepMs = NATIVE_CHAT_SUBMIT_DELAY_MS, verifyMs = VERIFY_MS, note = {} }) {
   let facts
   try { facts = await read() } catch { return { ok: false, reason: 'unavailable' } }
+  note.final = { state: facts.status?.state, kind: facts.status?.kind, turn: facts.status?.turn }
   const first = questionState(facts)
   if (!first) return { ok: false, reason: 'closed' }
   if (!first.call || first.why || questionRow(first, { turn: 0 }).id !== rowId) return { ok: false, reason: 'changed' }
@@ -137,6 +139,7 @@ export async function answerQuestion({ hc, address, rowId, choice, text, read, t
     if (sent) {
       await new Promise((r) => timers.setTimeout(r, stepMs))
       try { facts = await read() } catch { return stop('unavailable') }
+      note.final = { state: facts.status?.state, kind: facts.status?.kind, turn: facts.status?.turn }
       const now = questionState(facts)
       if (!now?.call || now.why || now.call.id !== first.call.id || facts.status.turn !== turn) return stop('changed')
       // herdr-core's report of the last step: it went in at this question's status and turn.
@@ -148,6 +151,7 @@ export async function answerQuestion({ hc, address, rowId, choice, text, read, t
         ? await hc.call('terminal.send', { terminal: address, text: step.text, force: true, caller: null })
         : await hc.call('terminal.keys', { terminal: address, keys: step.keys, caller: null })
     } catch (e) { return { ok: false, reason: e?.kind ?? 'unavailable', sent: true } }
+    note.typed = { status: typed?.status, turn: typed?.turn }
   }
   if ((typeof typed?.status === 'string' && typed.status !== 'blocked') || (typeof typed?.turn === 'number' && typeof turn === 'number' && typed.turn !== turn)) {
     return { ok: true, pressed: 'uncertain', sent: true }
@@ -157,6 +161,7 @@ export async function answerQuestion({ hc, address, rowId, choice, text, read, t
   for (;;) {
     let t
     try { t = await hc.call('terminal.get', { terminal: address }) } catch { break }
+    note.final = { state: t?.status?.state, kind: t?.status?.kind, turn: t?.turn }
     if (t?.status?.state !== 'blocked') return { ok: true, pressed: 'done', sent: true }
     if (Date.now() >= deadline) break
     await new Promise((r) => timers.setTimeout(r, 250))

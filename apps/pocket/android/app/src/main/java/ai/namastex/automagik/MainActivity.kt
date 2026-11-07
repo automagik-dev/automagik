@@ -159,7 +159,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
     }
     LifecycleResumeEffect(Unit) { activity?.let(Updater::resume); onPauseOrDispose { } }
-    LifecycleStartEffect(Unit) { vm.setForeground(true); onStopOrDispose { vm.setForeground(false) } }
+    // A stopped screen (the app left, or the screen off) lets go of the terminal and chat streams; a start takes them back.
+    LifecycleStartEffect(Unit) { vm.setForeground(true); vm.streams(true); onStopOrDispose { vm.setForeground(false); vm.streams(false) } }
     // Android 13+ asks before an app's first notification: once, when a machine first connects.
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val anyConnected = state.machines.values.any { it.connected }
