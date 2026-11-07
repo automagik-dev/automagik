@@ -618,6 +618,48 @@ function redactYamlBlocks(s) {
   return out
 }
 
+// #590: the explicit-key guard in the name rules scans a bounded quote tail at every name. On a
+// text with no `? name` line the guard can never fail, so dropping it is exact; the rule is
+// compiled with and without it and chosen per text, keeping an unclosed quote run linear (#172).
+const EXPLICIT_KEY = /(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t]/
+const GUARD_START = '(?!(?<=(?:^|[\\r\\n])[ \\t]{0,160}'
+const KEY_TAIL_START = String.raw`|(?<=(?:^|[\r\n])[ \t]{0,256}`
+const QUOTE_TAIL = String.raw`|(?:"[^"\r\n]{241,}|'[^'\r\n]{241,}`
+  + String.raw`|"[^"\r\n]{0,}(?=[ \t]{0,64}(?:#[^\r\n]*)?[\r\n])`
+  + String.raw`|'[^'\r\n]{0,}(?=[ \t]{0,64}(?:#[^\r\n]*)?[\r\n]))`
+function withoutGuard(source) {
+  let out = source
+  for (let at = out.indexOf(GUARD_START); at >= 0; at = out.indexOf(GUARD_START)) {
+    let depth = 0
+    let end = at
+    for (; end < out.length; end++) {
+      if (out[end] === '\\') { end++; continue }
+      if (out[end] === '(') depth++
+      else if (out[end] === ')' && --depth === 0) { end++; break }
+    }
+    out = out.slice(0, at) + out.slice(end)
+  }
+  for (let at = out.indexOf(KEY_TAIL_START); at >= 0; at = out.indexOf(KEY_TAIL_START)) {
+    const next = out.indexOf(QUOTE_TAIL, at)
+    if (next < 0) break
+    out = out.slice(0, at) + out.slice(next)
+  }
+  return out.split(QUOTE_TAIL).join('')
+}
+function nameRule(pattern, replace) {
+  const plain = new RegExp(withoutGuard(pattern.source), pattern.flags)
+  return (text) => (EXPLICIT_KEY.test(text)
+    ? text.replace(pattern, replace)
+    : text.replace(plain, replace))
+}
+for (const rule of SECRET_TEXT) {
+  if (typeof rule[0] !== 'function' &&
+    (rule[0].source.includes(GUARD_START) || rule[0].source.includes(QUOTE_TAIL))) {
+    rule[0] = nameRule(rule[0], rule[1])
+    rule[1] = null
+  }
+}
+
 export function redactText(s, open = false) {
   const was = OPEN_END
   OPEN_END = open

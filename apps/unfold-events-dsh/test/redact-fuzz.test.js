@@ -57,6 +57,11 @@ function fuzzCases(seed = SEED, count = 200) {
   // The shape that once backtracked over a whole blank run: 80k of " \t", then a name and a block.
   cases.push(['fixed: 80000 " \\t" then accessToken: >', `${' \t'.repeat(40_000)}accessToken: >\n`])
   cases.push(['fixed: 16384 of {"\\ runs', '{"\\'.repeat(5462).slice(0, 16_384)])
+  // The shape Mind's padded kept tail makes from the row above: the unclosed run, a 4 KiB blank
+  // pad, then the run again (#590). Its cost must stay one linear pass of its own.
+  cases.push(['fixed: {"\\ runs around a 4096 blank pad',
+    `${'{"\\'.repeat(5462).slice(0, 8192)}${' '.repeat(4096)}` +
+    `${'{"\\'.repeat(5462).slice(0, 8176)}=ClientSecret: |\n DB_PASS`])
   cases.push(['fixed: ? " + 80000 alnum + :x', `? "${'z'.repeat(80_000)}:x\n`])
   return cases
 }
@@ -167,4 +172,19 @@ test('a seeded fuzz of 200 mixed texts up to 80k characters stays fast on every 
     t.diagnostic(`${path}: slowest ${ms.toFixed(1)} ms of CPU, ` +
       `${(ms / referenceMs).toFixed(2)} times the reference — ${shape}`)
   }
+})
+
+// #590: the window's own rule pass on the padded kept-tail shape, against a flat text of the
+// same length. The shared window bound is wide enough that a rule-only regression hides in it.
+const WINDOW_QUOTE_RUN = '{"\\'.repeat(5462)
+const WINDOW_PAD_ROW = `${WINDOW_QUOTE_RUN.slice(0, 8192)}${' '.repeat(4096)}` +
+  `${WINDOW_QUOTE_RUN.slice(0, 8176)}=ClientSecret: |\n DB_PASS`
+test('the window rules stay linear on an unclosed quote run around a blank pad', () => {
+  const reference = 'x'.repeat(WINDOW_PAD_ROW.length)
+  const referenceMs = fixedWork(() => redactText(reference))
+  assert.ok(referenceMs > 0, `reference sample is ${referenceMs.toFixed(3)} ms of CPU`)
+  const ms = fixedWork(() => redactText(WINDOW_PAD_ROW))
+  assert.ok(ms <= 40 * referenceMs,
+    `the window rules: ${ms.toFixed(2)} ms of CPU on the quote run, ` +
+    `bound ${(40 * referenceMs).toFixed(2)} ms (40 x reference ${referenceMs.toFixed(3)} ms)`)
 })
