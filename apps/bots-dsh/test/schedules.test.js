@@ -82,6 +82,93 @@ function setup(services = {}, team = TEAM) {
   return { ctx, home, call, rt }
 }
 
+// DSH 0.2.2 runs a due delivery inside the schedule service's one serialization queue:
+// an edit made from the delivery waterfall waits for the drive to end, and a delivery the
+// drive refused is re-attempted only when `runtime.requestDrive` asks for a drive. This
+// stand-in holds that queue open, records each requested drive, and lets a row model the
+// delivery DSH re-attempts.
+function serializedDrive() {
+  const schedule = scheduleService()
+  const drives = []
+  const state = { failPause: false }
+  let inDrive = false
+  let held = Promise.resolve()
+  let releaseDrive
+  const baseEdit = schedule.edit
+  schedule.edit = async request => {
+    if (inDrive) await held
+    if (request.action === 'update' && state.failPause) throw new Error('schedule store is busy')
+    return baseEdit(request)
+  }
+  schedule.runtime = {
+    requestDrive() {
+      drives.push(1)
+      schedule.onDrive?.()
+    },
+  }
+  return {
+    schedule,
+    drives,
+    state,
+    // Edits wait until release(), as one made during a drive waits for it to end.
+    hold() {
+      inDrive = true
+      held = new Promise(resolve => { releaseDrive = resolve })
+    },
+    release() {
+      inDrive = false
+      releaseDrive?.()
+    },
+  }
+}
+
+// Runs `until` between turns of the event loop, up to 100 of them.
+const settle = async (until) => {
+  for (let index = 0; index < 100 && !until(); index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
+// L1: `requestDrive` is private in dsh-schedule; a bump that drops it must not be silent.
+// This runs first, because the warning is once per process.
+test('a schedule service without the drive hook warns once per process', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  const warnings = []
+  ctx.logger.warn = (...args) => warnings.push(args.map(value => String(value)).join(' '))
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  // Count the drive requests: the service exposes no hook to call.
+  let requests = 0
+  Object.defineProperty(schedule, 'runtime', {
+    configurable: true,
+    get() { requests += 1; return undefined },
+  })
+  const noDrive = () => warnings.filter(line => /no requestDrive hook/.test(line))
+  // The load-backed sweep opens the guard and needs a drive.
+  await rt.load()
+  await settle(() => requests > 0)
+  assert.equal(requests, 1)
+  assert.equal(noDrive().length, 1, warnings.join('\n'))
+  // A pause that recovers needs another drive; the warning is not repeated.
+  const armed = await freshTask(schedule, 'w2')
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('schedule store is busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  schedule.edit = edit
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+  assert.equal(requests, 2)
+  assert.equal(noDrive().length, 1, warnings.join('\n'))
+  // The warning is the visible signal; without the hook the re-drive is simply absent.
+  assert.match(warnings.join('\n'), /a refused delivery waits for DSH's own next tick/)
+})
+
 test('without the schedule service the page says so and creating is refused', async (t) => {
   const { ctx, home, call } = setup()
   t.after(async () => {
@@ -494,4 +581,108 @@ test('clearing the deny list releases a stuck pause and asks DSH to drive again'
   assert.ok(drives.length > before)
   const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
   assert.equal(await guard('fresh-1', async () => 'ran'), 'ran')
+})
+
+// L2: the retry tick is what recovers a pause the store refused. Without it the task stays
+// active and every delivery to a fresh Session stays refused.
+test('the 15 s retry tick pauses a stuck task and releases its deliveries', async (t) => {
+  const drive = serializedDrive()
+  const { ctx, home, rt } = setup({ schedule: drive.schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // The load-backed sweep already asked for one drive when it opened the guard.
+  const before = drive.drives.length
+  const armed = await freshTask(drive.schedule, 'w2')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  drive.state.failPause = true
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(drive.schedule.tasks.get(armed.id).status, 'active')
+  // A refusal made while the edit waits behind a held drive does not hang the delivery.
+  drive.hold()
+  const outcome = await Promise.race([
+    guard('fresh-1', async () => 'ran').then(() => 'next', () => 'refused'),
+    new Promise(resolve => setTimeout(() => resolve('hung'), 250)),
+  ])
+  drive.release()
+  assert.equal(outcome, 'refused')
+  // The sweep that refusal kicked off found the store still refusing: nothing moved yet.
+  for (let turn = 0; turn < 5; turn += 1) await new Promise(resolve => setImmediate(resolve))
+  assert.equal(drive.schedule.tasks.get(armed.id).status, 'active')
+  assert.equal(drive.drives.length, before)
+  // The store answers: the next tick pauses the task and asks DSH to drive again.
+  drive.state.failPause = false
+  t.mock.timers.tick(15_000)
+  await settle(() => drive.schedule.tasks.get(armed.id).status === 'paused')
+  assert.equal(drive.schedule.tasks.get(armed.id).status, 'paused')
+  assert.equal(drive.drives.length, before + 1)
+  assert.equal(await guard('fresh-1', async () => 'ran'), 'ran')
+  // The tick that saw the queue clear stops the timer: no further drives.
+  t.mock.timers.tick(15_000)
+  t.mock.timers.tick(15_000)
+  assert.equal(drive.drives.length, before + 1)
+})
+
+// L3: a reminder due during the boot window is refused until the team loads; the
+// load-backed sweep then asks DSH to drive again, and the held delivery lands.
+test('a boot-window reminder lands after load through the re-drive', async (t) => {
+  const drive = serializedDrive()
+  const { ctx, home, rt } = setup({ schedule: drive.schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await drive.schedule.create({
+    title: 'Mine', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'user-chat' },
+  })
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  let landed
+  await assert.rejects(
+    () => guard('user-chat', async () => { landed = 'ran' }),
+    /blocked until its task can be paused/,
+  )
+  assert.equal(landed, undefined)
+  assert.equal(drive.drives.length, 0)
+  // DSH re-attempts the delivery it refused when a drive is requested.
+  drive.schedule.onDrive = () => {
+    void guard('user-chat', async () => { landed = 'ran' }).catch(() => {})
+  }
+  await rt.load()
+  await settle(() => landed === 'ran')
+  assert.equal(landed, 'ran')
+  assert.equal(drive.drives.length, 1)
+})
+
+// DSH hides a `new` target's reserved Session id. A stuck pause must refuse that id and
+// still let the user's ordinary reminder on another Session run.
+test('an ordinary reminder is not wedged by a reserved fresh id', async (t) => {
+  const drive = serializedDrive()
+  const { ctx, home, rt } = setup({ schedule: drive.schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const reserved = await drive.schedule.create({
+    title: 'Nightly', prompt: 'Check the build', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'new_once', sessionId: 'reserved-7' },
+  }, 'w2')
+  drive.state.failPause = true
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(drive.schedule.tasks.get(reserved.id).status, 'active')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  // The reserved id is refused while its task cannot be paused...
+  drive.hold()
+  await assert.rejects(
+    () => guard('reserved-7', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  // ...and the user's own reminder runs, even with the delivery drive held open: the
+  // guard reads the catalog, which the drive does not serialize.
+  assert.equal(await guard('user-chat', async () => 'ran'), 'ran')
+  drive.release()
 })

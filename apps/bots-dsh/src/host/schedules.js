@@ -13,6 +13,10 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 const NEW_TARGETS = new Set(['new', 'new_once'])
 // How often a pause the schedule store refused is retried while it stays refused.
 const PAUSE_RETRY_MS = 15_000
+// DSH drives deliveries through the schedule service's private `runtime.requestDrive`;
+// a host without it leaves a refused delivery waiting for DSH's own next tick. Say so
+// once per process, so a DSH bump that drops the hook is not a silent wedge.
+let warnedNoDrive = false
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 
@@ -168,8 +172,17 @@ export function install(rt) {
   // opens the guard or clears the last stuck task does that, and a stuck pause is retried
   // on a timer until the store answers.
   const requestDrive = () => {
+    const runtime = service?.runtime
+    if (typeof runtime?.requestDrive !== 'function') {
+      if (!warnedNoDrive) {
+        warnedNoDrive = true
+        rt.warn('ds-bot: the schedule service has no requestDrive hook; '
+          + 'a refused delivery waits for DSH\'s own next tick')
+      }
+      return
+    }
     try {
-      service?.runtime?.requestDrive?.()
+      runtime.requestDrive()
     } catch (error) {
       rt.warn('ds-bot: the schedule drive was not re-requested: %s', error?.message ?? error)
     }
