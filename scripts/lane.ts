@@ -93,8 +93,9 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
 // The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
+// herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
-  /^herdr\/[^/]+\.md$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/,
+  /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
   /^apps\/landing\//];
