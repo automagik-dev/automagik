@@ -229,23 +229,75 @@ test('restricting a Bot pauses the fresh-Session tasks its Sessions armed', asyn
   assert.equal(schedule.tasks.get(outside.id).status, 'active')
 })
 
-test('a subagent child of a restricted Bot resolves through its parent lineage', async (t) => {
+// DSH's live registry holds loaded Sessions only; the durable copy keeps a child's
+// parent and subagent origin after it ends or before it reopens on a restart.
+const durableChild = async id => (id === 'child-1'
+  ? { header: { origin: 'subagent', parentSession: 'w2' } }
+  : undefined)
+
+test('a subagent child that is no longer live resolves through its durable header', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, rt } = setup({ schedule })
   t.after(async () => {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   })
-  // DSH keeps a child's parent and subagent origin in its Session header, not in state.
-  ctx.sessions = {
-    get: id => (id === 'child-1'
-      ? { header: { origin: 'subagent', parentSession: 'w2' } }
-      : undefined),
-  }
+  ctx.sessions = undefined
+  ctx.sessionPersistence = { stat: durableChild }
   await rt.load()
   const armed = await freshTask(schedule, 'child-1', 'Child')
   await rt.updateBot('w1', { denyTools: ['bash'] })
   assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a restart with a restricted Bot pauses a child-armed task that is not live', async (t) => {
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'child-1', 'Child')
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  const { ctx, home, rt } = setup({ schedule }, team)
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  ctx.sessionPersistence = { stat: durableChild }
+  await rt.load()
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a pause that the schedule service refuses blocks unlineaged deliveries', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('schedule store is busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  // Fail closed: an unlineaged Session is not activated while the pause is stuck...
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  assert.equal(typeof guard, 'function')
+  let nexted = 0
+  await assert.rejects(
+    () => guard('fresh-1', async () => { nexted += 1 }),
+    /blocked until its task can be paused/,
+  )
+  // ...and the next sweep that can pause it clears the block.
+  schedule.edit = edit
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+  assert.equal(await guard('fresh-1', async () => { nexted += 1; return 'live' }), 'live')
+  assert.equal(nexted, 1)
 })
 
 test('a restart with the deny list already set pauses the armed fresh-Session task', async (t) => {
