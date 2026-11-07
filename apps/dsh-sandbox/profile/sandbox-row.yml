@@ -1,0 +1,19 @@
+# The profile row for the hc socket mask (apps/dsh-sandbox, issue #631, the DSH lane of #624).
+#
+# OFF by default. The row only changes anything when the pack sets DSH_SANDBOX_MASK=1 at pane
+# start; with the switch absent the wrapper runs bwrap with exactly the arguments it got, so a
+# profile that carries this row behaves as it does today.
+#
+# `{{WRAPPER}}` is a placeholder. Only `dsh-sandbox install` substitutes the absolute path to
+# bin/hc-socket-mask.mjs and writes this item inside its managed block; install refuses a
+# relative or missing wrapper path, and check fails on a relative one. Do not copy this file into
+# a profile by hand.
+#
+# Rollout: the pack copies the wrapper byte-equal from its release and runs the helper at
+# enablement; the proxy lane sets the switch and absolute AM_HC_REAL_SOCKET / AM_HC_PROXY_SOCKET
+# per pane (the wrapper refuses a pane without the absolute proxy path).
+# Nothing here is installed on a live profile until then (README.md, "Rollout").
+- id: sandbox
+  config:
+    runnerCommand: ['{{WRAPPER}}']
+    runnerFailureSignatures: ['hc-socket-mask: ']
