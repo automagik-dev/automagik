@@ -735,6 +735,12 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(templateAgent("bash -c 'claude --model x'"), "claude");
   assert.equal(templateAgent('/usr/bin/env PATH=/x /bin/sh -c "omp --auto-approve"'), "omp");
   assert.equal(templateAgent('sh -c "claude --model omp-turbo"'), "claude", "the quoted command's own agent");
+  // The agent is each simple command's PROGRAM, never a bare agent word in an argument (F2).
+  assert.equal(templateAgent('sh -c "claude; omp"'), null, "two programs with two agents: fail closed");
+  assert.equal(templateAgent('sh -c "echo omp"'), null, "omp is an argument, not a program");
+  assert.equal(templateAgent('sh -c "cd x && omp --auto-approve"'), "omp");
+  assert.equal(templateAgent('env A=1 sh -c "exec omp"'), "omp");
+  assert.equal(templateAgent("omp | tee log"), "omp");
   assert.equal(startRow({ kind: "worker", terminal: "t9", botId: ID.dev, template: "dev-sol" }).template, "dev-sol");
   assert.match(workerPlan({ name: "G", agent: "claude" }, { template: "x", model: "m" }).error, /--template goes alone, without --model/);
   assert.equal(sessionChange(null, JSON.stringify({ session_id: "s2" })), null);
