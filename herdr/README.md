@@ -575,7 +575,12 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
   its status to hc), so an agent that exits at startup (a stale resume, a failed swap) never
   leaves the space empty. A replacement that doesn't make it is ended, and the old pane keeps
-  running. It resumes the conversation by its session id, for every agent that resumes one: the
+  running. The launch is rebuilt from its current source — a live hc template's current command,
+  else the bot's agent row and model pin, plus the agent's own resume words — never copied from
+  the old pane, so a flag the source no longer names (a retired proxy, say) doesn't survive.
+  When the pane's command differs, one line names the flag names only, their values masked
+  (#597); a template hc no longer lists falls back to the agent row, and the line names it.
+  It resumes the conversation by its session id, for every agent that resumes one: the
   id on the pane (`agent.session`, carried to the new pane, or a reviver's `revive.session`),
   else the workers ledger's last session row for that terminal (`claude --resume <id>`,
   `codex resume <id>`, `omp --resume=<id>`, `pi --session <id>`, `kimi --session=<id>`,

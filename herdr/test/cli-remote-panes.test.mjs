@@ -428,6 +428,19 @@ test("restart --machine of a pane that reports no status: refused in plain words
   assert.deepEqual(keysSent(s.calls()), [], "never a key to the pane, so never an approval answered");
 });
 
+test("restart --machine names a pane's stale flags without their values (#597 review F2/F4)", (t) => {
+  const stale = ["/usr/bin/env", "PATH=/old", "hermes", "--tui", "--proxy=http://user:token@proxy.example:8080"];
+  const s = scene(t, { terminals: [atlasPane({ status: { state: "idle", app: "hermes" }, argv: stale })] });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  const r = s.cli(["restart", "Atlas", ...s.on, "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /Atlas: its pane's command differs from its source now \(drops --proxy=\*\*\*\): restarting from the source/);
+  assert.equal(r.err.includes("proxy.example"), false, "the value is masked");
+  assert.equal(r.err.includes("user:token"), false, "the URL's userinfo is masked");
+  const run = s.calls().find((c) => c[0] === "run");
+  assert.ok(run.includes("--proxy=http://user:token@proxy.example:8080") === false, "the source's command, never the pane's flag");
+});
+
 test("restart --machine --tree is refused before anything is read there (#437): the bot and its helper keep running, and what to do by hand is said", (t) => {
   const helper = atlasPane({ address: "vm/t9", created_ms: 1700000000009, parent: "vm/t8", die_with_parent: true, status: { state: "idle", app: "claude" } });
   const s = scene(t, { terminals: [atlasPane({ status: { state: "idle", app: "hermes" } }), helper] });
