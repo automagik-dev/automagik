@@ -176,8 +176,12 @@ docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 
 The **compressed** figure is the sum of the registry manifest's layer sizes (`.layers[].size`),
 the compressed blobs a pull fetches; it is not a `docker save | gzip` artifact. **Unpacked** is
-the sum of the layers' regular file payloads. The earlier 193 MiB figure was a `docker save` gzip
-artifact of 202,734,124 bytes, a different count and never the image size.
+the sum of the 18 layers' regular-file payloads, counted layer by layer, so a file a later layer
+replaces or deletes is counted again in its own layer; this is what `docker image inspect .Size`
+reports (521.2 MiB for this image). **Flattened rootfs** is the other count: extract all 18 layers
+into one directory and sum the regular-file bytes that remain, 541,605,298 bytes (516.52 MiB).
+The earlier 193 MiB figure was a `docker save` gzip artifact of 202,734,124 bytes, a different
+count and never the image size.
 
 `yoga` (IncusOS, Incus 7.6, ZFS), 2026-11-07, on the image in the table below. Pull and create
 are the Incus timings for the launch. Memory is the instance's cgroup (`memory.current`) unless
@@ -187,7 +191,8 @@ the row says RSS; anon and file are the 5-minute split.
 |---|---|
 | Image | `sha256:f3ba1643b147fa78f76bf05e736d17c11c5e4f3fd2589469f327093c225fba09` |
 | Layers | 18 |
-| Unpacked | 516.8 MiB |
+| Unpacked (per-layer sum) | 546,556,270 bytes (521.24 MiB) |
+| Flattened rootfs | 541,605,298 bytes (516.52 MiB) |
 | Compressed OCI blobs | 185,312,829 bytes (176.7 MiB) |
 | Pull | 21.3 s |
 | Create | 4.3 s |
@@ -199,8 +204,8 @@ the row says RSS; anon and file are the 5-minute split.
 | CPU | 0.09% of one core |
 | Warnings | none |
 
-The **350 MB unpacked target is not reachable** (516.8 MiB). The **350 MB compressed target is
-met** (176.7 MiB).
+The **350 MB unpacked target is not reachable** (546,556,270 bytes, 521.24 MiB across layers).
+The **350 MB compressed target is met** (176.7 MiB).
 
 ## Health
 
