@@ -38,6 +38,19 @@ describe('the plugin lane', () => {
     expect(kindOf([...wslc, 'apps/desktop/electron-builder.yml'], none)).toBe('full');
   });
 
+  test('the server image (server/) is built by CI only and ships nothing until a release carries it', () => {
+    const none = () => false;
+    const server = ['server/Dockerfile', 'server/assemble.mjs', 'server/entrypoint.mjs', 'server/smoke.mjs',
+      'server/README.md', 'server/test/lib.test.mjs'];
+    // Alone: no release at all.
+    expect(ships(server, none)).toBe(false);
+    // Beside a plugin: a plugin patch, no desktop build.
+    expect(kindOf([...server, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...server, 'apps/bots-dsh/src/host/turns.js'], none, none, [...server, 'apps/bots-dsh/src/host/turns.js'])).toBe('plugins');
+    // The app's own code is still a full release.
+    expect(kindOf([...server, 'apps/desktop/src/main.js'], none)).toBe('full');
+  });
+
   test('the landing page (apps/landing/) ships from the site, never from a release', () => {
     const none = () => false;
     const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/assets/hero.png',

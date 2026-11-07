@@ -1,0 +1,21 @@
+{
+  "name": "automagik-web-profile",
+  "private": true,
+  "description": "The automagik-web dsh profile the server image ships: dsh's base and web app, the Bot team, the welcome and ACP agents, from Automagik's release tarballs. The image's build rewrites the file: tarball names to the version it pins.",
+  "dependencies": {
+    "@automagik/acp-dsh": "file:vendor/automagik-acp-dsh-3.90.1.tgz",
+    "@automagik/bots-dsh": "file:vendor/automagik-bots-dsh-3.90.1.tgz",
+    "@automagik/welcome-dsh": "file:vendor/automagik-welcome-dsh-3.90.1.tgz"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@automagik/bots-dsh",
+        "@automagik/welcome-dsh",
+        "@automagik/acp-dsh"
+      ]
+    }
+  }
+}

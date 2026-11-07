@@ -1,0 +1,31 @@
+# The automagik-web server's own dsh profile. It mirrors the desktop profile's safety rows
+# (apps/desktop/profile/cordis.patch.yml) without the app-only ones: no plugin-market row
+# (the image loads no market bundle) and no Omni-specific rows.
+- insert:
+    - id: web-search-auto
+      name: '@automagik/bots-dsh/web-search'
+- id: web
+  config:
+    searchProvider: auto
+    fetchProvider: http
+# No local web fetch. DSH's HTTP provider has no private-address guard, and the Bot team reads
+# text from external channels: with web fetch on, a prompt injection reaches this machine's
+# localhost services. DSH exposes no "public addresses only" switch, so the provider is off
+# for every Session of this profile; web search (above), the browser tools and the file tools
+# are unaffected.
+- id: web-fetch-http
+  disabled: true
+# Read before write stays on: dsh 0.2.2 ships the policy row disabled, so write would overwrite
+# and edit would replace a file the model never read. apply_patch stays off (dsh 0.2.2-rc.1
+# already disables it in this profile's presets): it applies hunks on context alone, bypassing
+# the read this row requires.
+- id: fs-observation-policy
+  disabled: false
+# DSH's own welcome notice and credential step stay off: the welcome plugin is the server's
+# Connect AI surface. DSH compares the notice version exactly: it stays a quoted string.
+- id: ui-settings-general
+  config:
+    welcomeNoticeVersion: '2026-09-28.1'
+- id: ui-settings-models
+  config:
+    credentialOnboarding: false
