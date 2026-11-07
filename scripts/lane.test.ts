@@ -90,6 +90,13 @@ describe('the plugin lane', () => {
     // The binary ships from its own release lane: nothing here reaches an install, so no release kind.
     expect(ships(scheduler, none)).toBe(false);
     expect(herdrShips(scheduler)).toBe(false);
+    // The check script (herdr/scripts/scheduler-upstream.mjs) is tooling too: on its own, and beside
+    // the scheduler, it cuts no release and never reaches the pack.
+    const check = ['herdr/scripts/scheduler-upstream.mjs'];
+    expect(ships(check, none)).toBe(false);
+    expect(herdrShips(check)).toBe(false);
+    expect(ships([...scheduler, ...check], none)).toBe(false);
+    expect(herdrShips([...scheduler, ...check])).toBe(false);
     // Beside a plugin change it is a plugin patch; beside an app change, a full release.
     expect(kindOf([...scheduler, 'apps/bots-dsh/client.js'], none, none, [...scheduler, 'apps/bots-dsh/client.js'])).toBe('plugins');
     expect(kindOf([...scheduler, 'apps/desktop/src/main.js'], none, none, [...scheduler, 'apps/desktop/src/main.js'])).toBe('full');
