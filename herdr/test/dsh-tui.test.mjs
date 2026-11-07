@@ -15,7 +15,8 @@ import {
 } from "../mods/am-sidebar/dshTui.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
-const PUBLISHED = "2026-11-06T03:36:00Z";
+/** The pinned release's publish time: an hour before this run, so the fresh path never depends on the wall clock. */
+const PUBLISHED = new Date(Date.now() - 3600e3).toISOString();
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 /**
@@ -160,7 +161,7 @@ function seedProfile(s, { version = DSH_TUI.version, record = false } = {}) {
 
 test("install pins exactly 0.19.0 with its integrity into the dsh-tui profile only", async (t) => {
   const s = scene(t);
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-06T10:00:00Z") });
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse(PUBLISHED) + 3600e3 });
   assert.equal(r.status, "installed", r.detail);
   const state = profileState(join(s.home, ".dsh"));
   assert.equal(state.pin, DSH_TUI.version);
@@ -419,10 +420,11 @@ test("no dsh: one honest line, nothing written", async (t) => {
 test("the release-age exception is exact, leaves other packages alone, and is pruned once aged", async (t) => {
   const s = scene(t);
   const workspace = join(s.home, ".dsh", "profiles", PROFILE, "pnpm-workspace.yaml");
-  const young = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-06T10:00:00Z") });
+  const publishedAt = Date.parse(PUBLISHED);
+  const young = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 3600e3 });
   assert.equal(young.status, "installed", young.detail);
   assert.deepEqual(releaseAgeEntries(readFileSync(workspace, "utf8")), [PIN]);
-  const aged = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse("2026-11-09T10:00:00Z") });
+  const aged = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 72 * 3600e3 });
   assert.equal(aged.status, "installed");
   assert.deepEqual(releaseAgeEntries(readFileSync(workspace, "utf8")), []);
   assert.match(aged.lines.join("\n"), /Removed the release-age exception for .*older than the profile's minimumReleaseAge/);
