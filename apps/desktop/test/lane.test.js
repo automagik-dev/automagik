@@ -236,7 +236,7 @@ test('Automagik\'s lane updates only the plugins it names, never an add-on it do
   assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1'])
 })
 
-// The Unfold bridge left this lane (Refs marketplace/unfold): Unfold's own release ships it. The
+// Unfold's plugins left this lane (Refs marketplace/unfold): Unfold's own release ships them. The
 // lane is additive, never a mirror: a plugin it stops carrying is still installed, still at its
 // version, with its profile entry and its data, through every lane update.
 test('a lane that stops carrying a plugin leaves the installed one, and its data, untouched', async (t) => {
@@ -281,6 +281,19 @@ test('a lane that stops carrying a plugin leaves the installed one, and its data
   // The lane's record names what it moved, and only that: no removal, no bridge.
   const applied = JSON.parse(readFileSync(join(home, 'lane', 'applied.json'), 'utf8'))
   assert.deepEqual(applied.plugins.map(plugin => plugin.name), ['@automagik/bots-dsh'])
+})
+
+// The other eight left with the bridge: a stale lane naming every Unfold plugin is still only a
+// lane for the plugins the publisher lists, so one lane update moves none of them.
+test('a lane carrying every Unfold plugin updates none of them', () => {
+  const unfold = ['bot', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory', 'bridge']
+    .map(name => `@automagik/unfold-${name}-dsh`)
+  assert.equal(automagik.plugins.some(name => name.startsWith('@automagik/unfold-')), false)
+  const plugin = (name, version) => ({ ...lane().plugins[0], name, version })
+  const carried = lane({ plugins: [plugin('@automagik/bots-dsh', '3.22.1'), ...unfold.map(name => plugin(name, '3.22.1'))] })
+  const installed = { ...context.installed, ...Object.fromEntries(unfold.map(name => [name, '3.20.0'])) }
+  const update = laneUpdate(carried, { ...context, installed })
+  assert.deepEqual(update?.plugins.map(plugin => plugin.name), ['@automagik/bots-dsh'])
 })
 
 // A bare `tar` on Windows can be Git for Windows' GNU tar, which reads C:\... as a remote host.

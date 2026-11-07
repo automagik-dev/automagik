@@ -37,16 +37,15 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 // versions, and its base is the oldest app it runs on. Automagik's lane also carries the add-ons
 // the profile pins that have no dependencies of their own (its `addons`, scripts/lane.ts
 // LANE_ADDONS), so a pin move needs no new app either. Besides the profile's own three, it updates
-// the Automagik plugins a person added from the market (Portuguese, Unfold's — but not the
-// Unfold bridge: it is not preinstalled and this lane no longer carries it, Unfold's own release
-// ships it; an installed bridge is left exactly as it is), as Genie's lane does
+// the Automagik plugins a person added from the market (Portuguese). It names no Unfold plugin:
+// none is preinstalled and this lane does not carry them, Unfold's own release ships them
+// (Refs marketplace/unfold); an installed one is left exactly as it is, as Genie's lane does
 // Genie; a plugin that is not installed is never taken. Swapping a plugin's folder is safe because
 // a lane patch never changes what a plugin is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS)
 // makes any change to a plugin's dependencies, peers, engines or entry points a full release, a new
 // app, and never a plugin-only patch. So the dependencies pnpm laid out for the installed version
 // are the new version's too.
-export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh',
-  ...['bot', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory'].map(name => `@automagik/unfold-${name}-dsh`)])
+export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh'])
 export const PUBLISHERS = Object.freeze([
   { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: AUTOMAGIK_PLUGINS },
   { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },

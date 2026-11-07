@@ -3,8 +3,8 @@
  * Automagik's DSH plugin market index (marketplace/automagik.json, format 1): this repository's
  * plugins, each a git source pinned to a release commit with the plugin's folder, and the outside
  * plugins Automagik vetted (VETTED), each pinned to the commit that was reviewed. Unfold's
- * plugins are built and released here but never listed (`unlisted`): they come with Unfold's
- * own instance, not from a market.
+ * plugins are built and tested here but never listed (`unlisted`): they come with Unfold's own
+ * instance, not from a market, and Unfold's own release ships them.
  *
  *   bun scripts/marketplace.ts check        DSH's own parser, then every entry proven against this repository
  *   bun scripts/marketplace.ts pin <ref>    list the plugins at <ref> (a release tag), at its version

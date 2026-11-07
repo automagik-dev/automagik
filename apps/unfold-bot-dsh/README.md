@@ -11,7 +11,7 @@ Unfold for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (
 
 ## Its defaults
 
-The Unfold Bot type starts with the Unfold bridge and the six Unfold companion bundles (`UNFOLD_PLUGINS` in `src/host/unfold.js`). They are versioned together in this repository, but this repository's release lane does not carry the bridge: it is built and tested here and ships from Unfold's own release, and it is never preinstalled. The six companion bundles are released here at its one version; the welcome installs their release tarballs, or their sibling paths when the welcome comes from a linked checkout or a pinned git source. Unfold's own instance brings the bridge and the companions bundled. The SSE library is shipped in the streaming bundles; it is released separately for reuse and is not installed as a DSH bundle.
+The Unfold Bot type starts with the Unfold bridge and the six Unfold companion bundles (`UNFOLD_PLUGINS` in `src/host/unfold.js`). They are versioned together in this repository, but this repository's releases carry none of them (Refs marketplace/unfold): they are built and tested here and ship from Unfold's own release, and none is preinstalled. Unfold's own instance brings the bridge and the companions bundled. The SSE library is shipped in the streaming bundles; it is built and tested here too and is not installed as a DSH bundle.
 
 | Plugin | What it brings |
 |---|---|
@@ -24,7 +24,7 @@ The Unfold Bot type starts with the Unfold bridge and the six Unfold companion b
 | `@automagik/unfold-trajectory-dsh` | Each run, step by step |
 | `@automagik/unfold-session-dsh` | Unfold's own session, in DSH |
 
-The welcome (`@automagik/welcome-dsh`) installs them in that order, after the Bot team, when the person powers Unfold on in the team step. Unfold's own instance has them preinstalled, so choosing Unfold installs nothing and needs no git.
+Unfold's own instance has them all preinstalled, so choosing Unfold installs nothing and needs no git. This repository's release carries none of them, so the welcome's Unfold card is offered only there; anywhere else they are added by hand from a git source of this repository (or from Unfold's own release once it carries them).
 
 ## Develop
 

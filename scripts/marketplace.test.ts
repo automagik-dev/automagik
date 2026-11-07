@@ -22,7 +22,6 @@ describe('market index', () => {
     const ours = index.plugins.filter((plugin: IndexPlugin) => plugin.versions[0]?.source.url === REPO_URL);
     const listed = ours.map((plugin: IndexPlugin) => plugin.name);
     // A plugin not released yet is listed by its first release's pin, from its automagik.market.
-    // A library the plugins carry (no dsh block: unfold-sse-dsh) is not a plugin and is never listed.
     for (const name of pluginNames().filter((name) => !listed.includes(name))) {
       const manifest = JSON.parse(readFileSync(join(repoDir, 'apps', name.replace('@automagik/', ''), 'package.json'), 'utf8'));
       if (!manifest.dsh) {
@@ -49,8 +48,8 @@ describe('market index', () => {
   test('no Unfold plugin is listed: they come with Unfold\'s own instance, and a release never adds one', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
     expect(index.plugins.filter((plugin: { name: string }) => plugin.name.startsWith('@automagik/unfold-'))).toEqual([]);
-    // Built and released all the same.
-    expect(pluginNames().filter(unlisted).length).toBeGreaterThan(0);
+    // Built and tested here all the same, but outside this repository's release set.
+    expect(pluginNames().filter(unlisted)).toEqual([]);
     // A listing left over from before is dropped at the next release, and the check refuses one.
     const listed = { ...index, plugins: [{ name: '@automagik/unfold-bridge-dsh', versions: [{ version: '1.0.0', publishTimestamp: 1, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' } }] }] };
     expect(checkIndex(structuredClone(listed), repoDir)).toContain('@automagik/unfold-bridge-dsh: is unlisted, so the index must not carry it');

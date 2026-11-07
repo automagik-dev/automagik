@@ -65,15 +65,16 @@ describe('the plugin lane', () => {
     expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 
-  test('the Unfold bridge is built and tested here but ships from Unfold\'s own release', () => {
+  test('every Unfold plugin is built and tested here but ships from Unfold\'s own release', () => {
     const none = () => false;
-    const bridge = ['apps/unfold-bridge-dsh/src/host/bridge.js', 'apps/unfold-bridge-dsh/client.js', 'apps/unfold-bridge-dsh/package.json'];
+    const unfold = ['bot', 'bridge', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory']
+      .map((name) => `apps/unfold-${name}-dsh/src/index.js`);
     // Alone: no tarball, no lane entry, no release here (Refs marketplace/unfold).
-    expect(ships(bridge, none)).toBe(false);
-    // Beside a plugin: that plugin's patch, and the lane still names no bridge.
-    expect(ships([...bridge, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
-    expect(kindOf([...bridge, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
-    // Nor is its folder a plugin's for `unpackedIn`: nothing in it rides the lane.
+    expect(ships(unfold, none)).toBe(false);
+    // Beside a plugin: that plugin's patch, and the lane still names no Unfold plugin.
+    expect(ships([...unfold, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
+    expect(kindOf([...unfold, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    // Nor is an Unfold folder a plugin's for `unpackedIn`: nothing in it rides the lane.
     expect(kindOf(['apps/unfold-bridge-dsh/dev/harness/package.json', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 

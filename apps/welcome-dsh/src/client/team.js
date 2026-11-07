@@ -16,10 +16,10 @@ import { t } from './i18n.js'
 // what it found, or the ways to reach one. A link made here completes the Connect Omni step
 // by itself; anything the card cannot finish waits for that step. Genie's power button
 // installs its plugin (@automagik/genie-dsh, with the Bot team under it in a plain DSH), which
-// puts the Genie Bot on the team. Unfold's does the same with its plugin and defaults
-// (@automagik/unfold-bot-dsh), which put the Unfold Bot on the team. In Unfold's own instance
-// (state.host 'unfold') Omni and Genie come bundled: Omni's card offers no new Omni of its own
-// and Genie's no line to paste into a terminal. Its copy is the welcome.team namespace (i18n.js).
+// puts the Genie Bot on the team. Unfold's card is shown only in Unfold's own instance
+// (state.host 'unfold'), where its plugin and defaults come bundled: it installs nothing. Omni
+// and Genie come bundled there too: Omni's card offers no new Omni of its own and Genie's no line
+// to paste into a terminal. Its copy is the welcome.team namespace (i18n.js).
 
 export const WAKE_MS = 1100
 export const LOOK_MS = 1800
