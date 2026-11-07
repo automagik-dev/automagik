@@ -32,11 +32,13 @@ const tag = args.tag || 'automagik-server:local'
 const version = args.version || '3.90.1'
 const dsh = args.dsh || '0.2.2-rc.1'
 const repository = args.repository || 'https://github.com/automagik-dev/automagik'
+// The context is explicit: GitHub aliases `docker build` to buildx, which requires it.
 const command = ['build', '--file', 'server/Dockerfile', '--tag', tag,
   '--build-arg', `AUTOMAGIK_VERSION=${version}`,
   '--build-arg', `DSH_VERSION=${dsh}`,
   '--build-arg', `AUTOMAGIK_REPOSITORY=${repository}`]
 if (!args.cache) command.push('--no-cache')
+command.push('.')
 
 console.log(`[build] docker ${command.join(' ')} ${ROOT}`)
 execFileSync('docker', command, { cwd: ROOT, stdio: 'inherit' })
