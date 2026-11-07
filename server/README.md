@@ -10,11 +10,12 @@ or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as 
 Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at the release in
 `server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1` for a manual build). CI sets
 `AUTOMAGIK_VERSION` to the newest stable release that carries `plugins.json`, because a herdr,
-Pocket or am patch carries no plugin tarballs; the image's `:<version>` tag and its
-`org.opencontainers.image.version` label are the repository version (`IMAGE_VERSION`). A
-`versions.json` inside the image names the plugin release it installed. Each tarball is checked
-against the release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256)
-before dsh installs it.
+Pocket or am patch carries no plugin tarballs (a build-only run falls back to that release; a
+publish dispatch requires the dispatched version's own release to carry the plugin tarballs).
+The image's `:<version>` tag and its `org.opencontainers.image.version` label are the repository
+version (`IMAGE_VERSION`). A `versions.json` inside the image names the plugin release it
+installed. Each tarball is checked against the release's `plugins.json` (sha512 integrity, size)
+and `PLUGINS.SHA256SUMS` (sha256) before dsh installs it.
 
 ## Pull
 
@@ -36,7 +37,7 @@ Three stages, every base digest-pinned:
 |---|---|
 | `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, fetches and verifies the release tarballs, installs the profile with dsh's own `plugin … install`, prunes what the profile does not compose, writes `versions.json` |
 | `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
-| `runtime` | `gcr.io/distroless/nodejs24-debian12`: node and glibc, the code, the tools above (man pages and changelogs removed), nothing else — no apt, npm, curl or build toolchain |
+| `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
 
 The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.2. The
 pruned payload keeps everything the composed tree names — office-to-pdf and its
@@ -170,25 +171,27 @@ entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)
 The workflow extracts the built image's rootfs (`docker export`; the image is never run), lists
 every file and scans it before logging in or pushing (`server/secrecy.mjs`). Every file gets the
 repository's own privacy grep (`herdr/scripts/privacy-check.mjs`, same deny list) plus the image
-rules: a provider key, a `token=` or JSON token field, a private-key block with a real base64
-body, a `.env` or `launch-url` file, any file under `/data` (the image bakes no profile, bot/team
-state, workspace or secret), a home or `/mnt/ai` path, a credential URL, an archive (not opened
-by this scan), or an environment variable named like a secret. The image's config is scanned too.
-A hit fails the job.
+rules: a provider key, a `token=` or JSON token field, a private-key block with a real body (a
+base64 line of any length, a short final line, or a `Proc-Type`/`DEK-Info` header; a bare
+`BEGIN`/`END` label is not a key), a `.env` or `launch-url` file, any file under `/data` (the
+image bakes no profile, bot/team state, workspace or secret), a home or `/mnt/ai` path, a
+credential URL, an archive (not opened by this scan), or an environment variable named like a
+secret. The image's config is scanned too. A hit fails the job.
 
 The only exceptions are exact entries in `server/secrecy-allowlist.json`: one file, one rule and
 the exact matched string (or its sha256), each with a reason. There are no path patterns, and a
 key, `/data`, this repository's own code, `/etc` or a config file may never be allowlisted. A
-private-key block is an entry only in a required vendored library (the six real gnutls test keys
-with base64 bodies; a bare `BEGIN`/`END` label is not a key), and the Node binary's `/home/iojs`
-is excused only when that binary's sha256 matches the entry's pin. The workflow lists the entries
-used and reports a stale entry.
+private-key block is an entry only for the six reviewed gnutls test vectors in
+`usr/lib/x86_64-linux-gnu/libgnutls.so.30`; each names its gnutls source and pins both the block
+sha256 and the containing library's `sha256sum` (so a library update stops matching). The Node
+binary's `/home/iojs` is excused only when that binary's `sha256sum` matches the entry's pin. The
+workflow lists the entries used and reports a stale entry.
 
 The image is shrunk before the scan: third-party test, example and docs folders, non-Linux
 prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`), and the
-runtime stage removes the distroless `usr/share/doc`, `man`, `info` and `lintian` pages (it
-copies the tools' shell and closure first for that one `RUN`). The `archive` rule never allows an
-archive that is left.
+`tools` stage copies the distroless rootfs, strips `usr/share/doc`, `man`, `info` and `lintian`
+there with coreutils, and the final `scratch` copies that cleaned rootfs. There is no `rm` in
+the runtime image. The `archive` rule never allows an archive that is left.
 
 The image's `/etc/passwd` is the repository's own (`server/passwd`), with no `/home/<user>`; the
 distroless `nonroot` home is not in the image. The layer list is the image's RootFS plus
@@ -228,7 +231,8 @@ The unit tests cover the token redaction, the startup-line match, the private-ke
 first-start-only seed, the pnpm-store pin, the tarball verification, the third-party prune, and
 the secrecy gate: 17 negative probes (keys, tokens, a real-shaped fake private key, `/mnt/ai`,
 homes, a private name, credentials, `.env`, `launch-url`, `/data` state, an archive, and a key
-that the allowlist may never excuse), that a bare PEM label is not a key, that the Node build
-account is excused only for the pinned binary hash, the exact allowlist, and that the image's own
-redaction regex is not mistaken for a token. The smoke is the real check of the image; the
-workflow runs the scan on the real rootfs before pushing.
+that the allowlist may never excuse), that a bare PEM label is not a key while a short final
+line and a `Proc-Type`/`DEK-Info` header are, that a private-key entry is allowed only for the
+gnutls library, that the Node build account is excused only for the pinned binary hash, the exact
+allowlist, and that the image's own redaction regex is not mistaken for a token. The smoke is
+the real check of the image; the workflow runs the scan on the real rootfs before pushing.

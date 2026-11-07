@@ -87,13 +87,33 @@ test('the 17 negative probes all stay failures', () => {
   }
 })
 
-test('a bare PEM label constant is not a key; a real body is', () => {
+test('a bare PEM label constant is not a key; a real body, short last line and header are', () => {
   const dir = rootfs()
   write(dir, 'opt/leak/label.txt', '-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n')
   // The repository's privacy grep still reports a bare header as `secret`; the key rule does not.
   assert.deepEqual(scanTree(dir, undefined, []).hits.filter((hit) => hit.rule === 'private-key'), [])
-  write(dir, 'opt/leak/real.txt', `-----BEGIN PRIVATE KEY-----\n${'A'.repeat(64)}\n-----END PRIVATE KEY-----\n`)
-  assert.ok(scanTree(dir, undefined, []).hits.some((hit) => hit.rule === 'private-key'))
+  const bodies = [
+    `${'A'.repeat(64)}\n`,
+    `${'A'.repeat(64)}\nAAAA\n`,
+    `Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,0123456789ABCDEF\n\nAAAAAA\n`,
+    'AAAAAA\n',
+  ]
+  bodies.forEach((body, index) => {
+    const file = `opt/leak/real-${index}.txt`
+    write(dir, file, `-----BEGIN PRIVATE KEY-----\n${body}-----END PRIVATE KEY-----\n`)
+    assert.ok(scanTree(dir, undefined, []).hits.some((hit) => hit.rule === 'private-key' && hit.file === file), `body ${index}`)
+  })
+})
+
+test('a private-key entry is allowed only for the gnutls library', () => {
+  const file = join(temp(), 'allowlist.json')
+  writeFileSync(file, JSON.stringify([{
+    file: 'opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/soffice.wasm',
+    rule: 'private-key',
+    sha256: 'a'.repeat(64),
+    reason: 'not the gnutls library',
+  }]))
+  assert.throws(() => loadAllowlist(file), /private-key may not be allowlisted here/)
 })
 
 test('the node build account is excused only for the pinned binary hash', () => {

@@ -9,15 +9,18 @@ name: Server image
 # the image label stay the repository version.
 #
 # The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
-# and fails the job on a provider key, a token= or JSON token field, a private-key block, a
-# .env or launch-url file, bot/team state under /data, a home or /mnt/ai path, a git credential,
-# an archive, a hit from the repository's own privacy grep, or a secret-looking env name. The
-# only exceptions are exact reviewed entries in server/secrecy-allowlist.json (one file, one
-# rule, the exact match; keys, private-key blocks, /data, our own code, /etc and config may
-# never be allowlisted). Third-party test/example/docs folders are pruned from the image before
-# the scan. A self-check in image mode proves a planted key still fails; the layer list, file
-# inventory, allowlist used and external symlinks are kept as an artifact. The image is never
-# run by the scan.
+# and fails the job on a provider key, a token= or JSON token field, a private-key block with a
+# real body, a .env or launch-url file, bot/team state under /data, a home or /mnt/ai path, a git
+# credential, an archive, a hit from the repository's own privacy grep, or a secret-looking env
+# name. The only exceptions are exact reviewed entries in server/secrecy-allowlist.json (one
+# file, one rule, the exact match; keys, /data, our own code, /etc and config may never be
+# allowlisted; a private-key block only for the six reviewed gnutls test vectors, pinned by the
+# block and containing-library sha256). Third-party test/example/docs folders, non-Linux
+# prebuilds and the profile's vendor tarballs are pruned before the scan, and the tools stage
+# strips the distroless man/changelog pages before the final scratch image copies that rootfs.
+# A self-check in image mode proves a planted key still fails; the layer list, file inventory,
+# allowlist used and external symlinks are kept as an artifact. The image is never run by the
+# scan.
 #
 # No key is baked and no test token is in this workflow: the only credential is GITHUB_TOKEN,
 # used to log in to the registry and to read the release's assets. It is not passed to docker
@@ -26,9 +29,12 @@ name: Server image
 #
 # A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
 # events made with that token), so the cut's own releases do not trigger this automatically:
-# dispatch this workflow on dev after the release exists, or on its v<version> tag. A release
+# dispatch this workflow on a v<version> tag whose release carries plugins.json (the last
+# full/plugin release), or on dev when its package version has such a release. A release
 # published by hand (or by a PAT) triggers it. A release with no plugins.json (a herdr, Pocket
-# or am patch) carries no plugin tarballs: the build is skipped and nothing is pushed.
+# or am patch) carries no plugin tarballs: the build is skipped and nothing is pushed, and a
+# publish dispatch at such a version is refused (a build-only run falls back to the newest
+# release that has them).
 
 on:
   pull_request:
@@ -132,11 +138,11 @@ jobs:
                   exit 1
                   ;;
               esac
-              content="$(resolve_content)"
-              if [[ -z "${content}" ]]; then
-                echo "::error::no stable release carries plugins.json; nothing to pin the plugins from"
+              if ! has_plugins "v${version}"; then
+                echo "::error::v${version} carries no plugins.json (a herdr/Pocket/am patch); a publish dispatch needs a version whose release has the plugin tarballs (dispatch its v<version> tag, e.g. the last full/plugin release)"
                 exit 1
               fi
+              content="${version}"
               publish=true
               ;;
             release)

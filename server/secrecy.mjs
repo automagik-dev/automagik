@@ -58,9 +58,10 @@ export const SECRET_RULES = [
   { rule: 'key', re: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, mask: () => 'github_pat_***' },
   { rule: 'key', re: /\bAKIA[0-9A-Z]{16}\b/g, mask: () => 'AKIA***' },
   { rule: 'key', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, mask: () => 'xox***' },
-  // A real block: a header, at least one base64 body line, and a footer. A bare label constant
-  // (the string gnutls/soffice hold) is not a key.
-  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:[A-Za-z0-9+/=]{16,}[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
+  // A real block: a header, at least one body element (a base64 line of any length, including a
+  // short final line, a Proc-Type/DEK-Info header, or the blank line after it), and a footer. A
+  // bare BEGIN/END label constant is not a key.
+  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:(?:Proc-Type|DEK-Info):[^\r\n]*[\r\n]+|[\r\n]+|[A-Za-z0-9+/=]+[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
   { rule: 'private-path', re: /\/mnt\/ai(?:\/|\b)/g, mask: () => '/mnt/ai' },
 ]
 export const TOKEN_RULES = [
@@ -77,11 +78,11 @@ export const SERVER_RULES = [...SECRET_RULES, ...TOKEN_RULES, ...CREDENTIAL_RULE
 const NEVER_ALLOW_RULE = new Set(['key', 'data-state', 'launch-url', 'dotenv', 'env-secret', 'archive', 'unreadable'])
 /** Paths that may never be allowlisted: /data, our own code, /etc and its config. */
 const NEVER_ALLOW_PATH = /^(?:data\/|opt\/automagik\/(?:[^/]+\.mjs|versions\.json)|opt\/automagik\/profile\/(?:package\.json|cordis\.patch\.yml|pnpm-workspace\.yaml)|opt\/automagik\/profile\/node_modules\/@automagik\/|usr\/local\/bin\/(?:dsh|pnpm)$|etc\/)/
-/** A private-key block in a required vendor binary may be an exact entry; nowhere else. */
-const VENDORED = /^(?:opt\/automagik\/(?:runtime|profile)\/node_modules\/|usr\/lib\/)/
+/** Only the six reviewed gnutls test-vector blocks may be private-key entries; nowhere else. */
+const PRIVATE_KEY_ALLOW = /^usr\/lib\/x86_64-linux-gnu\/libgnutls\.so\.30$/
 const allowable = (entry) => !NEVER_ALLOW_RULE.has(entry.rule)
   && !NEVER_ALLOW_PATH.test(entry.file)
-  && (entry.rule !== 'private-key' || VENDORED.test(entry.file))
+  && (entry.rule !== 'private-key' || PRIVATE_KEY_ALLOW.test(entry.file))
 
 /**
  * The reviewed exceptions: one exact file, one rule and the exact matched string (or its

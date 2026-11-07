@@ -7,11 +7,14 @@
 # Build from the repository root (the builder reuses the desktop's pinned runtime lock):
 #   docker build -f server/Dockerfile -t automagik-server .
 #
-# The runtime is distroless: node and glibc, the image's code, and the tools Bots need in their
-# shell (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build
-# toolchain. The release pins are build args; every plugin tarball is checked against the
-# release's plugins.json (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh
-# installs it (server/fetch-plugins.mjs).
+# The runtime is the distroless nodejs24 rootfs (node and glibc), cleaned in the tools stage
+# (no man pages or changelogs), plus the image's code and the tools Bots need in their shell
+# (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build toolchain. The release
+# pins are build args; every plugin tarball is checked against the release's plugins.json
+# (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh installs it
+# (server/fetch-plugins.mjs).
+
+FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS base
 
 FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS builder
 
@@ -43,12 +46,18 @@ RUN node /build/server/assemble.mjs \
 # the distroless nodejs24-debian12 base.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS tools
 
+# The distroless rootfs, stripped here where coreutils exist, before it is copied into the final
+# image. No man pages or changelogs (nothing reads them, and their .gz files are archives the
+# secrecy scan refuses); the shell and libraries Bots need stay.
+COPY --from=base / /out/rootfs
+
 RUN set -eux; \
+    rm -rf /out/rootfs/usr/share/doc /out/rootfs/usr/share/man /out/rootfs/usr/share/info /out/rootfs/usr/share/lintian; \
     apt-get update; \
     apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
-    for f in /bin/bash /bin/dash /bin/rm /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
+    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
       | awk '/=>/ {print $3}' | sort -u > /tmp/libs; \
     while read -r lib; do \
       case "$lib" in \
@@ -56,7 +65,7 @@ RUN set -eux; \
       esac; \
       cp -L "$lib" /out/lib/; \
     done < /tmp/libs; \
-    cp /bin/bash /bin/dash /bin/rm /usr/bin/git /usr/bin/rg /out/bin/; \
+    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /out/bin/; \
     ln -s /bin/dash /out/bin/sh; \
     cp -a /usr/lib/git-core /out/git-core; \
     cp -a /usr/share/git-core /out/git-core-share; \
@@ -64,7 +73,7 @@ RUN set -eux; \
     chmod 0700 /out/data/secrets; \
     chown -R 1000:1000 /out/data
 
-FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
+FROM scratch AS runtime
 
 # The image's own version (the repository's) may be a herdr/Pocket/am patch, while the plugins
 # come from the newest release that carries their tarballs. `AUTOMAGIK_VERSION` in the builder
@@ -77,17 +86,12 @@ LABEL org.opencontainers.image.title="Automagik server" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${IMAGE_VERSION}"
 
-# The distroless base has no shell. Copy dash and its closure first so this stage can remove
-# the base's man pages and changelogs: nothing reads them, and their .gz files are archives the
-# secrecy scan refuses. The shell and libraries stay (Bots need them).
+# The cleaned distroless rootfs (node, glibc and its account records) and the tools Bots need.
+COPY --from=tools /out/rootfs/ /
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
+COPY --from=tools /out/bin/bash /bin/bash
 COPY --from=tools /out/bin/dash /bin/dash
 COPY --from=tools /out/bin/sh /bin/sh
-COPY --from=tools /out/bin/rm /bin/rm
-USER root
-RUN rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian
-
-COPY --from=tools /out/bin/bash /bin/bash
 COPY --from=tools /out/bin/git /usr/bin/git
 COPY --from=tools /out/bin/rg /usr/bin/rg
 COPY --from=tools /out/git-core /usr/lib/git-core
