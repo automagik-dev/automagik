@@ -5,6 +5,7 @@
 #   remote-gate.sh --pr 123 herdr            the herdr pack's gate (AGENTS.md), per Node version
 #   remote-gate.sh --sha 1a2b3c4 plugin bots-dsh   a plugin's install, lint and node --test
 #   remote-gate.sh --sha 1a2b3c4 bun          the repository's bun run check
+#   remote-gate.sh --sha 1a2b3c4 desktop      the desktop app's npm ci and node --test
 #
 # Only the named ref is fetched from REMOTE_GATE_REMOTE, into refs/remote-gate/ (a pull request's
 # head, or one commit by its full sha when the clone lacks it); no other ref changes. It is
@@ -31,11 +32,20 @@
 #   REMOTE_GATE_GIT_TIMEOUT    seconds to wait for the clone's fetch lock (default: 600)
 #   REMOTE_GATE_KEEP_DAYS      days to keep refs/remote-gate/* and logs (default: 7)
 #   REMOTE_GATE_NODE_VERSIONS  herdr gate's Node versions, nvm-installed (default: "24 22 24.9.0")
-#   REMOTE_GATE_PLUGIN_NODE    Node for the plugin and bun gates (default: 24.9, as CI)
+#   REMOTE_GATE_PLUGIN_NODE    Node for the plugin, bun and desktop gates (default: 24.9, as CI)
+#   REMOTE_GATE_NPM_CACHE      desktop gate's npm cache (default: <REMOTE_GATE_BASE>/npm-cache)
 #   REMOTE_GATE_TEST_CONCURRENCY  herdr node --test concurrency (default: 8; Node's own default
 #                              is one less than the cores, too many beside other work)
 #   NVM_DIR                    where nvm keeps Node (default: $HOME/.nvm)
 #   CHROME_BIN                 bots-dsh's browser (default: one at a usual path, if any)
+#
+# The desktop gate runs apps/desktop's main-process tests as CI's desktop job does: Node 24.9,
+# npm ci --no-fund --no-audit with ELECTRON_SKIP_BINARY_DOWNLOAD=1, then npm test (node --test).
+# It unsets NODE_ENV (CI has none) so npm ci keeps the devDependencies. It is Electron-free: no
+# Electron binary is downloaded or started, and no app is launched. The Electron UI and boot
+# checks stay with CI (desktop-build.yml, boot-check.yml). npm's download cache lives under the
+# gate base and is reused by later gates; node_modules is installed fresh into each gate's
+# throwaway worktree, never cached across shas.
 #
 # What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, by the owner's
 # rule that it never runs on our machines (CI still runs it), and scripts/usagemeter-pin.mjs (it
@@ -43,7 +53,9 @@
 # newest one nvm has installed, not the newest released; the record names the exact one. bun is
 # whatever PATH has (CI pins 1.4.4); the record names it. The plugin gate does not fetch Omni for
 # welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,
-# and says so; with one it sets CHROME_BIN and CI as CI does.
+# and says so; with one it sets CHROME_BIN and CI as CI does. The desktop gate is CI's desktop job
+# on Linux only (CI also runs windows-latest), reusing an npm cache where CI starts cold; its Node
+# 24.9 and npm flags are CI's. Electron, the UI and the boot checks stay with CI.
 #
 # Signals: bash runs a trap only once the running command returns, so a TERM to this script
 # waits for the step in progress (a test run can take minutes) before the cleanup; a terminal's
@@ -86,7 +98,7 @@ case $kind in
   *) usage ;;
 esac
 case $gate in
-  herdr | bun) ;;
+  herdr | bun | desktop) ;;
   plugin) [[ $app =~ ^[a-z0-9-]+$ ]] || usage ;;
   *) usage ;;
 esac
@@ -110,6 +122,7 @@ git_timeout=${REMOTE_GATE_GIT_TIMEOUT:-600}
 keep_days=${REMOTE_GATE_KEEP_DAYS:-7}
 node_versions=${REMOTE_GATE_NODE_VERSIONS:-24 22 24.9.0}
 plugin_node=${REMOTE_GATE_PLUGIN_NODE:-24.9}
+npm_cache=${REMOTE_GATE_NPM_CACHE:-$base/npm-cache}
 concurrency=${REMOTE_GATE_TEST_CONCURRENCY:-8}
 if [ -n "${NVM_DIR:-}" ]; then
   nvm_dir=$NVM_DIR
@@ -502,6 +515,27 @@ gate_bun() {
   step check bun run check
   counts=$(bun_counts "$logs/check.log")
   judge "gate=bun node=$(node --version) bun=$(bun --version) files=${counts##* }" "$counts" $((SECONDS - t0))
+}
+
+gate_desktop() {
+  local dir=$wt/apps/desktop bin n t0
+  [ -f "$dir/package.json" ] || die "no desktop app at apps/desktop"
+  cd "$dir"
+  bin=$(node_bin "$plugin_node")
+  export PATH="$bin:$PATH"
+  # As CI's desktop job: the install is Electron-free and no app is started. CI sets no
+  # NODE_ENV, and npm ci would omit the devDependencies if the box's environment had one.
+  unset NODE_ENV
+  export ELECTRON_SKIP_BINARY_DOWNLOAD=1 DO_NOT_TRACK=1
+  # npm's downloads only: node_modules is installed fresh in each gate's worktree.
+  mkdir -p "$npm_cache"
+  npm_cache=$(cd "$npm_cache" && pwd)
+  n=$(find test -maxdepth 1 -name '*.test.js' | wc -l | tr -d ' ')
+  say "desktop: $n test files (Electron-free: no binary, no app start)"
+  step install npm ci --no-fund --no-audit --cache "$npm_cache"
+  t0=$SECONDS
+  step test npm test
+  judge "gate=desktop node=$(node --version) files=$n" "$(node_counts "$logs/test.log")" $((SECONDS - t0))
 }
 
 slot_take
