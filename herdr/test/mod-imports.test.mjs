@@ -326,17 +326,17 @@ test("every shipped mod's static import graph fits gpui-shell 0.7.1", () => {
 
 test("a fixture mod importing node:url fails", () => {
   const { problems } = walkMods(join(FIXTURES, "node-url", "mods"));
-  assert.match(problems.join("\n"), /main\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
 });
 
 test('a fixture importing fileURLToPath from "url" fails', () => {
   const { problems } = walkMods(join(FIXTURES, "url-surface", "mods"));
-  assert.match(problems.join("\n"), /main\.js:\d+: import "url": fileURLToPath is not exported/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: import "url": fileURLToPath is not exported/);
 });
 
 test("a fixture with a top-level new URL(x, import.meta.url) fails", () => {
   const { problems } = walkMods(join(FIXTURES, "meta-url", "mods"));
-  assert.match(problems.join("\n"), /main\.js:\d+: top-level import\.meta\.url/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: top-level import\.meta\.url/);
 });
 
 test("a fixture mod whose entry is not main.js is still walked", () => {
@@ -347,12 +347,12 @@ test("a fixture mod whose entry is not main.js is still walked", () => {
 
 test("a fixture re-exporting node:url fails (export-from is walked)", () => {
   const { problems } = walkMods(join(FIXTURES, "export-from", "mods"));
-  assert.match(problems.join("\n"), /main\.js:\d+: export "node:url": not a gpui-shell 0\.7\.1 module/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: export "node:url": not a gpui-shell 0\.7\.1 module/);
 });
 
 test("a fixture with a dynamic import() fails", () => {
   const { problems } = walkMods(join(FIXTURES, "dynamic-import", "mods"));
-  assert.match(problems.join("\n"), /main\.js:\d+: dynamic import\(\)/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: dynamic import\(\)/);
 });
 
 test("guardDirOf: the guard folder beside the module, from either runtime's meta URL", () => {
