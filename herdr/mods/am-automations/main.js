@@ -26,6 +26,8 @@ const PRESETS = [
 ];
 const WORKSPACES = [["worktree", "New worktree"], ["root", "Repo root"], ["existing", "Existing space"]];
 const FINISHED = new Set(["done", "failed", "cancelled"]);
+/** Our scheduler's `version` output carries "-am." (herdr-automations-v<version>); upstream's never does. */
+const oursVersion = (out) => /-am\./.test(out ?? "");
 
 const human = (cron) => PRESETS.find(([, c]) => c === cron)?.[0] ?? cron;
 const tilde = (p) => (p && p.startsWith(home()) ? "~" + p.slice(home().length) : p ?? "");
@@ -70,11 +72,12 @@ export default class Automations extends View {
   async locate() {
     // Ours carries "-am." in `version` (herdr-automations-v<version>, herdr/scheduler): only our
     // build's ls --json and put know close_workspace. Upstream's answer leaves this.ours false.
+    // put() asks again right before it sends: a repair can replace the binary while we are open.
     const answers = async (bin) => {
       try {
         const r = await exec(bin, ["version"]);
         if (r.code !== 0) return false;
-        this.ours = /-am\./.test(r.stdout ?? "");
+        this.ours = oursVersion(r.stdout);
         return true;
       } catch { return false; }
     };
@@ -245,8 +248,22 @@ export default class Automations extends View {
   // Whether the form's agent is the one the entry was saved with (always, for a new entry).
   sameAgent(f) { return !f.original || (!f.template && f.agent === f.savedAgent); }
 
+  // The binary locate() found can be repaired or reinstalled while the panel is open, so put() asks
+  // once more, right before it builds the JSON. A probe that fails or errors reads as upstream
+  // (fail closed): close_workspace must never reach upstream's put.
+  async probeOurs() {
+    let ours = false;
+    try {
+      const r = await exec(this.bin, ["version"]);
+      ours = r.code === 0 && oursVersion(r.stdout);
+    } catch { ours = false; }
+    this.ours = ours;
+    return ours;
+  }
+
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
+    await this.probeOurs();
     // exec has no stdin: hand the JSON over through the shell.
     const r = await exec("sh", ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, JSON.stringify(this.entry()), ...args]);
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
