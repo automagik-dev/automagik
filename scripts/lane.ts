@@ -61,7 +61,11 @@ export const LANE_RELEASE = 'plugin-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
-const PLUGINS = ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-bridge-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'];
+// The plugins this release lane ships and updates. The Unfold bridge
+// (apps/unfold-bridge-dsh) is not one: it is built and tested here until Unfold's own release
+// carries it, but this repository's releases attach no tarball of it and its lane names none
+// (Refs marketplace/unfold). It stays opt-in: whoever installs it keeps it.
+const PLUGINS = ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-capabilities-dsh', 'unfold-events-dsh', 'unfold-mind-dsh', 'unfold-session-dsh', 'unfold-settings-dsh', 'unfold-sse-dsh', 'unfold-trajectory-dsh', 'welcome-dsh'];
 const PROFILE = 'apps/desktop/profile/package.json';
 // The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
 // a reviewed fork with no dependencies of its own (its folder alone is the add-on) that declares
@@ -94,7 +98,10 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
-const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
+// The Unfold bridge ships from Unfold's own release, not from this lane: its folder stays here
+// (built and tested) but a change to it cuts no release and reaches no install from here
+// (Refs marketplace/unfold). It is never preinstalled: the app's profile does not carry it.
+const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//, /^apps\/unfold-bridge-dsh\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,

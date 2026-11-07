@@ -63,8 +63,10 @@ export function pinPatchVersions(patches, version) {
   }))
 }
 
-// The plugins whose tests pin a DSH and whose manifest declares the range.
-export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'acp-dsh', 'locale-pt-br-dsh', 'unfold-bridge-dsh', 'unfold-bot-dsh', 'unfold-sse-dsh', 'unfold-events-dsh', 'unfold-capabilities-dsh', 'unfold-settings-dsh', 'unfold-mind-dsh', 'unfold-trajectory-dsh', 'unfold-session-dsh'])
+// The plugins whose tests pin a DSH and whose manifest declares the range. The Unfold bridge is
+// not one: it is built and tested here but Unfold's own release ships it (Refs marketplace/unfold),
+// so its harness pin is not moved with the desktop's until that release carries it.
+export const PLUGINS = Object.freeze(['bots-dsh', 'welcome-dsh', 'acp-dsh', 'locale-pt-br-dsh', 'unfold-bot-dsh', 'unfold-sse-dsh', 'unfold-events-dsh', 'unfold-capabilities-dsh', 'unfold-settings-dsh', 'unfold-mind-dsh', 'unfold-trajectory-dsh', 'unfold-session-dsh'])
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const all = process.argv[2] === '--all'

@@ -12,20 +12,23 @@ import { join } from 'node:path'
 import { install } from '../src/host/endpoint.js'
 import { OMNI_PLUGINS, UNFOLD_PLUGIN, UNFOLD_PLUGINS } from '../src/host/bot-types.js'
 import { fakeContext } from './fake-ctx.js'
-import { EVERYTHING, KEYS, RELEASE, V, entryOf, filesOf, laneOf, release, signatureOf, tarballOf, urlOf } from './lane-fixture.js'
+import { KEYS, RELEASE, SHIPPED, V, entryOf, filesOf, laneOf, release, signatureOf, tarballOf, urlOf } from './lane-fixture.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 function rig(t, files, { homeAs } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'welcome-lane-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
-  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: urlOf({ dir: 'welcome-dsh' }), version: V }]
+  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: urlOf({ dir: 'welcome-dsh' }), version: V },
+    // Unfold's own instance brings the bridge bundled, and this repository's release no longer
+    // carries it (Refs marketplace/unfold): present here, so the Unfold flow never asks its lane.
+    { name: UNFOLD_PLUGINS.find(plugin => plugin.dir === 'unfold-bridge-dsh').name, availability: 'profile', enabled: true, version: V }]
   const calls = []
   const manager = {
     async listBundles() { return structuredClone(bundles) },
     async installBundle(spec) {
       calls.push(spec)
-      const plugin = EVERYTHING.find(entry => spec.includes(`${entry.name.replace('/', '+')}-${V}-`))
+      const plugin = SHIPPED.find(entry => spec.includes(`${entry.name.replace('/', '+')}-${V}-`))
       if (!plugin) return { application: 'failed', error: { code: 'not-found', diagnostic: `${spec} is not a checked tarball` } }
       bundles.push({ name: plugin.name, availability: 'profile', enabled: true, version: V })
       return { application: 'restart-required', changed: true }
@@ -56,9 +59,9 @@ test('every sibling is checked against the release lane, kept 0600 at a stable p
   const r = rig(t, filesOf())
   const done = await r.run()
   assert.equal(done.phase, 'restart', done.error)
-  assert.equal(r.calls.length, EVERYTHING.length)
+  assert.equal(r.calls.length, SHIPPED.length)
   for (const [i, spec] of r.calls.entries()) {
-    const plugin = EVERYTHING[i]
+    const plugin = SHIPPED[i]
     assert.equal(spec, join(r.dir, `${plugin.name.replace('/', '+')}-${V}-${entryOf(plugin).sha256}.tgz`))
     assert.deepEqual(readFileSync(spec), tarballOf(plugin))
     assert.equal(statSync(spec).mode & 0o777, 0o600, spec)
@@ -73,7 +76,7 @@ const refused = [
     bad[3] ^= 1
     return filesOf({ tarballs: { [UNFOLD_PLUGINS[2].name]: bad } })
   }, /does not match the lane/],
-  ['a sibling the lane does not list', () => filesOf({ lane: laneOf({ plugins: EVERYTHING.filter(p => p !== UNFOLD_PLUGINS[4]).map(p => entryOf(p)) }) }), /not in the release's lane/],
+  ['a sibling the lane does not list', () => filesOf({ lane: laneOf({ plugins: SHIPPED.filter(p => p !== UNFOLD_PLUGINS[4]).map(p => entryOf(p)) }) }), /not in the release's lane/],
   ['a signature that does not match', () => filesOf({ sig: signatureOf(Buffer.from('another lane')) }), /signature/],
   ['no signature', () => filesOf({ sig: null }), /lane\.json\.sig: HTTP 404/],
   ['a lane for another version', () => {

@@ -8,6 +8,10 @@ export const PKG = JSON.parse(readFileSync(new URL('../package.json', import.met
 export const V = PKG.version
 export const RELEASE = `https://github.com/automagik-dev/automagik/releases/download/v${V}/`
 export const EVERYTHING = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
+// This repository's release no longer carries the Unfold bridge (Refs marketplace/unfold): it is
+// not preinstalled, Unfold's own release ships it, and Unfold's own instance brings it bundled.
+// The release fixture serves and lists only what this repository's release actually carries.
+export const SHIPPED = EVERYTHING.filter(plugin => plugin.dir !== 'unfold-bridge-dsh')
 export const urlOf = plugin => `${RELEASE}automagik-${plugin.dir}-${V}.tgz`
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519')
@@ -22,7 +26,7 @@ export const entryOf = (plugin, bytes = tarballOf(plugin)) => ({
   size: bytes.length,
   engines: { dsh: '*' },
 })
-export const laneOf = ({ version = V, plugins = EVERYTHING.map(plugin => entryOf(plugin)) } = {}) => Buffer.from(JSON.stringify({
+export const laneOf = ({ version = V, plugins = SHIPPED.map(plugin => entryOf(plugin)) } = {}) => Buffer.from(JSON.stringify({
   schemaVersion: 1, publisher: 'automagik', keyId: 'test-key', sequence: 1, issuedAt: '2026-10-28T00:00:00Z',
   repository: 'https://github.com/automagik-dev/automagik', version, commit: '0'.repeat(40), base: version, plugins,
 }))
@@ -43,5 +47,5 @@ export function release(files) {
 export const filesOf = ({ lane = laneOf(), sig = signatureOf(lane), tarballs = {} } = {}) => ({
   [`${RELEASE}lane.json`]: lane,
   ...(sig === null ? {} : { [`${RELEASE}lane.json.sig`]: sig }),
-  ...Object.fromEntries(EVERYTHING.map(plugin => [urlOf(plugin), tarballs[plugin.name] ?? tarballOf(plugin)])),
+  ...Object.fromEntries(SHIPPED.map(plugin => [urlOf(plugin), tarballs[plugin.name] ?? tarballOf(plugin)])),
 })

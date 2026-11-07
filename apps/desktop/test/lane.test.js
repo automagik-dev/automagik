@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { LANE_KEYS } from '../src/lane-keys.js'
 import { PUBLISHERS, beforeStart, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, stagedVersion, trialFailed, verifyLane } from '../src/lane.js'
@@ -234,6 +234,53 @@ test('Automagik\'s lane updates only the plugins it names, never an add-on it do
   const carried = lane({ addons: [addon('dsh-oh-my-claude', '1.5.6-omni.8'), addon('@goodandready/dsh-subscriptions', '0.7.22-omni.1')] })
   const installed = { ...context.installed, 'dsh-oh-my-claude': '1.5.6-omni.7', '@goodandready/dsh-subscriptions': '0.7.21-omni.1' }
   assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1'])
+})
+
+// The Unfold bridge left this lane (Refs marketplace/unfold): Unfold's own release ships it. The
+// lane is additive, never a mirror: a plugin it stops carrying is still installed, still at its
+// version, with its profile entry and its data, through every lane update.
+test('a lane that stops carrying a plugin leaves the installed one, and its data, untouched', async (t) => {
+  const root = temp(t)
+  const home = join(root, 'home')
+  const { target } = profileWith(root, '3.22.0')
+  // The bridge a person installed: its folder in the profile's store, its link, its dependency.
+  const bridge = join(target, 'node_modules', '.pnpm', '@automagik+unfold-bridge-dsh@3.20.0', 'node_modules', '@automagik', 'unfold-bridge-dsh')
+  mkdirSync(bridge, { recursive: true })
+  writeFileSync(join(bridge, 'package.json'), JSON.stringify({ name: '@automagik/unfold-bridge-dsh', version: '3.20.0' }))
+  const link = join(target, 'node_modules', '@automagik', 'unfold-bridge-dsh')
+  symlinkSync(bridge, link)
+  const manifest = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+  manifest.dependencies['@automagik/unfold-bridge-dsh'] = 'github:automagik-dev/automagik#0123456789abcdef0123456789abcdef01234567'
+  writeFileSync(join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  // What the bridge keeps outside node_modules: the sessions it watches.
+  const data = join(home, 'team', 'unfold-bridge', 'state.json')
+  mkdirSync(dirname(data), { recursive: true })
+  writeFileSync(data, '{"watched":["session-1"]}')
+  const before = readFileSync(join(bridge, 'package.json'))
+  // The lane carries the Bot team, and a stale entry still names the bridge, newer than the one
+  // installed: the publisher's list no longer includes it, so it is never selected. The one the
+  // person installed stays as it was.
+  const carried = lane({ plugins: [...lane().plugins, {
+    ...lane().plugins[0], name: '@automagik/unfold-bridge-dsh', version: '3.22.1',
+    url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-unfold-bridge-dsh-3.22.1.tgz',
+  }] })
+  const installed = { ...context.installed, '@automagik/unfold-bridge-dsh': '3.20.0' }
+  const update = laneUpdate(carried, { ...context, installed })
+  assert.deepEqual(update?.plugins.map(plugin => plugin.name), ['@automagik/bots-dsh'])
+  assert.equal(update?.plugins.some(plugin => plugin.name === '@automagik/unfold-bridge-dsh'), false)
+  const bytes = tarball(root, '3.22.1')
+  const plugin = { ...lane().plugins[0], size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
+  await stage({ ...update, plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(confirm(home), true)
+  // The bridge is exactly as it was: same folder, version, dependency and data.
+  assert.deepEqual(readFileSync(join(bridge, 'package.json')), before)
+  assert.equal(existsSync(link), true)
+  assert.equal(JSON.parse(readFileSync(join(target, 'package.json'), 'utf8')).dependencies['@automagik/unfold-bridge-dsh'], manifest.dependencies['@automagik/unfold-bridge-dsh'])
+  assert.equal(readFileSync(data, 'utf8'), '{"watched":["session-1"]}')
+  // The lane's record names what it moved, and only that: no removal, no bridge.
+  const applied = JSON.parse(readFileSync(join(home, 'lane', 'applied.json'), 'utf8'))
+  assert.deepEqual(applied.plugins.map(plugin => plugin.name), ['@automagik/bots-dsh'])
 })
 
 // A bare `tar` on Windows can be Git for Windows' GNU tar, which reads C:\... as a remote host.
