@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { channelOf, cleanStaleCache, compareVersions, feedFileOf, feedOverride, isReleasePage, isTransient, pickUpdate, QUICK_RETRIES, QUICK_RETRY_MS, RETRY_MS, startUpdates, updaterCacheDir, updateMode, updatesEnabled } from '../src/update.js'
+import { channelOf, cleanStaleCache, compareVersions, feedFileOf, feedOverride, isReleasePage, isTransient, pickUpdate, QUICK_RETRIES, QUICK_RETRY_MS, RETRY_MS, startUpdates, updaterCacheDir, updateMode, updatesEnabled, versionFromArtifact } from '../src/update.js'
 
 const release = (tag, assets = ['latest-mac.yml', 'latest-linux.yml'], extra = {}) => ({ tag_name: tag, draft: false, assets: assets.map(name => ({ name })), ...extra })
 
@@ -17,6 +17,17 @@ test('versions compare by semver: a dev cut is newer than the labs build of the 
   assert.equal(compareVersions('1.0.0-alpha', '1.0.0-alpha.1'), -1)
   assert.equal(compareVersions('1.0.0-1', '1.0.0-alpha'), -1)
   assert.ok(Number.isNaN(compareVersions('v2', '2.0.0')))
+})
+
+test('an artifact name gives its version whole, the x86_64 AppImage included', () => {
+  assert.equal(versionFromArtifact('Automagik-3.95.0-mac-arm64.zip'), '3.95.0')
+  // Splitting on `_` broke `x86_64` into `x86` and `64` and kept `3.95.0-linux-x86-64` (#654).
+  assert.equal(versionFromArtifact('Automagik-3.95.0-linux-x86_64.AppImage'), '3.95.0')
+  assert.equal(versionFromArtifact('Automagik Setup 3.95.0.exe'), '3.95.0')
+  assert.equal(versionFromArtifact('Automagik-3.95.0-labs.1-mac-arm64.zip'), '3.95.0-labs.1')
+  assert.equal(versionFromArtifact('Automagik-3.95.0-mac-arm64.zip.blockmap'), '3.95.0')
+  assert.equal(versionFromArtifact('latest-mac.yml'), null)
+  assert.equal(versionFromArtifact(''), null)
 })
 
 test("the update is the newest release above this one with this platform's feed; drafts and other tags are not", () => {
@@ -276,13 +287,14 @@ function stubFetch(t, answer) {
 
 function recordingTimers() {
   const scheduled = []
+  const cleared = []
   const timers = {
     setTimeout: (fn, ms) => { const entry = { fn, ms }; scheduled.push(entry); return entry },
     setInterval: () => ({ interval: true }),
-    clearTimeout() {},
+    clearTimeout: entry => { if (entry) cleared.push(entry) },
     clearInterval() {},
   }
-  return { timers, retries: ms => scheduled.filter(entry => entry.ms === ms) }
+  return { timers, retries: ms => scheduled.filter(entry => entry.ms === ms), cleared }
 }
 
 // Runs a scheduled retry and waits for its async check() (the timer calls it with void).
@@ -364,6 +376,51 @@ test('the retrying state clears to idle when a quick retry starts, and a non-tra
   assert.match(warnings.at(-1), /GitHub answered 404 for the desktop releases/)
 })
 
+test('a non-transient failure takes over a pending quick retry instead of inheriting its 60 s', async (t) => {
+  stubFetch(t, () => answerStatus(504))
+  const states = []
+  const warnings = []
+  const { timers, retries, cleared } = recordingTimers()
+  const updater = fakeUpdater()
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error', retrying: true })
+  const [quick] = retries(QUICK_RETRY_MS)
+  assert.ok(quick, 'the quick retry is scheduled')
+  // The 404 arrives while the quick timer still waits: it must not inherit its minute.
+  updater.emit('error', new Error('GitHub answered 404 for the desktop releases'))
+  assert.ok(cleared.includes(quick), 'the pending quick retry is cleared')
+  assert.equal(retries(RETRY_MS).length, 1, 'the 30-minute retry replaces it')
+  assert.equal(retries(QUICK_RETRY_MS).length, 1, 'no second quick retry is scheduled')
+  assert.deepEqual(states, [{ state: 'retrying', failure: 'check' }, { state: 'idle' }])
+  assert.deepEqual(warnings, [
+    'update check: GitHub answered 504 for the desktop releases',
+    'update: GitHub answered 404 for the desktop releases',
+  ])
+})
+
+test('a transient failure that arrives while a retry waits inherits it, with no second timer', async (t) => {
+  stubFetch(t, () => answerStatus(504))
+  const states = []
+  const { timers, retries, cleared } = recordingTimers()
+  const updater = fakeUpdater()
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: quiet, onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error', retrying: true })
+  updater.emit('error', new Error('net::ERR_NETWORK_CHANGED'))
+  assert.equal(retries(QUICK_RETRY_MS).length, 1, 'still one quick retry')
+  assert.equal(retries(RETRY_MS).length, 0)
+  assert.deepEqual(cleared, [], 'the pending retry is kept')
+  assert.ok(states.length > 0 && states.every(state => state.state === 'retrying'))
+})
+
 test('the retrying state clears to idle when a quick retry succeeds', async (t) => {
   let status = 504
   stubFetch(t, () => answerStatus(status))
@@ -441,12 +498,12 @@ function writeMacCache(cacheDir, version) {
   writeFileSync(join(cacheDir, 'pending', `Automagik-${version}-mac-arm64.zip`), 'installer')
 }
 
-const macCachePaths = (cacheDir, version) => [
+const macPendingPaths = (cacheDir, version) => [
   join(cacheDir, 'pending', 'update-info.json'),
   join(cacheDir, 'pending', `Automagik-${version}-mac-arm64.zip`),
-  join(cacheDir, 'update.zip'),
-  join(cacheDir, 'current.blockmap'),
 ]
+const macBasePaths = cacheDir => [join(cacheDir, 'update.zip'), join(cacheDir, 'current.blockmap')]
+const macCachePaths = (cacheDir, version) => [...macPendingPaths(cacheDir, version), ...macBasePaths(cacheDir)]
 
 // A fake electron-updater whose app-update.yml (in a temp dir) names the cache folder, as the
 // real one does: these tests never look at, or write to, an installed app's cache.
@@ -459,19 +516,21 @@ function updaterWithCache(t, name = 'automagik-desktop-updater') {
   return { updater, cacheDir: join(base, name) }
 }
 
-test('cleanStaleCache removes a 3.95.0 pending in the real Mac cache shape when 3.95.0 runs', (t) => {
+test('cleanStaleCache keeps the equal 3.95.0 base in the real Mac cache shape and removes only pending', (t) => {
   const cacheDir = tempDir(t, 'automagik-updater-cache-')
   writeMacCache(cacheDir, '3.95.0')
   const cleaned = cleanStaleCache(cacheDir, { current: '3.95.0' })
   assert.equal(cleaned.stale, true)
   assert.equal(cleaned.version, '3.95.0')
+  // Equal is the normal state after every Mac install: electron-updater keeps update.zip and
+  // current.blockmap as the next update's differential base (MacUpdater.js), so only the
+  // pending files go; removing the base would make every later update a full download.
   assert.deepEqual([...cleaned.removed].sort(), [
     'pending/update-info.json',
     'pending/Automagik-3.95.0-mac-arm64.zip',
-    'update.zip',
-    'current.blockmap',
   ].sort())
-  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macPendingPaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
   // A missing cache dir, or a current version it cannot read, is a no-op.
   assert.deepEqual(cleanStaleCache(join(cacheDir, 'missing'), { current: '3.95.0' }), { stale: false, version: null, removed: [] })
   assert.deepEqual(cleanStaleCache(cacheDir, { current: 'not-a-version' }), { stale: false, version: null, removed: [] })
@@ -488,9 +547,28 @@ test('the observed Mac cache without update-info.json is recognized from the pen
   assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), {
     stale: true,
     version: '3.95.0',
-    removed: ['pending/Automagik-3.95.0-mac-arm64.zip', 'update.zip', 'current.blockmap'],
+    removed: ['pending/Automagik-3.95.0-mac-arm64.zip'],
   })
-  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macPendingPaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
+})
+
+// The AppImage cache names its installer `Automagik-3.95.0-linux-x86_64.AppImage`. Parsed with
+// the `_` as a separator it read as the prerelease 3.95.0-linux-x86-64, strictly older than
+// 3.95.0, so a normal AppImage update deleted its own differential base too.
+test('a Linux AppImage pending at the running version keeps the base too', (t) => {
+  const cacheDir = tempDir(t, 'automagik-updater-cache-')
+  mkdirSync(join(cacheDir, 'pending'), { recursive: true })
+  writeFileSync(join(cacheDir, 'update.zip'), 'zip')
+  writeFileSync(join(cacheDir, 'current.blockmap'), 'blockmap')
+  writeFileSync(join(cacheDir, 'pending', 'Automagik-3.95.0-linux-x86_64.AppImage'), 'installer')
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), {
+    stale: true,
+    version: '3.95.0',
+    removed: ['pending/Automagik-3.95.0-linux-x86_64.AppImage'],
+  })
+  assert.equal(existsSync(join(cacheDir, 'pending', 'Automagik-3.95.0-linux-x86_64.AppImage')), false)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
 })
 
 test('cleanStaleCache never removes a newer pending, even when a stale version is named', (t) => {
@@ -499,11 +577,58 @@ test('cleanStaleCache never removes a newer pending, even when a stale version i
   assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), { stale: false, version: '3.96.0', removed: [] })
   assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0', version: '3.95.0' }), { stale: false, version: '3.96.0', removed: [] })
   for (const path of macCachePaths(cacheDir, '3.96.0')) assert.equal(existsSync(path), true, path)
-  // A named stale version with only the base files still removes those.
-  const baseOnly = tempDir(t, 'automagik-updater-cache-')
-  writeFileSync(join(baseOnly, 'update.zip'), 'zip')
-  writeFileSync(join(baseOnly, 'current.blockmap'), 'blockmap')
-  assert.deepEqual(cleanStaleCache(baseOnly, { current: '3.95.0', version: '3.95.0' }), { stale: true, version: '3.95.0', removed: ['update.zip', 'current.blockmap'] })
+})
+
+test('cleanStaleCache removes the base only when the cached version is strictly older', (t) => {
+  const older = tempDir(t, 'automagik-updater-cache-')
+  writeMacCache(older, '3.94.0')
+  assert.deepEqual(cleanStaleCache(older, { current: '3.95.0' }), {
+    stale: true,
+    version: '3.94.0',
+    removed: [
+      'pending/Automagik-3.94.0-mac-arm64.zip',
+      'pending/update-info.json',
+      'update.zip',
+      'current.blockmap',
+    ],
+  })
+  for (const path of macCachePaths(older, '3.94.0')) assert.equal(existsSync(path), false, path)
+  // An equal version named by a download report keeps the base too: it is still the next
+  // update's differential base, even with no pending files left beside it.
+  const equalBase = tempDir(t, 'automagik-updater-cache-')
+  writeFileSync(join(equalBase, 'update.zip'), 'zip')
+  writeFileSync(join(equalBase, 'current.blockmap'), 'blockmap')
+  assert.deepEqual(cleanStaleCache(equalBase, { current: '3.95.0', version: '3.95.0' }), { stale: true, version: '3.95.0', removed: [] })
+  for (const path of macBasePaths(equalBase)) assert.equal(existsSync(path), true, path)
+})
+
+// Windows makes a directory symlink only for an administrator or Developer Mode, but a junction
+// needs neither (and lstat reports it as a link too).
+function linkDir(target, path) {
+  try {
+    symlinkSync(target, path, process.platform === 'win32' ? 'junction' : 'dir')
+    return true
+  } catch {
+    return false
+  }
+}
+
+test('a symlinked pending folder is never followed: nothing outside the cache is read or removed', (t) => {
+  const cacheDir = tempDir(t, 'automagik-updater-cache-')
+  const outside = tempDir(t, 'automagik-updater-outside-')
+  writeFileSync(join(cacheDir, 'update.zip'), 'zip')
+  writeFileSync(join(cacheDir, 'current.blockmap'), 'blockmap')
+  writeFileSync(join(outside, 'update-info.json'), JSON.stringify({ fileName: 'Automagik-3.95.0-mac-arm64.zip' }))
+  writeFileSync(join(outside, 'Automagik-3.95.0-mac-arm64.zip'), 'installer')
+  if (!linkDir(outside, join(cacheDir, 'pending'))) return t.skip('this machine cannot make a directory link')
+  // The version scan does not read through the link, so the cache names no version at all.
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), { stale: false, version: null, removed: [] })
+  // Even a version named by a download report (equal, so stale) touches neither the link's
+  // target nor the link itself; the base files stay.
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0', version: '3.95.0' }), { stale: true, version: '3.95.0', removed: [] })
+  for (const name of ['update-info.json', 'Automagik-3.95.0-mac-arm64.zip']) assert.equal(existsSync(join(outside, name)), true, name)
+  assert.equal(lstatSync(join(cacheDir, 'pending')).isSymbolicLink(), true)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
 })
 
 test("the updater cache is electron-updater's own layout from a temp app-update.yml, never a hardcoded path", (t) => {
@@ -535,16 +660,19 @@ test('startUpdates drops the install-time stale pending at start and on a stale 
     onState: state => states.push(state),
   })
   t.after(() => updates.stop())
-  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  // Equal: the pending files go so nothing can be ready, and the base stays for the next update.
+  for (const path of macPendingPaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
   assert.equal(updates.ready, null)
   assert.deepEqual(states, [])
   assert.deepEqual(warnings, ['update: the cached 3.95.0 update is not newer than 3.95.0; ignoring it'])
-  // electron-updater reports the same download again: it is ignored and its files removed.
+  // electron-updater reports the same download again: it is ignored and its pending files removed.
   writeMacCache(cacheDir, '3.95.0')
   updater.emit('update-downloaded', { version: '3.95.0' })
   assert.equal(updates.ready, null)
   assert.deepEqual(states, [])
-  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macPendingPaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
   assert.match(warnings.at(-1), /update: 3\.95\.0 is not newer than 3\.95\.0; ignoring it/)
 })
 
@@ -586,7 +714,8 @@ test('a stale update-downloaded never disturbs a newer ready update, and removes
   assert.equal(updates.ready, '3.96.0')
   assert.deepEqual(states, [{ version: '3.96.0', state: 'ready' }])
   assert.match(warnings.at(-1), /3\.95\.0 is not newer than 3\.95\.0/)
-  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macPendingPaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  for (const path of macBasePaths(cacheDir)) assert.equal(existsSync(path), true, path)
 })
 
 test('an update-downloaded version equal to, older than, or invalid for the app is logged and never ready', async (t) => {

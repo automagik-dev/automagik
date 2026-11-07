@@ -9,7 +9,7 @@
 // one above this version, on this build's channel, that carries this platform's feed.
 // A deb is the system package manager's to replace, so there the app only says a release is out.
 
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
 export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50'
@@ -113,14 +113,18 @@ export function compareVersions(a, b) {
 const ARCHITECTURES = new Set(['mac', 'darwin', 'win', 'windows', 'linux', 'arm64', 'x64', 'x86_64', 'ia32', 'universal', 'amd64', 'armv7l', 'arm', 'x86'])
 
 /**
- * The version in an updater artifact name: `Automagik-3.95.0-mac-arm64.zip` and
- * `Automagik Setup 3.95.0.exe` are 3.95.0, `Automagik-3.95.0-labs.1-mac-arm64.zip` is
- * 3.95.0-labs.1. Null when the name carries no version.
+ * The version in an updater artifact name: `Automagik-3.95.0-mac-arm64.zip`,
+ * `Automagik-3.95.0-linux-x86_64.AppImage` and `Automagik Setup 3.95.0.exe` are 3.95.0,
+ * `Automagik-3.95.0-labs.1-mac-arm64.zip` is 3.95.0-labs.1. Null when the name carries no
+ * version.
  */
 export function versionFromArtifact(name) {
   let stem = basename(String(name ?? ''))
   for (let i = 0; i < 3; i++) stem = stem.replace(/\.(?:zip|exe|appimage|dmg|pkg|blockmap|7z)$/i, '')
-  const tokens = stem.split(/[-_ ]+/)
+  // Not on `_`: it belongs to the architecture token `x86_64`, and splitting it there left
+  // `3.95.0-linux-x86-64` as the version (issue #654). electron-builder's artifact names use
+  // hyphens and spaces as separators.
+  const tokens = stem.split(/[- ]+/)
   while (tokens.length > 1 && ARCHITECTURES.has(tokens.at(-1).toLowerCase())) tokens.pop()
   const start = tokens.findIndex(token => /^\d+\.\d+\.\d+$/.test(token))
   if (start === -1) return null
@@ -171,9 +175,23 @@ export function updaterCacheDir(updater) {
   }
 }
 
-function updateInfoFile(cacheDir) {
+// The pending folder, only when it is a real directory: a symlink there is never followed, so
+// nothing outside the cache is scanned or removed through it (a malicious or moved cache entry
+// must not take files elsewhere with it).
+function pendingDir(cacheDir) {
+  const path = join(cacheDir, PENDING_DIR)
   try {
-    const parsed = JSON.parse(readFileSync(join(cacheDir, PENDING_DIR, 'update-info.json'), 'utf8'))
+    return lstatSync(path).isDirectory() ? path : null
+  } catch {
+    return null
+  }
+}
+
+function updateInfoFile(cacheDir) {
+  const dir = pendingDir(cacheDir)
+  if (dir === null) return null
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, 'update-info.json'), 'utf8'))
     return typeof parsed?.fileName === 'string' ? parsed.fileName : null
   } catch {
     return null
@@ -181,8 +199,10 @@ function updateInfoFile(cacheDir) {
 }
 
 function pendingFiles(cacheDir) {
+  const dir = pendingDir(cacheDir)
+  if (dir === null) return []
   try {
-    return readdirSync(join(cacheDir, PENDING_DIR), { withFileTypes: true })
+    return readdirSync(dir, { withFileTypes: true })
       .filter(entry => entry.isFile())
       .map(entry => entry.name)
       .sort()
@@ -203,15 +223,18 @@ function versionsInCache(cacheDir, version) {
 }
 
 /**
- * Removes the updater cache of a pending update that is not newer than `current`, so a version
- * already installed (or an older one) can never look ready to install. Only the stale version's
- * files go: `pending/update-info.json`, the installer beside it and the base cache's
- * `update.zip` and `current.blockmap`. A pending version newer than `current` is never touched,
- * and a missing cache folder (or an unreadable version) is a no-op.
+ * Removes a pending update that is not newer than `current`, so a version already installed (or
+ * an older one) can never look ready to install. An EQUAL version is the normal state on macOS
+ * after a Mac install: electron-updater keeps its download as the next update's differential
+ * base, so `update.zip` and `current.blockmap` stay, and only the pending files go
+ * (`pending/update-info.json` and the installer beside it). A STRICTLY OLDER version removes
+ * those base files too. A pending version newer than `current` is never touched, and a missing
+ * cache folder (or an unreadable version) is a no-op. A `pending` folder that is a symlink is
+ * never followed (see pendingDir).
  *
  * Returns `{ stale, version, removed }`: whether a stale pending update was found, the newest
- * version found in the cache, and the cache-relative paths removed (`pending/<file>`,
- * `update.zip`, `current.blockmap`).
+ * version found in the cache, and the cache-relative paths removed (`pending/<file>`, and
+ * `update.zip` and `current.blockmap` for a strictly older version only).
  */
 export function cleanStaleCache(cacheDir, { current, version } = {}) {
   const nothing = { stale: false, version: null, removed: [] }
@@ -220,7 +243,8 @@ export function cleanStaleCache(cacheDir, { current, version } = {}) {
   const versions = versionsInCache(cacheDir, version)
   if (versions.length === 0) return nothing
   const newest = versions.reduce((best, found) => (compareVersions(found, best) > 0 ? found : best))
-  if (compareVersions(newest, current) > 0) return { stale: false, version: newest, removed: [] }
+  const order = compareVersions(newest, current)
+  if (order > 0) return { stale: false, version: newest, removed: [] }
   const removed = []
   const remove = (relative, path) => {
     try {
@@ -228,10 +252,15 @@ export function cleanStaleCache(cacheDir, { current, version } = {}) {
       removed.push(relative)
     } catch {}
   }
-  for (const name of pendingFiles(cacheDir)) remove(`${PENDING_DIR}/${name}`, join(cacheDir, PENDING_DIR, name))
-  for (const name of BASE_CACHE_FILES) {
-    const path = join(cacheDir, name)
-    if (existsSync(path)) remove(name, path)
+  const pending = pendingDir(cacheDir)
+  if (pending !== null) for (const name of pendingFiles(cacheDir)) remove(`${PENDING_DIR}/${name}`, join(pending, name))
+  // Equal: the download is the next update's differential base, so keep it. Only a strictly
+  // older version's base is useless once its pending files are gone.
+  if (order < 0) {
+    for (const name of BASE_CACHE_FILES) {
+      const path = join(cacheDir, name)
+      if (existsSync(path)) remove(name, path)
+    }
   }
   return { stale: true, version: newest, removed }
 }
@@ -362,13 +391,16 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   }
 
   function retryLater(error) {
-    // A retry is already scheduled (an electron-updater error, say): a check that failed
-    // meanwhile inherits its mark, and no second timer is set.
-    if (retry !== null) {
+    const soon = isTransient(error) && quickRetries < QUICK_RETRIES
+    // A retry is already scheduled (an electron-updater error, say): a failure that would wait
+    // as long inherits it, and no second timer is set. A non-transient failure must not inherit
+    // a pending quick retry's minute: it replaces that timer with RETRY_MS and clears the
+    // retrying mark (through report(), like every other state change).
+    if (retry !== null && !(retryQuick && !soon)) {
       if (retryQuick) report({ state: 'retrying', failure: 'check' })
       return retryQuick
     }
-    const soon = isTransient(error) && quickRetries < QUICK_RETRIES
+    if (retry !== null) timers.clearTimeout(retry)
     if (soon) quickRetries += 1
     retryQuick = soon
     retry = timers.setTimeout(() => {
