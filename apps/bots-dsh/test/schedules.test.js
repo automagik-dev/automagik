@@ -365,6 +365,19 @@ test('a read-only host neither pauses nor vouches for unlineaged deliveries', as
     () => guard('fresh-1', async () => 'ran'),
     /blocked until its task can be paused/,
   )
+  // The refusal kicks the check off the delivery path; it pauses the task right after.
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
   assert.equal(schedule.tasks.get(armed.id).status, 'paused')
-  assert.equal(await guard('fresh-2', async () => 'ran'), 'ran')
+  // The guard opens once the check that pause kicked off has finished.
+  let ran
+  for (let index = 0; index < 100 && ran === undefined; index += 1) {
+    try {
+      ran = await guard('fresh-2', async () => 'ran')
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+  }
+  assert.equal(ran, 'ran')
 })

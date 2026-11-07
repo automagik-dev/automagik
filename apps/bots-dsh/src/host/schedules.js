@@ -262,13 +262,11 @@ export function install(rt) {
   ctx.on('schedule/resolve-agent', async (sessionId, next) => {
     if (swept && stuck.size === 0) return next()
     if (await botOfTaskSession(sessionId) !== undefined) return next()
-    // Give the pause a chance now: this covers a host that just took the team over and a
-    // stuck task whose store came back. A task paused here refuses this delivery too.
-    const paused = await revokeNewSchedules().catch(() => [])
-    if (paused.length > 0) {
-      throw new Error('ds-bot: a scheduled fresh Session is blocked until its task can be paused')
-    }
-    if (swept && stuck.size === 0) return next()
+    // Never wait on the schedule service here: DSH runs this waterfall inside the delivery
+    // drive, and a management write queues behind it, so awaiting one would deadlock the
+    // drive. Ask for the check and refuse this delivery; the next attempt runs after it.
+    void revokeNewSchedules()
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
     throw new Error('ds-bot: a scheduled fresh Session is blocked until its task can be paused')
   })
 
