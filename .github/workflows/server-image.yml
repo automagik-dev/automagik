@@ -54,6 +54,7 @@ on:
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/runtime/patches/**
       - apps/desktop/scripts/prune-runtime.mjs
+      - apps/desktop/scripts/runtime-patches.mjs
       - herdr/scripts/privacy-check.mjs
       - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
@@ -65,6 +66,7 @@ on:
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/runtime/patches/**
       - apps/desktop/scripts/prune-runtime.mjs
+      - apps/desktop/scripts/runtime-patches.mjs
       - herdr/scripts/privacy-check.mjs
       - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
