@@ -339,19 +339,25 @@ async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
   writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
-  if (project.dir !== project.key) report([worktreeNote(project, await untrackedIn(project.key))]);
+  if (project.dir !== project.key) report([worktreeNote(project, await changesIn(project.key))]);
 }
 /**
  * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
- * when the main checkout's file was never committed, that its pull would stop on it (git won't
- * overwrite an untracked file with the merged one).
+ * when the main checkout's file was never committed or has local changes, that its pull would
+ * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one).
  */
-const worktreeNote = ({ key, dir }, untracked = false) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
+const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
-  + (untracked ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "");
-/** Whether `key`'s .herdr/bots.json is there and untracked by git (`git status` says ??). */
-async function untrackedIn(key) {
-  return ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??");
+  + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "")
+  + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "");
+/**
+ * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
+ * "modified" when it is committed but has local changes, null when it is clean or git can't say.
+ */
+async function changesIn(key) {
+  const out = ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").trim();
+  if (!out) return null;
+  return out.startsWith("??") ? "untracked" : "modified";
 }
 
 const fsIo = {

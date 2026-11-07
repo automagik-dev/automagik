@@ -604,6 +604,37 @@ test("a worktree space whose main checkout's bots.json isn't committed: the form
   assert.match(textOf(nodes.get("bot-where")), /repo\/\.herdr\/bots\.json isn't committed: commit or remove it before pulling, or the pull stops on it\.$/);
 });
 
+// #332, a follow-up to #234: a pull stops on the main checkout's committed bots.json too once
+// it has local changes, not only on an untracked one; the form warns for either.
+test("a worktree space whose main checkout's bots.json has local changes: the form warns its pull would stop on it", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  const committed = `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`;
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, committed);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  // An edit made on the main checkout (allowed by design), not committed: the file is tracked.
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.match(textOf(nodes.get("bot-where")), /repo\/\.herdr\/bots\.json has local changes: commit or discard them before pulling, or the pull stops on it\.$/);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /isn't committed/);
+  // Committed and clean, the main checkout's file draws no warning.
+  writeFileSync(mainPath, committed);
+  const clean = await open({ form: "create", project: undefined });
+  clean.draw();
+  assert.match(textOf(nodes.get("bot-where")), /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\./);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /isn't committed|has local changes/);
+});
+
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
 
 test("Bot settings (pick) draws the sidebar's known bots before discovery answers, then the fresh list", async () => {
