@@ -143,15 +143,34 @@ const MASK = "***";
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 
 /**
- * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2, D1):
- * a flag by name with its value masked (`--model=***`), a flag's separate value folded into it
- * whatever it starts with (`--k v`, `--k -v`; a long flag starts a flag of its own), a short
- * flag with its value joined on cut to its first two characters (`-kV` is `-k=***`), an env
- * assignment as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left
- * out, so no value can reach a line. `--` ends the options.
+ * The flags known to take no value, per agent: the word after one is a flag of its own. Any other
+ * flag takes the next word as its value, and a value is masked whatever it looks like (D1's
+ * fail-closed rule). When an agent isn't listed, every flag is taken to have a value. The resume
+ * aliases are here though a restart strips them before a line is compared.
  */
-function launchTokens(words) {
+const NO_VALUE = Object.fromEntries(Object.entries({
+  claude: ["-c", "--continue", "--dangerously-skip-permissions"],
+  codex: ["--yolo"],
+  hermes: ["--tui", "--yolo"],
+  omp: ["--auto-approve", "-c", "--continue"],
+  pi: ["-c", "--continue"],
+  kimi: ["-c", "--continue"],
+  antigravity: ["-c", "--continue"],
+  "dsh-tui": ["-c", "--continue"],
+}).map(([key, flags]) => [key, new Set(flags)]));
+
+/**
+ * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2, D1):
+ * a flag by name with its value masked (`--model=***`), an inline value (`--k=v`), a separate
+ * value folded in and masked whatever it looks like (`--k v`, `--k -v`, `--k --v`), a short flag
+ * with its value joined on cut to its first two characters (`-kV` is `-k=***`), an env assignment
+ * as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left out. Only the
+ * flags in NO_VALUE print without consuming the next word: any other flag's next word is its
+ * value, so nothing in value position reaches a line. `--` ends the options.
+ */
+function launchTokens(words, agent = null) {
   const list = Array.isArray(words) ? words.map(String) : [];
+  const known = NO_VALUE[agent] ?? new Set();
   const out = [];
   for (let i = 0; i < list.length; i += 1) {
     const w = list[i];
@@ -161,10 +180,10 @@ function launchTokens(words) {
       if (eq > 0) { out.push({ key: w.slice(0, eq), text: `${w.slice(0, eq)}=${MASK}`, value: w.slice(eq + 1) }); continue; }
       // A short flag with its value joined on: `-kV`, `-kSECRET`.
       if (!w.startsWith("--") && w.length > 2) { out.push({ key: w.slice(0, 2), text: `${w.slice(0, 2)}=${MASK}`, value: w.slice(2) }); continue; }
-      // A word after a flag is its value, whatever it starts with: `--k v`, `--k -v`. A long
-      // flag is a flag of its own (`--tui --proxy=...`), so a boolean doesn't swallow it.
-      const following = list[i + 1];
-      const next = following !== undefined && following !== "--" && !following.startsWith("--") ? following : undefined;
+      // A known boolean prints by name and takes no value; a flag after it is a flag.
+      if (known.has(w)) { out.push({ key: w, text: w, value: "" }); continue; }
+      // Value position: whatever follows is this flag's value, masked however it looks.
+      const next = i + 1 < list.length && list[i + 1] !== "--" ? list[i + 1] : undefined;
       out.push({ key: w, text: next === undefined ? w : `${w}=${MASK}`, value: next ?? "" });
       if (next !== undefined) i += 1;
       continue;
@@ -180,9 +199,9 @@ function launchTokens(words) {
  * --effort=***`, `changes --model=***`. A flag both sides carry with the same value isn't
  * named; a bare value is never printed.
  */
-export function launchDiff(oldWords, newWords) {
-  const olds = launchTokens(oldWords);
-  const news = launchTokens(newWords);
+export function launchDiff(oldWords, newWords, agent = null) {
+  const olds = launchTokens(oldWords, agent);
+  const news = launchTokens(newWords, agent);
   const by = (tokens) => { const m = new Map(); for (const t of tokens) m.set(t.key, [...(m.get(t.key) ?? []), t]); return m; };
   const oldBy = by(olds), newBy = by(news);
   const values = (ts) => ts.map((t) => t.value).sort();
@@ -231,7 +250,7 @@ export function launchChange({ name, launch, agent, argv, template = null, usedT
   }
   const pane = paneLaunch(launch, agent);
   if (pane && sameWords(pane, argv)) return null;
-  const diff = launchDiff(pane ?? launch.argv, argv);
+  const diff = launchDiff(pane ?? launch.argv, argv, agent);
   const said = diff ? ` (${diff})` : "";
   return `${name}: its pane's command differs from its source now${said}: restarting from the source, not the pane's command.`;
 }
