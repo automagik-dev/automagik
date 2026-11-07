@@ -363,11 +363,28 @@ test('a row never prints a credential-shaped error even if one arrives unredacte
   assert.match(text, /Bearer \[hidden\]/)
 })
 
-test('failed with a diagnostic: Install details carries the output and the log path', () => {
-  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic: 'npm ERR! 503 Service Unavailable\nnpm ERR! failed', logPath: '/tmp/acp/logs/codex.log' } }), acpOf([]))
+// The client's own gate: the host strips credentials before it answers, and the panel applies
+// the same shared table to the diagnostic it draws, without the host in the path.
+const rawRowOf = (row, acp = acpOf([])) => render(ui.AcpAgentRow({ agent: row, acp }))
+
+test('a row redacts a credential-shaped install diagnostic even if one arrives unredacted', () => {
+  const npmToken = ['npm_', 'a'.repeat(24)].join('')
+  const ghToken = ['ghp_', 'b'.repeat(24)].join('')
+  const diagnostic = `npm ERR! ${npmToken}\nnpm ERR! https://deploybot:secretpass@registry.npmjs.org/pkg\nnpm ERR! ${ghToken}`
+  const tree = rawRowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic } }))
+  const text = textOf(tree)
+  for (const raw of [npmToken, 'secretpass', ghToken]) assert.ok(!text.includes(raw), `the diagnostic hides ${raw}`)
+  assert.match(text, /npm_\[hidden\]/)
+  assert.match(text, /\[hidden\]@registry\.npmjs\.org/)
+})
+
+test('failed with a diagnostic: Install details carries the output and the log path unchanged', () => {
+  const diagnostic = 'npm ERR! 503 Service Unavailable\nnpm ERR! failed'
+  const tree = rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503', diagnostic, logPath: '/tmp/acp/logs/codex.log' } }), acpOf([]))
   const text = textOf(tree)
   assert.match(text, /Install details/)
-  assert.match(text, /npm ERR! 503 Service Unavailable/)
+  const [pre] = findAll(tree, node => node.type === 'pre')
+  assert.equal(textOf(pre), diagnostic)
   assert.match(text, /Log: \/tmp\/acp\/logs\/codex\.log/)
 })
 

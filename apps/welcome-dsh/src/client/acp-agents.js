@@ -59,7 +59,9 @@ export function agentLines(agent) {
       text: error ? t('The connector did not install: {error}', { error: redactText(error) }) : t('The connector did not install.'),
       action: 'retry',
       // What DSH 0.2.2 shows for a failed plugin install: the full diagnostic and its log file.
-      ...(diagnostic ? { details: { diagnostic, ...(logPath ? { logPath } : {}) } } : {}),
+      // The panel and its expander read this one value, so the shared table runs here too: a
+      // diagnostic that arrived unredacted still draws masked.
+      ...(diagnostic ? { details: { diagnostic: redactText(diagnostic), ...(logPath ? { logPath } : {}) } } : {}),
     })
   }
   if (state === 'ready') {
