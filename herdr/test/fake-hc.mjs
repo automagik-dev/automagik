@@ -85,11 +85,21 @@ if (["get", "label", "kill", "read", "send", "keys", "interrupt"].includes(words
  * `env K=V`) is the command's words and the args (sh execs a simple command, as the real one
  * does); anything else is itself.
  */
+/** The script a `sh -c "…"` (or bash/zsh/dash) command carries, or null. */
+function wrappedScript(command) {
+  const m = /^\s*(?:\S*\/)?(?:ba|z|da)?sh\s+-c\s+(?:"([\s\S]*)"|'([\s\S]*)'|(\S+))\s*$/.exec(command);
+  return m ? (m[1] ?? m[2] ?? m[3]) : null;
+}
+
 function foregroundOf(launch) {
   let w = [...launch];
   if (/(^|\/)env$/.test(w[0] ?? "")) { let j = 1; while (j < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[j])) j += 1; w = w.slice(j); }
   if (/(^|\/)(sh|bash)$/.test(w[0] ?? "") && w[1] === "-c" && typeof w[2] === "string") {
-    return [...w[2].replace(/ "\$@"$/, "").split(/\s+/).filter(Boolean), ...w.slice(4)];
+    const cmd = w[2].replace(/ "\$@"$/, "");
+    // A nested `sh -c "…"` execs its own command: report that program, as the real one shows.
+    const inner = wrappedScript(cmd);
+    if (inner !== null) return [...foregroundOf(["sh", "-c", inner]), ...w.slice(4)];
+    return [...cmd.split(/\s+/).filter(Boolean), ...w.slice(4)];
   }
   return launch;
 }

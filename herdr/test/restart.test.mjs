@@ -254,6 +254,26 @@ test("restartPlan runs a live template's CURRENT command with its resume words; 
   assert.deepEqual([swap.template, swap.argv], [null, ["codex"]]);
 });
 
+test("restartPlan uses a live template only when it runs the bot's own agent (D2)", () => {
+  const template = { name: "old-omp", command: "omp --auto-approve" };
+  // The pane's agent can't be read and the bot was moved to dsh-tui: the template's runner decides.
+  const moved = restartPlan({ bot: { agent: "dsh-tui" }, run: ["dsh-tui"], runningAgent: null, fresh: true, template });
+  assert.deepEqual([moved.template, moved.argv], [null, ["dsh-tui"]]);
+  // The same agent, pane unknown: the template is still the source.
+  const same = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true, template });
+  assert.deepEqual([same.template, same.argv], ["old-omp", ["sh", "-c", "omp --auto-approve"]]);
+  // A template running another agent never crosses into the bot's seat.
+  const crossed = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: "omp", fresh: true, template: { name: "dsh", command: "dsh-tui" } });
+  assert.deepEqual([crossed.template, crossed.argv], [null, ["omp"]]);
+  // A quoted shell wrapper is looked into (F2): its own agent matches, another's never does.
+  const quoted = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true,
+    template: { name: "quoted", command: 'sh -c "omp --auto-approve"' } });
+  assert.deepEqual([quoted.template, quoted.argv], ["quoted", ["sh", "-c", 'sh -c "omp --auto-approve"']]);
+  const quotedOther = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true,
+    template: { name: "quoted", command: 'sh -c "claude --model x"' } });
+  assert.deepEqual([quotedOther.template, quotedOther.argv], [null, ["omp"]]);
+});
+
 test("paneLaunch and launchChange: only flag names are named, values masked, a template by name (#597 F1/F2)", () => {
   const stale = { argv: ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value", "-c"] };
   assert.deepEqual(paneLaunch(stale, "claude"), ["claude", "--proxy=http://user:token@proxy.example:8080", "--api-key=sk-secret-value"]);
@@ -284,13 +304,58 @@ test("paneLaunch and launchChange: only flag names are named, values masked, a t
   assert.equal(shell.includes("auto-approve"), false);
   // A live template the pane's command already matches: no line; edited, the template is named.
   const live = { name: "dev-kimi", command: "omp --auto-approve --model kimi/k3" };
-  assert.equal(launchChange({ name: "Captain", launch: { shell: live.command }, agent: "omp", argv: ["omp"], template: live }), null);
-  const edited = launchChange({ name: "Captain", launch: { shell: "omp --old" }, agent: "omp", argv: ["omp"], template: live });
+  assert.equal(launchChange({ name: "Captain", launch: { shell: live.command }, agent: "omp", argv: ["omp"], template: live, usedTemplate: true }), null);
+  const edited = launchChange({ name: "Captain", launch: { shell: "omp --old" }, agent: "omp", argv: ["omp"], template: live, usedTemplate: true });
   assert.equal(edited, "Captain: its pane's command differs from template dev-kimi's current command: restarting through the template.");
   assert.equal(edited.includes("kimi/k3"), false);
   // A template hc no longer lists: its name, never its text.
   assert.equal(launchChange({ name: "Captain", launch: { shell: "env PATH=/x omp --auto-approve" }, agent: "omp", argv: ["omp"], template: { name: "dev-kimi" } }),
     "Captain: its pane's template dev-kimi differs from its source now: restarting from the source, not the pane's command.");
+});
+
+test("launchChange never prints a flag's value, whatever form it takes or starts with (D1)", () => {
+  const secret = "s3cr3t-value";
+  const forms = [
+    ["--k=v", ["--k=" + secret], "--k=***"],
+    ["--k v", ["--k", secret], "--k=***"],
+    ["--k -v", ["--k", "-" + secret], "--k=***"],
+    ["-kV", ["-k" + secret], "-k=***"],
+    ["-k V", ["-k", secret], "-k=***"],
+    ["env NAME=v", ["/usr/bin/env", "NAME=" + secret, "claude"], "NAME=***"],
+    ["--proxy URL userinfo", ["--proxy", "http://user:token@proxy.example:8080"], "--proxy=***"],
+    ["--proxy=URL userinfo", ["--proxy=http://user:token@proxy.example:8080"], "--proxy=***"],
+  ];
+  for (const [form, words, want] of forms) {
+    const line = launchChange({ name: "Genie", launch: { argv: ["claude", ...words] }, agent: "claude", argv: ["claude"] });
+    assert.ok(line, form);
+    assert.ok(line.includes(want), `${form}: ${line}`);
+    for (const raw of [secret, "user:token", "proxy.example"]) assert.equal(line.includes(raw), false, `${form}: ${raw} in ${line}`);
+  }
+  // The names it prints still name the flags that differ.
+  assert.match(launchChange({ name: "Genie", launch: { argv: ["claude", "--k", "-" + secret] }, agent: "claude", argv: ["claude"] }), /drops --k=\*\*\*/);
+  assert.match(launchChange({ name: "Genie", launch: { argv: ["claude", "-k" + secret] }, agent: "claude", argv: ["claude"] }), /drops -k=\*\*\*/);
+});
+
+test("launchChange masks a value in value position whatever it looks like (D1 fail-closed)", () => {
+  const name = "Genie";
+  const line = (words) => launchChange({ name, launch: { argv: ["omp", ...words] }, agent: "omp", argv: ["omp"] });
+  // The lead's row: a proxy whose value looks like a long flag.
+  const proxy = line(["--proxy", "--s3cr3t-value"]);
+  assert.ok(proxy.includes("drops --proxy=***"), proxy);
+  assert.equal(proxy.includes("--s3cr3t-value"), false, proxy);
+  // A repeated value-taking flag: neither value prints.
+  const twice = line(["--proxy", "first-secret", "--proxy", "second-secret"]);
+  assert.ok(twice.includes("--proxy=***"), twice);
+  for (const raw of ["first-secret", "second-secret"]) assert.equal(twice.includes(raw), false, twice);
+  // An unknown flag followed by a token that looks like a flag: the token is its value.
+  const unknown = line(["--mystery", "--token"]);
+  assert.ok(unknown.includes("drops --mystery=***"), unknown);
+  assert.equal(unknown.includes("--token"), false, unknown);
+  // A known boolean keeps the flag after it: --tui --proxy=... still names the proxy.
+  const known = launchChange({ name, launch: { argv: ["hermes", "--tui", "--proxy=http://user:token@proxy.example:8080"] },
+    agent: "hermes", argv: ["hermes", "--tui"] });
+  assert.ok(known.includes("drops --proxy=***"), known);
+  assert.equal(known.includes("--tui"), false, known);
 });
 
 test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {

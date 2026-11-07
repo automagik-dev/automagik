@@ -6,7 +6,7 @@
 import { agentKeyOfArgv, canResume, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutResume }
   from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
-import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL } from "./workers.js";
+import { ENV, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
@@ -112,9 +112,11 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
   const pin = model !== undefined ? (model || null) : key === bot.agent ? (bot.model ?? null) : null;
   const source = [...run, ...modelArgs(key, pin)];
-  // A template owns its command, but only while the pane still runs the bot's agent: a swap or a
-  // pane on another agent starts from the agent row (the template would cross both).
-  const tpl = !swap && (!runningAgent || runningAgent === key) && typeof template?.command === "string" && template.command.trim() ? template : null;
+  // A template owns its command only when it runs the bot's own agent, whatever the pane's
+  // foreground says (unknown included): a template for another agent, a swap or a pane on
+  // another agent starts from the agent row (the template would cross them).
+  const tpl = !swap && (!runningAgent || runningAgent === key) && typeof template?.command === "string" && template.command.trim()
+    && templateAgent(template.command) === key ? template : null;
   // A template command can't take resume words (it ends in a separator or a comment): start it
   // fresh and say why, as a helper does.
   const blocked = "its template's command ends in a separator or a comment, so it can't take resume words";
@@ -141,24 +143,49 @@ const MASK = "***";
 const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
 
 /**
- * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2): a flag
- * by name with its value masked (`--model=***`), a flag's separate value folded into it, an env
- * assignment as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left
- * out, so no value can reach a line. `--` ends the options.
+ * The flags known to take no value, per agent: the word after one is a flag of its own. Any other
+ * flag takes the next word as its value, and a value is masked whatever it looks like (D1's
+ * fail-closed rule). When an agent isn't listed, every flag is taken to have a value. The resume
+ * aliases are here though a restart strips them before a line is compared.
  */
-function launchTokens(words) {
+const NO_VALUE = Object.fromEntries(Object.entries({
+  claude: ["-c", "--continue", "--dangerously-skip-permissions"],
+  codex: ["--yolo"],
+  hermes: ["--tui", "--yolo"],
+  omp: ["--auto-approve", "-c", "--continue"],
+  pi: ["-c", "--continue"],
+  kimi: ["-c", "--continue"],
+  antigravity: ["-c", "--continue"],
+  "dsh-tui": ["-c", "--continue"],
+}).map(([key, flags]) => [key, new Set(flags)]));
+
+/**
+ * A launch's own words as { key, text, value } tokens, for launchChange (#597 review F2, D1):
+ * a flag by name with its value masked (`--model=***`), an inline value (`--k=v`), a separate
+ * value folded in and masked whatever it looks like (`--k v`, `--k -v`, `--k --v`), a short flag
+ * with its value joined on cut to its first two characters (`-kV` is `-k=***`), an env assignment
+ * as `NAME=***`, and a bare word (a program, a prompt, a positional argument) left out. Only the
+ * flags in NO_VALUE print without consuming the next word: any other flag's next word is its
+ * value, so nothing in value position reaches a line. `--` ends the options.
+ */
+function launchTokens(words, agent = null) {
   const list = Array.isArray(words) ? words.map(String) : [];
+  const known = NO_VALUE[agent] ?? new Set();
   const out = [];
   for (let i = 0; i < list.length; i += 1) {
     const w = list[i];
     if (w === "--") break;
-    if (w.startsWith("-")) {
+    if (w.startsWith("-") && w !== "-") {
       const eq = w.indexOf("=");
       if (eq > 0) { out.push({ key: w.slice(0, eq), text: `${w.slice(0, eq)}=${MASK}`, value: w.slice(eq + 1) }); continue; }
-      const next = list[i + 1];
-      const takes = next !== undefined && next !== "--" && !next.startsWith("-");
-      out.push({ key: w, text: takes ? `${w}=${MASK}` : w, value: takes ? next : "" });
-      if (takes) i += 1;
+      // A short flag with its value joined on: `-kV`, `-kSECRET`.
+      if (!w.startsWith("--") && w.length > 2) { out.push({ key: w.slice(0, 2), text: `${w.slice(0, 2)}=${MASK}`, value: w.slice(2) }); continue; }
+      // A known boolean prints by name and takes no value; a flag after it is a flag.
+      if (known.has(w)) { out.push({ key: w, text: w, value: "" }); continue; }
+      // Value position: whatever follows is this flag's value, masked however it looks.
+      const next = i + 1 < list.length && list[i + 1] !== "--" ? list[i + 1] : undefined;
+      out.push({ key: w, text: next === undefined ? w : `${w}=${MASK}`, value: next ?? "" });
+      if (next !== undefined) i += 1;
       continue;
     }
     const assign = ASSIGN.exec(w);
@@ -172,9 +199,9 @@ function launchTokens(words) {
  * --effort=***`, `changes --model=***`. A flag both sides carry with the same value isn't
  * named; a bare value is never printed.
  */
-export function launchDiff(oldWords, newWords) {
-  const olds = launchTokens(oldWords);
-  const news = launchTokens(newWords);
+export function launchDiff(oldWords, newWords, agent = null) {
+  const olds = launchTokens(oldWords, agent);
+  const news = launchTokens(newWords, agent);
   const by = (tokens) => { const m = new Map(); for (const t of tokens) m.set(t.key, [...(m.get(t.key) ?? []), t]); return m; };
   const oldBy = by(olds), newBy = by(news);
   const values = (ts) => ts.map((t) => t.value).sort();
@@ -204,14 +231,18 @@ export function paneLaunch(launch, agentKey) {
  * One line naming how the old pane's command (`launch`, paneCommand of its hc get) differs from
  * what the bot's source launches now, or null when they agree (#597). Only flag names are named,
  * their values masked (#597 review F2); `template` (the template the pane ran, { name, command }
- * when hc still lists it, else { name }) is named, never its command text. `argv`: the agent row
- * with no resume words, for a pane whose source isn't a template.
+ * when hc still lists it, else { name }) is named, never its command text. `usedTemplate`: the
+ * restart is running that template, so a matching command is no difference; when it isn't (the
+ * template runs another agent, say), its name is the difference (D2). `argv`: the agent row with
+ * no resume words, for a pane whose source isn't a template.
  */
-export function launchChange({ name, launch, agent, argv, template = null }) {
+export function launchChange({ name, launch, agent, argv, template = null, usedTemplate = false }) {
   if (!launch) return null;
   if (template) {
-    if (template.command && launch.shell !== undefined && launch.shell === template.command) return null;
-    if (template.command) return `${name}: its pane's command differs from template ${template.name}'s current command: restarting through the template.`;
+    if (usedTemplate && template.command && launch.shell !== undefined && launch.shell === template.command) return null;
+    if (usedTemplate && template.command) {
+      return `${name}: its pane's command differs from template ${template.name}'s current command: restarting through the template.`;
+    }
     return `${name}: its pane's template ${template.name} differs from its source now: restarting from the source, not the pane's command.`;
   }
   if (launch.shell !== undefined) {
@@ -219,7 +250,7 @@ export function launchChange({ name, launch, agent, argv, template = null }) {
   }
   const pane = paneLaunch(launch, agent);
   if (pane && sameWords(pane, argv)) return null;
-  const diff = launchDiff(pane ?? launch.argv, argv);
+  const diff = launchDiff(pane ?? launch.argv, argv, agent);
   const said = diff ? ` (${diff})` : "";
   return `${name}: its pane's command differs from its source now${said}: restarting from the source, not the pane's command.`;
 }
