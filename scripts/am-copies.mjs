@@ -30,6 +30,8 @@ export const ROOTS = ["bin/automagik-herdr.mjs", "briefing.mjs", "briefingEntry.
 export const EXTRA = [
   [`${SOURCE}/bin/automagik-herdr`, `${TARGET}/bin/automagik-herdr`],
   [`${SOURCE}/bin/run.sh`, `${TARGET}/bin/run.sh`],
+  [`${SOURCE}/guard/hc`, `${TARGET}/guard/hc`],
+  [`${SOURCE}/hcGuard.mjs`, `${TARGET}/hcGuard.mjs`],
   [`${SOURCE}/pack-keys.json`, `${TARGET}/pack-keys.json`],
   ["plugin-lane/keys.json", `${TARGET}/plugin-lane-keys.json`],
 ];

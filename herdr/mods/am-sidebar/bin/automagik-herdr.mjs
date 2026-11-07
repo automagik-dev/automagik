@@ -30,7 +30,7 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
+import { EFFORT_SHAPE, GUARD_DIR, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
@@ -182,6 +182,37 @@ function programPath(program) {
 const onPath = (program) => programPath(program) !== null;
 
 /**
+ * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
+ * docs): the first PATH hc that isn't this pack's guard folder. The guard is a guardrail for
+ * the bot's direct calls (#624), not for the pack's own commands, and skipping its folder keeps
+ * `automagik-herdr worker` and the remote commands working in a guarded pane.
+ */
+function realHcPath() {
+  const guarded = resolvePath(`${GUARD_DIR}/hc`);
+  const dirs = [...(process.env.PATH ?? "").split(":"), `${home()}/.local/bin`, dirname(process.execPath)];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const file = `${dir}/hc`;
+    try {
+      accessSync(file, constants.X_OK);
+      if (resolvePath(file) !== guarded) return file;
+    } catch { /* next */ }
+  }
+  return null;
+}
+async function hcReal(args, { timeout } = {}) {
+  const r = await runProgram(realHcPath() ?? "hc", args, { timeout });
+  if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
+  return r;
+}
+/** `hc <args> --json` through the real hc, parsed; a failed call throws (as hcJson does). */
+async function hcRealJson(args) {
+  const r = await hcReal([...args, "--json"]);
+  if (r.code !== 0) throw new CliError(`hc ${args.join(" ")} failed: ${(r.stderr || r.stdout).trim()}`);
+  return parsed(r, args);
+}
+
+/**
  * The PATH a pane this CLI starts in folder `cwd` runs with (#56, #213): this one, less what
  * belongs to the caller's folder (entries under its working folder or the pane's, a
  * node_modules/.bin, $VIRTUAL_ENV/bin: a venv or a project's tools aren't frozen into the pane),
@@ -239,9 +270,9 @@ const fileName = ({ key, machine, dir = key }) => `${under(dir, BOTS_PATH)}${mac
 
 // herdr-core there: its file ops (remoteFile.js) and one program, as `hc exec --on` runs it.
 const remoteIo = {
-  hc,
+  hc: hcReal,
   exec: async (command, args, machine, { cwd, timeout } = {}) =>
-    decodeExec(await hc(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args], { timeout: timeout ? (timeout + 10) * 1000 : undefined }), timeout ?? 60),
+    decodeExec(await hcReal(["exec", "--json", ...(timeout ? ["--timeout", String(timeout)] : []), "--on", machine, ...(cwd ? ["--cwd", cwd] : []), "--", command, ...args], { timeout: timeout ? (timeout + 10) * 1000 : undefined }), timeout ?? 60),
 };
 
 // What hc said: its error's message when it printed one as JSON.
@@ -280,7 +311,7 @@ async function remoteProjectOf(machine, dir) {
 
 let machinesOnce = null;
 /** The linked machines by core id (attach.js machinesById), asked once per run; hc failing: none. */
-const machinesNow = () => (machinesOnce ??= hc(["machine", "ls", "--json"]).then((r) => (r.code === 0 ? machinesById(r.stdout) : new Map()), () => new Map()));
+const machinesNow = () => (machinesOnce ??= hcReal(["machine", "ls", "--json"]).then((r) => (r.code === 0 ? machinesById(r.stdout) : new Map()), () => new Map()));
 /** A linked machine by name: { id, name, connected }, or null. */
 async function machineNamed(name) {
   for (const [id, m] of await machinesNow()) if (m.name === name) return { id, ...m };
@@ -639,7 +670,7 @@ let coreOnce = null;
  * when state is wiped" (hc schema CoreInfo). Asked once per run; a failure throws.
  */
 function coreId() {
-  coreOnce ??= hcJson(["server", "status"]).then((s) => {
+  coreOnce ??= hcRealJson(["server", "status"]).then((s) => {
     const id = s?.core?.id;
     if (typeof id !== "string" || !id) throw new CliError("hc server status gave no core id.");
     return id;
@@ -2064,7 +2095,7 @@ async function seatOnMachine(project, bot, over = {}) {
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels, path: there.path, env });
+    parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey });
   args.splice(1, 0, "--on", machine);
   const warnings = [...paneEnv.warnings, ...there.warnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
   const run = async () => {
@@ -2351,7 +2382,7 @@ async function launchSeat(project, bot, over = {}) {
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env: briefed.env, login });
+    env: briefed.env, login, agent: agentKey });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
@@ -4540,7 +4571,7 @@ const TIDIES = new Set(["start", "restart", "attach", "create"]);
 
 // ---- usagemeter on every linked machine (meterFleet.js) ----
 
-const hcProgram = () => programPath("hc");
+const hcProgram = () => realHcPath();
 /** meterFleet.js's runner: on a linked machine through `hc exec`, else here from the home folder. */
 const meterRun = (argv, { on, timeout }) => (on
   ? runProgram(hcProgram() ?? "hc", hcExecArgs(on, argv, timeout), { timeout: (timeout + 15) * 1000 }).then((r) => decodeExec(r, timeout))
@@ -4683,7 +4714,7 @@ export async function cmdDoc(opts, [verb, name, ...rest]) {
   if (rest.length) throw new CliError(`doc get takes one name (got ${[name, ...rest].join(" ")}).`, 2);
   let value;
   try {
-    value = await docGet(name, { machine: opts.machine, hc: programPath("hc") ?? "hc" });
+    value = await docGet(name, { machine: opts.machine, hc: realHcPath() ?? "hc" });
   } catch (e) {
     if (e instanceof DocError) throw new CliError(e.message, e.code);
     throw e;

@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// The guard's executable entry (automagik#624): a tiny shim, so the logic stays in
+// hcGuard.mjs, which the pack's node --check gate covers. Dynamic import works whether this
+// extensionless file loads as CommonJS (an installed pack has no package.json) or as ESM
+// (`herdr/package.json` says type module). Apache-2.0.
+"use strict";
+import("../hcGuard.mjs").then(
+  ({ runGuard }) => runGuard(process.argv.slice(2), process.env),
+  () => {
+    process.stderr.write("hc guard: failed closed (#624): the guard's logic did not load; this wrapper is a guardrail, not a boundary (#629).\n");
+    return 1;
+  },
+).then(
+  (code) => { process.exitCode = Number.isInteger(code) ? code : 1; },
+  () => {
+    process.stderr.write("hc guard: failed closed (#624): internal error; this wrapper is a guardrail, not a boundary (#629).\n");
+    process.exitCode = 1;
+  },
+);

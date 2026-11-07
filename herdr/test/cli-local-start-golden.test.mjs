@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readJsonLines } from "./log-lines.mjs";
+import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -63,7 +64,8 @@ function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   const r = spawnSync(process.execPath, [CLI, "start", bot.name, "--json"], { cwd: project, env, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   // The briefing file's name starts with a hash of the project's folder, a new temp folder each run.
-  const norm = (text) => (text === null ? null : text.split(root).join("<root>").replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-"));
+  const norm = (text) => (text === null ? null : text.split(root).join("<root>").split(GUARD_DIR).join("<guard>")
+    .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-"));
   const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : null);
   const run = readJsonLines(logPath).find((c) => c[0] === "run");
   const file = run.find((w, i) => run[i - 1] === "--append-system-prompt-file") ?? null;
