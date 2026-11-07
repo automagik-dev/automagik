@@ -303,6 +303,13 @@ export function writeInventory(dir, { image, layers, blobs, entries, hits, allow
   writeFileSync(join(dir, 'secrecy.txt'), hits.length
     ? `${hits.map((hit) => `${hit.file}:${hit.line}: ${hit.rule}: ${hit.match}`).join('\n')}\n`
     : 'clean\n')
+  writeFileSync(join(dir, 'secrecy-hits.json'), `${JSON.stringify(hits.map((hit) => ({
+    file: hit.file,
+    line: hit.line,
+    rule: hit.rule,
+    rawSha256: sha256(hit.raw ?? ''),
+    fileSha256: hit.fileSha256 ?? null,
+  })), null, 2)}\n`)
   writeFileSync(join(dir, 'allowlist-used.txt'), allowed.length
     ? `${allowed.map((entry) => `${entry.file}: ${entry.rule} (${entry.count}): ${entry.reason}`).join('\n')}\n`
     : '')
@@ -336,7 +343,9 @@ function report({ image, layers, blobs, entries, hits, allowed, unused, bytes, e
   if (unused.length) console.warn(`[secrecy] warning: ${unused.length} allowlist entry(s) did not match; see ${join(inventory, 'allowlist-unused.txt')}`)
   for (const entry of allowed) console.log(`[secrecy] allowed: ${entry.file} ${entry.rule} (${entry.count}): ${entry.reason}`)
   if (hits.length) {
-    for (const hit of hits) console.error(`${hit.file}:${hit.line}: ${hit.rule}: ${hit.match}`)
+    for (const hit of hits) {
+      console.error(`${hit.file}:${hit.line}: ${hit.rule}: ${hit.match} rawSha256=${sha256(hit.raw ?? '')} fileSha256=${hit.fileSha256 ?? '-'}`)
+    }
     console.error(`[secrecy] ${hits.length} finding(s): the image must not be pushed`)
     return false
   }
