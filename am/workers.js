@@ -16,18 +16,25 @@ export { TEMPLATE_SHAPE };
 /**
  * The deny-by-default hc guard's folder (automagik#624, `guard/hc`): put first on a dsh-tui
  * pane's PATH only, by startArgs and workerArgs. A guardrail, never a boundary: an absolute
- * hc path, a raw socket or `hc connect` skips it; #631 is the hard boundary.
+ * hc path, a raw socket or `hc connect` skips it; #628 is the full send/keys/attach scope; #631 is the hard boundary.
  */
 export const GUARD_DIR = fileURLToPath(new URL("./guard/", import.meta.url)).replace(/\/+$/, "");
 
 /**
- * `path` with the guard folder first for a dsh-tui pane; any other agent's path unchanged
- * (byte for byte, so a non-dsh-tui start stays as it was). A guard folder already on the
- * caller's PATH is moved to the front, never repeated.
+ * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
+ * repeated. A null guard leaves the path exactly as it is.
+ */
+export function guardPathWith(path, guard) {
+  if (!guard || !path) return path;
+  return [guard, ...String(path).split(":").filter((dir) => dir !== guard)].join(":");
+}
+
+/**
+ * `path` with this pack's guard folder first for a dsh-tui pane; any other agent's path
+ * unchanged (byte for byte, so a non-dsh-tui start stays as it was).
  */
 export function guardPath(path, agent) {
-  if (agent !== "dsh-tui" || !path) return path;
-  return [GUARD_DIR, ...String(path).split(":").filter((dir) => dir !== GUARD_DIR)].join(":");
+  return agent === "dsh-tui" ? guardPathWith(path, GUARD_DIR) : path;
 }
 
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
@@ -229,7 +236,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
  * `/usr/bin/env <login words>`, its template label kept. `agent` `dsh-tui`: the pack's
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
- * boundary (#624, #631).
+ * boundary (#624, #628, #631).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
   taskId, project, lead, space, login = [], templateArgv = null }) {

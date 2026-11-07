@@ -3,10 +3,11 @@
 // A GUARDRAIL, NOT A BOUNDARY. This wrapper sits first on the pane PATH only because the pack
 // put it there (launchArgs.js startArgs and workers.js workerArgs, dsh-tui only). It refuses the
 // ordinary `hc exec` / bare `run` / file writes / machine and server commands with one line
-// naming #624 and #631, and passes the allowed calls to the real hc unchanged. It is bypassable
+// naming #624, #628 and #631, and passes the allowed calls to the real hc unchanged. It is bypassable
 // by design: an absolute path to the real hc, a raw socket client, or `hc connect` skips it.
 // The hard boundary is the sandboxed socket mask plus the per-pane filtering proxy (#624),
-// tracked in #631. Labels and .herdr/bots.json are writable by the bot; the team check is a
+// tracked in #631; #628 is the full send/keys/attach scope. Labels and .herdr/bots.json are
+// writable by the bot; the team check is a
 // guardrail over that data, never a boundary. Apache-2.0.
 //
 // The caller comes from the attach ledger (attach.js), the authority: a worker pane has no
@@ -46,11 +47,11 @@ const SELF_ENTRY = join(GUARD_DIR, "hc");
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 const say = (line) => process.stderr.write(`${line}\n`);
 const refused = (reason, code = 2) => {
-  say(`hc guard: refused ${oneLine(reason)} (#624): this wrapper is a guardrail, not a boundary; the hard boundary is #631.`);
+  say(`hc guard: refused ${oneLine(reason)} (#624; the full send/keys/attach scope is #628): this wrapper is a guardrail, not a boundary; the hard boundary is #631.`);
   return code;
 };
 const failedClosed = (reason = "the real hc could not be run") => {
-  say(`hc guard: failed closed (#624): ${oneLine(reason)}; this wrapper is a guardrail, not a boundary (#631).`);
+  say(`hc guard: failed closed (#624; the full send/keys/attach scope is #628): ${oneLine(reason)}; this wrapper is a guardrail, not a boundary (#631).`);
   return 1;
 };
 
@@ -67,6 +68,8 @@ export async function runGuard(argv, env = process.env) {
     if (!ALLOWED_VERBS.has(verb) && verb !== "run") return refused(verb === "file" ? `file ${args[1] ?? ""}` : verb);
     const on = onWord(args);
     if (on.present && verb !== "send") return refused(`${verb} with --on`);
+    const target = TARGETED_VERBS.has(verb) ? firstPositional(args, TARGET_VALUE_OPTIONS[verb]) : null;
+    if (verb !== "send" && target && target.includes("/")) return refused(`${verb} with a machine target`);
     const terminal = terminalOf(env);
     if (!terminal) return refused("a command without HC_TERMINAL_ID");
     const real = findRealHc(env);
@@ -79,6 +82,11 @@ export async function runGuard(argv, env = process.env) {
     if (verb === "send") {
       const why = sendProblem(real, args, env, terminal, on);
       if (why) return refused(`send: ${why}`);
+      return passthrough(real, args, env);
+    }
+    if (verb === "label") {
+      const why = labelProblem(real, args, env, terminal, on);
+      if (why) return refused(`label: ${why}`);
       return passthrough(real, args, env);
     }
     return passthrough(real, args, env);
@@ -109,12 +117,14 @@ const executable = (path) => {
   try { return statSync(path).isFile() && (accessSync(path, constants.X_OK), true); } catch { return false; }
 };
 const realOrNull = (path) => { try { return realpathSync(path); } catch { return null; } };
+/** A guard folder: its `hc` entry has `../hcGuard.mjs` beside it (the pack's or am's copy). */
+const isGuardFolder = (dir) => typeof dir === "string" && dir !== "" && existsSync(join(dir, "..", "hcGuard.mjs"));
 
-/** The real hc: the first executable `hc` on PATH that is not this guard's own real path. */
+/** The real hc: the first executable `hc` on PATH that is not any guard folder's own entry. */
 function findRealHc(env) {
   const self = new Set([realOrNull(SELF_ENTRY), realOrNull(process.argv[1])].filter(Boolean));
   for (const dir of String(env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
+    if (!dir || isGuardFolder(dir)) continue;
     const candidate = join(dir, "hc");
     if (!executable(candidate)) continue;
     const real = realOrNull(candidate);
@@ -237,6 +247,29 @@ function teamOf(file, caller) {
 // ---- send: resolve the target with hc, then check its labels and the team graph ----
 
 const SEND_VALUE_OPTIONS = new Set(["--if", "--timeout", "--on"]);
+/** The first positional target of a verb and the options that take a value before it. */
+const TARGET_VALUE_OPTIONS = {
+  read: new Set(["--lines"]),
+  get: new Set(),
+  wait: new Set(["--children", "--output", "--timeout"]),
+  put: new Set(),
+  label: new Set(),
+  kill: new Set(),
+  rm: new Set(),
+};
+const TARGETED_VERBS = new Set(Object.keys(TARGET_VALUE_OPTIONS));
+
+/** The first positional word after the options, or null (`--` starts the positionals). */
+function firstPositional(args, valueOptions = new Set()) {
+  for (let i = 1; i < args.length; i += 1) {
+    const word = args[i];
+    if (word === "--") return args[i + 1] ?? null;
+    if (valueOptions.has(word)) { i += 1; continue; }
+    if (word.startsWith("-") && word !== "-") continue;
+    return word;
+  }
+  return null;
+}
 
 /** The positional words of `hc send`, with its options and their values skipped. */
 function sendPositionals(args) {
@@ -262,7 +295,7 @@ function targetOf(real, word, on, env) {
   }
   const get = hcJson(real, ["get", address], env);
   if (!get || typeof get !== "object" || get.error || !get.labels || typeof get.labels !== "object") return null;
-  return { address, labels: get.labels };
+  return { address, get, labels: get.labels };
 }
 
 function sendProblem(real, args, env, terminal, on) {
@@ -285,6 +318,18 @@ function sendProblem(real, args, env, terminal, on) {
   const def = typeof labels.bot === "string" ? file.bots.find((b) => b.id === labels.bot) : null;
   if (def && SHARED_ROLES.includes(def.rank)) return null;
   return "the target is not in the caller's team";
+}
+
+/** label is own-workers only: the target's parent must be the caller's own pane. */
+function labelProblem(real, args, env, terminal, on) {
+  const target = firstPositional(args, TARGET_VALUE_OPTIONS.label);
+  if (!target) return "no target";
+  const caller = callerOf(real, env, terminal);
+  if (typeof caller === "string") return caller;
+  const hit = targetOf(real, target, on.value, env);
+  if (!hit) return "the target is not resolvable with hc";
+  if (hit.get.parent !== terminal) return "the target is not the caller's own worker";
+  return null;
 }
 
 // ---- run: exactly the worker start workers.js emits for dsh-tui ----
@@ -366,7 +411,7 @@ function runProblem(args, env, terminal) {
   if (rest[0] !== ENV) return `the program is not ${ENV}`;
   if (!rest[1] || !rest[1].startsWith("PATH=")) return "no PATH word after the program";
   const first = rest[1].slice("PATH=".length).split(delimiter)[0];
-  if (first !== GUARD_DIR) return "the PATH word does not start with the guard";
+  if (!isGuardFolder(first)) return "the PATH word does not start with a guard";
   if (rest[2] !== "dsh-tui") return "the program is not dsh-tui";
   if (rest.length !== 5 || rest[3] !== "--" || typeof rest[4] !== "string") return "the task is not the one -- <task> word";
   return null;

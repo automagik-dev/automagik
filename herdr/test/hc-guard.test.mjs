@@ -1,5 +1,5 @@
 // The deny-by-default hc guard (#624, stopgap C): every allowed verb passes to a stub hc
-// unchanged; every refused verb is one stderr line naming #624 and #631 and never calls it;
+// unchanged; every refused verb is one stderr line naming #624, #628 and #631 and never calls it;
 // send is scoped to the caller's team; the dsh-tui worker run shape is exact. Hermetic: a temp
 // app home, a temp project and a stub hc on PATH; the real hc is never run. No escape route
 // (an absolute hc path, a raw socket, `hc connect`) is tested here: the guard is a guardrail,
@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -37,7 +37,7 @@ const team = () => ({
 // The stub: logs every call, answers hc ls/get from the state file, and for any other verb
 // prints the pass-through markers and exits HC_STUB_CODE.
 const STUB = `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.HC_STUB_LOG, JSON.stringify({ argv: args }) + "\\n");
 const state = JSON.parse(readFileSync(process.env.HC_STUB_STATE, "utf8"));
@@ -78,7 +78,7 @@ function scene(t, { caller = "t100" } = {}) {
       t101: get("t101", { bot: ID.cap }, { cwd: project, name: "cap" }),
       t102: get("t102", { bot: ID.junior }, { cwd: project, name: "junior" }),
       t103: get("t103", { bot: ID.main }, { cwd: project, name: "main" }),
-      t105: get("t105", { "worker.of": ID.dev }, { cwd: worktree, name: "worker" }),
+      t105: get("t105", { "worker.of": ID.dev }, { cwd: worktree, name: "worker", parent: "t100" }),
       t106: get("t106", { role: "reviewer" }, { cwd: project, name: "reviewer" }),
       t107: get("t107", { role: "fixer" }, { cwd: project, name: "fixer" }),
       t108: get("t108", { bot: ID.tester }, { cwd: project, name: "tester" }),
@@ -86,6 +86,7 @@ function scene(t, { caller = "t100" } = {}) {
       t120: get("t120", { bot: ID.other }, { cwd: project, name: "other" }),
       t121: get("t121", {}, { cwd: project, name: "bare" }),
       "m/t101": get("m/t101", { bot: ID.cap }, { cwd: project, name: "cap" }),
+      "m/t120": get("m/t120", { bot: ID.other }, { cwd: project, name: "other" }),
     },
   };
   const statePath = join(root, "hc-state.json"), logPath = join(root, "hc.log");
@@ -130,6 +131,7 @@ function assertRefused(r) {
   const lines = r.stderr.trim().split("\n");
   assert.equal(lines.length, 1, `exactly one stderr line: ${JSON.stringify(r.stderr)}`);
   assert.match(r.stderr, /#624/);
+  assert.match(r.stderr, /#628/);
   assert.match(r.stderr, /#631/);
   assert.equal(r.stdout, "", "a refusal prints no stdout");
 }
@@ -140,7 +142,7 @@ test("every allowed verb reaches the stub unchanged", (t) => {
   const s = scene(t);
   const allowed = [
     ["send", "t101", "hello"], ["read", "t101"], ["ls"], ["get", "t101"], ["wait", "t101"],
-    ["put", "t101", "/tmp/file"], ["label", "t101", "role=dev"], ["kill", "t101"], ["rm", "t101"],
+    ["put", "t101", "/tmp/file"], ["label", "t105", "role=dev"], ["kill", "t101"], ["rm", "t101"],
     ["events"], ["schema"], ["templates"],
   ];
   for (const args of allowed) {
@@ -176,7 +178,7 @@ test("the doc-only forms pass; a doc flag on a refused command does not", (t) =>
 
 // ---- the refuse list ----
 
-test("every refused verb is one line naming #624 and #631, and the stub is never called", (t) => {
+test("every refused verb is one line naming #624, #628 and #631, and the stub is never called", (t) => {
   const s = scene(t);
   const refused = [
     ["exec", "echo", "x"], ["file", "write", "/tmp/x"], ["file", "edit", "/tmp/x", "--old", "a", "--new", "b"],
@@ -206,6 +208,7 @@ test("no real hc: the guard fails closed with one line", (t) => {
   assert.equal(r.status, 1);
   assert.equal(r.stderr.trim().split("\n").length, 1, r.stderr);
   assert.match(r.stderr, /#624/);
+  assert.match(r.stderr, /#628/);
   assert.match(r.stderr, /#631/);
 });
 
@@ -254,6 +257,50 @@ test("a worker's team is the main checkout's, not a bots file in its worktree", 
   })}\n`);
   const r = guardRun(s, ["send", "t100", "report"], { HC_TERMINAL_ID: "t110" });
   assert.equal(r.status, 0, r.stderr);
+});
+
+// ---- machine targets, and label on the caller's own workers ----
+
+test("a machine target is refused on every allowed verb but send", (t) => {
+  const s = scene(t);
+  const cases = [
+    ["read", "m/t101"], ["read", "--lines", "5", "m/t101"], ["get", "m/t101"], ["wait", "m/t101"],
+    ["put", "m/t101", "/tmp/file"], ["label", "m/t101", "role=reviewer"], ["kill", "m/t101"], ["rm", "m/t101"],
+  ];
+  for (const args of cases) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, args);
+    assertRefused(r);
+    assert.match(r.stderr, /machine target/, args.join(" "));
+    assert.deepEqual(calls(s), [], `${args.join(" ")} never reaches hc`);
+  }
+  writeFileSync(s.logPath, "");
+  const team = guardRun(s, ["send", "m/t101", "hi"]);
+  assert.equal(team.status, 0, team.stderr);
+  assert.ok(calls(s).some((argv) => same(argv, ["send", "m/t101", "hi"])));
+  for (const args of [["send", "m/t120", "hi"], ["send", "--on", "m", "t120", "hi"]]) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, args);
+    assertRefused(r);
+    assert.equal(calls(s).some((argv) => argv[0] === "send"), false);
+  }
+});
+
+test("label is the caller's own workers only; a label cannot widen send", (t) => {
+  const s = scene(t);
+  writeFileSync(s.logPath, "");
+  let r = guardRun(s, ["label", "t101", "role=reviewer"]);
+  assertRefused(r);
+  assert.match(r.stderr, /own worker/);
+  assert.equal(calls(s).some((argv) => argv[0] === "label"), false, "a foreign label never reaches hc");
+  r = guardRun(s, ["label", "t120", "role=reviewer"]);
+  assertRefused(r);
+  assert.equal(calls(s).some((argv) => argv[0] === "label"), false, "the label-then-send pane is never labelled");
+  r = guardRun(s, ["send", "t120", "hi"]);
+  assertRefused(r);
+  r = guardRun(s, ["label", "t105", "role=dev"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(calls(s).some((argv) => same(argv, ["label", "t105", "role=dev"])));
 });
 
 // ---- the dsh-tui worker run shape ----
@@ -313,6 +360,51 @@ test("a worker pane cannot start a worker: the ledger has no binding for it", (t
 });
 
 // ---- the PATH word: dsh-tui only ----
+
+test("a mixed am+pack guard PATH reaches the real hc once, never a guard as hc", (t) => {
+  const s = scene(t);
+  const am = join(s.root, "am"), amGuard = join(am, "guard");
+  mkdirSync(amGuard, { recursive: true });
+  writeFileSync(join(am, "hcGuard.mjs"), "// fake am guard\n");
+  const marker = join(s.root, "am-guard-called");
+  writeFileSync(join(amGuard, "hc"), `#!/bin/sh\necho called > "${marker}"\nexit 1\n`);
+  chmodSync(join(amGuard, "hc"), 0o755);
+  const exact = exactRun(s);
+  exact[exact.indexOf("--") + 2] = `PATH=${amGuard}:${GUARD_DIR}:/usr/bin:/bin`;
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, exact, { PATH: `${amGuard}:${GUARD_DIR}:${s.bin}:${dirname(process.execPath)}` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s), [exact], "the real hc got the mixed-PATH worker argv once");
+  assert.equal(existsSync(marker), false, "the am guard was skipped, not run as hc");
+});
+
+test("a fake guard pair never loops: every guard folder is skipped and the stub runs once", (t) => {
+  const s = scene(t);
+  const fakeGuard = (name) => {
+    const mod = join(s.root, name);
+    mkdirSync(join(mod, "guard"), { recursive: true });
+    writeFileSync(join(mod, "hcGuard.mjs"), "// fake guard\n");
+    // Bounded by a depth file beside the fake entry itself: even a wrong skip ends here.
+    writeFileSync(join(mod, "guard", "hc"), `#!/bin/sh
+depth=\${0%/*}/depth
+n=0
+[ -f "$depth" ] && read n < "$depth"
+n=$((n + 1))
+echo "$n" > "$depth"
+[ "$n" -gt 2 ] && exit 9
+exec hc "$@"
+`);
+    chmodSync(join(mod, "guard", "hc"), 0o755);
+    return join(mod, "guard");
+  };
+  const a = fakeGuard("fake-a"), b = fakeGuard("fake-b");
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["read", "t101"], { PATH: `${a}:${b}:${s.bin}:${dirname(process.execPath)}` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s), [["read", "t101"]], "the real hc ran once; the fake guards did not");
+  assert.equal(existsSync(join(a, "depth")), false, "the bounded fake loop never started");
+  assert.equal(existsSync(join(b, "depth")), false, "the second fake guard never ran either");
+});
 
 test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv is unchanged", () => {
   assert.equal(guardPath("/a:/b", "claude"), "/a:/b");

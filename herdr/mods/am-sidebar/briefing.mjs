@@ -21,9 +21,10 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
   from "node:fs";
 import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf, unwrapKeep } from "./launchArgs.js";
@@ -88,6 +89,8 @@ async function hcJson(args) {
 }
 
 const git = async (args, cwd) => { const out = await run("git", args, cwd); return out === UNANSWERED ? null : out; };
+/** Whether a guard folder is on this pane's PATH: its hc entry has ../hcGuard.mjs beside it. */
+const guardOnPath = (path) => String(path ?? "").split(delimiter).some((dir) => dir && existsSync(join(dir, "..", "hcGuard.mjs")));
 const exists = async (path) => { try { await access(path); return true; } catch { return false; } };
 
 /**
@@ -96,7 +99,7 @@ const exists = async (path) => { try { await access(path); return true; } catch 
  * own live terminal, whose unlabelled children are its helpers (null: no helpers counted).
  * Shared with the CLI's `automagik-herdr brief`.
  */
-export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask) }) {
+export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask), guard = null }) {
   const team = directMembers(file, bot.id);
   const leadId = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
   const leadBot = leadId ? file.bots.find((b) => b.id === leadId) : null;
@@ -121,7 +124,7 @@ export async function gatherBriefing({ file, bot, address, ask, locate = (id) =>
   const lead = leadBot
     ? { bot: leadBot, terminal: leadPane?.get?.address ?? "", status: leadPane?.get?.status?.state, unreachable: Boolean(leadPane?.unreachable) }
     : undefined;
-  return briefingText({ self: bot, file, members, lead, helpers });
+  return briefingText({ self: bot, file, members, lead, helpers, guard });
 }
 
 /**
@@ -198,7 +201,8 @@ async function main(mePending, inputPending, appHome) {
   if (!bot || bot.planned) return null;
   const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
   const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
-  const now = textHash(launchBriefingText({ self: bot, file }));
+  const guard = guardOnPath(process.env.PATH);
+  const now = textHash(launchBriefingText({ self: bot, file, guard }));
   const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
   const offset = () => (transcript ? sizeOf(transcript) : 0);
   const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset() });
@@ -206,7 +210,7 @@ async function main(mePending, inputPending, appHome) {
     if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
     return null;
   }
-  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, ...(ledger ? { locate: ledger.locate } : {}) });
+  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, guard, ...(ledger ? { locate: ledger.locate } : {}) });
   return { text, record };
 }
 

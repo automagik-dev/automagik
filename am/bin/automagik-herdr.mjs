@@ -30,7 +30,7 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, GUARD_DIR, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
+import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
@@ -181,21 +181,24 @@ function programPath(program) {
 }
 const onPath = (program) => programPath(program) !== null;
 
+/** A guard folder: its `hc` entry has `../hcGuard.mjs` beside it (the pack's or am's copy). */
+const isGuardDir = (dir) => existsSync(join(dir, "..", "hcGuard.mjs"));
+
 /**
  * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
- * docs): the first PATH hc that isn't this pack's guard folder. The guard is a guardrail for
- * the bot's direct calls (#624), not for the pack's own commands, and skipping its folder keeps
- * `automagik-herdr worker` and the remote commands working in a guarded pane.
+ * docs): the first PATH hc that isn't inside any guard folder. The guard is a guardrail for
+ * the bot's direct calls (#624; #628 scopes send/keys/attach), not for the pack's own commands.
+ * Skipping every guard folder (the pack's and am's) keeps `automagik-herdr worker` and the
+ * remote commands working in a guarded pane, and never treats one guard as the real hc.
  */
 function realHcPath() {
-  const guarded = resolvePath(`${GUARD_DIR}/hc`);
   const dirs = [...(process.env.PATH ?? "").split(":"), `${home()}/.local/bin`, dirname(process.execPath)];
   for (const dir of dirs) {
-    if (!dir) continue;
+    if (!dir || isGuardDir(dir)) continue;
     const file = `${dir}/hc`;
     try {
       accessSync(file, constants.X_OK);
-      if (resolvePath(file) !== guarded) return file;
+      return file;
     } catch { /* next */ }
   }
   return null;
@@ -1887,6 +1890,32 @@ async function agentThere(machine, argv, name, prepend = null, shipped = null) {
 }
 
 /**
+ * The hc guard folder beside `automagik-herdr` on `path`, that machine's pane PATH (#624): the
+ * pack's or am's `bin/../guard`, with hcGuard.mjs beside it. Null when that machine has no
+ * automagik-herdr there or no guard; a remote dsh-tui seat then gets no guard, and no briefing
+ * paragraph claiming one.
+ */
+const GUARD_PROBE_SH = `PATH=$1; export PATH
+p=$(command -v automagik-herdr 2>/dev/null) || exit 3
+case $p in /*) ;; *) exit 3 ;; esac
+while [ -L "$p" ]; do
+  to=$(readlink "$p") || break
+  case $to in /*) p=$to ;; *) p=$(dirname "$p")/$to ;; esac
+done
+dir=$(cd "$(dirname "$p")" && pwd -P) || exit 3
+guard=$dir/../guard
+[ -x "$guard/hc" ] && [ -f "$dir/../hcGuard.mjs" ] || exit 3
+cd "$guard" && pwd -P`;
+async function guardThere(machine, path) {
+  if (typeof path !== "string" || !path) return null;
+  const r = await remoteIo.exec("sh", ["-c", GUARD_PROBE_SH, "sh", path], machine, { timeout: AGENT_WAIT_S });
+  if (r.code !== 0) return null;
+  const dir = r.stdout.trim();
+  // eslint-disable-next-line no-control-regex
+  return dir.startsWith("/") && !/[\x00-\x1f\x7f]/.test(dir) ? dir : null;
+}
+
+/**
  * A project's pane-env on `machine` (agentPath.mjs paneEnvOf: PATH_PREPEND, HERDR_APP_HOME), read
  * there through hc: { prepend, appHome, refused, warnings }. No file: nothing, so the start is as
  * before #582. A file it refuses, or one that can't be read, is one warning, `refused` and nothing
@@ -1963,11 +1992,11 @@ async function ownFileOn(machine, path, text) {
  * to its own config file (BRIEFING's ownConfig: codex, hermes) starts as it is, since only this
  * computer's config is read. Never throws: { argv, env, warnings }.
  */
-async function briefedOn(machine, project, bot, agentKey, argv, boxHome) {
+async function briefedOn(machine, project, bot, agentKey, argv, boxHome, guard = null) {
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || briefingOwnConfig(agentKey) || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings: [] };
-  const text = launchBriefingText({ self: bot, file: project.file });
+  const text = launchBriefingText({ self: bot, file: project.file, guard });
   const warnings = [];
   let launch = null;
   if (way === "file") {
@@ -2074,11 +2103,19 @@ async function seatOnMachine(project, bot, over = {}) {
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
+  // A remote dsh-tui seat gets the guard its own machine has, resolved there (#624); with none,
+  // no guard on PATH and no briefing paragraph claiming one, and one warning says so.
+  const remoteGuard = agentKey === "dsh-tui" ? await guardThere(machine, there.path) : null;
+  const guardWarnings = agentKey === "dsh-tui" && !remoteGuard
+    ? [`${bot.name} runs on ${machine} without the hc guard (#624): no automagik-herdr with guard/hc and `
+      + `hcGuard.mjs beside it was found on its pane PATH, so its hc calls are not guarded.`]
+    : [];
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
   const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
   const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
-  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, home.dir);
+  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, home.dir,
+    agentKey === "dsh-tui" ? Boolean(remoteGuard) : null);
   const argv = briefed.argv;
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
@@ -2095,9 +2132,9 @@ async function seatOnMachine(project, bot, over = {}) {
   const name = hcName(bot.name, bot.id, taken);
   const args = startArgs({ botId: bot.id, name, cwd: over.cwd ?? key, space: place?.space, tab: place?.tab,
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
-    parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey });
+    parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey, guard: remoteGuard });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...paneEnv.warnings, ...there.warnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());

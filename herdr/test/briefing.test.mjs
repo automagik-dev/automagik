@@ -910,6 +910,9 @@ test("the hc guard paragraph is only in a dsh-tui bot's briefing", () => {
   const dsh = { ...byId(f, ID.cap), agent: "dsh-tui" };
   assert.ok(launchBriefingText({ self: dsh, file: f }).includes(GUARD_LINE));
   assert.ok(briefingText({ self: dsh, file: f }).includes(GUARD_LINE));
+  assert.equal(launchBriefingText({ self: dsh, file: f, guard: false }).includes(GUARD_LINE), false,
+    "a linked machine without a guard says nothing");
+  assert.equal(briefingText({ self: dsh, file: f, guard: false }).includes(GUARD_LINE), false);
   for (const agent of ["claude", "omp", "hermes", "codex", "pi", "grok"]) {
     const self = { ...byId(f, ID.cap), agent };
     assert.equal(launchBriefingText({ self, file: f }).includes(GUARD_LINE), false, agent);
