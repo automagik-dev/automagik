@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { fetchPlugins, DEFAULT_PACKAGES } from './fetch-plugins.mjs'
 import { profileDirOf, PROFILE, pinStore } from './lib.mjs'
 import { pruneNodeModules } from '../apps/desktop/scripts/prune-runtime.mjs'
+import { patchRuntime } from '../apps/desktop/scripts/runtime-patches.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -27,6 +28,7 @@ export const PRUNE_EXTRA_DIR = /^(?:test|tests|__tests__|examples|example|docs|\
 /** A package's test/spec file, wherever it sits (zod's src/v4/classic/tests, node-gyp's *_test.py). */
 export const PRUNE_EXTRA_FILE = /(?:^|[._-])(?:test|spec)\.[^.]+$/i
 const RUNTIME_SOURCE = join(REPO, 'apps', 'desktop', 'runtime')
+const PATCHES_SOURCE = join(RUNTIME_SOURCE, 'patches')
 const PROFILE_SOURCE = join(HERE, 'profile')
 const ENV = { ...process.env, DO_NOT_TRACK: '1', npm_config_fund: 'false', npm_config_audit: 'false', npm_config_update_notifier: 'false' }
 
@@ -114,6 +116,21 @@ export function pruneExtras(nodeModules) {
   return removed
 }
 
+/**
+ * Apply the desktop's carried runtime patches to an installed runtime, logging each file's
+ * result. `patchRuntime` checks the dsh version, every package version and every file hash
+ * before it writes, and throws on any mismatch, so a patch that no longer fits fails the build.
+ * Exported so a test can run it against a temp runtime without assembling the image.
+ * @param {string} runtimeDir - the runtime folder whose node_modules is patched
+ * @param {string} [patchesDir] - the patches folder; defaults to apps/desktop/runtime/patches
+ * @returns {{ name: string, state: 'patched' | 'already patched' }[]}
+ */
+export function applyRuntimePatches(runtimeDir, patchesDir = PATCHES_SOURCE) {
+  const results = patchRuntime(join(runtimeDir, 'node_modules'), patchesDir)
+  for (const { name, state } of results) say(`runtime patch: ${name} ${state}`)
+  return results
+}
+
 export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', repository = 'https://github.com/automagik-dev/automagik' }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`not a release version: ${version}`)
   const runtimeDir = join(out, 'runtime')
@@ -133,6 +150,10 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   run('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund', '--dangerously-allow-all-scripts'], { cwd: runtimeDir, env: ENV })
   const installedDsh = readJson(join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')).version
   if (installedDsh !== dsh) throw new Error(`runtime installed dsh ${installedDsh}, not ${dsh}`)
+
+  // The same carried patches the desktop runtime applies, to the same pinned packages: this
+  // image serves the web app, so the index cache policy is the one the desktop's patch sets.
+  applyRuntimePatches(runtimeDir)
 
   say(`fetching ${DEFAULT_PACKAGES.join(', ')} at ${version}`)
   mkdirSync(installDir, { recursive: true })

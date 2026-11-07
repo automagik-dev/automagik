@@ -88,6 +88,8 @@ To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `-
 
   Switch Agent Teams on from Settings → Plugins, which uses the runtime's patched copy. `dsh plugin --profile omni add @deepseek-ai/dsh-experimental-agent-team-profile` installs DeepSeek's own copy into the profile instead, which loads ahead of the runtime's, so the patch does nothing there. `dsh plugin --profile omni remove` of the same package, then the Plugins switch, puts it back.
 
+- `frontend-static-index-cache.patch` (dsh 0.2.2-rc.1): the SPA index (`/` and the configured index path) answers `cache-control: no-cache` with a weak ETag of the rendered bytes, and a matching `If-None-Match` gets an empty 304 — the validator non-index assets already carry in this release — and authorization still runs before the bytes are read. Without it a normal reload after a plugin update can keep a stale manifest and client bundle; the release-change reload prompt is already in this dsh, and the server image applies the same patch. It carries no `Last-Modified`: a plugin update can rewrite the manifest without touching `index.html`'s mtime, so only a content ETag validates the served document. **Delete it in the DSH release that serves the index with cache directives.**
+
 ### The icon
 
 `assets/icon.svg` is the icon's source: the owner's clay triskelion (`assets/mark.png`, the kit-v4 source, kept as delivered) on a cream clay tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium (`--no-sandbox` where its sandbox cannot start; the SVG loads `mark.png` beside it):
