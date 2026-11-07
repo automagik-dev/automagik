@@ -126,6 +126,28 @@ object Wire {
     const val CLOSE = 2
     const val RESIZE = 3
     const val FOCUS = 4
+    /** Input the core passes on without counting it as typing (attach's automatic_input), so it holds no key back. */
+    const val AUTOMATIC_INPUT = 6
+    /** One mouse report: SGR (ESC [ < Cb ; x ; y M|m) or X10 (ESC [ M and three bytes). */
+    private val MOUSE = Regex("""\x1b\[<(\d{1,4});\d{1,5};\d{1,5}[Mm]|\x1b\[M([\x20-\xff])[\x20-\xff]{2}""")
+    /**
+     * The frame kind for terminal input [bytes] on a stream whose attach said [automatic] (automatic_input): only mouse
+     * wheel (Cb bit 64) and motion (bit 32) reports, the page's swipes, are AUTOMATIC_INPUT, so herdr-core's ~3 s quiet
+     * rule does not hold a tapped answer behind them. A press or release (a deliberate tap's click), keys and text are
+     * typing (DATA), as is anything on a path without automatic_input.
+     */
+    fun inputKind(bytes: ByteArray, automatic: Boolean): Int {
+        if (!automatic || bytes.isEmpty()) return DATA
+        val s = String(bytes, Charsets.ISO_8859_1)
+        var at = 0
+        for (m in MOUSE.findAll(s)) {
+            if (m.range.first != at) return DATA
+            val cb = m.groupValues[1].toIntOrNull() ?: (m.groupValues[2][0].code - 32)
+            if ((cb and 96) == 0) return DATA
+            at = m.range.last + 1
+        }
+        return if (at == s.length) AUTOMATIC_INPUT else DATA
+    }
     fun encode(channel: Int, kind: Int, payload: ByteArray = byteArrayOf()): ByteArray {
         require(payload.size <= MAX_PAYLOAD)
         return ByteBuffer.allocate(9 + payload.size).order(ByteOrder.LITTLE_ENDIAN)

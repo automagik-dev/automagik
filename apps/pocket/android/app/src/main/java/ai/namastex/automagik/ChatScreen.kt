@@ -181,7 +181,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
             if (what.isNotBlank() && what != Chat.ANSWER_ON_COMPUTER) Text(ChatText.clean(what), fontSize = 13.sp, color = Ink)
             if (row.input.isNotBlank()) { Spacer(Modifier.height(6.dp)); Mono(row.input) }
             Spacer(Modifier.height(8.dp))
-            if (choices.isEmpty()) Text(if (row.why == "answered") "Answered." else ChatActions.passive(s), fontSize = 12.sp, color = Muted)
+            if (choices.isEmpty()) Text(ChatActions.pendingNote(s, row), fontSize = 12.sp, color = Muted)
             else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in choices) {
                     val label = when (c) { "allow" -> "Allow"; "allow-always" -> "Always allow"; else -> "Deny" }
