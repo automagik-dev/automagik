@@ -356,6 +356,59 @@ const SECRET_VALUES = [
   [/(^|[\r\n])((?:[ \t]*(?:-[ \t]+)?\?[ \t](?:[&!][^\s"'`]{0,80}[ \t]+){0,2})(["'])(?=[^"'\r\n:]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))[^"'\r\n:]*:(?![ \t])(?![^"'\r\n]*(?<!\\)\3[ \t]*(?::[^\r\n]*|#[^\r\n]*)?(?=[\r\n]|$)))(?![^\r\n]*[\r\n](?:[ \t]*(?:#[^\r\n]*)?[\r\n])*[ \t]*:)(["']?([^ \t\r\n"']+(?:'+[^ \t\r\n"']+)*))/g, /:/],
 ]
 
+// #590: the explicit-key guard in the name rules scans a bounded quote tail at every name. On a
+// text with no `? name` line the guard can never fail, so dropping it is exact; the rule is
+// compiled with and without it and chosen per text, keeping an unclosed quote run linear (#172).
+const EXPLICIT_KEY = /(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t]/
+const NO_EXPLICIT_KEY = /^(?![\s\S]*\?[ \t])/
+const ANY_EXPLICIT_KEY = /\?[ \t]/
+const GUARD_START = '(?!(?<=(?:^|[\\r\\n])[ \\t]{0,160}'
+const KEY_TAIL_START = String.raw`|(?<=(?:^|[\r\n])[ \t]{0,256}`
+const QUOTE_TAIL = String.raw`|(?:"[^"\r\n]{241,}|'[^'\r\n]{241,}`
+  + String.raw`|"[^"\r\n]{0,}(?=[ \t]{0,64}(?:#[^\r\n]*)?[\r\n])`
+  + String.raw`|'[^'\r\n]{0,}(?=[ \t]{0,64}(?:#[^\r\n]*)?[\r\n]))`
+function withoutGuard(source) {
+  let out = source
+  for (let at = out.indexOf(GUARD_START); at >= 0; at = out.indexOf(GUARD_START)) {
+    let depth = 0
+    let end = at
+    for (; end < out.length; end++) {
+      if (out[end] === '\\') { end++; continue }
+      if (out[end] === '(') depth++
+      else if (out[end] === ')' && --depth === 0) { end++; break }
+    }
+    out = out.slice(0, at) + out.slice(end)
+  }
+  for (let at = out.indexOf(KEY_TAIL_START); at >= 0; at = out.indexOf(KEY_TAIL_START)) {
+    const next = out.indexOf(QUOTE_TAIL, at)
+    if (next < 0) break
+    out = out.slice(0, at) + out.slice(next)
+  }
+  return out.split(QUOTE_TAIL).join('')
+}
+function nameRule(pattern, replace) {
+  const plain = new RegExp(withoutGuard(pattern.source), pattern.flags)
+  return (text) => (EXPLICIT_KEY.test(text)
+    ? text.replace(pattern, replace)
+    : text.replace(plain, replace))
+}
+for (const rule of SECRET_TEXT) {
+  if (typeof rule[0] !== 'function' &&
+    (rule[0].source.includes(GUARD_START) || rule[0].source.includes(QUOTE_TAIL))) {
+    rule[0] = nameRule(rule[0], rule[1])
+    rule[1] = null
+  }
+}
+for (let i = 0; i < SECRET_VALUES.length; i++) {
+  const entry = SECRET_VALUES[i]
+  if (!Array.isArray(entry) ||
+    !(entry[0].source.includes(GUARD_START) || entry[0].source.includes(QUOTE_TAIL))) continue
+  const plain = new RegExp(withoutGuard(entry[0].source), entry[0].flags)
+  SECRET_VALUES.splice(i, 0, [plain, NO_EXPLICIT_KEY, ...entry.slice(2)])
+  entry[1] = ANY_EXPLICIT_KEY
+  i++
+}
+
 export function secretsIn(s, open = false) {
   const out = new Set()
   const text = String(s)
