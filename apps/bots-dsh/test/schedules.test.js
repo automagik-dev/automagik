@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
@@ -28,7 +28,7 @@ function scheduleService() {
   let next = 1
   return {
     tasks,
-    async create(request) {
+    async create(request, actorSessionId) {
       const id = `schedule-${next++}`
       const timing = request.timing
       const entry = {
@@ -45,24 +45,35 @@ function scheduleService() {
         rrule: timing.rrule,
         request,
         target: request.target,
+        // DSH records the acting Session and the named target as involved.
+        involvedSessionIds: [...new Set([
+          ...(actorSessionId === undefined ? [] : [actorSessionId]),
+          ...(request.target?.kind === 'new' ? [] : [request.target?.sessionId]),
+        ])],
         status: 'active',
       }
       tasks.set(id, entry)
       return entry
     },
     async catalog() { return [...tasks.values()].map(entry => ({ ...entry })) },
-    async edit({ id, action }) {
-      if (action !== 'delete') throw new Error(`unexpected edit ${action}`)
+    async edit({ id, action, patch }) {
       if (!tasks.has(id)) return { id, deleted: false, code: 'schedule_not_found' }
-      tasks.delete(id)
-      return { id, deleted: true }
+      if (action === 'delete') {
+        tasks.delete(id)
+        return { id, deleted: true }
+      }
+      if (action !== 'update') throw new Error(`unexpected edit ${action}`)
+      const entry = tasks.get(id)
+      if (patch?.active === false) entry.status = 'paused'
+      else if (patch?.active === true) entry.status = 'active'
+      return entry
     },
   }
 }
 
-function setup(services = {}) {
+function setup(services = {}, team = TEAM) {
   const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const ctx = fakeContext({ services })
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
@@ -73,7 +84,10 @@ function setup(services = {}) {
 
 test('without the schedule service the page says so and creating is refused', async (t) => {
   const { ctx, home, call } = setup()
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   assert.deepEqual((await call('schedules', {})).value, { available: false, tasks: [] })
   const refused = await call('schedule-create', { target: 'm1', title: 'Briefing', prompt: 'Sum up', when: { kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' } })
   assert.equal(refused.ok, false)
@@ -83,7 +97,10 @@ test('without the schedule service the page says so and creating is refused', as
 test('tasks are created on the Bot’s current part, listed by Bot, and deleted', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, call } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const daily = await call('schedule-create', { target: 'w1', title: ' Briefing ', prompt: 'Sum up the day', when: { kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' } })
   assert.equal(daily.ok, true, JSON.stringify(daily))
   const [created] = [...schedule.tasks.values()]
@@ -122,7 +139,10 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
 test('a group chat task lives on the group Session and lists under the group', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, call } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const made = await call('schedule-create', { target: 'g1', title: 'Standup', prompt: 'Where are we?', when: { kind: 'daily', time: '10:00', timeZone: 'UTC' } })
   assert.equal(made.ok, true, JSON.stringify(made))
   assert.equal([...schedule.tasks.values()][0].target.sessionId, 'g1')
@@ -141,7 +161,10 @@ test('a due reminder reaches a group as its prompts', () => {
 test('a failed task move can resume without losing identical remaining tasks', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, rt } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const seed = { title: 'Ping', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w2' } }
   await schedule.create(seed)
   await schedule.create(seed)
@@ -165,4 +188,310 @@ test('a failed task move can resume without losing identical remaining tasks', a
   assert.equal(on('w2').length, 0)
   const movedRrule = on('s9').find(task => task.request.timing.kind === 'rrule')
   assert.equal(movedRrule?.request.timing.rrule, 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY')
+})
+
+// #584, L5: a fresh-Session target (`new`/`new_once`) opens a Session no deny layer binds.
+// A restricted Bot's already-armed tasks are paused; the record stays so the user can see it.
+const freshTask = (schedule, actor, title = 'Nightly') => schedule.create({
+  title, prompt: 'Check the build', timing: { kind: 'every', every_seconds: 3600 },
+  target: { kind: 'new', create: { cwd: '/tmp' } },
+}, actor)
+
+test('restricting a Bot pauses the fresh-Session tasks its Sessions armed', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // Armed by w1's own chat (`w2`) before it had a deny list.
+  const fresh = await freshTask(schedule, 'w2')
+  const bound = await schedule.create({
+    title: 'Reminder', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'w2' },
+  }, 'w2')
+  const outside = await freshTask(schedule, 'outside', 'Elsewhere')
+  // A `new_once` task is rewritten to its fresh Session after the first delivery; that
+  // Session has no lineage, so the task is still unbound.
+  const delivered = await schedule.create({
+    title: 'Once', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'fresh-1' },
+  }, 'w2')
+  // An unrestricted Bot keeps its fresh-Session task, whatever the sweep sees.
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(fresh.id).status, 'active')
+  // The user's settings restrict it: its fresh-Session tasks pause, the bound one stays.
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(fresh.id).status, 'paused')
+  assert.equal(schedule.tasks.get(delivered.id).status, 'paused')
+  assert.equal(schedule.tasks.get(bound.id).status, 'active')
+  assert.equal(schedule.tasks.get(outside.id).status, 'active')
+})
+
+// DSH's live registry holds loaded Sessions only; the durable copy keeps a child's
+// parent and subagent origin after it ends or before it reopens on a restart.
+const durableChild = async id => (id === 'child-1'
+  ? { header: { origin: 'subagent', parentSession: 'w2' } }
+  : undefined)
+
+test('a subagent child that is no longer live resolves through its durable header', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  ctx.sessions = undefined
+  ctx.sessionPersistence = { stat: durableChild }
+  await rt.load()
+  const armed = await freshTask(schedule, 'child-1', 'Child')
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a restart with a restricted Bot pauses a child-armed task that is not live', async (t) => {
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'child-1', 'Child')
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  const { ctx, home, rt } = setup({ schedule }, team)
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  ctx.sessionPersistence = { stat: durableChild }
+  await rt.load()
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a pause that the schedule service refuses blocks unlineaged deliveries', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('schedule store is busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  // Fail closed: an unlineaged Session is not activated while the pause is stuck...
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  assert.equal(typeof guard, 'function')
+  let nexted = 0
+  await assert.rejects(
+    () => guard('fresh-1', async () => { nexted += 1 }),
+    /blocked until its task can be paused/,
+  )
+  // ...and the next sweep that can pause it clears the block.
+  schedule.edit = edit
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+  assert.equal(await guard('fresh-1', async () => { nexted += 1; return 'live' }), 'live')
+  assert.equal(nexted, 1)
+})
+
+test('a restart with the deny list already set pauses the armed fresh-Session task', async (t) => {
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'w2')
+  assert.equal(armed.status, 'active')
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  const { ctx, home, rt } = setup({ schedule }, team)
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // The check runs after the boot load; give it the turns it needs.
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('deleting a Bot pauses the fresh-Session task its Session armed', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  ctx.workspaceRegistry = { archiveSession: async () => {} }
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  await rt.deleteBot('w1')
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a read-only host neither pauses nor vouches for unlineaged deliveries', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
+  // Another live process holds the team lock: this host only follows the file.
+  writeFileSync(join(home, 'state.lock'),
+    JSON.stringify({ pid: process.ppid, host: hostname(), token: 'other', since: Date.now() }))
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'w2')
+  const ctx = fakeContext({ services: { schedule } })
+  const rt = createRuntime(ctx, { home })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // The other host owns the team: this one writes nothing and cannot vouch for the state.
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  // It takes the team over; the next delivery checks, pauses the task and refuses it.
+  rmSync(join(home, 'state.lock'))
+  await rt.refresh()
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  // The refusal kicks the check off the delivery path; it pauses the task right after.
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+  // The guard opens once the check that pause kicked off has finished.
+  let ran
+  for (let index = 0; index < 100 && ran === undefined; index += 1) {
+    try {
+      ran = await guard('fresh-2', async () => 'ran')
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+  }
+  assert.equal(ran, 'ran')
+})
+
+test('the attach-time check runs before the team loads without an error', async (t) => {
+  const schedule = scheduleService()
+  const ctx = fakeContext({ services: { schedule } })
+  const warnings = []
+  ctx.logger.warn = (...args) => warnings.push(args.map(value => String(value)).join(' '))
+  const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
+  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+  // The service is present before the team is read, so the attach-time check runs first.
+  const rt = createRuntime(ctx, { home })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.doesNotMatch(warnings.join('\n'), /before initialization/)
+  assert.doesNotMatch(warnings.join('\n'), /fresh-Session tasks were not checked/)
+})
+
+test('the delivery guard refuses without waiting on a serialized schedule write', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  // The real service serializes management writes behind the delivery drive: an edit made
+  // from the waterfall waits for that drive to end. A guard that awaited it would hang.
+  const baseEdit = schedule.edit
+  let inDrive = false
+  let failPause = true
+  let releaseDrive
+  let driveHeld = Promise.resolve()
+  schedule.edit = async request => {
+    if (inDrive) await driveHeld
+    if (request.action === 'update' && failPause) throw new Error('store busy')
+    return baseEdit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  inDrive = true
+  driveHeld = new Promise(resolve => { releaseDrive = resolve })
+  const outcome = await Promise.race([
+    guard('fresh-1', async () => 'ran').then(() => 'next', () => 'refused'),
+    new Promise(resolve => setTimeout(() => resolve('hung'), 250)),
+  ])
+  inDrive = false
+  failPause = false
+  releaseDrive()
+  assert.equal(outcome, 'refused')
+})
+
+test('a stuck pause does not block a reminder on the user\'s own Session', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  await freshTask(schedule, 'w2')
+  // The user's own reminder on a Session outside the team, armed without an acting Bot.
+  const own = await schedule.create({
+    title: 'Mine', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'outside' },
+  })
+  assert.deepEqual(own.involvedSessionIds, ['outside'])
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('store busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  // The restricted Bot's fresh task is refused; the user's own reminder is not.
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  assert.equal(await guard('outside', async () => 'ran'), 'ran')
+})
+
+test('clearing the deny list releases a stuck pause and asks DSH to drive again', async (t) => {
+  const schedule = scheduleService()
+  const drives = []
+  schedule.runtime = { requestDrive: () => drives.push(1) }
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('store busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const before = drives.length
+  // The user clears the list: there is no restriction left to bypass, so the task is
+  // released, the guard opens and DSH is asked to re-drive what it refused.
+  schedule.edit = edit
+  await rt.updateBot('w1', { denyTools: [] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  assert.ok(drives.length > before)
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  assert.equal(await guard('fresh-1', async () => 'ran'), 'ran')
 })

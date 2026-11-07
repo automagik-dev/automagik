@@ -201,6 +201,86 @@ test('a call that reaches the executor for a denied tool is refused', async (t) 
   assert.equal(await guard({ name: 'bash', agent: { id: other.id } }, async () => 'ran'), 'ran')
 })
 
+test('a restricted Bot loses schedule create and edit, and the guard refuses both', async (t) => {
+  const schedule = ['schedule_create', 'schedule_edit']
+  const { ctx, restricted } = team(t, { served: [...SERVED, 'schedule_list', ...schedule] })
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({
+    name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.',
+  })
+  await flush()
+  // The profile serves the schedule tools, so the restriction hides them too.
+  const applied = restricted.filter(entry => entry.sessionId === bot.id).at(-1)
+  assert.deepEqual(applied.deny.sort(), ['bash', ...schedule].sort())
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  for (const name of schedule) {
+    await assert.rejects(
+      () => guard({ name, agent: { id: bot.id } }, async () => 'ran'),
+      new RegExp(`does not have the ${name} tool`),
+    )
+  }
+  // Reading the schedule opens no Session and stays available.
+  assert.equal(await guard({ name: 'schedule_list', agent: { id: bot.id } },
+    async () => 'ran'), 'ran')
+})
+
+test('a restricted Bot loses schedule create and edit when not restrictable', async (t) => {
+  const schedule = ['schedule_create', 'schedule_edit']
+  // An agent-scope mount: `restrict()` cannot name these, so the executor guard is the layer.
+  const { ctx, restricted, warnings } = team(t, { scoped: schedule })
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({
+    name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.',
+  })
+  await flush()
+  const hidden = restricted.filter(entry => entry.sessionId === bot.id
+    && entry.deny.some(name => schedule.includes(name)))
+  assert.equal(hidden.length, 0)
+  // The names are implicit, not the user's typo: no "ignored" warning names them.
+  assert.doesNotMatch(warnings.join('\n'), /schedule_create|schedule_edit/)
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  for (const name of schedule) {
+    await assert.rejects(
+      () => guard({ name, agent: { id: bot.id } }, async () => 'ran'),
+      new RegExp(`does not have the ${name} tool`),
+    )
+  }
+})
+
+test('a Bot without a deny list keeps schedule create and edit', async (t) => {
+  const schedule = ['schedule_create', 'schedule_edit']
+  const { ctx } = team(t, { served: [...SERVED, ...schedule] })
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({ name: 'Plain', pickModel: true, instructions: 'Free.' })
+  await flush()
+  const guard = (ctx.listeners.get('tools/execute') ?? [])[0]
+  for (const name of schedule) {
+    assert.equal(await guard({ name, agent: { id: bot.id } }, async () => 'ran'), 'ran')
+  }
+})
+
+test('only the user can change a Bot\'s deny list; the Bot cannot lift its own', async (t) => {
+  const { ctx } = team(t)
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({
+    name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.',
+  })
+  // A Bot editing itself, or a Main Bot editing it, cannot clear or narrow the list.
+  await assert.rejects(
+    () => rt.updateBot(bot.id, { denyTools: [] }, bot.id),
+    /Only the user can set what Analista may use/,
+  )
+  await assert.rejects(
+    () => rt.updateBot(bot.id, { name: 'Looser', denyTools: ['omni_send'] }, 'someone-else'),
+    /Only the user can set what Analista may use/,
+  )
+  assert.deepEqual(bot.denyTools, ['bash'])
+  assert.equal(bot.name, 'Analista')
+  // The user's own settings path (no acting Bot) still clears it.
+  await rt.updateBot(bot.id, { denyTools: [] })
+  assert.equal(bot.denyTools, undefined)
+})
+
 test('a name this DSH stops serving is reported once and left out of the restriction', async (t) => {
   const { ctx, restricted, warnings } = team(t)
   const rt = ctx.provided.get('omniTeam')
