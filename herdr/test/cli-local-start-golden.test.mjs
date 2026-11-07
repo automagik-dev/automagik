@@ -19,15 +19,22 @@ import { readJsonLines } from "./log-lines.mjs";
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const FIXTURE = new URL("./fixtures/local-start-argv.json", import.meta.url).pathname;
+const OVERRIDE_FIXTURE = new URL("./fixtures/local-start-override-argv.json", import.meta.url).pathname;
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 const BOTS = [
   { id: "b-claudeaaaa", name: "Genie", kind: "main", agent: "claude", model: "claude-opus-5-5" },
   { id: "b-ompaaaaaaa", name: "Omen", kind: "member", agent: "omp" },
   { id: "b-hermesaaaa", name: "Atlas", kind: "member", agent: "hermes" },
 ];
+// #612: a local start with this computer's programs.json holding an absolute override.
+const OVERRIDE = { id: "b-overtuiaaa", name: "Overt", kind: "member", agent: "dsh-tui" };
 
-/** One local start of `bot` in a fresh scratch world: what hc run got, and the files it wrote. */
-function startOne(t, bot) {
+/**
+ * One local start of `bot` in a fresh scratch world: what hc run got, and the files it wrote.
+ * `bots`: the project's bots (default BOTS); `override`: an absolute programs.json run for the
+ * bot's agent, its first word a program in the scratch bin.
+ */
+function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-golden-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
@@ -40,9 +47,14 @@ function startOne(t, bot) {
   writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
   mkdirSync(join(project, ".herdr"));
   writeFileSync(join(project, ".herdr/pane-env"), "PATH_PREPEND=/opt/node-22/bin\nHERDR_APP_HOME=/srv/bots/herdr-app\n");
+  if (override) {
+    exe(join(bin, override[0]), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(app, "programs.json"),
+      `${JSON.stringify({ programs: { [bot.agent]: { run: [join(bin, override[0]), ...override.slice(1)] } } })}\n`);
+  }
   const look = { character: "star", colour: "blue" };
   writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [],
-    bots: BOTS.map((b) => ({ look, role: "r", instructions: "i", ...b, ...(b.kind === "member" ? { lead: BOTS[0].id } : {}) })) }, null, 2)}\n`);
+    bots: bots.map((b) => ({ look, role: "r", instructions: "i", ...b, ...(b.kind === "member" ? { lead: bots[0].id } : {}) })) }, null, 2)}\n`);
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: [], next: 100 }));
   writeFileSync(logPath, "");
@@ -69,4 +81,18 @@ test("a local start's argv, env words, briefing file and hook are byte-identical
   const want = JSON.parse(readFileSync(FIXTURE, "utf8"));
   for (const agent of Object.keys(want)) assert.deepEqual(seen[agent], want[agent], agent);
   assert.deepEqual(Object.keys(seen).sort(), Object.keys(want).sort());
+});
+
+// #612: the shipped-run fallback is for a start on another machine only. A local start with this
+// computer's programs.json override still runs exactly that override, model words and all; the
+// fixture is recorded from the base before the fix (AUTOMAGIK_GOLDEN_RECORD=1) and only compared.
+test("a local start with a programs.json override runs it byte for byte (#612)", (t) => {
+  const seen = startOne(t, OVERRIDE, { bots: [...BOTS, OVERRIDE], override: ["dsh-tui-local", "--profile", "worker"] });
+  if (process.env.AUTOMAGIK_GOLDEN_RECORD === "1") writeFileSync(OVERRIDE_FIXTURE, `${JSON.stringify(seen, null, 2)}\n`);
+  const want = JSON.parse(readFileSync(OVERRIDE_FIXTURE, "utf8"));
+  assert.deepEqual(seen, want);
+  // The override's absolute first word, never the shipped dsh-tui it would fall back to.
+  const launched = seen.argv.slice(seen.argv.indexOf("--") + 1);
+  assert.ok(launched.some((word) => word.endsWith("/bin/dsh-tui-local")), launched.join(" "));
+  assert.equal(launched.includes("dsh-tui"), false, "the shipped command is not local");
 });

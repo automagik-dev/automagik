@@ -838,3 +838,72 @@ test("start --machine under the sidebar's 30 s deadline (#444): too little left 
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
   assert.deepEqual(s.rows().map((x) => [x.event, x.terminal, x.machine]), [["attach", "t100", "vm"]]);
 });
+
+// ---- #612: this computer's programs.json override, and a linked machine that lacks it ----
+
+/**
+ * Hedge on dsh-tui there, with an override in this computer's programs.json: "skipped" (an
+ * absolute run only this computer has), "there" (one both have) or null (no override). `shipped`:
+ * vm has the shipped dsh-tui. `override` on the result is the override's first word.
+ */
+function dshTuiScene(t, { terminals = [], override = null, shipped = true } = {}) {
+  const s = scene(t, { terminals });
+  const file = join(s.project, ".herdr/bots.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "dsh-tui"'));
+  if (shipped) exe(join(s.root, "vm-bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  if (override) {
+    const path = override === "there" ? join(s.root, "vm-bin", "dsh-tui-custom") : join(s.root, "only-this-computer", "dsh-tui");
+    if (override === "there") exe(path, "#!/bin/sh\nexit 0\n");
+    s.override = path;
+    writeFileSync(join(s.app, "programs.json"), JSON.stringify({ programs: { "dsh-tui": { run: [path, "--local"] } } }));
+  }
+  return s;
+}
+
+const shippedWarning = (w, s) => /^dsh-TUI starts on vm from its shipped run \(dsh-tui\), skipping the programs\.json override here \(/
+  .test(w) && w.includes(s.override) && w.includes("which isn't installed there.");
+
+test("start --machine #612: the override isn't there but the shipped run is: the shipped run starts, with one warning naming both", (t) => {
+  const s = dshTuiScene(t, { override: "skipped" });
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  assert.deepEqual(out.argv.slice(0, 2), ["dsh-tui", "--"], "the shipped run, then dsh-tui's own briefing separator");
+  assert.equal(out.argv.includes("--local"), false, "the skipped override's words are not run");
+  assert.equal(out.warnings.length, 1, out.warnings.join("\n"));
+  assert.ok(shippedWarning(out.warnings[0], s), out.warnings[0]);
+  assert.ok(s.calls().find((c) => c[0] === "run").includes("dsh-tui"));
+});
+
+test("start --machine #612: both there: the override is used as it is, and no warning", (t) => {
+  const s = dshTuiScene(t, { override: "there" });
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  assert.deepEqual(out.argv.slice(0, 2), [s.override, "--local"], "the override, its own words kept");
+  assert.deepEqual(out.warnings, []);
+  assert.ok(s.calls().find((c) => c[0] === "run").includes(s.override));
+});
+
+test("start --machine #612: neither there: refused, naming the override and the shipped run; nothing runs", (t) => {
+  const s = dshTuiScene(t, { override: "skipped", shipped: false });
+  const r = s.cli(["start", "Hedge", ...s.on]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /dsh-TUI \(.+only-this-computer\/dsh-tui\) isn't installed on vm/);
+  assert.ok(r.err.includes(`its shipped run (dsh-tui) isn't either`), r.err);
+  assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("restart --machine #612: an argv built from the table gets the same fallback, and one warning", (t) => {
+  const pane = { address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null, labels: {},
+    turn: 1, foreground: { argv: ["dsh-tui", "--", "<herdr-bot>\nold"], name: "dsh-tui" }, status: { state: "idle", app: "dsh-tui" } };
+  const s = dshTuiScene(t, { terminals: [pane], override: "skipped" });
+  assert.equal(s.cli(["attach", "Hedge", "vm/t9", ...s.on]).code, 0);
+  const r = s.cli(["restart", "Hedge", ...s.on, "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  assert.deepEqual(out.argv.slice(0, 2), ["dsh-tui", "-c"], "the shipped run with dsh-tui's own -c");
+  assert.equal(out.argv.includes("--local"), false);
+  assert.ok(out.warnings.some((w) => shippedWarning(w, s)), out.warnings.join("\n"));
+  assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one runs");
+});
