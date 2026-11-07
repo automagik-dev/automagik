@@ -509,3 +509,14 @@ test('an answered question is not pressed twice while the status stays blocked',
   assert.deepEqual([last.answerable, last.why], [false, 'answered'])
   engine.close()
 })
+
+test('a client watching after the question was raised reads it from its handle, then it clears', async () => {
+  const { engine, hc } = await questionSetup()
+  const late = client(engine)
+  assert.deepEqual([late.handle.question()?.id, late.handle.question()?.options], ['question:1:2.0', ['Postgres', 'SQLite']])
+  assert.equal(late.events.filter((e) => e.type === 'question').length, 0)
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' }, turn: 3 })
+  await settle()
+  assert.equal(late.handle.question(), null)
+  engine.close()
+})

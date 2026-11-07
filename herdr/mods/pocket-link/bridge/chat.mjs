@@ -264,7 +264,8 @@ export class ChatConnection {
     this.event(channel, {
       type: 'snapshot', reset,
       rows: missed && !reset ? page(missed) : page(sub.handle.rows() ?? []),
-      screen: sub.handle.screen().map(cutRow), status: sub.handle.status(), approval: sub.handle.approval(), held: sub.handle.held()
+      screen: sub.handle.screen().map(cutRow), status: sub.handle.status(), approval: sub.handle.approval(),
+      question: sub.handle.question?.() ?? null, held: sub.handle.held()
     })
     return channel
   }

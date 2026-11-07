@@ -129,8 +129,8 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
   `chat.interrupt {terminal}`. Every write needs a subscription to that terminal on the same
   connection.
 - **Events** (JSON lines on the subscription's channel, sent while the phone has credit; it
-  grants more with CREDIT): first a `snapshot` (rows, screen, status, approval, held; `reset`
-  when the cursor in `after` is no longer held), then `rows`, `screen`, `status`, `approval`,
+  grants more with CREDIT): first a `snapshot` (rows, screen, status, approval, question, held;
+  `reset` when the cursor in `after` is no longer held), then `rows`, `screen`, `status`, `approval`,
   `question`, `held`, `sent`, `sending`, `matched`, `source`, `gone` and `offline`. A row's text
   is cut at 64 KiB (`cut: true`). A subscriber that stops granting credit gets CLOSE `slow` and
   resubscribes with its cursor. A CLOSE from the phone ends the subscription.

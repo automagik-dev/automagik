@@ -127,6 +127,19 @@ class ChatTest {
         assertNull(ChatActions.questionAnswer(s, s.question, emptyList(), "x"))
     }
 
+    /** A phone that opens the chat after the question was raised (an app restart, another device) gets it from the snapshot. */
+    @Test fun questionInTheSnapshotShowsOnAFreshChatAndCanBeAnswered() {
+        val fresh = Chat.reduce(Chat.State("t1"), j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],
+            "status":{"state":"blocked","kind":"question","msg":"Which database?"},"approval":null,"question":${question()},"held":[]}"""))
+        assertEquals("question:1:2.0", fresh.question?.id)
+        assertEquals(listOf("Postgres", "SQLite"), ChatActions.options(fresh, fresh.question))
+        assertEquals("2" to null, ChatActions.questionAnswer(fresh, fresh.question, listOf(1)))
+        // A closed question in the snapshot, or none: no card.
+        val closed = question().replace("\"open\":true", "\"open\":false")
+        assertNull(Chat.reduce(fresh, j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],"status":{"state":"blocked","kind":"question"},"question":$closed,"held":[]}""")).question)
+        assertNull(Chat.reduce(fresh, j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],"status":{"state":"working"},"question":null,"held":[]}""")).question)
+    }
+
     @Test fun questionWithoutTheEngineOptionsOffersNothingToTap() {
         for (s in listOf(asked(state(), question(answerable = false)), asked(state("dsh:bot-1"), question()),
             asked(state(), question()).copy(offline = true), asked(state(), question()).copy(connected = false))) {

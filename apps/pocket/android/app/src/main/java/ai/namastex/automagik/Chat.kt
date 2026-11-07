@@ -98,6 +98,7 @@ object Chat {
             s.copy(rows = kept.takeLast(MAX_ROWS), screen = e.optJSONArray("screen").rows(),
                 status = Status.parse(e.optJSONObject("status")) ?: s.status,
                 approval = Row.parse(e.optJSONObject("approval"))?.takeIf { it.open },
+                question = Row.parse(e.optJSONObject("question"))?.takeIf { it.open },
                 messages = held(s.messages, e.optJSONArray("held")), connected = true, gone = false, offline = false, error = null)
         }
         "rows" -> s.copy(rows = merge(s.rows, e.optJSONArray("rows").rows()).takeLast(MAX_ROWS))

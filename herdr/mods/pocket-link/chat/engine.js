@@ -119,7 +119,7 @@ export class Engine {
    * A client opens a terminal's chat. `listener` gets its events; the handle reads rows. Null when
    * the engine already holds maxTerminals terminals, every one of them watched.
    * @returns {null | { rows(after?: string): any[] | null, screen(): any[], backfill(before: string, limit?: number): Promise<any[]>,
-   *   status(): any, approval(): any, held(): any[], close(): void }}
+   *   status(): any, approval(): any, question(): any, held(): any[], close(): void }}
    */
   watch(address, client, listener) {
     let entry = this.entries.get(address)
@@ -141,6 +141,8 @@ export class Engine {
       backfill: (before, limit) => entry.projection.backfill(before, limit),
       status: () => entry.projection.status,
       approval: () => entry.approval,
+      // The open question, for a client that watches after it was raised (no question event comes).
+      question: () => entry.question,
       // Only this client's own held messages, by its own ids.
       held: () => entry.input.held.filter((h) => entry.authors.get(h.id) === client).map(({ id, why }) => ({ id: Engine.theirs(id), why })),
       close: () => this.leave(address, client)

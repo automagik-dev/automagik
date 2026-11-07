@@ -459,3 +459,33 @@ test('chat.answer carries a question’s free text to the engine: digit N+1, the
     [['terminal.keys', ['3']], ['terminal.send', 'MySQL']])
   engine.close()
 })
+
+test('a phone that subscribes after the question was raised gets it in its snapshot and can answer it', async () => {
+  const ask = JSON.stringify({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_q', name: 'AskUserQuestion',
+    input: { questions: [{ question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } }] } }) + '\n'
+  const { engine, hc } = world({ lines: user('u1', 'pick one') + ask })
+  // The first phone sees the question raised, then goes away (the rows stay for the linger).
+  const first = phone(engine)
+  first.hello()
+  await first.call('chat.subscribe', { terminal: 't1' })
+  await settle(); await engine.entries.get('t1').projection.ready
+  hc.screens.t1 = 'Which database?\n❯ 1. Postgres\n  2. SQLite\n  3. Type something.\nEsc to cancel\n'
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'question', msg: 'Which database?' } })
+  await settle()
+  first.conn.close()
+  // A fresh connection (an app restart, another device): no question event comes, only the snapshot.
+  const late = phone(engine)
+  late.hello()
+  const { result } = await late.call('chat.subscribe', { terminal: 't1' })
+  await settle()
+  const events = late.events(result.channel)
+  const snapshot = events.find(e => e.type === 'snapshot')
+  assert.deepEqual([snapshot.question?.id, snapshot.question?.options, snapshot.question?.answerable, snapshot.question?.open],
+    ['question:1:2.0', ['Postgres', 'SQLite'], true, true])
+  assert.equal(events.filter(e => e.type === 'question').length, 0)
+  hc.onWrite((m) => { if (m === 'terminal.keys') hc.set('t1', { status: { app: 'claude-code', state: 'working' } }) })
+  engine.timers = { ...noTimers, setTimeout: (fn) => setImmediate(fn) }
+  assert.deepEqual((await late.call('chat.answer', { terminal: 't1', row: snapshot.question.id, choice: '2' })).result, { ok: true, pressed: 'done', sent: true })
+  assert.deepEqual(hc.calls.filter(c => c.method === 'terminal.keys').map(c => c.params.keys), [['2']])
+  engine.close()
+})
