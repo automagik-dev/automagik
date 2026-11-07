@@ -757,44 +757,23 @@ export function install(rt) {
   const tasks = () => (state.tasks ??= {})
   // When a task ended, for which ended task is forgotten first; an older record has only `at`.
   const endOf = task => task.endedAt ?? task.at ?? 0
-  // Task Sessions this host started and has not seen end: the fallback for a DSH that does
-  // not list its loaded Sessions. A task record is the lineage the tools/execute guard
-  // resolves (`state.tasks[id].from`), so it must outlive the Session it describes.
-  const running = new Set()
-  // The Sessions DSH holds right now, or undefined when this DSH does not list them. A
-  // working task whose Session is loaded is still running: its record is never evicted.
-  const loadedSessions = () => {
-    try {
-      const list = ctx.sessions?.list?.()
-      return Array.isArray(list) ? new Set(list.map(session => session.id)) : undefined
-    } catch {
-      return undefined
-    }
-  }
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
-    running.add(sessionId)
-    // Only TASKS_KEPT tasks are remembered for their reports. The ended ones go first, the
-    // one that ended longest ago first: a long task that just ended is fresh news, and a
-    // task still working keeps its record, without which its end is never written down
-    // and it never reads "Stopped" (#164). A working task whose Session is gone (a stale
-    // record) can go too, past TASKS_KEPT newer records, so a list of records no host holds
-    // cannot grow for ever. A working task DSH still holds is never evicted: its record is
-    // the only lineage the Bot's tool deny list and permission bind to (#584).
+    // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
+    // the one that ended longest ago first: a long task that just ended is fresh news.
+    // A working record is never evicted, whatever its age or whether DSH still holds its
+    // Session: it is the only lineage the Bot's tool deny list and permission bind to, so
+    // dropping it would lift the tools/execute guard for that Session (#584, L4). The cap
+    // is a bound on ended history; working records are bounded by what the host can run.
     const all = Object.entries(tasks())
     const ended = all.filter(([, task]) => task.status !== 'working').sort(([, a], [, b]) => endOf(a) - endOf(b))
-    const working = all.filter(([, task]) => task.status === 'working').sort(([, a], [, b]) => (a.at ?? 0) - (b.at ?? 0))
-    // This start's own record and any live one stay; the newest start is never guessed dead.
-    const loaded = loadedSessions()
-    const keepsRecord = id => id === sessionId
-      || (loaded === undefined ? running.has(id) : loaded.has(id))
     // The level each forgotten task ran at is read while it is still a task.
-    const forgotten = [...ended, ...working.filter(([id]) => !keepsRecord(id))]
-      .slice(0, Math.max(0, all.length - TASKS_KEPT)).map(([id]) => [id, rt.taskLevelOf(id)])
+    const forgotten = ended.slice(0, Math.max(0, all.length - TASKS_KEPT))
+      .map(([id]) => [id, rt.taskLevelOf(id)])
     for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
     for (const [id, ranAt] of forgotten) {
@@ -846,7 +825,6 @@ export function install(rt) {
       const stopped = kind === 'aborted'
       task.status = failed ? 'failed' : stopped ? 'stopped' : 'done'
       task.endedAt = Date.now()
-      running.delete(id)
       const words = lastWords.get(id) ?? ''
       lastWords.delete(id)
       const problem = event.data?.reason?.error?.message || 'unknown error'

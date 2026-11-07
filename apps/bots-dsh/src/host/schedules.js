@@ -8,6 +8,9 @@
 
 const MAX_TITLE = 120
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
+// The targets whose delivery opens a Session of its own: no subagent lineage, no task
+// record, so no Bot's restriction can bind it (#584, L5).
+const NEW_TARGETS = new Set(['new', 'new_once'])
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 
@@ -89,6 +92,8 @@ export function install(rt) {
     const own = sub.schedule
     service = own
     sub.effect(() => () => { if (service === own) service = null }, 'ds-bot: schedule service')
+    void revokeNewSchedules()
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
   }
   if (typeof ctx.inject === 'function') ctx.inject(['schedule'], attach)
   else if (ctx.get?.('schedule') !== undefined) attach({ schedule: ctx.get('schedule'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -102,6 +107,79 @@ export function install(rt) {
     return rt.groupOwners.get(sessionId) ?? rt.pastOwners.get(sessionId)
   }
   const known = owner => owner !== undefined && (owner.botId === undefined ? rt.roomOf(owner.roomId) !== undefined : rt.botOf(owner.botId) !== undefined)
+
+  // The Bot an involved Session speaks for: its own chat, a group Session, an earlier part,
+  // or a task run. DSH records every Session involved in a task, the creating one included.
+  const botOfTaskSession = (sessionId) => {
+    if (typeof sessionId !== 'string' || sessionId === '') return undefined
+    const direct = rt.botOf(sessionId)
+    if (direct !== undefined) return direct
+    const owner = rt.selfOf?.(sessionId)
+    if (owner !== undefined) return rt.botOf(owner)
+    const from = rt.state?.tasks?.[sessionId]?.from
+    return from === undefined ? undefined : rt.botOf(from)
+  }
+  const restricted = bot => Array.isArray(bot?.denyTools) && bot.denyTools.length > 0
+  // Every Session a Bot speaks from now, plus the ones a caller already has.
+  const sessionsOf = (bot, extra = []) => {
+    const ids = new Set(extra)
+    for (const id of rt.sessionsOfBot?.(bot.id) ?? []) ids.add(id)
+    for (const part of bot.segments ?? []) ids.add(part.sessionId)
+    for (const room of Object.values(rt.state?.rooms ?? {})) {
+      for (const part of room.segments?.[bot.id] ?? []) ids.add(part.sessionId)
+    }
+    for (const [id, task] of Object.entries(rt.state?.tasks ?? {})) {
+      if (task.from === bot.id) ids.add(id)
+    }
+    return ids
+  }
+
+  /**
+   * Pause every active task with a fresh-Session target that a restricted Bot is involved
+   * in. Scoped to one Bot when `botId` is given (a restriction or a deletion), else every
+   * Bot in the team (a restart, or a task armed by the user for a restricted Bot's Session).
+   * The record stays; only its deliveries stop. Resolves the ids it paused.
+   * @param {string} [botId] - the Bot whose Sessions must not open fresh Sessions.
+   * @param {string[]} [extra] - Sessions of that Bot a caller already holds (deletion).
+   * @param {{ any?: boolean }} [options] - pause for this Bot even without a deny list
+   *   (its deletion).
+   */
+  async function revokeNewSchedules(botId, extra = [], { any = false } = {}) {
+    if (service === null) return []
+    const scoped = botId !== undefined
+    const bot = scoped ? rt.botOf(botId) : undefined
+    if (scoped && bot === undefined) return []
+    const sessions = scoped ? sessionsOf(bot, extra) : undefined
+    const paused = []
+    for (const entry of await service.catalog()) {
+      if (entry.status !== 'active' || !NEW_TARGETS.has(entry.target?.kind)) continue
+      const involved = Array.isArray(entry.involvedSessionIds) ? entry.involvedSessionIds : []
+      const fromBot = involved.some((sessionId) => {
+        if (sessions !== undefined && !sessions.has(sessionId)) return false
+        return any || restricted(botOfTaskSession(sessionId))
+      })
+      if (!fromBot) continue
+      try {
+        await service.edit({ id: entry.id, action: 'update', patch: { active: false } })
+        paused.push(entry.id)
+        rt.warn('ds-bot: paused the scheduled task %s: '
+          + 'its fresh Session would run with no Bot lineage', entry.title ?? entry.id)
+      } catch (error) {
+        rt.warn('ds-bot: the scheduled task %s was not paused: %s',
+          entry.title ?? entry.id, error?.message ?? error)
+      }
+    }
+    return paused
+  }
+  // A restart keeps both the deny list and the armed task: check once the team is loaded.
+  void Promise.resolve(rt.load?.()).then(() => revokeNewSchedules())
+    .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+  // A task armed later for a restricted Bot's Session (by the user, in DSH's own surface)
+  // is checked the moment the service reports it.
+  ctx.on('schedule/changed', () => {
+    void revokeNewSchedules()
+      .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+  })
 
   async function schedulesView() {
     if (service === null) return { available: false, tasks: [] }
@@ -161,5 +239,9 @@ export function install(rt) {
     }
   }
 
-  Object.assign(rt, { scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}), moveSchedules })
+  Object.assign(rt, {
+    scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}),
+    moveSchedules,
+    revokeNewSchedules,
+  })
 }

@@ -20,8 +20,6 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
   const failArchive = { on: false }
   const restricted = []
   const renamed = []
-  // The Sessions this DSH holds: what `ctx.sessions.list()` reports.
-  const liveSessions = new Set()
   let sessions = 0
   ctx.tools.schemas = () => [...TEAM_TOOLS, 'read', 'write'].map(name => ({ name }))
   Object.assign(ctx, {
@@ -41,9 +39,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     sessionController: {
       create: async (options) => {
         created.push(options)
-        const sessionId = options.sessionId ?? `s${++sessions}`
-        liveSessions.add(sessionId)
-        return { sessionId }
+        return { sessionId: options.sessionId ?? `s${++sessions}` }
       },
       resolveAgent: async (sessionId) => {
         const agent = {
@@ -59,7 +55,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
       selectModel: async () => {},
     },
     sessionTitle: { rename: async (session, title) => { renamed.push({ id: session.id, title }) } },
-    sessions: { flush: async () => {}, list: () => [...liveSessions].map(id => ({ id })) },
+    sessions: { flush: async () => {} },
   })
   let route
   const register = ctx.connection.fetch.register
@@ -78,8 +74,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
   return {
-    call, stop, home, created, archived, failArchive, restricted, renamed,
-    createdAgents, ctx, liveSessions,
+    call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx,
   }
 }
 
@@ -1256,15 +1251,17 @@ test('the task cap forgets the task that ended longest ago, not the one started 
   assert.equal(Object.keys(rt.state.tasks).length, 60)
 })
 
-test('the task cap stays a bound when 60 tasks never sent their end', async (t) => {
+test('the task cap never forgets a working task, even with no ended record to drop', async (t) => {
+  // A full list of working records does not push the oldest out: its record is the lineage
+  // the tool deny guard and the permission re-apply resolve (#584, L4). The cap gives way.
   const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`w${i}`, { title: `Stuck ${i}`, from: 'm1', at: 10 + i, status: 'working' }]))
   const { call, stop, ctx } = start({ ...TEAM, tasks })
   t.after(stop)
   await call('state', {})
   const rt = ctx.provided.get('omniTeam')
   const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
-  assert.equal(Object.keys(rt.state.tasks).length, 60)
-  assert.equal(rt.state.tasks.w0, undefined)
+  assert.equal(Object.keys(rt.state.tasks).length, 61)
+  assert.equal(rt.state.tasks.w0?.status, 'working')
   assert.equal(rt.state.tasks[next]?.status, 'working')
 })
 
@@ -1353,23 +1350,9 @@ test('ended tasks are forgotten before any working one, even the oldest', async 
   assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
 })
 
-test('with 60 working tasks the oldest working one goes and the newest are kept', async (t) => {
-  const tasks = Object.fromEntries(Array.from({ length: TASK_CAP }, (_, index) => [`w${index}`, { title: `Stuck ${index}`, from: 'm1', at: 10 + index, status: 'working' }]))
-  const { call, stop, ctx } = start({ ...TEAM, tasks })
-  t.after(stop)
-  await call('state', {})
-  const rt = ctx.provided.get('omniTeam')
-  const next = await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
-  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP)
-  assert.equal(rt.state.tasks.w0, undefined)
-  assert.equal(Object.keys(rt.state.tasks).filter(id => id !== next && rt.state.tasks[id] === undefined).length, 0)
-  assert.equal(rt.state.tasks[`w${TASK_CAP - 1}`]?.status, 'working')
-  assert.equal(rt.state.tasks[next]?.status, 'working')
-})
-
-test('a live working task keeps its record past the cap, and the guard still binds', async (t) => {
-  // All sixty are running: their records are the lineage the executor guard resolves. The
-  // cap must give way rather than drop a live task's record (#584, L4).
+test('a working task keeps its record past the cap, and the guard still binds', async (t) => {
+  // All sixty are at work; their records are the lineage the executor guard resolves. The
+  // cap must give way rather than drop a working record (#584, L4).
   const stuck = index => ({
     title: `Stuck ${index}`, from: 'm1', at: 10 + index, status: 'working',
   })
@@ -1381,7 +1364,6 @@ test('a live working task keeps its record past the cap, and the guard still bin
   const bench = start(team)
   t.after(bench.stop)
   await bench.call('state', {})
-  for (const id of Object.keys(tasks)) bench.liveSessions.add(id)
   const rt = bench.ctx.provided.get('omniTeam')
   await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
   assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP + 1)
@@ -1440,8 +1422,7 @@ test('a stop after an eviction is written down and reported to the Bot that aske
   assert.deepEqual(reports.map(report => [report.taskSessionId, report.text]), [['wish', 'It was stopped before it finished.']])
 })
 
-// #164's residual limits of the bound, documented not tested. A working task DSH no longer
-// holds can still be evicted past 60 newer records; its stop was never coming, and
-// `forgetTaskPermission` still lowers its level. Its record is gone, so a Session DSH opens
-// again later has no tool lineage (the executor guard cannot bind it, #584). Evicting a
-// working record whose Session *is* live is what #584 removed: the cap gives way to it.
+// The cap now bounds ended history only: a working record is never evicted, so a list of
+// tasks that never sent their end keeps every record. That cost is the point of #584 L4 —
+// the record is the lineage the tools/execute guard resolves. Its stop still lands when the
+// Session reports one; a Session DSH never reopens keeps a record nobody reads.

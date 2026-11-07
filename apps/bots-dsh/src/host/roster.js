@@ -362,6 +362,12 @@ export function install(rt) {
     if (patch.browserGrants !== undefined && actorId !== undefined) {
       throw refusal(`Only the user can set what ${bot.name} may do in the browser`)
     }
+    // The deny list is the Bot's hard restriction, so a Bot cannot lift or narrow it by
+    // editing itself (or through a Main Bot's call): only the user's settings change it.
+    // Same rule as the browser grants above (#584).
+    if (patch.denyTools !== undefined && actorId !== undefined) {
+      throw refusal(`Only the user can set what ${bot.name} may use`)
+    }
     const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants)
     // The tool deny list is checked with the rest, before anything is written: a name this
     // DSH does not serve refuses the update, so a typo cannot quietly weaken the list.
@@ -448,7 +454,18 @@ export function install(rt) {
     await rt.save()
     // The list changed: every Session of this Bot is lifted and re-set from the new one, so
     // a name added now disappears at once and a name removed comes back.
-    if (denyTools !== undefined) await rt.applyToolDeny(bot)
+    if (denyTools !== undefined) {
+      await rt.applyToolDeny(bot)
+      // A restricted Bot's already-armed fresh-Session tasks would keep opening Sessions no
+      // deny layer can bind (#584, L5); pause the ones its Sessions created.
+      if (Array.isArray(bot.denyTools) && bot.denyTools.length > 0) {
+        try {
+          await rt.revokeNewSchedules?.(bot.id)
+        } catch (error) {
+          rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
+        }
+      }
+    }
     // The system prompt reads the live profile every turn, but a Session with
     // several rounds behind it follows the old kickoff's pull until a message
     // lands; notify the Bot's chat so the next turn honors the new profile.
@@ -783,6 +800,14 @@ export function install(rt) {
       left.push({ room, index, admin: room.admin === id })
       room.members = room.members.filter(member => member !== id)
       if (room.admin === id) room.admin = null
+    }
+    // A Bot's already-armed fresh-Session tasks would keep opening Sessions after it is
+    // gone, with no Bot left to bind them to (#584, L5). Pause them before its Sessions are
+    // released; the records stay, and a failed deletion leaves them paused.
+    try {
+      await rt.revokeNewSchedules?.(id, sessions, { any: true })
+    } catch (error) {
+      rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
     }
     let archived
     try {

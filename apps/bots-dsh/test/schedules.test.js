@@ -28,7 +28,7 @@ function scheduleService() {
   let next = 1
   return {
     tasks,
-    async create(request) {
+    async create(request, actorSessionId) {
       const id = `schedule-${next++}`
       const timing = request.timing
       const entry = {
@@ -45,24 +45,35 @@ function scheduleService() {
         rrule: timing.rrule,
         request,
         target: request.target,
+        // DSH records the acting Session and the named target as involved.
+        involvedSessionIds: [...new Set([
+          ...(actorSessionId === undefined ? [] : [actorSessionId]),
+          ...(request.target?.kind === 'new' ? [] : [request.target?.sessionId]),
+        ])],
         status: 'active',
       }
       tasks.set(id, entry)
       return entry
     },
     async catalog() { return [...tasks.values()].map(entry => ({ ...entry })) },
-    async edit({ id, action }) {
-      if (action !== 'delete') throw new Error(`unexpected edit ${action}`)
+    async edit({ id, action, patch }) {
       if (!tasks.has(id)) return { id, deleted: false, code: 'schedule_not_found' }
-      tasks.delete(id)
-      return { id, deleted: true }
+      if (action === 'delete') {
+        tasks.delete(id)
+        return { id, deleted: true }
+      }
+      if (action !== 'update') throw new Error(`unexpected edit ${action}`)
+      const entry = tasks.get(id)
+      if (patch?.active === false) entry.status = 'paused'
+      else if (patch?.active === true) entry.status = 'active'
+      return entry
     },
   }
 }
 
-function setup(services = {}) {
+function setup(services = {}, team = TEAM) {
   const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const ctx = fakeContext({ services })
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
@@ -73,7 +84,10 @@ function setup(services = {}) {
 
 test('without the schedule service the page says so and creating is refused', async (t) => {
   const { ctx, home, call } = setup()
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   assert.deepEqual((await call('schedules', {})).value, { available: false, tasks: [] })
   const refused = await call('schedule-create', { target: 'm1', title: 'Briefing', prompt: 'Sum up', when: { kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' } })
   assert.equal(refused.ok, false)
@@ -83,7 +97,10 @@ test('without the schedule service the page says so and creating is refused', as
 test('tasks are created on the Bot’s current part, listed by Bot, and deleted', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, call } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const daily = await call('schedule-create', { target: 'w1', title: ' Briefing ', prompt: 'Sum up the day', when: { kind: 'daily', time: '09:00', timeZone: 'Asia/Shanghai' } })
   assert.equal(daily.ok, true, JSON.stringify(daily))
   const [created] = [...schedule.tasks.values()]
@@ -122,7 +139,10 @@ test('tasks are created on the Bot’s current part, listed by Bot, and deleted'
 test('a group chat task lives on the group Session and lists under the group', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, call } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const made = await call('schedule-create', { target: 'g1', title: 'Standup', prompt: 'Where are we?', when: { kind: 'daily', time: '10:00', timeZone: 'UTC' } })
   assert.equal(made.ok, true, JSON.stringify(made))
   assert.equal([...schedule.tasks.values()][0].target.sessionId, 'g1')
@@ -141,7 +161,10 @@ test('a due reminder reaches a group as its prompts', () => {
 test('a failed task move can resume without losing identical remaining tasks', async (t) => {
   const schedule = scheduleService()
   const { ctx, home, rt } = setup({ schedule })
-  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
   const seed = { title: 'Ping', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 }, target: { kind: 'session', sessionId: 'w2' } }
   await schedule.create(seed)
   await schedule.create(seed)
@@ -165,4 +188,69 @@ test('a failed task move can resume without losing identical remaining tasks', a
   assert.equal(on('w2').length, 0)
   const movedRrule = on('s9').find(task => task.request.timing.kind === 'rrule')
   assert.equal(movedRrule?.request.timing.rrule, 'DTSTART:20300101T090000Z\nRRULE:FREQ=DAILY')
+})
+
+// #584, L5: a fresh-Session target (`new`/`new_once`) opens a Session no deny layer binds.
+// A restricted Bot's already-armed tasks are paused; the record stays so the user can see it.
+const freshTask = (schedule, actor, title = 'Nightly') => schedule.create({
+  title, prompt: 'Check the build', timing: { kind: 'every', every_seconds: 3600 },
+  target: { kind: 'new', create: { cwd: '/tmp' } },
+}, actor)
+
+test('restricting a Bot pauses the fresh-Session tasks its Sessions armed', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // Armed by w1's own chat (`w2`) before it had a deny list.
+  const fresh = await freshTask(schedule, 'w2')
+  const bound = await schedule.create({
+    title: 'Reminder', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'w2' },
+  }, 'w2')
+  const outside = await freshTask(schedule, 'outside', 'Elsewhere')
+  // An unrestricted Bot keeps its fresh-Session task, whatever the sweep sees.
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(fresh.id).status, 'active')
+  // The user's settings restrict it: its fresh-Session task pauses, the others stay.
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(fresh.id).status, 'paused')
+  assert.equal(schedule.tasks.get(bound.id).status, 'active')
+  assert.equal(schedule.tasks.get(outside.id).status, 'active')
+})
+
+test('a restart with the deny list already set pauses the armed fresh-Session task', async (t) => {
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'w2')
+  assert.equal(armed.status, 'active')
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  const { ctx, home, rt } = setup({ schedule }, team)
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // The check runs after the boot load; give it the turns it needs.
+  for (let index = 0; index < 100 && schedule.tasks.get(armed.id).status === 'active'; index += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('deleting a Bot pauses the fresh-Session task its Session armed', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  ctx.workspaceRegistry = { archiveSession: async () => {} }
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  await rt.deleteBot('w1')
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
 })

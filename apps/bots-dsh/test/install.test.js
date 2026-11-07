@@ -120,6 +120,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: connectors',
     'on agent/created',
     'effect ds-bot: capabilities',
+    'on schedule/changed',
     'effect ds-bot: browser channel',
     'effect ds-bot: browser holds',
     'on agent/pre-step (prepend)',

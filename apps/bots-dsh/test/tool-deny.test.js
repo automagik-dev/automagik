@@ -259,6 +259,28 @@ test('a Bot without a deny list keeps schedule create and edit', async (t) => {
   }
 })
 
+test('only the user can change a Bot\'s deny list; the Bot cannot lift its own', async (t) => {
+  const { ctx } = team(t)
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({
+    name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.',
+  })
+  // A Bot editing itself, or a Main Bot editing it, cannot clear or narrow the list.
+  await assert.rejects(
+    () => rt.updateBot(bot.id, { denyTools: [] }, bot.id),
+    /Only the user can set what Analista may use/,
+  )
+  await assert.rejects(
+    () => rt.updateBot(bot.id, { name: 'Looser', denyTools: ['omni_send'] }, 'someone-else'),
+    /Only the user can set what Analista may use/,
+  )
+  assert.deepEqual(bot.denyTools, ['bash'])
+  assert.equal(bot.name, 'Analista')
+  // The user's own settings path (no acting Bot) still clears it.
+  await rt.updateBot(bot.id, { denyTools: [] })
+  assert.equal(bot.denyTools, undefined)
+})
+
 test('a name this DSH stops serving is reported once and left out of the restriction', async (t) => {
   const { ctx, restricted, warnings } = team(t)
   const rt = ctx.provided.get('omniTeam')
