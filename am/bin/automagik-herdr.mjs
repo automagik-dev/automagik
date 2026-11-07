@@ -2130,11 +2130,12 @@ async function restartOnMachine(opts, project, bot, entry) {
   // A session counts only when the command really resumes it by id (--resume <id> in its argv).
   let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
   // #598: dsh-tui's id-less -c only once a turn has finished in the old pane (hc's turn counter;
-  // missing or unreadable is 0): else a new conversation, and why.
+  // missing or unreadable is 0): else a new conversation, and why, in --json's warnings too (F3).
+  let turnNote = null;
   if (plan.mode === "resume" && !session && resumeAfterTurn(plan.agent) && !(Number.isSafeInteger(old?.turn) && old.turn >= 1)) {
     const note = noTurnNote(agentTable(), plan.agent, old);
     plan = { ...restartPlan({ ...planned, fresh: true }), note };
-    report([`${bot.name} starts on a new conversation: ${note}.`]);
+    turnNote = `${bot.name} starts on a new conversation: ${note}.`;
   }
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
@@ -2156,7 +2157,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
-  const warnings = [...seat.warnings];
+  const warnings = [...(turnNote ? [turnNote] : []), ...seat.warnings];
   // #597: the replacement is built from bots.json, never the pane's command; when they differ,
   // one line names only flag names, values masked, and a template by name. A linked machine's
   // templates aren't read here, so a template pane is named rather than resolved.

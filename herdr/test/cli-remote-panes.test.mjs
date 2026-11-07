@@ -615,8 +615,8 @@ test("restart --machine #413: codex can't resume a thread whose model provider i
 });
 
 test("restart --machine of a dsh-tui bot (#598): -c only after a finished turn there; turn 0 or no counter, a new conversation", (t) => {
-  const restartAt = (turn, force) => {
-    const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null, labels: {},
+  const restartAt = (turn, force, labels = {}) => {
+    const s = scene(t, { terminals: [{ address: "vm/t9", name: null, state: "live", created_ms: 1700000000009, parent: null, labels,
       ...(turn === undefined ? {} : { turn }), foreground: { argv: ["dsh-tui", "--", "<herdr-bot>\nold"], name: "dsh-tui" },
       status: { state: "idle", app: "dsh-tui" } }] });
     const file = join(s.project, ".herdr/bots.json");
@@ -629,14 +629,23 @@ test("restart --machine of a dsh-tui bot (#598): -c only after a finished turn t
     return { out: r.json(), err: r.err, words: run.slice(run.indexOf("dsh-tui")) };
   };
   // A finished turn: the id-less -c, which a machine still takes only with --force (continueRefusal).
-  const done = restartAt(2, true);
-  assert.deepEqual(done.words.slice(0, 3), ["dsh-tui", "-c", "--"]);
+  for (const turn of [1, 2]) {
+    const done = restartAt(turn, true);
+    assert.deepEqual(done.words.slice(0, 3), ["dsh-tui", "-c", "--"], `turn ${turn}: ${done.words.join(" ")}`);
+  }
+  // A known session id resumes by it even at turn 0: the turn guard is for the id-less -c only.
+  const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
+  const byId = restartAt(0, false, { "agent.session": SID });
+  assert.deepEqual(byId.words.slice(0, 4), ["dsh-tui", "--resume", SID, "--"], byId.words.join(" "));
+  assert.equal(byId.out.note, null);
   for (const turn of [0, undefined]) {
     const fresh = restartAt(turn, false);
     assert.deepEqual(fresh.words.slice(0, 2), ["dsh-tui", "--"], `turn ${turn}: ${fresh.words.join(" ")}`);
     assert.match(fresh.words[2], /^<herdr-bot>\n/);
     assert.equal(fresh.out.note, "dsh-TUI has no finished turn in vm/t9 to continue");
     assert.match(fresh.err, /Hedge starts on a new conversation: dsh-TUI has no finished turn in vm\/t9 to continue\./);
+    // The sidebar shows --json's warnings only: why it didn't resume is there too (#600 review F3).
+    assert.ok(fresh.out.warnings.includes("Hedge starts on a new conversation: dsh-TUI has no finished turn in vm/t9 to continue."), fresh.out.warnings.join("\n"));
   }
 });
 

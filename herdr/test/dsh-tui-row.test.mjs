@@ -100,6 +100,16 @@ test("a dsh-tui worker: its task is the prompt after --; --model or --effort is 
   }
   // A bot's worker defaults name a model or effort: refused for dsh-tui too, never silently dropped.
   assert.match(workerPlan({ ...bot, worker: { effort: "high" } }, {}).error, /^dsh-TUI takes no --model or --effort/);
+  // Another agent's worker defaults never stop a dsh-tui worker (#600 review F4): a Claude captain
+  // with a worker effort of "high" starts one with no error, and one warning line says the effort
+  // was left out, as the model's does (#602 review); an effort it types is refused.
+  const captain = { name: "Captain", agent: "claude", worker: { effort: "high", model: "opus" } };
+  const fromClaude = workerPlan(captain, { agent: "dsh-tui" });
+  assert.equal(fromClaude.error, undefined, fromClaude.error);
+  assert.deepEqual([fromClaude.agent, fromClaude.effort, fromClaude.argv], ["dsh-tui", null, ["dsh-tui"]]);
+  assert.deepEqual(fromClaude.warnings.filter((w) => /effort/.test(w)),
+    ["Captain's worker effort high is for claude; dsh-tui runs its own default."], fromClaude.warnings.join());
+  assert.match(workerPlan(captain, { agent: "dsh-tui", effort: "high" }).error, /^dsh-TUI takes no --model or --effort/);
   // Other agents keep warn-and-drop.
   const kimi = workerPlan({ name: "K", agent: "kimi" }, { effort: "high" });
   assert.equal(kimi.error, undefined);
@@ -174,6 +184,17 @@ test("edit a dsh-tui bot's --model: refused with one clear line, nothing written
   assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before);
 });
 
+test("edit a dsh-tui bot's --worker-model or --worker-effort: refused, nothing written", (t) => {
+  for (const flag of ["--worker-model", "--worker-effort"]) {
+    const s = scene(t);
+    const before = readFileSync(join(s.project, ".herdr/bots.json"), "utf8");
+    const r = s.cli(["edit", "Genie", flag, flag === "--worker-model" ? "deepseek-v4" : "high"]);
+    assert.notEqual(r.code, 0, flag);
+    assert.match(r.err, /--worker-model \/ --worker-effort: dsh-TUI takes no --model or --effort: its DSH profile on the machine it runs on sets both\./, flag);
+    assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before, flag);
+  }
+});
+
 test("restart a dsh-tui bot with a known session: dsh-tui --resume <id> -- <brief>; --fresh: no resume words", (t) => {
   const s = withPane(t, { turn: 3, session: SID });
   const r = s.cli(["restart", "Genie", "--json"]);
@@ -182,6 +203,10 @@ test("restart a dsh-tui bot with a known session: dsh-tui --resume <id> -- <brie
   assert.deepEqual(words.slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
   assert.match(words[4], /^<herdr-bot>\n/);
   assert.equal(words.length, 5, "the brief once, last");
+  // A known id resumes by id whatever the turn counter says: the guard is only for the id-less -c.
+  const early = withPane(t, { turn: 0, session: SID });
+  assert.equal(early.cli(["restart", "Genie", "--json"]).code, 0);
+  assert.deepEqual(agentWords(early.runs().at(-1)).slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
   const f = withPane(t, { turn: 3, session: SID });
   assert.equal(f.cli(["restart", "Genie", "--fresh", "--json"]).code, 0);
   const fresh = agentWords(f.runs().at(-1));
@@ -190,10 +215,12 @@ test("restart a dsh-tui bot with a known session: dsh-tui --resume <id> -- <brie
 });
 
 test("restart a dsh-tui bot with no session id: -c after a finished turn; with none (turn 0 or no counter) a new conversation, said", (t) => {
-  const done = withPane(t, { turn: 2 });
-  const r = done.cli(["restart", "Genie", "--json"]);
-  assert.equal(r.code, 0, r.err);
-  assert.deepEqual(agentWords(done.runs().at(-1)).slice(0, 3), ["dsh-tui", "-c", "--"]);
+  for (const turn of [1, 2]) {
+    const done = withPane(t, { turn });
+    const r = done.cli(["restart", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(agentWords(done.runs().at(-1)).slice(0, 3), ["dsh-tui", "-c", "--"], `turn ${turn}: one finished turn is enough`);
+  }
   for (const turn of [0, undefined, "2"]) {
     const s = withPane(t, { turn });
     const out = s.cli(["restart", "Genie", "--json"]);
