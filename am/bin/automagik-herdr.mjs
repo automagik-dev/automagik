@@ -344,20 +344,28 @@ async function saveProject(project, raw, { list = true } = {}) {
 /**
  * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
  * when the main checkout's file was never committed or has local changes, that its pull would
- * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one).
+ * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one);
+ * when it is deleted in the working tree, that the pull restores it with the worktree's version.
  */
 const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
   + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "")
-  + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "");
+  + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "")
+  + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a pull here brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead).` : "");
 /**
  * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
- * "modified" when it is committed but has local changes, null when it is clean or git can't say.
+ * "modified" when it is committed but has local changes, "deleted" when it is committed and
+ * deleted in the working tree without that deletion being staged, null when it is clean or git
+ * can't say. A pull that brings a worktree's committed file stops on the first two (#234, #332);
+ * an unstaged deletion is restored with the worktree's version instead.
  */
 async function changesIn(key) {
-  const out = ((await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").trim();
-  if (!out) return null;
-  return out.startsWith("??") ? "untracked" : "modified";
+  const out = (await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "";
+  if (!out.trim()) return null;
+  const state = out.slice(0, 2);
+  if (state === "??") return "untracked";
+  if (state === " D") return "deleted";
+  return "modified";
 }
 
 const fsIo = {

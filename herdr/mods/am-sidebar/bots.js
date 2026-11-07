@@ -331,14 +331,19 @@ export async function editFolderOf(folder, key, machine = null) {
 
 /**
  * What git says about `key`'s .herdr/bots.json (this machine): "untracked" when git doesn't
- * know the file, "modified" when it is committed but has local changes, null when it is clean
- * or git can't say. A pull that brings a worktree's committed file stops on either (#234, #332).
+ * know the file, "modified" when it is committed but has local changes, "deleted" when it is
+ * committed and deleted in the working tree without that deletion being staged, null when it
+ * is clean or git can't say. A pull that brings a worktree's committed file stops on the first
+ * two (#234, #332); an unstaged deletion is restored with the worktree's version instead.
  */
 export async function changesIn(key) {
   try {
-    const out = ((await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").trim();
-    if (!out) return null;
-    return out.startsWith("??") ? "untracked" : "modified";
+    const out = (await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "";
+    if (!out.trim()) return null;
+    const state = out.slice(0, 2);
+    if (state === "??") return "untracked";
+    if (state === " D") return "deleted";
+    return "modified";
   } catch { return null; }
 }
 
