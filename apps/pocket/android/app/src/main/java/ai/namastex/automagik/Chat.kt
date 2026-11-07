@@ -36,7 +36,9 @@ object Chat {
         val role: String = "", val text: String = "", val tool: String = "", val summary: String = "",
         val input: String = "", val output: String = "", val ok: Boolean = true, val call: String = "",
         val choices: List<String> = emptyList(), val open: Boolean = false, val answerable: Boolean = true,
-        val prompt: String = "", val cut: Boolean = false, val why: String = "", val state: String = "", val msg: String = ""
+        val prompt: String = "", val cut: Boolean = false, val why: String = "", val state: String = "", val msg: String = "",
+        /** A question's option labels, in order (option 1 first), and whether several can be picked. */
+        val options: List<String> = emptyList(), val multi: Boolean = false
     ) {
         companion object {
             fun parse(j: JSONObject?): Row? {
@@ -46,7 +48,7 @@ object Chat {
                 return Row(id, s("kind"), s("source"), j.optLong("turn", 0), s("role"), s("text"), s("tool"), s("summary"),
                     s("input"), s("output"), j.optBoolean("ok", true), s("call"), j.optJSONArray("choices").strings(),
                     j.optBoolean("open", false), j.optBoolean("answerable", true), s("prompt"), j.optBoolean("cut", false),
-                    s("why"), s("state"), s("msg"))
+                    s("why"), s("state"), s("msg"), j.optJSONArray("options").strings(), j.optBoolean("multi", false))
             }
         }
     }
@@ -137,6 +139,7 @@ object Chat {
             "changed" -> "The question changed; nothing was pressed."
             "closed", "no-such-row" -> "That question is already closed."
             "answered" -> "Already answered."
+            "stopped" -> "Stopped partway: the question moved on. Finish in the terminal."
             "in-flight" -> "Still answering the last tap."
             else -> "Not answered. $ANSWER_IN_TERMINAL."
         }
@@ -193,6 +196,40 @@ object ChatActions {
     fun choices(s: Chat.State, row: Chat.Row?): List<String> {
         if (row == null || s.readOnly || !canSend(s) || !row.open || !row.answerable || row.kind != "approval") return emptyList()
         return CHOICES.filter { it in row.choices }
+    }
+
+    /** The choice that types a question's own answer (chat/question.js `OTHER`). */
+    const val OTHER = "other"
+
+    /** A question's options to tap: only on a writable chat, an open answerable row the engine raised, with options it named. */
+    fun options(s: Chat.State, row: Chat.Row?): List<String> {
+        if (row == null || s.readOnly || !canSend(s) || !row.open || !row.answerable || row.kind != "question") return emptyList()
+        return row.options
+    }
+
+    /** Whether the question also takes a typed answer: a single-select with options (a multi-select's was never probed). */
+    fun canType(s: Chat.State, row: Chat.Row?) = row != null && !row.multi && options(s, row).isNotEmpty()
+
+    /**
+     * The chat.answer `choice` for the options picked, 0-based as drawn: one option on a single-select (its digit),
+     * one or more on a multi-select (digits joined by ","); null for anything else.
+     */
+    fun questionChoice(s: Chat.State, row: Chat.Row?, picked: List<Int>): String? {
+        val n = options(s, row).size
+        if (n == 0 || picked.isEmpty() || picked.any { it !in 0 until n } || picked.toSet().size != picked.size) return null
+        if (row?.multi != true && picked.size != 1) return null
+        return picked.joinToString(",") { (it + 1).toString() }
+    }
+
+    /**
+     * What a tap on a question sends as chat.answer's (choice, text): the options [picked], or the typed [text] (one
+     * line, single-select only) with choice [OTHER]. Null when the row does not offer it: nothing is sent.
+     */
+    fun questionAnswer(s: Chat.State, row: Chat.Row?, picked: List<Int>, text: String? = null): Pair<String, String?>? {
+        if (text == null) return questionChoice(s, row, picked)?.let { it to null }
+        val typed = text.trim()
+        if (!canType(s, row) || typed.isEmpty() || typed.any { it == '\n' || it == '\r' } || picked.isNotEmpty()) return null
+        return OTHER to typed
     }
 
     /** What an approval or question without buttons says instead. */

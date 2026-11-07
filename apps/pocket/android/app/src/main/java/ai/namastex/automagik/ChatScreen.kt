@@ -181,7 +181,9 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
             if (what.isNotBlank() && what != Chat.ANSWER_ON_COMPUTER) Text(ChatText.clean(what), fontSize = 13.sp, color = Ink)
             if (row.input.isNotBlank()) { Spacer(Modifier.height(6.dp)); Mono(row.input) }
             Spacer(Modifier.height(8.dp))
-            if (choices.isEmpty()) Text(if (row.why == "answered") "Answered." else ChatActions.passive(s), fontSize = 12.sp, color = Muted)
+            val options = ChatActions.options(s, row)
+            if (options.isNotEmpty()) QuestionOptions(row, s, options, vm)
+            else if (choices.isEmpty()) Text(if (row.why == "answered") "Answered." else ChatActions.passive(s), fontSize = 12.sp, color = Muted)
             else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (c in choices) {
                     val label = when (c) { "allow" -> "Allow"; "allow-always" -> "Always allow"; else -> "Deny" }
@@ -189,6 +191,30 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                     else Button(onClick = { vm.chatAnswer(row, c) }) { Text(label, fontSize = 13.sp) }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A question's options, as the engine named them (option 1 first): a tap answers a single-select; a multi-select is
+ * ticked, then submitted; a single-select also takes a typed answer. What is sent is [ChatActions.questionAnswer]'s.
+ */
+@Composable private fun QuestionOptions(row: Chat.Row, s: Chat.State, options: List<String>, vm: PocketViewModel) {
+    var picked by remember(row.id) { mutableStateOf(listOf<Int>()) }
+    var typed by remember(row.id) { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.forEachIndexed { i, label ->
+            if (row.multi) Row(Modifier.fillMaxWidth().clickable { picked = if (i in picked) picked - i else picked + i }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = i in picked, onCheckedChange = { picked = if (it) picked + i else picked - i })
+                Text(ChatText.clean(label), fontSize = 13.sp, color = Ink)
+            }
+            else OutlinedButton(onClick = { vm.chatAnswerQuestion(row, listOf(i)) }, modifier = Modifier.fillMaxWidth()) { Text(ChatText.clean(label), fontSize = 13.sp) }
+        }
+        if (row.multi) Button(onClick = { vm.chatAnswerQuestion(row, picked) }, enabled = picked.isNotEmpty()) { Text("Submit", fontSize = 13.sp) }
+        if (ChatActions.canType(s, row)) Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(typed, { typed = it.replace("\n", " ") }, placeholder = { Text("Or type an answer…", fontSize = 12.sp) },
+                modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(12.dp))
+            TextButton(onClick = { vm.chatAnswerQuestion(row, emptyList(), typed) }, enabled = typed.isNotBlank()) { Text("Send", fontSize = 13.sp) }
         }
     }
 }
