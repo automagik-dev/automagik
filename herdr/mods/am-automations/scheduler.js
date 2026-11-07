@@ -8,8 +8,8 @@ export const SCHEDULER = Object.freeze({
   repo: "automagik-dev/automagik",
   version: "0.12.1-am.1",
   sha256: Object.freeze({
-    arm64: "PENDING-SHA256",
-    amd64: "PENDING-SHA256",
+    arm64: "bcfa2d499668cefedf5c6f465c30331adaeda1eb0341b1982be240d727fad4de",
+    amd64: "f106185b80994074fd439af1f2db23c1eb3464f13710f6e1ae325dd990695c2e",
   }),
 });
 
