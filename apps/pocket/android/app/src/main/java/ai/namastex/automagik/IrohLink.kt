@@ -1,6 +1,7 @@
 package ai.namastex.automagik
 
 import android.content.Context
+import android.net.ConnectivityManager
 import computer.iroh.Endpoint
 import computer.iroh.EndpointOptions
 import computer.iroh.EndpointTicket
@@ -58,19 +59,29 @@ object IrohLink {
     val CHAT = "herdr-pocket/chat/1".toByteArray()
     private val lock = Mutex()
     private var endpoint: Endpoint? = null
+    /** The network the endpoint was bound on, and connect timeouts in a row since ([Background.rebind]). */
+    private var boundOn: String? = null
+    private var timeouts = 0
+
+    /** The phone's default network now, as a handle that changes when it moves (Wi-Fi to mobile, another Wi-Fi). */
+    private fun network(context: Context): String? =
+        runCatching { context.getSystemService(ConnectivityManager::class.java)?.activeNetwork?.toString() }.getOrNull()
 
     private suspend fun endpoint(context: Context): Endpoint = lock.withLock {
         endpoint?.takeUnless { it.isClosed() } ?: run {
             IrohAndroid.installAndroidContext(context.applicationContext)
             val file = File(context.noBackupFilesDir, "iroh.key")
             if (!file.exists()) file.writeBytes(SecretKey.generate().toBytes())
-            Endpoint.bind(EndpointOptions(secretKey = file.readBytes(), alpns = emptyList())).also { endpoint = it }
+            Endpoint.bind(EndpointOptions(secretKey = file.readBytes(), alpns = emptyList())).also { endpoint = it; boundOn = network(context); timeouts = 0 }
         }
     }
 
-    /** Drops the endpoint after a connect timed out: one bound before a network change can stay deaf after it. */
-    private suspend fun forget(stale: Endpoint) = lock.withLock {
-        if (endpoint === stale) { endpoint = null; runCatching { stale.close() } }
+    /**
+     * After a connect timed out: drops the endpoint when the network changed since its bind (one bound before a network
+     * change can stay deaf after it), or every few timeouts in a row; an unreachable desktop alone keeps it.
+     */
+    private suspend fun timedOut(context: Context, stale: Endpoint) = lock.withLock {
+        if (endpoint === stale && Background.rebind(boundOn, network(context), ++timeouts)) { endpoint = null; runCatching { stale.close() } }
     }
 
     /** The desktop a ticket names, as a stable id for "is this the same machine". */
@@ -93,7 +104,8 @@ object IrohLink {
     suspend fun open(context: Context, ticket: String, session: String, scope: CoroutineScope, alpn: ByteArray = SESSION): IrohTransport {
         val ep = endpoint(context)
         val conn = try { withTimeout(30_000) { ep.connect(EndpointTicket.fromString(ticket).endpointAddr(), alpn) } }
-            catch (e: TimeoutCancellationException) { forget(ep); throw e }
+            catch (e: TimeoutCancellationException) { timedOut(context, ep); throw e }
+        lock.withLock { timeouts = 0 }
         val bi = conn.openBi()
         val send = bi.send(); val recv = bi.recv()
         send.writeAll((JSONObject().put("session", session).toString() + "\n").toByteArray())

@@ -1,5 +1,6 @@
 package ai.namastex.automagik
 
+import ai.namastex.automagik.Background.whileShown
 import android.app.Application
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
@@ -78,7 +79,6 @@ const val DEFAULT_FONT_SIZE = 13
 const val ICON_MAX = 5 * 1024 * 1024
 const val PET_SHEET_MAX = 6 * 1024 * 1024
 const val PET_SLEEP_MAX = 2 * 1024 * 1024
-private val RECONNECT_DELAYS = listOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 val FONT_SIZES = 8..24
 
 /**
@@ -182,11 +182,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         Updater.usage = { val s = state.value; Updater.Usage(foreground, s.selected != null, watchText.isNotEmpty()) }
         ProgramIcons.load(application)
         // Teams: each reading of the connected machines replaces their rows in the cache and raises today's peaks; a new
-        // merge in a feed celebrates its bots; pets and space images the phone lacks are fetched once.
+        // merge in a feed celebrates its bots; pets and space images the phone lacks are fetched once. Only while the app is
+        // on screen ([Background.whileShown]): the latest reading syncs when it comes back.
         // At most one reading every 400 ms, each of the latest state: readings arrive many times a second while a desktop
         // starts, and restarting a delay on each (collectLatest) could put the cache write and pets off indefinitely.
         viewModelScope.launch(Dispatchers.IO) {
-            state.map { s -> if (s.demo) null else s.machines.filterValues { it.connected } }.distinctUntilChanged().conflate().collect { live ->
+            state.map { s -> if (s.demo) null else s.machines.filterValues { it.connected } }.distinctUntilChanged().whileShown(onScreen).conflate().collect { live ->
                 live ?: return@collect
                 val now = System.currentTimeMillis()
                 val jump = try { teamsSync.reading(live, now) } catch (e: CancellationException) { throw e } catch (_: Exception) { emptySet() }
@@ -285,15 +286,24 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 ensureActive()
                 clients[profile.id] = c
                 gitChecked.keys.removeIf { it.startsWith("${profile.id}|") }
-                retrying.remove(profile.id)
+                retrying.remove(profile.id); attempts.remove(profile.id)
                 updateMachine(profile.id) { it.copy(connecting = false, connected = true, version = hello.optString("version"), error = null, session = it.session + 1) }
                 val changes = Channel<Unit>(Channel.CONFLATED)
                 c.subscribe { changes.trySend(Unit) }
                 refresh(profile.id, c)
+                var fullRead = System.currentTimeMillis()
                 for (ignored in changes) {
-                    // Away from the app, fewer reads: the alert is what matters, not every redraw.
+                    // Away from the app, fewer reads: the alert is what matters, not every redraw. Only the terminal list,
+                    // and the whole machine when a status moved or every 30 s ([Background.refresh]).
                     delay(if (foreground) 180 else 1_500)
-                    runCatching { refresh(profile.id, c) }.onFailure { e -> updateMachine(profile.id) { it.copy(error = e.message) } }
+                    runCatching {
+                        val list = c.call("terminal.list")
+                        val now = System.currentTimeMillis()
+                        val terminals = list.optJSONArray("terminals")?.objects()?.map(CoreTerminal::parse).orEmpty()
+                        if (Background.refresh(foreground, alertBase[profile.id]?.takeIf { it.first === c }?.second, terminals, fullRead, now)) {
+                            refresh(profile.id, c, list); fullRead = now
+                        }
+                    }.onFailure { e -> updateMachine(profile.id) { it.copy(error = e.message) } }
                 }
             } catch (e: Throwable) {
                 client?.close()
@@ -394,7 +404,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** [deliberate]: the person asked, so a background reconnect in progress ends too. */
     fun disconnect(id: String, deliberate: Boolean = true) {
         reconnects.remove(id)?.cancel()
-        if (deliberate) retrying.remove(id)
+        if (deliberate) { retrying.remove(id); attempts.remove(id) }
         if (state.value.selected?.hostId == id) detach()
         jobs.remove(id)?.cancel()
         clients.remove(id)?.close()
@@ -409,17 +419,27 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val reconnects = ConcurrentHashMap<String, Job>()
     /** Machines coming back on their own, so the watch service keeps running between attempts. */
     private val retrying = ConcurrentHashMap.newKeySet<String>()
-    /** A dropped connection comes back on its own while watching: after 2 s, then longer, up to a minute between tries. */
+    /** Each retrying machine's last attempt, so opening the app tries a slow one at once ([kickSlowReconnects]). */
+    private val attempts = ConcurrentHashMap<String, Int>()
+    /** A dropped connection comes back on its own while watching: after 2 s, then longer, then every 15 minutes ([Background.reconnectDelay]). */
     private fun reconnectLater(profile: HostProfile, attempt: Int) {
         if (!state.value.watch || state.value.demo) return
         retrying.add(profile.id)
+        attempts[profile.id] = attempt
         reconnects.remove(profile.id)?.cancel()
         reconnects[profile.id] = viewModelScope.launch {
-            delay(RECONNECT_DELAYS[(attempt - 1).coerceIn(0, RECONNECT_DELAYS.lastIndex)])
+            delay(Background.reconnectDelay(attempt))
             reconnects.remove(profile.id)
             state.value.hosts.find { it.id == profile.id }?.let { connect(it, retry = attempt + 1) }
         }
         syncWatch()
+    }
+    /** The person opened the app: a machine waiting out its slow retry is tried now (a failure goes back to waiting). */
+    private fun kickSlowReconnects() {
+        for ((id, attempt) in attempts) {
+            if (attempt <= Background.RECONNECT_FAST || reconnects[id]?.isActive != true) continue
+            state.value.hosts.find { it.id == id }?.let { connect(it, retry = attempt + 1) }
+        }
     }
     @Volatile private var watchText = ""
     @Volatile private var kept: Set<String>? = null
@@ -458,21 +478,23 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun setWatch(on: Boolean) {
         prefs.edit { putBoolean(WatchResume.PREF_WATCH, on) }
         _state.update { it.copy(watch = on) }
-        if (!on) { reconnects.values.forEach { it.cancel() }; reconnects.clear(); retrying.clear() }
+        if (!on) { reconnects.values.forEach { it.cancel() }; reconnects.clear(); retrying.clear(); attempts.clear() }
         watchText = ""; syncWatch()
     }
     /** The watch notification's Stop: disconnect everything and stay disconnected until the person connects again. */
     fun stopWatching() {
-        reconnects.values.forEach { it.cancel() }; reconnects.clear(); retrying.clear()
+        reconnects.values.forEach { it.cancel() }; reconnects.clear(); retrying.clear(); attempts.clear()
         state.value.machines.keys.forEach { disconnect(it) }
         watchText = ""
     }
     private val alertBase = ConcurrentHashMap<String, Pair<CoreClient, List<CoreTerminal>>>()
-    @Volatile private var foreground = false
+    /** The app on screen: Teams sync waits for it ([Background.whileShown]). */
+    private val onScreen = MutableStateFlow(false)
+    private val foreground get() = onScreen.value
     fun setForeground(shown: Boolean) {
-        foreground = shown
+        onScreen.value = shown
         // Android lets the watch service start only from the foreground.
-        if (shown) { watchText = ""; syncWatch() }
+        if (shown) { watchText = ""; syncWatch(); kickSlowReconnects() }
         if (shown) Updater.opened() else Updater.left()
     }
     private suspend fun alert(found: List<Alerts.Alert>, client: CoreClient) {
@@ -578,8 +600,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun playAlert() = Alerts.play(getApplication())
     private fun encryption(hostId: String) = state.value.hosts.find { it.id == hostId }?.encryption ?: "encrypted"
-    private suspend fun refresh(id: String, client: CoreClient) {
-        val list = client.call("terminal.list")
+    /** [listed]: a terminal.list this event already read. */
+    private suspend fun refresh(id: String, client: CoreClient, listed: JSONObject? = null) {
+        val list = listed ?: client.call("terminal.list")
         val terminals = list.optJSONArray("terminals")?.objects()?.map(CoreTerminal::parse).orEmpty()
         val local = client.call("doc.get", JSONObject().put("name", "herdr-app"))
         val home = homes.getOrPut(id) { exec(client, "printenv", "HOME") }
@@ -982,6 +1005,22 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _chat.value = null
     }
 
+    private val held = Background.Held()
+    /**
+     * The main screen stopped (the app left, or the screen off) or started: a stopped one streams nothing, so the
+     * attached terminal and the open chat let go, and the next start takes them back where the person left them.
+     */
+    fun streams(started: Boolean) {
+        if (!started) {
+            held.stop(activeChannel != null || attachJob?.isActive == true || nativeJob?.isActive == true, chatRef?.takeIf { chatJob?.isActive == true })
+            dropStream()
+            chatJob?.cancel(); chatJob = null
+            return
+        }
+        val (terminal, chat) = held.start()
+        if (terminal && state.value.selected != null) { if (state.value.nativeDisplay) nativeReady(cols, rows) else terminalReady(cols, rows) }
+        if (chat != null && chat == chatRef) openChat(chat)
+    }
     /** Connects the open chat again after it dropped. */
     fun reconnectChat() { val ref = chatRef ?: return; chatJob?.cancel(); chatJob = null; openChat(ref) }
 
@@ -1094,8 +1133,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun detach() {
         markSeen()
-        ++attachRevision; attachJob = null
         if (state.value.modifiers.any) _state.update { it.copy(modifiers = KeyModifiers()) }
+        dropStream()
+    }
+    /** Closes the attached terminal's stream; what is selected stays. */
+    private fun dropStream() {
+        ++attachRevision; attachJob = null
         nativeJob?.cancel(); nativeJob = null
         val previous = activeChannel; activeChannel = null
         if (previous != null) viewModelScope.launch(Dispatchers.IO) { runCatching { previous.first.detach(previous.second) } }

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.createBitmap
 import com.caverock.androidsvg.SVG
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -327,7 +328,9 @@ val LocalIconsVersion = compositionLocalOf { 0 }
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     // Read again every 2 s, as the terminal screen does: a menu that wasn't drawn yet, or changed, shows its answers.
-    val menu by produceState<Prompt.Menu?>(null, ref) { while (true) { value = vm.readMenu(ref); delay(2_000) } }
+    // Not while the app is stopped ([Background.poll]).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val menu by produceState<Prompt.Menu?>(null, ref) { Background.poll(lifecycle.started(), 2_000) { vm.readMenu(ref) }.collect { value = it } }
     val choices = remember(menu, bot.kind) { if (bot.kind == "permission") Prompt.choices(bot.kind, menu) else emptyList() }
     val yes = choices.firstOrNull()
     val no = choices.lastOrNull()?.takeIf { choices.size >= 2 }
