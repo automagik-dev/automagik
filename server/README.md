@@ -8,10 +8,13 @@ or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as 
 `:latest`. There is no laptop push. Tracked in #620.
 
 Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at the release in
-`server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1` for a manual build). CI passes the
-repository's version as `AUTOMAGIK_VERSION`, so the image pins the release whose plugin tarballs
-match the tag it publishes. Each tarball is checked against the release's `plugins.json` (sha512
-integrity, size) and `PLUGINS.SHA256SUMS` (sha256) before dsh installs it.
+`server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1` for a manual build). CI sets
+`AUTOMAGIK_VERSION` to the newest stable release that carries `plugins.json`, because a herdr,
+Pocket or am patch carries no plugin tarballs; the image's `:<version>` tag and its
+`org.opencontainers.image.version` label are the repository version (`IMAGE_VERSION`). A
+`versions.json` inside the image names the plugin release it installed. Each tarball is checked
+against the release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256)
+before dsh installs it.
 
 ## Pull
 
@@ -44,9 +47,12 @@ composes.
 ## Build and smoke
 
 ```sh
-node server/build.mjs --tag automagik-server:local
+node server/build.mjs --tag automagik-server:local --version 3.93.0 --image-version 3.93.1
 node server/smoke.mjs automagik-server:local
 ```
+
+`--version` is the release whose plugin tarballs are installed; `--image-version` is the version
+label (the repository's). With no arguments both are `3.90.1`.
 
 The context is the repository root because the builder reuses
 `apps/desktop/runtime/package-lock.json`; `server/Dockerfile.dockerignore` keeps the context

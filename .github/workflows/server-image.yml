@@ -4,7 +4,9 @@ name: Server image
 # Harness, with the plugins from one pinned release. Every change builds, smokes and scans it;
 # a dispatch or a published release then pushes it to ghcr.io/automagik-dev/automagik-server as
 # :<version> (the repository's version), and as :latest only when the release is not a
-# prerelease and the published :latest is not newer.
+# prerelease and the published :latest is not newer. A herdr/Pocket/am patch has no plugin
+# tarballs, so the plugins are pinned from the newest stable release that has them; the tag and
+# the image label stay the repository version.
 #
 # The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
 # and fails the job on a provider key, a token= or JSON token field, a private-key block, a
@@ -66,6 +68,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       version: ${{ steps.gate.outputs.version }}
+      content: ${{ steps.gate.outputs.content }}
       publish: ${{ steps.gate.outputs.publish }}
       latest: ${{ steps.gate.outputs.latest }}
     env:
@@ -96,12 +99,23 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
+          content=""
           build=true
           publish=false
           latest=false
           if [[ "${RELEASE_PRERELEASE}" != "true" ]]; then latest=true; fi
           has_plugins() {
-            gh release view "v${version}" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
+            gh release view "$1" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
+          }
+          # The newest stable release that carries the plugin tarballs. A herdr, Pocket or am
+          # patch has none, so the image pins the plugins from the last release that does.
+          newest_plugins() {
+            gh api "repos/${REPOSITORY}/releases?per_page=30" \
+              --jq '[.[] | select(.draft|not) | select(.prerelease|not) | select([.assets[].name] | index("plugins.json"))][0].tag_name' \
+              | sed 's/^v//'
+          }
+          resolve_content() {
+            if has_plugins "v${version}"; then echo "${version}"; else newest_plugins; fi
           }
           case "${EVENT}" in
             workflow_dispatch)
@@ -118,8 +132,9 @@ jobs:
                   exit 1
                   ;;
               esac
-              if ! has_plugins; then
-                echo "::error::v${version} carries no plugins.json; dispatch on a version whose release has the plugin tarballs"
+              content="$(resolve_content)"
+              if [[ -z "${content}" ]]; then
+                echo "::error::no stable release carries plugins.json; nothing to pin the plugins from"
                 exit 1
               fi
               publish=true
@@ -129,16 +144,30 @@ jobs:
                 echo "::error::release ${RELEASE_TAG} does not match package.json ${version}"
                 exit 1
               fi
-              if has_plugins; then
+              if has_plugins "${RELEASE_TAG}"; then
+                content="${version}"
                 publish=true
               else
-                echo "release ${RELEASE_TAG} carries no plugins.json: the image pins plugin tarballs, so nothing builds or publishes"
+                echo "release ${RELEASE_TAG} carries no plugins.json (a herdr/Pocket/am patch): nothing builds or publishes"
                 build=false
               fi
               ;;
+            *)
+              # pull_request and push: build and scan only. A version without plugins (a patch
+              # merged into dev) still builds, pinned to the newest release that has them.
+              content="$(resolve_content)"
+              if [[ -z "${content}" ]]; then
+                echo "::error::no stable release carries plugins.json; nothing to pin the plugins from"
+                exit 1
+              fi
+              ;;
           esac
+          if [[ -n "${content}" && "${content}" != "${version}" ]]; then
+            echo "image ${version} pins its plugins from ${content} (the newest stable release with plugins.json)"
+          fi
           {
             echo "version=${version}"
+            echo "content=${content}"
             echo "build=${build}"
             echo "publish=${publish}"
             echo "latest=${latest}"
@@ -176,7 +205,8 @@ jobs:
         if: steps.gate.outputs.build == 'true'
         env:
           VERSION: ${{ steps.gate.outputs.version }}
-        run: node server/build.mjs --tag "automagik-server:${VERSION}" --version "${VERSION}"
+          CONTENT: ${{ steps.gate.outputs.content }}
+        run: node server/build.mjs --tag "automagik-server:${VERSION}" --version "${CONTENT}" --image-version "${VERSION}"
 
       - name: Smoke
         if: steps.gate.outputs.build == 'true'
@@ -236,6 +266,7 @@ jobs:
     env:
       DO_NOT_TRACK: '1'
       VERSION: ${{ needs.image.outputs.version }}
+      CONTENT: ${{ needs.image.outputs.content }}
       LATEST: ${{ needs.image.outputs.latest }}
       GHCR: ghcr.io/automagik-dev/automagik-server
     steps:
@@ -326,6 +357,7 @@ jobs:
             echo '```'
             echo
             echo "- version: \`${VERSION}\`"
+            if [[ "${CONTENT}" != "${VERSION}" ]]; then echo "- plugins from: \`${CONTENT}\` (the newest stable release with plugins.json)"; fi
             echo "- tags: ${tags}"
             echo
             echo "Pull by digest:"

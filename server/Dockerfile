@@ -66,13 +66,16 @@ RUN set -eux; \
 
 FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
 
-ARG AUTOMAGIK_VERSION=3.90.1
+# The image's own version (the repository's) may be a herdr/Pocket/am patch, while the plugins
+# come from the newest release that carries their tarballs. `AUTOMAGIK_VERSION` in the builder
+# is that plugin release; this label is the image's.
+ARG IMAGE_VERSION=3.90.1
 
 LABEL org.opencontainers.image.title="Automagik server" \
       org.opencontainers.image.description="The automagik-web DeepSeek Harness profile for a host: the Bot team, the welcome and ACP agents" \
       org.opencontainers.image.source="https://github.com/automagik-dev/automagik" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="${AUTOMAGIK_VERSION}"
+      org.opencontainers.image.version="${IMAGE_VERSION}"
 
 COPY --from=tools /out/bin/bash /bin/bash
 COPY --from=tools /out/bin/dash /bin/dash
