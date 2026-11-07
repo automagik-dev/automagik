@@ -97,9 +97,10 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
 // The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
-// The server image (server/: the automagik-web Dockerfile, its build, smoke and entrypoint) is
-// built and smoked by CI only (.github/workflows/server-image.yml) and no release carries it
-// yet: it installs plugins from a pinned release, not from this checkout.
+// The server image (server/: the automagik-web Dockerfile, its build, smoke, scan and
+// entrypoint) is built, scanned and published to ghcr.io by its own workflow
+// (.github/workflows/server-image.yml); no release carries it as an asset, so a server-only
+// change cuts no release. It installs plugins from a pinned release, not from this checkout.
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
 // Every Unfold plugin ships from Unfold's own release, not from this lane: its folder stays here
 // (built and tested) but a change to any cuts no release and reaches no install from here

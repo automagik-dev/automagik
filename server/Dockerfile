@@ -1,16 +1,20 @@
 # syntax=docker/dockerfile:1
 # The Automagik server image: the automagik-web dsh profile (dsh-base + dsh-web-app, the Bot
 # team, the welcome and ACP) on a pinned DeepSeek Harness, ready for /data on a host. Built by
-# CI only (.github/workflows/server-image.yml), never pushed.
+# CI only (.github/workflows/server-image.yml), which extracts the rootfs, scans it
+# (server/secrecy.mjs) and only then publishes it to ghcr.io/automagik-dev/automagik-server.
 #
 # Build from the repository root (the builder reuses the desktop's pinned runtime lock):
 #   docker build -f server/Dockerfile -t automagik-server .
 #
-# The runtime is distroless: node and glibc, the image's code, and the tools Bots need in their
-# shell (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build
-# toolchain. The release pins are build args; every plugin tarball is checked against the
-# release's plugins.json (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh
-# installs it (server/fetch-plugins.mjs).
+# The runtime is the distroless nodejs24 rootfs (node and glibc), cleaned in the tools stage
+# (no man pages or changelogs), plus the image's code and the tools Bots need in their shell
+# (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build toolchain. The release
+# pins are build args; every plugin tarball is checked against the release's plugins.json
+# (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh installs it
+# (server/fetch-plugins.mjs).
+
+FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS base
 
 FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS builder
 
@@ -42,7 +46,13 @@ RUN node /build/server/assemble.mjs \
 # the distroless nodejs24-debian12 base.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS tools
 
+# The distroless rootfs, stripped here where coreutils exist, before it is copied into the final
+# image. No man pages or changelogs (nothing reads them, and their .gz files are archives the
+# secrecy scan refuses); the shell and libraries Bots need stay.
+COPY --from=base / /out/rootfs
+
 RUN set -eux; \
+    rm -rf /out/rootfs/usr/share/doc /out/rootfs/usr/share/man /out/rootfs/usr/share/info /out/rootfs/usr/share/lintian; \
     apt-get update; \
     apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
@@ -63,16 +73,22 @@ RUN set -eux; \
     chmod 0700 /out/data/secrets; \
     chown -R 1000:1000 /out/data
 
-FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
+FROM scratch AS runtime
 
-ARG AUTOMAGIK_VERSION=3.90.1
+# The image's own version (the repository's) may be a herdr/Pocket/am patch, while the plugins
+# come from the newest release that carries their tarballs. `AUTOMAGIK_VERSION` in the builder
+# is that plugin release; this label is the image's.
+ARG IMAGE_VERSION=3.90.1
 
 LABEL org.opencontainers.image.title="Automagik server" \
       org.opencontainers.image.description="The automagik-web DeepSeek Harness profile for a host: the Bot team, the welcome and ACP agents" \
       org.opencontainers.image.source="https://github.com/automagik-dev/automagik" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="${AUTOMAGIK_VERSION}"
+      org.opencontainers.image.version="${IMAGE_VERSION}"
 
+# The cleaned distroless rootfs (node, glibc and its account records) and the tools Bots need.
+COPY --from=tools /out/rootfs/ /
+COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /out/bin/bash /bin/bash
 COPY --from=tools /out/bin/dash /bin/dash
 COPY --from=tools /out/bin/sh /bin/sh
@@ -81,13 +97,15 @@ COPY --from=tools /out/bin/rg /usr/bin/rg
 COPY --from=tools /out/git-core /usr/lib/git-core
 COPY --from=tools /out/git-core-share /usr/share/git-core
 COPY --from=tools /out/certs /etc/ssl/certs
-COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools --chown=1000:1000 /out/data /data
 
 COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
 COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs /opt/automagik/
+# No /home/<user> in the image's account record: the distroless nonroot home is replaced with
+# the uid the image actually runs as. The scanner's home check then has nothing to excuse.
+COPY server/passwd /etc/passwd
 COPY --chmod=0755 server/bin/dsh server/bin/pnpm /usr/local/bin/
 
 ENV HOME=/data \

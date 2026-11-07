@@ -13,7 +13,7 @@
 // builder, where npm and the network exist; the runtime stage carries no package manager but
 // the profile's own pnpm.
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fetchPlugins, DEFAULT_PACKAGES } from './fetch-plugins.mjs'
@@ -22,6 +22,10 @@ import { pruneNodeModules } from '../apps/desktop/scripts/prune-runtime.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
+/** Third-party test, example and documentation folders the runtime never reads. */
+export const PRUNE_EXTRA_DIR = /^(?:test|tests|__tests__|examples|example|docs|\.yarn)$/
+/** A package's test/spec file, wherever it sits (zod's src/v4/classic/tests, node-gyp's *_test.py). */
+export const PRUNE_EXTRA_FILE = /(?:^|[._-])(?:test|spec)\.[^.]+$/i
 const RUNTIME_SOURCE = join(REPO, 'apps', 'desktop', 'runtime')
 const PROFILE_SOURCE = join(HERE, 'profile')
 const ENV = { ...process.env, DO_NOT_TRACK: '1', npm_config_fund: 'false', npm_config_audit: 'false', npm_config_update_notifier: 'false' }
@@ -45,6 +49,69 @@ function argsOf(argv) {
 
 function run(command, args, options) {
   execFileSync(command, args, { stdio: ['ignore', 'inherit', 'inherit'], ...options })
+}
+
+/**
+ * Remove third-party test/example/documentation folders and test files from a node_modules
+ * tree. Nothing a runtime imports lives there; it keeps the server image smaller and its
+ * secrecy scan about this repository's bytes, not a dependency's fixtures. Nested node_modules
+ * are walked as packages, not removed.
+ */
+export function pruneExtras(nodeModules) {
+  const removed = { files: 0, bytes: 0 }
+  const count = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) count(full)
+      else if (entry.isFile()) {
+        removed.files += 1
+        removed.bytes += lstatSync(full).size
+      }
+    }
+  }
+  const prunePackage = (dir) => {
+    let stat
+    try { stat = lstatSync(dir) } catch { return }
+    if (!stat.isDirectory()) return
+    const visit = (folder) => {
+      for (const entry of readdirSync(folder, { withFileTypes: true })) {
+        const full = join(folder, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') {
+            for (const name of readdirSync(full)) {
+              if (name.startsWith('.')) continue
+              if (name.startsWith('@')) {
+                for (const inner of readdirSync(join(full, name))) {
+                  if (!inner.startsWith('.')) prunePackage(join(full, name, inner))
+                }
+              } else prunePackage(join(full, name))
+            }
+            continue
+          }
+          if (PRUNE_EXTRA_DIR.test(entry.name)) {
+            count(full)
+            rmSync(full, { recursive: true, force: true })
+            continue
+          }
+          visit(full)
+        } else if (entry.isFile() && PRUNE_EXTRA_FILE.test(entry.name)) {
+          removed.files += 1
+          removed.bytes += lstatSync(full).size
+          rmSync(full)
+        }
+      }
+    }
+    visit(dir)
+  }
+  for (const name of readdirSync(nodeModules)) {
+    if (name.startsWith('.')) continue
+    if (name.startsWith('@')) {
+      let inner
+      try { inner = readdirSync(join(nodeModules, name)) } catch { continue }
+      for (const sub of inner) if (!sub.startsWith('.')) prunePackage(join(nodeModules, name, sub))
+    } else prunePackage(join(nodeModules, name))
+  }
+  return removed
 }
 
 export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', repository = 'https://github.com/automagik-dev/automagik' }) {
@@ -119,6 +186,13 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
     '@img/sharp-libvips-linuxmusl-x64', '@img/sharp-linuxmusl-x64',
     'node-pty/prebuilds/win32-arm64', 'node-pty/prebuilds/win32-x64',
     'node-pty/prebuilds/darwin-arm64', 'node-pty/prebuilds/darwin-x64', 'node-pty/prebuilds/linux-arm64',
+    // The server image is glibc Linux: the musl native addon and pnpm's non-Linux reflink
+    // binaries are never loaded there.
+    'node-addon-require-builtin-linux-x64-musl',
+    'pnpm/dist/reflink.darwin-arm64-2HJ4WGO6.node',
+    'pnpm/dist/reflink.darwin-x64-3G3H6IW4.node',
+    'pnpm/dist/reflink.win32-arm64-msvc-Q6BARPPB.node',
+    'pnpm/dist/reflink.win32-x64-msvc-J2TZHRQI.node',
   ]
   for (const name of PRUNE) rmSync(join(runtimeDir, 'node_modules', name), { recursive: true, force: true })
 
@@ -130,6 +204,13 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   })
   say(`runtime: left out ${runtimePruned.files} files, ${mib(runtimePruned.bytes)}`)
   say(`profile: left out ${profilePruned.files} files, ${mib(profilePruned.bytes)}`)
+  const runtimeExtras = pruneExtras(join(runtimeDir, 'node_modules'))
+  const profileExtras = pruneExtras(join(installDir, 'node_modules'))
+  say(`runtime: left out ${runtimeExtras.files} test/example files, ${mib(runtimeExtras.bytes)}`)
+  say(`profile: left out ${profileExtras.files} test/example files, ${mib(profileExtras.bytes)}`)
+  // The tarballs were verified and installed; the image does not carry them (or an archive the
+  // secrecy scan would have to excuse). The profile's node_modules is the installed result.
+  rmSync(join(installDir, 'vendor'), { recursive: true, force: true })
 
   cpSync(installDir, join(out, 'profile'), { recursive: true, verbatimSymlinks: true })
   rmSync(dshHome, { recursive: true, force: true })

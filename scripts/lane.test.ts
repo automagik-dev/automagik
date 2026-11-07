@@ -38,7 +38,7 @@ describe('the plugin lane', () => {
     expect(kindOf([...wslc, 'apps/desktop/electron-builder.yml'], none)).toBe('full');
   });
 
-  test('the server image (server/) is built by CI only and ships nothing until a release carries it', () => {
+  test('the server image (server/) publishes from its own workflow, and a server-only change cuts no release', () => {
     const none = () => false;
     const server = ['server/Dockerfile', 'server/assemble.mjs', 'server/entrypoint.mjs', 'server/smoke.mjs',
       'server/README.md', 'server/test/lib.test.mjs'];

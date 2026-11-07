@@ -1,13 +1,40 @@
 name: Server image
 
 # The Automagik server image (server/): the automagik-web profile on the pinned DeepSeek
-# Harness, with the plugins from one pinned release. Built and smoked here only: nothing is
-# pushed to a registry and no release carries the image yet. The smoke starts the container
-# with a named volume and checks the first-start seed, the 401 auth fence, the redacted log,
-# uid 1000, Docker's health check and a restart that keeps the profile (server/smoke.mjs).
+# Harness, with the plugins from one pinned release. Every change builds, smokes and scans it;
+# a dispatch or a published release then pushes it to ghcr.io/automagik-dev/automagik-server as
+# :<version> (the repository's version), and as :latest only when the release is not a
+# prerelease and the published :latest is not newer. A herdr/Pocket/am patch has no plugin
+# tarballs, so the plugins are pinned from the newest stable release that has them; the tag and
+# the image label stay the repository version.
 #
-# The plugins come from the release the Dockerfile pins, not from this checkout, so a plugin
-# source change does not rebuild it; a runtime-lock move does.
+# The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
+# and fails the job on a provider key, a token= or JSON token field, a private-key block with a
+# real body, a .env or launch-url file, bot/team state under /data, a home or /mnt/ai path, a git
+# credential, an archive, a hit from the repository's own privacy grep, or a secret-looking env
+# name. The only exceptions are exact reviewed entries in server/secrecy-allowlist.json (one
+# file, one rule, the exact match; keys, /data, our own code, /etc and config may never be
+# allowlisted; a private-key block only for the six reviewed gnutls test vectors, pinned by the
+# block and containing-library sha256). Third-party test/example/docs folders, non-Linux
+# prebuilds and the profile's vendor tarballs are pruned before the scan, and the tools stage
+# strips the distroless man/changelog pages before the final scratch image copies that rootfs.
+# A self-check in image mode proves a planted key still fails; the layer list, file inventory,
+# allowlist used and external symlinks are kept as an artifact. The image is never run by the
+# scan.
+#
+# No key is baked and no test token is in this workflow: the only credential is GITHUB_TOKEN,
+# used to log in to the registry and to read the release's assets. It is not passed to docker
+# build or into the image. GitHub has no REST endpoint for a Container package's visibility:
+# the job checks it and leaves the organization package-settings path in the summary.
+#
+# A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
+# events made with that token), so the cut's own releases do not trigger this automatically:
+# dispatch this workflow on a v<version> tag whose release carries plugins.json (the last
+# full/plugin release), or on dev when its package version has such a release. A release
+# published by hand (or by a PAT) triggers it. A release with no plugins.json (a herdr, Pocket
+# or am patch) carries no plugin tarballs: the build is skipped and nothing is pushed, and a
+# publish dispatch at such a version is refused (a build-only run falls back to the newest
+# release that has them).
 
 on:
   pull_request:
@@ -16,6 +43,8 @@ on:
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/scripts/prune-runtime.mjs
+      - herdr/scripts/privacy-check.mjs
+      - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
   push:
     branches: [dev]
@@ -24,7 +53,11 @@ on:
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/scripts/prune-runtime.mjs
+      - herdr/scripts/privacy-check.mjs
+      - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -32,13 +65,18 @@ permissions:
 
 concurrency:
   group: server-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   image:
-    name: Server image (build and smoke)
+    name: Server image (build, smoke, scan)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      content: ${{ steps.gate.outputs.content }}
+      publish: ${{ steps.gate.outputs.publish }}
+      latest: ${{ steps.gate.outputs.latest }}
     env:
       DO_NOT_TRACK: '1'
     steps:
@@ -46,10 +84,100 @@ jobs:
         with:
           persist-credentials: false
 
-      # The image runs Node 24; the build, smoke and unit-test scripts run on the runner's.
+      # The image runs Node 24; the build, smoke and scan scripts run on the runner's.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
+
+      # The version is the repository's (one version everywhere), and the release it names must
+      # carry the plugin tarballs the image installs. A dispatch is dev or a v<version> tag; a
+      # release must be that tag. A herdr/Pocket/am patch has no plugin tarballs: build nothing.
+      - name: Resolve the image version and whether to publish
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          content=""
+          build=true
+          publish=false
+          latest=false
+          if [[ "${RELEASE_PRERELEASE}" != "true" ]]; then latest=true; fi
+          has_plugins() {
+            gh release view "$1" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
+          }
+          # The newest stable release that carries the plugin tarballs. A herdr, Pocket or am
+          # patch has none, so the image pins the plugins from the last release that does.
+          newest_plugins() {
+            gh api "repos/${REPOSITORY}/releases?per_page=30" \
+              --jq '[.[] | select(.draft|not) | select(.prerelease|not) | select([.assets[].name] | index("plugins.json"))][0].tag_name' \
+              | sed 's/^v//'
+          }
+          resolve_content() {
+            if has_plugins "v${version}"; then echo "${version}"; else newest_plugins; fi
+          }
+          case "${EVENT}" in
+            workflow_dispatch)
+              case "${REF}" in
+                refs/heads/dev) ;;
+                refs/tags/v*)
+                  if [[ "${REF_NAME}" != "v${version}" ]]; then
+                    echo "::error::dispatch tag ${REF_NAME} is not v${version}, the version in package.json"
+                    exit 1
+                  fi
+                  ;;
+                *)
+                  echo "::error::dispatch this on dev or a v<version> tag, not ${REF}"
+                  exit 1
+                  ;;
+              esac
+              if ! has_plugins "v${version}"; then
+                echo "::error::v${version} carries no plugins.json (a herdr/Pocket/am patch); a publish dispatch needs a version whose release has the plugin tarballs (dispatch its v<version> tag, e.g. the last full/plugin release)"
+                exit 1
+              fi
+              content="${version}"
+              publish=true
+              ;;
+            release)
+              if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+                echo "::error::release ${RELEASE_TAG} does not match package.json ${version}"
+                exit 1
+              fi
+              if has_plugins "${RELEASE_TAG}"; then
+                content="${version}"
+                publish=true
+              else
+                echo "release ${RELEASE_TAG} carries no plugins.json (a herdr/Pocket/am patch): nothing builds or publishes"
+                build=false
+              fi
+              ;;
+            *)
+              # pull_request and push: build and scan only. A version without plugins (a patch
+              # merged into dev) still builds, pinned to the newest release that has them.
+              content="$(resolve_content)"
+              if [[ -z "${content}" ]]; then
+                echo "::error::no stable release carries plugins.json; nothing to pin the plugins from"
+                exit 1
+              fi
+              ;;
+          esac
+          if [[ -n "${content}" && "${content}" != "${version}" ]]; then
+            echo "image ${version} pins its plugins from ${content} (the newest stable release with plugins.json)"
+          fi
+          {
+            echo "version=${version}"
+            echo "content=${content}"
+            echo "build=${build}"
+            echo "publish=${publish}"
+            echo "latest=${latest}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Syntax
         run: |
@@ -61,8 +189,221 @@ jobs:
       - name: Unit tests
         run: node --test 'server/test/*.test.mjs'
 
+      # The gate itself, in image mode, on a known-red image: a planted key must fail before the
+      # real build is trusted. This is the same docker export + scan path the publish runs.
+      - name: Secrecy gate self-check (a planted key must fail)
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          printf 'sk-%s\n' "$(printf 'a%.0s' $(seq 1 32))" > "${dir}/leak"
+          tar -C "${dir}" -cf "${dir}/rootfs.tar" leak
+          docker import "${dir}/rootfs.tar" automagik-secrecy-red:test >/dev/null
+          if node server/secrecy.mjs automagik-secrecy-red:test --inventory "${dir}/secrecy"; then
+            echo "::error::the secrecy gate passed a planted key"
+            exit 1
+          fi
+          grep -q 'key: sk-\*\*\*' "${dir}/secrecy/secrecy.txt"
+          docker rmi automagik-secrecy-red:test >/dev/null
+          echo "secrecy gate self-check: the planted key fails the image-mode scan"
+
       - name: Build
-        run: node server/build.mjs --tag automagik-server:ci
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+          CONTENT: ${{ steps.gate.outputs.content }}
+        run: node server/build.mjs --tag "automagik-server:${VERSION}" --version "${CONTENT}" --image-version "${VERSION}"
 
       - name: Smoke
-        run: node server/smoke.mjs automagik-server:ci
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: node server/smoke.mjs "automagik-server:${VERSION}"
+
+      # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
+      # file, and fail on a secret, a home path, a credential or any baked state. The inventory
+      # is the proof of what was checked.
+      - name: Secrecy (extract rootfs and scan)
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+
+      - name: Assert the image is clean
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          test "$(cat secrecy/secrecy.txt)" = clean
+          allowed="$(grep -c . secrecy/allowlist-used.txt || true)"
+          echo "image-clean: $(wc -l < secrecy/image-files.txt) files, $(wc -l < secrecy/image-layers.txt) layer lines, 0 findings, ${allowed:-0} exact allowlist hits"
+
+      - name: Keep the secrecy inventory
+        if: always() && steps.gate.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-secrecy-${{ steps.gate.outputs.version }}
+          path: secrecy/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save the scanned image for the publish job
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: docker save "automagik-server:${VERSION}" | gzip -1 > server-image.tar.gz
+
+      - name: Keep the image
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-${{ steps.gate.outputs.version }}
+          path: server-image.tar.gz
+          retention-days: 1
+
+  publish:
+    name: Publish ghcr.io/automagik-dev/automagik-server
+    needs: image
+    if: needs.image.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DO_NOT_TRACK: '1'
+      VERSION: ${{ needs.image.outputs.version }}
+      CONTENT: ${{ needs.image.outputs.content }}
+      LATEST: ${{ needs.image.outputs.latest }}
+      GHCR: ghcr.io/automagik-dev/automagik-server
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: server-image-${{ needs.image.outputs.version }}
+          path: .
+
+      - name: Load the scanned image
+        run: gunzip -c server-image.tar.gz | docker load
+
+      # The bytes that will be pushed, scanned again after the round trip: a hit here still
+      # precedes the login and the push below.
+      - name: Secrecy (the bytes about to be pushed)
+        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+
+      - name: Assert the pushed bytes are clean
+        run: |
+          set -euo pipefail
+          test "$(cat secrecy/secrecy.txt)" = clean
+          allowed="$(grep -c . secrecy/allowlist-used.txt || true)"
+          echo "image-clean: $(wc -l < secrecy/image-files.txt) files, $(wc -l < secrecy/image-layers.txt) layer lines, 0 findings, ${allowed:-0} exact allowlist hits"
+
+      - name: Keep the push secrecy inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-push-secrecy-${{ needs.image.outputs.version }}
+          path: secrecy/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Log in to the Container registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "${TOKEN}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Push :version and, when newer, :latest
+        id: push
+        env:
+          LATEST: ${{ needs.image.outputs.latest }}
+        run: |
+          set -euo pipefail
+          docker tag "automagik-server:${VERSION}" "${GHCR}:${VERSION}"
+          out="$(docker push "${GHCR}:${VERSION}" 2>&1)"
+          printf '%s\n' "${out}"
+          digest="$(printf '%s\n' "${out}" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
+          if [[ -z "${digest}" ]]; then
+            echo "::error::docker push printed no manifest digest"
+            exit 1
+          fi
+          latest="${LATEST}"
+          if [[ "${latest}" == "true" ]]; then
+            old="$(docker buildx imagetools inspect "${GHCR}:latest" --format '{{index .Image.Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)"
+            if [[ -n "${old}" && "${old}" != "<no value>" ]]; then
+              newest="$(printf '%s\n%s\n' "${VERSION}" "${old}" | sort -V | tail -1)"
+              if [[ "${newest}" == "${old}" && "${old}" != "${VERSION}" ]]; then
+                echo "::warning::latest stays at ${old}; ${VERSION} is older"
+                latest=false
+              fi
+            fi
+          fi
+          tags="\`:${VERSION}\`"
+          if [[ "${latest}" == "true" ]]; then
+            docker tag "automagik-server:${VERSION}" "${GHCR}:latest"
+            docker push "${GHCR}:latest"
+            tags="${tags}, \`:latest\`"
+          else
+            echo "latest not moved (a prerelease, or older than the published image)"
+          fi
+          ref="${GHCR}@${digest}"
+          printf '%s\n' "${ref}" > image-digest.txt
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Automagik server image"
+            echo
+            echo '```'
+            echo "${ref}"
+            echo '```'
+            echo
+            echo "- version: \`${VERSION}\`"
+            if [[ "${CONTENT}" != "${VERSION}" ]]; then echo "- plugins from: \`${CONTENT}\` (the newest stable release with plugins.json)"; fi
+            echo "- tags: ${tags}"
+            echo
+            echo "Pull by digest:"
+            echo
+            echo '```sh'
+            echo "docker pull ${ref}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # GitHub creates a new package private and has no public REST endpoint to change a
+      # Container package's visibility. Check it and leave the UI path in the summary; the
+      # image is still pushed, but anonymous pulls fail until the one-time flip.
+      - name: Check package visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: automagik-server
+        run: |
+          set -euo pipefail
+          endpoint="/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+          visibility="$(gh api "${endpoint}" --jq .visibility 2>/dev/null || true)"
+          if [[ "${visibility}" == "public" ]]; then
+            echo "package ${PACKAGE}: public"
+            exit 0
+          fi
+          echo "::warning::GitHub has no REST call to change a package's visibility; make ${PACKAGE} public once at https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE} (Package settings -> Danger Zone -> Change visibility -> Public)"
+          {
+            echo
+            echo "### Package visibility"
+            echo
+            echo "GitHub has no public REST endpoint for a Container package's visibility. Make it public once:"
+            echo
+            echo "1. Open https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+            echo "2. Package settings -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "Until then anonymous pulls fail; a pull authenticated with a GitHub token still works."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the manifest digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-digest-${{ needs.image.outputs.version }}
+          path: image-digest.txt
+          retention-days: 30
