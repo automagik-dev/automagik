@@ -42,6 +42,9 @@ test('only a private key file is accepted', () => {
   assert.equal(privateMode(0o640), false)
   assert.equal(privateMode(0o444), false)
   assert.equal(privateMode(0o660), false)
+  assert.equal(privateMode(0o700), false)
+  assert.equal(privateMode(0o500), false)
+  assert.equal(privateMode(0o200), false)
 })
 
 test('the first start seeds the profile; a second start never replaces it', async () => {

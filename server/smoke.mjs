@@ -86,6 +86,12 @@ async function main() {
   check(!/(?<![A-Za-z0-9_])token=(?!<redacted>)\S+/.test(logs), 'the launch token is in the log')
   check(/automagik-web: seeded \/data\/dsh\/profiles\/automagik-web/.test(logs), 'the first start did not seed the profile')
   check(/automagik-web: profile automagik-web: automagik \d+\.\d+\.\d+, dsh \d+\.\d+\.\d+/.test(logs), 'no version line')
+  check(!/failed to import|ERR_MODULE_NOT_FOUND/.test(logs), 'a composed plugin failed to import')
+  // The real token from the 0600 launch file must not be in the log, not merely a pattern.
+  const launch = (await docker(['exec', name, '/nodejs/bin/node', '-e', 'process.stdout.write(require("fs").readFileSync("/data/dsh/launch-url","utf8"))'])).stdout.trim()
+  const token = new URL(launch).searchParams.get('token')
+  check(token && token.length >= 16, `launch-url carries no token: ${launch}`)
+  check(!logs.includes(token), 'the real launch token is in the log')
 
   await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/package.json'])
   await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/node_modules/@automagik/bots-dsh/package.json'])
@@ -108,6 +114,11 @@ async function main() {
     check(config.includes(`name: '${plugin}'`) || config.includes(`name: "${plugin}"`), `${plugin} is not composed`)
   }
   say(`seeded profile, three plugins, 600 launch URL, uid 1000, ${entries} composed entries`)
+
+  // The distroless base is older glibc than the builder: exercise both native modules.
+  const native = "const k=require('/opt/automagik/runtime/node_modules/koffi');const p=require('/opt/automagik/runtime/node_modules/node-pty');const t=p.spawn('/bin/sh',['-c','echo native-ok'],{name:'xterm',cols:80,rows:24,cwd:'/tmp',env:process.env});let o='';t.onData((d)=>{o+=d});t.onExit(()=>process.exit(o.includes('native-ok')&&typeof k.version==='string'?0:1));setTimeout(()=>process.exit(1),5000)"
+  await docker(['exec', name, '/nodejs/bin/node', '-e', native])
+  say('native modules: koffi and node-pty load and spawn')
 
   // A restart keeps the user's profile: the seed runs only where nothing is.
   await docker(['restart', name])

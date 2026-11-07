@@ -7,7 +7,7 @@
 #   docker build -f server/Dockerfile -t automagik-server .
 #
 # The runtime is distroless: node and glibc, the image's code, and the tools Bots need in their
-# shell (bash, dash as /bin/sh, git, ripgrep, and git's perl). No npm, apt, curl or build
+# shell (bash, dash as /bin/sh, git core, ripgrep). No npm, apt, curl or build
 # toolchain. The release pins are build args; every plugin tarball is checked against the
 # release's plugins.json (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh
 # installs it (server/fetch-plugins.mjs).
@@ -36,14 +36,15 @@ RUN node /build/server/assemble.mjs \
       --dsh "$DSH_VERSION" \
       --repository "$AUTOMAGIK_REPOSITORY"
 
-# The shell tools Bots need, prepared for the distroless base: the binaries, git's perl, the
-# shared-library closure ldd names for them, and the /data ownership. Debian 12 here matches
+# The shell tools Bots need, prepared for the distroless base: the binaries, the shared-library
+# closure ldd names for them, and the /data ownership. Git core only: perl-based git
+# subcommands are not shipped. Debian 12 here matches
 # the distroless nodejs24-debian12 base.
-FROM debian:bookworm-slim AS tools
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS tools
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates perl; \
+    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
     for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
@@ -58,7 +59,6 @@ RUN set -eux; \
     ln -s /bin/dash /out/bin/sh; \
     cp -a /usr/lib/git-core /out/git-core; \
     cp -a /usr/share/git-core /out/git-core-share; \
-    cp -a /usr/share/perl /usr/share/perl5 /out/; \
     cp -a /etc/ssl/certs /out/certs; \
     chmod 0700 /out/data/secrets; \
     chown -R 1000:1000 /out/data
@@ -80,8 +80,6 @@ COPY --from=tools /out/bin/git /usr/bin/git
 COPY --from=tools /out/bin/rg /usr/bin/rg
 COPY --from=tools /out/git-core /usr/lib/git-core
 COPY --from=tools /out/git-core-share /usr/share/git-core
-COPY --from=tools /out/perl /usr/share/perl
-COPY --from=tools /out/perl5 /usr/share/perl5
 COPY --from=tools /out/certs /etc/ssl/certs
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools --chown=1000:1000 /out/data /data

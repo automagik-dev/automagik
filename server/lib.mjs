@@ -16,8 +16,8 @@ export const redactTokens = (text) => String(text).replace(/(?<![A-Za-z0-9_])tok
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
 export const launchUrlOf = (text) => /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\S*token=\S+)/.exec(String(text))?.[1] ?? null
 
-/** A key file must be private: 0400 or 0600, never readable or writable by group or other. */
-export const privateMode = (mode) => (mode & 0o077) === 0
+/** A key file must be 0400 or 0600: owner-only and not executable. */
+export const privateMode = (mode) => mode === 0o400 || mode === 0o600
 
 /** The profiles dsh reads under `$DSH_HOME/profiles`. */
 export const profileDirOf = (dshHome) => join(dshHome, 'profiles', PROFILE)

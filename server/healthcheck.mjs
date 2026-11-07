@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Docker's health check, in the image's own node: GET the web app on 127.0.0.1 and print the
-// HTTP code. 401 is the healthy answer without a browser session (the auth fence is up);
-// 200 is healthy too (a fresh launch URL's token was accepted). Anything else, or no answer,
-// prints 000 and fails. No curl, no journalctl, no cookie.
+// HTTP code. Only 401 is healthy: the auth fence is up. A 200 means the fence answered without
+// a session, which is not a healthy server; anything else, or no answer, prints 000 and fails.
+// No curl, no journalctl, no cookie.
 import http from 'node:http'
 import { PORT } from './lib.mjs'
 
@@ -16,7 +16,7 @@ const request = http.get(
   (response) => {
     process.stdout.write(`${response.statusCode}\n`)
     response.resume()
-    response.on('end', () => process.exit(response.statusCode === 401 || response.statusCode === 200 ? 0 : 1))
+    response.on('end', () => process.exit(response.statusCode === 401 ? 0 : 1))
   },
 )
 request.on('timeout', () => {
