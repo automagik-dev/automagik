@@ -137,6 +137,23 @@ redacted in the log:
 docker exec automagik cat /data/dsh/launch-url
 ```
 
+### Incus
+
+Incus creates a custom volume root-owned, and the image runs as uid 1000: the first start cannot
+write `/data` unless the volume is created for that uid, and the image cannot chown (it runs as
+1000 and has no root). Create and attach the volume with its initial owner:
+
+```sh
+incus storage volume create <pool> automagik-data initial.uid=1000 initial.gid=1000
+incus storage volume attach <pool> automagik-data <instance> data /data
+```
+
+`attach` takes a device name (`data`) and then the mount path (`/data`); a filesystem volume
+requires the path. Incus takes `initial.uid` and `initial.gid` as positional `key=value` config
+on `create`. For an existing root-owned volume, chown it to `1000:1000` on the host instead
+(`chown -R 1000:1000 <the volume's path>`). Docker's named volume needs neither: Docker seeds a
+fresh volume with the image's `/data` ownership (1000:1000).
+
 ## Visibility
 
 GitHub creates a new Container package private even when the repository is public, and its REST
@@ -157,30 +174,33 @@ docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 
 ## Measured
 
-One named store: the **OCI image** (`docker buildx build --output type=oci`, the path a registry
-and Arca pull). Uncompressed is the sum of regular file payloads across the 35 layers — the
-number CI's `docker image inspect .Size` reports; compressed is the sum of their gzip blobs.
-`docker image inspect .Size` on the classic store reports 785.0 MiB for the same content; that
-is layer accounting and is not used.
+The **compressed** figure is the sum of the registry manifest's layer sizes (`.layers[].size`),
+the compressed blobs a pull fetches; it is not a `docker save | gzip` artifact. **Unpacked** is
+the sum of the layers' regular file payloads. The earlier 193 MiB figure was a `docker save` gzip
+artifact of 202,734,124 bytes, a different count and never the image size.
 
-`ryzen` (x86_64, 32 vCPU, 128 GiB RAM, Docker 29.9.1, Linux 7.0), 2026-11-07. Start-to-401
-polls the in-image health script every 50 ms; the cold figure uses a fresh named volume and
-includes the first-start profile seed.
+`yoga` (IncusOS, Incus 7.6, ZFS), 2026-11-07, on the image in the table below. Pull and create
+are the Incus timings for the launch. Memory is the instance's cgroup (`memory.current`) unless
+the row says RSS; anon and file are the 5-minute split.
 
 | Measure | Value |
 |---|---|
-| Image content (OCI, 35 layers) | 571,644,590 bytes (545.2 MiB) |
-| Compressed OCI blobs | 195,678,897 bytes (186.6 MiB) |
-| Cold start to 401 (fresh `/data`) | 2,908 ms (CI smoke: 1,965 ms) |
-| Restart to 401 (seeded `/data`) | 2,169 ms (CI smoke: 1,430 ms) |
-| Idle RSS after 5 min | 166.5 MiB (`memory.current`); 154.9 MiB in `docker stats` |
-| Idle CPU over 291 s | 0.0050 core (0.11% in a `docker stats` snapshot) |
-| Processes / peak RSS | 25 / 317.4 MiB |
+| Image | `sha256:f3ba1643b147fa78f76bf05e736d17c11c5e4f3fd2589469f327093c225fba09` |
+| Layers | 18 |
+| Unpacked | 516.8 MiB |
+| Compressed OCI blobs | 185,312,829 bytes (176.7 MiB) |
+| Pull | 21.3 s |
+| Create | 4.3 s |
+| First 401 | 4.1 s (polled every 1.6 s, likely 2.5–4 s) |
+| Idle at 5 min | 198.9 MiB cgroup (anon 163 MiB, file 35 MiB) |
+| Largest RSS | 174 MiB |
+| First minute | ~341 MiB |
+| By minute 2 | ~206 MiB |
+| CPU | 0.09% of one core |
+| Warnings | none |
 
-f657be63 measured 562.0 MiB content / 190.0 MiB compressed before the dead perl dirs were
-dropped. The **350 MB uncompressed target is not reachable**: 545.2 MiB content, of which the
-office stack alone is 146 MiB; removing it leaves ~399 MiB, still above 350. **350 MB compressed
-is met** (186.6 MiB).
+The **350 MB unpacked target is not reachable** (516.8 MiB). The **350 MB compressed target is
+met** (176.7 MiB).
 
 ## Health
 

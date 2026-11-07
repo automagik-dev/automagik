@@ -1,6 +1,6 @@
 // What the server image's entrypoint and its build share: the profile's name, the web port,
-// the token redaction every log line goes through, the private-key-file rule, and the pnpm
-// store pinning that keeps a profile built under /build usable under /data.
+// the data-dir preflight, the token redaction every log line goes through, the private-key-file
+// rule, and the pnpm store pinning that keeps a profile built under /build usable under /data.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cp } from 'node:fs/promises'
@@ -9,6 +9,35 @@ export const PROFILE = 'automagik-web'
 export const PORT = 3081
 /** The store pnpm uses for its major version, as the desktop app records it (`v10` for pnpm 10). */
 export const STORE_LAYOUT = 'v10'
+
+/**
+ * Make each data directory and prove this process can write it. A mkdir on an existing
+ * root-owned directory succeeds, so the probe write is the check that matters: an Incus volume
+ * or bind mount created for another uid fails here, before dsh starts.
+ */
+export function ensureDataDirs(dirs, { uid = process.getuid?.() ?? 1000 } = {}) {
+  for (const dir of dirs) {
+    try {
+      mkdirSync(dir, { recursive: true })
+      const probe = join(dir, `.automagik-write-probe-${process.pid}`)
+      try {
+        writeFileSync(probe, '')
+      } finally {
+        rmSync(probe, { force: true })
+      }
+    } catch (error) {
+      if (['EACCES', 'EPERM', 'EROFS'].includes(error?.code)) {
+        throw new Error(
+          `${dir} is not writable by uid ${uid}: create the /data volume with ` +
+            `initial.uid=${uid} initial.gid=${uid}, or chown the volume to ${uid}:${uid} ` +
+            'on the host; the image cannot chown',
+        )
+      }
+      throw error
+    }
+  }
+  return dirs
+}
 
 /** One log line with any `token=` credential replaced. Everything else is kept verbatim. */
 export const redactTokens = (text) => String(text).replace(/(?<![A-Za-z0-9_])token=[^\s&"'<>]+/g, 'token=<redacted>')
