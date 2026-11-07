@@ -1,8 +1,8 @@
 // The Unfold Bot: Unfold inside DSH, on the Bot team. In Unfold's own Automagik instance
 // (AUTOMAGIK_HOST=unfold or AUTOMAGIK_PRELOAD=unfold) it is the team's Main Bot, made in place of
 // the default one (the team's rt.mainBotMaker), so the instance starts with Unfold and nothing
-// else. Anywhere else (the Automagik app, or a plain DSH where the welcome's Unfold card installs
-// this plugin) it joins as one more Bot, beside the Main Bot the person's companion becomes.
+// else. Anywhere else (the Automagik app, or a plain DSH where a person adds this plugin) it joins
+// as one more Bot, beside the Main Bot the person's companion becomes.
 // Either way it is made once: an Unfold Bot that is there is kept, and one the person deleted is
 // not made again.
 //

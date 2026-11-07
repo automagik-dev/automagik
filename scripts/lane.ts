@@ -102,7 +102,7 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // (built and tested) but a change to any cuts no release and reaches no install from here
 // (Refs marketplace/unfold). None is preinstalled: the app's profile does not carry one, and the
 // desktop's publisher list names none.
-// The server image (server/) is built and smoked by CI only: no release carries it yet.
+// The server image (server/) ships from no release.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//, /^apps\/unfold-[^/]+\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,

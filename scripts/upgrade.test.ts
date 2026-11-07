@@ -104,7 +104,7 @@ describe("a release's tarballs", () => {
     packages: {
       '@automagik/bots-dsh': { version: '3.49.0', file: 'automagik-bots-dsh-3.49.0.tgz', integrity: 'sha512-a', size: 1 },
       '@automagik/locale-pt-br-dsh': { version: '3.49.0', file: 'automagik-locale-pt-br-dsh-3.49.0.tgz', integrity: 'sha512-b', size: 1 },
-      '@automagik/unfold-bot-dsh': { version: '3.49.0', file: 'automagik-unfold-bot-dsh-3.49.0.tgz', integrity: 'sha512-c', size: 1 },
+      '@automagik/acp-dsh': { version: '3.49.0', file: 'automagik-acp-dsh-3.49.0.tgz', integrity: 'sha512-c', size: 1 },
     },
   };
 
@@ -115,7 +115,7 @@ describe("a release's tarballs", () => {
       '@goodandready/dsh-subscriptions': 'github:automagik-genie/dsh-subscriptions#def',
     };
     expect(pluginsToInstall(release, dependencies).map((plugin) => plugin.name)).toEqual(['@automagik/bots-dsh', '@automagik/locale-pt-br-dsh']);
-    expect(pluginsLeftAlone(release, dependencies)).toEqual(['@automagik/unfold-bot-dsh']);
+    expect(pluginsLeftAlone(release, dependencies)).toEqual(['@automagik/acp-dsh']);
   });
 
   test('finds a runtime asset only when a release really carries one', () => {

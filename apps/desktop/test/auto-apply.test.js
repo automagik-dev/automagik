@@ -69,10 +69,12 @@ test('the notice names each plugin with its versions, apart from the app\'s upda
   assert.deepEqual(updatePresentation(null, { plugins: '3.59.2' }), { phase: 'ready', version: '3.59.2', kind: 'plugins' })
 })
 
-test('the Automagik lane updates the Automagik plugins a person added from the market, never Omni\'s', () => {
+test('the Automagik lane updates the Automagik plugins a person added from the market, never Omni\'s or Unfold\'s', () => {
   const automagik = PUBLISHERS.find(entry => entry.publisher === 'automagik')
-  for (const name of ['@automagik/locale-pt-br-dsh', '@automagik/unfold-bot-dsh', BOTS]) assert.ok(automagik.plugins.includes(name), name)
+  for (const name of ['@automagik/locale-pt-br-dsh', BOTS]) assert.ok(automagik.plugins.includes(name), name)
   assert.ok(!automagik.plugins.some(name => name.startsWith('@automagik/omni-')))
+  // Unfold's ship from Unfold's own release, not this lane (Refs marketplace/unfold).
+  assert.ok(!automagik.plugins.some(name => name.startsWith('@automagik/unfold-')))
   const lane = { schemaVersion: 1, publisher: 'automagik', sequence: 590002, version: '3.59.2', base: '3.59.0', plugins: [{ name: '@automagik/locale-pt-br-dsh', version: '3.59.2', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.59.2/x.tgz', engines: { dsh: '>=0.2.1-rc.5 <0.2.2-0' } }] }
   const context = { publisher: automagik, appVersion: '3.59.0', dshVersion: '0.2.1-rc.5' }
   assert.equal(laneUpdate(lane, { ...context, installed: { '@automagik/locale-pt-br-dsh': '3.59.0' } })?.plugins.length, 1)
