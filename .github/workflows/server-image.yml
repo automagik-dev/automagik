@@ -1,12 +1,26 @@
 name: Server image
 
-# The Automagik server image (server/): the automagik-web profile on the pinned DeepSeek
-# Harness, with the plugins from one pinned release. Every change builds, smokes and scans it;
-# a dispatch or a published release then pushes it to ghcr.io/automagik-dev/automagik-server as
-# :<version> (the repository's version), and as :latest only when the release is not a
-# prerelease and the published :latest is not newer. A herdr/Pocket/am patch has no plugin
-# tarballs, so the plugins are pinned from the newest stable release that has them; the tag and
-# the image label stay the repository version.
+# The Automagik server image (server/): the automagik-web DeepSeek Harness profile, with the
+# plugins from one chosen release, built from the dispatched tree. Every change builds, smokes
+# and scans it; a dispatch or a published release then pushes it to
+# ghcr.io/automagik-dev/automagik-server as :<content>-<short sha> and, when allowed, :latest.
+# The tag and the org.opencontainers.image.version label are the content release (the plugin
+# tarballs' release, without its v); org.opencontainers.image.revision is the full workflow
+# commit. :latest moves only for a non-prerelease content release and never to a version older
+# than the published :latest.
+#
+# workflow_dispatch takes one optional input, `content`: a release tag that carries
+# plugins.json (e.g. v3.93.0). Empty means the newest stable release whose assets include
+# plugins.json, searched among the last 30 releases. A herdr, Pocket or am patch carries no
+# plugin tarballs, so a dispatch whose content has none fails, naming the tag. A dispatch runs
+# on dev or on a v<version> tag (which must be package.json's version). After merge:
+#
+#   gh workflow run server-image.yml --ref dev -f content=v3.93.0
+#
+# A release event uses the release's own version as the content when it carries plugins.json,
+# with the same composite tag and labels; a release without it builds and pushes nothing. A
+# pull_request or push only builds and scans, pinning the plugins from the newest release that
+# has them.
 #
 # The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
 # and fails the job on a provider key, a token= or JSON token field, a private-key block with a
@@ -29,12 +43,8 @@ name: Server image
 #
 # A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
 # events made with that token), so the cut's own releases do not trigger this automatically:
-# dispatch this workflow on a v<version> tag whose release carries plugins.json (the last
-# full/plugin release), or on dev when its package version has such a release. A release
-# published by hand (or by a PAT) triggers it. A release with no plugins.json (a herdr, Pocket
-# or am patch) carries no plugin tarballs: the build is skipped and nothing is pushed, and a
-# publish dispatch at such a version is refused (a build-only run falls back to the newest
-# release that has them).
+# dispatch it on dev with -f content=<a release that has plugins.json> (the command above), or
+# on a v<version> tag. A release published by hand (or by a PAT) triggers it.
 
 on:
   pull_request:
@@ -59,6 +69,14 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      content:
+        description: >-
+          A release tag whose assets include plugins.json (e.g. v3.93.0). Empty uses the
+          newest stable release that has plugins.json.
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -75,6 +93,8 @@ jobs:
     outputs:
       version: ${{ steps.gate.outputs.version }}
       content: ${{ steps.gate.outputs.content }}
+      tag: ${{ steps.gate.outputs.tag }}
+      revision: ${{ steps.gate.outputs.revision }}
       publish: ${{ steps.gate.outputs.publish }}
       latest: ${{ steps.gate.outputs.latest }}
     env:
@@ -89,10 +109,12 @@ jobs:
         with:
           node-version: '24'
 
-      # The version is the repository's (one version everywhere), and the release it names must
-      # carry the plugin tarballs the image installs. A dispatch is dev or a v<version> tag; a
-      # release must be that tag. A herdr/Pocket/am patch has no plugin tarballs: build nothing.
-      - name: Resolve the image version and whether to publish
+      # The content is the release whose plugin tarballs the image installs; the image is the
+      # dispatched tree plus that content. A dispatch chooses the content (empty picks the newest
+      # stable release that carries plugins.json, within the last 30 releases); a release is its
+      # own content. A herdr/Pocket/am patch has no plugin tarballs: a dispatch whose content has
+      # none is refused, and a release for such a version builds nothing.
+      - name: Resolve the image content and whether to publish
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,15 +123,19 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          DISPATCH_CONTENT: ${{ inputs.content }}
           REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
+          revision="${REVISION}"
+          short="${revision:0:8}"
           content=""
+          tag=""
           build=true
           publish=false
           latest=false
-          if [[ "${RELEASE_PRERELEASE}" != "true" ]]; then latest=true; fi
           has_plugins() {
             gh release view "$1" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
           }
@@ -119,6 +145,9 @@ jobs:
             gh api "repos/${REPOSITORY}/releases?per_page=30" \
               --jq '[.[] | select(.draft|not) | select(.prerelease|not) | select([.assets[].name] | index("plugins.json"))][0].tag_name' \
               | sed 's/^v//'
+          }
+          release_prerelease() {
+            gh release view "v$1" --repo "${REPOSITORY}" --json isPrerelease --jq .isPrerelease
           }
           resolve_content() {
             if has_plugins "v${version}"; then echo "${version}"; else newest_plugins; fi
@@ -138,12 +167,24 @@ jobs:
                   exit 1
                   ;;
               esac
-              if ! has_plugins "v${version}"; then
-                echo "::error::v${version} carries no plugins.json (a herdr/Pocket/am patch); a publish dispatch needs a version whose release has the plugin tarballs (dispatch its v<version> tag, e.g. the last full/plugin release)"
+              content="${DISPATCH_CONTENT#v}"
+              if [[ -z "${content}" ]]; then
+                content="$(newest_plugins)"
+                if [[ -z "${content}" ]]; then
+                  echo "::error::no stable release in the last 30 carries plugins.json; pass -f content=<tag>"
+                  exit 1
+                fi
+              fi
+              if ! has_plugins "v${content}"; then
+                echo "::error::content v${content} carries no plugins.json (a herdr/Pocket/am patch); pass a release tag whose assets include plugins.json, e.g. v3.93.0"
                 exit 1
               fi
-              content="${version}"
               publish=true
+              if [[ "$(release_prerelease "${content}")" == "true" ]]; then
+                echo "::notice::content v${content} is a prerelease; :latest stays put"
+              else
+                latest=true
+              fi
               ;;
             release)
               if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
@@ -153,6 +194,7 @@ jobs:
               if has_plugins "${RELEASE_TAG}"; then
                 content="${version}"
                 publish=true
+                if [[ "${RELEASE_PRERELEASE}" != "true" ]]; then latest=true; fi
               else
                 echo "release ${RELEASE_TAG} carries no plugins.json (a herdr/Pocket/am patch): nothing builds or publishes"
                 build=false
@@ -168,12 +210,21 @@ jobs:
               fi
               ;;
           esac
-          if [[ -n "${content}" && "${content}" != "${version}" ]]; then
-            echo "image ${version} pins its plugins from ${content} (the newest stable release with plugins.json)"
+          if [[ -n "${content}" ]]; then
+            tag="${content}-${short}"
+            if [[ ! "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::cannot form a Docker tag from content ${content} and commit ${revision}"
+              exit 1
+            fi
+            if [[ "${content}" != "${version}" ]]; then
+              echo "content ${content}: the plugins are this release's; the tree is ${version} at ${short}"
+            fi
           fi
           {
             echo "version=${version}"
             echo "content=${content}"
+            echo "tag=${tag}"
+            echo "revision=${revision}"
             echo "build=${build}"
             echo "publish=${publish}"
             echo "latest=${latest}"
@@ -210,15 +261,18 @@ jobs:
       - name: Build
         if: steps.gate.outputs.build == 'true'
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
           CONTENT: ${{ steps.gate.outputs.content }}
-        run: node server/build.mjs --tag "automagik-server:${VERSION}" --version "${CONTENT}" --image-version "${VERSION}"
+          TAG: ${{ steps.gate.outputs.tag }}
+          REVISION: ${{ steps.gate.outputs.revision }}
+        run: |
+          node server/build.mjs --tag "automagik-server:${TAG}" \
+            --version "${CONTENT}" --image-version "${CONTENT}" --revision "${REVISION}"
 
       - name: Smoke
         if: steps.gate.outputs.build == 'true'
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
-        run: node server/smoke.mjs "automagik-server:${VERSION}"
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: node server/smoke.mjs "automagik-server:${TAG}"
 
       # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
       # file, and fail on a secret, a home path, a credential or any baked state. The inventory
@@ -226,8 +280,8 @@ jobs:
       - name: Secrecy (extract rootfs and scan)
         if: steps.gate.outputs.build == 'true'
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
-        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: node server/secrecy.mjs "automagik-server:${TAG}" --inventory secrecy
 
       - name: Assert the image is clean
         if: steps.gate.outputs.build == 'true'
@@ -241,7 +295,7 @@ jobs:
         if: always() && steps.gate.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: server-image-secrecy-${{ steps.gate.outputs.version }}
+          name: server-image-secrecy-${{ steps.gate.outputs.tag }}
           path: secrecy/
           if-no-files-found: ignore
           retention-days: 7
@@ -249,14 +303,14 @@ jobs:
       - name: Save the scanned image for the publish job
         if: steps.gate.outputs.publish == 'true'
         env:
-          VERSION: ${{ steps.gate.outputs.version }}
-        run: docker save "automagik-server:${VERSION}" | gzip -1 > server-image.tar.gz
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: docker save "automagik-server:${TAG}" | gzip -1 > server-image.tar.gz
 
       - name: Keep the image
         if: steps.gate.outputs.publish == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: server-image-${{ steps.gate.outputs.version }}
+          name: server-image-${{ steps.gate.outputs.tag }}
           path: server-image.tar.gz
           retention-days: 1
 
@@ -273,6 +327,8 @@ jobs:
       DO_NOT_TRACK: '1'
       VERSION: ${{ needs.image.outputs.version }}
       CONTENT: ${{ needs.image.outputs.content }}
+      TAG: ${{ needs.image.outputs.tag }}
+      REVISION: ${{ needs.image.outputs.revision }}
       LATEST: ${{ needs.image.outputs.latest }}
       GHCR: ghcr.io/automagik-dev/automagik-server
     steps:
@@ -286,7 +342,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: server-image-${{ needs.image.outputs.version }}
+          name: server-image-${{ needs.image.outputs.tag }}
           path: .
 
       - name: Load the scanned image
@@ -295,7 +351,7 @@ jobs:
       # The bytes that will be pushed, scanned again after the round trip: a hit here still
       # precedes the login and the push below.
       - name: Secrecy (the bytes about to be pushed)
-        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+        run: node server/secrecy.mjs "automagik-server:${TAG}" --inventory secrecy
 
       - name: Assert the pushed bytes are clean
         run: |
@@ -308,7 +364,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: server-image-push-secrecy-${{ needs.image.outputs.version }}
+          name: server-image-push-secrecy-${{ needs.image.outputs.tag }}
           path: secrecy/
           if-no-files-found: ignore
           retention-days: 7
@@ -318,14 +374,14 @@ jobs:
           TOKEN: ${{ github.token }}
         run: printf '%s' "${TOKEN}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Push :version and, when newer, :latest
+      - name: Push :content-revision and, when newer, :latest
         id: push
         env:
           LATEST: ${{ needs.image.outputs.latest }}
         run: |
           set -euo pipefail
-          docker tag "automagik-server:${VERSION}" "${GHCR}:${VERSION}"
-          out="$(docker push "${GHCR}:${VERSION}" 2>&1)"
+          docker tag "automagik-server:${TAG}" "${GHCR}:${TAG}"
+          out="$(docker push "${GHCR}:${TAG}" 2>&1)"
           printf '%s\n' "${out}"
           digest="$(printf '%s\n' "${out}" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
           if [[ -z "${digest}" ]]; then
@@ -336,20 +392,20 @@ jobs:
           if [[ "${latest}" == "true" ]]; then
             old="$(docker buildx imagetools inspect "${GHCR}:latest" --format '{{index .Image.Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)"
             if [[ -n "${old}" && "${old}" != "<no value>" ]]; then
-              newest="$(printf '%s\n%s\n' "${VERSION}" "${old}" | sort -V | tail -1)"
-              if [[ "${newest}" == "${old}" && "${old}" != "${VERSION}" ]]; then
-                echo "::warning::latest stays at ${old}; ${VERSION} is older"
+              newest="$(printf '%s\n%s\n' "${CONTENT}" "${old}" | sort -V | tail -1)"
+              if [[ "${newest}" == "${old}" && "${old}" != "${CONTENT}" ]]; then
+                echo "::warning::latest stays at ${old}; ${CONTENT} is older"
                 latest=false
               fi
             fi
           fi
-          tags="\`:${VERSION}\`"
+          tags="\`:${TAG}\`"
           if [[ "${latest}" == "true" ]]; then
-            docker tag "automagik-server:${VERSION}" "${GHCR}:latest"
+            docker tag "automagik-server:${TAG}" "${GHCR}:latest"
             docker push "${GHCR}:latest"
             tags="${tags}, \`:latest\`"
           else
-            echo "latest not moved (a prerelease, or older than the published image)"
+            echo "latest not moved (a prerelease content release, or older than the published image)"
           fi
           ref="${GHCR}@${digest}"
           printf '%s\n' "${ref}" > image-digest.txt
@@ -362,8 +418,9 @@ jobs:
             echo "${ref}"
             echo '```'
             echo
-            echo "- version: \`${VERSION}\`"
-            if [[ "${CONTENT}" != "${VERSION}" ]]; then echo "- plugins from: \`${CONTENT}\` (the newest stable release with plugins.json)"; fi
+            echo "- version: \`${CONTENT}\` (the release whose plugin tarballs are installed)"
+            echo "- revision: \`${REVISION}\` (the workflow commit)"
+            if [[ "${VERSION}" != "${CONTENT}" ]]; then echo "- repository version: \`${VERSION}\` (the tree this image was built from)"; fi
             echo "- tags: ${tags}"
             echo
             echo "Pull by digest:"
@@ -404,6 +461,6 @@ jobs:
       - name: Keep the manifest digest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: server-image-digest-${{ needs.image.outputs.version }}
+          name: server-image-digest-${{ needs.image.outputs.tag }}
           path: image-digest.txt
           retention-days: 30

@@ -2,20 +2,24 @@
 
 The `automagik-web` DeepSeek Harness profile on a host: dsh's base and web app, the Bot team
 (`@automagik/bots-dsh`), the welcome (`@automagik/welcome-dsh`) and ACP agents
-(`@automagik/acp-dsh`), from one pinned release. Built by CI only
+(`@automagik/acp-dsh`), from one chosen release. Built by CI only
 (`.github/workflows/server-image.yml`): every change builds, smokes and scans it, and a dispatch
-or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as `:<version>` and
-`:latest`. There is no laptop push. Tracked in #620.
+or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as
+`:<content>-<short sha>` and, when allowed, `:latest`. There is no laptop push. Tracked in #620.
 
-Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at the release in
-`server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1` for a manual build). CI sets
-`AUTOMAGIK_VERSION` to the newest stable release that carries `plugins.json`, because a herdr,
-Pocket or am patch carries no plugin tarballs (a build-only run falls back to that release; a
-publish dispatch requires the dispatched version's own release to carry the plugin tarballs).
-The image's `:<version>` tag and its `org.opencontainers.image.version` label are the repository
-version (`IMAGE_VERSION`). A `versions.json` inside the image names the plugin release it
-installed. Each tarball is checked against the release's `plugins.json` (sha512 integrity, size)
-and `PLUGINS.SHA256SUMS` (sha256) before dsh installs it.
+Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at one release, the
+content. A dispatch takes `-f content=<tag>`, a release whose assets include `plugins.json`
+(e.g. `v3.93.0`); empty picks the newest stable release that carries it, within the last 30
+releases. A release event uses its own version as the content. A herdr, Pocket or am patch
+carries no plugin tarballs: a dispatch whose content has none is refused, naming the tag, and a
+release event for such a version builds and pushes nothing. The `Dockerfile`'s
+`AUTOMAGIK_VERSION` is that plugin release (default `3.90.1` for a manual build); CI passes it as
+both `--version` and `--image-version`. The identity names the content and the tree: the tag
+`:<content>-<short sha>` (e.g. `3.93.0-91cf4862`), `org.opencontainers.image.version` = the
+content version, and `org.opencontainers.image.revision` = the full workflow commit. A
+`versions.json` inside the image names the plugin release it installed. Each tarball is checked
+against the release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256)
+before dsh installs it.
 
 ## Pull
 
@@ -24,10 +28,25 @@ docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 ```
 
 The publish job prints the manifest digest in its summary and saves it as `image-digest.txt`; pin
-that digest, not a tag. `:<version>` is the repository version whose release supplied the plugin
-tarballs (the same value `scripts/version.ts` writes). `:latest` moves only on a non-prerelease
-publish and never to an older version. GitHub creates a new package private, so the first publish
-needs the one-time visibility flip below before an anonymous pull works.
+that digest, not a tag. `:<content>-<short sha>` identifies one build of one content release from
+one commit; the version label is the content release and the revision label the commit. `:latest`
+moves only when the content release is not a prerelease and its version is not older than the
+published `:latest` (compared by that label). GitHub creates a new package private, so the first
+publish needs the one-time visibility flip below before an anonymous pull works.
+
+## Publish
+
+A published release for a version that carries `plugins.json` publishes the image. A cut's own
+release starts no workflow (GitHub suppresses events made with `GITHUB_TOKEN`), so dispatch it
+after merge:
+
+```sh
+gh workflow run server-image.yml --ref dev -f content=v3.93.0
+```
+
+`content` is the release tag whose plugin tarballs are installed; empty means the newest stable
+release that has `plugins.json`. The dispatch runs on `dev` or on a `v<version>` tag equal to
+`package.json`'s version. A pull request or a push to `dev` only builds and scans.
 
 ## The image
 
@@ -48,12 +67,14 @@ composes.
 ## Build and smoke
 
 ```sh
-node server/build.mjs --tag automagik-server:local --version 3.93.0 --image-version 3.93.1
+node server/build.mjs --tag automagik-server:local --version 3.93.0 --image-version 3.93.0 \
+  --revision "$(git rev-parse HEAD)"
 node server/smoke.mjs automagik-server:local
 ```
 
-`--version` is the release whose plugin tarballs are installed; `--image-version` is the version
-label (the repository's). With no arguments both are `3.90.1`.
+`--version` is the release whose plugin tarballs are installed; `--image-version` is the content
+version label (normally the same release, without its `v`); `--revision` is the commit label. With
+no arguments the release is `3.90.1` and the revision label `unknown`.
 
 The context is the repository root because the builder reuses
 `apps/desktop/runtime/package-lock.json`; `server/Dockerfile.dockerignore` keeps the context
