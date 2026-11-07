@@ -315,7 +315,7 @@ test("a worktree edit names both pull modes for the main checkout's deleted bots
   // As the note says: the rebase pull refuses while the deletion is unstaged, the file stays gone.
   git(wt, "add", ".herdr/bots.json");
   git(wt, "commit", "-q", "-m", "scout");
-  assert.throws(() => execFileSync("git", ["pull", ".", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+  assert.throws(() => git(s.project, "pull", ".", "wt"),
     (err) => /cannot pull with rebase: You have unstaged changes/.test(String(err.stderr)));
   assert.equal(existsSync(s.botsPath), false);
   // And as it says of a merge pull: that one brings the file back with the worktree's version.
@@ -351,8 +351,25 @@ test("a worktree edit warns when the main checkout has committed its bots.json d
   // As the note says, the pull ends in a modify/delete conflict.
   git(wt, "add", ".herdr/bots.json");
   git(wt, "commit", "-q", "-m", "ranging");
-  assert.throws(() => execFileSync("git", ["merge", "-q", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+  assert.throws(() => git(s.project, "merge", "-q", "wt"),
     (err) => /CONFLICT \(modify\/delete\)/.test(`${err.stdout}${err.stderr}`));
+});
+
+// #626: a main checkout that never had .herdr/bots.json is not a committed deletion: the pull
+// only adds the worktree's file, so no warning.
+test("a worktree edit does not warn when the main checkout never had a bots.json", (t) => {
+  const s = scene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  const made = s.cli(["create", "--name", "Genie", "--agent", "claude"], { cwd: wt });
+  assert.equal(made.code, 0, made.err);
+  assert.match(made.err, new RegExp(`saved in ${join(wt, ".herdr/bots.json")} \\(this worktree\\)`));
+  assert.doesNotMatch(made.err, /committed deletion|modify\/delete|isn't committed|has local changes|is deleted/);
+  // HEAD has no file there, and no commit ever touched the path: the pull only adds it.
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.throws(() => git(s.project, "show", "HEAD:.herdr/bots.json"));
+  assert.equal(git(s.project, "log", "-1", "--format=%H", "HEAD", "--", ".herdr/bots.json"), "");
 });
 
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
