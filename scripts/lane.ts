@@ -107,11 +107,15 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // (Refs marketplace/unfold). None is preinstalled: the app's profile does not carry one, and the
 // desktop's publisher list names none.
 // The server image (server/) ships from no release.
+// The sandbox runner (apps/dsh-sandbox/: the hc socket-mask wrapper, its profile row snippet and
+// the install/check helper) rides the herdr pack's release, copied byte-equal by the pack at
+// enablement; no release here carries it, so a change to it alone cuts no release, and it must
+// never become a plugin tarball.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//, /^apps\/unfold-[^/]+\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
-  /^apps\/landing\//, /^server\//];
+  /^apps\/landing\//, /^server\//, /^apps\/dsh-sandbox\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

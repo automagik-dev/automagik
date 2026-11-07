@@ -469,6 +469,49 @@ jobs:
           for f in meter/statusline/*.mjs; do node --check "$f"; done
           node --test 'meter/statusline/test/*.test.mjs'
 
+  dsh-sandbox:
+    # The dsh-sandbox runner (apps/dsh-sandbox/: the hc socket-mask wrapper, its profile row and
+    # the install/check helper): syntax and hermetic tests (fake bwrap, temp Unix sockets and
+    # temp profiles; no live socket, docker.sock or profile). The pack carries the wrapper in
+    # its release; no release here ships this folder (scripts/lane.ts NEVER_SHIPPED).
+    # Only when apps/dsh-sandbox/ changed, or this workflow.
+    name: dsh-sandbox runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whether apps/dsh-sandbox/ changed
+        id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] \
+            || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "sandbox=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${BASE}...HEAD" \
+            | grep -qE '^(apps/dsh-sandbox/|\.github/workflows/ci\.yml$)'; then
+            echo "sandbox=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "apps/dsh-sandbox/ did not change: nothing to test"
+          fi
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.changed.outputs.sandbox == 'true'
+        with:
+          node-version: '22'
+
+      - name: Syntax and tests
+        if: steps.changed.outputs.sandbox == 'true'
+        run: |
+          set -euo pipefail
+          for f in apps/dsh-sandbox/bin/*.mjs; do node --check "$f"; done
+          node --test 'apps/dsh-sandbox/test/*.test.mjs'
+
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH
     # release it pins in dev/harness/package.json, which its tests run against.

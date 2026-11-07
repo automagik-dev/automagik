@@ -51,6 +51,22 @@ describe('the plugin lane', () => {
     expect(kindOf([...server, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 
+  test('the dsh-sandbox runner (apps/dsh-sandbox/) ships with the pack, never as a plugin', () => {
+    const none = () => false;
+    const sandbox = ['apps/dsh-sandbox/bin/hc-socket-mask.mjs',
+      'apps/dsh-sandbox/bin/dsh-sandbox.mjs', 'apps/dsh-sandbox/profile/sandbox-row.yml',
+      'apps/dsh-sandbox/test/wrapper.test.mjs', 'apps/dsh-sandbox/README.md'];
+    // Alone: no release at all.
+    expect(ships(sandbox, none)).toBe(false);
+    // Beside a plugin: a plugin patch, no desktop build.
+    expect(ships([...sandbox, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);
+    expect(kindOf([...sandbox, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...sandbox, 'apps/bots-dsh/src/host/turns.js'], none, none,
+      [...sandbox, 'apps/bots-dsh/src/host/turns.js'])).toBe('plugins');
+    // Beside the desktop app's own code: still a full release.
+    expect(kindOf([...sandbox, 'apps/desktop/src/main.js'], none)).toBe('full');
+  });
+
   test('the landing page (apps/landing/) ships from the site, never from a release', () => {
     const none = () => false;
     const landing = ['apps/landing/index.html', 'apps/landing/styles.css', 'apps/landing/assets/hero.png',
