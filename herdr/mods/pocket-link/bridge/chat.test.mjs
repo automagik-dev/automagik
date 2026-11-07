@@ -438,3 +438,24 @@ test('through the route: a phone that reconnects and retries an id has it typed 
   assert.equal(hc.calls.filter(c => c.method === 'terminal.send').length, 2, 'another device: its own message')
   engine.close()
 })
+
+test('chat.answer carries a question’s free text to the engine: digit N+1, then the text', async () => {
+  const ask = JSON.stringify({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_q', name: 'AskUserQuestion',
+    input: { questions: [{ question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'Postgres' }, { label: 'SQLite' }] }] } }] } }) + '\n'
+  const { engine, hc } = world({ lines: user('u1', 'pick one') + ask })
+  const p = phone(engine)
+  p.hello()
+  await p.call('chat.subscribe', { terminal: 't1' })
+  await settle(); await engine.entries.get('t1').projection.ready
+  hc.screens.t1 = 'Which database?\n❯ 1. Postgres\n  2. SQLite\n  3. Type something.\nEsc to cancel\n'
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'question', msg: 'Which database?' } })
+  await settle()
+  hc.onWrite((m) => { if (m === 'terminal.send') hc.set('t1', { status: { app: 'claude-code', state: 'working' } }) })
+  engine.timers = { ...noTimers, setTimeout: (fn) => setImmediate(fn) }
+  assert.equal((await p.call('chat.answer', { terminal: 't1', row: 'question:1:2.0', choice: 'other', text: 7 })).error?.message, 'invalid_params')
+  const r = await p.call('chat.answer', { terminal: 't1', row: 'question:1:2.0', choice: 'other', text: 'MySQL' })
+  assert.deepEqual(r.result, { ok: true, pressed: 'done', sent: true })
+  assert.deepEqual(hc.calls.filter(c => ['terminal.send', 'terminal.keys'].includes(c.method)).map(c => [c.method, c.params.keys ?? c.params.text]),
+    [['terminal.keys', ['3']], ['terminal.send', 'MySQL']])
+  engine.close()
+})

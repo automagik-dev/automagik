@@ -242,7 +242,7 @@ rows a backfill reads from before them count back (0, -1, ...). The kinds:
 - `approval`: `tool`, `summary`, `choices` (`allow`, `allow-always` when the key map has it,
   `deny`), `open` (still on screen);
 - `question`: `prompt`, `options`, `multi`, `answerable` (false where the agent cannot be answered
-  by keys, below);
+  by keys, below), `call` (the open call it answers) and `open`;
 - `status`: `state`, `msg`;
 - `tokens`: `input`, `output`, `cache`, `context` when the transcript records them (Orca's
   `AgentSessionTokenUsage`, no prices).
@@ -297,7 +297,12 @@ anything on its own (0014 Threat model).
   plus 500 ms to let the next question draw (`native-chat-answer-stepping.ts`). Each step checks
   the screen first and stops at a mismatch with "Finish in the terminal". omp's questions cannot
   be answered by keys (`native-chat-agent-support.ts:41`): the row shows the question with "Answer
-  in the terminal".
+  in the terminal". Claude Code's AskUserQuestion (probed on 2.1.319; `chat/question.js`) gets
+  options only for one open call asking one question; every key is its own send, 500 ms apart: a
+  single-select is the option's digit alone (`choice` `"2"`), free text is digit N+1 then the text
+  and Enter (`choice` `"other"` with `text`), a multi-select is each digit, Right, then Enter
+  (`choice` `"1,3"`). Codex and OpenCode step too, but their keys were never recorded: "Answer in
+  the terminal".
 - **Interrupt.** `terminal.interrupt`: esc when the program reports status, else ctrl+c, and it
   never escalates. Never a second esc for Claude or Codex, which read esc esc as rewind
   (`native-chat-agent-support.ts:46`).
@@ -321,7 +326,7 @@ second ALPN beside the session one:
   `chat.subscribe {terminal, after?}` (a stream of row, status, draft and dialog events);
   `chat.backfill {terminal, before, limit}`; `chat.send {terminal, text, id}` (answers `sent`,
   `queued`, `held` or `refused` with a reason); `chat.sendHeld` and `chat.cancelHeld`
-  `{terminal, id}`; `chat.answer {terminal, row, choice}`; `chat.interrupt {terminal}`.
+  `{terminal, id}`; `chat.answer {terminal, row, choice, text?}` (`text`: a question's free text only); `chat.interrupt {terminal}`.
 - **Limits.** A row's text is cut at 64 KiB and a tool output preview at 8 KiB, each with "open
   in terminal"; a backfill page is at most 200 rows and 1 MiB; a send at most 32 KiB; at most 8
   subscriptions per connection. The connection caps in `guard.mjs` (`MAX_OPEN`, `MAX_PENDING`,

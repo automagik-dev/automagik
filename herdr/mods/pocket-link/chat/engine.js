@@ -20,6 +20,7 @@ import { StatusHub, statusOf } from './status.js'
 import { Projection } from './projection.js'
 import { Input } from './input.js'
 import { answerApproval, approvalRow, approvalState } from './approve.js'
+import { answerQuestion, questionRow, questionState } from './question.js'
 
 /** How long a terminal's rows are kept after its last client leaves (RFC 0015, "Reconnect"). */
 export const LINGER_MS = 10 * 60_000
@@ -214,7 +215,11 @@ export class Engine {
     })
     projection.on((e) => {
       emit(e)
-      if (e.type === 'rows') this.match(entry, e.rows)
+      if (e.type === 'rows') {
+        this.match(entry, e.rows)
+        // A question raised before its AskUserQuestion call reached the transcript: look again.
+        if (entry.question && !entry.question.answerable && entry.question.why === 'no-open-call') this.checkApproval(entry)
+      }
       if (e.type === 'status') { if (entry.clients.size) entry.input.flush(); this.checkApproval(entry) }
       if (e.type === 'screen' && entry.clients.size) entry.input.flush()
     })
@@ -279,16 +284,22 @@ export class Engine {
 
   async checkOnce(entry) {
     const status = entry.projection.status
-    if (status.state !== 'blocked') { entry.answered.clear(); this.closeApproval(entry); return }
+    if (status.state !== 'blocked') { entry.answered.clear(); entry.question = null; this.closeApproval(entry); return }
+    let facts
     if (status.kind !== 'permission') {
-      // Questions and pickers are answered in the terminal: no agent's was recorded.
-      const id = `question:${status.turn}`
-      if (entry.question === id) return
-      entry.question = id
-      entry.emit({ type: 'question', row: { id, turn: status.turn, at: null, source: 'status', kind: 'question', prompt: status.msg, options: [], multi: false, answerable: false } })
+      // A question (question.js): options to tap only for a probed agent and one open
+      // AskUserQuestion call; anything else (a picker, an auth prompt) is answered in the terminal.
+      try { facts = await entry.read() } catch { facts = null }
+      const state = (facts && questionState(facts)) ??
+        { call: null, prompt: status.msg, options: [], multi: false, why: 'answer-in-terminal' }
+      const answered = state.call && entry.answered.has(state.call.id)
+      const row = questionRow(answered ? { ...state, why: 'answered' } : state, { turn: status.turn, segment: entry.projection.store.segment })
+      const q = entry.question
+      if (q && q.id === row.id && q.answerable === row.answerable && q.why === row.why) return
+      entry.question = row
+      entry.emit({ type: 'question', row })
       return
     }
-    let facts
     try { facts = await entry.read() } catch { return }
     const state = approvalState(facts)
     // Read fresh, no approval is open any more (answered, or the status moved on).
@@ -341,10 +352,11 @@ export class Engine {
    * another client or a retry after 'uncertain' would press again, maybe on the next dialog. An
    * answered call is refused until the status leaves blocked.
    */
-  async answer(client, address, { row, choice }) {
+  async answer(client, address, { row, choice, text }) {
     if (!this.watching(client, address)) return refused()
     const entry = this.entries.get(address)
     if (entry.answering) return { ok: false, reason: 'in-flight' }
+    if (typeof row === 'string' && row.startsWith('question:')) return this.answerQuestion(entry, address, { row, choice, text })
     if (!entry.approval || entry.approval.id !== row) return { ok: false, reason: 'no-such-row' }
     if (entry.approval.call && entry.answered.has(entry.approval.call)) return { ok: false, reason: 'answered' }
     const call = entry.approval.call
@@ -355,6 +367,21 @@ export class Engine {
     // may still have typed it) and whatever the dialog shows, until the status moves.
     if (result.sent && call) entry.answered.add(call)
     if (result.ok || result.reason === 'changed' || result.reason === 'closed') this.checkApproval(entry)
+    return result
+  }
+
+  /** A question the person answered: the same rules as an approval (one at a time, one per call). */
+  async answerQuestion(entry, address, { row, choice, text }) {
+    const q = entry.question
+    if (!q || q.id !== row) return { ok: false, reason: 'no-such-row' }
+    if (q.call && entry.answered.has(q.call)) return { ok: false, reason: 'answered' }
+    if (!q.answerable) return { ok: false, reason: 'answer-in-terminal' }
+    entry.answering = answerQuestion({ hc: this.hc, address, rowId: row, choice, text, read: entry.read, timers: this.timers })
+    let result
+    try { result = await entry.answering } finally { entry.answering = null }
+    // A key went in: that call is answered until the status moves, as an approval's.
+    if (result.sent) entry.answered.add(q.call)
+    if (result.sent || result.reason === 'changed' || result.reason === 'closed') this.checkApproval(entry)
     return result
   }
 
