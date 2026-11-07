@@ -5,5 +5,5 @@
   "PATH=<root>/bin:/usr/bin:/bin",
   "claude",
   "--append-system-prompt-file",
-  "<root>/home/.config/herdr-app/automagik-herdr/briefings/<hash>-b-mainaaaaaa.md"
+  "<root>/box/.config/herdr-app/automagik-herdr/briefings/<hash>-b-mainaaaaaa.md"
 ]

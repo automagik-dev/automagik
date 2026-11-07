@@ -49,7 +49,9 @@ process.stdout.write("stub-out " + JSON.stringify(args) + "\\n"); process.exit(0
 function scene(t, { withAppHome = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-650-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
+  // Not a folder named "home": privacy-check reads a "/home/<name>" path (even under <root>) as a
+  // real home path. It is the scratch HOME all the same.
+  const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "box"), app = join(root, "app");
   const guardBin = join(root, "guard-bin");
   for (const d of [project, bin, home, app, guardBin]) mkdirSync(d, { recursive: true });
   execFileSync("git", ["init", "-q", "--template=", project]);
