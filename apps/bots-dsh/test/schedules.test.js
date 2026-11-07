@@ -381,3 +381,22 @@ test('a read-only host neither pauses nor vouches for unlineaged deliveries', as
   }
   assert.equal(ran, 'ran')
 })
+
+test('the attach-time check runs before the team loads without an error', async (t) => {
+  const schedule = scheduleService()
+  const ctx = fakeContext({ services: { schedule } })
+  const warnings = []
+  ctx.logger.warn = (...args) => warnings.push(args.map(value => String(value)).join(' '))
+  const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
+  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+  // The service is present before the team is read, so the attach-time check runs first.
+  const rt = createRuntime(ctx, { home })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.doesNotMatch(warnings.join('\n'), /before initialization/)
+  assert.doesNotMatch(warnings.join('\n'), /fresh-Session tasks were not checked/)
+})

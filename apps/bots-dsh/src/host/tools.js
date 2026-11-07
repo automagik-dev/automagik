@@ -36,7 +36,14 @@ const WORKING_DIRECTORY_TOOL = 'working_directory'
 const DENY_TOOLS_PARAM = {
   type: 'array',
   items: { type: 'string' },
-  description: 'Tools this Bot never gets, by exact name and case (for example omni_send, bash, write): a hard read-only list enforced on every Session of the Bot, not an instruction. A name this DSH does not serve refuses the save. An empty list clears it. It is the Bot\'s own setting, so only the Main Bot may set it for another Bot.',
+  description: 'Tools this Bot never gets, by exact name and case '
+    + '(for example omni_send, bash, write): a hard read-only list enforced on every Session '
+    + 'of the Bot, not an instruction. '
+    + 'A name this DSH does not serve refuses the save. '
+    + 'Any non-empty list also denies schedule_create and schedule_edit, whose fresh-Session '
+    + 'targets no Bot lineage could bind. '
+    + 'An existing Bot\'s list changes only through the user\'s settings: no Bot can set or clear '
+    + 'its own, and no Main Bot can set it for another Bot.',
 }
 
 export function install(rt) {
@@ -374,8 +381,8 @@ export function install(rt) {
       model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id' },
       effort: { type: 'string', description: 'Thinking level for the Bot\'s model, as list_bot_models shows; an empty string returns to the model\'s default' },
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
-      deny_tools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
-      denyTools: { ...DENY_TOOLS_PARAM, description: `${DENY_TOOLS_PARAM.description} An empty list clears it.` },
+      deny_tools: DENY_TOOLS_PARAM,
+      denyTools: DENY_TOOLS_PARAM,
     },
     output,
     async execute(args, exec) {

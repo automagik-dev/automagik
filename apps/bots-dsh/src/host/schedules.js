@@ -87,6 +87,14 @@ function selectorOf(when) {
 export function install(rt) {
   const { ctx } = rt
   let service = null
+  // Tasks whose pause failed. While one is stuck, an unlineaged delivery is refused rather
+  // than let it run with no Bot to bind it; the next successful sweep clears it. `swept`
+  // holds deliveries closed through the boot window, before the first check has run.
+  const stuck = new Set()
+  // The boot check runs after the team loads; before that an empty team would read as "no
+  // restricted Bot" and open the guard too early, so only a load-backed sweep opens it.
+  let teamLoaded = false
+  let swept = false
 
   const attach = (sub) => {
     const own = sub.schedule
@@ -154,15 +162,6 @@ export function install(rt) {
     }
     return ids
   }
-  // Tasks whose pause failed. While one is stuck, an unlineaged delivery is refused rather
-  // than let it run with no Bot to bind it; the next successful sweep clears it. `swept`
-  // holds deliveries closed through the boot window, before the first check has run.
-  const stuck = new Set()
-  // The boot check runs after the team loads; before that an empty team would read as "no
-  // restricted Bot" and open the guard too early, so only a load-backed sweep opens it.
-  let teamLoaded = false
-  let swept = false
-
   /**
    * Pause every active task with a fresh-Session target that a restricted Bot is involved
    * in. Scoped to one Bot when `botId` is given (a restriction or a deletion), else every
