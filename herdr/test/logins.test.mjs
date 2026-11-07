@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { CONFIG_VAR, DEFAULT_WORDS, LOGINS_FILE, chooseLogin, envWords, formProblem, loginsPath, parseLogins } from "../mods/am-sidebar/logins.js";
 import { agentArgv, agentKeyOfArgv, briefingFileOf, briefingLaunch, detectModel, resumedSessionOf, withBriefing } from "../mods/am-sidebar/models.js";
-import { helperArgs, helperPlan, paneCommand, restartPlan } from "../mods/am-sidebar/restart.js";
+import { helperArgs, helperPlan, launchChange, paneCommand, restartPlan } from "../mods/am-sidebar/restart.js";
 import { startArgs } from "../mods/am-sidebar/launchArgs.js";
 import { AGENTS as TABLE } from "../mods/am-sidebar/models.js";
 import { workerArgs } from "../mods/am-sidebar/workers.js";
@@ -162,9 +162,11 @@ test("restartPlan and helperPlan take the agent through paneCommand in the -u fo
   const get = { address: "t5", cwd: "/r", foreground: { argv: AGENT }, argv: FORMS["login A (-u first)"] };
   const bot = { id: "b-aaaaaaaaaa", name: "Dev", agent: "claude", model: "opus" };
   const plan = restartPlan({ bot, run: ["claude"], runningAgent: "claude", session: "0b6c1f43-3b0e-4f6e-9d1c-2a8e5b7f9c10", launch: paneCommand(get) });
-  assert.equal(plan.reused, true, "the old pane's own command is reused");
   assert.equal(plan.argv[0], "claude", "Restart runs claude, never env");
   assert.ok(!plan.argv.includes("-u") && !plan.argv.includes(CONFIG_VAR));
+  // The source's pin is the model, and the pane's model agrees: nothing differs (#597).
+  assert.deepEqual(plan.source, ["claude", "--model", "opus"]);
+  assert.equal(launchChange({ name: "Dev", launch: paneCommand(get), agent: "claude", argv: plan.source }), null);
   const helper = helperPlan({ get, agents: TABLE });
   assert.equal(helper.agent, "claude");
   assert.equal(helper.argv[0], "claude");

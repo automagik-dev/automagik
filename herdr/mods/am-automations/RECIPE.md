@@ -34,9 +34,10 @@ three views:
 - **Detail**: name, `Run now` / `Pause` / `Edit` / `Delete` (delete asks once), schedule, next, repo,
   where it runs, agent, permissions, the prompt, and `HISTORY` per run with status, duration or error, and when.
 - **Form**: name, schedule pills over a cron field, repo with `Choose…`, "runs in" (new worktree,
-  repo root, existing space), agent pills (installed agents plus hc templates), model, `PERMISSIONS`,
-  prompt, timeout, MCP config, and `Next: …` previewed live; `Cancel` / `Save`. A prompt naming a
-  terminal address gets a `blocked`-coloured line under it.
+  repo root, existing space), an "after a run" close switch (worktree and repo root only), agent
+  pills (installed agents plus hc templates), model, `PERMISSIONS`, prompt, timeout, MCP config, and
+  `Next: …` previewed live; `Cancel` / `Save`. A prompt naming a terminal address gets a
+  `blocked`-coloured line under it.
 - **PERMISSIONS** (#498): pills for the mode the run starts the agent in — `As saved: <mode>` (an
   existing entry), `Automatic (<flag>)` (codex and claude), `Agent default` — a line "Runs <mode>:
   <agent> <args>", and a field for more words to the agent (`agent_args` past the permission flags;
@@ -49,9 +50,11 @@ three views:
 ## How it behaves
 
 - **Finding the scheduler**: `herdr-automations version` on PATH, then
-  `~/.local/bin/herdr-automations`. Neither answers: the repair block shows `repairCommand()` for
-  this Mac's `uname -m` (`SCHEDULER` pins the release and its sha256s, from its `checksums.txt`),
-  and every 30 s refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes
+  `~/.local/bin/herdr-automations`; the answer also says whether it is ours (`-am.` in the version).
+  Neither answers: the repair block shows `repairCommand()` for this Mac's `uname -m`
+  (`SCHEDULER` in `scheduler.js` pins our `herdr-automations-v<version>` release and its darwin
+  sha256s from its `checksums.txt`, checked by `herdr/scripts/scheduler-pin.mjs`), and every 30 s
+  refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes
   the command to the clipboard; the panel never runs it and never installs a login service (only
   **Start**, pressed by you, runs `service install`).
 - Every read and write goes through the CLI (`ls --json`, `history --json`, `put [--dry-run]`,
@@ -79,9 +82,14 @@ three views:
 - **Closing a run's workspace** (#498): the scheduler closes a fresh run's workspace once the run
   is `done` when its entry says `close_workspace: on-success` (v0.12.0; failed and blocked runs
   stay open; refused with `workspace: existing`, so a workspace you already had is never closed).
-  The panel cannot set it yet: v0.12.1's `put` and `ls --json` have no such field, and a sent key
-  with no value is removed. Write it by hand in `automations.yaml`; the panel never sends the key,
-  so an edit keeps it (and `session` too).
+  Our build (`herdr/scheduler/`, released as `herdr-automations-v<version>`) carries the field
+  through `ls --json` and `put`, so the form sets it with "Close the space after a successful run":
+  shown for new worktree and repo-root runs only, on by default for a new automation (D2), and set
+  from what `ls --json` reports for an existing one (`never` or `on-success`). Switching it off
+  sends `close_workspace: never`. The panel knows our build by its `version` output containing
+  `-am.`; with an upstream `herdr-automations` the switch is replaced by one line saying our build
+  is needed, and the key is never sent, so a hand-written `close_workspace` (and `session`) survives
+  an edit there. Hand-writing it in `automations.yaml` still works: `on-success` or `never`.
 - **Address warning** (#498): a prompt holding an hc address (`t3q1`, `build-box/t9`: a `t`, a
   digit, then letters and digits) is warned about on every preview and on Save, "… is a terminal
   address; it changes on restart. Name the bot instead"; it is saved all the same. A name given with
@@ -97,6 +105,7 @@ three views:
 
 `mods/am-automations/main.js`, `agents.js` (which agents the form offers, never a retired one),
 `modes.js` (permission flags read as a mode, the automatic flags, the address check; pure),
+`scheduler.js` (the scheduler release pin and its repair command; pure, so the pin check reads it),
 `retired.js` (the retired agents: a byte-equal copy of am-sidebar's, the pack's one list),
 `automations.svg` (a clock, 24×24 stroke), `mod.json`
 (`place: "none"`, title "Automations"), `LICENSE` (this pack's Apache-2.0) and `LICENSE-upstream`

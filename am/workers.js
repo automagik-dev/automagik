@@ -234,20 +234,99 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   return [...args, "--parent", parent, "--", ...env, ...argv, ...promptArgs(agent, task)];
 }
 
+/** A program path's own name (`/bin/sh` is `sh`). */
+const shellBase = (p) => String(p ?? "").split("/").pop();
+
+// The shells whose `-c` carries a script a template's command may be wrapped in.
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+
+// The characters that end a simple command in a shell command string.
+const SEPARATORS = new Set([";", "&", "|", "(", ")", "<", ">", "\n"]);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
 /**
- * The agent an hc template's command runs: the agent (a key of `agents`) whose program comes
- * first in it as a word of its own (`… codex --no-daemon …`, `/usr/bin/claude …`), else null.
+ * A shell command string's simple commands: each a word list, split on ; & | ( ) < > and
+ * newlines outside quotes. Quotes group a word and are dropped, a backslash escapes the next
+ * character. Never throws on an unclosed quote.
+ */
+function shellCommands(text) {
+  const commands = [];
+  let words = [], word = "", quote = null, has = false;
+  const endWord = () => { if (has) { words.push(word); word = ""; has = false; } };
+  const endCommand = () => { endWord(); if (words.length) { commands.push(words); words = []; } };
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) { quote = null; continue; }
+      if (ch === "\\" && quote === '"' && i + 1 < text.length) { word += text[++i]; has = true; continue; }
+      word += ch; has = true; continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; has = true; continue; }
+    if (ch === "\\" && i + 1 < text.length) { word += text[++i]; has = true; continue; }
+    if (SEPARATORS.has(ch)) { endCommand(); continue; }
+    if (/\s/.test(ch)) { endWord(); continue; }
+    word += ch; has = true;
+  }
+  endCommand();
+  return commands;
+}
+
+/**
+ * The programs a command string runs: for each simple command, its first word after env
+ * assignments and the wrappers env, exec and nohup; a shell's `-c` script is followed the same
+ * way, a few levels deep. A word in argument position is never a program.
+ */
+function commandPrograms(text, depth = 0) {
+  const out = [];
+  for (const words of shellCommands(text)) {
+    let i = 0;
+    for (;;) {
+      while (i < words.length && ASSIGNMENT.test(words[i])) i += 1;
+      const name = shellBase(words[i]);
+      if (name === "env") {
+        i += 1;
+        while (i < words.length) {
+          if (words[i] === "-u" || words[i] === "--unset") { i += 2; continue; }
+          if (words[i].startsWith("-") || ASSIGNMENT.test(words[i])) { i += 1; continue; }
+          break;
+        }
+        continue;
+      }
+      if (name === "exec" || name === "nohup") { i += 1; continue; }
+      if (SHELLS.has(name) && words[i + 1] === "-c" && typeof words[i + 2] === "string") {
+        if (depth < 4) out.push(...commandPrograms(words[i + 2], depth + 1));
+        i = words.length;
+        break;
+      }
+      break;
+    }
+    if (i < words.length) out.push(shellBase(words[i]));
+  }
+  return out;
+}
+
+/** The agent key `program` names (a key, an agent's run[0] or a match name), or null. */
+function agentOfProgram(program, agents) {
+  for (const [key, agent] of Object.entries(agents)) {
+    if (key === program || shellBase(agent?.run?.[0]) === program || (agent?.match ?? []).includes(program)) return key;
+  }
+  return null;
+}
+
+/**
+ * The agent an hc template's command runs: the one agent its simple commands' programs name,
+ * after env assignments and the wrappers env, exec and nohup, a shell's `-c` script followed the
+ * same way (`sh -c "omp --auto-approve"`, also behind env assignments). A word in argument
+ * position never counts (`echo omp` names nothing), and more than one agent fails closed (null),
+ * so the restart falls back to the source rather than adopt another agent's command.
  */
 export function templateAgent(command, agents = AGENTS) {
-  let best = null;
-  for (const [key, agent] of Object.entries(agents)) {
-    const program = agent?.run?.[0];
-    if (!program) continue;
-    const word = program.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const at = String(command ?? "").search(new RegExp(`(?:^|[\\s/])${word}(?=\\s|$)`));
-    if (at >= 0 && (!best || at < best.at)) best = { key, at };
+  const found = new Set();
+  for (const program of commandPrograms(String(command ?? ""))) {
+    const key = agentOfProgram(program, agents);
+    if (key) found.add(key);
   }
-  return best?.key ?? null;
+  return found.size === 1 ? [...found][0] : null;
 }
 
 /** The env program agent workers start under, by its full path (macOS and Linux both have it). */

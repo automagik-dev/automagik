@@ -75,12 +75,41 @@ describe('the plugin lane', () => {
       'herdr/mockup/gen-sidebar.mjs', 'herdr/catalog/index.json', 'docs/rfcs/0011-monorepo-parts-and-releases.md'];
     expect(ships(notes, none)).toBe(false);
     expect(herdrShips(notes)).toBe(false);
+    // NOTICE is provenance the pack never carries (pack.mjs archives PACK_MODS and the layout
+    // files): a change to it alone cuts nothing; beside a herdr mod, the mod is the release.
+    const notice = ['herdr/NOTICE'];
+    expect(ships(notice, none)).toBe(false);
+    expect(herdrShips(notice)).toBe(false);
+    const withNotice = ['herdr/mods/am-sidebar/main.js', ...notice];
+    expect(ships(withNotice, none)).toBe(true);
+    expect(kindOf(withNotice, none, none, withNotice)).toBe('herdr');
     // The pack's version files, bumped by a release, ship nothing on their own.
     const versions = ['herdr/package.json', 'herdr/mods/am-sidebar/VERSION'];
     expect(herdrShips(versions, path => versions.includes(path))).toBe(false);
     expect(herdrShips(versions)).toBe(true);
     // Nothing shipping since the last release falls back to the rule since the last full one.
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
+  });
+
+  test('a scheduler-only change (herdr/scheduler/, vendored) cuts no release and never reaches the pack', () => {
+    const none = () => false;
+    const scheduler = ['herdr/scheduler/main.go', 'herdr/scheduler/internal/daemon/daemon.go', 'herdr/scheduler/go.mod',
+      'herdr/scheduler/UPSTREAM.md', 'herdr/scheduler/LICENSE-upstream'];
+    // The binary ships from its own release lane: nothing here reaches an install, so no release kind.
+    expect(ships(scheduler, none)).toBe(false);
+    expect(herdrShips(scheduler)).toBe(false);
+    // The check scripts (herdr/scripts/scheduler-upstream.mjs, scheduler-pin.mjs) are tooling too:
+    // on their own, and beside the scheduler, they cut no release and never reach the pack.
+    const check = ['herdr/scripts/scheduler-upstream.mjs', 'herdr/scripts/scheduler-pin.mjs'];
+    expect(ships(check, none)).toBe(false);
+    expect(herdrShips(check)).toBe(false);
+    expect(ships([...scheduler, ...check], none)).toBe(false);
+    expect(herdrShips([...scheduler, ...check])).toBe(false);
+    // Beside a plugin change it is a plugin patch; beside an app change, a full release.
+    expect(kindOf([...scheduler, 'apps/bots-dsh/client.js'], none, none, [...scheduler, 'apps/bots-dsh/client.js'])).toBe('plugins');
+    expect(kindOf([...scheduler, 'apps/desktop/src/main.js'], none, none, [...scheduler, 'apps/desktop/src/main.js'])).toBe('full');
+    // The rule is the scheduler folder alone: anything else under herdr/ still makes a herdr patch.
+    expect(herdrShips(['herdr/scheduler/main.go', 'herdr/mods/am-sidebar/main.js'])).toBe(true);
   });
 
   test('an am-only change is an am patch; am never makes a release more than it is otherwise', () => {

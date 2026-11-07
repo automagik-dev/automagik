@@ -32,7 +32,7 @@ function fuzzCases(seed = SEED, count = 200) {
   const pick = (list) => list[Math.floor(rand() * list.length)]
   const unit = () => Array.from({ length: 1 + Math.floor(rand() * 4) }, () => pick(PIECES)).join('')
   const fill = (piece, size) => piece.repeat(Math.max(1, Math.floor(size / piece.length)))
-  return Array.from({ length: count }, (_, i) => {
+  const cases = Array.from({ length: count }, (_, i) => {
     const size = pick(SIZES)
     if (i % 3 === 2) {
       const [runs, keys, tails] = pick(SHAPES)
@@ -53,6 +53,11 @@ function fuzzCases(seed = SEED, count = 200) {
     const text = `${fill(lead, size * share)}${fill(run, size * (1 - share))}${tail}`
     return [`#${i} ${JSON.stringify(lead)} then ${JSON.stringify(run)} repeated, then ${JSON.stringify(tail)}`, text]
   })
+  // The shape that once backtracked over a whole blank run: 80k of " \t", then a name and a block.
+  cases.push(['fixed: 80000 " \\t" then accessToken: >', `${' \t'.repeat(40_000)}accessToken: >\n`])
+  cases.push(['fixed: 16384 of {"\\ runs', '{"\\'.repeat(5462).slice(0, 16_384)])
+  cases.push(['fixed: ? " + 80000 alnum + :x', `? "${'z'.repeat(80_000)}:x\n`])
+  return cases
 }
 
 // Each text ends with two planted credentials: `SVCTOKEN=`, which only the upper-case KEY= rule
@@ -113,17 +118,23 @@ const REFERENCE_TEXT = (() => {
 })()
 
 // The stream runs redactText over each delta and builds its row, sentence and audit work on top,
-// so it costs a multiple of the reference: 3.74–4.24x measured here (worst of the 200 cases over
-// two runs, Node 24.13.1) and 3.56x, 3.76x, 7.18x, 7.45x and 7.62x across four CI runs; the 7.62x
-// one measured 233.2 ms against a 30.6 ms reference and failed the old 200 ms bound (#513).
-// STREAM_MARGIN 10 sits 1.31x above that worst CI reading. The trade: a 2x regression of the stream
-// on a quiet machine (8.5x) stays inside the bound, while the text ceiling catches a shared
-// quadratic key rule. The absolute backstop caps how far a slow reference may widen the bound:
-// 400 ms sits 1.7x above the worst observed stream reading (225.8 and 233.2 ms at 30.3-30.6 ms
-// references, the #513 reds) and only binds when 10 x reference passes it (a reference above 40 ms,
-// 1.3x above the worst observed). A shared rule gone quadratic still fails: the text ceiling
-// catches it on the rule pass, and the stream runs past the cap.
-const STREAM_MARGIN = 10
+// so it costs a multiple of the reference: 3.56–4.24x measured here (worst of the 200 cases across
+// 24.13.1) and 3.49x, 3.55x, 3.56x, 3.76x, 3.92x, 5.84x, 6.00x, 7.02x, 7.18x, 7.45x,
+// 7.62x and 10.5x across CI runs, then 3.62x, 3.66x, 4.26x and 4.51x on the #599 and #513 lanes
+// after it. The 10.5x one measured 118.7 ms against a 11.3 ms reference and failed the old 10 x
+// bound by 5% (#513's b6e7041e head); it was a margin overrun, never a hiding failure.
+// STREAM_MARGIN 15 sits 1.43x above that worst CI reading. The spread is runner-driven: the
+// reference moved 11.3-33.5 ms while the ratio moved 3.6-10.5x, so a bound of two same-run
+// references would track it better; that is #590's deeper rework, not this pass. The trade: a 2x
+// regression of the stream on a quiet machine (8.0x) now stays inside the bound, while the text
+// ceiling catches a shared quadratic key rule and a stream-only O(n^2) mutant (measured 351.9 ms
+// against the 126.4 ms bound here) still fails. The absolute backstop caps how far a slow
+// reference may widen the bound: 400 ms sits 1.7x above the worst observed stream reading
+// (235.2 ms, 7.02x) and binds when 15 x reference passes it, a reference above 26.7 ms; at the
+// worst observed reference (33.5 ms) the cap sets the bound and that 235.2 ms reading still
+// passes. A shared rule gone quadratic still fails: the text ceiling catches it on the rule pass,
+// and the stream runs past the cap.
+const STREAM_MARGIN = 15
 const BACKSTOP_MS = 400
 
 function push(text) {

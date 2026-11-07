@@ -47,16 +47,26 @@ async function panel() {
   return { view, cx, draw: () => { index(view.render(cx)); return nodes; } };
 }
 
-test("the repair command: the pinned release for this Mac's arch, hash-checked, into ~/.local/bin", () => {
+test("the repair command: our pinned release for this Mac's arch, hash-checked, into ~/.local/bin", () => {
   const arm = repairCommand("arm64");
-  assert.match(arm, new RegExp(`/${SCHEDULER.repo}/releases/download/v${SCHEDULER.version}/herdr-automations_darwin_arm64 `));
+  assert.match(arm, /\/automagik-dev\/automagik\/releases\/download\/herdr-automations-v0\.12\.1-am\.1\/herdr-automations_darwin_arm64 /);
   assert.ok(arm.includes(`echo "${SCHEDULER.sha256.arm64}  herdr-automations" | shasum -a 256 -c`));
   assert.match(arm, /shasum -a 256 -c && chmod 755 herdr-automations && mv herdr-automations ~\/\.local\/bin\/\)$/, "moved in only once the hash matches");
   const intel = repairCommand("x86_64");
-  assert.match(intel, /herdr-automations_darwin_amd64 /);
+  assert.match(intel, /herdr-automations-v[^/]+\/herdr-automations_darwin_amd64 /);
   assert.ok(intel.includes(SCHEDULER.sha256.amd64));
-  for (const h of Object.values(SCHEDULER.sha256)) assert.match(h, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(arm + intel, /service install|launchctl|LaunchAgents/, "it installs the program, never a login service");
+});
+
+// The release the Integrator cuts carries the checksums; until they are pasted in, this fails loudly
+// so nothing merges with the repair command pointing at placeholder hashes.
+test("the scheduler pin is a real release hash, never the PENDING-SHA256 placeholder", () => {
+  assert.equal(SCHEDULER.repo, "automagik-dev/automagik");
+  assert.equal(SCHEDULER.version, "0.12.1-am.1");
+  for (const arch of ["arm64", "amd64"]) {
+    assert.notEqual(SCHEDULER.sha256[arch], "PENDING-SHA256", `${arch}: paste the release's checksums.txt sha256`);
+    assert.match(SCHEDULER.sha256[arch], /^[0-9a-f]{64}$/, `${arch}: a sha256`);
+  }
 });
 
 test("no scheduler: one line says what is missing, the command is shown, Copy copies it, nothing runs it", async () => {
@@ -117,6 +127,7 @@ function listing(automations) {
 
 const nightly = (agent) => ({ name: "nightly", cron: "0 9 * * 1-5", repo: "/r", workspace: "worktree", agent, prompt: "p", timeout_minutes: 60 });
 const border = (node) => node.calls.filter(([m]) => m === "border_color").map(([, c]) => c).at(-1);
+const bg = (node) => node.calls.filter(([m]) => m === "bg").map(([, c]) => c).at(-1);
 
 test("an automation saved with gemini shows a dimmed, picked 'gemini (retired)' pill and saves gemini back (#224)", async () => {
   const puts = listing([nightly("gemini")]);
@@ -177,19 +188,31 @@ test("a non-retired automation: no retired pill, its agent picked as before; a n
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 const STUB = String.raw`
 const fs = require("node:fs"), path = require("node:path");
 const home = process.env.STUB_HOME, args = process.argv.slice(2);
+const version = process.env.STUB_VERSION || "0.12.1";
+const OUR = version.includes("-am.");
+// putCmd's api.Automation keys, the fields a put writes: 15 upstream, close_workspace the 16th in
+// our build (herdr/scheduler). A sent key outside them is not in the entry put encodes, so
+// config.Put's setKeys removes it from the config, exactly as the real put does (held #595 Low).
+const FIELDS = ["name", "cron", "repo", "workspace", "workspace_id", "agent", "model", "template",
+  "prompt", "workflow", "mcp_config", "agent_args", "timeout_minutes", "catch_up_minutes", "disabled"];
+if (OUR) FIELDS.push("close_workspace");
 const yaml = path.join(home, ".config/herdr-automations/automations.yaml");
 const read = () => JSON.parse(fs.readFileSync(yaml, "utf8"));
 const out = (x) => process.stdout.write(JSON.stringify(x));
 let input = "";
 if (args[0] === "put") input = fs.readFileSync(0, "utf8");
 fs.appendFileSync(path.join(home, "argv.jsonl"), JSON.stringify({ argv: args, input }) + "\n");
-if (args[0] === "version") process.stdout.write("0.12.1\n");
-else if (args[0] === "ls") out({ automations: read().map(({ close_workspace, session, ...a }) => a), invalid: [], scheduler: { pid: 1 }, paused: false });
+if (args[0] === "version") process.stdout.write(version + "\n");
+else if (args[0] === "ls") out({ automations: read().map(({ session, ...a }) => {
+  if (OUR) a.close_workspace = a.close_workspace ?? "never";
+  else delete a.close_workspace; // upstream's api.Automation has no field for it
+  return a;
+}), invalid: [], scheduler: { pid: 1 }, paused: false });
 else if (args[0] === "history") out([]);
 else if (args[0] === "put") {
   const entry = JSON.parse(input), list = read();
@@ -198,7 +221,7 @@ else if (args[0] === "put") {
     const empty = (k, v) => !["name", "cron", "repo"].includes(k)
       && (v === undefined || v === null || v === "" || v === 0 || v === false || (Array.isArray(v) && !v.length));
     const into = at >= 0 ? list[at] : {};
-    for (const [k, v] of Object.entries(entry)) if (empty(k, v)) delete into[k]; else into[k] = v;
+    for (const [k, v] of Object.entries(entry)) if (!FIELDS.includes(k) || empty(k, v)) delete into[k]; else into[k] = v;
     if (at < 0) list.push(into);
     fs.writeFileSync(yaml, JSON.stringify(list, null, 2));
   }
@@ -206,7 +229,7 @@ else if (args[0] === "put") {
 } else { process.stderr.write("stub: not offered: " + args.join(" ")); process.exit(2); }
 `;
 
-function stubScheduler(automations) {
+function stubScheduler(automations, { version = "0.12.1" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "am-automations-"));
   mkdirSync(join(dir, ".local/bin"), { recursive: true });
   mkdirSync(join(dir, ".config/herdr-automations"), { recursive: true });
@@ -216,14 +239,16 @@ function stubScheduler(automations) {
   const yaml = join(dir, ".config/herdr-automations/automations.yaml");
   writeFileSync(yaml, JSON.stringify(automations, null, 2));
   state.home = dir;
+  let running = version; // the installed build; useVersion() swaps it, like a repair does
   state.exec = (command, args) => new Promise((resolve) => {
     if (command !== "sh" && command !== bin) { resolve({ code: 127, stdout: "", stderr: `cannot run ${command}: refused` }); return; }
-    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir } }, (err, stdout, stderr) =>
+    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir, STUB_VERSION: running } }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
   });
   const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   return {
-    dir, bin,
+    dir, bin, version,
+    useVersion: (v) => { running = v; },
     saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, raw: c.input, entry: JSON.parse(c.input) })),
     yaml: () => JSON.parse(readFileSync(yaml, "utf8")),
     done: () => rmSync(dir, { recursive: true, force: true }),
@@ -280,8 +305,8 @@ const TEMPLATES = { templates: [
 ] };
 
 /** A panel on the stub scheduler with every agent installed and the fake hc's templates. */
-async function stubPanel(automations) {
-  const s = stubScheduler(automations);
+async function stubPanel(automations, options) {
+  const s = stubScheduler(automations, options);
   state.agents = ALL;
   state.hc = async (args) => (args.join(" ") === "templates --json"
     ? { code: 0, stdout: JSON.stringify(TEMPLATES), stderr: "" } : { code: 2, stdout: "", stderr: "fake hc: not offered" });
@@ -409,8 +434,9 @@ test("an automatic-only entry turned down to Agent default keeps no flag in the 
   } finally { s.done(); }
 });
 
-// close_workspace (and session) can only be hand-written: v0.12.1's put has no field for them, and
-// a key it is sent with no value is removed. The panel never sends either, so an edit keeps them.
+// Under an upstream scheduler close_workspace (and session) can only be hand-written: v0.12.1's put
+// has no field for them, and a key it is sent with no value is removed. The panel never sends either
+// there, so an edit keeps them.
 test("a hand-written close_workspace and session survive a prompt-only edit; put is never sent them", async () => {
   const { s, view, cx } = await stubPanel([{ ...nightly("claude"), close_workspace: "on-success", session: "night" }]);
   try {
@@ -424,6 +450,119 @@ test("a hand-written close_workspace and session survive a prompt-only edit; put
     assert.equal(s.yaml()[0].session, "night");
     assert.equal(s.yaml()[0].prompt, "p, said again");
   } finally { s.done(); }
+});
+
+// ---- our scheduler build (#498): the close_workspace switch ----
+// The panel installs and drives our build of the vendored fork (herdr/scheduler/), whose ls --json
+// and put carry close_workspace; upstream DnzzL's v0.12.1 has no field for it. `version` tells them
+// apart: ours contains "-am.".
+const OUR = "0.12.1-am.1";
+
+test("our scheduler: a new worktree automation closes its space after a successful run by default (D2)", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: OUR });
+  try {
+    const t = (await import(stubs.herdr)).theme();
+    await fillNew(view, cx, draw, "claude");
+    const toggle = draw().get("f-close");
+    assert.ok(toggle, "the close switch is shown for a new worktree entry");
+    assert.equal(bg(toggle), t.accent, "on by default");
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.equal(saved.entry.close_workspace, "on-success");
+    assert.equal(s.yaml()[0].close_workspace, "on-success");
+  } finally { s.done(); }
+});
+
+test("upstream: close_workspace is never sent, and one line says our build is needed (#595)", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), close_workspace: "on-success" }]);
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    const n = draw();
+    assert.ok(!n.has("f-close"), "no switch for an upstream binary");
+    assert.match(textOf(n.get("f-close-upstream")), /Our scheduler build \(0\.12\.1-am\.1\) is needed/);
+    view.form.prompt.type("p, said again", cx);
+    await saveIt(view, cx);
+    assert.ok(!("close_workspace" in s.saves()[0].entry), "never sent");
+    assert.equal(s.yaml()[0].close_workspace, "on-success", "the stub would have removed it had it been sent");
+  } finally { s.done(); }
+});
+
+test("an existing space hides the switch: close_workspace on-success is refused with workspace existing", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), workspace: "existing", workspace_id: "w7" }], { version: OUR });
+  try {
+    view.edit("nightly", cx);
+    await cx.settle();
+    assert.ok(!draw().has("f-close"), "no switch");
+    assert.ok(!draw().has("f-close-upstream"), "and no upstream line: ours is installed");
+    await saveIt(view, cx);
+    assert.equal(s.saves()[0].entry.close_workspace, "never", "sent never, never on-success");
+    assert.equal(s.yaml()[0].close_workspace, "never");
+  } finally { s.done(); }
+});
+
+test("an existing entry shows ls's on-success, and switching the close switch off sends never", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...nightly("claude"), close_workspace: "on-success" }], { version: OUR });
+  try {
+    const t = (await import(stubs.herdr)).theme();
+    view.edit("nightly", cx);
+    await cx.settle();
+    const toggle = draw().get("f-close");
+    assert.ok(toggle, "shown for a worktree entry");
+    assert.equal(bg(toggle), t.accent, "on: ls --json said on-success");
+    toggle.click({}, cx);
+    await cx.settle();
+    assert.equal(bg(draw().get("f-close")), t.input, "off after the click");
+    await saveIt(view, cx);
+    assert.equal(s.saves()[0].entry.close_workspace, "never");
+    assert.equal(s.yaml()[0].close_workspace, "never");
+  } finally { s.done(); }
+});
+
+test("a binary swapped for upstream before Save: close_workspace is withheld (fail closed)", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: OUR });
+  try {
+    const t = (await import(stubs.herdr)).theme();
+    await fillNew(view, cx, draw, "claude");
+    assert.equal(bg(draw().get("f-close")), t.accent, "ours at start: the switch is on");
+    s.useVersion("0.12.1"); // repaired to upstream while the panel is open, before the 30 s refresh
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(!("close_workspace" in saved.entry), "the probe right before put says upstream");
+    assert.ok(!("close_workspace" in s.yaml()[0]), "and nothing was written");
+  } finally { s.done(); }
+});
+
+test("upstream at start, ours at Save: the key goes, because the switch is on", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: "0.12.1" });
+  try {
+    await fillNew(view, cx, draw, "claude");
+    assert.ok(!draw().has("f-close"), "upstream at start: no switch");
+    assert.ok(draw().has("f-close-upstream"), "one line says our build is needed");
+    s.useVersion(OUR); // repaired to our build while the panel is open
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.equal(saved.entry.close_workspace, "on-success", "the fresh probe says ours, D2 is on");
+    assert.equal(s.yaml()[0].close_workspace, "on-success");
+  } finally { s.done(); }
+});
+
+test("the stub's put deletes a key outside putCmd's field list, like the real put (held #595 Low)", () => {
+  const entry = { name: "nightly", cron: "0 9 * * 1-5", repo: "/r", workspace: "worktree", agent: "claude",
+    prompt: "p", timeout_minutes: 60, close_workspace: "on-success", session: "night" };
+  const upstream = stubScheduler([{ ...nightly("claude"), close_workspace: "on-success", session: "night" }]);
+  const ours = stubScheduler([{ ...nightly("claude"), session: "night" }], { version: OUR });
+  try {
+    const put = (s) => execFileSync(s.bin, ["put", "--original", "nightly"], {
+      input: JSON.stringify(entry), env: { PATH: "/usr/bin:/bin", STUB_HOME: s.dir, STUB_VERSION: s.version },
+    });
+    put(upstream);
+    assert.ok(!("close_workspace" in upstream.yaml()[0]), "upstream's 15 fields: the 16th is removed");
+    assert.ok(!("session" in upstream.yaml()[0]), "session is no field of either build");
+    put(ours);
+    assert.equal(ours.yaml()[0].close_workspace, "on-success", "ours' 16th field is written");
+    assert.ok(!("session" in ours.yaml()[0]), "session is still no field of ours");
+  } finally { upstream.done(); ours.done(); }
 });
 
 test("catch_up_minutes and workflow go back to put as they came (#501)", async () => {

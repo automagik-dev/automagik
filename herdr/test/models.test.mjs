@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
   withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
-import { paneCommand, restartPlan } from "../mods/am-sidebar/restart.js";
+import { launchChange, paneCommand, paneLaunch, restartPlan } from "../mods/am-sidebar/restart.js";
 import { startArgs } from "../mods/am-sidebar/launchArgs.js";
 
 const files = (map) => ({ home: "/h", read: (p) => map[p] ?? null });
@@ -202,11 +202,14 @@ test("briefingFileOf and resumesConversation: what the hook reads from a pane's 
   assert.equal(resumesConversation("claude", ["claude", "--append-system-prompt-file", FILE]), false);
 });
 
-test("restartPlan reusing a pane's command drops its old briefing words before the prompt and resume rules", () => {
+test("restartPlan no longer reuses a pane's command: its briefing words don't change the source's launch (#597)", () => {
   const bot = { agent: "omp" };
   const launch = { argv: ["omp", "--thinking=high", `--append-system-prompt=${BRIEF}`] };
   const plan = restartPlan({ bot, run: ["omp"], runningAgent: "omp", session: null, launch });
-  assert.deepEqual(plan.argv, ["omp", "--thinking=high", "--continue"]);
+  assert.deepEqual(plan.argv, ["omp", "--continue"]);
+  // The pane's own flags are what launchChange names, its briefing words are no difference.
+  assert.deepEqual(paneLaunch(launch, "omp"), ["omp", "--thinking=high"]);
+  assert.match(launchChange({ name: "Dev", launch, agent: "omp", argv: plan.source }), /Dev: its pane's command differs from its source now \(drops --thinking=\*\*\*\)/);
 });
 
 test("tomlString: JSON's escapes, plus U+007F escaped and lone surrogates replaced (TOML rejects both)", () => {
@@ -237,13 +240,14 @@ test("resumedSessionOf: the id a Claude command resumes, null for --continue, un
   assert.equal(resumedSessionOf("claude", ["claude", "--model", "m"]), undefined);
 });
 
-test("restart of a hermes bot fed the whole command Start gave it (env PATH, briefing variable): its own flags kept (#213)", () => {
+test("restart of a hermes bot fed the whole command Start gave it (env PATH, briefing variable): the source's command, not --yolo (#597)", () => {
   const args = startArgs({ botId: "b-aaaaaaaaaa", cwd: "/p", parent: ["--no-parent"], argv: ["hermes", "--yolo"], path: "/bin",
     env: { HERMES_EPHEMERAL_SYSTEM_PROMPT: BRIEF } });
   const launch = paneCommand({ argv: args.slice(args.indexOf("--") + 1) });
   assert.deepEqual(launch, { argv: ["hermes", "--yolo"] }, "the whole env prefix dropped, the program found");
   const plan = restartPlan({ bot: { agent: "hermes" }, run: ["hermes"], runningAgent: "hermes", session: null, launch });
-  assert.deepEqual([plan.reused, plan.argv], [true, ["hermes", "--yolo", "--continue"]]);
+  assert.deepEqual(plan.argv, ["hermes", "--continue"]);
+  assert.match(launchChange({ name: "Dev", launch, agent: "hermes", argv: plan.source }), /Dev: its pane's command differs from its source now \(drops --yolo\)/);
   // A person's own env line (not this pack's PATH prefix) is left as it is.
   assert.deepEqual(paneCommand({ argv: ["/usr/bin/env", "FOO=1", "hermes"] }), { argv: ["/usr/bin/env", "FOO=1", "hermes"] });
 });

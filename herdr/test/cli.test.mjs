@@ -1323,11 +1323,13 @@ const ledgerOf = (s) => readLedger(existsSync(ledgerPath(s.app)) ? readFileSync(
 const attachOf = (s) => readRows(existsSync(attachFile(s.app)) ? readFileSync(attachFile(s.app), "utf8") : "").rows;
 
 /** Genie's live pane t5 in the project, placed in sp9/tb3, with a Claude session and a squad. */
-function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen } = {}) {
+function restartScene(t, { status = "idle", extra = [], session = SID, runAs, runScreen, paneArgv = null } = {}) {
   const s = scene(t);
   s.seed(team());
   const old = term("t5", { bot: ID.main, cwd: s.project, status });
   old.foreground.cwd = s.project;
+  // A pane started with words the bot's definition may no longer name (hc get's launch argv).
+  if (paneArgv) { old.argv = paneArgv; old.foreground.argv = paneArgv; }
   old.labels = { ...old.labels, role: "main", "herdr.space": "sp9", "herdr.tab": "tb3", squad: "core", ...(session ? { "agent.session": session } : {}) };
   writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(runAs ? { runAs } : {}), ...(runScreen ? { runScreen } : {}) }));
   return s;
@@ -1372,6 +1374,25 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const again = s.cli(["restart", "Genie", "--force"]);
   assert.equal(again.code, 0, again.err);
   assert.deepEqual(plain(s.calls().filter((c) => c[0] === "run")[1]).slice(-3), ["claude", "--resume", SID]);
+});
+
+test("restart rebuilds the launch from the bot's source, never the old pane's argv (#597)", (t) => {
+  // The Housekeeper repro: a pane once started with a retired proxy and -c. Its definition
+  // (agent, model) no longer names them, so restart launches from the source and says so.
+  const stale = ["claude", "--proxy=http://proxy.example:8080", "-c"];
+  const s = restartScene(t, { paneArgv: stale });
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["claude", "--resume", SID], "the source's command, resumed by the session");
+  assert.match(r.err, /Genie: its pane's command differs from its source now \(drops --proxy=\*\*\*\): restarting from the source/);
+  assert.equal(r.err.includes("proxy.example"), false, "the value is masked");
+  // --fresh: the source's command, and never the old pane's resume words.
+  const f = restartScene(t, { paneArgv: stale });
+  const fresh = f.cli(["restart", "Genie", "--fresh", "--json"]);
+  assert.equal(fresh.code, 0, fresh.err);
+  const words = plain(agentWords(runCall(f.calls())));
+  assert.deepEqual(words, ["claude"], "neither the proxy nor a resume word");
+  assert.equal(words.some((w) => ["-c", "--continue", "--resume"].includes(w)), false);
 });
 
 test("restart refuses a working bot (nothing started or ended) unless --force", (t) => {
@@ -1828,14 +1849,14 @@ test("history: no ledgers is an empty history; a removed bot by its bare id; an 
 // ---- restart #213: the old pane's folder, command and session; PATH; --tree ----
 
 /** Captain on `agent` in pane t6 (hc get fields `over`), in project folder `cwd`, with an `omp` on PATH. */
-function captainScene(t, { agent = "omp", over = {}, extra = [] } = {}) {
+function captainScene(t, { agent = "omp", over = {}, extra = [], templates = null } = {}) {
   const s = scene(t);
   const f = team();
   f.bots[1].agent = agent;
   s.seed(f);
   exe(join(s.root, "bin", "omp"), "#!/bin/sh\nexit 0\n");
   const old = { ...term("t6", { bot: ID.cap, app: agent }), ...over };
-  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100 }));
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, ...extra], next: 100, ...(templates ? { templates } : {}) }));
   return s;
 }
 const runs = (s) => s.calls().filter((c) => c[0] === "run");
@@ -1883,22 +1904,25 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.equal(s3.hcState().terminals.find((x) => x.address === "t6").state, "live");
 });
 
-test("restart #213: an omp bot from a template, in a worktree, comes back in that folder on the template's command, resumed", (t) => {
+test("restart #213/#597: an omp bot from a template, in a worktree, comes back on the template's CURRENT command, resumed", (t) => {
   const s0 = scene(t);
   const wt = join(s0.root, "proj.worktrees", "rust-cap");
   mkdirSync(wt, { recursive: true });
   const cmd = 'env PATH="$HOME/.bun/bin:$PATH" omp --auto-approve --model kimi/k3';
-  const s = captainScene(t, { over: { cwd: wt, foreground: { argv: ["bun", "/h/.bun/bin/omp", "--auto-approve", "--model", "kimi/k3"], cwd: wt },
-    argv: ["sh", "-c", cmd], template: "dev-kimi" } });
+  const s = captainScene(t, { templates: [{ name: "dev-kimi", command: cmd }],
+    over: { cwd: wt, foreground: { argv: ["bun", "/h/.bun/bin/omp", "--auto-approve", "--model", "kimi/k3"], cwd: wt },
+      argv: ["sh", "-c", cmd], template: "dev-kimi" } });
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().replaced, r.json().mode, r.json().agent], ["t6", "resume", "omp"]);
   const run = runCall(s.calls());
   assert.equal(run[run.indexOf("--cwd") + 1], wt, "the old pane's folder, not the project's");
-  // The template's own command (its env, flags and model), with --continue as a real argument.
+  // The template's own CURRENT command (its env, flags and model), with --continue as an argument.
   assert.deepEqual(agentWords(run), ["sh", "-c", `${cmd} "$@"`, "sh", "--continue"]);
+  assert.ok(run.includes("worker.template=dev-kimi"), "the template's name goes with the new pane");
+  assert.doesNotMatch(r.err, /differs from/, "its command is the template's: no line");
   // Again (t100 is mid-turn in the fake: --force), now with an omp session id on the pane: the
-  // command isn't wrapped twice and the old --continue is dropped.
+  // template is found by its label and the resume words come from the id.
   const st = s.hcState();
   st.terminals.find((x) => x.address === "t100").labels["agent.session"] = SID2;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -1909,9 +1933,54 @@ test("restart #213: an omp bot from a template, in a worktree, comes back in tha
   assert.equal(next[next.indexOf("--cwd") + 1], wt);
   assert.deepEqual(agentWords(next), ["sh", "-c", `${cmd} "$@"`, "sh", `--resume=${SID2}`]);
   assert.ok(next.includes(`agent.session=${SID2}`), "the session label goes with it");
+  assert.ok(next.includes("worker.template=dev-kimi"), "and the template's name too");
+  assert.doesNotMatch(again.err, /differs from/);
 });
 
-test("restart #213: a hand-started codex bot keeps its flags and resumes its session by id; the old pane's folder gone: the project's, said", (t) => {
+test("restart #597: a template hc no longer lists falls back to the agent row; its line names the template, not its text", (t) => {
+  const cmd = 'env PATH="$HOME/.bun/bin:$PATH" omp --auto-approve --model kimi/k3';
+  const s = captainScene(t, { templates: [], over: {
+    foreground: { argv: ["omp", "--auto-approve"], cwd: "/x" }, argv: ["sh", "-c", cmd], template: "dev-kimi" } });
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(ownWords(runCall(s.calls())), ["omp", "--continue"], "the agent row, not the gone template");
+  assert.match(r.err, /Captain: its pane's template dev-kimi differs from its source now: restarting from the source/);
+  assert.equal(r.err.includes("auto-approve"), false, "never the template's text");
+});
+
+test("restart D2: a bot moved to dsh-tui whose pane's agent can't be read doesn't restart its old omp template", (t) => {
+  const cmd = "omp --auto-approve --model kimi/k3";
+  const s = captainScene(t, { agent: "dsh-tui", templates: [{ name: "old-omp", command: cmd }],
+    over: { foreground: { argv: ["zsh"], cwd: "/x" }, argv: ["sh", "-c", cmd], template: "old-omp" } });
+  exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = ownWords(runCall(s.calls()));
+  assert.equal(words[0], "dsh-tui", JSON.stringify(words));
+  assert.equal(words.includes("omp"), false, "never the old omp template");
+  assert.match(r.err, /Captain: its pane's template old-omp differs from its source now: restarting from the source/);
+});
+
+test("restart F2: a quoted template command is read, and another agent's quoted command still never matches", (t) => {
+  const cmd = 'sh -c "omp --auto-approve"';
+  const s = captainScene(t, { templates: [{ name: "quoted", command: cmd }],
+    over: { foreground: { argv: ["omp"], cwd: "/x" }, argv: ["sh", "-c", cmd], template: "quoted" } });
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(runCall(s.calls()));
+  assert.deepEqual(words.slice(0, 2), ["sh", "-c"], "the template's command, wrapped with its resume words");
+  assert.ok(words[2].startsWith(cmd), words.join(" "));
+  assert.doesNotMatch(r.err, /differs from/, "its command is the template's: no line");
+  // The same quoted shape running another agent never matches this omp bot.
+  const other = captainScene(t, { templates: [{ name: "quoted", command: 'sh -c "claude --model x"' }],
+    over: { foreground: { argv: ["omp"], cwd: "/x" }, argv: ["sh", "-c", 'sh -c "claude --model x"'], template: "quoted" } });
+  const o = other.cli(["restart", "Captain", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(ownWords(runCall(other.calls())), ["omp", "--continue"], "the agent row, not the quoted template");
+  assert.match(o.err, /Captain: its pane's template quoted differs from its source now: restarting from the source/);
+});
+
+test("restart #597: a hand-started codex bot comes back from its source, not its old flags; the old pane's folder gone: the project's, said", (t) => {
   const s = captainScene(t, { agent: "codex", over: {
     cwd: "/gone/folder", foreground: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"], cwd: "/gone/folder" },
     argv: ["/usr/bin/env", "PATH=/old", "codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"],
@@ -1919,7 +1988,9 @@ test("restart #213: a hand-started codex bot keeps its flags and resumes its ses
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.deepEqual(plain(agentWords(run)), ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", SID], "a person's own -c stays");
+  assert.deepEqual(plain(agentWords(run)), ["codex", "resume", SID], "the source's command, resumed by its session");
+  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*\)/);
+  assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
   assert.equal(r.json().session, SID);
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
   assert.match(r.err, /t6's folder \/gone\/folder isn't there now, so t100 runs in .*; its conversation may not be found there\./);
@@ -2190,13 +2261,14 @@ test("start #453: login 2's folder by value after PATH; a bad record starts Clau
   assert.match(dev.err, /claude-logins\.json: can't be read \(EISDIR\); started on the default login/);
 });
 
-test("restart --tree #453: the bot's own -u launch reused under login 2; a Claude helper gets the words, a codex helper none", (t) => {
+test("restart --tree #453: the bot's own -u launch is rebuilt on login 2; a Claude helper gets the words, a codex helper none", (t) => {
   const s = restartScene(t);
   const two = join(s.home, ".claude-2");
   mkdirSync(two);
   writeFileSync(join(s.app, "claude-logins.json"), JSON.stringify({ use: "2", logins: [{ id: "2", dir: two }] }));
   const st = s.hcState();
-  // Genie was started on login A (its launch argv has -u): Restart strips it and reuses its command.
+  // Genie was started on login A (its launch argv has -u): Restart rebuilds its command from the
+  // source (claude and its session) and puts login 2's words in front (#597).
   st.terminals[0].argv = ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", "PATH=/old", "claude", "--model", "opus"];
   const wa = join(s.root, "wa"), wb = join(s.root, "wb");
   mkdirSync(wa);
@@ -2208,7 +2280,8 @@ test("restart --tree #453: the bot's own -u launch reused under login 2; a Claud
   assert.equal(r.code, 0, r.err);
   const [bot, claude, codex] = runs(s).map(envAndProgram);
   assert.deepEqual(bot.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
-  assert.deepEqual(plain(bot.program).slice(0, 3), ["claude", "--model", "opus"], "its own command, never env");
+  assert.deepEqual(plain(bot.program), ["claude", "--resume", SID], "the source's command, never the pane's --model");
+  assert.match(r.err, /Genie: its pane's command differs from its source now \(drops --model=\*\*\*\)/);
   assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
   assert.equal(claude.program[0], "claude");
   assert.equal(codex.program[0], "codex");
@@ -2550,7 +2623,7 @@ test("start: omp, pi and grok get the briefing once, as the word or value right 
   }
 });
 
-test("restart: an omp bot's command reused keeps one briefing, the new one, and its own flags", (t) => {
+test("restart: an omp bot's pane command is not reused: one briefing, the new one, the source's words and a line naming the dropped flag (#597)", (t) => {
   const s = agentScene(t, "omp");
   assert.equal(s.cli(["start", "Genie", "--json"]).code, 0);
   const first = agentWords(runCall(s.calls()));
@@ -2570,7 +2643,9 @@ test("restart: an omp bot's command reused keeps one briefing, the new one, and 
   assert.equal(found.length, 1, "never twice");
   assert.equal(found[0][1], 1, "right after the executable");
   assert.match(found[0][0], /Edited\./, "the new text, not the old");
-  assert.ok(words.includes("--thinking=high"), "its own flag kept");
+  assert.equal(words.includes("--thinking=high"), false, "the pane's old flag isn't carried over");
+  assert.ok(words.includes("--continue"), "the source's own resume words");
+  assert.match(r.err, /Genie: its pane's command differs from its source now \(drops --thinking=\*\*\*\)/);
 });
 
 test("start: hermes gets the briefing in its environment, unless its config sets its own prompt (then a warning)", (t) => {

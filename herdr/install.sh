@@ -30,7 +30,7 @@
 # over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
 # the pack's `automagik-herdr meter install --linked`: each machine downloads and checks it
 # itself); a failure there is only a warning. When asked at a terminal (or with --dsh-tui; --yes
-# never does), it installs the pinned dsh-TUI into DSH's own `tui` profile and the `dsh-tui` shim
+# never does), it installs the pinned dsh-TUI into DSH's own `dsh-tui` profile and the `dsh-tui` shim
 # into ~/.local/bin, so Herdr's built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
 # missing or damaged folder the record lists (the damaged copy kept in backup/), puts back a
@@ -159,7 +159,7 @@ pack (automagik-herdr-pack-<v>.tgz): not every release does.
 machine: install skips it, and --uninstall keeps it even where this installer put it.
 --usagemeter-local-only installs and removes it on this computer only, never on a linked machine
 (hc machine ls). Both are remembered for 'automagik-herdr update' and the sidebar's sync.
---dsh-tui installs the pinned dsh-TUI into DSH's own `tui` profile and the dsh-tui shim into
+--dsh-tui installs the pinned dsh-TUI into DSH's own `dsh-tui` profile and the dsh-tui shim into
 ~/.local/bin, so Herdr's built-in DSH entry works; --no-dsh-tui leaves DSH alone. Without either,
 the installer asks (unless --yes), and a machine with no dsh gets one line saying how to get it.
 --uninstall removes dsh-TUI (the plugin and the shim) when this installer put it there.
@@ -757,7 +757,7 @@ uninstall_meter() {
 
 # ---- DSH as a Herdr agent (dsh-TUI, #561) ----
 # The profile, the pin and the shim are the pack CLI's (`automagik-herdr dsh-tui install`), which
-# writes DSH's own `tui` profile and never the desktop one. This step only decides whether to ask;
+# writes DSH's own `dsh-tui` profile and never the desktop one. This step only decides whether to ask;
 # a machine with no dsh gets the one line the CLI gives, and nothing is written.
 dsh_tui_step() {
   [ "$DSH_TUI" = no ] && { say "Left DSH (dsh-TUI) alone (--no-dsh-tui)."; return 0; }
@@ -769,7 +769,7 @@ dsh_tui_step() {
     say "Left DSH (dsh-TUI) alone: --yes never installs the third-party dsh-TUI package; 'automagik-herdr dsh-tui install' or this installer with --dsh-tui adds it."
     return 0
   fi
-  if [ "$DSH_TUI" = ask ] && ! ask_opt_in "Install DSH as a Herdr agent (dsh-TUI, its own tui DSH profile; a third-party package)?"; then
+  if [ "$DSH_TUI" = ask ] && ! ask_opt_in "Install DSH as a Herdr agent (dsh-TUI, its own dsh-tui DSH profile; a third-party package)?"; then
     say "Left DSH (dsh-TUI) alone; 'automagik-herdr dsh-tui install' adds it later."
     return 0
   fi
@@ -788,6 +788,7 @@ dsh_tui_step() {
 dsh_shim_is_ours() {
   [ -f "$1" ] || return 1
   grep -Fq "# Automagik Herdr's dsh-tui shim" "$1" 2>/dev/null || return 1
+  grep -Fqx 'exec dsh --profile dsh-tui "$@"' "$1" 2>/dev/null && return 0
   grep -Fqx 'exec dsh --profile tui -- "$@"' "$1" 2>/dev/null
 }
 dsh_tui_uninstall() {
@@ -803,7 +804,7 @@ dsh_tui_uninstall() {
   fi
   if [ -e "$BIN_DIR/dsh-tui" ] || [ -L "$BIN_DIR/dsh-tui" ]; then
     if dsh_shim_is_ours "$BIN_DIR/dsh-tui"; then
-      rm -f "$BIN_DIR/dsh-tui" && say "Removed $BIN_DIR/dsh-tui; the tui DSH profile was left as it is (no installed dsh-tui command to run)."
+      rm -f "$BIN_DIR/dsh-tui" && say "Removed $BIN_DIR/dsh-tui; the dsh-tui DSH profile was left as it is (no installed dsh-tui command to run)."
     else
       say "Left $BIN_DIR/dsh-tui: it is not this installer's (or it is a dangling link)."
     fi

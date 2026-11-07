@@ -31,7 +31,7 @@ function fuzzCases(seed = SEED, count = 200) {
   const pick = (list) => list[Math.floor(rand() * list.length)]
   const unit = () => Array.from({ length: 1 + Math.floor(rand() * 4) }, () => pick(PIECES)).join('')
   const fill = (piece, size) => piece.repeat(Math.max(1, Math.floor(size / piece.length)))
-  return Array.from({ length: count }, (_, i) => {
+  const cases = Array.from({ length: count }, (_, i) => {
     const size = pick(SIZES)
     if (i % 3 === 2) {
       const [runs, keys, tails] = pick(SHAPES)
@@ -52,6 +52,11 @@ function fuzzCases(seed = SEED, count = 200) {
     const text = `${fill(lead, size * share)}${fill(run, size * (1 - share))}${tail}`
     return [`#${i} ${JSON.stringify(lead)} then ${JSON.stringify(run)} repeated, then ${JSON.stringify(tail)}`, text]
   })
+  // The shape that once backtracked over a whole blank run: 80k of " \t", then a name and a block.
+  cases.push(['fixed: 80000 " \\t" then accessToken: >', `${' \t'.repeat(40_000)}accessToken: >\n`])
+  cases.push(['fixed: 16384 of {"\\ runs', '{"\\'.repeat(5462).slice(0, 16_384)])
+  cases.push(['fixed: ? " + 80000 alnum + :x', `? "${'z'.repeat(80_000)}:x\n`])
+  return cases
 }
 
 // A sample uses CPU time, not wall clock: CI runs this package's test files side by side, and a
@@ -105,10 +110,11 @@ const REFERENCE_TEXT = (() => {
 
 // `redact` walks a served value and sends its strings through redactText, so it costs a small
 // multiple of the reference: 1.37–1.63x measured here over five runs (worst of the 200 cases over
-// those runs, Node 24.13.1) and 2.02x on the CI run that failed (#513: 20.8 ms against a
-// 10.3 ms reference). SERVED_MARGIN 3 sits 1.49x above that CI reading and 1.84x above the local
-// worst: a 2x regression of either reading (3.26x local, 4.04x on CI) still fails, while a
-// regression smaller than 1.49x of the CI reading is the trade for clearing the runner's spread.
+// those runs, Node 24.13.1), 2.02x on the CI run that failed (#513: 20.8 ms against a 10.3 ms
+// reference) and 1.62x, 1.82x and 1.89x on the #599 and #513 lanes after it. SERVED_MARGIN 3 sits
+// 1.49x above that CI reading and 1.84x above the local worst: a 2x regression of either reading
+// (3.26x local, 4.04x on CI) still fails, while a regression smaller than 1.49x of the CI reading
+// is the trade for clearing the runner's spread.
 // The absolute backstop caps how far a slow reference may widen the bound: 400 ms sits 1.7x above
 // the worst observed runner reading (mind's stream 225.8-233.2 ms at a 30.3-30.6 ms reference) and
 // only binds when 3 x reference passes it. A shared rule gone quadratic still fails: the text

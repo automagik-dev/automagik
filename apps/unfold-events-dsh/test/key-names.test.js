@@ -188,12 +188,13 @@ const REFERENCE_TEXT = (() => {
 // The window runs redactText over each delta and puts its rows and change payloads together on top,
 // so it costs a multiple of the reference: 1.29x measured here (worst of this adversarial set, Node
 // 24.13.1). The window reads only its keep, so a 160k input costs no more than a 16k one.
-// WINDOW_MARGIN matches the fuzz window's 4.5, 3.5x above that 1.29x. The absolute backstop
-// (400 ms, as in the fuzz guards) caps how far a slow reference may widen the bound; a quadratic
-// rule at 80k characters is 6.4e9 steps, seconds of CPU, far past the bound or the backstop. The
-// text paths keep the absolute ceiling: they are the plain rule pass over fixed-size inputs, with
-// no per-path constant to scale.
-const WINDOW_MARGIN = 4.5
+// WINDOW_MARGIN matches the fuzz window's 8, the runner-driven constant: this path is the same
+// window, the fuzz window's worst CI reading is 6.32x (#513 head ee8595c8), and this path's own
+// measured 1.29x leaves 6.2x of headroom. The absolute backstop (400 ms, as in the fuzz guards)
+// caps how far a slow reference may widen the bound; a quadratic rule at 80k characters is 6.4e9
+// steps, seconds of CPU, far past the bound or the backstop. The text paths keep the absolute
+// ceiling: they are the plain rule pass over fixed-size inputs, with no per-path constant to scale.
+const WINDOW_MARGIN = 8
 const BACKSTOP_MS = 400
 
 const catalog = loadCatalog()

@@ -30,13 +30,13 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKTREES_EXCLUDE,
+import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
-import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, ledgerSession, paneCommand, planText as restartText, restartPlan,
-  sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+import { carriedLabels, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, paneCommand, planText as restartText,
+  restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
@@ -984,10 +984,14 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
   restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force] [--cwd DIR]
                                 the bot's agent again in its pane's place (same space and tab,
-                                same folder, labels kept, and the old pane's own command: its
-                                template, model and effort flags): the new pane starts, and the
-                                old one ends only once the new one's agent has stayed up (prints
-                                the new terminal). It resumes the conversation in that folder
+                                same folder, labels kept), launched from its current source
+                                (a live hc template's current command, else the definition's
+                                agent and model, plus the agent's own resume words), never from
+                                the old pane's command: a flag the source no longer names is
+                                dropped, with one line naming the flag names only (their values
+                                masked). The new pane starts, and the old one ends only
+                                once the new one's agent has stayed up (prints the new
+                                terminal). It resumes the conversation in that folder
                                 by the pane's session id (its agent.session label, or the
                                 ledger's row): claude --resume <session>, codex resume
                                 <session>, omp --resume=<session>, pi --session <session>,
@@ -1088,12 +1092,12 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
   dsh-tui install | update      DSH as a Herdr agent: the pinned dsh-TUI ${DSH_TUI.version} in its
-                                own \`tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
+                                own \`dsh-tui\` DSH profile, the dsh-tui shim on PATH (Herdr's
                                 built-in DSH entry finds it), and dsh-TUI's first-run guide
                                 marked done. No dsh on PATH: one honest line, skipped.
-  dsh-tui uninstall             dsh-TUI out of the tui profile and the shim away (sessions,
+  dsh-tui uninstall             dsh-TUI out of the dsh-tui profile and the shim away (sessions,
                                 dsh-TUI's state and the profile stay)
-  dsh-tui doctor                whether dsh, the tui profile and the shim are there, and
+  dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
                                 whether the profile is the pinned one (read-only)
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
@@ -2113,6 +2117,8 @@ async function restartOnMachine(opts, project, bot, entry) {
   if (!run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
   // The old pane's agent.session label, as restartPlan reads it for the agent.
   const label = old?.labels?.[SESSION_LABEL] ?? null;
+  // The old pane's launch, only to say when it differs from what the source launches now (#597).
+  const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
@@ -2152,6 +2158,14 @@ async function restartOnMachine(opts, project, bot, entry) {
     carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...(turnNote ? [turnNote] : []), ...seat.warnings];
+  // #597: the replacement is built from bots.json, never the pane's command; when they differ,
+  // one line names only flag names, values masked, and a template by name. A linked machine's
+  // templates aren't read here, so a template pane is named rather than resolved.
+  if (oldLaunch && !entry && (planned.runningAgent === null || planned.runningAgent === plan.agent)) {
+    const template = typeof old?.template === "string" && old.template.trim() ? { name: old.template.trim() } : null;
+    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source, template });
+    if (changed) warnings.push(changed);
+  }
   report(warnings);
   if (old) {
     let up = await agentUp(seat.address);
@@ -2917,11 +2931,15 @@ async function cmdRestart(opts, [ref]) {
     return resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
   };
   const known = old ? knownSession(old, runningAgent ?? bot.agent) : null;
+  // The old pane's launch and hc template, only to rebuild from the source and to say when they
+  // differ from it (#597): a template hc still lists owns the command, with its CURRENT words.
+  const oldLaunch = old ? paneCommand(old) : null;
+  const oldTemplate = old ? await paneTemplate(old) : null;
   const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
-    launch: old ? paneCommand(old) : null, runningModel: old && runningAgent ? detectModel(old.foreground?.argv, runningAgent) : null,
+    template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
   };
   let plan = restartPlan(planned);
   // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
@@ -2963,12 +2981,22 @@ async function cmdRestart(opts, [ref]) {
   let plans = tree;
   const early = [];
   if (tree.length) plans = await treeIdle(old, tree, (w) => early.push(w), { force: opts.force });
-  // A resumed session keeps its label on the new pane, so the next restart resumes it too.
-  const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}) };
+  // A resumed session keeps its label on the new pane, so the next restart resumes it too; a
+  // template keeps its name in the worker.template label, so the next restart finds it again.
+  const carry = { ...carriedLabels(old), ...(resumeId ? { [SESSION_LABEL]: resumeId } : {}),
+    ...(plan.template ? { [WORKER_TEMPLATE_LABEL]: plan.template } : {}) };
   let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry, replacing: old ? held.binding : null });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
+  // #597: the replacement is built from the bot's source (a live template's current command, or
+  // bots.json), never the pane's copy; when they differ, one line names only flag names, values
+  // masked, and a template by name.
+  if (oldLaunch && !swap && (runningAgent === null || runningAgent === plan.agent)) {
+    const changed = launchChange({ name: bot.name, launch: oldLaunch, agent: plan.agent, argv: plan.source, template: oldTemplate,
+      usedTemplate: Boolean(plan.template) });
+    if (changed) say(changed);
+  }
   // The sidebar's Restart shows only --json's warnings: why it didn't resume goes there too
   // (the text answer says it in its own line).
   if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
@@ -2990,7 +3018,8 @@ async function cmdRestart(opts, [ref]) {
       plan = { ...restartPlan({ ...planned, fresh: true }), note };
       resumeId = null;
       say(`${bot.name} starts on a new conversation: ${note}.`);
-      const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place, carry: carriedLabels(old), replacing: held.binding });
+      const again = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
+        carry: { ...carriedLabels(old), ...(plan.template ? { [WORKER_TEMPLATE_LABEL]: plan.template } : {}) }, replacing: held.binding });
       if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
       for (const w of again.hook.warnings) say(w);
       seat = again;
@@ -3856,6 +3885,14 @@ async function workersIn(worktree, ls) {
   return found.filter((w) => w.labels?.[WORKER_OF_LABEL]);
 }
 
+/** What `hc templates --json` lists: { list: [{ name, command }], why }; list null when it gives none. */
+async function hcTemplates() {
+  const r = await hc(["templates", "--json"]);
+  let list = null;
+  try { list = r.code === 0 ? JSON.parse(r.stdout).templates : null; } catch { list = null; }
+  return { list: Array.isArray(list) ? list : null, why: (r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}` };
+}
+
 /**
  * The agent an hc template runs, from its command in `hc templates`: { runs: an agent key, or
  * undefined when no known agent is in the command; command: that command }. A template hc doesn't list, or no list at
@@ -3863,11 +3900,9 @@ async function workersIn(worktree, ls) {
  * program (`--template rm` would run rm).
  */
 async function templateRuns(template, agents) {
-  const r = await hc(["templates", "--json"]);
-  let list = null;
-  try { list = r.code === 0 ? JSON.parse(r.stdout).templates : null; } catch { list = null; }
-  if (!Array.isArray(list)) {
-    throw new CliError(`hc templates gave no list (${(r.stderr || r.stdout).trim().slice(0, 200) || `exit ${r.code}`}), `
+  const { list, why } = await hcTemplates();
+  if (!list) {
+    throw new CliError(`hc templates gave no list (${why}), `
       + `so ${template} can't be checked as a template; hc run would start an unlisted name as a program. Not started.`);
   }
   const hit = list.find((x) => x?.name === template);
@@ -3876,6 +3911,24 @@ async function templateRuns(template, agents) {
     throw new CliError(`hc has no template ${template}${names.length ? `. Its templates: ${names.join(", ")}` : ""}.`);
   }
   return { runs: templateAgent(hit.command, agents) ?? undefined, command: typeof hit.command === "string" ? hit.command : null };
+}
+
+/**
+ * The hc template an old pane was started from: `get.template`, else the worker.template label a
+ * Restart through a template leaves on its new pane (so the next restart finds it again), with
+ * the template's CURRENT command when hc still lists it: { name, command }. { name } when hc
+ * doesn't list it (or gives no list): the restart falls back to the agent row, and its line
+ * names the template (#597 review F1). Null when the pane names none.
+ */
+async function paneTemplate(get) {
+  const own = typeof get?.template === "string" && get.template.trim() ? get.template.trim() : null;
+  const labeled = get?.labels?.[WORKER_TEMPLATE_LABEL];
+  const name = own ?? (typeof labeled === "string" && labeled.trim() ? labeled.trim() : null);
+  if (!name) return null;
+  const { list } = await hcTemplates();
+  const hit = list?.find((x) => x?.name === name);
+  const command = typeof hit?.command === "string" && hit.command.trim() ? hit.command : null;
+  return command ? { name, command } : { name };
 }
 
 /**
@@ -4518,7 +4571,7 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
 }
 
 /**
- * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `tui`
+ * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `dsh-tui`
  * profile, through the pinned dsh-TUI and the `dsh-tui` shim. `update` is the same idempotent
  * install (a newer pin in a later pack replaces it). Local only: the profile is this computer's.
  */
