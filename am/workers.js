@@ -229,17 +229,60 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   return [...args, "--parent", parent, "--", ...env, ...argv, ...promptArgs(agent, task)];
 }
 
+/** A program path's own name (`/bin/sh` is `sh`). */
+const shellBase = (p) => String(p ?? "").split("/").pop();
+
+// The shells whose `-c` carries a script a template's command may be wrapped in.
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+
+/**
+ * A shell command string's words: quotes group a word and are dropped, a backslash escapes the
+ * next character, blanks separate words. Never throws on an unclosed quote.
+ */
+function shellWords(text) {
+  const words = [];
+  let word = "", quote = null, has = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) { quote = null; continue; }
+      if (ch === "\\" && quote === '"' && i + 1 < text.length) { word += text[++i]; has = true; continue; }
+      word += ch; has = true; continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; has = true; continue; }
+    if (ch === "\\" && i + 1 < text.length) { word += text[++i]; has = true; continue; }
+    if (/\s/.test(ch)) { if (has) { words.push(word); word = ""; has = false; } continue; }
+    word += ch; has = true;
+  }
+  if (has) words.push(word);
+  return words;
+}
+
+/** The script a shell's `-c` carries in these words (`sh -c "…"`, `/bin/bash -c …`), or null. */
+function shellScript(words) {
+  for (let i = 1; i + 1 < words.length; i += 1) if (words[i] === "-c" && SHELLS.has(shellBase(words[i - 1]))) return words[i + 1];
+  return null;
+}
+
 /**
  * The agent an hc template's command runs: the agent (a key of `agents`) whose program comes
  * first in it as a word of its own (`… codex --no-daemon …`, `/usr/bin/claude …`), else null.
+ * A quoted shell wrapper (`sh -c "omp --auto-approve"`, also behind env assignments and other
+ * wrappers) is looked into, its `-c` script found the same way, a few wrappers deep.
  */
-export function templateAgent(command, agents = AGENTS) {
+export function templateAgent(command, agents = AGENTS, depth = 0) {
+  const text = String(command ?? "");
+  const script = shellScript(shellWords(text));
+  if (script !== null && depth < 4) {
+    const inner = templateAgent(script, agents, depth + 1);
+    if (inner) return inner;
+  }
   let best = null;
   for (const [key, agent] of Object.entries(agents)) {
     const program = agent?.run?.[0];
     if (!program) continue;
     const word = program.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const at = String(command ?? "").search(new RegExp(`(?:^|[\\s/])${word}(?=\\s|$)`));
+    const at = text.search(new RegExp(`(?:^|[\\s/])${word}(?=\\s|$)`));
     if (at >= 0 && (!best || at < best.at)) best = { key, at };
   }
   return best?.key ?? null;
