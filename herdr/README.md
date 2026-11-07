@@ -839,7 +839,7 @@ same exit code, same stdout and stderr. It allows `send`, `read`, `ls`, `get`, `
 `--help`/`-h`/`--version`/`--skill` forms, and one `run` shape: the dsh-tui worker start that
 `automagik-herdr worker` emits (`--bg`, the caller as `--parent`, `worker.of=<the caller's
 bot>`, a `--cwd` under the project's `.claude/worktrees/`, and `/usr/bin/env PATH=… dsh-tui`
-after `--`). Everything else is refused with one stderr line naming #624 and #629, and the
+after `--`). Everything else is refused with one stderr line naming #624 and #631, and the
 real `hc` is never called: `exec`, any other `run` (including a template or another agent),
 file writes, edits and reads, `machine`, `server`, `update`, `connect`, `keys`, `attach`, and
 any `--on` outside an allowed `send`.
@@ -849,13 +849,14 @@ any `--on` outside an allowed `send`.
 caller's bot) and the shared reviewer/fixer roles (`RANKS`). The caller comes from the attach
 ledger, the authority; a worker pane has no ledger row, so its `worker.of` label names its bot
 and its cwd's project. The target is resolved with the real `hc` (`ls` for a name, `get` for
-the labels). Any target outside that team is refused.
+the labels). Any target outside that team is refused. The launch briefing carries the guard
+paragraph only for a dsh-tui bot; a claude, omp or hermes briefing is unchanged.
 
 **This is a guardrail, not a boundary.** A bot can bypass it with an absolute path to the real
 `hc`, a raw socket client, or `hc connect`. A bot that edits its project's
 `.herdr/bots.json`, or changes a pane's labels with `hc label`, can widen its own `send`
 scope; that data is writable by the bot, so the team check is only as good as that data. The
-real fix is the sandboxed socket mask plus the per-pane filtering proxy wish (#624), and #629
+real fix is the sandboxed socket mask plus the per-pane filtering proxy wish (#624), and #631
 is the hard boundary. This wrapper only stops the ordinary `hc exec` attempt while that lands. The
 pack's own CLI still reaches the real `hc` for its trusted calls (system status, machine
 lists, remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep

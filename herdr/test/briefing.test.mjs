@@ -17,7 +17,7 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
-  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash,
+  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
@@ -903,6 +903,18 @@ test("launch text: who, role, instructions, how it works, lead and team by id; n
   // Long instructions stay under the cap.
   byId(f, ID.cap).instructions = "x".repeat(20000);
   assert.ok(launchBriefingText({ self: byId(f, ID.cap), file: f }).length <= BRIEFING_LIMIT);
+});
+
+test("the hc guard paragraph is only in a dsh-tui bot's briefing", () => {
+  const f = team();
+  const dsh = { ...byId(f, ID.cap), agent: "dsh-tui" };
+  assert.ok(launchBriefingText({ self: dsh, file: f }).includes(GUARD_LINE));
+  assert.ok(briefingText({ self: dsh, file: f }).includes(GUARD_LINE));
+  for (const agent of ["claude", "omp", "hermes", "codex", "pi", "grok"]) {
+    const self = { ...byId(f, ID.cap), agent };
+    assert.equal(launchBriefingText({ self, file: f }).includes(GUARD_LINE), false, agent);
+    assert.equal(briefingText({ self, file: f }).includes(GUARD_LINE), false, agent);
+  }
 });
 
 test("launch file: one per bot and project under the app home, its bot id read back", () => {

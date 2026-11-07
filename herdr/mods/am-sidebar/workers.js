@@ -16,7 +16,7 @@ export { TEMPLATE_SHAPE };
 /**
  * The deny-by-default hc guard's folder (automagik#624, `guard/hc`): put first on a dsh-tui
  * pane's PATH only, by startArgs and workerArgs. A guardrail, never a boundary: an absolute
- * hc path, a raw socket or `hc connect` skips it; #629 is the hard boundary.
+ * hc path, a raw socket or `hc connect` skips it; #631 is the hard boundary.
  */
 export const GUARD_DIR = fileURLToPath(new URL("./guard/", import.meta.url)).replace(/\/+$/, "");
 
@@ -229,7 +229,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
  * `/usr/bin/env <login words>`, its template label kept. `agent` `dsh-tui`: the pack's
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
- * boundary (#624, #629).
+ * boundary (#624, #631).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
   taskId, project, lead, space, login = [], templateArgv = null }) {

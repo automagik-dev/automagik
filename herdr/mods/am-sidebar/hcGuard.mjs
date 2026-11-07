@@ -3,10 +3,10 @@
 // A GUARDRAIL, NOT A BOUNDARY. This wrapper sits first on the pane PATH only because the pack
 // put it there (launchArgs.js startArgs and workers.js workerArgs, dsh-tui only). It refuses the
 // ordinary `hc exec` / bare `run` / file writes / machine and server commands with one line
-// naming #624 and #629, and passes the allowed calls to the real hc unchanged. It is bypassable
+// naming #624 and #631, and passes the allowed calls to the real hc unchanged. It is bypassable
 // by design: an absolute path to the real hc, a raw socket client, or `hc connect` skips it.
 // The hard boundary is the sandboxed socket mask plus the per-pane filtering proxy (#624),
-// tracked in #629. Labels and .herdr/bots.json are writable by the bot; the team check is a
+// tracked in #631. Labels and .herdr/bots.json are writable by the bot; the team check is a
 // guardrail over that data, never a boundary. Apache-2.0.
 //
 // The caller comes from the attach ledger (attach.js), the authority: a worker pane has no
@@ -46,11 +46,11 @@ const SELF_ENTRY = join(GUARD_DIR, "hc");
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 const say = (line) => process.stderr.write(`${line}\n`);
 const refused = (reason, code = 2) => {
-  say(`hc guard: refused ${oneLine(reason)} (#624): this wrapper is a guardrail, not a boundary; the hard boundary is #629.`);
+  say(`hc guard: refused ${oneLine(reason)} (#624): this wrapper is a guardrail, not a boundary; the hard boundary is #631.`);
   return code;
 };
 const failedClosed = (reason = "the real hc could not be run") => {
-  say(`hc guard: failed closed (#624): ${oneLine(reason)}; this wrapper is a guardrail, not a boundary (#629).`);
+  say(`hc guard: failed closed (#624): ${oneLine(reason)}; this wrapper is a guardrail, not a boundary (#631).`);
   return 1;
 };
 

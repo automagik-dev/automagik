@@ -50,7 +50,7 @@ export function startRefusal(file, botId) {
  * `login`: a Claude launch's login words (logins.js chooseLogin): `-u CLAUDE_CONFIG_DIR` first,
  * or `CLAUDE_CONFIG_DIR=<dir>` last. `agent`: when it is `dsh-tui`, the pack's deny-by-default
  * hc guard folder goes first on the pane PATH (workers.js GUARD_DIR); any other agent's arguments
- * stay byte for byte as before. The guard is a guardrail, not a boundary (#624, #629).
+ * stay byte for byte as before. The guard is a guardrail, not a boundary (#624, #631).
  */
 export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null }) {
   const args = ["run", "--bg", "--json"];

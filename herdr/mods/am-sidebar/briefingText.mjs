@@ -16,14 +16,17 @@ export const WORKER_LINE = "You write no code yourself: for each task start one 
 
 /**
  * The hc guard the pack puts first on a dsh-tui pane's PATH (#624, stopgap C). A GUARDRAIL,
- * not a boundary: an absolute hc path, a raw socket or `hc connect` skips it; #629 is the
+ * not a boundary: an absolute hc path, a raw socket or `hc connect` skips it; #631 is the
  * hard boundary. The pack's CLI still runs its own trusted hc calls.
  */
 export const GUARD_LINE = "The pack puts a deny-by-default hc guard first on a dsh-tui pane's PATH: "
   + "it allows send, read, ls, get, wait, put, label, kill, rm, events, schema, templates and the worker start, "
   + "and refuses exec, other runs, file writes/reads, machine, server, update, connect, keys, attach and --on. "
   + "It is a GUARDRAIL, not a boundary: an absolute hc path, a raw socket or `hc connect` bypasses it. "
-  + "The real fix is the socket mask plus the per-pane proxy wish (#624); #629 is the hard boundary.";
+  + "The real fix is the socket mask plus the per-pane proxy wish (#624); #631 is the hard boundary.";
+
+/** The guard paragraph only in a briefing whose pane gets the guard: a dsh-tui bot (#624). */
+const guardLines = (self) => (self?.agent === "dsh-tui" ? [GUARD_LINE] : []);
 
 /** The block stays under Claude Code's 10,000-character cap on a hook's output. */
 export const BRIEFING_LIMIT = 9900;
@@ -87,7 +90,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) head.push("Instructions:", shown.trim());
-  head.push(WORKER_LINE, GUARD_LINE, liveLine(self.id));
+  head.push(WORKER_LINE, ...guardLines(self), liveLine(self.id));
   const tail = [];
 
   if (lead) {
@@ -170,7 +173,7 @@ export function launchBriefingText({ self, file }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) lines.push("Instructions:", shown.trim());
-  lines.push(WORKER_LINE, GUARD_LINE, liveLine(self.id), restartLine(self.id));
+  lines.push(WORKER_LINE, ...guardLines(self), liveLine(self.id), restartLine(self.id));
   const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
   const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
   if (lead) {

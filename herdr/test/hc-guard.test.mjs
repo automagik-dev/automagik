@@ -1,5 +1,5 @@
 // The deny-by-default hc guard (#624, stopgap C): every allowed verb passes to a stub hc
-// unchanged; every refused verb is one stderr line naming #624 and #629 and never calls it;
+// unchanged; every refused verb is one stderr line naming #624 and #631 and never calls it;
 // send is scoped to the caller's team; the dsh-tui worker run shape is exact. Hermetic: a temp
 // app home, a temp project and a stub hc on PATH; the real hc is never run. No escape route
 // (an absolute hc path, a raw socket, `hc connect`) is tested here: the guard is a guardrail,
@@ -130,7 +130,7 @@ function assertRefused(r) {
   const lines = r.stderr.trim().split("\n");
   assert.equal(lines.length, 1, `exactly one stderr line: ${JSON.stringify(r.stderr)}`);
   assert.match(r.stderr, /#624/);
-  assert.match(r.stderr, /#629/);
+  assert.match(r.stderr, /#631/);
   assert.equal(r.stdout, "", "a refusal prints no stdout");
 }
 
@@ -176,7 +176,7 @@ test("the doc-only forms pass; a doc flag on a refused command does not", (t) =>
 
 // ---- the refuse list ----
 
-test("every refused verb is one line naming #624 and #629, and the stub is never called", (t) => {
+test("every refused verb is one line naming #624 and #631, and the stub is never called", (t) => {
   const s = scene(t);
   const refused = [
     ["exec", "echo", "x"], ["file", "write", "/tmp/x"], ["file", "edit", "/tmp/x", "--old", "a", "--new", "b"],
@@ -206,7 +206,7 @@ test("no real hc: the guard fails closed with one line", (t) => {
   assert.equal(r.status, 1);
   assert.equal(r.stderr.trim().split("\n").length, 1, r.stderr);
   assert.match(r.stderr, /#624/);
-  assert.match(r.stderr, /#629/);
+  assert.match(r.stderr, /#631/);
 });
 
 // ---- send: the team, deny by default ----
