@@ -98,9 +98,9 @@ describe('the plugin lane', () => {
     // The binary ships from its own release lane: nothing here reaches an install, so no release kind.
     expect(ships(scheduler, none)).toBe(false);
     expect(herdrShips(scheduler)).toBe(false);
-    // The check script (herdr/scripts/scheduler-upstream.mjs) is tooling too: on its own, and beside
-    // the scheduler, it cuts no release and never reaches the pack.
-    const check = ['herdr/scripts/scheduler-upstream.mjs'];
+    // The check scripts (herdr/scripts/scheduler-upstream.mjs, scheduler-pin.mjs) are tooling too:
+    // on their own, and beside the scheduler, they cut no release and never reach the pack.
+    const check = ['herdr/scripts/scheduler-upstream.mjs', 'herdr/scripts/scheduler-pin.mjs'];
     expect(ships(check, none)).toBe(false);
     expect(herdrShips(check)).toBe(false);
     expect(ships([...scheduler, ...check], none)).toBe(false);

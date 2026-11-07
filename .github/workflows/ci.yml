@@ -114,6 +114,12 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/usagemeter-pin.mjs
 
+      # The Automations panel installs our scheduler release and pins its darwin sha256s
+      # (mods/am-automations/scheduler.js): checked against that release's checksums.txt.
+      - name: Scheduler pin
+        if: steps.changed.outputs.herdr == 'true'
+        run: node scripts/scheduler-pin.mjs
+
       # On every pull request, whatever changed: herdr.dev skips the whole repository when a herdr-mod
       # entry folder (any folder holding mods/<name>/main.js) holds layouts/ (RFC 0011).
       - name: No layouts/ in a herdr-mod entry folder

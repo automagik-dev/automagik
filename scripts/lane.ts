@@ -85,8 +85,8 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // The vendored scheduler (herdr/scheduler/, a byte-identical copy of DnzzL/herdr-automations, its own
 // UPSTREAM.md) is Go source, not pack code: its binary ships from its own release lane
 // (.github/workflows/scheduler-release.yml), so no release here packs or rebuilds it, and a scheduler
-// refresh alone cuts nothing. Its check script (herdr/scripts/scheduler-upstream.mjs) is tooling and
-// ships nowhere either.
+// refresh alone cuts nothing. Its check scripts (herdr/scripts/scheduler-upstream.mjs,
+// herdr/scripts/scheduler-pin.mjs) are tooling and ship nowhere either.
 // The Windows helper's Linux image and its guest launcher (apps/desktop/wslc/: the Dockerfile,
 // dsh-launch, the CI smoke and their tests; RFC 0016 delivery 2) are built by CI alone, and no
 // shipped app reads them yet: the desktop build packages src/ and the build/ resources only. When
@@ -95,7 +95,7 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^apps\/automagik-pets\//, /^docs\//,
-  /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/,
+  /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
   /^apps\/landing\//];
