@@ -33,5 +33,19 @@
         "after": "97cbae5491b6d941ead10487d557e67536fb23300224bb43fcd5ad91bfc167c2"
       }
     ]
+  },
+  {
+    "patch": "client-connection-cookie-lax.patch",
+    "about": "Connection: the browser-session cookie is SameSite=Lax instead of Strict. A launch link opened from a phone camera or QR is a top-level cross-site navigation, and the redirected ./ request withholds a Strict cookie, so authorizeIndex answers the 401 failed-authentication page; Lax sends the cookie on that navigation (#632). HttpOnly, the computed Secure attribute and the 303 are unchanged. Delete it in the DSH release whose browser-session cookie is Lax.",
+    "dsh": "0.2.2-rc.1",
+    "files": [
+      {
+        "package": "@deepseek-ai/dsh-client-connection",
+        "version": "0.2.2-rc.1",
+        "file": "lib/index.js",
+        "before": "0ebcca7583e082716f79b0b55bc1749d48269cc8db2989b043b321b57abd3684",
+        "after": "d90e87220ffcb6491703da90f882b775c1d085b0ab09e8d045ad1e5021c35d23"
+      }
+    ]
   }
 ]

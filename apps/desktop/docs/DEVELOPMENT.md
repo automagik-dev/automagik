@@ -90,6 +90,8 @@ To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `-
 
 - `frontend-static-index-cache.patch` (dsh 0.2.2-rc.1): the SPA index (`/` and the configured index path) answers `cache-control: no-cache` with a weak ETag of the rendered bytes, and a matching `If-None-Match` gets an empty 304 — the validator non-index assets already carry in this release — and authorization still runs before the bytes are read. Without it a normal reload after a plugin update can keep a stale manifest and client bundle; the release-change reload prompt is already in this dsh, and the server image applies the same patch. It carries no `Last-Modified`: a plugin update can rewrite the manifest without touching `index.html`'s mtime, so only a content ETag validates the served document. **Delete it in the DSH release that serves the index with cache directives.**
 
+- `client-connection-cookie-lax.patch` (dsh 0.2.2-rc.1): the browser-session cookie is `SameSite=Lax` instead of `Strict`, so a launch link opened from a phone camera or QR — a top-level cross-site navigation — reaches `./` with the cookie and does not get the 401 failed-authentication page (#632). `HttpOnly`, the computed `Secure` attribute and the 303 are unchanged; the desktop runtime and the server image both apply this patch. **Delete it in the DSH release whose browser-session cookie is Lax.**
+
 ### The icon
 
 `assets/icon.svg` is the icon's source: the owner's clay triskelion (`assets/mark.png`, the kit-v4 source, kept as delivered) on a cream clay tile. electron-builder makes every platform's icons from `assets/icon.png`, which is the SVG rendered by headless Chromium (`--no-sandbox` where its sandbox cannot start; the SVG loads `mark.png` beside it):
