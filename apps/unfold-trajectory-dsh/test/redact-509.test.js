@@ -171,8 +171,8 @@ test('#509: an unclosed no-space colon tail is masked and its value remembered',
     ['a quote after the colon', `? "${PASS}:${LEAK}"x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
     ['an apostrophe after the colon', `? "${PASS}:${LEAK} 'x\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
     ['an apostrophe in the value', `? "${PASS}:hunt'er2\n`, `? "${PASS}:${REDACTED}\n`, "hunt'er2"],
-    ['a value beginning with an apostrophe', `? "${PASS}:'${VALUE}\n`, `? "${PASS}:${REDACTED}\n`, `'${VALUE}`],
-    ['a value beginning with a double quote', `? "${PASS}:"${VALUE}\n`, `? "${PASS}:${REDACTED}\n`, `"${VALUE}`],
+    ['a value beginning with an apostrophe', `? "${PASS}:'${VALUE}\n`, `? "${PASS}:${REDACTED}\n`, `${VALUE}`],
+    ['a value beginning with a double quote', `? "${PASS}:"${VALUE}\n`, `? "${PASS}:${REDACTED}\n`, `${VALUE}`],
     ['a value with doubled apostrophes', `? "${PASS}:abc''def\n`, `? "${PASS}:${REDACTED}\n`, "abc''def"],
     ['a single-quoted twin with a double quote', `? '${PASS}:${LEAK} "x\n`, `? '${PASS}:${REDACTED}\n`, LEAK],
     ['a trailing comment apostrophe', `? "${PASS}:${LEAK} # c'mon\n`, `? "${PASS}:${REDACTED}\n`, LEAK],
@@ -183,6 +183,7 @@ test('#509: an unclosed no-space colon tail is masked and its value remembered',
     assert.equal(redactText(input), want, what)
     const kept = secretsIn(input)
     assert.ok(kept.includes(remembered), `${what}: the value is remembered`)
+    assert.ok(masked(`later note: ${remembered}`, kept).includes(REDACTED), `${what}: a later bare occurrence is masked`)
     assert.ok(!kept.includes(TAIL), `${what}: the name tail is not remembered`)
   }
 })
