@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test, { after } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { applyAllowlist, DATA_DIRS, loadAllowlist, nameHits, scanTree } from '../secrecy.mjs'
+import { applyAllowlist, DATA_DIRS, loadAllowlist, nameHits, scanTree, sha256, sha256Bytes } from '../secrecy.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const temps = []
@@ -87,6 +87,15 @@ test('the 17 negative probes all stay failures', () => {
   }
 })
 
+test('the file digest hashes bytes, not a lossy string', () => {
+  const a = Buffer.from([0x80, 0x00, 0x41])
+  const b = Buffer.from([0xfe, 0x00, 0x41])
+  assert.notEqual(sha256Bytes(a), sha256Bytes(b))
+  // The old path hashed String(buffer): both decode to the same replacement characters.
+  assert.equal(sha256(a.toString('utf8')), sha256(b.toString('utf8')))
+  assert.notEqual(sha256Bytes(Buffer.from('a')), sha256Bytes(Buffer.from('b')))
+})
+
 test('a bare PEM label constant is not a key; a real body, short last line and header are', () => {
   const dir = rootfs()
   write(dir, 'opt/leak/label.txt', '-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n')
@@ -117,7 +126,7 @@ test('a private-key entry is allowed only for the gnutls library', () => {
 })
 
 test('the node build account is excused only for the pinned binary hash', () => {
-  const pin = '5bcb4ec9c0ad9764e41392c1d3a3d46c28656c79b6e49f4a644499c9d96ac39f'
+  const pin = 'e237a2839d0cbdc9a9a2adda1a184afc0f5b20306ffbe923af5686550472d8a8'
   const hit = { file: 'nodejs/bin/node', rule: 'home-path', raw: '/home/iojs', match: '/home/iojs', fileSha256: pin }
   const entry = { file: 'nodejs/bin/node', rule: 'home-path', match: '/home/iojs', fileSha256: pin, reason: 'pinned' }
   assert.equal(applyAllowlist([hit], [entry]).kept.length, 0)

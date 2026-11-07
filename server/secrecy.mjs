@@ -45,6 +45,8 @@ export const ARCHIVE = /\.(?:tgz|tar|tar\.gz|gz|xz|bz2|zip|7z|rar)$/i
 const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MiB`
 const lineOf = (text, index) => text.slice(0, index).split('\n').length
 export const sha256 = (text) => createHash('sha256').update(String(text)).digest('hex')
+/** A file digest over its bytes, equal to `sha256sum`; `sha256` above is for matched text. */
+export const sha256Bytes = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const usage = 'usage: node server/secrecy.mjs <image> [--inventory <dir>] [--keep]\n'
   + '       node server/secrecy.mjs --rootfs <dir> [--inventory <dir>]'
 
@@ -231,7 +233,7 @@ export function scanTree(root, list = JSON.parse(readFileSync(LIST, 'utf8')), al
       raw.push(hitOf(entry.file, 0, 'unreadable', error.code ?? 'read failed'))
       continue
     }
-    const digest = sha256(buf)
+    const digest = sha256Bytes(buf)
     const tagged = (hits) => hits.map((hit) => ({ ...hit, fileSha256: digest }))
     raw.push(...tagged(nameHits(entry.file, entry.kind)))
     const binary = buf.includes(0)
