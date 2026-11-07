@@ -11,6 +11,11 @@ import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
 import { offeredAgents, RETIRED } from "./agents.js";
 import { addressWarning, argsText, autoArgs, modeOf, parseArgs, splitPermission, templateMode, withoutPermission } from "./modes.js";
+import { SCHEDULER, repairCommand } from "./scheduler.js";
+
+// The scheduler's release pin and install line live in scheduler.js: pure, so the Node pin check
+// (herdr/scripts/scheduler-pin.mjs) reads the same pins this panel offers.
+export { SCHEDULER, repairCommand };
 
 const PRESETS = [
   ["Hourly", "0 * * * *"],
@@ -21,27 +26,6 @@ const PRESETS = [
 ];
 const WORKSPACES = [["worktree", "New worktree"], ["root", "Repo root"], ["existing", "Existing space"]];
 const FINISHED = new Set(["done", "failed", "cancelled"]);
-
-// The scheduler this panel drives is a separate program the pack does not install (#220). When it
-// is missing, the panel says so and offers this release's install line to copy; it never runs it.
-// The sha256s are the release's checksums.txt, pinned here (macOS only, as part.json says).
-export const SCHEDULER = Object.freeze({
-  repo: "DnzzL/herdr-automations",
-  version: "0.12.1",
-  sha256: Object.freeze({
-    arm64: "7697a45b902bff14654355e1721ca588c2d3306050cbf201e5a497dc4f177819",
-    amd64: "890b53558b9a24e32fe093b58f0339808f85a8f15eca7452fe10b0b7f840597d",
-  }),
-});
-/** The command that installs the scheduler to ~/.local/bin, hash-checked, for this Mac's `uname -m`
- * (a subshell, so the terminal it is pasted in stays where it was). */
-export function repairCommand(machine) {
-  const arch = machine === "x86_64" ? "amd64" : "arm64";
-  const url = `https://github.com/${SCHEDULER.repo}/releases/download/v${SCHEDULER.version}/herdr-automations_darwin_${arch}`;
-  return `(mkdir -p ~/.local/bin && cd "$(mktemp -d)" && curl -fsSLo herdr-automations ${url}`
-    + ` && echo "${SCHEDULER.sha256[arch]}  herdr-automations" | shasum -a 256 -c`
-    + " && chmod 755 herdr-automations && mv herdr-automations ~/.local/bin/)";
-}
 
 const human = (cron) => PRESETS.find(([, c]) => c === cron)?.[0] ?? cron;
 const tilde = (p) => (p && p.startsWith(home()) ? "~" + p.slice(home().length) : p ?? "");
@@ -76,7 +60,7 @@ export default class Automations extends View {
     this.missing = null; // the repair command while the scheduler is not installed, else null
     this.copied = false;
     this.handle = cx.focus_handle();
-    this.bin = null; this.watching = false;
+    this.bin = null; this.ours = false; this.watching = false;
     cx.spawn((cx) => this.refresh(cx));
     cx.timer.every(30000, (cx) => this.refresh(cx)); // next-run times and the scheduler's pid
   }
@@ -84,7 +68,16 @@ export default class Automations extends View {
   // The CLI on PATH, else ~/.local/bin (where its install line and the dev symlink put it). Neither:
   // null, and the panel shows the command that installs it (looked for again on every refresh).
   async locate() {
-    const answers = async (bin) => { try { return (await exec(bin, ["version"])).code === 0; } catch { return false; } };
+    // Ours carries "-am." in `version` (herdr-automations-v<version>, herdr/scheduler): only our
+    // build's ls --json and put know close_workspace. Upstream's answer leaves this.ours false.
+    const answers = async (bin) => {
+      try {
+        const r = await exec(bin, ["version"]);
+        if (r.code !== 0) return false;
+        this.ours = /-am\./.test(r.stdout ?? "");
+        return true;
+      } catch { return false; }
+    };
     if (await answers("herdr-automations")) return "herdr-automations";
     const local = `${home()}/.local/bin/herdr-automations`;
     if (await answers(local)) return local;
@@ -181,6 +174,9 @@ export default class Automations extends View {
     };
     this.form = {
       original, workspace: a.workspace ?? "worktree", workspace_id: a.workspace_id ?? "",
+      // #498 (D2): a new entry closes its fresh space on success; an existing one shows what
+      // ls --json reports, "on-success" or "never".
+      close: original ? a.close_workspace === "on-success" : true,
       agent: a.template ? "" : a.agent ?? "claude", template: a.template ?? "",
       name: field(a.name, "issue-triage"), cron: field(a.cron, "0 9 * * 1-5"), repo: field(tilde(a.repo), "~/Projects/myapp"),
       model: field(a.model, "agent default"), timeout: field(String(a.timeout_minutes ?? 60), "60"),
@@ -223,6 +219,10 @@ export default class Automations extends View {
       prompt: f.prompt.value(), mcp_config: expand(f.mcp.value().trim()), timeout_minutes: Number.isFinite(num) ? num : 0,
       ...Object.fromEntries(Object.entries(f.untouched).filter(([, v]) => v !== undefined && v !== null)),
       ...this.agentArgsOf(f),
+      // Only our build's put and ls --json carry close_workspace; sending it to upstream would have
+      // put drop the key (its api.Automation has no field). A shared space can never close: the
+      // scheduler refuses on-success with workspace: existing, so the hidden switch reads as never.
+      ...(this.ours ? { close_workspace: f.workspace !== "existing" && f.close ? "on-success" : "never" } : {}),
     };
   }
 
@@ -502,6 +502,15 @@ export default class Automations extends View {
       .when(f.workspace === "existing", (el) => el.child(this.pills("f-space",
         spaces().filter((s) => !s.machine).map((s) => [s.id, s.name]), f.workspace_id, t,
         (v, cx) => { f.workspace_id = v; this.preview(cx); cx.notify(); })))
+      // #498: closing a fresh run's space only makes sense for a new worktree or the repo root (an
+      // existing space is refused); our build sets it, upstream's API cannot.
+      .when(f.workspace !== "existing", (el) => el
+        .child(label("AFTER A RUN"))
+        .when(this.ours, (el2) => el2.child(h_flex().gap(8).items_center()
+          .child(this.switch_("f-close", f.close, t, (cx) => { f.close = !f.close; this.preview(cx); cx.notify(); }))
+          .child(div().text_size(12).child("Close the space after a successful run"))))
+        .when(!this.ours, (el2) => el2.child(div().id("f-close-upstream").text_size(11).text_color(t.muted)
+          .child(`Our scheduler build (${SCHEDULER.version}) is needed to close the space after a run.`))))
       .child(label("AGENT")).child(this.pills("f-agent", agents, agentValue, t, (v, cx) => {
         if (v.startsWith("template:")) { f.template = v.slice(9); f.agent = ""; } else { f.template = ""; f.agent = v; }
         // An existing entry: its saved agent gets its saved args back; any other lands on Agent
