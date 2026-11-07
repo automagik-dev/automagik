@@ -17,15 +17,23 @@
 // helper and its hardcoded `/data/secrets` path cannot be redirected at a temp directory; the
 // preflight itself is not copied.
 //
-// As root the probe write succeeds through a 0555 directory, so the failure and repair cases
-// would be meaningless and those tests skip.
+// The repair case keeps the old directory open while it runs: the removed inode cannot be reused
+// while its descriptor is open, so the recreated directory's inode proves it was replaced and not
+// merely chmod'ed. A further case makes the workspace empty but its parent unwritable, so the
+// entry cannot be removed: the helper must leave it and let the preflight refuse, never force it.
+//
+// As root the probe write succeeds through a 0555 directory, so the failure, repair and
+// unremovable cases would be meaningless and those tests skip.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -104,7 +112,9 @@ test('a missing or writable workspace passes prepareWorkspace', () => {
   const parent = temp()
   const writable = join(parent, 'writable')
   mkdirSync(writable)
+  const writableIno = statSync(writable).ino
   assert.equal(prepareWorkspace(writable, { uid: 1000 }), false, 'a writable directory passes')
+  assert.equal(statSync(writable).ino, writableIno, 'a writable workspace is not recreated')
   ensureDataDirs([writable], { uid: 1000 })
   assert.equal(readdirSync(writable).length, 0, 'the write probe must leave no file behind')
 
@@ -122,6 +132,10 @@ test(
     const workspace = join(parent, 'workspace')
     mkdirSync(workspace)
     chmodSync(workspace, 0o555)
+    // An open descriptor keeps the old inode allocated, so the recreated directory cannot reuse
+    // its number: a chmod-only "repair" would leave the descriptor's inode in place.
+    const old = openSync(workspace, 'r')
+    const oldIno = fstatSync(old).ino
     try {
       assert.throws(
         () => ensureDataDirs([workspace], { uid: 1000 }),
@@ -129,13 +143,63 @@ test(
         'the untouched root-owned workspace must fail the preflight first',
       )
       assert.equal(prepareWorkspace(workspace, { uid: 1000 }), true, 'the helper repairs it')
+      assert.notEqual(statSync(workspace).ino, oldIno, 'the workspace is recreated, not chmod-ed')
       const mode = statSync(workspace).mode & 0o777
       assert.notEqual(mode & 0o200, 0, 'the recreated workspace is writable by its owner')
       assert.equal(statSync(workspace).uid, process.getuid(), 'recreated by this process')
       assert.equal(readdirSync(workspace).length, 0, 'the write probe must leave no file behind')
       ensureDataDirs([workspace], { uid: 1000 })
     } finally {
+      closeSync(old)
       chmodSync(workspace, 0o755)
+    }
+  },
+)
+
+test(
+  'an empty workspace whose entry cannot be removed is left and refused, not forced',
+  { skip: skipAsRoot },
+  () => {
+    const parent = temp()
+    const workspace = join(parent, 'workspace')
+    mkdirSync(workspace)
+    chmodSync(workspace, 0o555)
+    chmodSync(parent, 0o555)
+    try {
+      // uid 1000 can read the empty workspace but cannot unlink its entry from a 0555 parent.
+      assert.equal(
+        prepareWorkspace(workspace, { uid: 1000 }),
+        false,
+        'an unremovable entry is not claimed as repaired',
+      )
+      assert.ok(existsSync(workspace), 'the entry is left in place')
+      const preflight = `
+        import { ensureDataDirs, prepareWorkspace } from ${JSON.stringify(LIB)}
+        try {
+          prepareWorkspace(process.argv[1], { uid: 1000 })
+          ensureDataDirs([process.argv[1]], { uid: 1000 })
+        } catch (error) {
+          process.stderr.write('automagik-web: ' + error.message + '\\n')
+          process.exit(1)
+        }
+      `
+      const result = spawnSync(
+        process.execPath,
+        ['--input-type=module', '--eval', preflight, workspace],
+        { encoding: 'utf8', timeout: 30_000 },
+      )
+      assert.equal(result.status, 1, 'the unremovable workspace must fail the preflight')
+      assert.equal(result.stdout, '', 'the preflight must fail before logging anything')
+      assert.equal(result.stderr.trim().split('\n').length, 1, 'exactly one stderr line')
+      assert.ok(result.stderr.includes(workspace), 'the line names the unwritable directory')
+      assert.match(result.stderr, /uid 1000/)
+      assert.match(result.stderr, /initial\.uid=1000/)
+      assert.match(result.stderr, /cannot chown/)
+      assert.doesNotMatch(result.stderr, /^\s+at\s/m, 'no stack frames')
+      assert.ok(existsSync(workspace), 'the workspace is not forced')
+      assert.equal(readdirSync(workspace).length, 0, 'the workspace is still empty')
+    } finally {
+      chmodSync(parent, 0o755)
     }
   },
 )
