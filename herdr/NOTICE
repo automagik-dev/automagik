@@ -36,9 +36,10 @@ repeated here, as MIT requires; that file, not the mod's Apache LICENSE, is the 
   herdr/scheduler       from DnzzL/herdr-automations v0.12.1 (commit 900b4f25, 2026-11-04): the
                         scheduler the automations run on, a Go binary of its own, not a mod and
                         never in the pack. Copied byte for byte except the paths its UPSTREAM.md
-                        lists (upstream's app/ mod, its committed root binary, docs/*.gif and
-                        docs/*.png, .github/). Its MIT notice is LICENSE-upstream (and LICENSE, as
-                        upstream ships it), repeated below.
+                        excludes (upstream's app/ mod, its committed root binary, docs/*.gif and
+                        docs/*.png, .github/) and the Local changes it lists (this fork's
+                        close_workspace API patch and its tests). Its MIT notice is
+                        LICENSE-upstream (and LICENSE, as upstream ships it), repeated below.
   mods/pocket-link/chat Pocket Link's live chat projection (RFC 0015), ported from stablyai/orca at
                         e1dfc022 (TypeScript to JavaScript, behaviour unchanged except as noted in
                         chat/UPSTREAM.md): decode-claude.js, decode-codex.js, decode-omp.js,

@@ -76,6 +76,92 @@ func TestPutKeepsTheKeysItWasNotGiven(t *testing.T) {
 	}
 }
 
+// close_workspace is one key of the entry, so put's merge rules cover it like the rest: the form
+// can set it, a put that does not send it keeps a hand-written value, and an empty value removes
+// the key. A run that would close a shared workspace is refused by the loader's own validation.
+func TestPutCarriesCloseWorkspace(t *testing.T) {
+	base := `automations:
+  - name: triage
+    cron: "0 9 * * 1-5"
+    repo: /x
+    prompt: p
+`
+	with := base + "    close_workspace: on-success\n"
+	given := []string{"name", "cron", "repo", "prompt", "close_workspace"}
+	entry := func(close CloseWorkspace) Automation {
+		return Automation{Name: "triage", Cron: "0 9 * * 1-5", Repo: "/x", Prompt: "p", CloseWorkspace: close}
+	}
+
+	t.Run("writes on-success", func(t *testing.T) {
+		withConfig(t, base)
+		if res, err := Put("triage", entry(CloseOnSuccess), given, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Find("triage").CloseWorkspace != CloseOnSuccess {
+			t.Fatalf("close_workspace not applied:\n%s", fileText(t))
+		}
+	})
+
+	t.Run("keeps a hand-written value when the key is not given", func(t *testing.T) {
+		withConfig(t, with)
+		if res, err := Put("triage", entry(""), []string{"name", "cron", "repo", "prompt"}, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Find("triage").CloseWorkspace != CloseOnSuccess {
+			t.Fatalf("hand-written close_workspace lost:\n%s", fileText(t))
+		}
+	})
+
+	t.Run("removes the key when given empty", func(t *testing.T) {
+		withConfig(t, with)
+		if res, err := Put("triage", entry(""), given, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		if strings.Contains(fileText(t), "close_workspace") {
+			t.Fatalf("an empty close_workspace left the key:\n%s", fileText(t))
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Find("triage").CloseWorkspace != CloseNever {
+			t.Fatalf("the removed key does not read as never: %+v", cfg.Find("triage"))
+		}
+	})
+
+	t.Run("refuses on-success with an existing workspace", func(t *testing.T) {
+		shared := `automations:
+  - name: triage
+    cron: "0 9 * * 1-5"
+    repo: /x
+    prompt: p
+    workspace: existing
+    workspace_id: w7
+`
+		withConfig(t, shared)
+		a := entry(CloseOnSuccess)
+		a.Workspace, a.WorkspaceID = WorkspaceExisting, "w7"
+		res, err := Put("triage", a, []string{"name", "cron", "repo", "prompt", "workspace", "workspace_id", "close_workspace"}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(res.Problem, "close_workspace: on-success would close the shared workspace") {
+			t.Fatalf("problem %q", res.Problem)
+		}
+		if fileText(t) != shared {
+			t.Fatal("a refused put changed the file")
+		}
+	})
+}
+
 func TestPutAppendsANewEntry(t *testing.T) {
 	withConfig(t, commented)
 	a := Automation{Name: "digest", Cron: "0 17 * * 5", Repo: "/x", Prompt: "sum up"}

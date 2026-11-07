@@ -75,6 +75,14 @@ describe('the plugin lane', () => {
       'herdr/mockup/gen-sidebar.mjs', 'herdr/catalog/index.json', 'docs/rfcs/0011-monorepo-parts-and-releases.md'];
     expect(ships(notes, none)).toBe(false);
     expect(herdrShips(notes)).toBe(false);
+    // NOTICE is provenance the pack never carries (pack.mjs archives PACK_MODS and the layout
+    // files): a change to it alone cuts nothing; beside a herdr mod, the mod is the release.
+    const notice = ['herdr/NOTICE'];
+    expect(ships(notice, none)).toBe(false);
+    expect(herdrShips(notice)).toBe(false);
+    const withNotice = ['herdr/mods/am-sidebar/main.js', ...notice];
+    expect(ships(withNotice, none)).toBe(true);
+    expect(kindOf(withNotice, none, none, withNotice)).toBe('herdr');
     // The pack's version files, bumped by a release, ship nothing on their own.
     const versions = ['herdr/package.json', 'herdr/mods/am-sidebar/VERSION'];
     expect(herdrShips(versions, path => versions.includes(path))).toBe(false);
@@ -90,6 +98,13 @@ describe('the plugin lane', () => {
     // The binary ships from its own release lane: nothing here reaches an install, so no release kind.
     expect(ships(scheduler, none)).toBe(false);
     expect(herdrShips(scheduler)).toBe(false);
+    // The check script (herdr/scripts/scheduler-upstream.mjs) is tooling too: on its own, and beside
+    // the scheduler, it cuts no release and never reaches the pack.
+    const check = ['herdr/scripts/scheduler-upstream.mjs'];
+    expect(ships(check, none)).toBe(false);
+    expect(herdrShips(check)).toBe(false);
+    expect(ships([...scheduler, ...check], none)).toBe(false);
+    expect(herdrShips([...scheduler, ...check])).toBe(false);
     // Beside a plugin change it is a plugin patch; beside an app change, a full release.
     expect(kindOf([...scheduler, 'apps/bots-dsh/client.js'], none, none, [...scheduler, 'apps/bots-dsh/client.js'])).toBe('plugins');
     expect(kindOf([...scheduler, 'apps/desktop/src/main.js'], none, none, [...scheduler, 'apps/desktop/src/main.js'])).toBe('full');
