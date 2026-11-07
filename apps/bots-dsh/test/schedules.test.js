@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
@@ -331,4 +331,40 @@ test('deleting a Bot pauses the fresh-Session task its Session armed', async (t)
   const armed = await freshTask(schedule, 'w2')
   await rt.deleteBot('w1')
   assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+})
+
+test('a read-only host neither pauses nor vouches for unlineaged deliveries', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dsb-schedules-'))
+  const team = JSON.parse(JSON.stringify(TEAM))
+  team.bots.w1.denyTools = ['bash']
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
+  // Another live process holds the team lock: this host only follows the file.
+  writeFileSync(join(home, 'state.lock'),
+    JSON.stringify({ pid: process.ppid, host: hostname(), token: 'other', since: Date.now() }))
+  const schedule = scheduleService()
+  const armed = await freshTask(schedule, 'w2')
+  const ctx = fakeContext({ services: { schedule } })
+  const rt = createRuntime(ctx, { home })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  // The other host owns the team: this one writes nothing and cannot vouch for the state.
+  await rt.revokeNewSchedules()
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  // It takes the team over; the next delivery checks, pauses the task and refuses it.
+  rmSync(join(home, 'state.lock'))
+  await rt.refresh()
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
+  assert.equal(await guard('fresh-2', async () => 'ran'), 'ran')
 })

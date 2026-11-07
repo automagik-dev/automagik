@@ -175,12 +175,16 @@ export function install(rt) {
    */
   async function revokeNewSchedules(botId, extra = [], { any = false } = {}) {
     if (service === null) return []
-    // A host that only reads the team does not write another host's schedule store; that
-    // host's own sweep does, and a failed takeover must not block its deliveries here.
-    if (typeof rt.readOnly === 'function' && rt.readOnly() !== undefined) {
-      swept = true
-      return []
-    }
+    // The attach-time check can run before the team is read; it must neither act on an empty
+    // team nor write another host's store. The load-backed sweep does the first check.
+    if (botId === undefined && !teamLoaded) return []
+    // A host that only reads the team does not write another host's schedule store, and it
+    // cannot vouch for what it did not read: the guard stays closed for unlineaged
+    // deliveries until this host owns the team and a later sweep runs.
+    if (typeof rt.readOnly === 'function' && rt.readOnly() !== undefined) return []
+    // Only a sweep that started with the team loaded may open the guard: an attach-time
+    // sweep can finish after the boot chain and would otherwise vouch for pre-load state.
+    const loadedThen = teamLoaded
     const scoped = botId !== undefined
     const bot = scoped ? rt.botOf(botId) : undefined
     if (scoped && bot === undefined) return []
@@ -238,7 +242,7 @@ export function install(rt) {
       }
     }
     for (const id of stuck) if (!checked.has(id)) stuck.delete(id)
-    swept = swept || teamLoaded
+    swept = swept || loadedThen
     return paused
   }
   // A restart keeps both the deny list and the armed task: check once the team is loaded.
@@ -258,6 +262,13 @@ export function install(rt) {
   ctx.on('schedule/resolve-agent', async (sessionId, next) => {
     if (swept && stuck.size === 0) return next()
     if (await botOfTaskSession(sessionId) !== undefined) return next()
+    // Give the pause a chance now: this covers a host that just took the team over and a
+    // stuck task whose store came back. A task paused here refuses this delivery too.
+    const paused = await revokeNewSchedules().catch(() => [])
+    if (paused.length > 0) {
+      throw new Error('ds-bot: a scheduled fresh Session is blocked until its task can be paused')
+    }
+    if (swept && stuck.size === 0) return next()
     throw new Error('ds-bot: a scheduled fresh Session is blocked until its task can be paused')
   })
 
