@@ -21,6 +21,13 @@ content version, and `org.opencontainers.image.revision` = the full workflow com
 against the release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256)
 before dsh installs it.
 
+The builder also applies the desktop app's DSH runtime patches
+(`apps/desktop/runtime/patches` via `apps/desktop/scripts/runtime-patches.mjs`) to the same
+pinned packages, and fails the build on any version or hash mismatch. Today that includes
+`frontend-static-index-cache.patch`: the SPA index gets `cache-control: no-cache` with a weak
+ETag of the rendered bytes, and a matching `If-None-Match` gets an empty 304, so a reload after
+a plugin update cannot keep a stale manifest.
+
 ## Pull
 
 ```sh

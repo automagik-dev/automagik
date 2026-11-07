@@ -1,0 +1,50 @@
+--- a/@deepseek-ai/dsh-host-frontend-static/lib/index.js
++++ b/@deepseek-ai/dsh-host-frontend-static/lib/index.js
+@@ -12,10 +12,10 @@
+ * is 405. An HTTP index request first passes Connection's browser
+ * authentication and renders for the browser Peer; an in-process read renders
+ * for the Peer its caller admitted. Both renders go through the webserver's
+-* index render (structured injection rows, then raw taps). Non-index assets
+-* stay public; every file other than the index carries a weak ETag with
+-* `cache-control: no-cache` and answers a matching `If-None-Match` with 304,
+-* while the index carries no cache headers. The dist location is workspace
++* index render (structured injection rows, then raw taps). Every served file,
++* the index included, carries a weak ETag with `cache-control: no-cache` and
++* answers a matching `If-None-Match` with 304; non-index assets stay public.
++* The dist location is workspace
+ * knowledge of the composing application, so `distIndex` is typically
+ * supplied through a `!!js` expression, never hardcoded by a deployment.
+ * @module @deepseek-ai/dsh-host-frontend-static
+@@ -61,9 +61,10 @@
+ * @param renderIndex - turns the raw index.html body into the served document
+ * for the dist root and configured index path.
+ * @returns the dist response; a HEAD response carries the GET status and
+-* headers without a body. A file other than the index carries
++* headers without a body. Every served file, the index included, carries
+ * `cache-control: no-cache` and a weak ETag from a SHA-1 of its bytes, and a
+-* request whose `If-None-Match` equals that ETag receives an empty 304.
++* request whose `If-None-Match` equals that ETag receives an empty 304. The
++* index is authorized before its bytes are read and before any 304.
+ */
+ async function serveStatic(request, distRoot, distIndex, authorizeIndex, renderIndex) {
+ 	const target = resolve(normalize(join(distRoot, decodeURIComponent(new URL(request.url).pathname))));
+@@ -75,7 +76,18 @@
+ 			const refusal = authorizeIndex();
+ 			if (refusal !== void 0) return refusal;
+ 			body = renderIndex(await readFile(distIndex, "utf8"));
+-			headers = { "content-type": HTML_MIME };
++			const cache = {
++				"cache-control": "no-cache",
++				etag: `W/"${createHash("sha1").update(body).digest("base64url")}"`
++			};
++			if (request.headers.get("if-none-match") === cache.etag) return new Response(null, {
++				status: 304,
++				headers: cache
++			});
++			headers = {
++				"content-type": HTML_MIME,
++				...cache
++			};
+ 		} else {
+ 			body = await readFile(target);
+ 			const cache = {

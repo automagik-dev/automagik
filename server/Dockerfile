@@ -28,10 +28,12 @@ ENV DO_NOT_TRACK=1 \
     npm_config_update_notifier=false
 
 WORKDIR /build
-# The desktop's own runtime pins (dsh 0.2.2-rc.1, pnpm 10.34.6, zod 4.4.3) and the pruner the
-# desktop build uses. The same pins keep this image on the harness the plugins are tested on.
+# The desktop's own runtime pins (dsh 0.2.2-rc.1, pnpm 10.34.6, zod 4.4.3), the pruner the
+# desktop build uses, and the runtime patches the desktop carries (assemble applies them to the
+# same pinned packages). The same pins keep this image on the harness the plugins are tested on.
 COPY apps/desktop/runtime/package.json apps/desktop/runtime/package-lock.json /build/apps/desktop/runtime/
-COPY apps/desktop/scripts/prune-runtime.mjs /build/apps/desktop/scripts/prune-runtime.mjs
+COPY apps/desktop/runtime/patches /build/apps/desktop/runtime/patches
+COPY apps/desktop/scripts/prune-runtime.mjs apps/desktop/scripts/runtime-patches.mjs /build/apps/desktop/scripts/
 COPY server /build/server
 
 RUN node /build/server/assemble.mjs \

@@ -19,5 +19,19 @@
         "after": "f7f2c992e0c55a701b6cb90edb74f0fcb8e45ae53e271159e1731c7a422643a6"
       }
     ]
+  },
+  {
+    "patch": "frontend-static-index-cache.patch",
+    "about": "Frontend static server: index.html gets cache-control: no-cache and a weak ETag from the rendered bytes, and a matching If-None-Match gets an empty 304, so a normal reload after a plugin update cannot keep a stale manifest or client bundle. No Last-Modified: a plugin update can rewrite the manifest without touching index.html's mtime, so a content ETag is the only correct validator (the desktop runtime and the server image both apply this patch). Delete it in the DSH release that serves the index with cache directives.",
+    "dsh": "0.2.2-rc.1",
+    "files": [
+      {
+        "package": "@deepseek-ai/dsh-host-frontend-static",
+        "version": "0.2.2-rc.1",
+        "file": "lib/index.js",
+        "before": "6bb17c239f48fc26d4cf990af3139e7b64ae9f06fc5249bce7b58a3130edaed4",
+        "after": "97cbae5491b6d941ead10487d557e67536fb23300224bb43fcd5ad91bfc167c2"
+      }
+    ]
   }
 ]
