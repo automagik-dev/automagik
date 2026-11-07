@@ -79,6 +79,11 @@ function makeFixture({ ssh = 'dir' } = {}) {
   mkdirSync(home, { recursive: true });
   if (ssh === 'dir') mkdirSync(sshPath, { recursive: true });
   else if (ssh === 'file') writeFileSync(sshPath, 'not a key');
+  else if (ssh === 'symlink') {
+    const target = join(root, 'canonical-ssh');
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, sshPath);
+  }
   mkdirSync(coreDir, { recursive: true });
   mkdirSync(proxyDir, { recursive: true });
   return {
@@ -267,6 +272,26 @@ test('an unset proxy says one line and still masks the real dir and ~/.ssh', () 
   assert.ok(!recorded(fixture).includes(dirname(fixture.proxy)));
 });
 
+test('a relative proxy says one line, draws no folder tmpfs and still masks the rest', () => {
+  const fixture = makeFixture();
+  const relativeProxy = 'relative-proxy/pane.sock';
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    proxy: relativeProxy,
+  }));
+  assert.equal(result.status, 0);
+  assert.match(assertOneLine(result), /is not an absolute path/);
+  const args = recorded(fixture);
+  assert.ok(!args.includes(relativeProxy));
+  assert.ok(!args.includes('relative-proxy'));
+  assert.deepEqual(withoutContainerBinds(args), [
+    ...PROFILE_ARGS,
+    '--tmpfs', dirname(fixture.real),
+    '--tmpfs', realpathSync(fixture.ssh),
+    '--', ...COMMAND,
+  ]);
+});
+
 test('a ~/.ssh directory is shadowed at its canonical path', async () => {
   const fixture = makeFixture();
   await listen(fixture.proxy);
@@ -277,6 +302,23 @@ test('a ~/.ssh directory is shadowed at its canonical path', async () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '');
   assert.ok(recorded(fixture).includes(realpathSync(fixture.ssh)));
+});
+
+test('a ~/.ssh symlink to a directory is shadowed at its canonical target', async () => {
+  const fixture = makeFixture({ ssh: 'symlink' });
+  await listen(fixture.proxy);
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    proxy: fixture.proxy,
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const canonical = realpathSync(fixture.ssh);
+  const args = recorded(fixture);
+  assert.deepEqual(args.slice(args.indexOf(canonical) - 1, args.indexOf(canonical) + 1),
+    ['--tmpfs', canonical]);
+  // The symlink path itself is not a mount target: the canonical directory is what is hidden.
+  assert.ok(!args.includes(fixture.ssh));
 });
 
 test('a missing ~/.ssh adds no mask and does not fail', async () => {
@@ -347,6 +389,17 @@ test('no real socket path fails closed: one line, nonzero, bwrap never runs', ()
   assert.equal(bwrapRan(fixture), false);
 });
 
+test('a relative real socket fails closed: one line, nonzero, bwrap never runs', () => {
+  const fixture = makeFixture();
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: 'core/default.sock',
+    proxy: fixture.proxy,
+  }));
+  assert.notEqual(result.status, 0);
+  assert.match(assertOneLine(result), /not absolute/);
+  assert.equal(bwrapRan(fixture), false);
+});
+
 test('no HOME fails closed: ~/.ssh cannot be hidden', () => {
   const fixture = makeFixture();
   const env = environment(fixture, { real: fixture.real, proxy: fixture.proxy, home: undefined });
@@ -355,6 +408,17 @@ test('no HOME fails closed: ~/.ssh cannot be hidden', () => {
   assert.notEqual(result.status, 0);
   const line = assertOneLine(result);
   assert.match(line, /HOME is not set/);
+  assert.equal(bwrapRan(fixture), false);
+});
+
+test('a relative HOME fails closed: one line, nonzero, bwrap never runs', () => {
+  const fixture = makeFixture();
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    home: 'relative/home',
+  }));
+  assert.notEqual(result.status, 0);
+  assert.match(assertOneLine(result), /HOME is not set to an absolute path/);
   assert.equal(bwrapRan(fixture), false);
 });
 
@@ -376,6 +440,55 @@ test('a proxy folder that holds the real socket path fails closed, socket or not
   assert.notEqual(result.status, 0);
   assert.match(assertOneLine(result), /holds the real socket path/);
   assert.equal(bwrapRan(missing), false);
+});
+
+test('a proxy folder above the real socket path fails closed, socket or not', async () => {
+  const live = makeFixture();
+  const liveProxy = join(live.root, 'pane.sock');
+  await listen(liveProxy);
+  const liveResult = run(RUNNER_ARGS, environment(live, { real: live.real, proxy: liveProxy }));
+  assert.notEqual(liveResult.status, 0);
+  assert.match(assertOneLine(liveResult), /holds the real socket path/);
+  assert.equal(bwrapRan(live), false);
+  // The folder is still an ancestor when the proxy is missing, so the guard applies just the same.
+  const missing = makeFixture();
+  const missingProxy = join(missing.root, 'pane.sock');
+  const result = run(RUNNER_ARGS, environment(missing, {
+    real: missing.real,
+    proxy: missingProxy,
+  }));
+  assert.notEqual(result.status, 0);
+  assert.match(assertOneLine(result), /holds the real socket path/);
+  assert.equal(bwrapRan(missing), false);
+});
+
+test('the absolute requirement: no core socket without a live proxy, real dir first', async () => {
+  for (const state of ['live', 'missing', 'not-a-socket', 'relative', 'unset']) {
+    const fixture = makeFixture();
+    let proxy;
+    if (state === 'live') {
+      await listen(fixture.proxy);
+      proxy = fixture.proxy;
+    } else if (state === 'missing') proxy = fixture.proxy;
+    else if (state === 'not-a-socket') {
+      writeFileSync(fixture.proxy, 'not a socket');
+      proxy = fixture.proxy;
+    } else if (state === 'relative') proxy = 'proxy/pane.sock';
+    const result = run(RUNNER_ARGS, environment(fixture, { real: fixture.real, proxy }));
+    assert.equal(result.status, 0, result.stderr);
+    const args = recorded(fixture);
+    // The real runtime folder is shut first, before any bind that could expose it.
+    assert.deepEqual(args.slice(PROFILE_ARGS.length, PROFILE_ARGS.length + 2),
+      ['--tmpfs', dirname(fixture.real)], state);
+    // The only bind onto the real path is a live proxy; otherwise the path has no listener.
+    for (let at = 0; at + 2 < args.length; at += 1) {
+      if (args[at] === '--bind' && args[at + 2] === fixture.real) {
+        assert.equal(state, 'live');
+        assert.equal(args[at + 1], fixture.proxy);
+      }
+    }
+    if (state !== 'live') assert.ok(!args.includes(fixture.proxy), state);
+  }
 });
 
 test('the runner args without a -- separator fail closed', () => {
