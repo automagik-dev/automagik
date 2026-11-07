@@ -67,6 +67,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -186,10 +188,12 @@ import kotlin.math.roundToInt
     var menu by remember(ref) { mutableStateOf<Prompt.Menu?>(null) }
     var sending by remember(ref) { mutableStateOf(false) }
     var reread by remember(ref) { mutableIntStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(ref, asking, kind, msg, terminal?.turn, reread) {
         if (!asking) { menu = null; return@LaunchedEffect }
-        // The prompt may draw a moment after the status, and the person may move its cursor or answer by keys.
-        while (true) { menu = vm.readMenu(ref); delay(1_500) }
+        // The prompt may draw a moment after the status, and the person may move its cursor or answer by keys. Not while
+        // the app is stopped: this loop keeps running when the screen is not drawn.
+        Background.poll(lifecycle.started(), 1_500) { vm.readMenu(ref) }.collect { menu = it }
     }
     val shown = menu?.takeIf { asking } ?: return
     val choices = Prompt.choices(kind, shown, limit = Prompt.ALL)
@@ -448,5 +452,7 @@ private fun openInBrowser(context: Context, url: String) {
             webView.removeJavascriptInterface("Pocket"); webView.stopLoading(); webView.destroy()
         }
     }
+    // A stopped app's page and its JS timers pause; the stream itself is let go by PocketViewModel.streams.
+    LifecycleStartEffect(webView) { webView.started(true); onStopOrDispose { webView.started(false) } }
     AndroidView(factory = { webView }, modifier = modifier)
 }
