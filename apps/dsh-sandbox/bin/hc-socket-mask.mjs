@@ -38,12 +38,13 @@ export const CONTAINER_RUNTIME_SOCKETS = Object.freeze([
 ]);
 
 /**
- * The fixed container runtime sockets, plus the per-uid rootless Podman socket when the platform
- * has a uid. The wrapper masks only those that exist inside this host's namespace.
+ * The fixed container runtime sockets, plus the per-uid rootless Docker and Podman sockets when
+ * the platform has a uid. The wrapper masks only those that exist inside this host's namespace.
  */
 export function containerSocketPaths(uid = process.getuid?.()) {
   const paths = [...CONTAINER_RUNTIME_SOCKETS];
   if (typeof uid === 'number' && Number.isInteger(uid) && uid >= 0) {
+    paths.push(`/run/user/${uid}/docker.sock`);
     paths.push(`/run/user/${uid}/podman/podman.sock`);
   }
   return paths;
@@ -111,24 +112,34 @@ export function maskArgs(args, env = process.env, options = {}) {
   if (realDir === real || realDir === '/') {
     return failed(args, `the real core socket path has no folder of its own to hide: ${real}`);
   }
-  // Order matters: hide the real runtime folder, bind the proxy at the exact real path inside
-  // that fresh tmpfs, then hide the proxy's host folder (after the bind resolved its source).
-  // ~/.ssh and the container sockets are independent masks and follow.
+  // Order matters: hide the real runtime folder; when the proxy path is absolute, hide its
+  // host folder too (after the bind, when the socket is live, so the bind resolved its source
+  // first); then ~/.ssh and the container sockets, which are independent masks.
   const mounts = ['--tmpfs', realDir];
   const notices = [];
   const proxy = env[PROXY_SOCKET];
   const notice = proxyNotice(proxy);
-  if (notice) {
-    notices.push(notice);
-  } else {
+  if (notice) notices.push(notice);
+  if (proxy && isAbsolute(proxy)) {
     const proxyDir = dirname(proxy);
     if (isSameOrAncestor(proxyDir, real)) {
       return failed(args,
         `the proxy folder ${proxyDir} holds the real socket path: the mask would hide the proxy`);
     }
-    mounts.push('--bind', proxy, real, '--tmpfs', proxyDir);
+    if (!notice) mounts.push('--bind', proxy, real);
+    mounts.push('--tmpfs', proxyDir);
   }
-  mounts.push('--tmpfs', join(env.HOME, '.ssh'));
+  // ~/.ssh exists on most machines, but a fresh one may have none: then there is nothing to
+  // hide. A directory (following symlinks) is shadowed; anything else is bound over.
+  const ssh = join(env.HOME, '.ssh');
+  try {
+    const canonical = realpath(ssh);
+    mounts.push(...(stat(canonical).isDirectory()
+      ? ['--tmpfs', canonical]
+      : ['--bind', '/dev/null', canonical]));
+  } catch {
+    // No ~/.ssh (or no readable one): add no mask.
+  }
   const seen = new Set();
   for (const candidate of containerSockets) {
     if (typeof candidate !== 'string' || !isAbsolute(candidate)) continue;

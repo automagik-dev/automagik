@@ -70,12 +70,15 @@ function fakeBwrap(root) {
   return bin;
 }
 
-function makeFixture() {
+function makeFixture({ ssh = 'dir' } = {}) {
   const root = temp();
   const home = join(root, 'home');
   const coreDir = join(root, 'core');
   const proxyDir = join(root, 'proxy');
-  mkdirSync(join(home, '.ssh'), { recursive: true });
+  const sshPath = join(home, '.ssh');
+  mkdirSync(home, { recursive: true });
+  if (ssh === 'dir') mkdirSync(sshPath, { recursive: true });
+  else if (ssh === 'file') writeFileSync(sshPath, 'not a key');
   mkdirSync(coreDir, { recursive: true });
   mkdirSync(proxyDir, { recursive: true });
   return {
@@ -83,6 +86,7 @@ function makeFixture() {
     home,
     coreDir,
     proxyDir,
+    ssh: sshPath,
     real: join(coreDir, 'default.sock'),
     proxy: join(proxyDir, 'pane.sock'),
     bin: fakeBwrap(root),
@@ -137,31 +141,15 @@ function bwrapRan(fixture) {
   }
 }
 
-/** The container-socket pairs this host would add, canonicalized and deduplicated. */
-function liveContainerBinds() {
-  const seen = new Set();
-  const paths = [];
-  for (const candidate of containerSocketPaths()) {
-    let canonical;
-    try {
-      canonical = realpathSync(candidate);
-      statSync(canonical);
-    } catch {
-      continue;
-    }
-    if (seen.has(canonical)) continue;
-    seen.add(canonical);
-    paths.push(canonical);
-  }
-  return paths;
-}
-
-/** Drop the host-dependent container masks so the rest of the argv can be asserted exactly. */
-function withoutContainerBinds(args) {
-  const live = new Set(liveContainerBinds());
+/**
+ * Drop the host-dependent container masks by shape, so a CLI test never stats a live path.
+ * Their exact targets are asserted only by the pure-helper tests with an explicit fake list.
+ * `keep` holds one real `--bind /dev/null` target to compare (the ~/.ssh file case).
+ */
+function withoutContainerBinds(args, keep = null) {
   const kept = [];
   for (let at = 0; at < args.length; at += 1) {
-    if (args[at] === '--bind' && args[at + 1] === '/dev/null' && live.has(args[at + 2])) {
+    if (args[at] === '--bind' && args[at + 1] === '/dev/null' && args[at + 2] !== keep) {
       at += 2;
       continue;
     }
@@ -177,7 +165,7 @@ function assertOneLine(result) {
   return lines[0];
 }
 
-test('the fixed container list and the per-uid Podman socket', () => {
+test('the fixed container list and the per-uid rootless sockets', () => {
   assert.deepEqual(CONTAINER_RUNTIME_SOCKETS, [
     '/var/run/docker.sock',
     '/run/docker.sock',
@@ -185,7 +173,11 @@ test('the fixed container list and the per-uid Podman socket', () => {
     '/run/podman/podman.sock',
   ]);
   assert.deepEqual(containerSocketPaths(null), [...CONTAINER_RUNTIME_SOCKETS]);
-  assert.equal(containerSocketPaths(1000).at(-1), '/run/user/1000/podman/podman.sock');
+  assert.deepEqual(containerSocketPaths(1000), [
+    ...CONTAINER_RUNTIME_SOCKETS,
+    '/run/user/1000/docker.sock',
+    '/run/user/1000/podman/podman.sock',
+  ]);
 });
 
 test('splitRunnerArgs keeps the profile args and the command apart at the first --', () => {
@@ -219,17 +211,10 @@ test('switch on masks the real dir, ~/.ssh and the proxy, and preserves the comm
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
     '--tmpfs', dirname(fixture.proxy),
-    '--tmpfs', join(fixture.home, '.ssh'),
+    '--tmpfs', realpathSync(fixture.ssh),
     '--', ...COMMAND,
   ];
   assert.deepEqual(withoutContainerBinds(recorded(fixture)), expected);
-  // Any container masks this host has are the fixed list's, bound over /dev/null.
-  const live = new Set(liveContainerBinds());
-  const args = recorded(fixture);
-  for (let at = 0; at < args.length; at += 1) {
-    if (args[at] !== '--bind' || args[at + 1] !== '/dev/null') continue;
-    assert.ok(live.has(args[at + 2]), `${args[at + 2]} is not a fixed container socket`);
-  }
 });
 
 test('a missing proxy still masks everything, says one line and starts bwrap', () => {
@@ -243,9 +228,11 @@ test('a missing proxy still masks everything, says one line and starts bwrap', (
   assert.deepEqual(withoutContainerBinds(args), [
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
-    '--tmpfs', join(fixture.home, '.ssh'),
+    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', realpathSync(fixture.ssh),
     '--', ...COMMAND,
   ]);
+  // The shared proxy host folder is hidden even with no bind; the proxy file is not bound.
   assert.ok(!args.includes(fixture.proxy));
 });
 
@@ -257,8 +244,16 @@ test('a proxy that is not a Unix socket is treated as missing', () => {
   assert.equal(result.status, 0);
   const line = assertOneLine(result);
   assert.match(line, /is not a Unix socket/);
-  assert.ok(!recorded(fixture).includes(fixture.proxy));
-  assert.ok(recorded(fixture).includes(dirname(fixture.real)));
+  const args = recorded(fixture);
+  assert.ok(!args.includes(fixture.proxy));
+  assert.ok(args.includes(dirname(fixture.proxy)));
+  assert.deepEqual(withoutContainerBinds(args), [
+    ...PROFILE_ARGS,
+    '--tmpfs', dirname(fixture.real),
+    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', realpathSync(fixture.ssh),
+    '--', ...COMMAND,
+  ]);
 });
 
 test('an unset proxy says one line and still masks the real dir and ~/.ssh', () => {
@@ -268,7 +263,60 @@ test('an unset proxy says one line and still masks the real dir and ~/.ssh', () 
   const line = assertOneLine(result);
   assert.match(line, /is not set/);
   assert.ok(recorded(fixture).includes(dirname(fixture.real)));
-  assert.ok(recorded(fixture).includes(join(fixture.home, '.ssh')));
+  assert.ok(recorded(fixture).includes(realpathSync(fixture.ssh)));
+  assert.ok(!recorded(fixture).includes(dirname(fixture.proxy)));
+});
+
+test('a ~/.ssh directory is shadowed at its canonical path', async () => {
+  const fixture = makeFixture();
+  await listen(fixture.proxy);
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    proxy: fixture.proxy,
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.ok(recorded(fixture).includes(realpathSync(fixture.ssh)));
+});
+
+test('a missing ~/.ssh adds no mask and does not fail', async () => {
+  const fixture = makeFixture({ ssh: 'absent' });
+  await listen(fixture.proxy);
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    proxy: fixture.proxy,
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const args = recorded(fixture);
+  assert.ok(!args.includes(fixture.ssh));
+  assert.deepEqual(withoutContainerBinds(args), [
+    ...PROFILE_ARGS,
+    '--tmpfs', dirname(fixture.real),
+    '--bind', fixture.proxy, fixture.real,
+    '--tmpfs', dirname(fixture.proxy),
+    '--', ...COMMAND,
+  ]);
+});
+
+test('a non-directory ~/.ssh is bound over /dev/null at its canonical path', async () => {
+  const fixture = makeFixture({ ssh: 'file' });
+  await listen(fixture.proxy);
+  const result = run(RUNNER_ARGS, environment(fixture, {
+    real: fixture.real,
+    proxy: fixture.proxy,
+  }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const ssh = realpathSync(fixture.ssh);
+  assert.deepEqual(withoutContainerBinds(recorded(fixture), ssh), [
+    ...PROFILE_ARGS,
+    '--tmpfs', dirname(fixture.real),
+    '--bind', fixture.proxy, fixture.real,
+    '--tmpfs', dirname(fixture.proxy),
+    '--bind', '/dev/null', ssh,
+    '--', ...COMMAND,
+  ]);
 });
 
 test('HC_TERMINAL_SOCKET is the fallback for the real socket', async () => {
@@ -286,7 +334,7 @@ test('HC_TERMINAL_SOCKET is the fallback for the real socket', async () => {
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
     '--tmpfs', dirname(fixture.proxy),
-    '--tmpfs', join(fixture.home, '.ssh'),
+    '--tmpfs', realpathSync(fixture.ssh),
   ]);
 });
 
@@ -310,15 +358,24 @@ test('no HOME fails closed: ~/.ssh cannot be hidden', () => {
   assert.equal(bwrapRan(fixture), false);
 });
 
-test('a proxy folder that holds the real socket path fails closed', async () => {
-  const fixture = makeFixture();
-  const proxy = join(fixture.coreDir, 'pane.sock');
-  await listen(proxy);
-  const result = run(RUNNER_ARGS, environment(fixture, { real: fixture.real, proxy }));
+test('a proxy folder that holds the real socket path fails closed, socket or not', async () => {
+  const live = makeFixture();
+  const liveProxy = join(live.coreDir, 'pane.sock');
+  await listen(liveProxy);
+  const liveResult = run(RUNNER_ARGS, environment(live, { real: live.real, proxy: liveProxy }));
+  assert.notEqual(liveResult.status, 0);
+  assert.match(assertOneLine(liveResult), /holds the real socket path/);
+  assert.equal(bwrapRan(live), false);
+  // The folder is still masked when the proxy is missing, so the guard applies just the same.
+  const missing = makeFixture();
+  const missingProxy = join(missing.coreDir, 'pane.sock');
+  const result = run(RUNNER_ARGS, environment(missing, {
+    real: missing.real,
+    proxy: missingProxy,
+  }));
   assert.notEqual(result.status, 0);
-  const line = assertOneLine(result);
-  assert.match(line, /holds the real socket path/);
-  assert.equal(bwrapRan(fixture), false);
+  assert.match(assertOneLine(result), /holds the real socket path/);
+  assert.equal(bwrapRan(missing), false);
 });
 
 test('the runner args without a -- separator fail closed', () => {
@@ -373,7 +430,7 @@ test('the pure helper uses only its explicit container list: fake, deduped, exis
   assert.deepEqual(result.args, [
     ...PROFILE_ARGS,
     '--tmpfs', coreDir,
-    '--tmpfs', join(home, '.ssh'),
+    '--tmpfs', realpathSync(join(home, '.ssh')),
     '--bind', '/dev/null', realpathSync(first),
     '--bind', '/dev/null', realpathSync(second),
     '--', ...COMMAND,
@@ -411,8 +468,59 @@ test('the pure helper orders the proxy mounts before ~/.ssh and the container ma
     '--tmpfs', coreDir,
     '--bind', proxy, real,
     '--tmpfs', proxyDir,
-    '--tmpfs', join(home, '.ssh'),
+    '--tmpfs', realpathSync(join(home, '.ssh')),
     '--bind', '/dev/null', realpathSync(container),
+    '--', ...COMMAND,
+  ]);
+});
+
+test('the pure helper hides an absolute proxy folder even when there is no bind', () => {
+  const root = temp();
+  const home = join(root, 'home');
+  const coreDir = join(root, 'core');
+  const proxyDir = join(root, 'proxy');
+  mkdirSync(join(home, '.ssh'), { recursive: true });
+  mkdirSync(coreDir, { recursive: true });
+  mkdirSync(proxyDir, { recursive: true });
+  const real = join(coreDir, 'default.sock');
+  const proxy = join(proxyDir, 'pane.sock');
+  const result = maskArgs(RUNNER_ARGS, {
+    [SWITCH]: '1',
+    HOME: home,
+    [REAL_SOCKET]: real,
+    [PROXY_SOCKET]: proxy,
+  }, { containerSockets: [] });
+  assert.equal(result.fatal, null);
+  assert.equal(result.notices.length, 1);
+  assert.deepEqual(result.args, [
+    ...PROFILE_ARGS,
+    '--tmpfs', coreDir,
+    '--tmpfs', proxyDir,
+    '--tmpfs', realpathSync(join(home, '.ssh')),
+    '--', ...COMMAND,
+  ]);
+});
+
+test('the pure helper cannot hide a proxy folder it cannot name', () => {
+  const root = temp();
+  const home = join(root, 'home');
+  const coreDir = join(root, 'core');
+  mkdirSync(join(home, '.ssh'), { recursive: true });
+  mkdirSync(coreDir, { recursive: true });
+  const real = join(coreDir, 'default.sock');
+  const result = maskArgs(RUNNER_ARGS, {
+    [SWITCH]: '1',
+    HOME: home,
+    [REAL_SOCKET]: real,
+    [PROXY_SOCKET]: 'proxy/pane.sock',
+  }, { containerSockets: [] });
+  assert.equal(result.fatal, null);
+  assert.equal(result.notices.length, 1);
+  assert.match(result.notices[0], /not an absolute path/);
+  assert.deepEqual(result.args, [
+    ...PROFILE_ARGS,
+    '--tmpfs', coreDir,
+    '--tmpfs', realpathSync(join(home, '.ssh')),
     '--', ...COMMAND,
   ]);
 });

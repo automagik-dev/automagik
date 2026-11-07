@@ -39,7 +39,8 @@ ships no mask path for them, so there is nothing to enable there until that land
 - `AM_HC_REAL_SOCKET`: the pane's real herdr-core socket, handed over by the dsh-tui shim.
   `HC_TERMINAL_SOCKET` is the fallback when it is absent.
 - `AM_HC_PROXY_SOCKET`: the host-side per-pane proxy socket the Herdr lane starts; the wrapper
-  binds it at `AM_HC_REAL_SOCKET` inside the sandbox.
+  binds it at `AM_HC_REAL_SOCKET` inside the sandbox and always hides its folder. It must be an
+  absolute path (the wrapper cannot hide a folder it cannot name).
 - `hc-socket-mask: `: the prefix of every wrapper line. It is the profile row's
   `runnerFailureSignatures` entry, so DSH reports a wrapper refusal as a runner failure.
 
@@ -53,21 +54,28 @@ the `--`, in this order:
 
 1. `--tmpfs <dirname(AM_HC_REAL_SOCKET)>` - hides the core socket and the holder sockets beside
    it (and any other listener in the core's runtime folder).
-2. When `AM_HC_PROXY_SOCKET` is a live Unix socket: `--bind <proxy> <real>` (the proxy answers at
-   the path the client already uses, so `HC_TERMINAL_SOCKET`, `core.lock` and the client's
-   address check need no rewrite), then `--tmpfs <dirname(proxy)>` (hides the proxy host folder,
-   so another pane's proxy socket is unreachable). The bind resolves its source before that
-   tmpfs, which is why this pair comes before the remaining masks. The hidden folder is the
-   proxy's, never the attach ledger's: the CLI in the pane still reads `attach.jsonl`.
-3. `--tmpfs $HOME/.ssh` - hides the user's SSH keys, config and known_hosts. `HOME` must be an
-   absolute path or the runner fails closed.
+2. `--tmpfs <dirname(AM_HC_PROXY_SOCKET)>` for an absolute proxy path: hides the shared proxy
+   host folder, so another pane's proxy socket is unreachable. When the path is also a live Unix
+   socket, the bind comes first: `--bind <proxy> <real>` (the proxy answers at the path the
+   client already uses, so `HC_TERMINAL_SOCKET`, `core.lock` and the client's address check need
+   no rewrite), then the folder's tmpfs; the bind resolves its source before that tmpfs. When
+   the socket is missing or not a socket, the folder is still hidden (with no bind), and the
+   pane starts with no core socket. An unset or relative path names no folder the wrapper can
+   hide: no bind, no folder tmpfs, one notice, and the pane still starts with no core socket.
+   The hidden folder is the proxy's, never the attach ledger's: the CLI in the pane still reads
+   `attach.jsonl`.
+3. `$HOME/.ssh` when it exists, following symlinks: a directory is shadowed with
+   `--tmpfs <canonical path>`, anything else is bound over with
+   `--bind /dev/null <canonical path>`. Absent, nothing is added (there is nothing to hide).
+   `HOME` must be an absolute path.
 4. For each existing container runtime socket, `--bind /dev/null <socket>`, canonicalized and
    deduplicated. The fixed list is:
    - `/var/run/docker.sock`
    - `/run/docker.sock`
    - `/run/containerd/containerd.sock`
    - `/run/podman/podman.sock`
-   - `/run/user/<uid>/podman/podman.sock` (only when the platform has a uid)
+   - `/run/user/<uid>/docker.sock` (rootless Docker, only when the platform has a uid)
+   - `/run/user/<uid>/podman/podman.sock` (rootless Podman, only with a uid)
 
    Only paths that exist are masked; a test passes its own fake list, so no test looks at a live
    `docker.sock`.
@@ -84,16 +92,19 @@ Before running `bwrap`, the wrapper refuses with one `hc-socket-mask: ` line and
 - the real socket path (`AM_HC_REAL_SOCKET`, else `HC_TERMINAL_SOCKET`) is absent or not
   absolute;
 - the real socket path has no folder of its own to hide (`dirname` is `/`);
-- `HOME` is absent or not absolute (so `~/.ssh` cannot be hidden);
+- `HOME` is absent or not absolute (the runner will not guess where `~/.ssh` is);
 - the runner arguments have no `--` separator (the command cannot be preserved);
-- `AM_HC_PROXY_SOCKET` is a socket whose folder is the real socket path or one of its parents
-  (masking that folder would hide the proxy again).
+- `AM_HC_PROXY_SOCKET` is absolute but its folder is the real socket path or one of its parents
+  (masking that folder would hide the proxy again), whether or not a bind is added.
 
-When `AM_HC_PROXY_SOCKET` is unset, not absolute, missing or not a Unix socket, the wrapper
-prints one `hc-socket-mask: ` line, still hides the real folder, `~/.ssh` and the container
-sockets, and runs `bwrap` with **no core socket**: the pane starts and its `hc` calls fail
-closed. This is the hand-started-pane case and the "proxy not up yet" case; it never falls back
-to the real socket.
+When `AM_HC_PROXY_SOCKET` is absolute but missing or not a Unix socket, the wrapper prints one
+`hc-socket-mask: ` line, hides the proxy's host folder along with the real folder, `~/.ssh` (if
+present) and the container sockets, and runs `bwrap` with **no core socket**: the pane starts
+and its `hc` calls fail closed. When the path is unset or relative, the wrapper cannot name the
+folder: it prints one line, adds no bind and no proxy-folder tmpfs, applies every other mask,
+and the pane still starts with no core socket. These are the hand-started-pane case and the
+"proxy not up yet" case; they never fall back to the real socket. **The pack must always set an
+absolute `AM_HC_PROXY_SOCKET`** so the shared proxy host folder is hidden too.
 
 With the switch off, nothing above applies: the wrapper runs `bwrap` with exactly the argv it
 was handed, which is today's behavior.
@@ -115,8 +126,8 @@ Nothing here is installed on a live profile today. The order:
    nothing and changes no live profile.
 2. The Herdr lane's proxy PR adds the per-pane proxy and sets, in the pane environment it
    starts: `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET=<the pane's real core socket>` and
-   `AM_HC_PROXY_SOCKET=<the host proxy socket>`. It starts the proxy before DSH and refuses the
-   pane if the proxy cannot start.
+   `AM_HC_PROXY_SOCKET=<the absolute host proxy socket>`. It starts the proxy before DSH and
+   refuses the pane if the proxy cannot start.
 3. At enablement the pack (`herdr/mods/am-sidebar/dshTui.mjs`) copies `bin/hc-socket-mask.mjs`
    **byte-equal** from the pack release to a stable path, the way
    `node scripts/am-copies.mjs --check` treats the am copies, then runs
@@ -164,8 +175,10 @@ node --test 'apps/dsh-sandbox/test/*.test.mjs'
 ```
 
 The runner tests put a fake `bwrap` first on a temp `PATH` and assert the argv it records; the
-proxy sockets are real `net.createServer()` sockets under temp folders; the pure helper gets an
-explicit fake container-socket list, so no test reads, creates or connects to a live core, a
-live `docker.sock` or a live profile. The helper tests write only temp profiles. `ci.yml`'s
+proxy sockets are real `net.createServer()` sockets under temp folders. CLI-level tests drop the
+host-dependent container `--bind /dev/null` pairs by shape and never stat a live path; their
+exact targets are asserted only by the pure-helper tests with an explicit fake container list.
+So no test reads, creates or connects to a live core, a live `docker.sock` or a live profile.
+The helper tests write only temp profiles. `ci.yml`'s
 `dsh-sandbox` job runs both on every change under `apps/dsh-sandbox/` and on every change to
 the workflow itself.
