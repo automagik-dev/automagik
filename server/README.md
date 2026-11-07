@@ -2,13 +2,28 @@
 
 The `automagik-web` DeepSeek Harness profile on a host: dsh's base and web app, the Bot team
 (`@automagik/bots-dsh`), the welcome (`@automagik/welcome-dsh`) and ACP agents
-(`@automagik/acp-dsh`), from one pinned release. Built by CI only and never pushed
-(`.github/workflows/server-image.yml`). Tracked in #620.
+(`@automagik/acp-dsh`), from one pinned release. Built by CI only
+(`.github/workflows/server-image.yml`): every change builds, smokes and scans it, and a dispatch
+or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as `:<version>` and
+`:latest`. There is no laptop push. Tracked in #620.
 
 Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at the release in
-`server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1`). Each tarball is checked against the
-release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256) before dsh
-installs it.
+`server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1` for a manual build). CI passes the
+repository's version as `AUTOMAGIK_VERSION`, so the image pins the release whose plugin tarballs
+match the tag it publishes. Each tarball is checked against the release's `plugins.json` (sha512
+integrity, size) and `PLUGINS.SHA256SUMS` (sha256) before dsh installs it.
+
+## Pull
+
+```sh
+docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
+```
+
+The publish job prints the manifest digest in its summary and saves it as `image-digest.txt`; pin
+that digest, not a tag. `:<version>` is the repository version whose release supplied the plugin
+tarballs (the same value `scripts/version.ts` writes); `:latest` follows the last published image.
+The package is public; GitHub creates a new package private, so the first publish needs the
+one-time visibility flip below.
 
 ## The image
 
@@ -49,18 +64,24 @@ docker volume create automagik-data
 docker run -d --name automagik --network host \
   --volume automagik-data:/data \
   --env DEEPSEEK_API_KEY=sk-… \
-  automagik-server:local
+  ghcr.io/automagik-dev/automagik-server@sha256:…
 ```
 
-dsh binds `127.0.0.1:3081` inside the container, as the production host's layout does. That is
-reachable with `--network host` on Linux, or by running the reverse proxy in the same network
-namespace; `-p 3081:3081` does not reach a loopback bind. There is no `EXPOSE`.
+Use `automagik-server:local` here after `node server/build.mjs --tag automagik-server:local` to
+run a build from this checkout.
+
+No port is published: dsh binds `127.0.0.1:3081` inside the container, as the production host's
+layout does. That is reachable with `--network host` on Linux, or by running the reverse proxy in
+the same network namespace; `-p 3081:3081` does not reach a loopback bind. There is no `EXPOSE`.
 
 The key comes from `DEEPSEEK_API_KEY`, or from a `0400`/`0600` file: `DEEPSEEK_API_KEY_FILE`,
 else `/data/secrets/deepseek-api-key`, else `/run/secrets/deepseek_api_key`. A file readable by
 group or other, or executable, stops the start (Docker's `0444` secrets need the env instead).
-The value is never logged. With no key the server still boots; the welcome offers the sign-in
-tiles.
+The value is never logged.
+
+`DEEPSEEK_API_KEY` is optional for the idle server: without it the image still boots, the auth
+fence answers `401` and the welcome offers the sign-in tiles. A model turn needs the key; a
+healthy `401` says the fence is up, not that a model is configured.
 
 | Mount | What it holds |
 |---|---|
@@ -79,6 +100,26 @@ redacted in the log:
 
 ```sh
 docker exec automagik cat /data/dsh/launch-url
+```
+
+## Visibility
+
+GitHub creates a new Container package private even when the repository is public. Make it public
+once, as an organization owner:
+
+```sh
+gh api --method PATCH /orgs/automagik-dev/packages/container/automagik-server/visibility \
+  -f visibility=public
+```
+
+or **Packages → automagik-server → Package settings → Danger Zone → Change visibility → Public**.
+The publish job attempts the call with `GITHUB_TOKEN` and, if that token cannot change visibility,
+leaves the exact call in the job summary and warns. The image is still pushed, but anonymous pulls
+fail until the flip; the login-less pull is the verification:
+
+```sh
+docker logout ghcr.io 2>/dev/null || true
+docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 ```
 
 ## Measured
@@ -120,6 +161,23 @@ docker logs automagik | grep 'startup:'
 session, so it fails; no answer prints `000` and fails. The check is Node's `http`, not curl. The
 entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)`.
 
+## Secrecy gate
+
+The workflow extracts the built image's rootfs (`docker export`; the image is never run), lists
+every file and scans it before logging in or pushing (`server/secrecy.mjs`). It runs the
+repository's own privacy grep (`herdr/scripts/privacy-check.mjs`, same deny list) plus the image
+rules: a DeepSeek key, a `token=`, a `.env` or `launch-url` file, any file under `/data` (the
+image bakes no profile, bot/team state, workspace or secret), a `/home/<user>` or `/mnt/ai` path,
+a git credential, or an environment variable named like a secret. A hit fails the job. The layer
+list and the full file inventory are kept as `secrecy/image-layers.txt` and
+`secrecy/image-files.txt` (the workflow uploads them as an artifact).
+
+Run it on an already-extracted tree without Docker:
+
+```sh
+node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
+```
+
 ## Files
 
 | File | Role |
@@ -129,6 +187,7 @@ entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)
 | `fetch-plugins.mjs` | downloads and verifies the pinned release's tarballs |
 | `entrypoint.mjs`, `lib.mjs` | seed `/data`, key file, pnpm store, dsh, redacted log |
 | `healthcheck.mjs` | the Docker health check |
+| `secrecy.mjs` | pre-push scan: rootfs extraction, inventory, privacy grep and image rules |
 | `bin/dsh`, `bin/pnpm` | the image's pinned commands for `docker exec` |
 | `profile/` | the seed profile: `package.json`, `cordis.patch.yml`, `pnpm-workspace.yaml` |
 | `build.mjs`, `smoke.mjs`, `test/` | build, end-to-end smoke, unit tests |
@@ -140,5 +199,6 @@ node --test 'server/test/*.test.mjs'
 ```
 
 The unit tests cover the token redaction, the startup-line match, the private-key rule, the
-first-start-only seed, the pnpm-store pin, and the tarball verification. The smoke is the real
-check of the image.
+first-start-only seed, the pnpm-store pin, the tarball verification, and the secrecy gate's
+rules (including that the image's own redaction regex is not mistaken for a token). The smoke is
+the real check of the image; the workflow runs the scan on the real rootfs before pushing.

@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # The Automagik server image: the automagik-web dsh profile (dsh-base + dsh-web-app, the Bot
 # team, the welcome and ACP) on a pinned DeepSeek Harness, ready for /data on a host. Built by
-# CI only (.github/workflows/server-image.yml), never pushed.
+# CI only (.github/workflows/server-image.yml), which extracts the rootfs, scans it
+# (server/secrecy.mjs) and only then publishes it to ghcr.io/automagik-dev/automagik-server.
 #
 # Build from the repository root (the builder reuses the desktop's pinned runtime lock):
 #   docker build -f server/Dockerfile -t automagik-server .

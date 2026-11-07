@@ -1,13 +1,24 @@
 name: Server image
 
 # The Automagik server image (server/): the automagik-web profile on the pinned DeepSeek
-# Harness, with the plugins from one pinned release. Built and smoked here only: nothing is
-# pushed to a registry and no release carries the image yet. The smoke starts the container
-# with a named volume and checks the first-start seed, the 401 auth fence, the redacted log,
-# uid 1000, Docker's health check and a restart that keeps the profile (server/smoke.mjs).
+# Harness, with the plugins from one pinned release. Every change builds, smokes and scans it;
+# a dispatch or a published release then pushes it to ghcr.io/automagik-dev/automagik-server as
+# :<version> (the repository's version) and :latest.
 #
-# The plugins come from the release the Dockerfile pins, not from this checkout, so a plugin
-# source change does not rebuild it; a runtime-lock move does.
+# The scan (server/secrecy.mjs) extracts the built rootfs before any login and fails the job on
+# a DeepSeek key, a token=, a .env or launch-url file, bot/team state under /data, a /home/<user>
+# or /mnt/ai path, a git credential, or a hit from the repository's own privacy grep. The layer
+# list and the full file inventory are kept as an artifact. The image is never run by the scan.
+#
+# No key is baked and no test token is in this workflow: the only credential is GITHUB_TOKEN,
+# used to log in to the registry and to read the release's assets. It is not passed to docker
+# build or into the image.
+#
+# A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
+# events made with that token), so the cut's own releases do not trigger this automatically:
+# dispatch this workflow on dev after the release exists, or on its v<version> tag. A release
+# published by hand (or by a PAT) triggers it. A release with no plugins.json (a herdr, Pocket
+# or am patch) carries no plugin tarballs: the build is skipped and nothing is pushed.
 
 on:
   pull_request:
@@ -25,6 +36,8 @@ on:
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/scripts/prune-runtime.mjs
       - .github/workflows/server-image.yml
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -32,13 +45,16 @@ permissions:
 
 concurrency:
   group: server-image-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   image:
-    name: Server image (build and smoke)
+    name: Server image (build, smoke, scan)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      publish: ${{ steps.gate.outputs.publish }}
     env:
       DO_NOT_TRACK: '1'
     steps:
@@ -46,10 +62,70 @@ jobs:
         with:
           persist-credentials: false
 
-      # The image runs Node 24; the build, smoke and unit-test scripts run on the runner's.
+      # The image runs Node 24; the build, smoke and scan scripts run on the runner's.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
+
+      # The version is the repository's (one version everywhere), and the release it names must
+      # carry the plugin tarballs the image installs. A dispatch is dev or a v<version> tag; a
+      # release must be that tag. A herdr/Pocket/am patch has no plugin tarballs: build nothing.
+      - name: Resolve the image version and whether to publish
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          build=true
+          publish=false
+          has_plugins() {
+            gh release view "v${version}" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
+          }
+          case "${EVENT}" in
+            workflow_dispatch)
+              case "${REF}" in
+                refs/heads/dev) ;;
+                refs/tags/v*)
+                  if [[ "${REF_NAME}" != "v${version}" ]]; then
+                    echo "::error::dispatch tag ${REF_NAME} is not v${version}, the version in package.json"
+                    exit 1
+                  fi
+                  ;;
+                *)
+                  echo "::error::dispatch this on dev or a v<version> tag, not ${REF}"
+                  exit 1
+                  ;;
+              esac
+              if ! has_plugins; then
+                echo "::error::v${version} carries no plugins.json; dispatch on a version whose release has the plugin tarballs"
+                exit 1
+              fi
+              publish=true
+              ;;
+            release)
+              if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+                echo "::error::release ${RELEASE_TAG} does not match package.json ${version}"
+                exit 1
+              fi
+              if has_plugins; then
+                publish=true
+              else
+                echo "release ${RELEASE_TAG} carries no plugins.json: the image pins plugin tarballs, so nothing builds or publishes"
+                build=false
+              fi
+              ;;
+          esac
+          {
+            echo "version=${version}"
+            echo "build=${build}"
+            echo "publish=${publish}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Syntax
         run: |
@@ -62,7 +138,166 @@ jobs:
         run: node --test 'server/test/*.test.mjs'
 
       - name: Build
-        run: node server/build.mjs --tag automagik-server:ci
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: node server/build.mjs --tag "automagik-server:${VERSION}" --version "${VERSION}"
 
       - name: Smoke
-        run: node server/smoke.mjs automagik-server:ci
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: node server/smoke.mjs "automagik-server:${VERSION}"
+
+      # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
+      # file, and fail on a secret, a home path, a credential or any baked state. The inventory
+      # is the proof of what was checked.
+      - name: Secrecy (extract rootfs and scan)
+        if: steps.gate.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+
+      - name: Keep the secrecy inventory
+        if: always() && steps.gate.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-secrecy-${{ steps.gate.outputs.version }}
+          path: secrecy/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save the scanned image for the publish job
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: docker save "automagik-server:${VERSION}" | gzip -1 > server-image.tar.gz
+
+      - name: Keep the image
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-${{ steps.gate.outputs.version }}
+          path: server-image.tar.gz
+          retention-days: 1
+
+  publish:
+    name: Publish ghcr.io/automagik-dev/automagik-server
+    needs: image
+    if: needs.image.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DO_NOT_TRACK: '1'
+      VERSION: ${{ needs.image.outputs.version }}
+      GHCR: ghcr.io/automagik-dev/automagik-server
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: server-image-${{ needs.image.outputs.version }}
+          path: .
+
+      - name: Load the scanned image
+        run: gunzip -c server-image.tar.gz | docker load
+
+      # The bytes that will be pushed, scanned again after the round trip: a hit here still
+      # precedes the login and the push below.
+      - name: Secrecy (the bytes about to be pushed)
+        run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+
+      - name: Keep the push secrecy inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-push-secrecy-${{ needs.image.outputs.version }}
+          path: secrecy/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Log in to the Container registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "${TOKEN}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Push :version and :latest
+        id: push
+        run: |
+          set -euo pipefail
+          for tag in "${VERSION}" latest; do
+            docker tag "automagik-server:${VERSION}" "${GHCR}:${tag}"
+          done
+          out="$(docker push "${GHCR}:${VERSION}" 2>&1)"
+          printf '%s\n' "${out}"
+          digest="$(printf '%s\n' "${out}" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
+          if [[ -z "${digest}" ]]; then
+            echo "::error::docker push printed no manifest digest"
+            exit 1
+          fi
+          docker push "${GHCR}:latest"
+          ref="${GHCR}@${digest}"
+          printf '%s\n' "${ref}" > image-digest.txt
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Automagik server image"
+            echo
+            echo '```'
+            echo "${ref}"
+            echo '```'
+            echo
+            echo "- version: \`${VERSION}\`"
+            echo "- tags: \`:${VERSION}\`, \`:latest\`"
+            echo
+            echo "Pull by digest:"
+            echo
+            echo '```sh'
+            echo "docker pull ${ref}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One-time for a new package: GitHub creates it private. GITHUB_TOKEN may not have the
+      # admin permission the API needs; the warning then names the exact call and the UI, and
+      # the pull-by-digest instruction stays in the README.
+      - name: Make the package public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: automagik-server
+        run: |
+          set -euo pipefail
+          endpoint="/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/visibility"
+          if gh api --method PATCH "${endpoint}" -f visibility=public >/dev/null 2>visibility.err; then
+            echo "package ${PACKAGE}: public"
+          else
+            cat visibility.err >&2
+            echo "::warning::GITHUB_TOKEN could not set ${PACKAGE} public; run: gh api --method PATCH ${endpoint} -f visibility=public (an org owner/PAT with admin:packages) or use https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/settings"
+            {
+              echo
+              echo "### Package visibility"
+              echo
+              echo "Not public yet. Set it once, as an organization owner:"
+              echo
+              echo '```sh'
+              echo "gh api --method PATCH ${endpoint} -f visibility=public"
+              echo '```'
+              echo
+              echo "or https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/settings"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the manifest digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-image-digest-${{ needs.image.outputs.version }}
+          path: image-digest.txt
+          retention-days: 30

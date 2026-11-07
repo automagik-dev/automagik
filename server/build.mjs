@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Build the server image. No push: CI and an operator's machine build the same way.
+// Build the server image. No push here: CI scans and then tags and pushes; an operator's
+// machine builds the same way.
 //
 //   node server/build.mjs [--tag automagik-server:local] [--version 3.90.1]
 //                         [--dsh 0.2.2-rc.1] [--repository https://github.com/automagik-dev/automagik]
