@@ -373,33 +373,53 @@ async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
   writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
-  if (project.dir !== project.key) report([worktreeNote(project, await changesIn(project.key))]);
+  if (project.dir !== project.key) report([worktreeNote(project, await changesIn(project.key, project.dir))]);
 }
 /**
  * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
  * when the main checkout's file was never committed or has local changes, that its pull would
  * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one);
- * when it is deleted in the working tree, that the pull restores it with the worktree's version.
+ * when it is deleted in the working tree, that a merge pull restores it with the worktree's
+ * version and a rebase pull refuses until it is committed or discarded; when the deletion is
+ * committed, that the pull ends in a modify/delete conflict.
  */
 const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
   + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "")
   + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "")
-  + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a pull here brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead).` : "");
+  + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.` : "")
+  + (changes === "committed-deletion" ? ` ${under(key, BOTS_PATH)} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.` : "");
 /**
  * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
  * "modified" when it is committed but has local changes, "deleted" when it is committed and
- * deleted in the working tree without that deletion being staged, null when it is clean or git
- * can't say. A pull that brings a worktree's committed file stops on the first two (#234, #332);
- * an unstaged deletion is restored with the worktree's version instead.
+ * deleted in the working tree without that deletion being staged, "committed-deletion" when
+ * HEAD has no file but `dir`, the worktree an edit came from, does, and null when it is clean
+ * or git can't say. A pull that brings a worktree's committed file stops on the first two
+ * (#234, #332); an unstaged deletion is restored by a merge pull and refused by a rebase pull
+ * instead (#626); a committed deletion ends in modify/delete too.
  */
-async function changesIn(key) {
-  const out = (await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "";
-  if (!out.trim()) return null;
-  const state = out.slice(0, 2);
-  if (state === "??") return "untracked";
-  if (state === " D") return "deleted";
+async function changesIn(key, dir = null) {
+  // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
+  // space to a trimmed stdout, while a v2 record's "1" is its first character (#626).
+  const out = (await git(["status", "--porcelain=v2", "--", BOTS_PATH], key)) ?? "";
+  if (!out.trim()) return await committedDeletion(key, dir);
+  const line = out.split("\n").find((l) => l);
+  if (line.startsWith("? ")) return "untracked";
+  if (line.startsWith("1 ") && line.split(" ")[1] === ".D") return "deleted";
   return "modified";
+}
+/**
+ * #626: a committed deletion leaves `git status` empty, yet a pull that brings the worktree's
+ * version of a file HEAD no longer has ends in a modify/delete conflict. Compares HEAD's view
+ * with the worktree's, and checks the path was committed before: a file main never had is only
+ * added by the pull, with no conflict.
+ */
+async function committedDeletion(key, dir) {
+  if (!dir || dir === key) return null;
+  if ((await git(["show", `HEAD:${BOTS_PATH}`], key)) !== null) return null;
+  if (readText(under(dir, BOTS_PATH)) === null) return null;
+  const committed = await git(["log", "-1", "--format=%H", "HEAD", "--", BOTS_PATH], key);
+  return committed?.trim() ? "committed-deletion" : null;
 }
 
 const fsIo = {

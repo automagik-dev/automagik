@@ -295,6 +295,66 @@ test("a worktree edit says the main checkout's bots.json is deleted, and the pul
   assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
 });
 
+// #626: the deleted note assumed a merge pull. With pull.rebase=true git refuses an unstaged
+// deletion instead, so the note names both modes.
+test("a worktree edit names both pull modes for the main checkout's deleted bots.json", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  git(s.project, "config", "pull.rebase", "true");
+  rmSync(s.botsPath);
+  assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n");
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} is deleted: a merge pull brings it back with this worktree's version`));
+  assert.match(r.err, /pull\.rebase=true refuses the pull until the deletion is committed or discarded/);
+  assert.doesNotMatch(r.err, /a pull here brings it back/);
+  // As the note says: the rebase pull refuses while the deletion is unstaged, the file stays gone.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "scout");
+  assert.throws(() => execFileSync("git", ["pull", ".", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+    (err) => /cannot pull with rebase: You have unstaged changes/.test(String(err.stderr)));
+  assert.equal(existsSync(s.botsPath), false);
+  // And as it says of a merge pull: that one brings the file back with the worktree's version.
+  git(s.project, "pull", "-q", "--no-rebase", ".", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+});
+
+// #626: a committed deletion leaves porcelain empty, so the old note was silent, yet the pull
+// ends in a modify/delete conflict. HEAD:path against the worktree's view now warns.
+test("a worktree edit warns when the main checkout has committed its bots.json deletion", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  // The worktree commits its change; main commits the deletion of the same file.
+  const wtPath = join(wt, ".herdr/bots.json");
+  const file = JSON.parse(readFileSync(wtPath, "utf8"));
+  file.bots.find((b) => b.id === ID.dev).role = "worktree edit";
+  writeFileSync(wtPath, `${JSON.stringify(file, null, 2)}\n`);
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "worktree bots");
+  git(s.project, "rm", "-q", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "delete bots");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  const r = s.cli(["edit", ID.dev, "--role", "ranging"], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict`));
+  assert.match(r.err, /restore and commit the file before pulling, or resolve the conflict after/);
+  assert.doesNotMatch(r.err, /isn't committed|has local changes|is deleted: a merge pull/);
+  // As the note says, the pull ends in a modify/delete conflict.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "ranging");
+  assert.throws(() => execFileSync("git", ["merge", "-q", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+    (err) => /CONFLICT \(modify\/delete\)/.test(`${err.stdout}${err.stderr}`));
+});
+
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
   const s = restartScene(t);
   const wt = join(s.root, "wt");
