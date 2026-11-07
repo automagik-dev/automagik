@@ -52,6 +52,7 @@ on:
       - server/**
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
+      - apps/desktop/runtime/patches/**
       - apps/desktop/scripts/prune-runtime.mjs
       - herdr/scripts/privacy-check.mjs
       - herdr/scripts/privacy-list.json
@@ -62,6 +63,7 @@ on:
       - server/**
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
+      - apps/desktop/runtime/patches/**
       - apps/desktop/scripts/prune-runtime.mjs
       - herdr/scripts/privacy-check.mjs
       - herdr/scripts/privacy-list.json
