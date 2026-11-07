@@ -2091,8 +2091,10 @@ test("a release whose update.mjs imports layoutSafe.mjs but lacks it installs no
  * A fake `dsh` in the scratch PATH: it records every argv and, on `plugin --profile dsh-tui add`,
  * writes the dsh-tui profile the way DSH 0.2.2 does (base bundle, then the package); `remove`
  * takes the dependency out. DSH's home is under the scratch HOME, so nothing reaches the real one.
+ * `published` is the release time the CLI reads: an hour before this run, so the fresh-release
+ * path never depends on the wall clock.
  */
-const fakeDsh = (s) => {
+const fakeDsh = (s, published = new Date(Date.now() - 3600e3).toISOString()) => {
   const log = join(s.root, "dsh.log");
   writeFileSync(log, "");
   exe(join(s.bin, "dsh"), `#!/bin/sh
@@ -2119,7 +2121,7 @@ esac
 exit 0
 `);
   s.extraEnv.DSH_LOG = log;
-  s.extraEnv.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED = "2026-11-06T03:36:00Z";
+  s.extraEnv.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED = published;
   return { log, calls: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
 };
 
@@ -2153,6 +2155,20 @@ test("--dsh-tui installs the opt-in dsh-TUI into its own dsh-tui profile; --unin
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
   assert.ok(dsh.calls().includes("plugin --profile dsh-tui remove @deepseek-harness-tui/dsh-tui"));
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+});
+
+test("--dsh-tui writes minimumReleaseAgeExclude: [] for a release older than the profile's gate", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  // Far enough in the past to be aged whatever the wall clock says.
+  const dsh = fakeDsh(s, "2020-01-01T00:00:00Z");
+  const profile = join(s.home, ".dsh", "profiles", "dsh-tui");
+  const r = s.run("--dsh-tui", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Removed the release-age exception for .*older than the profile's minimumReleaseAge/);
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, { "@deepseek-harness-tui/dsh-tui": "0.19.0" });
+  assert.match(readFileSync(join(profile, "pnpm-workspace.yaml"), "utf8"), /^minimumReleaseAgeExclude: \[\]$/m);
+  assert.deepEqual(dsh.calls(), ["plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui@0.19.0 --save-exact"]);
 });
 
 test("--yes alone never installs the third-party dsh-TUI", (t) => {
