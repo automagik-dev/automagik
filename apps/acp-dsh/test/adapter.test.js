@@ -326,7 +326,9 @@ test('sideModel is a live setting, DeepSeek Flash by default', async () => {
 
 test('an agent that cannot start fails the step with its reason', async () => {
   const registered = {}
-  const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: () => undefined }, get: () => undefined }
+  // The Session's agent exists (scope finds it); the agent's process is what cannot start.
+  const agent = { session: { id: 's9' }, ctx: { tools: { register: () => () => {} } } }
+  const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: id => (id === 's9' ? agent : undefined) }, get: () => undefined }
   apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs'), claude: false, codex: false })
   const chunks = []
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)

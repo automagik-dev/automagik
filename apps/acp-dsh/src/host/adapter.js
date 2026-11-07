@@ -75,6 +75,21 @@ class Blocks {
 
 const textOf = content => (typeof content === 'string' ? content : (content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n'))
 
+/**
+ * The route provider a Session's agent resolves to: its model choice (a recorded selection,
+ * else its options), then the agent's own options. A live option may be a getter or a
+ * `{ get() }` reference; a plain value is what tests see.
+ * @param {any} agent
+ * @returns {string | undefined}
+ */
+export function providerOf(agent) {
+  const selected = agent?.model?.current?.()?.provider
+  if (typeof selected === 'string' && selected !== '') return selected
+  const option = agent?.options?.provider
+  const provider = typeof option?.get === 'function' ? option.get() : option
+  return typeof provider === 'string' && provider !== '' ? provider : undefined
+}
+
 /** The source kind of the row that says a new agent session does not see the chat before it. */
 export const NOTICE_KIND = 'acp-session'
 
@@ -217,6 +232,32 @@ export class AcpAdapter extends LlmAdapter {
     this.live = new Map()
     this.scoped = new WeakSet()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
+    // A new chat's first model step lists its tools after `agent/created`: register the
+    // mirror tool there for this adapter's routes only, so DSH's own Sessions never see it.
+    // The stream's `scope()` stays as the fallback for an agent this event missed.
+    this.ctx.on?.('agent/created', ({ agent } = {}) => {
+      if (this.agents.has(this.providerOf(agent))) this.registerMirror(agent)
+    })
+  }
+
+  /**
+   * The route provider a Session's agent resolves to; see the module's `providerOf`.
+   * @param {any} agent
+   * @returns {string | undefined}
+   */
+  providerOf(agent) {
+    return providerOf(agent)
+  }
+
+  /**
+   * Put the mirror tool in the Session agent's own scope, once: no other Session's model
+   * sees it. A missing agent is a no-op; `scope()` decides what that means for a turn.
+   * @param {any} agent
+   */
+  registerMirror(agent) {
+    if (agent === undefined || this.scoped.has(agent)) return
+    agent.ctx.tools.register(this.tool)
+    this.scoped.add(agent)
   }
 
   /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, off unless set). */
@@ -364,12 +405,17 @@ export class AcpAdapter extends LlmAdapter {
     return { provider, id: found.id, name: found.name, ...(found.description ? { description: found.description } : {}), ...(found.reasoning ? { reasoning: found.reasoning } : {}) }
   }
 
-  // The mirror tool lives in the agent's own scope: no other Session's model sees it.
+  // The mirror tool lives in the agent's own scope: no other Session's model sees it. The
+  // agent/created listener registers it before the first step; this fallback covers an agent
+  // that event missed and fails clearly when the Session has no live agent at all.
   scope(sessionId) {
     const agent = this.ctx.agents?.get?.(sessionId)
-    if (agent === undefined || this.scoped.has(agent)) return agent
-    agent.ctx.tools.register(this.tool)
-    this.scoped.add(agent)
+    if (agent === undefined) {
+      const error = new Error(`the Session ${sessionId} has no live agent`)
+      error.code = 'acp_agent_missing'
+      throw error
+    }
+    this.registerMirror(agent)
     return agent
   }
 
@@ -383,7 +429,7 @@ export class AcpAdapter extends LlmAdapter {
     try {
       dshAgent = this.scope(sessionId)
     } catch (error) {
-      return yield finish('error', `${agent.name} cannot show its tools here: ${error?.message ?? error}`)
+      return yield finish('error', `${agent.name} cannot show its tools here: ${error?.message ?? error}`, error?.code)
     }
     const blocks = new Blocks()
     let live = this.live.get(sessionId)
