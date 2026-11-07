@@ -1,6 +1,6 @@
-// Hermetic tests for bin/dsh-sandbox.mjs: every profile is a temp file shaped like the live
-// dsh-tui profile (a YAML list), every wrapper a temp executable. The live profile is never read
-// or written. The helper writes one managed block, backs it up, and check reads only.
+// Hermetic tests for bin/dsh-sandbox.mjs: every profile is a temp file (a YAML list or the exact
+// DSH template), every wrapper a temp executable. The live profile is never read or written.
+// The helper writes one managed block, backs it up, and check reads only.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
@@ -24,10 +24,12 @@ import {
   END,
   findManaged,
   installRow,
+  layerShape,
+  MSG_PREFIX as HELPER_PREFIX,
   PLACEHOLDER,
   sandboxBlock,
 } from '../bin/dsh-sandbox.mjs';
-import { MSG_PREFIX } from '../bin/hc-socket-mask.mjs';
+import { MSG_PREFIX as WRAPPER_PREFIX } from '../bin/hc-socket-mask.mjs';
 
 const HELPER = fileURLToPath(new URL('../bin/dsh-sandbox.mjs', import.meta.url));
 
@@ -41,6 +43,18 @@ const PROFILE = [
   '- id: approval',
   '  config:',
   '    policy: never',
+  '',
+].join('\n');
+
+/**
+ * The exact bytes @deepseek-ai/dsh-app-boot 0.2.2-rc.1 writes as a fresh profile patch layer
+ * (PROFILE_PATCH_TEMPLATE in lib/index.js). A freshly initialized DSH profile is this file.
+ */
+const DSH_TEMPLATE = [
+  '# Your patch layer for this dsh profile, applied after every bundle layer:',
+  '# a top-level YAML array of loader patch entries (id-targeted config',
+  '# overrides, disables, and insert lists; `!!js` expressions allowed).',
+  '[]',
   '',
 ].join('\n');
 
@@ -103,6 +117,127 @@ test('install writes one managed row and backs the profile up byte for byte', ()
     ok: true,
     message: `the sandbox row in ${fixture.profile} matches ${fixture.wrapper}`,
   });
+});
+
+test('install replaces the DSH template [] and check accepts the result', () => {
+  const fixture = makeFixture();
+  writeFileSync(fixture.profile, DSH_TEMPLATE);
+  const before = checkRow({ profile: fixture.profile, wrapper: fixture.wrapper });
+  assert.equal(before.ok, false);
+  assert.match(before.message, /no managed dsh-sandbox block/);
+  const installed = installRow({
+    profile: fixture.profile,
+    wrapper: fixture.wrapper,
+    now: new Date(1),
+  });
+  assert.equal(installed.changed, true);
+  const text = readFileSync(fixture.profile, 'utf8');
+  // The template comments stay, the [] line becomes the one managed block.
+  assert.equal(text, DSH_TEMPLATE.replace('[]\n', `${sandboxBlock(fixture.wrapper)}\n`));
+  assert.ok(text.startsWith('# Your patch layer for this dsh profile'));
+  assert.ok(text.includes('# overrides, disables, and insert lists'));
+  assert.ok(!text.split('\n').includes('[]'));
+  assert.equal(text.split(BEGIN).length - 1, 1);
+  assert.equal(text.split(END).length - 1, 1);
+  assert.equal(layerShape(text).shape, 'block-array');
+  assert.equal(readFileSync(installed.backup, 'utf8'), DSH_TEMPLATE);
+  assert.deepEqual(checkRow({ profile: fixture.profile, wrapper: fixture.wrapper }), {
+    ok: true,
+    message: `the sandbox row in ${fixture.profile} matches ${fixture.wrapper}`,
+  });
+});
+
+test('install keeps comments and blank lines around a lone []', () => {
+  const fixture = makeFixture();
+  const layer = '# before\n\n[]\n\n# after\n';
+  writeFileSync(fixture.profile, layer);
+  installRow({ profile: fixture.profile, wrapper: fixture.wrapper, now: new Date(1) });
+  assert.equal(readFileSync(fixture.profile, 'utf8'),
+    `# before\n\n${sandboxBlock(fixture.wrapper)}\n\n# after\n`);
+});
+
+test('check refuses the corrupted [] plus managed block state the old install made', () => {
+  const fixture = makeFixture();
+  const corrupted = `${DSH_TEMPLATE}${sandboxBlock(fixture.wrapper)}\n`;
+  writeFileSync(fixture.profile, corrupted);
+  const result = checkRow({ profile: fixture.profile, wrapper: fixture.wrapper });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /top-level \[\] with other content/);
+  const cli = runHelper(['check', '--profile', fixture.profile, '--wrapper', fixture.wrapper]);
+  assert.equal(cli.status, 1);
+  assert.equal(cli.stdout, '');
+  const lines = cli.stderr.trim().split('\n');
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].startsWith(HELPER_PREFIX));
+  assert.throws(
+    () => installRow({ profile: fixture.profile, wrapper: fixture.wrapper }),
+    /top-level \[\] with other content/,
+  );
+  assert.equal(readFileSync(fixture.profile, 'utf8'), corrupted);
+});
+
+test('install refuses a mapping layer and leaves it byte for byte', () => {
+  const fixture = makeFixture();
+  const mapping = [
+    '# a mapping layer',
+    'id: sandbox',
+    'config:',
+    '  policy: never',
+    '',
+  ].join('\n');
+  writeFileSync(fixture.profile, mapping);
+  assert.throws(
+    () => installRow({ profile: fixture.profile, wrapper: fixture.wrapper, now: new Date(1) }),
+    /top-level mapping or scalar/,
+  );
+  assert.equal(readFileSync(fixture.profile, 'utf8'), mapping);
+  assert.deepEqual(backupsOf(fixture.profile), []);
+  const checked = checkRow({ profile: fixture.profile, wrapper: fixture.wrapper });
+  assert.equal(checked.ok, false);
+  assert.match(checked.message, /top-level mapping or scalar/);
+});
+
+test('the top-level shape check accepts empty, lone [] and block arrays only', () => {
+  assert.equal(layerShape('').shape, 'empty');
+  assert.equal(layerShape('# a comment\n\n').shape, 'empty');
+  assert.deepEqual(layerShape(DSH_TEMPLATE), { shape: 'empty-flow', line: 3 });
+  assert.equal(layerShape(PROFILE).shape, 'block-array');
+  assert.equal(layerShape('- id: a\n  config:\n    mode: x\n').shape, 'block-array');
+  assert.throws(() => layerShape('[]\n- id: a\n'), /top-level \[\] with other content/);
+  assert.throws(() => layerShape('[{ id: a }]\n'), /flow array with entries/);
+  assert.throws(() => layerShape('id: a\n'), /mapping or scalar/);
+  assert.throws(() => layerShape('sandbox\n'), /mapping or scalar/);
+  assert.throws(() => layerShape('- id: a\nid: b\n'), /not a list item/);
+  assert.throws(() => layerShape('  - id: a\n'), /not a top-level list/);
+});
+
+test('install appends after a comments-only layer', () => {
+  const fixture = makeFixture();
+  const comments = '# no rows yet\n\n# still comments\n';
+  writeFileSync(fixture.profile, comments);
+  installRow({ profile: fixture.profile, wrapper: fixture.wrapper, now: new Date(1) });
+  assert.equal(readFileSync(fixture.profile, 'utf8'),
+    `${comments}\n${sandboxBlock(fixture.wrapper)}\n`);
+  assert.equal(checkRow({ profile: fixture.profile, wrapper: fixture.wrapper }).ok, true);
+});
+
+test('install and check require an absolute wrapper path', () => {
+  const fixture = makeFixture();
+  const relative = 'hc-socket-mask.mjs';
+  assert.throws(
+    () => installRow({ profile: fixture.profile, wrapper: relative }),
+    /must be absolute/,
+  );
+  assert.equal(readFileSync(fixture.profile, 'utf8'), PROFILE);
+  assert.deepEqual(backupsOf(fixture.profile), []);
+  const checked = checkRow({ profile: fixture.profile, wrapper: relative });
+  assert.equal(checked.ok, false);
+  assert.match(checked.message, /must be absolute/);
+  const cli = runHelper(['install', '--profile', fixture.profile, '--wrapper', relative]);
+  assert.equal(cli.status, 1);
+  assert.equal(cli.stdout, '');
+  assert.equal(cli.stderr.trim().split('\n').length, 1);
+  assert.ok(cli.stderr.startsWith(HELPER_PREFIX));
 });
 
 test('re-install is idempotent: one block, no second backup, no rewrite', () => {
@@ -241,5 +376,5 @@ test('the shipped profile row snippet is OFF by default and carries the placehol
     .filter((line) => line !== BEGIN && line !== END);
   assert.deepEqual(rows, blockRows);
   // The runner's own prefix is the row's failure signature, so DSH reports it as a runner failure.
-  assert.equal(MSG_PREFIX, FAILURE_SIGNATURE);
+  assert.equal(WRAPPER_PREFIX, FAILURE_SIGNATURE);
 });

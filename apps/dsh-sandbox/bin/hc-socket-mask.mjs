@@ -65,11 +65,13 @@ export function isSameOrAncestor(dir, target) {
 
 const failed = (args, message) => ({ args: [...args], fatal: message, notices: [], masked: false });
 
-/** The one line the wrapper prints when it starts a pane with no core socket at all. */
+/**
+ * The one line the wrapper prints for a set, absolute proxy that is missing or not a Unix
+ * socket. The pane still starts with no core socket, and the caller always hides the proxy's
+ * folder. An unset or relative proxy is fatal in maskArgs, never a notice.
+ */
 export function proxyNotice(proxy) {
   const tail = 'starting the pane with no herdr-core socket (hc will fail closed)';
-  if (!proxy) return `${PROXY_SOCKET} is not set: ${tail}`;
-  if (!isAbsolute(proxy)) return `${PROXY_SOCKET} is not an absolute path: ${tail}`;
   let info;
   try {
     info = statSync(proxy);
@@ -112,23 +114,30 @@ export function maskArgs(args, env = process.env, options = {}) {
   if (realDir === real || realDir === '/') {
     return failed(args, `the real core socket path has no folder of its own to hide: ${real}`);
   }
-  // Order matters: hide the real runtime folder; when the proxy path is absolute, hide its
-  // host folder too (after the bind, when the socket is live, so the bind resolved its source
-  // first); then ~/.ssh and the container sockets, which are independent masks.
+  // Order matters: hide the real runtime folder; hide the proxy's shared host folder too (after
+  // the bind, when the socket is live, so the bind resolved its source first); then ~/.ssh and
+  // the container sockets, which are independent masks. The proxy path is not optional: without
+  // it the wrapper cannot name the folder to hide, so another pane's proxy could be impersonated.
+  const proxy = env[PROXY_SOCKET];
+  if (!proxy) {
+    return failed(args, `${PROXY_SOCKET} is not set: the shared proxy folder cannot be hidden `
+      + "(another pane's proxy could be impersonated)");
+  }
+  if (!isAbsolute(proxy)) {
+    return failed(args, `${PROXY_SOCKET} is not an absolute path: ${proxy}: the shared proxy `
+      + "folder cannot be hidden (another pane's proxy could be impersonated)");
+  }
+  const proxyDir = dirname(proxy);
+  if (isSameOrAncestor(proxyDir, real)) {
+    return failed(args,
+      `the proxy folder ${proxyDir} holds the real socket path: the mask would hide the proxy`);
+  }
   const mounts = ['--tmpfs', realDir];
   const notices = [];
-  const proxy = env[PROXY_SOCKET];
   const notice = proxyNotice(proxy);
   if (notice) notices.push(notice);
-  if (proxy && isAbsolute(proxy)) {
-    const proxyDir = dirname(proxy);
-    if (isSameOrAncestor(proxyDir, real)) {
-      return failed(args,
-        `the proxy folder ${proxyDir} holds the real socket path: the mask would hide the proxy`);
-    }
-    if (!notice) mounts.push('--bind', proxy, real);
-    mounts.push('--tmpfs', proxyDir);
-  }
+  else mounts.push('--bind', proxy, real);
+  mounts.push('--tmpfs', proxyDir);
   // ~/.ssh exists on most machines, but a fresh one may have none: then there is nothing to
   // hide. A directory (following symlinks) is shadowed; anything else is bound over.
   const ssh = join(env.HOME, '.ssh');

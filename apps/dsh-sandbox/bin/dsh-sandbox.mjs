@@ -59,10 +59,18 @@ export function defaultProfile(env = process.env) {
   return resolve(join(home, 'profiles', 'dsh-tui', 'cordis.patch.yml'));
 }
 
+/** The wrapper path as written, requiring it to be absolute (a relative path is refused). */
+export function requireAbsoluteWrapper(wrapper) {
+  if (!wrapper) throw new Error('--wrapper is required');
+  if (!isAbsolute(wrapper)) {
+    throw new Error(`the wrapper path must be absolute: ${wrapper}`);
+  }
+  return wrapper;
+}
+
 /** The wrapper's absolute path, requiring an executable regular file (install only). */
 export function resolveWrapper(wrapper) {
-  if (!wrapper) throw new Error('--wrapper is required');
-  const path = isAbsolute(wrapper) ? wrapper : resolve(wrapper);
+  const path = requireAbsoluteWrapper(wrapper);
   let info;
   try {
     info = statSync(path);
@@ -105,18 +113,84 @@ export function markerProblem(text) {
   return null;
 }
 
-/** Replace the one managed block, or append it with a blank line before it. */
+/**
+ * The layer's top-level shape, without a YAML parser: comments and blank lines are skipped, so
+ * only indentation and the first character of each content line count. This is a top-level
+ * shape check, not YAML validation: an indented continuation line is accepted unparsed, and the
+ * managed row is generated here. Returns `{ shape, line }`: 'empty' (comments/blank only), the
+ * lone '[]' ('empty-flow', line set) or a block array ('block-array'). Throws a clear error for
+ * a mapping, a scalar, a flow array with entries or a '[]' mixed with other content.
+ */
+export function layerShape(text) {
+  const content = [];
+  text.split('\n').forEach((line, index) => {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) return;
+    content.push({ index, trimmed, indented: /^[ \t]/.test(line) });
+  });
+  if (content.length === 0) return { shape: 'empty', line: null };
+  const emptyFlow = content.filter((entry) => entry.trimmed === '[]');
+  if (emptyFlow.length > 0 && content.length > 1) {
+    throw new Error(`the profile layer has a top-level [] with other content at line `
+      + `${emptyFlow[0].index + 1}: the result would not be one YAML array`);
+  }
+  if (emptyFlow.length === 1) return { shape: 'empty-flow', line: emptyFlow[0].index };
+  const [first] = content;
+  if (first.indented) {
+    throw new Error(`the profile layer is not a top-level list: line ${first.index + 1} is `
+      + 'indented; refusing to guess its shape');
+  }
+  if (first.trimmed.startsWith('[')) {
+    throw new Error(`the profile layer is a flow array with entries at line ${first.index + 1}: `
+      + 'only a top-level block array is supported');
+  }
+  if (!first.trimmed.startsWith('-')) {
+    throw new Error(`the profile layer is a top-level mapping or scalar at line `
+      + `${first.index + 1}: only a block array (or the lone []) can take the managed row`);
+  }
+  for (const entry of content.slice(1)) {
+    if (!entry.indented && !entry.trimmed.startsWith('-')) {
+      throw new Error(`the profile layer has top-level content that is not a list item at line `
+        + `${entry.index + 1}: refusing to mix a block item into it`);
+    }
+  }
+  return { shape: 'block-array', line: null };
+}
+
+const withFinalNewline = (text) => (text.endsWith('\n') ? text : `${text}\n`);
+
+/** Append the managed block after an empty/comments-only layer or an existing block array. */
+function appendBlock(text, block) {
+  const separator = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
+  return `${text}${separator}${block}\n`;
+}
+
+/**
+ * Replace the one managed block, replace the DSH template's lone `[]`, or append the block to
+ * an empty/comments-only layer or an existing block array. The result is checked again so the
+ * helper never writes a layer that is not one top-level block array.
+ */
 export function applyBlock(text, block) {
   const { lines, begins, ends } = findManaged(text);
-  if (begins.length === 0 && ends.length === 0) {
-    if (text.trim() === '') return `${block}\n`;
-    const separator = text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
-    return `${text}${separator}${block}\n`;
+  const shape = layerShape(text);
+  let next;
+  if (begins.length === 0 && ends.length === 0 && shape.shape === 'empty') {
+    next = text.trim() === '' ? `${block}\n` : appendBlock(text, block);
+  } else if (begins.length === 0 && ends.length === 0 && shape.shape === 'empty-flow') {
+    lines.splice(shape.line, 1, ...block.split('\n'));
+    next = withFinalNewline(lines.join('\n'));
+  } else if (begins.length === 0 && ends.length === 0) {
+    next = appendBlock(text, block);
+  } else {
+    const problem = markerProblem(text);
+    if (problem) throw new Error(problem);
+    lines.splice(begins[0], ends[0] - begins[0] + 1, ...block.split('\n'));
+    next = withFinalNewline(lines.join('\n'));
   }
-  const problem = markerProblem(text);
-  if (problem) throw new Error(problem);
-  lines.splice(begins[0], ends[0] - begins[0] + 1, ...block.split('\n'));
-  return lines.join('\n');
+  if (layerShape(next).shape !== 'block-array') {
+    throw new Error('the profile layer would not be one top-level block array; refusing to write');
+  }
+  return next;
 }
 
 const modeOf = (path) => {
@@ -190,12 +264,22 @@ export function installRow({ profile, wrapper, now = new Date() }) {
 /** Check the installed row without writing. `ok` false carries one clear reason. */
 export function checkRow({ profile, wrapper }) {
   const path = resolve(profile);
-  const wrapperPath = isAbsolute(wrapper) ? wrapper : resolve(wrapper);
+  let wrapperPath;
+  try {
+    wrapperPath = requireAbsoluteWrapper(wrapper);
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
   let text;
   try {
     text = readFileSync(path, 'utf8');
   } catch {
     return { ok: false, message: `the profile ${path} does not exist or cannot be read` };
+  }
+  try {
+    layerShape(text);
+  } catch (error) {
+    return { ok: false, message: `${error.message} (${path})` };
   }
   const problem = markerProblem(text);
   if (problem) return { ok: false, message: `${problem} (${path})` };
@@ -235,8 +319,8 @@ export function parseArgs(argv, env = process.env) {
 }
 
 const USAGE = [
-  'usage: dsh-sandbox install [--profile <path>] --wrapper <path>',
-  '       dsh-sandbox check   [--profile <path>] --wrapper <path>',
+  'usage: dsh-sandbox install [--profile <path>] --wrapper <absolute path>',
+  '       dsh-sandbox check   [--profile <path>] --wrapper <absolute path>',
   '--profile defaults to $DSH_HOME/profiles/dsh-tui/cordis.patch.yml ($DSH_HOME is ~/.dsh)',
 ].join('\n');
 

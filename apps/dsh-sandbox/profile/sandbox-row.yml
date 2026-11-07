@@ -5,12 +5,13 @@
 # profile that carries this row behaves as it does today.
 #
 # `{{WRAPPER}}` is a placeholder. Only `dsh-sandbox install` substitutes the absolute path to
-# bin/hc-socket-mask.mjs and writes this item inside its managed block; the helper refuses (and
-# check fails) while the placeholder or a relative path is left. Do not copy this file into a
-# profile by hand.
+# bin/hc-socket-mask.mjs and writes this item inside its managed block; install refuses a
+# relative or missing wrapper path, and check fails on a relative one. Do not copy this file into
+# a profile by hand.
 #
 # Rollout: the pack copies the wrapper byte-equal from its release and runs the helper at
-# enablement; the proxy lane sets the switch and AM_HC_REAL_SOCKET / AM_HC_PROXY_SOCKET per pane.
+# enablement; the proxy lane sets the switch and absolute AM_HC_REAL_SOCKET / AM_HC_PROXY_SOCKET
+# per pane (the wrapper refuses a pane without the absolute proxy path).
 # Nothing here is installed on a live profile until then (README.md, "Rollout").
 - id: sandbox
   config:

@@ -40,7 +40,8 @@ ships no mask path for them, so there is nothing to enable there until that land
   `HC_TERMINAL_SOCKET` is the fallback when it is absent.
 - `AM_HC_PROXY_SOCKET`: the host-side per-pane proxy socket the Herdr lane starts; the wrapper
   binds it at `AM_HC_REAL_SOCKET` inside the sandbox and always hides its folder. It must be an
-  absolute path (the wrapper cannot hide a folder it cannot name).
+  absolute path: unset or relative is fatal (the wrapper cannot hide a folder it cannot name,
+  and another pane's proxy could be impersonated).
 - `hc-socket-mask: `: the prefix of every wrapper line. It is the profile row's
   `runnerFailureSignatures` entry, so DSH reports a wrapper refusal as a runner failure.
 
@@ -54,16 +55,15 @@ the `--`, in this order:
 
 1. `--tmpfs <dirname(AM_HC_REAL_SOCKET)>` - hides the core socket and the holder sockets beside
    it (and any other listener in the core's runtime folder).
-2. `--tmpfs <dirname(AM_HC_PROXY_SOCKET)>` for an absolute proxy path: hides the shared proxy
-   host folder, so another pane's proxy socket is unreachable. When the path is also a live Unix
-   socket, the bind comes first: `--bind <proxy> <real>` (the proxy answers at the path the
-   client already uses, so `HC_TERMINAL_SOCKET`, `core.lock` and the client's address check need
-   no rewrite), then the folder's tmpfs; the bind resolves its source before that tmpfs. When
-   the socket is missing or not a socket, the folder is still hidden (with no bind), and the
-   pane starts with no core socket. An unset or relative path names no folder the wrapper can
-   hide: no bind, no folder tmpfs, one notice, and the pane still starts with no core socket.
-   The hidden folder is the proxy's, never the attach ledger's: the CLI in the pane still reads
-   `attach.jsonl`.
+2. `--tmpfs <dirname(AM_HC_PROXY_SOCKET)>` - hides the shared proxy host folder, so another
+   pane's proxy socket is unreachable. When the path is also a live Unix socket, the bind comes
+   first: `--bind <proxy> <real>` (the proxy answers at the path the client already uses, so
+   `HC_TERMINAL_SOCKET`, `core.lock` and the client's address check need no rewrite), then the
+   folder's tmpfs; the bind resolves its source before that tmpfs. When the socket is missing or
+   not a socket, the folder is still hidden (with no bind), and the pane starts with no core
+   socket. An unset or relative path is fatal before `bwrap`: the wrapper cannot name the folder
+   to hide, so another pane's proxy could be impersonated. The hidden folder is the proxy's,
+   never the attach ledger's: the CLI in the pane still reads `attach.jsonl`.
 3. `$HOME/.ssh` when it exists, following symlinks: a directory is shadowed with
    `--tmpfs <canonical path>`, anything else is bound over with
    `--bind /dev/null <canonical path>`. Absent, nothing is added (there is nothing to hide).
@@ -92,6 +92,8 @@ Before running `bwrap`, the wrapper refuses with one `hc-socket-mask: ` line and
 - the real socket path (`AM_HC_REAL_SOCKET`, else `HC_TERMINAL_SOCKET`) is absent or not
   absolute;
 - the real socket path has no folder of its own to hide (`dirname` is `/`);
+- `AM_HC_PROXY_SOCKET` is unset or not absolute (the shared proxy folder cannot be hidden, so
+  another pane's proxy could be impersonated);
 - `HOME` is absent or not absolute (the runner will not guess where `~/.ssh` is);
 - the runner arguments have no `--` separator (the command cannot be preserved);
 - `AM_HC_PROXY_SOCKET` is absolute but its folder is the real socket path or one of its parents
@@ -100,11 +102,10 @@ Before running `bwrap`, the wrapper refuses with one `hc-socket-mask: ` line and
 When `AM_HC_PROXY_SOCKET` is absolute but missing or not a Unix socket, the wrapper prints one
 `hc-socket-mask: ` line, hides the proxy's host folder along with the real folder, `~/.ssh` (if
 present) and the container sockets, and runs `bwrap` with **no core socket**: the pane starts
-and its `hc` calls fail closed. When the path is unset or relative, the wrapper cannot name the
-folder: it prints one line, adds no bind and no proxy-folder tmpfs, applies every other mask,
-and the pane still starts with no core socket. These are the hand-started-pane case and the
-"proxy not up yet" case; they never fall back to the real socket. **The pack must always set an
-absolute `AM_HC_PROXY_SOCKET`** so the shared proxy host folder is hidden too.
+and its `hc` calls fail closed. This is the "proxy not up yet" case and a non-socket path; it
+never falls back to the real socket. **The pack must always set an absolute
+`AM_HC_PROXY_SOCKET`**: an unset or relative one refuses the pane instead of starting it without
+the folder mask.
 
 With the switch off, nothing above applies: the wrapper runs `bwrap` with exactly the argv it
 was handed, which is today's behavior.
@@ -127,7 +128,8 @@ Nothing here is installed on a live profile today. The order:
 2. The Herdr lane's proxy PR adds the per-pane proxy and sets, in the pane environment it
    starts: `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET=<the pane's real core socket>` and
    `AM_HC_PROXY_SOCKET=<the absolute host proxy socket>`. It starts the proxy before DSH and
-   refuses the pane if the proxy cannot start.
+   refuses the pane if the proxy cannot start; the wrapper refuses a pane without an absolute
+   proxy path.
 3. At enablement the pack (`herdr/mods/am-sidebar/dshTui.mjs`) copies `bin/hc-socket-mask.mjs`
    **byte-equal** from the pack release to a stable path, the way
    `node scripts/am-copies.mjs --check` treats the am copies, then runs
@@ -147,7 +149,8 @@ The default profile is `$DSH_HOME/profiles/dsh-tui/cordis.patch.yml`, with `DSH_
 to `~/.dsh`.
 
 ```sh
-# Install (or re-install) the managed row. The wrapper must exist and be executable.
+# Install (or re-install) the managed row. The wrapper must exist, be executable and be named by
+# an absolute path (a relative one is refused).
 node apps/dsh-sandbox/bin/dsh-sandbox.mjs install \
   --wrapper /path/to/hc-socket-mask.mjs
 
@@ -166,6 +169,14 @@ and is idempotent: an already-current block is not rewritten and takes no new ba
 is marked `# dsh-sandbox begin` / `# dsh-sandbox end`; install replaces it in place (or appends
 it), and refuses to guess when the markers are duplicated or broken. `check` only reads. Exit
 codes: `0` installed/current, `1` refusal or mismatch, `2` usage.
+
+The helper understands three top-level layer shapes: an empty/comments-only file, the DSH
+template's lone `[]`, and a block array. `install` replaces the lone `[]` line (keeping the
+template comments) and appends after an empty/comments-only file or an existing block array,
+then requires the result to be one block array again; it refuses a mapping, a scalar or a
+non-empty flow array without writing. This is a top-level shape check, not a YAML parser.
+`check` applies the same shape check before it compares the managed block, so the corrupted
+`[]` plus block state is never reported as current.
 
 ## Tests
 
