@@ -661,6 +661,16 @@ export function install(rt) {
     // A member who leaves and comes back starts from a fresh look at the log.
     for (const member of removed) {
       if (room.seen) delete room.seen[member]
+      // Its group Session leaves the team's maps here, and that Session is the only lineage
+      // a fresh-Session task armed there has (#584, L5): capture the ids now and let the
+      // pause finish on its own, so this change stays written without an await.
+      const parts = (room.segments?.[member] ?? []).map(part => part.sessionId)
+      const lost = [room.sessions?.[member], ...parts].filter(Boolean)
+      if (lost.length > 0) {
+        void rt.revokeNewSchedules?.(member, lost)
+          .catch(error => rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s',
+            member, error))
+      }
       rt.dropGroupSession(room, member)
     }
     room.members = members
@@ -716,6 +726,16 @@ export function install(rt) {
     if (room === undefined) throw refusal('Unknown group chat')
     // Before the group's Sessions leave the state, which the archive reads.
     const archived = rt.archiveGroupMemory(room)
+    // A fresh-Session task armed from one of these Sessions has no other lineage (#584, L5).
+    for (const botId of Object.keys(room.sessions ?? {})) {
+      const parts = (room.segments?.[botId] ?? []).map(part => part.sessionId)
+      const lost = [room.sessions[botId], ...parts]
+      try {
+        await rt.revokeNewSchedules?.(botId, lost)
+      } catch (error) {
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', botId, error)
+      }
+    }
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
     // Its tasks keep the level they run at as a cap, then take their Bot's own or lower.
     rt.capTasks(task => task.roomId === id)

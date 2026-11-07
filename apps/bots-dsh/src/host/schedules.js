@@ -109,15 +109,24 @@ export function install(rt) {
   const known = owner => owner !== undefined && (owner.botId === undefined ? rt.roomOf(owner.roomId) !== undefined : rt.botOf(owner.botId) !== undefined)
 
   // The Bot an involved Session speaks for: its own chat, a group Session, an earlier part,
-  // or a task run. DSH records every Session involved in a task, the creating one included.
+  // a task run, or a subagent child (through its parent lineage). DSH records every Session
+  // involved in a task, the creating one included.
   const botOfTaskSession = (sessionId) => {
-    if (typeof sessionId !== 'string' || sessionId === '') return undefined
-    const direct = rt.botOf(sessionId)
-    if (direct !== undefined) return direct
-    const owner = rt.selfOf?.(sessionId)
-    if (owner !== undefined) return rt.botOf(owner)
-    const from = rt.state?.tasks?.[sessionId]?.from
-    return from === undefined ? undefined : rt.botOf(from)
+    let current = sessionId
+    let header = typeof sessionId === 'string' ? ctx.sessions?.get?.(sessionId)?.header : undefined
+    for (let depth = 0; typeof current === 'string' && current !== '' && depth < 32; depth += 1) {
+      const direct = rt.botOf(current)
+      if (direct !== undefined) return direct
+      const owner = rt.selfOf?.(current) ?? rt.state?.tasks?.[current]?.from
+      if (owner !== undefined) {
+        const bot = rt.botOf(owner)
+        if (bot !== undefined) return bot
+      }
+      if (header?.origin !== 'subagent' || header.parentSession === undefined) return undefined
+      current = header.parentSession
+      header = ctx.sessions?.get?.(current)?.header
+    }
+    return undefined
   }
   const restricted = bot => Array.isArray(bot?.denyTools) && bot.denyTools.length > 0
   // Every Session a Bot speaks from now, plus the ones a caller already has.
@@ -152,12 +161,23 @@ export function install(rt) {
     const sessions = scoped ? sessionsOf(bot, extra) : undefined
     const paused = []
     for (const entry of await service.catalog()) {
-      if (entry.status !== 'active' || !NEW_TARGETS.has(entry.target?.kind)) continue
+      const target = entry.target ?? {}
+      // A delivered `new_once` is rewritten to a session target on the Session it opened,
+      // which has no team lineage: the task is still unbound and must be paused.
+      const unbound = target.kind === 'session' && botOfTaskSession(target.sessionId) === undefined
+      if (entry.status !== 'active' || (!NEW_TARGETS.has(target.kind) && !unbound)) continue
       const involved = Array.isArray(entry.involvedSessionIds) ? entry.involvedSessionIds : []
-      const fromBot = involved.some((sessionId) => {
-        if (sessions !== undefined && !sessions.has(sessionId)) return false
-        return any || restricted(botOfTaskSession(sessionId))
-      })
+      // A scoped caller vouches for the Session ids it hands over (a group Session leaving
+      // the maps, a task record being evicted), so they are resolved before the maps go.
+      const matched = sessions === undefined
+        ? involved
+        : involved.filter(sessionId => sessions.has(sessionId))
+      // A subagent child is in no team map; its header lineage still names the Bot.
+      const childOfBot = bot !== undefined
+        && involved.some(sessionId => botOfTaskSession(sessionId)?.id === bot.id)
+      const fromBot = sessions === undefined
+        ? involved.some(sessionId => restricted(botOfTaskSession(sessionId)))
+        : (matched.length > 0 && (any || restricted(bot))) || childOfBot
       if (!fromBot) continue
       try {
         await service.edit({ id: entry.id, action: 'update', patch: { active: false } })

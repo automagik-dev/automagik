@@ -212,14 +212,40 @@ test('restricting a Bot pauses the fresh-Session tasks its Sessions armed', asyn
     target: { kind: 'session', sessionId: 'w2' },
   }, 'w2')
   const outside = await freshTask(schedule, 'outside', 'Elsewhere')
+  // A `new_once` task is rewritten to its fresh Session after the first delivery; that
+  // Session has no lineage, so the task is still unbound.
+  const delivered = await schedule.create({
+    title: 'Once', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'fresh-1' },
+  }, 'w2')
   // An unrestricted Bot keeps its fresh-Session task, whatever the sweep sees.
   await rt.revokeNewSchedules()
   assert.equal(schedule.tasks.get(fresh.id).status, 'active')
-  // The user's settings restrict it: its fresh-Session task pauses, the others stay.
+  // The user's settings restrict it: its fresh-Session tasks pause, the bound one stays.
   await rt.updateBot('w1', { denyTools: ['bash'] })
   assert.equal(schedule.tasks.get(fresh.id).status, 'paused')
+  assert.equal(schedule.tasks.get(delivered.id).status, 'paused')
   assert.equal(schedule.tasks.get(bound.id).status, 'active')
   assert.equal(schedule.tasks.get(outside.id).status, 'active')
+})
+
+test('a subagent child of a restricted Bot resolves through its parent lineage', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  // DSH keeps a child's parent and subagent origin in its Session header, not in state.
+  ctx.sessions = {
+    get: id => (id === 'child-1'
+      ? { header: { origin: 'subagent', parentSession: 'w2' } }
+      : undefined),
+  }
+  await rt.load()
+  const armed = await freshTask(schedule, 'child-1', 'Child')
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'paused')
 })
 
 test('a restart with the deny list already set pauses the armed fresh-Session task', async (t) => {

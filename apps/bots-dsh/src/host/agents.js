@@ -774,6 +774,19 @@ export function install(rt) {
     // The level each forgotten task ran at is read while it is still a task.
     const forgotten = ended.slice(0, Math.max(0, all.length - TASKS_KEPT))
       .map(([id]) => [id, rt.taskLevelOf(id)])
+    // A fresh-Session task armed by an ended task's Session has that record as its only
+    // team lineage; a restricted Bot's such tasks are paused before the record goes
+    // (#584, L5). Without a schedule service this is a no-op.
+    for (const [id] of forgotten) {
+      const from = tasks()[id]?.from
+      const bot = from === undefined ? undefined : state.bots?.[from]
+      if (!Array.isArray(bot?.denyTools) || bot.denyTools.length === 0) continue
+      try {
+        await rt.revokeNewSchedules?.(from, [id])
+      } catch (error) {
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
+      }
+    }
     for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
     for (const [id, ranAt] of forgotten) {
