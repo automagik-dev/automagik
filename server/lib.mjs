@@ -1,7 +1,18 @@
 // What the server image's entrypoint and its build share: the profile's name, the web port,
 // the data-dir preflight, the token redaction every log line goes through, the private-key-file
 // rule, and the pnpm store pinning that keeps a profile built under /build usable under /data.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { cp } from 'node:fs/promises'
 
@@ -37,6 +48,43 @@ export function ensureDataDirs(dirs, { uid = process.getuid?.() ?? 1000 } = {}) 
     }
   }
   return dirs
+}
+
+const UNWRITABLE = ['EACCES', 'EPERM', 'EROFS']
+const unwritable = (error) => UNWRITABLE.includes(error?.code)
+
+/**
+ * Prepare the workspace before the data-dir preflight. An Incus instance pre-creates the
+ * image WorkingDir on the mounted data volume as root, so /data/workspace can be a root-owned
+ * 0755 directory uid 1000 cannot write. An empty one is removed without recursion (the
+ * writable parent owns the entry) and recreated by this process, which lets ensureDataDirs
+ * pass; a non-empty one is left for ensureDataDirs to refuse with its uid 1000 message. This
+ * never chowns, never runs as root and never deletes recursively. Returns true if repaired.
+ */
+export function prepareWorkspace(dir, { uid = process.getuid?.() ?? 1000 } = {}) {
+  if (!existsSync(dir)) return false
+  try {
+    accessSync(dir, constants.W_OK)
+    return false
+  } catch (error) {
+    if (!unwritable(error)) throw error
+  }
+  let entries
+  try {
+    entries = readdirSync(dir)
+  } catch (error) {
+    if (!unwritable(error)) throw error
+    return false
+  }
+  if (entries.length > 0) return false
+  try {
+    rmdirSync(dir)
+  } catch (error) {
+    if (!unwritable(error)) throw error
+    return false
+  }
+  ensureDataDirs([dir], { uid })
+  return true
 }
 
 /** One log line with any `token=` credential replaced. Everything else is kept verbatim. */

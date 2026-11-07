@@ -154,6 +154,11 @@ on `create`. For an existing root-owned volume, chown it to `1000:1000` on the h
 (`chown -R 1000:1000 <the volume's path>`). Docker's named volume needs neither: Docker seeds a
 fresh volume with the image's `/data` ownership (1000:1000).
 
+The volume flags above stay required. No `oci.cwd` override is needed now: the image's WorkingDir
+is `/opt/automagik`, outside `/data`, and the entrypoint creates `/data/workspace` as uid 1000.
+An empty root-owned `/data/workspace` left on a volume by an older image is removed and
+recreated; a non-empty one is refused with the directory's uid 1000 message.
+
 ## Visibility
 
 GitHub creates a new Container package private even when the repository is public, and its REST
