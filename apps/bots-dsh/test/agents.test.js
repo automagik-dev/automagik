@@ -20,6 +20,8 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
   const failArchive = { on: false }
   const restricted = []
   const renamed = []
+  // The Sessions this DSH holds: what `ctx.sessions.list()` reports.
+  const liveSessions = new Set()
   let sessions = 0
   ctx.tools.schemas = () => [...TEAM_TOOLS, 'read', 'write'].map(name => ({ name }))
   Object.assign(ctx, {
@@ -39,7 +41,9 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     sessionController: {
       create: async (options) => {
         created.push(options)
-        return { sessionId: options.sessionId ?? `s${++sessions}` }
+        const sessionId = options.sessionId ?? `s${++sessions}`
+        liveSessions.add(sessionId)
+        return { sessionId }
       },
       resolveAgent: async (sessionId) => {
         const agent = {
@@ -55,7 +59,7 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
       selectModel: async () => {},
     },
     sessionTitle: { rename: async (session, title) => { renamed.push({ id: session.id, title }) } },
-    sessions: { flush: async () => {} },
+    sessions: { flush: async () => {}, list: () => [...liveSessions].map(id => ({ id })) },
   })
   let route
   const register = ctx.connection.fetch.register
@@ -73,7 +77,10 @@ function start(team, { config = {}, home = mkdtempSync(join(tmpdir(), 'ds-bot-ag
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { call, stop, home, created, archived, failArchive, restricted, renamed, createdAgents, ctx }
+  return {
+    call, stop, home, created, archived, failArchive, restricted, renamed,
+    createdAgents, ctx, liveSessions,
+  }
 }
 
 async function nativeTransition(t) {
@@ -1360,6 +1367,32 @@ test('with 60 working tasks the oldest working one goes and the newest are kept'
   assert.equal(rt.state.tasks[next]?.status, 'working')
 })
 
+test('a live working task keeps its record past the cap, and the guard still binds', async (t) => {
+  // All sixty are running: their records are the lineage the executor guard resolves. The
+  // cap must give way rather than drop a live task's record (#584, L4).
+  const stuck = index => ({
+    title: `Stuck ${index}`, from: 'm1', at: 10 + index, status: 'working',
+  })
+  const tasks = Object.fromEntries(
+    Array.from({ length: TASK_CAP }, (_, index) => [`w${index}`, stuck(index)]),
+  )
+  const restrictedBot = { ...TEAM.bots.m1, denyTools: ['read'] }
+  const team = { ...TEAM, bots: { ...TEAM.bots, m1: restrictedBot }, tasks }
+  const bench = start(team)
+  t.after(bench.stop)
+  await bench.call('state', {})
+  for (const id of Object.keys(tasks)) bench.liveSessions.add(id)
+  const rt = bench.ctx.provided.get('omniTeam')
+  await rt.startTask({ title: 'Next', text: 'Do it', from: 'm1' })
+  assert.equal(Object.keys(rt.state.tasks).length, TASK_CAP + 1)
+  assert.equal(rt.state.tasks.w0?.status, 'working')
+  const guard = (bench.ctx.listeners.get('tools/execute') ?? [])[0]
+  await assert.rejects(
+    () => guard({ name: 'read', agent: { id: 'w0' } }, async () => 'ran'),
+    /does not have the read tool/,
+  )
+})
+
 test('the cap forgets by when a task ended, not when it started', async (t) => {
   const endedSince = count => Object.fromEntries(Array.from({ length: count }, (_, index) => [`e${index}`, { title: `Ended ${index}`, from: 'm1', at: 10 + index, status: 'done', endedAt: 1_000 + index }]))
   const tasks = {
@@ -1407,8 +1440,8 @@ test('a stop after an eviction is written down and reported to the Bot that aske
   assert.deepEqual(reports.map(report => [report.taskSessionId, report.text]), [['wish', 'It was stopped before it finished.']])
 })
 
-// #164's residual limits of the bound, documented not tested. A working task the cap does
-// evict past 60 newer working ones still loses its stop: agents.js:747-748 deletes the
-// record and agents.js:770-771 returns for a Session that has none. The drop also names
-// nothing: agents.js:751-752 warns only when forgetTaskPermission fails. Both go past this
-// PR's stated contract, so pinning them here would hold CI on a design question.
+// #164's residual limits of the bound, documented not tested. A working task DSH no longer
+// holds can still be evicted past 60 newer records; its stop was never coming, and
+// `forgetTaskPermission` still lowers its level. Its record is gone, so a Session DSH opens
+// again later has no tool lineage (the executor guard cannot bind it, #584). Evicting a
+// working record whose Session *is* live is what #584 removed: the cap gives way to it.

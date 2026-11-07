@@ -10,12 +10,19 @@
 // A name this profile does not serve is ignored with a warning instead of failing the boot:
 // a list written for another DSH keeps working here, and a typo is reported where the user
 // can see it (the Bot's own chat is untouched by it).
+//
+// A Bot that denies anything is restricted, and it also loses DSH's `schedule_create` and
+// `schedule_edit`: their `new` and `new_once` targets open a Session that is neither a
+// subagent child nor a task record, so no lineage would bind the restriction to it (#584).
 import { refusal } from './refusal.js'
 
 /** The most names one Bot may deny. */
 export const DENY_MAX = 64
 /** The longest tool name accepted. */
 export const DENY_NAME_MAX = 64
+// The tools that can start or retarget a scheduled task on a Session outside the team's
+// lineage. Every restricted Bot loses both; `schedule_list` and `schedule_view` open nothing.
+const SCHEDULE_TOOLS = ['schedule_create', 'schedule_edit']
 const RETRY_MS = 1_000
 const RETRY_TRIES = 15
 
@@ -98,6 +105,13 @@ export function install(rt) {
 
   const same = (left, right) => left.length === right.length && left.every((name, index) => name === right[index])
 
+  // The names in force for a Bot: its own list, sorted, plus the schedule tools every
+  // restricted Bot loses. An empty (or cleared) list restricts nothing.
+  const deniedNames = (bot) => {
+    const listed = Array.isArray(bot?.denyTools) ? bot.denyTools : []
+    return listed.length === 0 ? [] : [...new Set([...listed, ...SCHEDULE_TOOLS])].sort()
+  }
+
   // The tool names this profile serves for an Agent, before any restriction. `schemas()` is the
   // visible surface, so after a restriction it hides a name this Bot already denies: reading
   // the served set from it would call an additive update's earlier name unknown and drop it
@@ -170,7 +184,7 @@ export function install(rt) {
   async function apply(sessionId, agent, knownBot) {
     if (typeof sessionId !== 'string' || agent === undefined) return
     const bot = knownBot ?? botOfSession(sessionId, agent)
-    const wanted = Array.isArray(bot?.denyTools) ? [...bot.denyTools].sort() : []
+    const wanted = deniedNames(bot)
     const current = held.get(sessionId)
     if (current !== undefined && current.agent === agent && same(current.names, wanted)) {
       waiting.delete(sessionId)
@@ -201,8 +215,13 @@ export function install(rt) {
     // below still refuses it, and the next resolve re-applies this list.
     const deny = wanted.filter(name => served.has(name))
     const missing = wanted.filter(name => !served.has(name))
-    if (missing.length > 0) {
-      warnOnce(sessionId, `ds-bot: ${bot?.name ?? 'a Bot'} denies ${missing.join(', ')}, which this DSH does not serve or cannot restrict; ignored`)
+    // An implicit schedule name this profile cannot restrict is not the user's typo: the
+    // executor guard still refuses it, so there is nothing to report.
+    const listed = new Set(Array.isArray(bot?.denyTools) ? bot.denyTools : [])
+    const unknown = missing.filter(name => listed.has(name))
+    if (unknown.length > 0) {
+      warnOnce(sessionId, `ds-bot: ${bot?.name ?? 'a Bot'} denies ${unknown.join(', ')}, `
+        + 'which this DSH does not serve or cannot restrict; ignored')
     }
     waiting.delete(sessionId)
     release(sessionId)
@@ -288,7 +307,7 @@ export function install(rt) {
     const name = typeof exec?.name === 'string' ? exec.name : ''
     if (name === '' || exec?.agent === undefined) return next()
     const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id, exec.agent)
-    if (bot === undefined || !Array.isArray(bot.denyTools) || !bot.denyTools.includes(name)) return next()
+    if (bot === undefined || !deniedNames(bot).includes(name)) return next()
     throw refusal(`${bot.name} does not have the ${name} tool`)
   })
 
