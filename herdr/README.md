@@ -846,25 +846,32 @@ refused with one stderr line naming #624, #628 and #631, and the real `hc` is ne
 verb but `send` (`hc events --terminal`/`--children-of` included), and any `--on` outside an
 allowed `send`.
 
-`send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its members
+`send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its declared lead
+chain (`bot.lead`, then that bot's lead, while each id is listed in bots.json, planned entries
+included — so a captain whose lead is a planned Orchestrator reaches it), its members
 (`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the
-caller's bot) and the shared reviewer/fixer roles (`RANKS`). The caller comes from the attach
-ledger, the authority; a worker pane has no ledger row, so its `worker.of` label names its bot
-and its cwd's project. The target is resolved with the real `hc` (`ls` for a name, `get` for
-the labels). Any target outside that team is refused. The launch briefing carries the guard
+caller's bot) and the shared reviewer/fixer roles (`RANKS`). A pm, integrator or fixer bot the
+project lists may also send to any bot the project lists, planned entries included: their job
+is to message the Orchestrator, the captains and each other. That rank is the caller's
+bots.json entry, never its pane's `role=` label or an environment variable, and a worker of
+such a bot does not inherit the widening. The caller comes from the attach ledger, the
+authority; a worker pane has no ledger row, so its `worker.of` label names its bot and its
+cwd's project. The target is resolved with the real `hc` (`ls` for a name, `get` for the
+labels). Any target outside that team is refused. The launch briefing carries the guard
 paragraph only for a dsh-tui bot; a claude, omp or hermes briefing is unchanged. On a linked
 machine the seat uses the guard folder that machine has, beside its own `automagik-herdr`; with
 none it gets no guard, no briefing paragraph claiming one, and one warning naming #624.
 
 **This is a guardrail, not a boundary.** A bot can bypass it with an absolute path to the real
 `hc`, a raw socket client, or `hc connect`. The team data is still writable: a bot that edits
-its project's `.herdr/bots.json` can widen its own `send` scope, and a bot can label its own
-workers. `kill`, `rm` and `put` stay unscoped, and `read`/`ls`/`get` are cross-pane by design;
-#628 owns that scope. The real fix is the sandboxed socket mask plus the per-pane filtering
-proxy wish (#624), and #631 is the hard boundary. This wrapper only stops the ordinary
-`hc exec` attempt while that lands. The pack's own CLI still reaches the real `hc` for its
-trusted calls (system status, machine lists, remote file/exec, docs), so `automagik-herdr
-worker` and the remote commands keep working in a guarded pane.
+its project's `.herdr/bots.json` can widen its own `send` scope (for example by giving itself
+the pm, integrator or fixer rank), and a bot can label its own workers. `kill`, `rm` and `put`
+stay unscoped, and `read`/`ls`/`get` are cross-pane by design; #628 owns that scope. The real
+fix is the sandboxed socket mask plus the per-pane filtering proxy wish (#624), and #631 is the
+hard boundary. This wrapper only stops the ordinary `hc exec` attempt while that lands. The
+pack's own CLI still reaches the real `hc` for its trusted calls (system status, machine lists,
+remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
+guarded pane.
 
 ## The Create form
 

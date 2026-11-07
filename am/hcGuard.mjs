@@ -14,8 +14,12 @@
 // ledger row, so its `worker.of` label names its bot and its cwd's project is the team's
 // project. The target is resolved with the real hc: `hc ls` rows carry no labels, `hc get`
 // does, as the pack's workersIn does. The team is model.js's graph: the caller's lead chain
-// (effectiveLead), its members (descendantsOf), the project's main bot (mainBotOf), its own
-// workers (worker.of = the caller's bot) and the shared reviewer/fixer roles (RANKS).
+// (effectiveLead), the declared lead chain it names (`bot.lead`, a planned lead included),
+// its members (descendantsOf), the project's main bot (mainBotOf), its own workers
+// (worker.of = the caller's bot) and the shared reviewer/fixer roles (RANKS). A pm, integrator
+// or fixer bot the project lists may also send to any bot the project lists (planned entries
+// included); that rank is the bots.json entry's, never the pane's role= label or an
+// environment variable, and one of its workers inherits nothing.
 
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -39,6 +43,11 @@ const WORKER_LABELS = new Set([
 ]);
 /** The shared review roles: a target pane carrying one of these role= labels is reachable. */
 export const SHARED_ROLES = ["reviewer", "fixer"].filter((role) => RANKS.includes(role));
+/**
+ * The shared coordination roles: a caller whose bots.json entry has one of these ranks may
+ * send to any bot the project lists. The rank is bots.json's, never the pane's role= label.
+ */
+export const SHARED_SEND_RANKS = ["pm", "integrator", "fixer"].filter((role) => RANKS.includes(role));
 /** The guard's own folder, beside this module; the pane PATH word must start with it. */
 export const GUARD_DIR = join(dirname(fileURLToPath(import.meta.url)), "guard");
 /** The executable this module backs; PATH scans skip its real path. */
@@ -229,7 +238,27 @@ function readBots(project) {
   try { return parseBots(readFileSync(join(project, ".herdr", "bots.json"), "utf8")).file; } catch { return null; }
 }
 
-/** The bots the caller may address: lead chain up, members down, main, own workers (and its bot for a worker). */
+/**
+ * The declared lead chain of a bot: its `lead`, then that bot's `lead`, while each id is
+ * listed in the project's bots.json (planned entries included), cycle-safe. effectiveLead
+ * falls back to the main bot at a planned lead; this is the declared path, so a guarded
+ * captain reaches a planned Orchestrator without changing the tree's rule.
+ */
+function declaredLeads(file, botId) {
+  const out = [];
+  const seen = new Set([botId]);
+  let cur = file.bots.find((b) => b.id === botId)?.lead;
+  while (typeof cur === "string" && cur && !seen.has(cur)) {
+    const def = file.bots.find((b) => b.id === cur);
+    if (!def) break;
+    seen.add(cur);
+    out.push(cur);
+    cur = def.lead;
+  }
+  return out;
+}
+
+/** The bots the caller may address: both lead chains, members, main, own workers (and its bot for a worker). */
 function teamOf(file, caller) {
   const allowed = new Set();
   const main = mainBotOf(file);
@@ -241,6 +270,7 @@ function teamOf(file, caller) {
     seen.add(lead);
     lead = effectiveLead(file, lead).lead;
   }
+  for (const id of declaredLeads(file, caller.bot)) allowed.add(id);
   for (const id of descendantsOf(file, caller.bot)) allowed.add(id);
   if (caller.worker) allowed.add(caller.bot);
   return allowed;
@@ -330,13 +360,19 @@ function sendProblem(real, args, env, terminal, on) {
   if (typeof caller === "string") return caller;
   const file = readBots(caller.project);
   if (!file) return "the caller's project has no readable .herdr/bots.json";
-  if (!file.bots.some((b) => b.id === caller.bot)) return "the caller is not a bot in the project's .herdr/bots.json";
+  const self = file.bots.find((b) => b.id === caller.bot);
+  if (!self) return "the caller is not a bot in the project's .herdr/bots.json";
   const hit = targetOf(real, target, on.value, env);
   if (!hit) return "the target is not resolvable with hc";
   const { labels } = hit;
   const allowed = teamOf(file, caller);
   if (typeof labels.bot === "string" && allowed.has(labels.bot)) return null;
   if (labels[WORKER_OF_LABEL] === caller.bot) return null;
+  // A shared coordination role may send to any bot the project lists, planned entries
+  // included. The rank is bots.json's entry for the caller, never its pane's role= label or an
+  // environment variable; a worker (no ledger row) inherits nothing.
+  const listed = typeof labels.bot === "string" && file.bots.some((b) => b.id === labels.bot);
+  if (listed && !caller.worker && SHARED_SEND_RANKS.includes(self.rank)) return null;
   const role = typeof labels.role === "string" ? labels.role : "";
   if (SHARED_ROLES.includes(role)) return null;
   const def = typeof labels.bot === "string" ? file.bots.find((b) => b.id === labels.bot) : null;
