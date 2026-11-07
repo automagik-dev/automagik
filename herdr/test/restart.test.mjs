@@ -265,6 +265,13 @@ test("restartPlan uses a live template only when it runs the bot's own agent (D2
   // A template running another agent never crosses into the bot's seat.
   const crossed = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: "omp", fresh: true, template: { name: "dsh", command: "dsh-tui" } });
   assert.deepEqual([crossed.template, crossed.argv], [null, ["omp"]]);
+  // A quoted shell wrapper is looked into (F2): its own agent matches, another's never does.
+  const quoted = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true,
+    template: { name: "quoted", command: 'sh -c "omp --auto-approve"' } });
+  assert.deepEqual([quoted.template, quoted.argv], ["quoted", ["sh", "-c", 'sh -c "omp --auto-approve"']]);
+  const quotedOther = restartPlan({ bot: { agent: "omp" }, run: ["omp"], runningAgent: null, fresh: true,
+    template: { name: "quoted", command: 'sh -c "claude --model x"' } });
+  assert.deepEqual([quotedOther.template, quotedOther.argv], [null, ["omp"]]);
 });
 
 test("paneLaunch and launchChange: only flag names are named, values masked, a template by name (#597 F1/F2)", () => {

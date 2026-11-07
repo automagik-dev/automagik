@@ -1961,6 +1961,25 @@ test("restart D2: a bot moved to dsh-tui whose pane's agent can't be read doesn'
   assert.match(r.err, /Captain: its pane's template old-omp differs from its source now: restarting from the source/);
 });
 
+test("restart F2: a quoted template command is read, and another agent's quoted command still never matches", (t) => {
+  const cmd = 'sh -c "omp --auto-approve"';
+  const s = captainScene(t, { templates: [{ name: "quoted", command: cmd }],
+    over: { foreground: { argv: ["omp"], cwd: "/x" }, argv: ["sh", "-c", cmd], template: "quoted" } });
+  const r = s.cli(["restart", "Captain", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const words = agentWords(runCall(s.calls()));
+  assert.deepEqual(words.slice(0, 2), ["sh", "-c"], "the template's command, wrapped with its resume words");
+  assert.ok(words[2].startsWith(cmd), words.join(" "));
+  assert.doesNotMatch(r.err, /differs from/, "its command is the template's: no line");
+  // The same quoted shape running another agent never matches this omp bot.
+  const other = captainScene(t, { templates: [{ name: "quoted", command: 'sh -c "claude --model x"' }],
+    over: { foreground: { argv: ["omp"], cwd: "/x" }, argv: ["sh", "-c", 'sh -c "claude --model x"'], template: "quoted" } });
+  const o = other.cli(["restart", "Captain", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.deepEqual(ownWords(runCall(other.calls())), ["omp", "--continue"], "the agent row, not the quoted template");
+  assert.match(o.err, /Captain: its pane's template quoted differs from its source now: restarting from the source/);
+});
+
 test("restart #597: a hand-started codex bot comes back from its source, not its old flags; the old pane's folder gone: the project's, said", (t) => {
   const s = captainScene(t, { agent: "codex", over: {
     cwd: "/gone/folder", foreground: { argv: ["codex", "-m", "gpt-a", "-c", "model_reasoning_effort=high", "resume", "--last"], cwd: "/gone/folder" },
