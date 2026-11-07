@@ -9,6 +9,9 @@
 // one above this version, on this build's channel, that carries this platform's feed.
 // A deb is the system package manager's to replace, so there the app only says a release is out.
 
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { basename, join } from 'node:path'
+
 export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50'
 export const DESKTOP_TAG_PREFIX = 'v'
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/'
@@ -20,7 +23,18 @@ export const RETRY_MS = 30 * 60 * 1000
 // back within a minute: such a failure is retried that soon, a few times, before RETRY_MS.
 export const QUICK_RETRY_MS = 60 * 1000
 export const QUICK_RETRIES = 3
-export const isTransient = error => /net::ERR_|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH/.test(String(error?.message ?? error ?? ''))
+
+// fetchReleases's own failure text, so a releases API outage is retried soon instead of after
+// RETRY_MS. A 5xx or 429 is worth a minute; another 4xx (a bad token, a moved endpoint) is not.
+const GITHUB_STATUS = /GitHub answered (\d+) for the desktop releases/
+
+/** Whether a failure is worth retrying within a minute: the network changed, or GitHub's releases API was briefly unavailable or rate-limited. */
+export function isTransient(error) {
+  const message = String(error?.message ?? error ?? '')
+  if (/net::ERR_|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH/.test(message)) return true
+  const status = Number(GITHUB_STATUS.exec(message)?.[1])
+  return status === 429 || (status >= 500 && status <= 599)
+}
 
 /** The update feed electron-updater reads for `platform`, or null where the app does not update. */
 export function feedFileOf(platform) {
@@ -96,6 +110,132 @@ export function compareVersions(a, b) {
   return Math.sign(p.length - q.length)
 }
 
+const ARCHITECTURES = new Set(['mac', 'darwin', 'win', 'windows', 'linux', 'arm64', 'x64', 'x86_64', 'ia32', 'universal', 'amd64', 'armv7l', 'arm', 'x86'])
+
+/**
+ * The version in an updater artifact name: `Automagik-3.95.0-mac-arm64.zip` and
+ * `Automagik Setup 3.95.0.exe` are 3.95.0, `Automagik-3.95.0-labs.1-mac-arm64.zip` is
+ * 3.95.0-labs.1. Null when the name carries no version.
+ */
+export function versionFromArtifact(name) {
+  let stem = basename(String(name ?? ''))
+  for (let i = 0; i < 3; i++) stem = stem.replace(/\.(?:zip|exe|appimage|dmg|pkg|blockmap|7z)$/i, '')
+  const tokens = stem.split(/[-_ ]+/)
+  while (tokens.length > 1 && ARCHITECTURES.has(tokens.at(-1).toLowerCase())) tokens.pop()
+  const start = tokens.findIndex(token => /^\d+\.\d+\.\d+$/.test(token))
+  if (start === -1) return null
+  // A prerelease is the token after the version (`-labs.14`, `-beta.1`); the platform and
+  // architecture tokens at the end are gone by now.
+  const version = tokens.slice(start).join('-')
+  return compareVersions(version, version) === 0 ? version : null
+}
+
+const PENDING_DIR = 'pending'
+const BASE_CACHE_FILES = ['update.zip', 'current.blockmap']
+
+// electron-updater's app-update.yml names the folder it keeps downloads in
+// (`updaterCacheDirName`, from electron-builder's sanitized package name). YAML quotes a value
+// that starts with `@`, as this app's does.
+function cacheDirNameFrom(configPath) {
+  try {
+    const text = readFileSync(configPath, 'utf8')
+    const match = /^updaterCacheDirName:\s*(.+?)\s*$/m.exec(text)
+    if (!match) return null
+    let value = match[1].trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
+    else value = value.replace(/\s+#.*$/, '').trim()
+    return value || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The folder electron-updater 6.8.10 downloads into: its own DownloadedUpdateHelper when a
+ * download already made one, else `app.baseCachePath` (the OS cache root) plus the
+ * `updaterCacheDirName` from the updater's app-update.yml (falling back to the app's name, as
+ * electron-updater does). Null when the updater cannot say.
+ */
+export function updaterCacheDir(updater) {
+  try {
+    const known = updater?.downloadedUpdateHelper?.cacheDir
+    if (typeof known === 'string' && known !== '') return known
+    const app = updater?.app
+    const base = app?.baseCachePath
+    if (typeof base !== 'string' || base === '') return null
+    const config = app?.appUpdateConfigPath
+    const name = (typeof config === 'string' ? cacheDirNameFrom(config) : null) ?? (typeof app?.name === 'string' && app.name !== '' ? app.name : null)
+    return name === null ? null : join(base, name)
+  } catch {
+    return null
+  }
+}
+
+function updateInfoFile(cacheDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(cacheDir, PENDING_DIR, 'update-info.json'), 'utf8'))
+    return typeof parsed?.fileName === 'string' ? parsed.fileName : null
+  } catch {
+    return null
+  }
+}
+
+function pendingFiles(cacheDir) {
+  try {
+    return readdirSync(join(cacheDir, PENDING_DIR), { withFileTypes: true })
+      .filter(entry => entry.isFile())
+      .map(entry => entry.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+function versionsInCache(cacheDir, version) {
+  const versions = []
+  if (typeof version === 'string' && compareVersions(version, version) === 0) versions.push(version)
+  for (const name of [updateInfoFile(cacheDir), ...pendingFiles(cacheDir)]) {
+    if (typeof name !== 'string' || name === '') continue
+    const found = versionFromArtifact(name)
+    if (found !== null && !versions.includes(found)) versions.push(found)
+  }
+  return versions
+}
+
+/**
+ * Removes the updater cache of a pending update that is not newer than `current`, so a version
+ * already installed (or an older one) can never look ready to install. Only the stale version's
+ * files go: `pending/update-info.json`, the installer beside it and the base cache's
+ * `update.zip` and `current.blockmap`. A pending version newer than `current` is never touched,
+ * and a missing cache folder (or an unreadable version) is a no-op.
+ *
+ * Returns `{ stale, version, removed }`: whether a stale pending update was found, the newest
+ * version found in the cache, and the cache-relative paths removed (`pending/<file>`,
+ * `update.zip`, `current.blockmap`).
+ */
+export function cleanStaleCache(cacheDir, { current, version } = {}) {
+  const nothing = { stale: false, version: null, removed: [] }
+  if (typeof cacheDir !== 'string' || cacheDir === '' || !existsSync(cacheDir)) return nothing
+  if (compareVersions(current, current) !== 0) return nothing
+  const versions = versionsInCache(cacheDir, version)
+  if (versions.length === 0) return nothing
+  const newest = versions.reduce((best, found) => (compareVersions(found, best) > 0 ? found : best))
+  if (compareVersions(newest, current) > 0) return { stale: false, version: newest, removed: [] }
+  const removed = []
+  const remove = (relative, path) => {
+    try {
+      rmSync(path, { force: true })
+      removed.push(relative)
+    } catch {}
+  }
+  for (const name of pendingFiles(cacheDir)) remove(`${PENDING_DIR}/${name}`, join(cacheDir, PENDING_DIR, name))
+  for (const name of BASE_CACHE_FILES) {
+    const path = join(cacheDir, name)
+    if (existsSync(path)) remove(name, path)
+  }
+  return { stale: true, version: newest, removed }
+}
+
 /**
  * The newest desktop release above `current` on `channel` that carries `platform`'s update
  * feed: `{ version, url, page }`, where `url` is the folder electron-updater reads the feed from
@@ -130,42 +270,88 @@ export async function fetchReleases(fetchImpl = fetch) {
 
 /**
  * Checks after FIRST_CHECK_MS and every CHECK_EVERY_MS (sooner, after RETRY_MS, when a check
- * failed), and reports to `onState`:
+ * failed; after QUICK_RETRY_MS a few times when the failure is transient), and reports to
+ * `onState`:
  * - `auto`: `{ version, state: 'downloading', percent }`, then `{ version, state: 'ready' }`;
  *   `install()` restarts into the downloaded update, which otherwise installs on quit.
  * - `notify`: `{ version, state: 'available', page }`; nothing is downloaded.
+ * - `{ state: 'retrying', failure: 'check' }` while a quick retry waits; `idle` once it starts
+ *   or a non-transient failure takes over.
+ * It also drops a pending download that is not newer than `current` (see cleanStaleCache): an
+ * installed version must never show "Restart to update".
  * `check()` also serves the menu's Check for Updates, and answers what it found:
- * `{ result: 'latest' | 'found' | 'ready' | 'error' | 'busy', version? }`.
+ * `{ result: 'latest' | 'found' | 'ready' | 'error' | 'busy', version?, retrying? }`.
  */
 export function startUpdates({ updater, current, platform, env, log, onState, mode = 'auto', releases = fetchReleases, timers = globalThis }) {
   let busy = false
   let pending = null
   let ready = null
   let retry = null
+  let retryQuick = false
   let quickRetries = 0
+  let retrying = false
+  let cacheDir = null
   const auto = mode === 'auto'
+  const newer = version => compareVersions(version, current) > 0
   if (auto) {
     updater.autoDownload = true
     updater.autoInstallOnAppQuit = true
     updater.allowDowngrade = false
     updater.logger = log
+    cacheDir = updaterCacheDir(updater)
+    const cleaned = cleanStaleCache(cacheDir, { current })
+    if (cleaned.stale) {
+      log.warn(`update: the cached ${cleaned.version} update is not newer than ${current}; ignoring it`)
+      if (cleaned.removed.length > 0) log.info(`update: removed ${cleaned.removed.join(', ')} from the updater cache`)
+    }
   }
   // On macOS the download is handed to Squirrel, which swaps the app on quit only once it has
   // the update too: until Squirrel says so, the update is not ready.
   const squirrel = auto && platform === 'darwin' ? updater.nativeUpdater : null
+  // Every report goes through here, so a downloading/ready/available state takes the retrying
+  // marker away and a quick retry's state cannot outlive it.
+  function report(state) {
+    retrying = state?.state === 'retrying'
+    onState(state)
+  }
+  function clearRetrying() {
+    if (retrying) report({ state: 'idle' })
+  }
+  function cacheDirNow() {
+    const found = updaterCacheDir(updater)
+    if (found !== null) cacheDir = found
+    return cacheDir
+  }
+  function discardStale(version) {
+    log.warn(`update: ${version ?? 'the cached update'} is not newer than ${current}; ignoring it`)
+    if (ready !== null && !newer(ready)) {
+      ready = null
+      report({ state: 'idle' })
+    }
+    if (!newer(pending)) pending = null
+    const cleaned = cleanStaleCache(cacheDirNow(), { current, version })
+    if (cleaned.removed.length > 0) log.info(`update: removed ${cleaned.removed.join(', ')} from the updater cache`)
+  }
   const markReady = () => {
-    if (ready) return
+    if (ready !== null) {
+      if (newer(ready)) return
+      ready = null
+      report({ state: 'idle' })
+    }
+    if (!newer(pending)) return discardStale(pending)
     ready = pending
     log.info(`update: ${ready} is ready and installs on quit`)
-    onState({ version: ready, state: 'ready' })
+    report({ version: ready, state: 'ready' })
   }
   if (auto) {
-    updater.on('download-progress', progress => onState({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0) }))
-    updater.on('update-downloaded', info => {
-      pending = info?.version ?? pending
+    updater.on('download-progress', progress => report({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0) }))
+    updater.on('update-downloaded', (info) => {
+      const version = info?.version ?? pending
+      if (!newer(version)) return discardStale(version)
+      pending = version
       if (!squirrel) return markReady()
       log.info(`update: ${pending} is downloaded; macOS is preparing it`)
-      onState({ version: pending, state: 'downloading', percent: 100 })
+      report({ version: pending, state: 'downloading', percent: 100 })
     })
     squirrel?.on('update-downloaded', markReady)
     squirrel?.on('error', error => log.warn(`update (macOS): ${error?.message ?? error}`))
@@ -176,15 +362,33 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   }
 
   function retryLater(error) {
-    if (retry !== null) return
+    // A retry is already scheduled (an electron-updater error, say): a check that failed
+    // meanwhile inherits its mark, and no second timer is set.
+    if (retry !== null) {
+      if (retryQuick) report({ state: 'retrying', failure: 'check' })
+      return retryQuick
+    }
     const soon = isTransient(error) && quickRetries < QUICK_RETRIES
     if (soon) quickRetries += 1
-    retry = timers.setTimeout(() => { retry = null; void check() }, soon ? QUICK_RETRY_MS : RETRY_MS)
+    retryQuick = soon
+    retry = timers.setTimeout(() => {
+      retry = null
+      retryQuick = false
+      clearRetrying()
+      void check()
+    }, soon ? QUICK_RETRY_MS : RETRY_MS)
+    if (soon) report({ state: 'retrying', failure: 'check' })
+    else clearRetrying()
+    return soon
   }
 
   async function check() {
-    if (ready) return { result: 'ready', version: ready }
+    if (ready !== null) {
+      if (newer(ready)) return { result: 'ready', version: ready }
+      discardStale(ready)
+    }
     if (busy) return { result: 'busy' }
+    clearRetrying()
     busy = true
     try {
       const override = auto ? feedOverride(env) : null
@@ -202,7 +406,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
       }
       log.info(`update check: ${update.version ?? 'a release from the feed override'} is out`)
       if (!auto) {
-        onState({ version: update.version, state: 'available', page: update.page })
+        report({ version: update.version, state: 'available', page: update.page })
         return { result: 'found', version: update.version }
       }
       pending = update.version
@@ -214,8 +418,8 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
       return { result: 'found', version: update.version }
     } catch (error) {
       log.warn(`update check: ${error?.message ?? error}`)
-      retryLater(error)
-      return { result: 'error' }
+      const soon = retryLater(error)
+      return soon ? { result: 'error', retrying: true } : { result: 'error' }
     } finally {
       busy = false
     }
@@ -226,7 +430,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   return {
     check,
     get ready() { return ready },
-    install: () => { if (ready) updater.quitAndInstall(false, true) },
+    install: () => { if (ready !== null && newer(ready)) updater.quitAndInstall(false, true) },
     stop: () => {
       timers.clearTimeout(first)
       timers.clearInterval(every)
