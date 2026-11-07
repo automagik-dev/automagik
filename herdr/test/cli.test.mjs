@@ -230,6 +230,42 @@ test("a worktree with no bots.json of its own: the first edit starts from the ma
   assert.doesNotMatch(after.err, /isn't committed/);
 });
 
+// #332, a follow-up to #234: a pull stops on the main checkout's committed bots.json too once
+// it has local changes, not only on an untracked one; the note warns for either.
+test("a worktree edit warns when the main checkout's bots.json has local changes, and the pull stops on it", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const committed = readFileSync(s.botsPath, "utf8");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  // An edit made on the main checkout (allowed by design), not committed: the file is tracked.
+  const file = JSON.parse(committed);
+  file.bots.find((b) => b.id === ID.dev).role = "local edit";
+  writeFileSync(s.botsPath, `${JSON.stringify(file, null, 2)}\n`);
+  assert.match(git(s.project, "status", "--porcelain"), /^ M \.herdr\/bots\.json$/m);
+  // An edit from the worktree warns: a pull bringing it home stops on the main checkout's changes.
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} has local changes: commit or discard them before pulling, or git pull stops on it`));
+  assert.doesNotMatch(r.err, /isn't committed/);
+  // The worktree's change merged: git stops on the local changes; discarded, it goes in.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "scout");
+  assert.throws(() => execFileSync("git", ["merge", "-q", "wt"], { cwd: s.project, encoding: "utf8", stdio: "pipe" }),
+    (err) => /Your local changes to the following files would be overwritten/.test(String(err.stderr)));
+  writeFileSync(s.botsPath, committed);
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+  // Committed and clean, the main checkout's file draws no warning.
+  const after = s.cli(["edit", ID.dev, "--role", "ranging"], { cwd: wt });
+  assert.equal(after.code, 0, after.err);
+  assert.match(after.err, /saved in /);
+  assert.doesNotMatch(after.err, /isn't committed|has local changes/);
+});
+
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
   const s = restartScene(t);
   const wt = join(s.root, "wt");

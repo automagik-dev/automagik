@@ -330,11 +330,16 @@ export async function editFolderOf(folder, key, machine = null) {
 }
 
 /**
- * Whether `key`'s .herdr/bots.json (this machine) is there and untracked by git: a pull that
- * brings a worktree's committed file stops on it (#234). False when git can't say.
+ * What git says about `key`'s .herdr/bots.json (this machine): "untracked" when git doesn't
+ * know the file, "modified" when it is committed but has local changes, null when it is clean
+ * or git can't say. A pull that brings a worktree's committed file stops on either (#234, #332).
  */
-export async function untrackedIn(key) {
-  try { return ((await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").startsWith("??"); } catch { return false; }
+export async function changesIn(key) {
+  try {
+    const out = ((await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "").trim();
+    if (!out) return null;
+    return out.startsWith("??") ? "untracked" : "modified";
+  } catch { return null; }
 }
 
 /**
