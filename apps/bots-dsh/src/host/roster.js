@@ -456,14 +456,13 @@ export function install(rt) {
     // a name added now disappears at once and a name removed comes back.
     if (denyTools !== undefined) {
       await rt.applyToolDeny(bot)
-      // A restricted Bot's already-armed fresh-Session tasks would keep opening Sessions no
-      // deny layer can bind (#584, L5); pause the ones its Sessions created.
-      if (Array.isArray(bot.denyTools) && bot.denyTools.length > 0) {
-        try {
-          await rt.revokeNewSchedules?.(bot.id)
-        } catch (error) {
-          rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
-        }
+      // The list changed either way: a restricted Bot's already-armed fresh-Session tasks
+      // would keep opening Sessions no deny layer can bind (#584, L5), and a Bot that just
+      // became unrestricted releases a task whose pause had been stuck.
+      try {
+        await rt.revokeNewSchedules?.(bot.id)
+      } catch (error) {
+        rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
       }
     }
     // The system prompt reads the live profile every turn, but a Session with

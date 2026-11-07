@@ -11,6 +11,8 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 // The targets whose delivery opens a Session of its own: no subagent lineage, no task
 // record, so no Bot's restriction can bind it (#584, L5).
 const NEW_TARGETS = new Set(['new', 'new_once'])
+// How often a pause the schedule store refused is retried while it stays refused.
+const PAUSE_RETRY_MS = 15_000
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 
@@ -162,11 +164,38 @@ export function install(rt) {
     }
     return ids
   }
+  // A refused delivery is re-attempted only when DSH is asked to drive again; the tick that
+  // opens the guard or clears the last stuck task does that, and a stuck pause is retried
+  // on a timer until the store answers.
+  const requestDrive = () => {
+    try {
+      service?.runtime?.requestDrive?.()
+    } catch (error) {
+      rt.warn('ds-bot: the schedule drive was not re-requested: %s', error?.message ?? error)
+    }
+  }
+  let retryTimer
+  const stopRetry = () => {
+    if (retryTimer !== undefined) clearInterval(retryTimer)
+    retryTimer = undefined
+  }
+  const scheduleRetry = () => {
+    if (retryTimer !== undefined) return
+    retryTimer = setInterval(() => {
+      void revokeNewSchedules()
+        .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
+      if (stuck.size === 0) stopRetry()
+    }, PAUSE_RETRY_MS)
+    retryTimer.unref?.()
+  }
+  ctx.effect(() => stopRetry, 'ds-bot: schedule pause retry')
+
   /**
    * Pause every active task with a fresh-Session target that a restricted Bot is involved
-   * in. Scoped to one Bot when `botId` is given (a restriction or a deletion), else every
-   * Bot in the team (a restart, or a task armed by the user for a restricted Bot's Session).
-   * The record stays; only its deliveries stop. Resolves the ids it paused.
+   * in. Scoped to one Bot when `botId` is given (a restriction, its deletion, or its list
+   * becoming empty), else every Bot in the team (a restart, or a task armed by the user for
+   * a restricted Bot's Session). The record stays; only its deliveries stop. Resolves the
+   * ids it paused.
    * @param {string} [botId] - the Bot whose Sessions must not open fresh Sessions.
    * @param {string[]} [extra] - Sessions of that Bot a caller already holds (deletion).
    * @param {{ any?: boolean }} [options] - pause for this Bot even without a deny list
@@ -195,38 +224,39 @@ export function install(rt) {
       cache.set(sessionId, resolved)
       return resolved
     }
-    const paused = []
-    const checked = new Set()
-    for (const entry of await service.catalog()) {
-      if (entry.status === 'active') checked.add(entry.id)
+    // Is this task's delivery one no team lineage can bind, and is it this Bot's?
+    const freshEntry = async (entry) => {
       const target = entry.target ?? {}
-      // A delivered `new_once` is rewritten to a session target on the Session it opened,
-      // which has no team lineage: the task is still unbound and must be paused.
-      const targetBot = target.kind === 'session' ? await botFor(target.sessionId) : undefined
-      const unbound = target.kind === 'session' && targetBot === undefined
+      const unbound = target.kind === 'session'
+        && await botFor(target.sessionId) === undefined
         && !(sessions !== undefined && sessions.has(target.sessionId))
-      if (entry.status !== 'active' || (!NEW_TARGETS.has(target.kind) && !unbound)) continue
+      return NEW_TARGETS.has(target.kind) || unbound
+    }
+    const belongsToBot = async (entry) => {
+      if (!(await freshEntry(entry))) return false
       const involved = Array.isArray(entry.involvedSessionIds) ? entry.involvedSessionIds : []
-      // A scoped caller vouches for the Session ids it hands over (a group Session leaving
-      // the maps, a task record being evicted), so they are resolved before the maps go.
-      const matched = sessions === undefined
-        ? involved
-        : involved.filter(sessionId => sessions.has(sessionId))
-      let fromBot = false
       if (sessions === undefined) {
         for (const sessionId of involved) {
-          if (restricted(await botFor(sessionId))) { fromBot = true; break }
+          if (restricted(await botFor(sessionId))) return true
         }
-      } else if (matched.length > 0 && (any || restricted(bot))) {
-        fromBot = true
-      } else if (bot !== undefined) {
-        // A subagent child is in no team map; its durable header still names the Bot.
-        for (const sessionId of involved) {
-          const owner = await botFor(sessionId)
-          if (owner?.id === bot.id && (any || restricted(bot))) { fromBot = true; break }
-        }
+        return false
       }
-      if (!fromBot) continue
+      // A scoped caller vouches for the ids it hands over, so they resolve before maps go.
+      const matched = involved.some(sessionId => sessions.has(sessionId))
+      if (matched && (any || restricted(bot))) return true
+      if (bot === undefined) return false
+      // A subagent child is in no team map; its durable header still names the Bot.
+      for (const sessionId of involved) {
+        const owner = await botFor(sessionId)
+        if (owner?.id === bot.id && (any || restricted(bot))) return true
+      }
+      return false
+    }
+    const wasClosed = !swept || stuck.size > 0
+    const paused = []
+    const attempted = new Set()
+    const pauseEntry = async (entry) => {
+      attempted.add(entry.id)
       try {
         await service.edit({ id: entry.id, action: 'update', patch: { active: false } })
         stuck.delete(entry.id)
@@ -240,8 +270,32 @@ export function install(rt) {
         error?.message ?? error)
       }
     }
-    for (const id of stuck) if (!checked.has(id)) stuck.delete(id)
+    const active = new Map()
+    for (const entry of await service.catalog()) {
+      if (entry.status === 'active') active.set(entry.id, entry)
+    }
+    for (const entry of active.values()) {
+      if (await belongsToBot(entry)) await pauseEntry(entry)
+    }
+    // A stuck task this sweep did not match: a Bot that is now unrestricted or gone has no
+    // restriction left to bypass, so the task is released; while a restricted Bot remains
+    // involved, the pause is tried again here.
+    for (const id of stuck) {
+      const entry = active.get(id)
+      if (entry === undefined) { stuck.delete(id); continue }
+      if (attempted.has(id)) continue
+      if (!(await freshEntry(entry))) { stuck.delete(id); continue }
+      const involved = Array.isArray(entry.involvedSessionIds) ? entry.involvedSessionIds : []
+      let stillRestricted = false
+      for (const sessionId of involved) {
+        if (restricted(await botFor(sessionId))) { stillRestricted = true; break }
+      }
+      if (!stillRestricted) stuck.delete(id)
+      else await pauseEntry(entry)
+    }
+    if (stuck.size > 0) scheduleRetry()
     swept = swept || loadedThen
+    if (wasClosed && swept && stuck.size === 0) requestDrive()
     return paused
   }
   // A restart keeps both the deny list and the armed task: check once the team is loaded.
@@ -255,18 +309,64 @@ export function install(rt) {
     void revokeNewSchedules()
       .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
   })
-  // The last line for a fresh delivery: if the check has not run yet, or a task could not be
-  // paused, a Session with no Bot lineage must not be activated. DSH drives deliveries
-  // through this waterfall, before the prompt runs.
+  // Whether one delivery still belongs to a task a restricted Bot is involved in. Reads the
+  // catalog only: management writes are serialized behind a delivery, reads are not.
+  const unsafeDelivery = async (sessionId) => {
+    let entries
+    try {
+      entries = await service.catalog()
+    } catch {
+      return true
+    }
+    const seen = new Map()
+    const restrictedInvolved = async (ids) => {
+      for (const id of ids) {
+        if (!seen.has(id)) seen.set(id, await botOfTaskSession(id))
+        if (restricted(seen.get(id))) return true
+      }
+      return false
+    }
+    let freshUnsafe = false
+    let exact = false
+    for (const entry of entries) {
+      if (entry.status !== 'active') continue
+      const target = entry.target ?? {}
+      const involved = Array.isArray(entry.involvedSessionIds) ? entry.involvedSessionIds : []
+      if (target.kind === 'new') {
+        // A `new` target reserves a hidden Session id; while one of its tasks is unsafe,
+        // any unlineaged activation could be that delivery.
+        if (await restrictedInvolved(involved)) freshUnsafe = true
+        continue
+      }
+      if (target.kind === 'new_once') {
+        if (target.sessionId !== sessionId) continue
+        exact = true
+        if (await restrictedInvolved(involved)) return true
+        continue
+      }
+      if (target.kind !== 'session' || target.sessionId !== sessionId) continue
+      exact = true
+      // A session target that resolves to a Bot is bound; one that does not is unsafe only
+      // when a restricted Bot is involved (a fresh target that already delivered once).
+      if (await botOfTaskSession(sessionId) !== undefined) continue
+      if (await restrictedInvolved(involved)) return true
+    }
+    // An exact task for this Session decides it; only an anonymous `new` delivery falls
+    // back to "some unsafe fresh task exists".
+    return exact ? false : freshUnsafe
+  }
+  // The last line for a delivery: if the check has not run yet, or a task could not be
+  // paused, a Session no Bot binds must not be activated for a task a restricted Bot is in.
+  // DSH drives deliveries through this waterfall, before the prompt runs. It must never
+  // await a management write: that would queue behind the delivery's own serialized drive.
   ctx.on('schedule/resolve-agent', async (sessionId, next) => {
     if (swept && stuck.size === 0) return next()
     if (await botOfTaskSession(sessionId) !== undefined) return next()
-    // Never wait on the schedule service here: DSH runs this waterfall inside the delivery
-    // drive, and a management write queues behind it, so awaiting one would deadlock the
-    // drive. Ask for the check and refuse this delivery; the next attempt runs after it.
+    const unsafe = teamLoaded ? await unsafeDelivery(sessionId) : true
+    if (!unsafe) return next()
     void revokeNewSchedules()
       .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
-    throw new Error('ds-bot: a scheduled fresh Session is blocked until its task can be paused')
+    throw new Error('ds-bot: a scheduled delivery is blocked until its task can be paused')
   })
 
   async function schedulesView() {

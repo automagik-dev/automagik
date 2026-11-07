@@ -400,3 +400,98 @@ test('the attach-time check runs before the team loads without an error', async 
   assert.doesNotMatch(warnings.join('\n'), /before initialization/)
   assert.doesNotMatch(warnings.join('\n'), /fresh-Session tasks were not checked/)
 })
+
+test('the delivery guard refuses without waiting on a serialized schedule write', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  // The real service serializes management writes behind the delivery drive: an edit made
+  // from the waterfall waits for that drive to end. A guard that awaited it would hang.
+  const baseEdit = schedule.edit
+  let inDrive = false
+  let failPause = true
+  let releaseDrive
+  let driveHeld = Promise.resolve()
+  schedule.edit = async request => {
+    if (inDrive) await driveHeld
+    if (request.action === 'update' && failPause) throw new Error('store busy')
+    return baseEdit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  inDrive = true
+  driveHeld = new Promise(resolve => { releaseDrive = resolve })
+  const outcome = await Promise.race([
+    guard('fresh-1', async () => 'ran').then(() => 'next', () => 'refused'),
+    new Promise(resolve => setTimeout(() => resolve('hung'), 250)),
+  ])
+  inDrive = false
+  failPause = false
+  releaseDrive()
+  assert.equal(outcome, 'refused')
+})
+
+test('a stuck pause does not block a reminder on the user\'s own Session', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  await freshTask(schedule, 'w2')
+  // The user's own reminder on a Session outside the team, armed without an acting Bot.
+  const own = await schedule.create({
+    title: 'Mine', prompt: 'Check', timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'outside' },
+  })
+  assert.deepEqual(own.involvedSessionIds, ['outside'])
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('store busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  // The restricted Bot's fresh task is refused; the user's own reminder is not.
+  await assert.rejects(
+    () => guard('fresh-1', async () => 'ran'),
+    /blocked until its task can be paused/,
+  )
+  assert.equal(await guard('outside', async () => 'ran'), 'ran')
+})
+
+test('clearing the deny list releases a stuck pause and asks DSH to drive again', async (t) => {
+  const schedule = scheduleService()
+  const drives = []
+  schedule.runtime = { requestDrive: () => drives.push(1) }
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => {
+    await ctx.dispose()
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  })
+  await rt.load()
+  const armed = await freshTask(schedule, 'w2')
+  const edit = schedule.edit
+  schedule.edit = async request => {
+    if (request.action === 'update') throw new Error('store busy')
+    return edit(request)
+  }
+  await rt.updateBot('w1', { denyTools: ['bash'] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  const before = drives.length
+  // The user clears the list: there is no restriction left to bypass, so the task is
+  // released, the guard opens and DSH is asked to re-drive what it refused.
+  schedule.edit = edit
+  await rt.updateBot('w1', { denyTools: [] })
+  assert.equal(schedule.tasks.get(armed.id).status, 'active')
+  assert.ok(drives.length > before)
+  const guard = (ctx.listeners.get('schedule/resolve-agent') ?? [])[0]
+  assert.equal(await guard('fresh-1', async () => 'ran'), 'ran')
+})
