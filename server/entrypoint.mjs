@@ -6,9 +6,19 @@
 // dsh binds 127.0.0.1:3081 in the container (the production host's layout); publish it with
 // --network host or a proxy in the same network namespace, not -p.
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { launchUrlOf, pinStore, PORT, privateMode, profileDirOf, PROFILE, redactTokens, seedProfile } from './lib.mjs'
+import {
+  ensureDataDirs,
+  launchUrlOf,
+  pinStore,
+  PORT,
+  privateMode,
+  profileDirOf,
+  PROFILE,
+  redactTokens,
+  seedProfile,
+} from './lib.mjs'
 
 const ROOT = '/opt/automagik'
 const DSH_BIN = join(ROOT, 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
@@ -79,7 +89,13 @@ async function main() {
   const dshHome = env.DSH_HOME || '/data/dsh'
   const botsHome = env.AUTOMAGIK_BOTS_HOME || '/data/bots'
   const workspace = env.AUTOMAGIK_WORKSPACE || '/data/workspace'
-  for (const dir of [dshHome, botsHome, workspace, join(dshHome, 'pnpm-store'), '/data/secrets']) mkdirSync(dir, { recursive: true })
+  const dirs = [dshHome, botsHome, workspace, join(dshHome, 'pnpm-store'), '/data/secrets']
+  try {
+    ensureDataDirs(dirs, { uid: 1000 })
+  } catch (error) {
+    warn(error.message)
+    process.exit(1)
+  }
   process.chdir(workspace)
   env.DSH_HOME = dshHome
   env.AUTOMAGIK_BOTS_HOME = botsHome
