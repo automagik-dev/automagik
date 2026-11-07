@@ -236,6 +236,14 @@ jobs:
           node scripts/entries.mjs --check
           node scripts/parts.mjs --check
 
+      # The release gate for every mod the pack ships (#652, generalised): walk each PACK_MODS
+      # entry's static import graph against gpui-shell 0.7.1 and fail a load-time import.meta.url.
+      # The pack's tests above run it too; this step names the gate a pack release may not skip.
+      - name: Every pack mod's import graph
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        working-directory: herdr
+        run: node --test test/mod-imports.test.mjs
+
       # Before the cut, so a release that packs the pack never goes out without a pointer the
       # installed packs trust: HERDR_PACK_KEY must be a key pack-keys.json lists (its keyId is the
       # entry with its public key). The HERDR_PACK_SIGNER variable picks the secret slot, so a
