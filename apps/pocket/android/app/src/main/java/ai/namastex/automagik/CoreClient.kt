@@ -17,6 +17,9 @@ class CoreClient(
     private val pending = ConcurrentHashMap<Int, CompletableDeferred<JSONObject>>()
     private val ids = AtomicInteger(1)
     private val handlers = mutableMapOf<Int, (Frame) -> Unit>()
+    /** Attached streams whose path takes AUTOMATIC_INPUT (the attach's automatic_input). */
+    private val automatic = ConcurrentHashMap.newKeySet<Int>()
+    fun automaticInput(channel: Int) = channel in automatic
     private val early = mutableMapOf<Int, MutableList<Frame>>()
     private var earlyBytes = 0
     private val gate = Any()
@@ -101,6 +104,7 @@ class CoreClient(
     suspend fun attach(address: String, cols: Int, rows: Int, rendered: (Int, ByteArray) -> Unit, ended: (String) -> Unit, history: Int = 1000): Int {
         val reply = call("terminal.attach", JSONObject().put("terminal", address).put("cols", cols).put("rows", rows).put("history", history))
         val channel = reply.getInt("channel")
+        if (reply.optBoolean("automatic_input")) automatic.add(channel)
         register(channel) { f ->
             when (f.kind) {
                 Wire.DATA -> rendered(channel, f.payload)

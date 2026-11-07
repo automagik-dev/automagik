@@ -172,7 +172,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         Notify.channels(application)
         viewModelScope.launch(Dispatchers.IO) {
             for ((target, bytes) in keystrokes) {
-                if (activeChannel === target) runCatching { target.first.send(target.second, Wire.DATA, bytes) }
+                if (activeChannel === target) runCatching { target.first.send(target.second, Wire.inputKind(bytes, target.first.automaticInput(target.second)), bytes) }
                     .onFailure { e -> _state.update { it.copy(terminalStatus = "Input not sent: ${e.message}") } }
             }
         }
@@ -507,15 +507,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.demo) return choosePreview(ref, msg, options, index, label)
         val c = clients[ref.hostId] ?: return "Not sent: ${hostName(ref.hostId)} isn’t connected. Open Automagik to reconnect."
         if (index !in options.indices) return "Not sent: open the agent to answer."
-        return withTimeoutOrNull(8_000) {
-            runCatching {
-                val now = CoreTerminal.parse(c.call("terminal.get", JSONObject().put("terminal", ref.address)))
-                if (!now.attention || now.message != msg) return@runCatching "Not sent: it isn’t asking that any more."
-                val menu = Prompt.menu(c.call("terminal.read", JSONObject().put("terminal", ref.address).put("lines", 0)).optString("text"))
-                if (menu == null || !Prompt.unchanged(options, menu)) return@runCatching "Not sent: its options changed. Open the agent to answer."
-                c.call("terminal.keys", JSONObject().put("terminal", ref.address).put("keys", JSONArray(Prompt.keys(menu, index))))
-                "You chose: $label"
-            }.getOrElse { e -> "Not sent: ${e.message ?: "the core refused it"}" }
+        // The keys (herdr-core types them after ~3 s of quiet) and then Prompt.VERIFY_MS of read-back.
+        return withTimeoutOrNull(12_000) {
+            runCatching { Prompt.choose({ m, p -> c.call(m, p) }, ref.address, msg, options, index, label) }.getOrElse { e -> "Not sent: ${e.message ?: "the core refused it"}" }
         } ?: "Not confirmed: check the agent before trying again."
     }
     /** The menu [ref]'s agent shows now, read off its screen as [choose] reads it, or null. */

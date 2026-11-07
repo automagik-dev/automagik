@@ -1,5 +1,9 @@
 package ai.namastex.automagik
 
+import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+
 /**
  * The options an agent waits on, read off its screen, for the notification's buttons and the terminal screen's answer
  * row. Pressing one sends the arrow
@@ -98,4 +102,30 @@ object Prompt {
 
     /** The menu still on screen is the one the button was made from (same options in the same order). */
     fun unchanged(then: List<String>, now: Menu?) = now != null && now.options == then
+
+    /**
+     * A tapped option, through [call] (the core's terminal.get, terminal.read and terminal.keys): the agent is read
+     * again first, and nothing is pressed unless it still asks [msg] with the same [options]. Then it is read back:
+     * "You chose" only once the prompt went (not blocked any more, or another turn or question), else [Chat.NOT_TAKEN]
+     * after [verifyMs] (a key herdr-core reports typed can still leave the prompt there). Returns what to show.
+     */
+    suspend fun choose(call: suspend (String, JSONObject) -> JSONObject, address: String, msg: String, options: List<String>,
+                       index: Int, label: String, verifyMs: Long = VERIFY_MS, pause: suspend (Long) -> Unit = { delay(it) },
+                       clock: () -> Long = System::currentTimeMillis): String {
+        val now = CoreTerminal.parse(call("terminal.get", JSONObject().put("terminal", address)))
+        if (!now.attention || now.message != msg) return "Not sent: it isn’t asking that any more."
+        val menu = menu(call("terminal.read", JSONObject().put("terminal", address).put("lines", 0)).optString("text"))
+        if (menu == null || !unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
+        call("terminal.keys", JSONObject().put("terminal", address).put("keys", JSONArray(keys(menu, index))))
+        val deadline = clock() + verifyMs
+        while (true) {
+            val after = CoreTerminal.parse(call("terminal.get", JSONObject().put("terminal", address)))
+            if (!after.attention || after.turn != now.turn || after.message != msg) return "You chose: $label"
+            if (clock() >= deadline) return Chat.NOT_TAKEN
+            pause(250)
+        }
+    }
+
+    /** How long after the keys [choose] watches for the prompt to go, as the bridge's approve.js VERIFY_MS. */
+    const val VERIFY_MS = 5_000L
 }

@@ -48,6 +48,18 @@ export function createEngine({ home, appHome, hcPath, env = process.env, log } =
 
 const refused = (reason = 'not-watching') => ({ state: 'refused', ok: false, reason })
 
+/**
+ * The bridge log's line for one chat.answer: the terminal, row and choice exactly as the phone
+ * sent them (quoted, so no newline gets in), the result, and what terminal.keys and the last
+ * read saw. No row text.
+ */
+export function answerLine(address, row, choice, result, { typed, final } = {}) {
+  const v = (x) => (x === undefined || x === null || x === '' ? '-' : String(x))
+  return `chat.answer terminal=${JSON.stringify(address)} row=${JSON.stringify(row)} choice=${JSON.stringify(choice)} ` +
+    `ok=${result?.ok === true} reason=${v(result?.reason)} pressed=${v(result?.pressed)} sent=${result?.sent === true} ` +
+    `typed=${typed ? `${v(typed.status)}/${v(typed.turn)}` : '-'} final=${final ? `${v(final.state)}/${v(final.kind)}/${v(final.turn)}` : '-'}`
+}
+
 export class Engine {
   /**
    * @param {{ hc: any, home: string, appHome?: string, log?: (l: string) => void,
@@ -191,7 +203,7 @@ export class Engine {
   open(address) {
     const projection = new Projection(address, { hc: this.hc, hub: this.hub, home: this.home, appHome: this.appHome, log: this.log, refused: this.refused, timers: this.timers, ...this.projectionOptions })
     const entry = { address, projection, clients: new Map(), linger: null, approval: null, question: null, pending: new Map(), checking: null, flusher: null,
-      answering: null, answered: new Set(), authors: new Map() }
+      answering: null, answered: new Map(), authors: new Map() }
     const emit = (e) => { for (const l of [...entry.clients.values()]) { try { l(e) } catch {} } }
     entry.emit = emit
     entry.read = () => this.read(entry)
@@ -295,7 +307,7 @@ export class Engine {
     if (!state) { this.closeApproval(entry); return }
     // A call already answered keeps its row, without buttons, until the status moves.
     const answered = state.call && entry.answered.has(state.call.id)
-    const row = approvalRow(answered ? { ...state, choices: [], why: 'answered' } : state, { turn: status.turn, segment: entry.projection.store.segment })
+    const row = approvalRow(answered ? { ...state, choices: [], why: entry.answered.get(state.call.id) } : state, { turn: status.turn, segment: entry.projection.store.segment })
     if (entry.approval && entry.approval.id === row.id && entry.approval.choices.join() === row.choices.join()) return
     if (entry.approval && entry.approval.id !== row.id) this.closeApproval(entry)
     entry.approval = row
@@ -342,18 +354,26 @@ export class Engine {
    * answered call is refused until the status leaves blocked.
    */
   async answer(client, address, { row, choice }) {
+    const note = {}
+    const result = await this.answerOnce(client, address, { row, choice }, note)
+    this.log(answerLine(address, row, choice, result, note))
+    return result
+  }
+
+  async answerOnce(client, address, { row, choice }, note) {
     if (!this.watching(client, address)) return refused()
     const entry = this.entries.get(address)
     if (entry.answering) return { ok: false, reason: 'in-flight' }
     if (!entry.approval || entry.approval.id !== row) return { ok: false, reason: 'no-such-row' }
     if (entry.approval.call && entry.answered.has(entry.approval.call)) return { ok: false, reason: 'answered' }
     const call = entry.approval.call
-    entry.answering = answerApproval({ hc: this.hc, address, rowId: row, choice, read: entry.read, timers: this.timers })
+    entry.answering = answerApproval({ hc: this.hc, address, rowId: row, choice, read: entry.read, timers: this.timers, note })
     let result
     try { result = await entry.answering } finally { entry.answering = null }
     // terminal.keys was called: that call is answered, whatever came back (a timeout or an error
-    // may still have typed it) and whatever the dialog shows, until the status moves.
-    if (result.sent && call) entry.answered.add(call)
+    // may still have typed it) and whatever the dialog shows, until the status moves. Uncertain
+    // (the dialog still up after VERIFY_MS) is not-taken, never shown as answered.
+    if (result.sent && call) entry.answered.set(call, result.pressed === 'uncertain' ? 'not-taken' : 'answered')
     if (result.ok || result.reason === 'changed' || result.reason === 'closed') this.checkApproval(entry)
     return result
   }

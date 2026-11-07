@@ -57,4 +57,23 @@ class ProtocolTest {
         assertEquals(p, HostProfile.parse(p.json()))
         assertFalse(p.json().has("password"))
     }
+
+    /**
+     * The phone's terminal page sends a swipe as mouse wheel reports and a tap as a click (Claude Code turns on mouse
+     * modes 1000/1002/1003 and SGR 1006). Sent as typing (DATA), wheel reports held a tapped answer back until 3 s
+     * after the last one (probe: 10.37 s); as AUTOMATIC_INPUT it went in at once (0.03 s).
+     */
+    @Test fun wheelAndMotionReportsAreAutomaticInputAClickAndKeysStayTyping() {
+        fun b(s: String) = s.toByteArray(Charsets.ISO_8859_1)
+        val esc = "\u001b"
+        for (wheel in listOf("$esc[<64;5;5M", "$esc[<65;5;5M", "$esc[<65;5;5M$esc[<65;5;6M", "$esc[<35;10;3M", "$esc[<32;10;3M",
+            "$esc[M" + (32 + 65).toChar() + "%%", "$esc[M" + (32 + 35).toChar() + "%%")) {
+            assertEquals(wheel, Wire.AUTOMATIC_INPUT, Wire.inputKind(b(wheel), automatic = true))
+            // A path without automatic_input gets everything as DATA, as before.
+            assertEquals(wheel, Wire.DATA, Wire.inputKind(b(wheel), automatic = false))
+        }
+        // A deliberate tap's click (press and release), typed text, Enter and arrow keys stay typing.
+        for (typed in listOf("$esc[<0;5;5M", "$esc[<0;5;5m", "$esc[<0;5;5M$esc[<0;5;5m", "$esc[M" + 32.toChar() + "%%", "1", "y\r", "\r",
+            "$esc[B", "$esc[<65;5;5M1", "")) assertEquals(typed, Wire.DATA, Wire.inputKind(b(typed), automatic = true))
+    }
 }
