@@ -1617,7 +1617,6 @@ var SECRET_VALUES = [
   [/(^|[\r\n])((?:[ \t]*(?:-[ \t]+)?\?[ \t](?:[&!][^\s"'`]{0,80}[ \t]+){0,2})(["'])(?=[^"'\r\n:]*?(?:(?<![A-Za-z0-9_-])|(?<=(?<![A-Za-z0-9_-])-{1,2})|(?<=\\[nrt]))(?:[A-Za-z][a-z0-9]*(?![a-z0-9])(?:[A-Z][a-z0-9]*(?![a-z0-9]))*?(?:Token|Secret(?:(?:Access)?Key)?|Passw(?:or)?d|Passphrase|Pass|ApiKey|PrivateKey|Authorization)|(?:api|private)Key))[^"'\r\n:]*:(?![ \t])(?![^"'\r\n]*(?<!\\)\3[ \t]*(?::[^\r\n]*|#[^\r\n]*)?(?=[\r\n]|$)))(?![^\r\n]*[\r\n](?:[ \t]*(?:#[^\r\n]*)?[\r\n])*[ \t]*:)(["']?([^ \t\r\n"']+(?:'+[^ \t\r\n"']+)*))/g, /:/]
 ];
 var EXPLICIT_KEY = /(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t]/;
-var NO_EXPLICIT_KEY = /^(?![\s\S]*\?[ \t])/;
 var ANY_EXPLICIT_KEY = /\?[ \t]/;
 var GUARD_START = "(?!(?<=(?:^|[\\r\\n])[ \\t]{0,160}";
 var KEY_TAIL_START = String.raw`|(?<=(?:^|[\r\n])[ \t]{0,256}`;
@@ -1660,9 +1659,14 @@ for (const rule of SECRET_TEXT) {
 for (let i = 0; i < SECRET_VALUES.length; i++) {
   const entry = SECRET_VALUES[i];
   if (!Array.isArray(entry) || !(entry[0].source.includes(GUARD_START) || entry[0].source.includes(QUOTE_TAIL))) continue;
+  const gate = entry[1];
+  if (gate instanceof RegExp && gate.source === ANY_EXPLICIT_KEY.source) continue;
+  const live = (t) => !gate || gate.test(t);
+  const plainGate = { test: (t) => live(t) && !ANY_EXPLICIT_KEY.test(t) };
+  const guardedGate = { test: (t) => live(t) && ANY_EXPLICIT_KEY.test(t) };
   const plain = new RegExp(withoutGuard(entry[0].source), entry[0].flags);
-  SECRET_VALUES.splice(i, 0, [plain, NO_EXPLICIT_KEY, ...entry.slice(2)]);
-  entry[1] = ANY_EXPLICIT_KEY;
+  SECRET_VALUES.splice(i, 0, [plain, plainGate, ...entry.slice(2)]);
+  entry[1] = guardedGate;
   i++;
 }
 

@@ -368,7 +368,6 @@ const SECRET_VALUES = [
 // text with no `? name` line the guard can never fail, so dropping it is exact; the rule is
 // compiled with and without it and chosen per text, keeping an unclosed quote run linear (#172).
 const EXPLICIT_KEY = /(?:^|[\r\n])[ \t]*(?:-[ \t]+)?\?[ \t]/
-const NO_EXPLICIT_KEY = /^(?![\s\S]*\?[ \t])/
 const ANY_EXPLICIT_KEY = /\?[ \t]/
 const GUARD_START = '(?!(?<=(?:^|[\\r\\n])[ \\t]{0,160}'
 const KEY_TAIL_START = String.raw`|(?<=(?:^|[\r\n])[ \t]{0,256}`
@@ -411,9 +410,16 @@ for (let i = 0; i < SECRET_VALUES.length; i++) {
   const entry = SECRET_VALUES[i]
   if (!Array.isArray(entry) ||
     !(entry[0].source.includes(GUARD_START) || entry[0].source.includes(QUOTE_TAIL))) continue
+  const gate = entry[1]
+  // A rule whose own gate already requires `? ` has no plain variant to add: it skips every
+  // `?`-free text already.
+  if (gate instanceof RegExp && gate.source === ANY_EXPLICIT_KEY.source) continue
+  const live = (t) => !gate || gate.test(t)
+  const plainGate = { test: (t) => live(t) && !ANY_EXPLICIT_KEY.test(t) }
+  const guardedGate = { test: (t) => live(t) && ANY_EXPLICIT_KEY.test(t) }
   const plain = new RegExp(withoutGuard(entry[0].source), entry[0].flags)
-  SECRET_VALUES.splice(i, 0, [plain, NO_EXPLICIT_KEY, ...entry.slice(2)])
-  entry[1] = ANY_EXPLICIT_KEY
+  SECRET_VALUES.splice(i, 0, [plain, plainGate, ...entry.slice(2)])
+  entry[1] = guardedGate
   i++
 }
 
