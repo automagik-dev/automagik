@@ -5,8 +5,6 @@ node_modules/
 .env.*
 # Fetched or built, never committed
 .cache/
-# server/secrecy.mjs's inventory (a local scan)
-secrecy/
 apps/desktop/build/
 apps/desktop/dist/
 # Fixture runs (apps/bots-dsh/dev/advanced-check.mjs writes .tools/advanced-fixture)

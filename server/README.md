@@ -21,9 +21,9 @@ docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 
 The publish job prints the manifest digest in its summary and saves it as `image-digest.txt`; pin
 that digest, not a tag. `:<version>` is the repository version whose release supplied the plugin
-tarballs (the same value `scripts/version.ts` writes); `:latest` follows the last published image.
-The package is public; GitHub creates a new package private, so the first publish needs the
-one-time visibility flip below.
+tarballs (the same value `scripts/version.ts` writes). `:latest` moves only on a non-prerelease
+publish and never to an older version. GitHub creates a new package private, so the first publish
+needs the one-time visibility flip below before an anonymous pull works.
 
 ## The image
 
@@ -104,18 +104,16 @@ docker exec automagik cat /data/dsh/launch-url
 
 ## Visibility
 
-GitHub creates a new Container package private even when the repository is public. Make it public
-once, as an organization owner:
+GitHub creates a new Container package private even when the repository is public, and its REST
+API has no endpoint for a Container package's visibility (as of 2026-11). Make it public once, as
+an organization owner:
 
-```sh
-gh api --method PATCH /orgs/automagik-dev/packages/container/automagik-server/visibility \
-  -f visibility=public
-```
+1. Open <https://github.com/orgs/automagik-dev/packages/container/automagik-server>.
+2. **Package settings → Danger Zone → Change visibility → Public**.
 
-or **Packages → automagik-server → Package settings → Danger Zone → Change visibility → Public**.
-The publish job attempts the call with `GITHUB_TOKEN` and, if that token cannot change visibility,
-leaves the exact call in the job summary and warns. The image is still pushed, but anonymous pulls
-fail until the flip; the login-less pull is the verification:
+The publish job checks the package with `GITHUB_TOKEN` and, when it is not public (or the token
+cannot read packages), leaves this path in the job summary and warns. The image is still pushed,
+but anonymous pulls fail until the flip; the login-less pull is the verification:
 
 ```sh
 docker logout ghcr.io 2>/dev/null || true
@@ -164,13 +162,28 @@ entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)
 ## Secrecy gate
 
 The workflow extracts the built image's rootfs (`docker export`; the image is never run), lists
-every file and scans it before logging in or pushing (`server/secrecy.mjs`). It runs the
+every file and scans it before logging in or pushing (`server/secrecy.mjs`). Every file gets the
 repository's own privacy grep (`herdr/scripts/privacy-check.mjs`, same deny list) plus the image
-rules: a DeepSeek key, a `token=`, a `.env` or `launch-url` file, any file under `/data` (the
-image bakes no profile, bot/team state, workspace or secret), a `/home/<user>` or `/mnt/ai` path,
-a git credential, or an environment variable named like a secret. A hit fails the job. The layer
-list and the full file inventory are kept as `secrecy/image-layers.txt` and
-`secrecy/image-files.txt` (the workflow uploads them as an artifact).
+rules: a provider key, a `token=` or JSON token field, a complete private-key block, a `.env` or
+`launch-url` file, any file under `/data` (the image bakes no profile, bot/team state, workspace
+or secret), a home or `/mnt/ai` path, a credential URL, an archive (not opened by this scan), or
+an environment variable named like a secret. The image's config is scanned too. A hit fails the
+job.
+
+The only exceptions are exact entries in `server/secrecy-allowlist.json`: one file, one rule and
+the exact matched string (or its sha256), each with a reason (a vendored package's example or a
+toolchain's build account). There are no path patterns, and a key, a private-key block, `/data`,
+this repository's own code, `/etc` or a config file may never be allowlisted. The workflow lists
+the entries used and reports a stale entry. It also prunes third-party test, example and docs
+folders (and non-Linux prebuilds) from the image in `assemble.mjs`, so their fixtures are not
+shipped at all.
+
+The image's `/etc/passwd` is the repository's own (`server/passwd`), with no `/home/<user>`; the
+distroless `nonroot` home is not in the image. The layer list is the image's RootFS plus
+`docker save`'s manifest blobs (the content scan is the final flattened rootfs, which is what
+runs), and external/dangling symlinks are listed rather than followed. The inventory, the exact
+allowlist used and the symlink list are uploaded as an artifact. Before the real build, CI also
+runs the gate in image mode against a small image with a planted key and requires it to fail.
 
 Run it on an already-extracted tree without Docker:
 
@@ -187,7 +200,8 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 | `fetch-plugins.mjs` | downloads and verifies the pinned release's tarballs |
 | `entrypoint.mjs`, `lib.mjs` | seed `/data`, key file, pnpm store, dsh, redacted log |
 | `healthcheck.mjs` | the Docker health check |
-| `secrecy.mjs` | pre-push scan: rootfs extraction, inventory, privacy grep and image rules |
+| `secrecy.mjs`, `secrecy-allowlist.json` | pre-push scan: rootfs extraction, inventory, rules and the exact reviewed exceptions |
+| `passwd` | the image's account record (no `/home/<user>`; `automagik` is uid 1000) |
 | `bin/dsh`, `bin/pnpm` | the image's pinned commands for `docker exec` |
 | `profile/` | the seed profile: `package.json`, `cordis.patch.yml`, `pnpm-workspace.yaml` |
 | `build.mjs`, `smoke.mjs`, `test/` | build, end-to-end smoke, unit tests |
@@ -199,6 +213,9 @@ node --test 'server/test/*.test.mjs'
 ```
 
 The unit tests cover the token redaction, the startup-line match, the private-key rule, the
-first-start-only seed, the pnpm-store pin, the tarball verification, and the secrecy gate's
-rules (including that the image's own redaction regex is not mistaken for a token). The smoke is
-the real check of the image; the workflow runs the scan on the real rootfs before pushing.
+first-start-only seed, the pnpm-store pin, the tarball verification, the third-party prune, and
+the secrecy gate: 17 negative probes (keys, tokens, a private-key block, `/mnt/ai`, homes, a
+private name, credentials, `.env`, `launch-url`, `/data` state, an archive, and a key that the
+allowlist may never excuse), the exact allowlist, and that the image's own redaction regex is not
+mistaken for a token. The smoke is the real check of the image; the workflow runs the scan on
+the real rootfs before pushing.

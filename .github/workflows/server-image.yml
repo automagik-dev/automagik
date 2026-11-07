@@ -3,16 +3,24 @@ name: Server image
 # The Automagik server image (server/): the automagik-web profile on the pinned DeepSeek
 # Harness, with the plugins from one pinned release. Every change builds, smokes and scans it;
 # a dispatch or a published release then pushes it to ghcr.io/automagik-dev/automagik-server as
-# :<version> (the repository's version) and :latest.
+# :<version> (the repository's version), and as :latest only when the release is not a
+# prerelease and the published :latest is not newer.
 #
-# The scan (server/secrecy.mjs) extracts the built rootfs before any login and fails the job on
-# a DeepSeek key, a token=, a .env or launch-url file, bot/team state under /data, a /home/<user>
-# or /mnt/ai path, a git credential, or a hit from the repository's own privacy grep. The layer
-# list and the full file inventory are kept as an artifact. The image is never run by the scan.
+# The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
+# and fails the job on a provider key, a token= or JSON token field, a private-key block, a
+# .env or launch-url file, bot/team state under /data, a home or /mnt/ai path, a git credential,
+# an archive, a hit from the repository's own privacy grep, or a secret-looking env name. The
+# only exceptions are exact reviewed entries in server/secrecy-allowlist.json (one file, one
+# rule, the exact match; keys, private-key blocks, /data, our own code, /etc and config may
+# never be allowlisted). Third-party test/example/docs folders are pruned from the image before
+# the scan. A self-check in image mode proves a planted key still fails; the layer list, file
+# inventory, allowlist used and external symlinks are kept as an artifact. The image is never
+# run by the scan.
 #
 # No key is baked and no test token is in this workflow: the only credential is GITHUB_TOKEN,
 # used to log in to the registry and to read the release's assets. It is not passed to docker
-# build or into the image.
+# build or into the image. GitHub has no REST endpoint for a Container package's visibility:
+# the job checks it and leaves the organization package-settings path in the summary.
 #
 # A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
 # events made with that token), so the cut's own releases do not trigger this automatically:
@@ -27,6 +35,8 @@ on:
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/scripts/prune-runtime.mjs
+      - herdr/scripts/privacy-check.mjs
+      - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
   push:
     branches: [dev]
@@ -35,6 +45,8 @@ on:
       - apps/desktop/runtime/package.json
       - apps/desktop/runtime/package-lock.json
       - apps/desktop/scripts/prune-runtime.mjs
+      - herdr/scripts/privacy-check.mjs
+      - herdr/scripts/privacy-list.json
       - .github/workflows/server-image.yml
   release:
     types: [published]
@@ -55,6 +67,7 @@ jobs:
     outputs:
       version: ${{ steps.gate.outputs.version }}
       publish: ${{ steps.gate.outputs.publish }}
+      latest: ${{ steps.gate.outputs.latest }}
     env:
       DO_NOT_TRACK: '1'
     steps:
@@ -78,12 +91,15 @@ jobs:
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           version="$(node -p 'require("./package.json").version')"
           build=true
           publish=false
+          latest=false
+          if [[ "${RELEASE_PRERELEASE}" != "true" ]]; then latest=true; fi
           has_plugins() {
             gh release view "v${version}" --repo "${REPOSITORY}" --json assets --jq '.assets[].name' | grep -qx plugins.json
           }
@@ -125,6 +141,7 @@ jobs:
             echo "version=${version}"
             echo "build=${build}"
             echo "publish=${publish}"
+            echo "latest=${latest}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Syntax
@@ -136,6 +153,24 @@ jobs:
 
       - name: Unit tests
         run: node --test 'server/test/*.test.mjs'
+
+      # The gate itself, in image mode, on a known-red image: a planted key must fail before the
+      # real build is trusted. This is the same docker export + scan path the publish runs.
+      - name: Secrecy gate self-check (a planted key must fail)
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          printf 'sk-%s\n' "$(printf 'a%.0s' $(seq 1 32))" > "${dir}/leak"
+          tar -C "${dir}" -cf "${dir}/rootfs.tar" leak
+          docker import "${dir}/rootfs.tar" automagik-secrecy-red:test >/dev/null
+          if node server/secrecy.mjs automagik-secrecy-red:test --inventory "${dir}/secrecy"; then
+            echo "::error::the secrecy gate passed a planted key"
+            exit 1
+          fi
+          grep -q 'key: sk-\*\*\*' "${dir}/secrecy/secrecy.txt"
+          docker rmi automagik-secrecy-red:test >/dev/null
+          echo "secrecy gate self-check: the planted key fails the image-mode scan"
 
       - name: Build
         if: steps.gate.outputs.build == 'true'
@@ -157,6 +192,14 @@ jobs:
         env:
           VERSION: ${{ steps.gate.outputs.version }}
         run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
+
+      - name: Assert the image is clean
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          test "$(cat secrecy/secrecy.txt)" = clean
+          allowed="$(grep -c . secrecy/allowlist-used.txt || true)"
+          echo "image-clean: $(wc -l < secrecy/image-files.txt) files, $(wc -l < secrecy/image-layers.txt) layer lines, 0 findings, ${allowed:-0} exact allowlist hits"
 
       - name: Keep the secrecy inventory
         if: always() && steps.gate.outputs.build == 'true'
@@ -193,6 +236,7 @@ jobs:
     env:
       DO_NOT_TRACK: '1'
       VERSION: ${{ needs.image.outputs.version }}
+      LATEST: ${{ needs.image.outputs.latest }}
       GHCR: ghcr.io/automagik-dev/automagik-server
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -216,6 +260,13 @@ jobs:
       - name: Secrecy (the bytes about to be pushed)
         run: node server/secrecy.mjs "automagik-server:${VERSION}" --inventory secrecy
 
+      - name: Assert the pushed bytes are clean
+        run: |
+          set -euo pipefail
+          test "$(cat secrecy/secrecy.txt)" = clean
+          allowed="$(grep -c . secrecy/allowlist-used.txt || true)"
+          echo "image-clean: $(wc -l < secrecy/image-files.txt) files, $(wc -l < secrecy/image-layers.txt) layer lines, 0 findings, ${allowed:-0} exact allowlist hits"
+
       - name: Keep the push secrecy inventory
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -230,13 +281,13 @@ jobs:
           TOKEN: ${{ github.token }}
         run: printf '%s' "${TOKEN}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Push :version and :latest
+      - name: Push :version and, when newer, :latest
         id: push
+        env:
+          LATEST: ${{ needs.image.outputs.latest }}
         run: |
           set -euo pipefail
-          for tag in "${VERSION}" latest; do
-            docker tag "automagik-server:${VERSION}" "${GHCR}:${tag}"
-          done
+          docker tag "automagik-server:${VERSION}" "${GHCR}:${VERSION}"
           out="$(docker push "${GHCR}:${VERSION}" 2>&1)"
           printf '%s\n' "${out}"
           digest="$(printf '%s\n' "${out}" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)"
@@ -244,7 +295,25 @@ jobs:
             echo "::error::docker push printed no manifest digest"
             exit 1
           fi
-          docker push "${GHCR}:latest"
+          latest="${LATEST}"
+          if [[ "${latest}" == "true" ]]; then
+            old="$(docker buildx imagetools inspect "${GHCR}:latest" --format '{{index .Image.Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)"
+            if [[ -n "${old}" && "${old}" != "<no value>" ]]; then
+              newest="$(printf '%s\n%s\n' "${VERSION}" "${old}" | sort -V | tail -1)"
+              if [[ "${newest}" == "${old}" && "${old}" != "${VERSION}" ]]; then
+                echo "::warning::latest stays at ${old}; ${VERSION} is older"
+                latest=false
+              fi
+            fi
+          fi
+          tags="\`:${VERSION}\`"
+          if [[ "${latest}" == "true" ]]; then
+            docker tag "automagik-server:${VERSION}" "${GHCR}:latest"
+            docker push "${GHCR}:latest"
+            tags="${tags}, \`:latest\`"
+          else
+            echo "latest not moved (a prerelease, or older than the published image)"
+          fi
           ref="${GHCR}@${digest}"
           printf '%s\n' "${ref}" > image-digest.txt
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
@@ -257,7 +326,7 @@ jobs:
             echo '```'
             echo
             echo "- version: \`${VERSION}\`"
-            echo "- tags: \`:${VERSION}\`, \`:latest\`"
+            echo "- tags: ${tags}"
             echo
             echo "Pull by digest:"
             echo
@@ -266,34 +335,33 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # One-time for a new package: GitHub creates it private. GITHUB_TOKEN may not have the
-      # admin permission the API needs; the warning then names the exact call and the UI, and
-      # the pull-by-digest instruction stays in the README.
-      - name: Make the package public
+      # GitHub creates a new package private and has no public REST endpoint to change a
+      # Container package's visibility. Check it and leave the UI path in the summary; the
+      # image is still pushed, but anonymous pulls fail until the one-time flip.
+      - name: Check package visibility
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: automagik-server
         run: |
           set -euo pipefail
-          endpoint="/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/visibility"
-          if gh api --method PATCH "${endpoint}" -f visibility=public >/dev/null 2>visibility.err; then
+          endpoint="/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+          visibility="$(gh api "${endpoint}" --jq .visibility 2>/dev/null || true)"
+          if [[ "${visibility}" == "public" ]]; then
             echo "package ${PACKAGE}: public"
-          else
-            cat visibility.err >&2
-            echo "::warning::GITHUB_TOKEN could not set ${PACKAGE} public; run: gh api --method PATCH ${endpoint} -f visibility=public (an org owner/PAT with admin:packages) or use https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/settings"
-            {
-              echo
-              echo "### Package visibility"
-              echo
-              echo "Not public yet. Set it once, as an organization owner:"
-              echo
-              echo '```sh'
-              echo "gh api --method PATCH ${endpoint} -f visibility=public"
-              echo '```'
-              echo
-              echo "or https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/settings"
-            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          echo "::warning::GitHub has no REST call to change a package's visibility; make ${PACKAGE} public once at https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE} (Package settings -> Danger Zone -> Change visibility -> Public)"
+          {
+            echo
+            echo "### Package visibility"
+            echo
+            echo "GitHub has no public REST endpoint for a Container package's visibility. Make it public once:"
+            echo
+            echo "1. Open https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+            echo "2. Package settings -> Danger Zone -> Change visibility -> Public"
+            echo
+            echo "Until then anonymous pulls fail; a pull authenticated with a GitHub token still works."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the manifest digest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

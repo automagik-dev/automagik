@@ -1,0 +1,158 @@
+[
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
+    "rule": "home-path",
+    "match": "/home/CLI",
+    "reason": "DSH's documented example path in its app boot code, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-client-ui-plugin-manager/lib/client.js",
+    "rule": "home-path",
+    "match": "/Users/name",
+    "reason": "DSH's plugin-manager UI example path, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-client-ui-plugin-manager/lib/types/client/locales.d.ts",
+    "rule": "home-path",
+    "match": "/Users/name",
+    "reason": "the locale description of the same UI example path"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-client-ui-sidebar-documentpreview/lib/client.pdf.js",
+    "rule": "home-path",
+    "match": "/home/web_user",
+    "reason": "the Emscripten PDF runtime's default user, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-util-workspace-path/lib/types/file-address.d.ts",
+    "rule": "home-path",
+    "match": "/home/ys",
+    "reason": "a type-comment example path in DSH's workspace-path library"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-BgUyXZcc.js",
+    "rule": "private-name",
+    "match": "g9",
+    "reason": "a minified identifier that coincides with a deny-list short machine name; not this repository's code or build environment"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@eslint-community/regexpp/index.js",
+    "rule": "private-name",
+    "match": "g9",
+    "reason": "a regexp parser identifier that coincides with a deny-list short machine name"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@eslint-community/regexpp/index.mjs",
+    "rule": "private-name",
+    "match": "g9",
+    "reason": "a regexp parser identifier that coincides with a deny-list short machine name"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/soffice.cjs",
+    "rule": "home-path",
+    "match": "/home/web_user",
+    "reason": "the Emscripten LibreOffice runtime's default user, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/soffice.data",
+    "rule": "home-path",
+    "match": "/home/eric",
+    "reason": "a LibreOffice fixture path embedded in its data asset, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.cjs",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "an OpenTelemetry attribute example string, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.cjs",
+    "rule": "home-path",
+    "match": "/home/alice",
+    "reason": "an OpenTelemetry attribute example string, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.mjs",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "an OpenTelemetry attribute example string, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.mjs",
+    "rule": "home-path",
+    "match": "/home/alice",
+    "reason": "an OpenTelemetry attribute example string, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.cjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/experimental_attributes.mjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/stable_attributes.cjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/stable_attributes.cjs",
+    "rule": "git-credentials",
+    "match": "https://REDACTED:REDACTED@",
+    "reason": "an OpenTelemetry redaction example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/stable_attributes.mjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/stable_attributes.mjs",
+    "rule": "git-credentials",
+    "match": "https://REDACTED:REDACTED@",
+    "reason": "an OpenTelemetry redaction example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/trace/SemanticAttributes.cjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@opentelemetry/semantic-conventions/dist/trace/SemanticAttributes.mjs",
+    "rule": "git-credentials",
+    "match": "https://username:password@",
+    "reason": "an OpenTelemetry URL example, not a credential"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/pnpm/dist/pnpm.cjs",
+    "rule": "git-credentials",
+    "match": "https://use%21r:pas%2As@",
+    "reason": "pnpm's URL-parsing example, not a credential"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/playwright-core/lib/coreBundle.js",
+    "rule": "home-path",
+    "match": "/home/pwuser",
+    "reason": "Playwright's container user, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/@vscode/ripgrep-linux-x64/bin/rg",
+    "rule": "home-path",
+    "match": "/home/cloudtest",
+    "reason": "the ripgrep binary's build account, not a host account"
+  },
+  {
+    "file": "opt/automagik/runtime/node_modules/jose/dist/webapi/key/import.js",
+    "rule": "secret",
+    "match": "-----BEG…",
+    "reason": "JOSE's PEM parser source checks for this header literal; a complete private-key block is still refused"
+  }
+]

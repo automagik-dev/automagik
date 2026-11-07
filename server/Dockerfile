@@ -89,6 +89,9 @@ COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
 COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs /opt/automagik/
+# No /home/<user> in the image's account record: the distroless nonroot home is replaced with
+# the uid the image actually runs as. The scanner's home check then has nothing to excuse.
+COPY server/passwd /etc/passwd
 COPY --chmod=0755 server/bin/dsh server/bin/pnpm /usr/local/bin/
 
 ENV HOME=/data \
