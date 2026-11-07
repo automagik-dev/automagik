@@ -13,6 +13,7 @@ import {
   launchUrlOf,
   pinStore,
   PORT,
+  prepareWorkspace,
   privateMode,
   profileDirOf,
   PROFILE,
@@ -91,6 +92,7 @@ async function main() {
   const workspace = env.AUTOMAGIK_WORKSPACE || '/data/workspace'
   const dirs = [dshHome, botsHome, workspace, join(dshHome, 'pnpm-store'), '/data/secrets']
   try {
+    prepareWorkspace(workspace, { uid: 1000 })
     ensureDataDirs(dirs, { uid: 1000 })
   } catch (error) {
     warn(error.message)
