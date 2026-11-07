@@ -9,9 +9,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { GUARD_DIR, guardDirOf } from "../mods/am-sidebar/workers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -133,5 +136,40 @@ test("the sidebar's static import graph fits gpui-shell 0.7.1", () => {
     const declared = [...readFileSync(dts, "utf8").matchAll(/^declare module "([^"]+)"/gm)]
       .map((m) => m[1]).sort();
     assert.deepEqual(declared, [...RUNTIME_MODULES].sort(), `${dts} declares a different module set`);
+  }
+});
+
+test("guardDirOf: the guard folder beside the module, from either runtime's meta URL", () => {
+  assert.equal(GUARD_DIR, join(MOD, "guard"), "Node's file: URL still gives the same path");
+  assert.equal(guardDirOf("file:///opt/herdr/mods/am-sidebar/workers.js"),
+    "/opt/herdr/mods/am-sidebar/guard");
+  assert.equal(guardDirOf("file:///opt/herdr/mods/am-sidebar/workers.js?v=1"),
+    "/opt/herdr/mods/am-sidebar/guard");
+  assert.equal(guardDirOf("file:///tmp/a%20b/workers.js?v=1"), "/tmp/a b/guard");
+  assert.equal(guardDirOf("/Users/me/.config/herdr-app/mods/am-sidebar/workers.js?v=1"),
+    "/Users/me/.config/herdr-app/mods/am-sidebar/guard", "the mod runtime's bare path plus ?v=1");
+  assert.equal(guardDirOf("/tmp/a b/workers.js?v=1#frag"), "/tmp/a b/guard", "query and hash are stripped");
+  assert.equal(guardDirOf("/tmp/a%20b/workers.js?v=1"), "/tmp/a%20b/guard", "a bare path is already a path");
+});
+
+test("workers.js loads with the runtime's bare import.meta.url and keeps the guard path", async () => {
+  const file = join(MOD, "workers.js");
+  const bare = `${file}?v=1`;
+  const runtimeUrl = `${pathToFileURL(file).href}?v=1`;
+  const hook = registerHooks({
+    load: (url, context, next) => {
+      if (url !== runtimeUrl) return next(url, context);
+      const source = readFileSync(file, "utf8");
+      const transformed = source.replace("guardDirOf(import.meta.url)", `guardDirOf(${JSON.stringify(bare)})`);
+      assert.notEqual(transformed, source, "the load must exercise a bare import.meta.url");
+      return { format: "module", source: transformed, shortCircuit: true };
+    },
+  });
+  try {
+    const runtime = await import(runtimeUrl);
+    assert.equal(runtime.GUARD_DIR, join(MOD, "guard"));
+    assert.equal(runtime.GUARD_DIR, GUARD_DIR);
+  } finally {
+    hook.deregister();
   }
 });

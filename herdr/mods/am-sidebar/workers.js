@@ -12,12 +12,26 @@ import { envWords } from "./logins.js";
 export { TEMPLATE_SHAPE };
 
 /**
+ * The guard folder beside a mod file, from `import.meta.url`. Node gives a `file:` URL; Herdr's
+ * mod runtime gives a bare path with its `?v=1` cache buster, which `new URL` cannot take as a
+ * base. A bare path is stripped of its query/hash, then its folder gets `/guard`; never throws.
+ */
+export function guardDirOf(metaUrl) {
+  try {
+    return decodeURIComponent(new URL("./guard/", metaUrl).pathname).replace(/\/+$/, "");
+  } catch {
+    const file = String(metaUrl).replace(/[?#].*$/, "");
+    const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
+    return `${cut === -1 ? "." : file.slice(0, cut)}/guard`;
+  }
+}
+
+/**
  * The deny-by-default hc guard's folder (automagik#624, `guard/hc`): put first on a dsh-tui
  * pane's PATH only, by startArgs and workerArgs. A guardrail, never a boundary: an absolute
  * hc path, a raw socket or `hc connect` skips it; #628 is the full send/keys/attach scope; #631 is the hard boundary.
  */
-export const GUARD_DIR = decodeURIComponent(new URL("./guard/", import.meta.url).pathname)
-  .replace(/\/+$/, "");
+export const GUARD_DIR = guardDirOf(import.meta.url);
 
 /**
  * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
