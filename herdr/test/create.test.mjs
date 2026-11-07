@@ -720,6 +720,50 @@ test("a worktree space whose main checkout has committed its bots.json deletion:
   assert.doesNotMatch(where, /isn't committed|has local changes|is deleted: a merge pull/);
 });
 
+// #626 F1: a main checkout that never had bots.json is not a committed deletion: the pull only
+// adds the worktree's file, so the form does not warn.
+test("a worktree space whose main checkout never had a bots.json: the form does not warn", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  mkdirSync(repo);
+  g(repo, "init", "-q");
+  g(repo, "commit", "-q", "--allow-empty", "-m", "init");
+  g(repo, "worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /committed deletion|modify\/delete|isn't committed|has local changes|is deleted/);
+});
+
+// #626 F1: main deleted bots.json before the worktree branched: the merge base has no file, so
+// the form does not warn; the merge only adds the worktree's file.
+test("a worktree space whose main deleted bots.json before branching: the form does not warn", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g(repo, "init", "-q");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "bots");
+  g(repo, "rm", "-q", ".herdr/bots.json");
+  g(repo, "commit", "-q", "-m", "delete bots");
+  g(repo, "worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /committed deletion|modify\/delete/);
+});
+
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
 
 test("Bot settings (pick) draws the sidebar's known bots before discovery answers, then the fresh list", async () => {

@@ -381,7 +381,7 @@ async function saveProject(project, raw, { list = true } = {}) {
  * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one);
  * when it is deleted in the working tree, that a merge pull restores it with the worktree's
  * version and a rebase pull refuses until it is committed or discarded; when the deletion is
- * committed, that the pull ends in a modify/delete conflict.
+ * committed after the worktree branched, that the pull ends in a modify/delete conflict.
  */
 const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
@@ -393,10 +393,11 @@ const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BO
  * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
  * "modified" when it is committed but has local changes, "deleted" when it is committed and
  * deleted in the working tree without that deletion being staged, "committed-deletion" when
- * HEAD has no file but `dir`, the worktree an edit came from, does, and null when it is clean
- * or git can't say. A pull that brings a worktree's committed file stops on the first two
- * (#234, #332); an unstaged deletion is restored by a merge pull and refused by a rebase pull
- * instead (#626); a committed deletion ends in modify/delete too.
+ * HEAD has no file, `dir` (the worktree an edit came from) does, and the merge base of HEAD and
+ * that worktree had it; null when it is clean or git can't say. A pull that brings a worktree's
+ * committed file stops on the first two (#234, #332); an unstaged deletion is restored by a
+ * merge pull and refused by a rebase pull instead (#626); a deletion committed after the
+ * worktree branched ends in modify/delete too, one before it only adds.
  */
 async function changesIn(key, dir = null) {
   // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
@@ -410,16 +411,19 @@ async function changesIn(key, dir = null) {
 }
 /**
  * #626: a committed deletion leaves `git status` empty, yet a pull that brings the worktree's
- * version of a file HEAD no longer has ends in a modify/delete conflict. Compares HEAD's view
- * with the worktree's, and checks the path was committed before: a file main never had is only
- * added by the pull, with no conflict.
+ * version of a file the merge base has, and HEAD has deleted, ends in a modify/delete conflict.
+ * The merge base, not the path's history, is the test: a deletion committed before the worktree
+ * branched leaves no file at the base, and the pull only adds the worktree's file.
  */
 async function committedDeletion(key, dir) {
   if (!dir || dir === key) return null;
   if ((await git(["show", `HEAD:${BOTS_PATH}`], key)) !== null) return null;
   if (readText(under(dir, BOTS_PATH)) === null) return null;
-  const committed = await git(["log", "-1", "--format=%H", "HEAD", "--", BOTS_PATH], key);
-  return committed?.trim() ? "committed-deletion" : null;
+  const worktreeHead = (await git(["rev-parse", "HEAD"], dir))?.trim();
+  if (!worktreeHead) return null;
+  const base = (await git(["merge-base", "HEAD", worktreeHead], key))?.trim();
+  if (!base) return null;
+  return (await git(["cat-file", "-e", `${base}:${BOTS_PATH}`], key)) !== null ? "committed-deletion" : null;
 }
 
 const fsIo = {

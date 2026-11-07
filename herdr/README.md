@@ -523,8 +523,10 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   overwrite it. When it was committed and is deleted in the working tree (not staged), the note
   says so: a merge pull brings it back with the worktree's version, while a rebase pull
   (`pull.rebase=true`) refuses until the deletion is committed or discarded. When the deletion
-  is committed (HEAD has no file) and the worktree has one, the note says the pull ends in a
-  modify/delete conflict, and to restore and commit the file before pulling or resolve it after.
+  is committed (HEAD has no file), the worktree has one, and their merge base still has it, the
+  note says the pull ends in a modify/delete conflict, and to restore and commit the file before
+  pulling or resolve it after. A deletion committed before the worktree branched leaves nothing
+  at the merge base: the pull only adds the worktree's file, so the note says nothing.
 - `ls`, `show`, `create`, `edit`, `rm` and `category` also take `--machine M --project <folder>`:
   the project on linked machine M (`hc machine ls`), `--project` an absolute folder there, keyed
   there by the same rule. The file is read and written there through hc by the same

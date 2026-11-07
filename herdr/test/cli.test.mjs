@@ -372,6 +372,29 @@ test("a worktree edit does not warn when the main checkout never had a bots.json
   assert.equal(git(s.project, "log", "-1", "--format=%H", "HEAD", "--", ".herdr/bots.json"), "");
 });
 
+// #626 F1: a deletion committed before the worktree branched is not a modify/delete: the merge
+// base has no file, so the pull only adds the worktree's file — no warning, and a clean merge.
+test("a worktree edit does not warn when main deleted bots.json before the worktree branched", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  git(s.project, "rm", "-q", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "delete bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  assert.throws(() => git(s.project, "show", "HEAD:.herdr/bots.json"));
+  const made = s.cli(["create", "--name", "Genie", "--agent", "claude"], { cwd: wt });
+  assert.equal(made.code, 0, made.err);
+  assert.doesNotMatch(made.err, /committed deletion|modify\/delete/);
+  // The worktree's commit merges cleanly: the file is added, not a modify/delete conflict.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "genie");
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.ok(s.bots().bots.some((b) => b.name === "Genie"));
+});
+
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
   const s = restartScene(t);
   const wt = join(s.root, "wt");
