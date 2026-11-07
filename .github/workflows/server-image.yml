@@ -180,8 +180,12 @@ jobs:
                 exit 1
               fi
               publish=true
-              if [[ "$(release_prerelease "${content}")" == "true" ]]; then
+              pre="$(release_prerelease "${content}")"
+              if [[ "${pre}" == "true" ]]; then
                 echo "::notice::content v${content} is a prerelease; :latest stays put"
+              elif [[ "${pre}" != "false" ]]; then
+                echo "::error::cannot read prerelease state of v${content}; refusing to publish"
+                exit 1
               else
                 latest=true
               fi
