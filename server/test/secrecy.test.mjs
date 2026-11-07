@@ -117,7 +117,7 @@ test('a private-key entry is allowed only for the gnutls library', () => {
 })
 
 test('the node build account is excused only for the pinned binary hash', () => {
-  const pin = 'e237a2839d0cbdc9a9a2adda1a184afc0f5b20306ffbe923af5686550472d8a8'
+  const pin = '5bcb4ec9c0ad9764e41392c1d3a3d46c28656c79b6e49f4a644499c9d96ac39f'
   const hit = { file: 'nodejs/bin/node', rule: 'home-path', raw: '/home/iojs', match: '/home/iojs', fileSha256: pin }
   const entry = { file: 'nodejs/bin/node', rule: 'home-path', match: '/home/iojs', fileSha256: pin, reason: 'pinned' }
   assert.equal(applyAllowlist([hit], [entry]).kept.length, 0)
