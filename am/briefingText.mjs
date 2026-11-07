@@ -14,6 +14,26 @@ export const WORKER_LINE = "You write no code yourself: for each task start one 
   + "`automagik-herdr worker \"<task>\" --branch <branch>` (it runs in the task's worktree, under your pane), "
   + "check its result, and end it with `hc kill <terminal>` once the task merges.";
 
+/**
+ * The hc guard the pack puts first on a dsh-tui pane's PATH (#624, stopgap C). A GUARDRAIL,
+ * not a boundary: an absolute hc path, a raw socket or `hc connect` skips it; #631 is the
+ * hard boundary, and #628 is the full send/keys/attach scope. The pack's CLI still runs its
+ * own trusted hc calls.
+ */
+export const GUARD_LINE = "The pack puts a deny-by-default hc guard first on a dsh-tui pane's PATH: "
+  + "it allows send, read, ls, get, wait, put, label (own workers only), kill, rm, events, schema, templates "
+  + "and the worker start, and refuses exec, other runs, file writes/reads, machine, server, update, connect, "
+  + "keys, attach, machine-target addresses on every verb but send, and --on outside an allowed send. "
+  + "It is a GUARDRAIL, not a boundary: an absolute hc path, a raw socket or `hc connect` bypasses it. "
+  + "The full send/keys/attach scope is #628; the real fix is the socket mask plus the per-pane proxy wish "
+  + "(#624); #631 is the hard boundary.";
+
+/**
+ * The guard paragraph only in a briefing whose pane gets the guard: a dsh-tui bot (#624).
+ * `guard` false suppresses it (a linked machine with no guard); null keeps the agent default.
+ */
+const guardLines = (self, guard = null) => (self?.agent === "dsh-tui" && guard !== false ? [GUARD_LINE] : []);
+
 /** The block stays under Claude Code's 10,000-character cap on a hook's output. */
 export const BRIEFING_LIMIT = 9900;
 /** The longest latest report shown for one member. */
@@ -65,7 +85,7 @@ const indent = (text, pad) => text.split("\n").map((l) => pad + l).join("\n");
  * no answer about its pane in time. Reports are other agents' text: each sits in its own
  * <untrusted-report> element with its angle brackets neutralised.
  */
-export function briefingText({ self, file, members = [], lead, helpers = [] }) {
+export function briefingText({ self, file, members = [], lead, helpers = [], guard = null }) {
   const kind = self.kind === "main" ? "this project's main bot" : "a team member";
   const instructions = String(self.instructions ?? "");
   const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
@@ -76,7 +96,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [] }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) head.push("Instructions:", shown.trim());
-  head.push(WORKER_LINE, liveLine(self.id));
+  head.push(WORKER_LINE, ...guardLines(self, guard), liveLine(self.id));
   const tail = [];
 
   if (lead) {
@@ -148,7 +168,7 @@ export const restartLine = (botId) => `To restart you, the person runs \`automag
  * `automagik-herdr brief`. The hook's once-only print compares this text, so it changes only
  * when the file does.
  */
-export function launchBriefingText({ self, file }) {
+export function launchBriefingText({ self, file, guard = null }) {
   const kind = self.kind === "main" ? "this project's main bot" : "a team member";
   const instructions = String(self.instructions ?? "");
   const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
@@ -159,7 +179,7 @@ export function launchBriefingText({ self, file }) {
     `Role: ${self.role || "(none given)"}`,
   ];
   if (shown.trim()) lines.push("Instructions:", shown.trim());
-  lines.push(WORKER_LINE, liveLine(self.id), restartLine(self.id));
+  lines.push(WORKER_LINE, ...guardLines(self, guard), liveLine(self.id), restartLine(self.id));
   const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
   const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
   if (lead) {

@@ -5,11 +5,37 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
+import { fileURLToPath } from "node:url";
+
 import { AGENTS, effortArgs, hasEffortFlag, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
 
 export { TEMPLATE_SHAPE };
+
+/**
+ * The deny-by-default hc guard's folder (automagik#624, `guard/hc`): put first on a dsh-tui
+ * pane's PATH only, by startArgs and workerArgs. A guardrail, never a boundary: an absolute
+ * hc path, a raw socket or `hc connect` skips it; #628 is the full send/keys/attach scope; #631 is the hard boundary.
+ */
+export const GUARD_DIR = fileURLToPath(new URL("./guard/", import.meta.url)).replace(/\/+$/, "");
+
+/**
+ * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
+ * repeated. A null guard leaves the path exactly as it is.
+ */
+export function guardPathWith(path, guard) {
+  if (!guard || !path) return path;
+  return [guard, ...String(path).split(":").filter((dir) => dir !== guard)].join(":");
+}
+
+/**
+ * `path` with this pack's guard folder first for a dsh-tui pane; any other agent's path
+ * unchanged (byte for byte, so a non-dsh-tui start stays as it was).
+ */
+export function guardPath(path, agent) {
+  return agent === "dsh-tui" ? guardPathWith(path, GUARD_DIR) : path;
+}
 
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
 // `worker.of=<botId>`, `branch=<branch>` and `worker.role=<role>`, and its cwd is the task
@@ -208,7 +234,9 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * `login`: a Claude worker's login words (logins.js chooseLogin), after PATH. A Claude template
  * can't take them through hc's template form, so it runs its own command instead
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
- * `/usr/bin/env <login words>`, its template label kept.
+ * `/usr/bin/env <login words>`, its template label kept. `agent` `dsh-tui`: the pack's
+ * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
+ * boundary (#624, #628, #631).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
   taskId, project, lead, space, login = [], templateArgv = null }) {
@@ -229,7 +257,7 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  const vars = envWords(path ? [`PATH=${path}`] : [], login);
+  const vars = envWords(path ? [`PATH=${guardPath(path, agent)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
   return [...args, "--parent", parent, "--", ...env, ...argv, ...promptArgs(agent, task)];
 }

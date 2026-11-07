@@ -3,7 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
-import { ENV } from "./workers.js";
+import { ENV, GUARD_DIR, guardPathWith } from "./workers.js";
 import { envWords } from "./logins.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
@@ -48,9 +48,14 @@ export function startRefusal(file, botId) {
  * (workers.js workerArgs): the PATH agentPath.mjs interpreterPath gives it (#56). `env`: more
  * variables the agent starts with, after PATH (an agent that takes its briefing that way, models.js).
  * `login`: a Claude launch's login words (logins.js chooseLogin): `-u CLAUDE_CONFIG_DIR` first,
- * or `CLAUDE_CONFIG_DIR=<dir>` last.
+ * or `CLAUDE_CONFIG_DIR=<dir>` last. `agent`: when it is `dsh-tui`, the pack's deny-by-default
+ * hc guard folder goes first on the pane PATH (workers.js GUARD_DIR); any other agent's arguments
+ * stay byte for byte as before. `guard`: an explicit guard folder for this pane (a linked
+ * machine's own guard, resolved there), or null for none; undefined uses the dsh-tui default.
+ * The guard is a guardrail, not a boundary (#624; #628 is the full send/keys/attach scope; #631
+ * is the hard boundary).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [] }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -58,7 +63,8 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  const vars = envWords([...(path ? [`PATH=${path}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
+  const guardDir = guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
+  const vars = envWords([...(path ? [`PATH=${guardPathWith(path, guardDir)}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
   return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...argv];
 }
 

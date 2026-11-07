@@ -828,6 +828,44 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   rows on (terminal, session). There is no end row: a worker's end comes from hc or from its
   session. The rows outlive the terminals, so usage can be tied to bots and tasks afterwards.
 
+## The hc guard (a guardrail, not a boundary)
+
+A pack-started dsh-tui bot pane, and every worker it starts, gets
+`mods/am-sidebar/guard/` first on its PATH (`startArgs` and `workerArgs` add it for the
+`dsh-tui` agent only). Its `hc` is a deny-by-default wrapper around the real `hc` (#624; the
+full send/keys/attach scope is #628): it scans PATH past every guard folder and passes an
+allowed call through unchanged — same stdio, same exit code, same stdout and stderr. It allows
+`send`, `read`, `ls`, `get`, `wait`, `put`, `label` (the caller's own workers only), `kill`,
+`rm`, `events`, `schema`, `templates`, the doc-only `--help`/`-h`/`--version`/`--skill` forms,
+and one `run` shape: the dsh-tui worker start that `automagik-herdr worker` emits (`--bg`, the
+caller as `--parent`, `worker.of=<the caller's bot>`, a `--cwd` under the project's
+`.claude/worktrees/`, and `/usr/bin/env PATH=… dsh-tui` after `--`). Everything else is
+refused with one stderr line naming #624, #628 and #631, and the real `hc` is never called:
+`exec`, any other `run` (including a template or another agent), file writes, edits and reads,
+`machine`, `server`, `update`, `connect`, `keys`, `attach`, a `machine/t7` target on every
+verb but `send` (`hc events --terminal`/`--children-of` included), and any `--on` outside an
+allowed `send`.
+
+`send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its members
+(`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the
+caller's bot) and the shared reviewer/fixer roles (`RANKS`). The caller comes from the attach
+ledger, the authority; a worker pane has no ledger row, so its `worker.of` label names its bot
+and its cwd's project. The target is resolved with the real `hc` (`ls` for a name, `get` for
+the labels). Any target outside that team is refused. The launch briefing carries the guard
+paragraph only for a dsh-tui bot; a claude, omp or hermes briefing is unchanged. On a linked
+machine the seat uses the guard folder that machine has, beside its own `automagik-herdr`; with
+none it gets no guard, no briefing paragraph claiming one, and one warning naming #624.
+
+**This is a guardrail, not a boundary.** A bot can bypass it with an absolute path to the real
+`hc`, a raw socket client, or `hc connect`. The team data is still writable: a bot that edits
+its project's `.herdr/bots.json` can widen its own `send` scope, and a bot can label its own
+workers. `kill`, `rm` and `put` stay unscoped, and `read`/`ls`/`get` are cross-pane by design;
+#628 owns that scope. The real fix is the sandboxed socket mask plus the per-pane filtering
+proxy wish (#624), and #631 is the hard boundary. This wrapper only stops the ordinary
+`hc exec` attempt while that lands. The pack's own CLI still reaches the real `hc` for its
+trusted calls (system status, machine lists, remote file/exec, docs), so `automagik-herdr
+worker` and the remote commands keep working in a guarded pane.
+
 ## The Create form
 
 **New bot** at the foot of the sidebar opens the form: a live preview of the bot's character,

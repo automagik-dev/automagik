@@ -7,11 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
+import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 
@@ -846,11 +847,21 @@ test("start --machine under the sidebar's 30 s deadline (#444): too little left 
  * absolute run only this computer has), "there" (one both have) or null (no override). `shipped`:
  * vm has the shipped dsh-tui. `override` on the result is the override's first word.
  */
-function dshTuiScene(t, { terminals = [], override = null, shipped = true } = {}) {
+function dshTuiScene(t, { terminals = [], override = null, shipped = true, guard = true } = {}) {
   const s = scene(t, { terminals });
   const file = join(s.project, ".herdr/bots.json");
   writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "dsh-tui"'));
   if (shipped) exe(join(s.root, "vm-bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  if (guard) {
+    const pack = join(s.root, "vm-pack");
+    mkdirSync(join(pack, "bin"), { recursive: true });
+    mkdirSync(join(pack, "guard"), { recursive: true });
+    exe(join(pack, "bin", "automagik-herdr"), "#!/bin/sh\nexit 0\n");
+    exe(join(pack, "guard", "hc"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(pack, "hcGuard.mjs"), "// remote guard\n");
+    symlinkSync(join(pack, "bin", "automagik-herdr"), join(s.root, "vm-bin", "automagik-herdr"));
+    s.remoteGuard = join(pack, "guard");
+  }
   if (override) {
     const path = override === "there" ? join(s.root, "vm-bin", "dsh-tui-custom") : join(s.root, "only-this-computer", "dsh-tui");
     if (override === "there") exe(path, "#!/bin/sh\nexit 0\n");
@@ -892,6 +903,33 @@ test("start --machine #612: neither there: refused, naming the override and the 
   assert.match(r.err, /dsh-TUI \(.+only-this-computer\/dsh-tui\) isn't installed on vm/);
   assert.ok(r.err.includes(`its shipped run (dsh-tui) isn't either`), r.err);
   assert.deepEqual(s.calls().filter((c) => c[0] === "run"), []);
+});
+
+test("start --machine of a dsh-tui bot uses the guard on that machine and says so in the briefing", (t) => {
+  const s = dshTuiScene(t);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  const run = s.calls().find((c) => c[0] === "run");
+  const pathWord = run[run.indexOf("--") + 2];
+  assert.ok(pathWord.startsWith(`PATH=${s.remoteGuard}:`), pathWord);
+  assert.equal(pathWord.startsWith(`PATH=${GUARD_DIR}:`), false, "not this computer's guard folder");
+  assert.match(out.argv.join("\n"), /deny-by-default hc guard/);
+  assert.deepEqual(out.warnings, []);
+});
+
+test("start --machine of a dsh-tui bot without a guard: no PATH guard, no briefing paragraph, one #624 warning", (t) => {
+  const s = dshTuiScene(t, { guard: false });
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  const run = s.calls().find((c) => c[0] === "run");
+  const pathWord = run[run.indexOf("--") + 2];
+  assert.equal(pathWord.startsWith(`PATH=${GUARD_DIR}:`), false, "not this computer's guard folder");
+  assert.equal(pathWord.split(":").some((dir) => dir.endsWith("/guard")), false, pathWord);
+  assert.doesNotMatch(out.argv.join("\n"), /deny-by-default hc guard/);
+  const said = out.warnings.filter((w) => /#624/.test(w) && /guard/.test(w));
+  assert.equal(said.length, 1, out.warnings.join("\n"));
 });
 
 test("restart --machine #612: an argv built from the table gets the same fallback, and one warning", (t) => {
