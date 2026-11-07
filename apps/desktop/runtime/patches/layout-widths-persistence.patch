@@ -1,0 +1,109 @@
+--- a/@deepseek-ai/dsh-client-ui-layout/lib/client.js
++++ b/@deepseek-ai/dsh-client-ui-layout/lib/client.js
+@@ -25,6 +25,47 @@
+ 		function clampWidth(px, min, max) {
+ 			return Math.min(max, Math.max(min, Math.round(px)));
+ 		}
++		/** Per-browser key for the two panel widths the store keeps across plugin reloads. */
++		const WIDTHS_KEY = "dsh.layout.widths";
++		/**
++		* Read the persisted panel widths, clamped to the panel contract. A missing
++		* value, a storage or parse error, or a value of the wrong type falls back to
++		* the contract defaults.
++		* @param viewport - available frame width in px, for the right panel's range.
++		* @returns the sidebar width and the right panel width preference (null = none).
++		*/
++		function readSavedWidths(viewport) {
++			const fallback = {
++				sidebar: 280,
++				rightbar: null
++			};
++			try {
++				const saved = JSON.parse(globalThis.localStorage?.getItem(WIDTHS_KEY) ?? "");
++				if (saved === null || typeof saved !== "object") return fallback;
++				const sidebar = saved.sidebar;
++				const rightbar = saved.rightbar;
++				return {
++					sidebar: typeof sidebar === "number" && Number.isFinite(sidebar) ? clampWidth(sidebar, 264, 420) : 280,
++					rightbar: typeof rightbar === "number" && Number.isFinite(rightbar) && rightbar > 0 ? clampWidth(rightbar, 300, Math.max(300, viewport * RIGHTBAR_MAX_RATIO)) : null
++				};
++			} catch {
++				return fallback;
++			}
++		}
++		/**
++		* Persist the panel widths the store now uses. 0 is a temporary collapse, not a
++		* preference, so it is stored as null and the last positive rightbar width stays.
++		* @param sidebar - sidebar width preference in px.
++		* @param rightbar - right panel width preference in px (null = default).
++		*/
++		function saveWidths(sidebar, rightbar) {
++			try {
++				globalThis.localStorage?.setItem(WIDTHS_KEY, JSON.stringify({
++					sidebar: clampWidth(sidebar, 264, 420),
++					rightbar: typeof rightbar === "number" && Number.isFinite(rightbar) && rightbar > 0 ? rightbar : null
++				}));
++			} catch {}
++		}
+ 		/**
+ 		* Solve the three column widths for one viewport frame.
+ 		* @param viewport - available frame width in px.
+@@ -442,14 +483,17 @@
+ 		* @returns the store handle (spec + type + identity + factory in one).
+ 		*/
+ 		function createLayoutStore() {
++			const saved = readSavedWidths(window.innerWidth);
++			let lastSidebar = saved.sidebar;
++			const persist = (d) => saveWidths(d.layoutInfo.sidebar || lastSidebar, d.layoutInfo.rightbar);
+ 			return (0, _deepseek_ai_dsh_client_store.defineStore)({
+ 				init: () => ({
+ 					panelInfo: { activePanelId: null },
+ 					layoutInfo: {
+-						sidebar: 280,
++						sidebar: saved.sidebar,
+ 						viewportWidth: window.innerWidth,
+ 						narrowExpanded: false,
+-						rightbar: null,
++						rightbar: saved.rightbar,
+ 						rightbarShown: false,
+ 						rightbarTrack: false,
+ 						rightbarFullscreen: false,
+@@ -467,26 +511,37 @@
+ 					setSidebar: (d, px) => {
+ 						d.layoutInfo.rightbarInstant = false;
+ 						d.layoutInfo.sidebar = clampWidth(px, 264, 420);
++						lastSidebar = d.layoutInfo.sidebar;
++						persist(d);
+ 					},
+ 					toggleSidebar: (d) => {
+ 						d.layoutInfo.rightbarInstant = false;
+ 						if (d.layoutInfo.viewportWidth < 1024) d.layoutInfo.narrowExpanded = !d.layoutInfo.narrowExpanded;
+-						else d.layoutInfo.sidebar = d.layoutInfo.sidebar === 0 ? 280 : 0;
++						else d.layoutInfo.sidebar = d.layoutInfo.sidebar === 0 ? lastSidebar : 0;
+ 					},
+ 					setViewportWidth: (d, width) => {
+ 						if (d.layoutInfo.viewportWidth === width) return;
+ 						d.layoutInfo.rightbarInstant = false;
+ 						if (d.layoutInfo.viewportWidth < 1024 !== width < 1024 || d.layoutInfo.viewportWidth < 768 !== width < 768) d.layoutInfo.narrowExpanded = false;
+ 						d.layoutInfo.viewportWidth = width;
++						if (d.layoutInfo.rightbar !== null) {
++							const rightbar = clampWidth(d.layoutInfo.rightbar, 300, Math.max(300, width * RIGHTBAR_MAX_RATIO));
++							if (rightbar !== d.layoutInfo.rightbar) {
++								d.layoutInfo.rightbar = rightbar;
++								persist(d);
++							}
++						}
+ 					},
+ 					setRightbar: (d, px) => {
+ 						d.layoutInfo.rightbarInstant = false;
+ 						d.layoutInfo.rightbar = clampWidth(px, 300, Math.max(300, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO));
++						persist(d);
+ 					},
+ 					openRightbar: (d, track, fullscreen) => {
+ 						if (!d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track || d.layoutInfo.rightbarFullscreen !== fullscreen) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen;
+ 						if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < 1024) d.layoutInfo.narrowExpanded = false;
+ 						d.layoutInfo.rightbar ??= Math.max(300, Math.round(d.layoutInfo.viewportWidth * RIGHTBAR_DEFAULT_RATIO));
++						persist(d);
+ 						d.layoutInfo.rightbarShown = true;
+ 						d.layoutInfo.rightbarTrack = track;
+ 						d.layoutInfo.rightbarFullscreen = fullscreen;

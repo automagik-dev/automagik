@@ -47,5 +47,19 @@
         "after": "d90e87220ffcb6491703da90f882b775c1d085b0ab09e8d045ad1e5021c35d23"
       }
     ]
+  },
+  {
+    "patch": "layout-widths-persistence.patch",
+    "about": "Client layout: the sidebar and right panel widths are saved in localStorage under dsh.layout.widths and restored when the client plugin reloads, instead of resetting on every reload (#483). setSidebar, setRightbar and openRightbar save their clamped widths, a setViewportWidth re-clamp saves the shrunk right panel width, and toggleSidebar reopens at the last positive sidebar width. Missing, unreadable or invalid stored values fall back to the contract defaults. Delete it in the DSH release whose ui-layout persists the panel widths itself.",
+    "dsh": "0.2.2-rc.1",
+    "files": [
+      {
+        "package": "@deepseek-ai/dsh-client-ui-layout",
+        "version": "0.2.2-rc.1",
+        "file": "lib/client.js",
+        "before": "338bcbdea1180e56b0a8e86788d1e75b09296cbe7ba042a06cdc91028001cf93",
+        "after": "072f9b0489f1a75f00a82c2e1e70f7e84e5afd92832d7f60267d315974163abc"
+      }
+    ]
   }
 ]
