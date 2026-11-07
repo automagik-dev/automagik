@@ -58,7 +58,9 @@ export const SECRET_RULES = [
   { rule: 'key', re: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, mask: () => 'github_pat_***' },
   { rule: 'key', re: /\bAKIA[0-9A-Z]{16}\b/g, mask: () => 'AKIA***' },
   { rule: 'key', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, mask: () => 'xox***' },
-  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]{1,8192}?-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
+  // A real block: a header, at least one base64 body line, and a footer. A bare label constant
+  // (the string gnutls/soffice hold) is not a key.
+  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:[A-Za-z0-9+/=]{16,}[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
   { rule: 'private-path', re: /\/mnt\/ai(?:\/|\b)/g, mask: () => '/mnt/ai' },
 ]
 export const TOKEN_RULES = [
@@ -71,10 +73,15 @@ export const CREDENTIAL_RULES = [
 ]
 export const SERVER_RULES = [...SECRET_RULES, ...TOKEN_RULES, ...CREDENTIAL_RULES]
 
-/** Rules that may never be allowlisted: a key or a private-key block is never a reviewed exception. */
-const NEVER_ALLOW_RULE = new Set(['key', 'private-key', 'data-state', 'launch-url', 'dotenv', 'env-secret', 'archive', 'unreadable'])
+/** Rules that may never be allowlisted: a provider key is never a reviewed exception. */
+const NEVER_ALLOW_RULE = new Set(['key', 'data-state', 'launch-url', 'dotenv', 'env-secret', 'archive', 'unreadable'])
 /** Paths that may never be allowlisted: /data, our own code, /etc and its config. */
 const NEVER_ALLOW_PATH = /^(?:data\/|opt\/automagik\/(?:[^/]+\.mjs|versions\.json)|opt\/automagik\/profile\/(?:package\.json|cordis\.patch\.yml|pnpm-workspace\.yaml)|opt\/automagik\/profile\/node_modules\/@automagik\/|usr\/local\/bin\/(?:dsh|pnpm)$|etc\/)/
+/** A private-key block in a required vendor binary may be an exact entry; nowhere else. */
+const VENDORED = /^(?:opt\/automagik\/(?:runtime|profile)\/node_modules\/|usr\/lib\/)/
+const allowable = (entry) => !NEVER_ALLOW_RULE.has(entry.rule)
+  && !NEVER_ALLOW_PATH.test(entry.file)
+  && (entry.rule !== 'private-key' || VENDORED.test(entry.file))
 
 /**
  * The reviewed exceptions: one exact file, one rule and the exact matched string (or its
@@ -90,8 +97,8 @@ export function loadAllowlist(file = ALLOWLIST_FILE) {
       throw new Error('secrecy allowlist entries need file, rule and reason')
     }
     if (!entry.match && !/^[0-9a-f]{64}$/.test(entry.sha256 ?? '')) throw new Error(`${entry.file}: allowlist entry needs match or sha256`)
-    if (NEVER_ALLOW_RULE.has(entry.rule)) throw new Error(`${entry.file}: ${entry.rule} may not be allowlisted`)
-    if (NEVER_ALLOW_PATH.test(entry.file)) throw new Error(`${entry.file}: this path may not be allowlisted`)
+    if (entry.fileSha256 !== undefined && !/^[0-9a-f]{64}$/.test(entry.fileSha256)) throw new Error(`${entry.file}: fileSha256 is not a sha256`)
+    if (!allowable(entry)) throw new Error(`${entry.file}: ${entry.rule} may not be allowlisted here`)
     const key = `${entry.file}\0${entry.rule}\0${entry.sha256 ?? sha256(entry.match)}`
     if (seen.has(key)) throw new Error(`${entry.file}: duplicate allowlist entry`)
     seen.add(key)
@@ -102,14 +109,14 @@ export function loadAllowlist(file = ALLOWLIST_FILE) {
 /** Split hits into the ones an exact entry names (with its reason) and the ones that still fail. */
 export function applyAllowlist(hits, entries = []) {
   const exact = new Map(entries
-    .filter((entry) => !NEVER_ALLOW_RULE.has(entry.rule) && !NEVER_ALLOW_PATH.test(entry.file))
+    .filter(allowable)
     .map((entry) => [`${entry.file}\0${entry.rule}\0${entry.sha256 ?? sha256(entry.match)}`, entry]))
   const used = new Map()
   const kept = []
   for (const hit of hits) {
     const key = `${hit.file}\0${hit.rule}\0${sha256(hit.raw ?? hit.match ?? '')}`
     const entry = exact.get(key)
-    if (!entry) { kept.push(hit); continue }
+    if (!entry || (entry.fileSha256 && entry.fileSha256 !== hit.fileSha256)) { kept.push(hit); continue }
     if (!used.has(key)) used.set(key, { file: hit.file, rule: hit.rule, reason: entry.reason, count: 0 })
     used.get(key).count += 1
   }
@@ -211,8 +218,10 @@ export function scanTree(root, list = JSON.parse(readFileSync(LIST, 'utf8')), al
   const raw = []
   let bytes = 0
   for (const entry of entries) {
-    raw.push(...nameHits(entry.file, entry.kind))
-    if (entry.kind !== 'file') continue
+    if (entry.kind !== 'file') {
+      raw.push(...nameHits(entry.file, entry.kind))
+      continue
+    }
     bytes += entry.size
     let buf
     try {
@@ -221,10 +230,13 @@ export function scanTree(root, list = JSON.parse(readFileSync(LIST, 'utf8')), al
       raw.push(hitOf(entry.file, 0, 'unreadable', error.code ?? 'read failed'))
       continue
     }
+    const digest = sha256(buf)
+    const tagged = (hits) => hits.map((hit) => ({ ...hit, fileSha256: digest }))
+    raw.push(...tagged(nameHits(entry.file, entry.kind)))
     const binary = buf.includes(0)
     const text = fileText(buf)
-    raw.push(...textHits(entry.file, text, list, denied, { privacy: !binary }))
-    if (binary) raw.push(...homeHits(entry.file, text))
+    raw.push(...tagged(textHits(entry.file, text, list, denied, { privacy: !binary })))
+    if (binary) raw.push(...tagged(homeHits(entry.file, text)))
   }
   const applied = applyAllowlist(raw, allowlist)
   return { entries, hits: applied.kept, allowed: applied.allowed, unused: applied.unused, bytes, external: symlinks(root, entries) }

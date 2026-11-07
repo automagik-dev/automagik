@@ -77,15 +77,21 @@ LABEL org.opencontainers.image.title="Automagik server" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${IMAGE_VERSION}"
 
-COPY --from=tools /out/bin/bash /bin/bash
+# The distroless base has no shell. Copy dash and its closure first so this stage can remove
+# the base's man pages and changelogs: nothing reads them, and their .gz files are archives the
+# secrecy scan refuses. The shell and libraries stay (Bots need them).
+COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /out/bin/dash /bin/dash
 COPY --from=tools /out/bin/sh /bin/sh
+USER root
+RUN rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian
+
+COPY --from=tools /out/bin/bash /bin/bash
 COPY --from=tools /out/bin/git /usr/bin/git
 COPY --from=tools /out/bin/rg /usr/bin/rg
 COPY --from=tools /out/git-core /usr/lib/git-core
 COPY --from=tools /out/git-core-share /usr/share/git-core
 COPY --from=tools /out/certs /etc/ssl/certs
-COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools --chown=1000:1000 /out/data /data
 
 COPY --from=builder /build/out/runtime /opt/automagik/runtime

@@ -208,6 +208,9 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   const profileExtras = pruneExtras(join(installDir, 'node_modules'))
   say(`runtime: left out ${runtimeExtras.files} test/example files, ${mib(runtimeExtras.bytes)}`)
   say(`profile: left out ${profileExtras.files} test/example files, ${mib(profileExtras.bytes)}`)
+  // The tarballs were verified and installed; the image does not carry them (or an archive the
+  // secrecy scan would have to excuse). The profile's node_modules is the installed result.
+  rmSync(join(installDir, 'vendor'), { recursive: true, force: true })
 
   cpSync(installDir, join(out, 'profile'), { recursive: true, verbatimSymlinks: true })
   rmSync(dshHome, { recursive: true, force: true })

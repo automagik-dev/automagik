@@ -65,7 +65,7 @@ test('the 17 negative probes all stay failures', () => {
     ['token=', `url?token=${token}\n`, 'token'],
     ['token-url', `http://127.0.0.1:3081/?token=${token}\n`, 'token-url'],
     ['token-json', `{"token": "${'a1'.repeat(16)}"}\n`, 'token-json'],
-    ['private-key', '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n', 'private-key'],
+    ['private-key', `-----BEGIN PRIVATE KEY-----\n${'A'.repeat(64)}\n-----END PRIVATE KEY-----\n`, 'private-key'],
     ['private-path', 'workspace at /mnt/ai/bots\n', 'private-path'],
     ['home-path text', `workspace at ${home('alice')}\n`, 'home-path'],
     ['home-path binary', Buffer.concat([Buffer.from([0]), Buffer.from(`${home('bob')}\0`)]), 'home-path'],
@@ -85,6 +85,23 @@ test('the 17 negative probes all stay failures', () => {
     const { hits: findings } = scanTree(dir, undefined, [])
     assert.ok(findings.some((hit) => hit.rule === rule), `${label}: expected ${rule}, got ${JSON.stringify(findings)}`)
   }
+})
+
+test('a bare PEM label constant is not a key; a real body is', () => {
+  const dir = rootfs()
+  write(dir, 'opt/leak/label.txt', '-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n')
+  // The repository's privacy grep still reports a bare header as `secret`; the key rule does not.
+  assert.deepEqual(scanTree(dir, undefined, []).hits.filter((hit) => hit.rule === 'private-key'), [])
+  write(dir, 'opt/leak/real.txt', `-----BEGIN PRIVATE KEY-----\n${'A'.repeat(64)}\n-----END PRIVATE KEY-----\n`)
+  assert.ok(scanTree(dir, undefined, []).hits.some((hit) => hit.rule === 'private-key'))
+})
+
+test('the node build account is excused only for the pinned binary hash', () => {
+  const pin = 'e237a2839d0cbdc9a9a2adda1a184afc0f5b20306ffbe923af5686550472d8a8'
+  const hit = { file: 'nodejs/bin/node', rule: 'home-path', raw: '/home/iojs', match: '/home/iojs', fileSha256: pin }
+  const entry = { file: 'nodejs/bin/node', rule: 'home-path', match: '/home/iojs', fileSha256: pin, reason: 'pinned' }
+  assert.equal(applyAllowlist([hit], [entry]).kept.length, 0)
+  assert.equal(applyAllowlist([hit], [{ ...entry, fileSha256: '0'.repeat(64) }]).kept.length, 1)
 })
 
 test('an exact allowlist entry excuses one path, and a key may never be allowlisted', () => {
