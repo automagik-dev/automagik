@@ -102,12 +102,16 @@ const term = (address, { bot: b, argv = ["claude"], cwd = "/x", app = "claude-co
 const runCall = (calls) => calls.find((c) => c[0] === "run");
 /**
  * What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets
- * (#213), and a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453).
+ * (#213), a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453) and every
+ * other env word after PATH (a Hermes briefing's, the CLI's HERDR_APP_HOME, #650).
  */
 const agentWords = (run) => {
   const w = run.slice(run.indexOf("--") + 1);
   const at = w[1] === "-u" && w[2] === "CLAUDE_CONFIG_DIR" ? 3 : 1;
-  return w[0] === "/usr/bin/env" && w[at]?.startsWith("PATH=") ? w.slice(at + 1) : w;
+  if (w[0] !== "/usr/bin/env" || !w[at]?.startsWith("PATH=")) return w;
+  let i = at;
+  while (i < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i])) i += 1;
+  return w.slice(i);
 };
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
@@ -2073,7 +2077,8 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   // Before #213 nothing was passed here (this PATH already had node), and the pane got herdr-core's.
-  assert.deepEqual(plain(run.slice(run.indexOf("--") + 1)), ["/usr/bin/env", `PATH=${path}`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(run.slice(run.indexOf("--") + 1)),
+    ["/usr/bin/env", `PATH=${path}`, `HERDR_APP_HOME=${s.app}`, "codex", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -2304,7 +2309,7 @@ test("start #453: login 2's folder by value after PATH; a bad record starts Clau
   let { env, program } = envAndProgram(runsOf(s).at(-1));
   assert.equal(env[0], "/usr/bin/env");
   assert.match(env[1], /^PATH=/);
-  assert.deepEqual(env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
+  assert.deepEqual(env.slice(2), [`HERDR_APP_HOME=${s.app}`, `CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
   assert.equal(program[0], "claude");
   assert.doesNotMatch(r.err, /claude-logins/);
   assert.deepEqual(r.json().argv.slice(0, 1), ["claude"], "start's own argv is the agent's, as before");
@@ -2315,7 +2320,7 @@ test("start #453: login 2's folder by value after PATH; a bad record starts Clau
   assert.equal(codex.code, 0, codex.err);
   ({ env, program } = envAndProgram(runsOf(s).at(-1)));
   assert.equal(program[0], "codex");
-  assert.equal(env.length, 2, `codex: env and PATH only, no login words: ${env.join(" ")}`);
+  assert.deepEqual(env.slice(2), [`HERDR_APP_HOME=${s.app}`], `codex: no login words: ${env.join(" ")}`);
   assert.doesNotMatch(codex.err, /claude-logins/, "a codex launch never reads or warns about the record");
 
   const dev = s.cli(["start", "Dev", "--json"]);
@@ -2344,10 +2349,10 @@ test("restart --tree #453: the bot's own -u launch is rebuilt on login 2; a Clau
   const r = s.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 0, r.err);
   const [bot, claude, codex] = runs(s).map(envAndProgram);
-  assert.deepEqual(bot.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(bot.env.slice(2), [`HERDR_APP_HOME=${s.app}`, `CLAUDE_CONFIG_DIR=${two}`]);
   assert.deepEqual(plain(bot.program), ["claude", "--resume", SID], "the source's command, never the pane's --model");
   assert.match(r.err, /Genie: its pane's command differs from its source now \(drops --model=\*\*\*\)/);
-  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "a helper (workerArgs) keeps its env words");
   assert.equal(claude.program[0], "claude");
   assert.equal(codex.program[0], "codex");
   assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
@@ -2721,8 +2726,9 @@ test("start: hermes gets the briefing in its environment, unless its config sets
   const w = run.slice(run.indexOf("--") + 1);
   assert.equal(w[0], "/usr/bin/env");
   assert.match(w[1], /^PATH=/);
-  assert.match(w[2], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
-  assert.equal(w[3], "hermes");
+  assert.equal(w[2], `HERDR_APP_HOME=${plainStart.app}`, "the CLI's app home beside the briefing's env (#650)");
+  assert.match(w[3], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
+  assert.equal(w[4], "hermes");
   for (const text of ["agent:\n  system_prompt: Be terse.\n", "display:\n  personality: pirate\n"]) {
     const own = agentScene(t, "hermes", { config: { path: ".hermes/config.yaml", text } });
     const o = own.cli(["start", "Genie", "--json"]);

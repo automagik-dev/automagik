@@ -2376,7 +2376,9 @@ const seatJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, parent: 
  * (the whole command, checked by the caller), `agent`, `model`, `cwd`, `place` (undefined:
  * placementOf the project), `carry` (labels kept from the old pane), `replacing` (the old pane's
  * binding: hc run alone, past the "already running" check; the attach rows are restart's, once
- * the new pane has stayed up, and the seat row is left to `logSeat()`). Resolves { terminal,
+ * the new pane has stayed up, and the seat row is left to `logSeat()`). A pane of a CLI that
+ * runs with HERDR_APP_HOME set also gets it as an env word (#650), as a linked machine's pane
+ * gets the project's pane-env one. Resolves { terminal,
  * created_ms, parent, argv, labels, place, hook, logSeat }, or { running } when the ledger
  * names another terminal for the bot by the time the lock is taken.
  */
@@ -2418,8 +2420,12 @@ async function launchSeat(project, bot, over = {}) {
   }
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
+  // #650: the CLI's own app home as the pane's, beside the briefing's env (as seatOnMachine does
+  // with the project's pane-env): the hc guard finds the caller's binding there. Unset on the
+  // CLI: no word at all, and the argv stays byte for byte as before.
+  const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}), ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env: briefed.env, login, agent: agentKey });
+    env, login, agent: agentKey });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
