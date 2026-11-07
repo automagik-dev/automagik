@@ -46,11 +46,19 @@ export function releasePlugins(version: string, commit: string, dir: string, nam
   return { repository: REPO_URL, version, commit, packages };
 }
 
-/** This repository's plugins, by package name: every apps/*-dsh. */
+/**
+ * The plugins this repository's releases attach, by package name: every apps/*-dsh but the
+ * Unfold bridge, which stays here to be built and tested until Unfold's own release carries it
+ * (Refs marketplace/unfold). No release here packs it, names it in plugins.json, lists it in
+ * PLUGINS.SHA256SUMS or carries it in the plugin lane's manifest.
+ */
+export const UNSHIPPED: Record<string, true> = { '@automagik/unfold-bridge-dsh': true };
+
 export function pluginNames(root = join(import.meta.dir, '..')): string[] {
   return readdirSync(join(root, 'apps'))
     .filter((name) => name.endsWith('-dsh'))
     .map((name) => JSON.parse(readFileSync(join(root, 'apps', name, 'package.json'), 'utf8')).name as string)
+    .filter((name) => !UNSHIPPED[name])
     .sort();
 }
 

@@ -32,9 +32,10 @@ export const UNFOLD_BOT = Object.freeze({
 })
 
 // What the Unfold Bot type starts with, besides this plugin: the Unfold bridge and the Unfold
-// plugins, released together from this repository at its one version. The welcome's Unfold card installs them
-// in this order (welcome-dsh src/host/bot-types.js keeps a copy); Unfold's own instance has
-// them preinstalled.
+// plugins, versioned together in this repository. This repository's release lane does not carry
+// the bridge (Refs marketplace/unfold): it is not preinstalled and ships from Unfold's own
+// release. The welcome's Unfold card installs them in this order (welcome-dsh src/host/bot-types.js
+// keeps a copy); Unfold's own instance has them preinstalled.
 export const UNFOLD_PLUGINS = Object.freeze([
   { name: '@automagik/unfold-bridge-dsh', dir: 'unfold-bridge-dsh', title: 'Unfold bridge', what: 'Unfold watches this DSH' },
   { name: '@automagik/unfold-events-dsh', dir: 'unfold-events-dsh', title: 'Unfold events', what: 'What Unfold did, as a timeline' },
