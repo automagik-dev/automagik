@@ -9,7 +9,7 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "d5ed602b92410d40b1350185fd48cf1cefb9f606fb0a69351a10e12204afc3a2",
-        "after": "addb177d3b0bc81d3aed13e079a1817dd37e382fb46198dbb3c59191daaa51a9"
+        "after": "191ea98f920771ac6caebed911bb93c5fab88ba13ad3b0a5e7729d73cc74ecd4"
       },
       {
         "package": "@deepseek-ai/dsh-experimental-tool-agent-team",
