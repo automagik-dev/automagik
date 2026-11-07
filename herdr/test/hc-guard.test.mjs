@@ -286,6 +286,25 @@ test("a machine target is refused on every allowed verb but send", (t) => {
   }
 });
 
+test("a machine target named by an hc events option is refused", (t) => {
+  const s = scene(t);
+  const cases = [
+    ["events", "--terminal", "m/t101"], ["events", "--terminal=m/t101"],
+    ["events", "--children-of", "m/t101"], ["events", "--children-of=m/t101"],
+  ];
+  for (const args of cases) {
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, args);
+    assertRefused(r);
+    assert.match(r.stderr, /machine target/, args.join(" "));
+    assert.deepEqual(calls(s), []);
+  }
+  writeFileSync(s.logPath, "");
+  const local = guardRun(s, ["events", "--terminal", "t101"]);
+  assert.equal(local.status, 0, local.stderr);
+  assert.ok(calls(s).some((argv) => same(argv, ["events", "--terminal", "t101"])));
+});
+
 test("label is the caller's own workers only; a label cannot widen send", (t) => {
   const s = scene(t);
   writeFileSync(s.logPath, "");

@@ -843,7 +843,8 @@ caller as `--parent`, `worker.of=<the caller's bot>`, a `--cwd` under the projec
 refused with one stderr line naming #624, #628 and #631, and the real `hc` is never called:
 `exec`, any other `run` (including a template or another agent), file writes, edits and reads,
 `machine`, `server`, `update`, `connect`, `keys`, `attach`, a `machine/t7` target on every
-verb but `send`, and any `--on` outside an allowed `send`.
+verb but `send` (`hc events --terminal`/`--children-of` included), and any `--on` outside an
+allowed `send`.
 
 `send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its members
 (`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the

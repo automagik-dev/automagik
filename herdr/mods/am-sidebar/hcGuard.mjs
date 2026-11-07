@@ -68,8 +68,10 @@ export async function runGuard(argv, env = process.env) {
     if (!ALLOWED_VERBS.has(verb) && verb !== "run") return refused(verb === "file" ? `file ${args[1] ?? ""}` : verb);
     const on = onWord(args);
     if (on.present && verb !== "send") return refused(`${verb} with --on`);
-    const target = TARGETED_VERBS.has(verb) ? firstPositional(args, TARGET_VALUE_OPTIONS[verb]) : null;
-    if (verb !== "send" && target && target.includes("/")) return refused(`${verb} with a machine target`);
+    const targets = verb === "events"
+      ? optionValues(args, EVENTS_TARGET_OPTIONS)
+      : TARGETED_VERBS.has(verb) ? [firstPositional(args, TARGET_VALUE_OPTIONS[verb])].filter(Boolean) : [];
+    if (verb !== "send" && targets.some((target) => target.includes("/"))) return refused(`${verb} with a machine target`);
     const terminal = terminalOf(env);
     if (!terminal) return refused("a command without HC_TERMINAL_ID");
     const real = findRealHc(env);
@@ -258,6 +260,28 @@ const TARGET_VALUE_OPTIONS = {
   rm: new Set(),
 };
 const TARGETED_VERBS = new Set(Object.keys(TARGET_VALUE_OPTIONS));
+/** `hc events` names its terminal through option values, not a positional. */
+const EVENTS_TARGET_OPTIONS = ["--terminal", "--children-of"];
+
+/** The values of the named options (`--name value` or `--name=value`), in order. */
+function optionValues(args, names) {
+  const out = [];
+  for (let i = 1; i < args.length; i += 1) {
+    const word = args[i];
+    for (const name of names) {
+      if (word === name) {
+        if (typeof args[i + 1] === "string") out.push(args[i + 1]);
+        i += 1;
+        break;
+      }
+      if (word.startsWith(`${name}=`)) {
+        out.push(word.slice(name.length + 1));
+        break;
+      }
+    }
+  }
+  return out;
+}
 
 /** The first positional word after the options, or null (`--` starts the positionals). */
 function firstPositional(args, valueOptions = new Set()) {
