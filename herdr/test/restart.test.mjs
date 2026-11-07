@@ -329,6 +329,28 @@ test("launchChange never prints a flag's value, whatever form it takes or starts
   assert.match(launchChange({ name: "Genie", launch: { argv: ["claude", "-k" + secret] }, agent: "claude", argv: ["claude"] }), /drops -k=\*\*\*/);
 });
 
+test("launchChange masks a value in value position whatever it looks like (D1 fail-closed)", () => {
+  const name = "Genie";
+  const line = (words) => launchChange({ name, launch: { argv: ["omp", ...words] }, agent: "omp", argv: ["omp"] });
+  // The lead's row: a proxy whose value looks like a long flag.
+  const proxy = line(["--proxy", "--s3cr3t-value"]);
+  assert.ok(proxy.includes("drops --proxy=***"), proxy);
+  assert.equal(proxy.includes("--s3cr3t-value"), false, proxy);
+  // A repeated value-taking flag: neither value prints.
+  const twice = line(["--proxy", "first-secret", "--proxy", "second-secret"]);
+  assert.ok(twice.includes("--proxy=***"), twice);
+  for (const raw of ["first-secret", "second-secret"]) assert.equal(twice.includes(raw), false, twice);
+  // An unknown flag followed by a token that looks like a flag: the token is its value.
+  const unknown = line(["--mystery", "--token"]);
+  assert.ok(unknown.includes("drops --mystery=***"), unknown);
+  assert.equal(unknown.includes("--token"), false, unknown);
+  // A known boolean keeps the flag after it: --tui --proxy=... still names the proxy.
+  const known = launchChange({ name, launch: { argv: ["hermes", "--tui", "--proxy=http://user:token@proxy.example:8080"] },
+    agent: "hermes", argv: ["hermes", "--tui"] });
+  assert.ok(known.includes("drops --proxy=***"), known);
+  assert.equal(known.includes("--tui"), false, known);
+});
+
 test("restartRefusal --tree: helpers that end with the pane don't refuse, mid-turn or not (waited for); without it the refusal names --tree and --force", () => {
   const idle = { address: "t5", status: { state: "idle" } };
   const helper = { address: "t7", state: "live", die_with_parent: true, status: { state: "idle" } };
