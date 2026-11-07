@@ -5,8 +5,6 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { fileURLToPath } from "node:url";
-
 import { AGENTS, effortArgs, hasEffortFlag, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -18,7 +16,8 @@ export { TEMPLATE_SHAPE };
  * pane's PATH only, by startArgs and workerArgs. A guardrail, never a boundary: an absolute
  * hc path, a raw socket or `hc connect` skips it; #628 is the full send/keys/attach scope; #631 is the hard boundary.
  */
-export const GUARD_DIR = fileURLToPath(new URL("./guard/", import.meta.url)).replace(/\/+$/, "");
+export const GUARD_DIR = decodeURIComponent(new URL("./guard/", import.meta.url).pathname)
+  .replace(/\/+$/, "");
 
 /**
  * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
