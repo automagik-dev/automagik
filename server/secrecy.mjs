@@ -264,7 +264,9 @@ export function extractImage(image, work = mkdtempSync(join(tmpdir(), 'automagik
     rmSync(saved, { force: true })
   }
   try {
-    execFileSync('docker', ['create', '--name', name, image], { stdio: 'pipe' })
+    // A command lets docker create an image that declares no CMD (the self-check's imported
+    // red image); it is never run, only exported.
+    execFileSync('docker', ['create', '--name', name, image, '/bin/true'], { stdio: 'pipe' })
     execFileSync('docker', ['export', '--output', tar, name], { stdio: 'pipe' })
   } finally {
     try { execFileSync('docker', ['rm', '--force', name], { stdio: 'ignore' }) } catch {}
