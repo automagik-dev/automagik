@@ -34,13 +34,13 @@ const HOOK = `import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 const swap = new Map(JSON.parse(process.env.TEAM_PATCHED))
 registerHooks({ load(url, context, next) {
-  const file = swap.get(url.split('?')[0])
+  const file = swap.get(url)
   return file === undefined ? next(url, context) : { format: 'module', source: readFileSync(file, 'utf8'), shortCircuit: true }
 } })`
 
-function startMock(t, home) {
+function startMock(t, home, delay = 40) {
   const mock = spawn(process.execPath, [MOCK], {
-    env: { ...process.env, MOCK_PORT: '0', MOCK_LOG: join(home, 'mock.jsonl'), MOCK_DELAY_MS: '40', MOCK_JITTER_MS: '0' },
+    env: { ...process.env, MOCK_PORT: '0', MOCK_LOG: join(home, 'mock.jsonl'), MOCK_DELAY_MS: String(delay), MOCK_JITTER_MS: '0' },
   })
   t.after(() => mock.kill())
   mock.stderr.on('data', chunk => process.stderr.write(chunk))
@@ -176,4 +176,58 @@ test('fresh teammates keep their own LLM route through follow-ups and a cold res
   const count = (entries, member) => entries.filter(entry => entry.team === member).length
   for (const member of ['alpha', 'bravo', 'heir']) assert.ok(count(log.slice(0, before), member) >= 2, `${member} answered its prompt and the follow-up`)
   assert.ok(count(log.slice(before), 'alpha') >= 1, 'alpha answered after the cold resume')
+})
+
+// The spawn result is built only after the member is committed to the Lead's log. That flush can
+// outlast the new teammate's first turn, and a settled child is no longer live, so the row must
+// take the route from the durable descriptor cold resume reads, not only from the live Agent.
+// A 250 ms delay on the Lead's own session flush fixes that interleaving instead of racing it.
+test('a spawn result names the route of a teammate that settled before its row was built', { timeout: 120_000, skip }, async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dsb-route-race-'))
+  t.after(() => rmSync(home, { recursive: true, force: true, maxRetries: 5 }))
+  const persistence = join(MODULES, '@deepseek-ai', 'dsh-session-persistence-jsonl', 'lib', 'index.js')
+  const marker = join(home, 'root-flush-hook')
+  const wrapper = join(home, 'slow-root-flush.mjs')
+  writeFileSync(wrapper, `import { writeFileSync } from 'node:fs'
+import { apply as realApply, name, Config, JsonlCompressionSchema } from ${JSON.stringify(pathToFileURL(persistence).href + '?real')}
+export { name, Config, JsonlCompressionSchema }
+export async function apply(ctx, config) {
+  writeFileSync(${JSON.stringify(marker)}, '')
+  await realApply(ctx, config)
+  ctx.effect(() => ctx.on('session/flush', async (session) => {
+    if (session.header.parentSession === undefined) await new Promise(resolve => setTimeout(resolve, 250))
+  }))
+}
+`)
+  const swap = patchRuntime(MODULES, PATCHES, { versions: false, write: false }).map(({ name, path, text }) => {
+    const file = join(home, name.replaceAll('/', '_'))
+    writeFileSync(file, text)
+    return [pathToFileURL(path).href, file]
+  })
+  // The hook replaces the real persistence module, so its own import must bypass the swap map.
+  swap.push([pathToFileURL(persistence).href, wrapper])
+  writeFileSync(join(home, 'overlay.yml'), overlay(await startMock(t, home, 0)))
+  mkdirSync(join(home, 'work'))
+  mkdirSync(join(home, 'dsh', 'profiles', 'headless'), { recursive: true })
+  writeFileSync(join(home, 'dsh', 'profiles', 'headless', 'package.json'), JSON.stringify({
+    name: 'dsh-profile-headless', private: true, dependencies: {},
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', '@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+  }))
+
+  const job = { description: 'Say hello', prompt: '说你好' }
+  const plan = {
+    spawn: [
+      { name: 'alpha', ...job, llm_provider: 'mock-b', model: 'beta', reasoning_effort: 'max' },
+      { name: 'bravo', ...job, llm_provider: 'mock-a', model: 'gamma' },
+      { name: 'heir', ...job },
+    ],
+  }
+  const first = await dsh(home, swap, [`组队 ${JSON.stringify(plan)}`])
+  assert.ok(existsSync(marker), 'the Lead-session flush hook must be loaded, or this test does not hold the spawn past the teammate')
+  const spawned = results(first, 'spawn_teammate')
+  assert.deepEqual(routes(spawned.filter(result => result.status === 'completed').map(result => JSON.parse(result.result).member)), {
+    alpha: { llmProvider: 'mock-b', model: 'beta', reasoningEffort: 'max' },
+    bravo: { llmProvider: 'mock-a', model: 'gamma', reasoningEffort: undefined },
+    heir: { llmProvider: 'mock-a', model: 'alpha', reasoningEffort: 'low' },
+  })
 })

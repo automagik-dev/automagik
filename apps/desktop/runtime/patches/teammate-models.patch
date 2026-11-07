@@ -63,7 +63,15 @@
  				},
  				signal
  			});
-@@ -1158,10 +1165,35 @@
+@@ -1076,2 +1083,7 @@
++		try {
++			await this.rememberRoute(active.id, signal);
++		} catch {
++			// A roster detail: the teammate is already active, so a failed read never fails creation.
++		}
+ 		return { member: this.memberView(active) };
+ 	}
+@@ -1158,10 +1165,46 @@
  			description: member.description,
  			provider: member.provider,
  			context: member.context,
@@ -72,26 +80,37 @@
  			diagnostics: []
  		};
  	}
-+	/** One teammate's LLM route: live when loaded (and remembered), else the last one seen or read. */
++	/** One teammate's LLM route: the live one, else the last one seen or read. */
 +	memberRoute(id, live) {
 +		if (live === void 0) return this.routes.get(id) ?? {};
 +		const route = llmRoute(live);
 +		this.routes.set(id, route);
 +		return route;
 +	}
++	/**
++	* Remember one teammate's LLM route before its row is built: live when the Agent is resident,
++	* else from its durable child Session descriptor. One resolution, so a child that settles
++	* between the check and the row cannot leave the row without the route cold resume still names.
++	*/
++	async rememberRoute(id, signal) {
++		if (this.routes.has(id)) return;
++		const live = this.ctx.agents.get(id);
++		if (live === void 0) return await this.readRoute(id, signal);
++		this.routes.set(id, llmRoute(live));
++	}
++	/** Read one teammate's LLM route from its durable child Session descriptor. */
++	async readRoute(id, signal) {
++		const loaded = await readPersistedSession(this.ctx.sessionPersistence, id, signal);
++		const descriptor = foldSubagentDescriptor(loaded.events.slice(loaded.inheritedEventCount));
++		if (descriptor !== void 0) this.routes.set(id, llmRouteFromDescriptor(descriptor));
++	}
 +	/** Read the LLM route of each teammate not loaded in this process from its child Session descriptor. */
 +	async loadRoutes(root, signal) {
 +		for (const member of this.journal.state(root).members) {
-+			if (member.phase === "failed" || this.routes.has(member.id) || this.ctx.agents.get(member.id) !== void 0) continue;
++			if (member.phase === "failed" || this.routes.has(member.id)) continue;
 +			signal.throwIfAborted();
 +			try {
-+				const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal);
-+				const descriptor = foldSubagentDescriptor(loaded.events.slice(loaded.inheritedEventCount));
-+				if (descriptor !== void 0) this.routes.set(member.id, {
-+					...descriptor.agentProvider === void 0 ? {} : { llmProvider: descriptor.agentProvider },
-+					...descriptor.agentModel === void 0 ? {} : { model: descriptor.agentModel },
-+					...descriptor.agentReasoningEffort === void 0 ? {} : { reasoningEffort: descriptor.agentReasoningEffort }
-+				});
++				await this.rememberRoute(member.id, signal);
 +			} catch {
 +				signal.throwIfAborted();
 +			}
@@ -100,7 +119,7 @@
  	/** Validate a never-reused model-facing teammate name. */
  	memberName(value) {
  		if (!MEMBER_NAME.test(value) || value.length > 64 || value === "lead") throw new TeamError("teammate name must be lower-kebab-case, at most 64 characters, and not \"lead\"", "TEAM_INVALID_MEMBER_NAME");
-@@ -1187,6 +1219,15 @@
+@@ -1187,6 +1219,23 @@
  		return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== void 0;
  	}
  };
@@ -111,6 +130,14 @@
 +		...options.provider === void 0 ? {} : { llmProvider: options.provider },
 +		...options.model === void 0 ? {} : { model: options.model },
 +		...options.reasoningEffort === void 0 ? {} : { reasoningEffort: options.reasoningEffort }
++	};
++}
++/** The LLM route one teammate's durable descriptor names for its child Session. */
++function llmRouteFromDescriptor(descriptor) {
++	return {
++		...descriptor.agentProvider === void 0 ? {} : { llmProvider: descriptor.agentProvider },
++		...descriptor.agentModel === void 0 ? {} : { model: descriptor.agentModel },
++		...descriptor.agentReasoningEffort === void 0 ? {} : { reasoningEffort: descriptor.agentReasoningEffort }
 +	};
 +}
  /** Turn availability is independent of whether the Agent is loaded. */
