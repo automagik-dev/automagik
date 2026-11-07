@@ -239,14 +239,16 @@ function stubScheduler(automations, { version = "0.12.1" } = {}) {
   const yaml = join(dir, ".config/herdr-automations/automations.yaml");
   writeFileSync(yaml, JSON.stringify(automations, null, 2));
   state.home = dir;
+  let running = version; // the installed build; useVersion() swaps it, like a repair does
   state.exec = (command, args) => new Promise((resolve) => {
     if (command !== "sh" && command !== bin) { resolve({ code: 127, stdout: "", stderr: `cannot run ${command}: refused` }); return; }
-    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir, STUB_VERSION: version } }, (err, stdout, stderr) =>
+    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir, STUB_VERSION: running } }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
   });
   const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   return {
     dir, bin, version,
+    useVersion: (v) => { running = v; },
     saves: () => calls().filter((c) => c.argv[0] === "put" && !c.argv.includes("--dry-run")).map((c) => ({ argv: c.argv, raw: c.input, entry: JSON.parse(c.input) })),
     yaml: () => JSON.parse(readFileSync(yaml, "utf8")),
     done: () => rmSync(dir, { recursive: true, force: true }),
@@ -514,6 +516,34 @@ test("an existing entry shows ls's on-success, and switching the close switch of
     await saveIt(view, cx);
     assert.equal(s.saves()[0].entry.close_workspace, "never");
     assert.equal(s.yaml()[0].close_workspace, "never");
+  } finally { s.done(); }
+});
+
+test("a binary swapped for upstream before Save: close_workspace is withheld (fail closed)", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: OUR });
+  try {
+    const t = (await import(stubs.herdr)).theme();
+    await fillNew(view, cx, draw, "claude");
+    assert.equal(bg(draw().get("f-close")), t.accent, "ours at start: the switch is on");
+    s.useVersion("0.12.1"); // repaired to upstream while the panel is open, before the 30 s refresh
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(!("close_workspace" in saved.entry), "the probe right before put says upstream");
+    assert.ok(!("close_workspace" in s.yaml()[0]), "and nothing was written");
+  } finally { s.done(); }
+});
+
+test("upstream at start, ours at Save: the key goes, because the switch is on", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: "0.12.1" });
+  try {
+    await fillNew(view, cx, draw, "claude");
+    assert.ok(!draw().has("f-close"), "upstream at start: no switch");
+    assert.ok(draw().has("f-close-upstream"), "one line says our build is needed");
+    s.useVersion(OUR); // repaired to our build while the panel is open
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.equal(saved.entry.close_workspace, "on-success", "the fresh probe says ours, D2 is on");
+    assert.equal(s.yaml()[0].close_workspace, "on-success");
   } finally { s.done(); }
 });
 
