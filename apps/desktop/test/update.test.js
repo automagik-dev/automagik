@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
-import { channelOf, compareVersions, feedFileOf, feedOverride, isReleasePage, isTransient, pickUpdate, QUICK_RETRIES, QUICK_RETRY_MS, RETRY_MS, startUpdates, updateMode, updatesEnabled } from '../src/update.js'
+import { channelOf, cleanStaleCache, compareVersions, feedFileOf, feedOverride, isReleasePage, isTransient, pickUpdate, QUICK_RETRIES, QUICK_RETRY_MS, RETRY_MS, startUpdates, updaterCacheDir, updateMode, updatesEnabled } from '../src/update.js'
 
 const release = (tag, assets = ['latest-mac.yml', 'latest-linux.yml'], extra = {}) => ({ tag_name: tag, draft: false, assets: assets.map(name => ({ name })), ...extra })
 
@@ -257,4 +260,367 @@ test('a stable build never moves to a prerelease; a prerelease build follows bot
   assert.equal(pickUpdate(releases, { current: '2.261023.5', platform: 'darwin', channel: 'stable' }), null)
   assert.equal(pickUpdate(releases, { current: '2.261023.5', platform: 'darwin', channel: 'prerelease' }).version, '2.261024.1')
   assert.equal(pickUpdate(releases, { current: '2.261023.3', platform: 'darwin', channel: 'stable' }).version, '2.261023.5')
+})
+
+// The updater retry (#654): a releases API outage (a 5xx, or 429) is transient and retried in a
+// minute a few times, while another 4xx still waits 30 minutes.
+function answerStatus(status) {
+  return { ok: status >= 200 && status < 300, status, json: async () => [] }
+}
+
+function stubFetch(t, answer) {
+  const real = globalThis.fetch
+  globalThis.fetch = async () => answer()
+  t.after(() => { globalThis.fetch = real })
+}
+
+function recordingTimers() {
+  const scheduled = []
+  const timers = {
+    setTimeout: (fn, ms) => { const entry = { fn, ms }; scheduled.push(entry); return entry },
+    setInterval: () => ({ interval: true }),
+    clearTimeout() {},
+    clearInterval() {},
+  }
+  return { timers, retries: ms => scheduled.filter(entry => entry.ms === ms) }
+}
+
+// Runs a scheduled retry and waits for its async check() (the timer calls it with void).
+async function settle(condition, what) {
+  for (let i = 0; i < 200; i++) {
+    if (condition()) return
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.fail(`timed out waiting for ${what}`)
+}
+
+test('a releases API 5xx or 429 is transient; other 4xx are not; the network patterns stay', () => {
+  for (const status of [500, 502, 504, 599]) assert.equal(isTransient(new Error(`GitHub answered ${status} for the desktop releases`)), true, `HTTP ${status}`)
+  assert.equal(isTransient(new Error('GitHub answered 429 for the desktop releases')), true)
+  for (const status of [400, 401, 403, 404, 422]) assert.equal(isTransient(new Error(`GitHub answered ${status} for the desktop releases`)), false, `HTTP ${status}`)
+  assert.equal(isTransient('GitHub answered 504 for the desktop releases'), true)
+  for (const message of ['net::ERR_NETWORK_CHANGED', 'read ECONNRESET', 'connect ETIMEDOUT', 'getaddrinfo ENOTFOUND api.github.com', 'EAI_AGAIN', 'ENETUNREACH']) {
+    assert.equal(isTransient(new Error(message)), true, message)
+  }
+  assert.equal(isTransient(new Error('sha512 checksum mismatch')), false)
+  assert.equal(isTransient(undefined), false)
+})
+
+async function quickRetryEvidence(t, status) {
+  stubFetch(t, () => answerStatus(status))
+  const states = []
+  const warnings = []
+  const { timers, retries } = recordingTimers()
+  const updates = startUpdates({
+    updater: fakeUpdater(), current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  const answer = await updates.check()
+  return { answer, states, warnings, retries }
+}
+
+test('a 504 from the releases API quick-retries in 60 s and reports the retrying state', async (t) => {
+  // No test waits a minute: the retry is a captured setTimeout, so its delay is the evidence.
+  const { answer, states, warnings, retries } = await quickRetryEvidence(t, 504)
+  assert.equal(QUICK_RETRY_MS, 60_000)
+  assert.equal(QUICK_RETRIES, 3)
+  assert.deepEqual(answer, { result: 'error', retrying: true })
+  assert.deepEqual(states, [{ state: 'retrying', failure: 'check' }])
+  assert.deepEqual(warnings, ['update check: GitHub answered 504 for the desktop releases'])
+  assert.equal(retries(QUICK_RETRY_MS).length, 1)
+  assert.equal(retries(RETRY_MS).length, 0)
+})
+
+test('a 429 from the releases API quick-retries in 60 s and reports the retrying state', async (t) => {
+  const { answer, states, warnings, retries } = await quickRetryEvidence(t, 429)
+  assert.deepEqual(answer, { result: 'error', retrying: true })
+  assert.deepEqual(states, [{ state: 'retrying', failure: 'check' }])
+  assert.deepEqual(warnings, ['update check: GitHub answered 429 for the desktop releases'])
+  assert.equal(retries(QUICK_RETRY_MS).length, 1)
+  assert.equal(retries(RETRY_MS).length, 0)
+})
+
+test('the retrying state clears to idle when a quick retry starts, and a non-transient failure takes over', async (t) => {
+  let status = 504
+  stubFetch(t, () => answerStatus(status))
+  const states = []
+  const warnings = []
+  const { timers, retries } = recordingTimers()
+  const updates = startUpdates({
+    updater: fakeUpdater(), current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error', retrying: true })
+  const [quick] = retries(QUICK_RETRY_MS)
+  assert.ok(quick, 'the quick retry is scheduled')
+  status = 404
+  quick.fn()
+  await settle(() => retries(RETRY_MS).length === 1, 'the 30-minute retry a 404 schedules')
+  assert.deepEqual(states, [{ state: 'retrying', failure: 'check' }, { state: 'idle' }])
+  assert.match(warnings.at(-1), /GitHub answered 404 for the desktop releases/)
+})
+
+test('the retrying state clears to idle when a quick retry succeeds', async (t) => {
+  let status = 504
+  stubFetch(t, () => answerStatus(status))
+  const states = []
+  const infos = []
+  const { timers, retries } = recordingTimers()
+  const updates = startUpdates({
+    updater: fakeUpdater(), current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: { ...quiet, info: message => infos.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error', retrying: true })
+  status = 200
+  retries(QUICK_RETRY_MS)[0].fn()
+  await settle(() => infos.includes('update check: 3.95.0 is the newest stable release'), 'the retried check')
+  assert.deepEqual(states, [{ state: 'retrying', failure: 'check' }, { state: 'idle' }])
+})
+
+test('a non-transient 404 waits 30 minutes and reports no retrying state', async (t) => {
+  stubFetch(t, () => answerStatus(404))
+  const states = []
+  const warnings = []
+  const { timers, retries } = recordingTimers()
+  const updates = startUpdates({
+    updater: fakeUpdater(), current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error' })
+  assert.deepEqual(warnings, ['update check: GitHub answered 404 for the desktop releases'])
+  assert.deepEqual(states, [])
+  assert.equal(retries(RETRY_MS).length, 1)
+  assert.equal(retries(QUICK_RETRY_MS).length, 0)
+})
+
+test('a releases API 5xx quick-retries QUICK_RETRIES times, then waits RETRY_MS', async (t) => {
+  stubFetch(t, () => answerStatus(504))
+  const { timers, retries } = recordingTimers()
+  const updates = startUpdates({
+    updater: fakeUpdater(), current: '3.95.0', platform: 'darwin', env: {}, timers,
+    log: quiet, onState() {},
+  })
+  t.after(() => updates.stop())
+  assert.deepEqual(await updates.check(), { result: 'error', retrying: true })
+  const fired = []
+  for (let i = 0; i < QUICK_RETRIES; i++) {
+    const next = retries(QUICK_RETRY_MS).find(entry => !fired.includes(entry))
+    assert.ok(next, `quick retry ${i + 1} is scheduled`)
+    fired.push(next)
+    next.fn()
+    // The retried check fails again: the next quick retry, or the 30-minute one once they run out.
+    await settle(() => (i + 1 < QUICK_RETRIES ? retries(QUICK_RETRY_MS).length === i + 2 : retries(RETRY_MS).length === 1), `retry ${i + 1} to finish`)
+  }
+  assert.equal(retries(QUICK_RETRY_MS).length, QUICK_RETRIES)
+  assert.equal(retries(RETRY_MS).length, 1)
+})
+
+// The stale pending update (#654): after 3.95.0 installed, Felipe's Mac still had the 3.95.0
+// pending download beside update.zip and current.blockmap, which could look ready to install.
+function tempDir(t, prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+// The updater cache as macOS had it: the base archive and blockmap, and the pending installer
+// electron-updater wrote for that same version.
+function writeMacCache(cacheDir, version) {
+  mkdirSync(join(cacheDir, 'pending'), { recursive: true })
+  writeFileSync(join(cacheDir, 'update.zip'), 'zip')
+  writeFileSync(join(cacheDir, 'current.blockmap'), 'blockmap')
+  writeFileSync(join(cacheDir, 'pending', 'update-info.json'), JSON.stringify({ fileName: `Automagik-${version}-mac-arm64.zip`, sha512: 'sha512', isAdminRightsRequired: false }))
+  writeFileSync(join(cacheDir, 'pending', `Automagik-${version}-mac-arm64.zip`), 'installer')
+}
+
+const macCachePaths = (cacheDir, version) => [
+  join(cacheDir, 'pending', 'update-info.json'),
+  join(cacheDir, 'pending', `Automagik-${version}-mac-arm64.zip`),
+  join(cacheDir, 'update.zip'),
+  join(cacheDir, 'current.blockmap'),
+]
+
+// A fake electron-updater whose app-update.yml (in a temp dir) names the cache folder, as the
+// real one does: these tests never look at, or write to, an installed app's cache.
+function updaterWithCache(t, name = 'automagik-desktop-updater') {
+  const base = tempDir(t, 'automagik-updater-base-')
+  const config = join(base, 'app-update.yml')
+  writeFileSync(config, `provider: github\nupdaterCacheDirName: ${name}\n`)
+  const updater = fakeUpdater()
+  updater.app = { baseCachePath: base, appUpdateConfigPath: config, name: 'Automagik' }
+  return { updater, cacheDir: join(base, name) }
+}
+
+test('cleanStaleCache removes a 3.95.0 pending in the real Mac cache shape when 3.95.0 runs', (t) => {
+  const cacheDir = tempDir(t, 'automagik-updater-cache-')
+  writeMacCache(cacheDir, '3.95.0')
+  const cleaned = cleanStaleCache(cacheDir, { current: '3.95.0' })
+  assert.equal(cleaned.stale, true)
+  assert.equal(cleaned.version, '3.95.0')
+  assert.deepEqual([...cleaned.removed].sort(), [
+    'pending/update-info.json',
+    'pending/Automagik-3.95.0-mac-arm64.zip',
+    'update.zip',
+    'current.blockmap',
+  ].sort())
+  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  // A missing cache dir, or a current version it cannot read, is a no-op.
+  assert.deepEqual(cleanStaleCache(join(cacheDir, 'missing'), { current: '3.95.0' }), { stale: false, version: null, removed: [] })
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: 'not-a-version' }), { stale: false, version: null, removed: [] })
+})
+
+// The cache exactly as issue #654 reported it: no update-info.json, only the pending installer's
+// name carrying the version.
+test('the observed Mac cache without update-info.json is recognized from the pending installer name', (t) => {
+  const cacheDir = tempDir(t, 'automagik-updater-cache-')
+  mkdirSync(join(cacheDir, 'pending'), { recursive: true })
+  writeFileSync(join(cacheDir, 'update.zip'), 'zip')
+  writeFileSync(join(cacheDir, 'current.blockmap'), 'blockmap')
+  writeFileSync(join(cacheDir, 'pending', 'Automagik-3.95.0-mac-arm64.zip'), 'installer')
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), {
+    stale: true,
+    version: '3.95.0',
+    removed: ['pending/Automagik-3.95.0-mac-arm64.zip', 'update.zip', 'current.blockmap'],
+  })
+  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+})
+
+test('cleanStaleCache never removes a newer pending, even when a stale version is named', (t) => {
+  const cacheDir = tempDir(t, 'automagik-updater-cache-')
+  writeMacCache(cacheDir, '3.96.0')
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0' }), { stale: false, version: '3.96.0', removed: [] })
+  assert.deepEqual(cleanStaleCache(cacheDir, { current: '3.95.0', version: '3.95.0' }), { stale: false, version: '3.96.0', removed: [] })
+  for (const path of macCachePaths(cacheDir, '3.96.0')) assert.equal(existsSync(path), true, path)
+  // A named stale version with only the base files still removes those.
+  const baseOnly = tempDir(t, 'automagik-updater-cache-')
+  writeFileSync(join(baseOnly, 'update.zip'), 'zip')
+  writeFileSync(join(baseOnly, 'current.blockmap'), 'blockmap')
+  assert.deepEqual(cleanStaleCache(baseOnly, { current: '3.95.0', version: '3.95.0' }), { stale: true, version: '3.95.0', removed: ['update.zip', 'current.blockmap'] })
+})
+
+test("the updater cache is electron-updater's own layout from a temp app-update.yml, never a hardcoded path", (t) => {
+  const base = tempDir(t, 'automagik-updater-base-')
+  const configDir = tempDir(t, 'automagik-updater-config-')
+  const config = join(configDir, 'app-update.yml')
+  const app = { baseCachePath: base, appUpdateConfigPath: config, name: 'Automagik' }
+  writeFileSync(config, 'provider: github\nupdaterCacheDirName: "@automagik/omni-desktop"\n')
+  assert.equal(updaterCacheDir({ app }), join(base, '@automagik/omni-desktop'))
+  // electron-updater's DownloadedUpdateHelper wins once a download has made one.
+  assert.equal(updaterCacheDir({ app, downloadedUpdateHelper: { cacheDir: join(base, 'known') } }), join(base, 'known'))
+  // The app's name is electron-updater's fallback when the config is not there.
+  assert.equal(updaterCacheDir({ app: { ...app, appUpdateConfigPath: join(configDir, 'missing.yml') } }), join(base, 'Automagik'))
+  writeFileSync(config, 'provider: github\nupdaterCacheDirName: automagik-updater # sanitized package name\n')
+  assert.equal(updaterCacheDir({ app }), join(base, 'automagik-updater'))
+  assert.equal(updaterCacheDir({}), null)
+  assert.equal(updaterCacheDir({ app: { name: 'Automagik' } }), null)
+  assert.equal(updaterCacheDir({ app: { baseCachePath: base, appUpdateConfigPath: null, name: '' } }), null)
+})
+
+test('startUpdates drops the install-time stale pending at start and on a stale update-downloaded, with no ready state', async (t) => {
+  const { updater, cacheDir } = updaterWithCache(t)
+  writeMacCache(cacheDir, '3.95.0')
+  const states = []
+  const warnings = []
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers: noTimers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  assert.equal(updates.ready, null)
+  assert.deepEqual(states, [])
+  assert.deepEqual(warnings, ['update: the cached 3.95.0 update is not newer than 3.95.0; ignoring it'])
+  // electron-updater reports the same download again: it is ignored and its files removed.
+  writeMacCache(cacheDir, '3.95.0')
+  updater.emit('update-downloaded', { version: '3.95.0' })
+  assert.equal(updates.ready, null)
+  assert.deepEqual(states, [])
+  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+  assert.match(warnings.at(-1), /update: 3\.95\.0 is not newer than 3\.95\.0; ignoring it/)
+})
+
+test('a newer pending update survives the start cleanup and still readies and installs', async (t) => {
+  const { updater, cacheDir } = updaterWithCache(t)
+  writeMacCache(cacheDir, '3.96.0')
+  const states = []
+  const warnings = []
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers: noTimers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  for (const path of macCachePaths(cacheDir, '3.96.0')) assert.equal(existsSync(path), true, path)
+  assert.deepEqual(warnings, [])
+  updater.emit('update-downloaded', { version: '3.96.0' })
+  assert.equal(updates.ready, '3.96.0')
+  assert.deepEqual(states, [{ version: '3.96.0', state: 'ready' }])
+  updates.install()
+  assert.deepEqual(updater.installs, [[false, true]])
+})
+
+test('a stale update-downloaded never disturbs a newer ready update, and removes only the stale files', async (t) => {
+  const { updater, cacheDir } = updaterWithCache(t)
+  const states = []
+  const warnings = []
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers: noTimers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  updater.emit('update-downloaded', { version: '3.96.0' })
+  assert.equal(updates.ready, '3.96.0')
+  writeMacCache(cacheDir, '3.95.0')
+  updater.emit('update-downloaded', { version: '3.95.0' })
+  // 3.96.0 is still newer than 3.95.0: a stale report must not clear it, and it stays the ready one.
+  assert.equal(updates.ready, '3.96.0')
+  assert.deepEqual(states, [{ version: '3.96.0', state: 'ready' }])
+  assert.match(warnings.at(-1), /3\.95\.0 is not newer than 3\.95\.0/)
+  for (const path of macCachePaths(cacheDir, '3.95.0')) assert.equal(existsSync(path), false, path)
+})
+
+test('an update-downloaded version equal to, older than, or invalid for the app is logged and never ready', async (t) => {
+  const updater = fakeUpdater()
+  const warnings = []
+  const states = []
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'linux', env: {}, timers: noTimers,
+    log: { ...quiet, warn: message => warnings.push(message) },
+    onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  for (const version of ['3.95.0', '3.94.9', 'not-a-version']) {
+    updater.emit('update-downloaded', { version })
+    assert.equal(updates.ready, null, version)
+  }
+  assert.deepEqual(states, [])
+  assert.equal(warnings.length, 3)
+  assert.match(warnings[0], /3\.95\.0 is not newer/)
+  assert.match(warnings[1], /3\.94\.9 is not newer/)
+  assert.match(warnings[2], /not-a-version is not newer/)
+})
+
+test("Squirrel's update-downloaded cannot ready a pending download that is not newer", async (t) => {
+  const { updater } = updaterWithCache(t)
+  updater.nativeUpdater = new EventEmitter()
+  const states = []
+  const updates = startUpdates({
+    updater, current: '3.95.0', platform: 'darwin', env: {}, timers: noTimers,
+    log: quiet, onState: state => states.push(state),
+  })
+  t.after(() => updates.stop())
+  updater.emit('update-downloaded', { version: '3.95.0' })
+  updater.nativeUpdater.emit('update-downloaded')
+  assert.equal(updates.ready, null)
+  assert.deepEqual(states, [])
 })
