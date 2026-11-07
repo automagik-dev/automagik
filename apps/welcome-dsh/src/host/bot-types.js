@@ -3,9 +3,9 @@
 // through DSH's own plugin manager (the same installBundle its Plugins page runs). Genie
 // is one plugin (@automagik/genie-dsh), installed the same way when Genie is switched on,
 // in the desktop app too. Unfold is its plugin (@automagik/unfold-bot-dsh) with its defaults,
-// versioned together in this repository; this release lane does not carry the Unfold bridge
-// (Refs marketplace/unfold), which is never preinstalled and comes with Unfold's own instance;
-// Unfold's own instance has them all. What a type starts with (its
+// versioned together in this repository; this repository's releases carry no Unfold plugin
+// (Refs marketplace/unfold): Unfold's own release ships them, and its own instance has them all
+// bundled. What a type starts with (its
 // model, plugins, tools, skills, folder and permissions) is read from the live services where
 // they run, and from this list where they do not yet.
 import { execFile, spawn } from 'node:child_process'
@@ -41,7 +41,8 @@ export const genieSpec = (genie = GENIE_RELEASE) => `git+${genie.repository.repl
 
 // The Unfold Bot type: its plugin, which makes the Unfold Bot, and its defaults, in install
 // order after the Bot team. Copied from apps/unfold-bot-dsh src/host/unfold.js (UNFOLD_PLUGINS),
-// not imported: this plugin installs on its own. A test keeps the two lists the same.
+// not imported: this plugin installs on its own. A test keeps the two lists the same. Unfold's
+// own instance brings every one bundled; this repository's release carries none of them.
 export const UNFOLD_PLUGINS = Object.freeze([
   { name: '@automagik/unfold-bridge-dsh', dir: 'unfold-bridge-dsh', title: 'Unfold bridge', what: 'Unfold watches this DSH' },
   { name: '@automagik/unfold-events-dsh', dir: 'unfold-events-dsh', title: 'Unfold events', what: 'What Unfold did, as a timeline' },
@@ -361,9 +362,10 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
     })
   }
 
-  // Unfold's: the Bot team, Unfold's defaults and its own plugin, in that order, each from the
-  // source this plugin came from (else this release), as the Bot team is. None comes from git,
-  // so nothing asks for git. Ready once the plugin has made the Unfold Bot.
+  // Unfold's: the Bot team, Unfold's defaults and its own plugin, in that order. In Unfold's own
+  // instance all of them come bundled in its profile, and this repository's release carries none
+  // of the Unfold set (Refs marketplace/unfold), so its lane is never asked for one. None comes
+  // from git, so nothing asks for git. Ready once the plugin has made the Unfold Bot.
   const UNFOLD_ALL = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
   let unfoldJob = null
 

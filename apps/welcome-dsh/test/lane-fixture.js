@@ -2,16 +2,16 @@
 // lane keys welcome carries are not used). Each file is served by URL; a missing one is a 404.
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { OMNI_PLUGINS, UNFOLD_PLUGIN, UNFOLD_PLUGINS } from '../src/host/bot-types.js'
+import { OMNI_PLUGINS } from '../src/host/bot-types.js'
 
 export const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 export const V = PKG.version
 export const RELEASE = `https://github.com/automagik-dev/automagik/releases/download/v${V}/`
-export const EVERYTHING = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
-// This repository's release no longer carries the Unfold bridge (Refs marketplace/unfold): it is
-// not preinstalled, Unfold's own release ships it, and Unfold's own instance brings it bundled.
-// The release fixture serves and lists only what this repository's release actually carries.
-export const SHIPPED = EVERYTHING.filter(plugin => plugin.dir !== 'unfold-bridge-dsh')
+// This repository's release carries none of Unfold's plugins (Refs marketplace/unfold): they are
+// built and tested here, Unfold's own release ships them, and Unfold's own instance brings them
+// bundled. The release fixture serves and lists only what this repository's release carries: the
+// Bot team, which the Unfold flow installs after the welcome.
+export const SHIPPED = [OMNI_PLUGINS[0]]
 export const urlOf = plugin => `${RELEASE}automagik-${plugin.dir}-${V}.tgz`
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519')

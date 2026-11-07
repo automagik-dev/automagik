@@ -115,25 +115,24 @@ test('the Unfold type\'s plugins are the Bot type plugin\'s own defaults, then t
   assert.equal(UNFOLD_PLUGIN.name, '@automagik/unfold-bot-dsh')
   for (const plugin of [...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
     assert.deepEqual(installTargetOf(plugin, OWN_LINK), { spec: `link:/home/someone/automagik/apps/${plugin.dir}`, options: {} })
-    assert.deepEqual(installTargetOf(plugin, undefined), { spec: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`, options: {} })
   }
 })
 
-test('release and absent welcome sources resolve every Automagik plugin to a release tarball', () => {
+// This repository's releases carry none of Unfold's (Refs marketplace/unfold), so the Bot team is
+// the only plugin the welcome's flows can take from one.
+test('release and absent welcome sources resolve the Bot team to a release tarball', () => {
   const version = '3.35.2'
   const ownRelease = `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-welcome-dsh-${version}.tgz`
   for (const source of [ownRelease, undefined]) {
-    for (const plugin of [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
-      assert.deepEqual(installTargetOf(plugin, source, version), {
-        spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`,
-        options: {},
-      })
-    }
+    assert.deepEqual(installTargetOf(OMNI_PLUGINS[0], source, version), {
+      spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`,
+      options: {},
+    })
   }
 })
 
 test('outside Unfold\'s own instance nothing of Unfold\'s installs: no unfold-* plugin, no git', async (t) => {
-  // Even where every release tarball would resolve, the install is refused before any of it runs.
+  // Even where every spec it could build would resolve, the install is refused before any of it runs.
   const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
   const everything = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
   const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })

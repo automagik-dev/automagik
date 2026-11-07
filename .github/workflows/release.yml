@@ -6,24 +6,16 @@ name: Release
 #
 #   automagik-bots-dsh-<version>.tgz      the Bot team (npm pack of apps/bots-dsh)
 #   automagik-welcome-dsh-<version>.tgz   the welcome and Connect AI (apps/welcome-dsh)
-#   automagik-unfold-mind-dsh-<version>.tgz    the Unfold Mind stream (apps/unfold-mind-dsh)
 #   automagik-locale-pt-br-dsh-<version>.tgz   Brazilian Portuguese for DSH (apps/locale-pt-br-dsh)
 #   automagik-acp-dsh-<version>.tgz       agents over ACP as DSH models (apps/acp-dsh)
-#   automagik-unfold-capabilities-dsh-<version>.tgz  what Unfold can do, read-only (apps/unfold-capabilities-dsh)
-#   automagik-unfold-settings-dsh-<version>.tgz      how Unfold is set up, read-only (apps/unfold-settings-dsh)
-#   automagik-unfold-events-dsh-<version>.tgz  what the Unfold agent is doing, in DSH (apps/unfold-events-dsh)
-#   automagik-unfold-sse-dsh-<version>.tgz     server-sent events for the Unfold plugins (apps/unfold-sse-dsh)
-#   automagik-unfold-trajectory-dsh-<version>.tgz  Unfold's trajectory (apps/unfold-trajectory-dsh)
-#   automagik-unfold-session-dsh-<version>.tgz Unfold's session as a DSH conversation (apps/unfold-session-dsh)
-#   automagik-unfold-bot-dsh-<version>.tgz     the Unfold Bot (apps/unfold-bot-dsh)
 #   plugins.json                          each tarball's name, version, file and integrity
 #   <add-on>-<its version>.tgz            the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
 #
-# Not attached: automagik-unfold-bridge-dsh-<version>.tgz. The bridge
-# (apps/unfold-bridge-dsh) is built and tested here, but Unfold's own release ships it
-# (Refs marketplace/unfold): no tarball here, no entry in the plugin lane, and it is never
-# preinstalled (the desktop profile does not carry it; it is opt-in).
+# Not attached: any automagik-unfold-<name>-dsh-<version>.tgz, every one of apps/unfold-*-dsh
+# (the bridge included). They are built and tested here, but Unfold's own release ships them
+# (Refs marketplace/unfold): no tarball here, no entry in the plugin lane, and none is
+# preinstalled (the desktop profile does not carry one; they are opt-in).
 #   automagik-herdr-pack-<version>.tgz    the herdr pack, when herdr/ shipped something since the
 #   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
 #                                         herdr/mods/ (never pocket-link) plus
@@ -394,7 +386,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          for app in acp-dsh bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in acp-dsh bots-dsh locale-pt-br-dsh welcome-dsh; do
             (cd "apps/${app}" && npm pack --silent --ignore-scripts --pack-destination ../../release >/dev/null)
           done
           bun scripts/release-plugins.ts release "${VERSION}" "${SHA}" > release/plugins.json

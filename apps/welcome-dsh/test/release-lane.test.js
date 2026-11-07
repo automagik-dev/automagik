@@ -20,9 +20,10 @@ function rig(t, files, { homeAs } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'welcome-lane-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: urlOf({ dir: 'welcome-dsh' }), version: V },
-    // Unfold's own instance brings the bridge bundled, and this repository's release no longer
-    // carries it (Refs marketplace/unfold): present here, so the Unfold flow never asks its lane.
-    { name: UNFOLD_PLUGINS.find(plugin => plugin.dir === 'unfold-bridge-dsh').name, availability: 'profile', enabled: true, version: V }]
+    // Unfold's own instance brings every Unfold plugin bundled, and this repository's release
+    // carries none of them (Refs marketplace/unfold): all present here, so the Unfold flow asks
+    // its lane for none.
+    ...[...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => ({ name: plugin.name, availability: 'profile', enabled: true, version: V }))]
   const calls = []
   const manager = {
     async listBundles() { return structuredClone(bundles) },
@@ -60,6 +61,8 @@ test('every sibling is checked against the release lane, kept 0600 at a stable p
   const done = await r.run()
   assert.equal(done.phase, 'restart', done.error)
   assert.equal(r.calls.length, SHIPPED.length)
+  // The release carries no Unfold tarball, and the flow asks its lane for none.
+  assert.equal(r.asked.some(url => url.includes('automagik-unfold-')), false)
   for (const [i, spec] of r.calls.entries()) {
     const plugin = SHIPPED[i]
     assert.equal(spec, join(r.dir, `${plugin.name.replace('/', '+')}-${V}-${entryOf(plugin).sha256}.tgz`))
@@ -72,11 +75,11 @@ test('every sibling is checked against the release lane, kept 0600 at a stable p
 
 const refused = [
   ['one flipped byte in a sibling tarball', () => {
-    const bad = Buffer.from(tarballOf(UNFOLD_PLUGINS[2]))
+    const bad = Buffer.from(tarballOf(OMNI_PLUGINS[0]))
     bad[3] ^= 1
-    return filesOf({ tarballs: { [UNFOLD_PLUGINS[2].name]: bad } })
+    return filesOf({ tarballs: { [OMNI_PLUGINS[0].name]: bad } })
   }, /does not match the lane/],
-  ['a sibling the lane does not list', () => filesOf({ lane: laneOf({ plugins: SHIPPED.filter(p => p !== UNFOLD_PLUGINS[4]).map(p => entryOf(p)) }) }), /not in the release's lane/],
+  ['a sibling the lane does not list', () => filesOf({ lane: laneOf({ plugins: [] }) }), /not in the release's lane/],
   ['a signature that does not match', () => filesOf({ sig: signatureOf(Buffer.from('another lane')) }), /signature/],
   ['no signature', () => filesOf({ sig: null }), /lane\.json\.sig: HTTP 404/],
   ['a lane for another version', () => {
@@ -89,8 +92,8 @@ const refused = [
     return files
   }, /lane\.json: HTTP 404/],
   ['the last sibling failing, after every earlier one matched', () => {
-    const bad = Buffer.concat([tarballOf(UNFOLD_PLUGIN), Buffer.from('x')])
-    return filesOf({ tarballs: { [UNFOLD_PLUGIN.name]: bad } })
+    const bad = Buffer.concat([tarballOf(OMNI_PLUGINS[0]), Buffer.from('x')])
+    return filesOf({ tarballs: { [OMNI_PLUGINS[0].name]: bad } })
   }, /not the size the lane names/],
 ]
 for (const [what, files, reason] of refused) {
