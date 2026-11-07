@@ -3,8 +3,9 @@
 // through DSH's own plugin manager (the same installBundle its Plugins page runs). Genie
 // is one plugin (@automagik/genie-dsh), installed the same way when Genie is switched on,
 // in the desktop app too. Unfold is its plugin (@automagik/unfold-bot-dsh) with its defaults,
-// released together from this repository and
-// installed the same way; Unfold's own instance has them all. What a type starts with (its
+// versioned together in this repository; this release lane does not carry the Unfold bridge
+// (Refs marketplace/unfold), which is never preinstalled and comes with Unfold's own instance;
+// Unfold's own instance has them all. What a type starts with (its
 // model, plugins, tools, skills, folder and permissions) is read from the live services where
 // they run, and from this list where they do not yet.
 import { execFile, spawn } from 'node:child_process'

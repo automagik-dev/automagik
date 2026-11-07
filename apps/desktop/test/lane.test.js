@@ -257,10 +257,17 @@ test('a lane that stops carrying a plugin leaves the installed one, and its data
   mkdirSync(dirname(data), { recursive: true })
   writeFileSync(data, '{"watched":["session-1"]}')
   const before = readFileSync(join(bridge, 'package.json'))
-  // The lane carries the Bot team only, and the profile has a newer Bot team waiting.
+  // The lane carries the Bot team, and a stale entry still names the bridge, newer than the one
+  // installed: the publisher's list no longer includes it, so it is never selected. The one the
+  // person installed stays as it was.
+  const carried = lane({ plugins: [...lane().plugins, {
+    ...lane().plugins[0], name: '@automagik/unfold-bridge-dsh', version: '3.22.1',
+    url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-unfold-bridge-dsh-3.22.1.tgz',
+  }] })
   const installed = { ...context.installed, '@automagik/unfold-bridge-dsh': '3.20.0' }
-  const update = laneUpdate(lane(), { ...context, installed })
+  const update = laneUpdate(carried, { ...context, installed })
   assert.deepEqual(update?.plugins.map(plugin => plugin.name), ['@automagik/bots-dsh'])
+  assert.equal(update?.plugins.some(plugin => plugin.name === '@automagik/unfold-bridge-dsh'), false)
   const bytes = tarball(root, '3.22.1')
   const plugin = { ...lane().plugins[0], size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
   await stage({ ...update, plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })

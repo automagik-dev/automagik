@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pluginNames } from './release-plugins';
 
 const workflow = (name: string) => readFileSync(join(import.meta.dir, '..', '.github', 'workflows', name), 'utf8').split('\n');
 
@@ -424,4 +425,18 @@ describe('every release carries am (RFC 0012)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("the release's plugin set", () => {
+  // The tarballs the cut packs and the names plugins.json carries must be one set: an app packed
+  // again but filtered out of pluginNames() would publish an asset nothing verified, and a name
+  // with no tarball fails releasePlugins() only after the tag.
+  test('the pack loop packs exactly the plugins plugins.json names', () => {
+    const text = readFileSync(join(import.meta.dir, '..', '.github', 'workflows', 'release.yml'), 'utf8');
+    const match = /for app in ([\w- ]+); do\n\s+\(cd "apps\/\$\{app\}" && npm pack/.exec(text);
+    expect(match).not.toBeNull();
+    const packed = match![1].trim().split(/\s+/).sort();
+    const named = pluginNames().map((name) => `${name.replace('@automagik/', '').replace(/-dsh$/, '')}-dsh`).sort();
+    expect(packed).toEqual(named);
+  });
 });
