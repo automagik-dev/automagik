@@ -190,6 +190,7 @@ export class BotForm {
       + `${this.fileName(key)}, so this shows there once the worktree's change is merged and pulled.`;
     if (changes === "untracked") return `${where} ${this.fileName(key)} isn't committed: commit or remove it before pulling, or the pull stops on it.`;
     if (changes === "modified") return `${where} ${this.fileName(key)} has local changes: commit or discard them before pulling, or the pull stops on it.`;
+    if (changes === "deleted") return `${where} ${this.fileName(key)} is deleted: the pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead).`;
     return where;
   }
 

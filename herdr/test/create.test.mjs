@@ -635,6 +635,33 @@ test("a worktree space whose main checkout's bots.json has local changes: the fo
   assert.doesNotMatch(textOf(nodes.get("bot-where")), /isn't committed|has local changes/);
 });
 
+// #332 low: a committed bots.json deleted in the main checkout's working tree without staging
+// (` D`) is said as deleted; the pull restores it with the worktree's version, it doesn't stop.
+test("a worktree space whose main checkout's bots.json is deleted: the form says the pull restores it", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  rmSync(mainPath);
+  assert.equal(g("status", "--porcelain"), " D .herdr/bots.json\n");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  const where = textOf(nodes.get("bot-where"));
+  assert.match(where, /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\. The sidebar reads .*repo\/\.herdr\/bots\.json, so this shows there once the worktree's change is merged and pulled\./);
+  assert.match(where, /repo\/\.herdr\/bots\.json is deleted: /);
+  assert.match(where, /brings it back with this worktree's version/);
+  assert.doesNotMatch(where, /modified|has local changes|isn't committed|stops on it/);
+});
+
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----
 
 test("Bot settings (pick) draws the sidebar's known bots before discovery answers, then the fresh list", async () => {
@@ -1047,6 +1074,33 @@ test("menu Prompt from a worktree space: saved in the worktree, the menu stays s
   assert.equal(form.error, null, "the snapshot followed the save");
   assert.equal(JSON.parse(readFileSync(wtPath, "utf8")).bots.find((b) => b.id === OMP.id).instructions, "newer words");
   assert.equal(g("status", "--porcelain"), "");
+});
+
+// #332 low: the prompt editor's where line (menu-prompt-where) warns like the form's footer.
+test("menu Prompt from a worktree space whose main checkout's bots.json has local changes: the menu warns its pull would stop on it", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  // An edit made on the main checkout (allowed by design), not committed: the file is tracked.
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, { ...OMP, role: "local edit" }] }, null, 2)}\n`);
+  assert.equal(g("status", "--porcelain"), " M .herdr/bots.json\n");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const { draw, click } = await menu({ project: repo });
+  draw();
+  await click("menu-prompt");
+  draw();
+  const where = textOf(nodes.get("menu-prompt-where"));
+  assert.match(where, /repo\/\.herdr\/bots\.json has local changes: commit or discard them before pulling, or the pull stops on it\.$/);
+  assert.doesNotMatch(where, /isn't committed/);
+  assert.doesNotMatch(where, /is deleted/);
 });
 
 // #230: a project's formatter may use tabs (Biome's default); the form's saves keep the file's

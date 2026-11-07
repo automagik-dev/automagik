@@ -266,6 +266,35 @@ test("a worktree edit warns when the main checkout's bots.json has local changes
   assert.doesNotMatch(after.err, /isn't committed|has local changes/);
 });
 
+// #332 low: a committed bots.json deleted in the main checkout's working tree without staging
+// (` D`) is not "local changes" and the pull does not stop: it restores the file with the
+// worktree's version. Only the unstaged deletion gets this state.
+test("a worktree edit says the main checkout's bots.json is deleted, and the pull restores it with the worktree's version", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", wt);
+  const wtPath = join(wt, ".herdr/bots.json");
+  rmSync(s.botsPath);
+  assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n");
+  // An edit from the worktree warns that the file is deleted, not that it has local changes.
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`saved in ${wtPath} \\(this worktree\\); ls, whois and the sidebar read ${s.botsPath} until that change is merged there`));
+  assert.match(r.err, new RegExp(`${s.botsPath} is deleted: `));
+  assert.match(r.err, /brings it back with this worktree's version/);
+  assert.doesNotMatch(r.err, /modified|has local changes|isn't committed|stops on it/);
+  // The worktree's change merged: no stop; the main checkout's file comes back with its version.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "scout");
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.equal(readFileSync(s.botsPath, "utf8"), readFileSync(join(wt, ".herdr/bots.json"), "utf8"));
+  assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+});
+
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
   const s = restartScene(t);
   const wt = join(s.root, "wt");
