@@ -8,13 +8,28 @@ The `automagik-web` DeepSeek Harness profile on a host: dsh's base and web app, 
 Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at the release in
 `server/Dockerfile` (`AUTOMAGIK_VERSION`, default `3.90.1`). Each tarball is checked against the
 release's `plugins.json` (sha512 integrity, size) and `PLUGINS.SHA256SUMS` (sha256) before dsh
-installs it. The profile is installed at build time by dsh's own `plugin … install`, so the
-image needs no package manager at boot beyond that profile's pnpm.
+installs it.
+
+## The image
+
+Three stages:
+
+| Stage | What it does |
+|---|---|
+| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, fetches and verifies the release tarballs, installs the profile with dsh's own `plugin … install`, prunes what the profile does not compose, writes `versions.json` |
+| `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, `git`, `ripgrep`, `perl` for git, their `ldd` closure, and the empty `/data` tree owned by uid 1000 |
+| `runtime` | `gcr.io/distroless/nodejs24-debian12` (digest-pinned): node and glibc, the code, the tools above, nothing else — no apt, npm, curl or build toolchain |
+
+The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.2. The
+pruned payload keeps everything the composed tree names — office-to-pdf and its
+`libreoffice-kit-wasm` included — and drops the inspector, the voice engine, the musl sharp
+variants, the win32/darwin node-pty prebuilds and the experimental bundles the profile never
+composes.
 
 ## Build and smoke
 
 ```sh
-node server/build.mjs                       # docker build, prints id and size
+node server/build.mjs --tag automagik-server:local
 node server/smoke.mjs automagik-server:local
 ```
 
@@ -22,7 +37,9 @@ The context is the repository root because the builder reuses
 `apps/desktop/runtime/package-lock.json`; `server/Dockerfile.dockerignore` keeps the context
 small. The smoke runs the image with a named volume (no published port), waits for `401`, checks
 the log has no token, the profile and its three plugins are in `/data`, `launch-url` is `0600`,
-the process is uid 1000, Docker's health check turns healthy, and a restart does not reseed.
+the process is uid 1000, Docker's health check turns healthy, the composed tree still has its
+200 entries (bots, welcome, ACP, web app, office), and a restart does not reseed. No coreutils
+are assumed: the checks use node and bash.
 
 ## Run
 
@@ -64,28 +81,30 @@ docker exec automagik cat /data/dsh/launch-url
 
 ## Measured
 
-`ryzen` (x86_64, 32 vCPU, 128 GiB RAM, Docker 29.9.1, Linux 7.0), image
-`automagik-server:dev`, 2026-11-07. Start-to-401 polls the in-image health script every 50 ms;
-the cold figure uses a fresh named volume and includes the first-start profile seed.
+`ryzen` (x86_64, 32 vCPU, 128 GiB RAM, Docker 29.9.1, Linux 7.0), 2026-11-07. Start-to-401
+polls the in-image health script every 50 ms; the cold figure uses a fresh named volume and
+includes the first-start profile seed.
 
 | Measure | Value |
 |---|---|
-| Image size (`docker image inspect .Size`) | 1,172,975,375 bytes (1118.6 MiB), 14 layers |
-| Cold start to 401 (fresh `/data`) | 2,906 ms |
-| Restart to 401 (seeded `/data`) | 2,621 ms |
-| Idle RSS after 5 min | 162.5 MiB (`memory.current`); 157.4 MiB in `docker stats` |
-| Idle CPU over 290 s | 0.0049 core (0.11% in a `docker stats` snapshot) |
-| Processes / peak RSS | 19 / 317.0 MiB |
+| Image size (`docker image inspect .Size`) | 848,442,151 bytes (809.1 MiB), 37 layers |
+| Compressed (`docker save` + `gzip -1`) | 198,897,121 bytes (189.7 MiB) |
+| Cold start to 401 (fresh `/data`) | 2,791 ms (other runs 3,106 / 2,169 ms) |
+| Restart to 401 (seeded `/data`) | 2,222 ms (other runs 2,489 / 1,495 ms) |
+| Idle RSS after 5 min | 163.4 MiB (`memory.current`); 152.5 MiB in `docker stats` |
+| Idle CPU over 290 s | 0.0056 core (0.15% in a `docker stats` snapshot) |
+| Processes / peak RSS | 25 / 318.1 MiB |
 
-The harness is the size: `/opt/automagik/runtime` is 469 MiB (`@deepseek-ai` alone 261 MiB)
-and the profile 44 MiB. The base and the shell tools add the rest; there is no npm, curl or
-build toolchain.
+The node-slim build measured 2,589/2,027 ms on the same harness. The 350 MB *uncompressed*
+target is not reachable with node, a POSIX shell, git/rg and this profile: the harness's core is
+~215 MiB, `/data`'s profile seed 44 MiB, the office wasm 146 MiB, and the distroless base with
+the tools ~250 MiB. **350 MB compressed is met** (190 MiB).
 
 ## Health
 
 ```sh
 docker inspect --format '{{.State.Health.Status}}' automagik   # healthy
-docker exec automagik node /opt/automagik/healthcheck.mjs      # prints 401
+docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs   # prints 401
 docker logs automagik | grep 'startup:'
 ```
 
@@ -97,7 +116,7 @@ curl. The entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/l
 
 | File | Role |
 |---|---|
-| `Dockerfile`, `Dockerfile.dockerignore` | the two-stage image |
+| `Dockerfile`, `Dockerfile.dockerignore` | the builder, tools and distroless runtime stages |
 | `assemble.mjs` | builder stage: runtime, release tarballs, profile, prune |
 | `fetch-plugins.mjs` | downloads and verifies the pinned release's tarballs |
 | `entrypoint.mjs`, `lib.mjs` | seed `/data`, key file, pnpm store, dsh, redacted log |

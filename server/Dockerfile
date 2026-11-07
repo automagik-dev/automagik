@@ -6,9 +6,11 @@
 # Build from the repository root (the builder reuses the desktop's pinned runtime lock):
 #   docker build -f server/Dockerfile -t automagik-server .
 #
-# The release pins are build args; the defaults are the release this image ships. Every plugin
-# tarball is checked against the release's plugins.json (sha512 integrity, size) and
-# PLUGINS.SHA256SUMS (sha256) before dsh installs it (server/fetch-plugins.mjs).
+# The runtime is distroless: node and glibc, the image's code, and the tools Bots need in their
+# shell (bash, dash as /bin/sh, git, ripgrep, and git's perl). No npm, apt, curl or build
+# toolchain. The release pins are build args; every plugin tarball is checked against the
+# release's plugins.json (sha512 integrity, size) and PLUGINS.SHA256SUMS (sha256) before dsh
+# installs it (server/fetch-plugins.mjs).
 
 FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS builder
 
@@ -34,9 +36,34 @@ RUN node /build/server/assemble.mjs \
       --dsh "$DSH_VERSION" \
       --repository "$AUTOMAGIK_REPOSITORY"
 
-# The runtime stage is the same Debian slim with node, the image's code, and the tools Bots
-# need in their shell (bash, git, ripgrep): no npm, no build toolchain, no curl.
-FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS runtime
+# The shell tools Bots need, prepared for the distroless base: the binaries, git's perl, the
+# shared-library closure ldd names for them, and the /data ownership. Debian 12 here matches
+# the distroless nodejs24-debian12 base.
+FROM debian:bookworm-slim AS tools
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates perl; \
+    rm -rf /var/lib/apt/lists/*; \
+    mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
+    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
+      | awk '/=>/ {print $3}' | sort -u > /tmp/libs; \
+    while read -r lib; do \
+      case "$lib" in \
+        */libc.so.6|*/libm.so.6|*/libpthread.so.0|*/libdl.so.2|*/librt.so.1|*/libstdc++.so.6|*/libgcc_s.so.1|*/ld-linux*) continue;; \
+      esac; \
+      cp -L "$lib" /out/lib/; \
+    done < /tmp/libs; \
+    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /out/bin/; \
+    ln -s /bin/dash /out/bin/sh; \
+    cp -a /usr/lib/git-core /out/git-core; \
+    cp -a /usr/share/git-core /out/git-core-share; \
+    cp -a /usr/share/perl /usr/share/perl5 /out/; \
+    cp -a /etc/ssl/certs /out/certs; \
+    chmod 0700 /out/data/secrets; \
+    chown -R 1000:1000 /out/data
+
+FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
 
 ARG AUTOMAGIK_VERSION=3.90.1
 
@@ -46,30 +73,24 @@ LABEL org.opencontainers.image.title="Automagik server" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${AUTOMAGIK_VERSION}"
 
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends bash ca-certificates git ripgrep; \
-    rm -rf /var/lib/apt/lists/*; \
-    rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack; \
-    rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
-
-# The non-root user owns /data and nothing under /opt. uid and gid 1000, for a bind-mounted
-# data folder the host can chown to the same.
-RUN set -eux; \
-    userdel --remove node || true; \
-    groupdel node || true; \
-    groupadd --gid 1000 automagik; \
-    useradd --uid 1000 --gid 1000 --home-dir /data --no-create-home --shell /bin/bash automagik; \
-    mkdir -p /data/dsh /data/bots /data/workspace /data/secrets; \
-    chmod 0700 /data/secrets; \
-    chown -R automagik:automagik /data
+COPY --from=tools /out/bin/bash /bin/bash
+COPY --from=tools /out/bin/dash /bin/dash
+COPY --from=tools /out/bin/sh /bin/sh
+COPY --from=tools /out/bin/git /usr/bin/git
+COPY --from=tools /out/bin/rg /usr/bin/rg
+COPY --from=tools /out/git-core /usr/lib/git-core
+COPY --from=tools /out/git-core-share /usr/share/git-core
+COPY --from=tools /out/perl /usr/share/perl
+COPY --from=tools /out/perl5 /usr/share/perl5
+COPY --from=tools /out/certs /etc/ssl/certs
+COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
+COPY --from=tools --chown=1000:1000 /out/data /data
 
 COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
 COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs /opt/automagik/
-COPY server/bin/dsh server/bin/pnpm /usr/local/bin/
-RUN chmod 0755 /opt/automagik/entrypoint.mjs /opt/automagik/healthcheck.mjs /usr/local/bin/dsh /usr/local/bin/pnpm
+COPY --chmod=0755 server/bin/dsh server/bin/pnpm /usr/local/bin/
 
 ENV HOME=/data \
     DSH_HOME=/data/dsh \
@@ -77,16 +98,17 @@ ENV HOME=/data \
     AUTOMAGIK_HOME=/data \
     AUTOMAGIK_WORKSPACE=/data/workspace \
     NODE_ENV=production \
-    DO_NOT_TRACK=1
+    DO_NOT_TRACK=1 \
+    PATH=/nodejs/bin:/usr/local/bin:/usr/bin:/bin
 
-USER automagik
+# Distroless has no useradd: the uid/gid are numeric, and /data is already theirs.
+USER 1000:1000
 WORKDIR /data/workspace
 
 # 401 is the healthy answer without a browser session: the auth fence is up. The script prints
 # the code to the container's health log; it uses node, not curl.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-  CMD ["node", "/opt/automagik/healthcheck.mjs"]
+  CMD ["/nodejs/bin/node", "/opt/automagik/healthcheck.mjs"]
 
-ENTRYPOINT ["/usr/local/bin/node", "/opt/automagik/entrypoint.mjs"]
-# The base node image's CMD is ["node"]; the entrypoint takes no arguments.
+ENTRYPOINT ["/nodejs/bin/node", "/opt/automagik/entrypoint.mjs"]
 CMD []

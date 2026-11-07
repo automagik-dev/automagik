@@ -36,7 +36,7 @@ async function logsOf() {
 
 async function healthCode() {
   try {
-    const { stdout } = await docker(['exec', name, 'node', '/opt/automagik/healthcheck.mjs'])
+    const { stdout } = await docker(['exec', name, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
     return stdout.trim()
   } catch (error) {
     return `${error.stdout ?? ''}`.trim() || '000'
@@ -68,8 +68,10 @@ async function waitForHealthy() {
 async function main() {
   await docker(['image', 'inspect', image, '--format', '{{.Id}}'])
 
-  // Nothing baked into /data: no profile, and the image runs as the non-root uid.
-  await docker(['run', '--rm', '--entrypoint', '/bin/sh', image, '-c', 'test ! -e /data/dsh/profiles && test "$(id -u)" = 1000'])
+  // Nothing baked into /data: no profile, and the image runs as the non-root uid. Distroless
+  // carries no coreutils, so the uid check is node's own.
+  await docker(['run', '--rm', '--entrypoint', '/bin/bash', image, '-c', 'test ! -e /data/dsh/profiles'])
+  await docker(['run', '--rm', '--entrypoint', '/nodejs/bin/node', image, '-e', 'process.exit(process.getuid() === 1000 ? 0 : 1)'])
 
   await docker(['volume', 'create', volume])
   await docker(['run', '--detach', '--name', name, '--volume', `${volume}:/data`,
@@ -85,16 +87,27 @@ async function main() {
   check(/automagik-web: seeded \/data\/dsh\/profiles\/automagik-web/.test(logs), 'the first start did not seed the profile')
   check(/automagik-web: profile automagik-web: automagik \d+\.\d+\.\d+, dsh \d+\.\d+\.\d+/.test(logs), 'no version line')
 
-  await docker(['exec', name, 'test', '-f', '/data/dsh/profiles/automagik-web/package.json'])
-  await docker(['exec', name, 'test', '-f', '/data/dsh/profiles/automagik-web/node_modules/@automagik/bots-dsh/package.json'])
-  await docker(['exec', name, 'test', '-f', '/data/dsh/profiles/automagik-web/node_modules/@automagik/welcome-dsh/package.json'])
-  await docker(['exec', name, 'test', '-f', '/data/dsh/profiles/automagik-web/node_modules/@automagik/acp-dsh/package.json'])
-  await docker(['exec', name, 'test', '-f', '/data/dsh/launch-url'])
-  const mode = (await docker(['exec', name, 'stat', '-c', '%a', '/data/dsh/launch-url'])).stdout.trim()
+  await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/package.json'])
+  await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/node_modules/@automagik/bots-dsh/package.json'])
+  await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/node_modules/@automagik/welcome-dsh/package.json'])
+  await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/node_modules/@automagik/acp-dsh/package.json'])
+  await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/launch-url'])
+  const mode = (await docker(['exec', name, '/nodejs/bin/node', '-e', 'process.stdout.write((require("fs").statSync("/data/dsh/launch-url").mode & 0o777).toString(8))'])).stdout.trim()
   check(mode === '600', `launch-url is ${mode}, not 600`)
-  const uid = (await docker(['exec', name, 'id', '-u'])).stdout.trim()
+  const uid = (await docker(['exec', name, '/nodejs/bin/node', '-e', 'process.stdout.write(String(process.getuid()))'])).stdout.trim()
   check(uid === '1000', `runs as uid ${uid}, not 1000`)
-  say('seeded profile, three plugins, 600 launch URL, uid 1000')
+
+  // The pruned runtime must still compose the whole automagik-web tree: the five bundles and
+  // the entries DSH pulls in beside them, office-to-pdf included.
+  const config = (await docker(['exec', name, 'dsh', '--profile', 'automagik-web', '--dump-config'])).stdout
+  const entries = (config.match(/^- id:/gm) ?? []).length
+  check(entries >= 190, `composed only ${entries} entries`)
+  // dsh-base is a bundle patch, not an entry: it shows only through the entries it adds.
+  for (const plugin of ['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh',
+    '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-office-to-pdf']) {
+    check(config.includes(`name: '${plugin}'`) || config.includes(`name: "${plugin}"`), `${plugin} is not composed`)
+  }
+  say(`seeded profile, three plugins, 600 launch URL, uid 1000, ${entries} composed entries`)
 
   // A restart keeps the user's profile: the seed runs only where nothing is.
   await docker(['restart', name])
@@ -105,11 +118,11 @@ async function main() {
   say(`restart: 401 after ${restarted401} ms, profile kept`)
 
   // The key file: 0400 is taken, anything group- or other-readable stops the start.
-  await docker(['exec', name, 'sh', '-c', 'printf "sk-smoke\\n" > /data/secrets/deepseek-api-key && chmod 400 /data/secrets/deepseek-api-key'])
+  await docker(['exec', name, '/nodejs/bin/node', '-e', 'const fs=require("fs"); fs.writeFileSync("/data/secrets/deepseek-api-key", "sk-smoke\\n", { mode: 0o400 }); fs.chmodSync("/data/secrets/deepseek-api-key", 0o400)'])
   await docker(['restart', name])
   await waitForFence()
   check(/automagik-web: model key from \/data\/secrets\/deepseek-api-key/.test(await logsOf()), 'the 0400 key file was not used')
-  await docker(['exec', name, 'chmod', '644', '/data/secrets/deepseek-api-key'])
+  await docker(['exec', name, '/nodejs/bin/node', '-e', 'require("fs").chmodSync("/data/secrets/deepseek-api-key", 0o644)'])
   await docker(['restart', name])
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
