@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
@@ -1778,29 +1778,67 @@ function tooLate(bot, machine, key, need, space = null) {
     + `Start it from a terminal: automagik-herdr start ${shellWord(bot.id)} --project ${shellWord(key)} --machine ${shellWord(machine)}`);
 }
 
+const quietOn = (machine, seen) => seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
+  : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
+const quietWarning = (name, quiet) => (quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : []);
+const unreachable = (machine, seen) => new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
+
+/** The refusal for a program that isn't on `machine`; `also` (#612): the shipped run, missing too. */
+function notInstalledThere(name, program, machine, quiet, also = null) {
+  return new CliError(`${name} (${program}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there, `
+    + `its login shell's PATH, ~/.local/bin or ~/.bun/bin${also ? `; its shipped run (${also}) isn't either` : ""}${quiet ? ` (${quiet})` : ""}.`);
+}
+
+/** The refusal for a program on `machine` whose #! interpreter a pane there couldn't run. */
+function noInterpreterThere(name, seen, machine, quiet) {
+  return new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
+    + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
+}
+
+/**
+ * #612: `{ run: shipped, tail }` when `command` starts with the table's run (`run`: this
+ * computer's programs.json override) whose first word differs from Herdr's shipped run for the
+ * same agent key, `tail` the command's words after the override (its model and resume words);
+ * null when there is no shipped run to fall back to, or the command isn't built from the table.
+ */
+function shippedRunFor(agentKey, run, command) {
+  const shipped = AGENTS[agentKey]?.run;
+  if (!shipped?.length || !run?.length || shipped[0] === run[0]) return null;
+  if (command.length < run.length || run.some((word, i) => command[i] !== word)) return null;
+  return { run: shipped, tail: command.slice(run.length) };
+}
+
 /**
  * The agent `argv` starts, looked for on `machine` under the PATH its pane will get
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
  * and the user bin folders; `prepend`'s folders first, a project's pane-env PATH_PREPEND), so a
  * check that passes is a launch that finds it: refused when it
  * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
- * Resolves { path, warnings }: the PATH seatOnMachine starts it with.
+ * `shipped` (#612, shippedRunFor): when the table's override isn't there but the shipped run is,
+ * that run and `tail` replace the command, with one warning naming the agent and the skipped
+ * override's first word; when neither is there the refusal names both. Resolves
+ * { path, argv, warnings }: the PATH seatOnMachine starts it with and the command it starts.
  */
-async function agentThere(machine, argv, name, prepend = null) {
+async function agentThere(machine, argv, name, prepend = null, shipped = null) {
   const exec = (command, args, opts) => remoteIo.exec(command, args, machine, opts);
   const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S, prepend });
-  const quiet = seen.login === "timed out" ? `${machine}'s login shell didn't answer within ${AGENT_WAIT_S} s`
-    : seen.login === false ? `${machine}'s login shell gave no PATH` : null;
-  if (seen.state === "away") throw new CliError(`${machine} can't be reached: ${hcSaid(seen.why)}`);
-  if (seen.state === "missing") {
-    throw new CliError(`${name} (${argv[0]}) isn't installed on ${machine}, or isn't on the PATH hc runs programs with there, `
-      + `its login shell's PATH, ~/.local/bin or ~/.bun/bin${quiet ? ` (${quiet})` : ""}.`);
+  const quiet = quietOn(machine, seen);
+  if (seen.state === "away") throw unreachable(machine, seen);
+  if (seen.state === "missing" && shipped) {
+    const alt = await agentOnMachine(exec, shipped.run[0], { wait: AGENT_WAIT_S, prepend });
+    const altQuiet = quietOn(machine, alt);
+    if (alt.state === "away") throw unreachable(machine, alt);
+    if (alt.state === "found") {
+      return { path: alt.path, argv: [...shipped.run, ...shipped.tail],
+        warnings: [`${name} starts on ${machine} from its shipped run (${shipped.run[0]}), skipping the `
+          + `programs.json override here (${argv[0]}), which isn't installed there.`, ...quietWarning(name, altQuiet)] };
+    }
+    if (alt.state === "no-interpreter") throw noInterpreterThere(name, alt, machine, altQuiet);
+    throw notInstalledThere(name, argv[0], machine, altQuiet, shipped.run[0]);
   }
-  if (seen.state === "no-interpreter") {
-    throw new CliError(`${name} (${seen.file}) runs under ${seen.interpreter}, which isn't on the PATH a pane on ${machine} gets; `
-      + `it would fail with "env: ${seen.interpreter}: No such file or directory". Put ${seen.interpreter} on the PATH of ${machine}'s login shell${quiet ? ` (${quiet})` : ""}.`);
-  }
-  return { path: seen.path, warnings: quiet ? [`${quiet}, so ${name} starts with the PATH hc runs programs with there and its user bin folders.`] : [] };
+  if (seen.state === "missing") throw notInstalledThere(name, argv[0], machine, quiet);
+  if (seen.state === "no-interpreter") throw noInterpreterThere(name, seen, machine, quiet);
+  return { path: seen.path, argv, warnings: quietWarning(name, quiet) };
 }
 
 /**
@@ -1988,12 +2026,14 @@ async function seatOnMachine(project, bot, over = {}) {
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
   const command = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
   const paneEnv = await paneEnvOn(machine, key);
-  const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend);
+  // #612: a local absolute override that isn't there falls back to the shipped run when that is.
+  const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
+    shippedRunFor(agentKey, agent.run, command));
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
   const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
   const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
-  const briefed = await briefedOn(machine, project, bot, agentKey, command, home.dir);
+  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, home.dir);
   const argv = briefed.argv;
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
