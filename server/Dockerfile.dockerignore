@@ -1,0 +1,7 @@
+# The build context is the repository root, but the image reads only these inputs. BuildKit
+# uses a <Dockerfile>.dockerignore beside the Dockerfile.
+**
+!server/**
+!apps/desktop/runtime/package.json
+!apps/desktop/runtime/package-lock.json
+!apps/desktop/scripts/prune-runtime.mjs

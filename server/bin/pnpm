@@ -1,0 +1,3 @@
+#!/bin/sh
+# The pnpm dsh's plugin manager installs with: the runtime's pinned pnpm 10, not a global.
+exec /nodejs/bin/node /opt/automagik/runtime/node_modules/pnpm/bin/pnpm.cjs "$@"

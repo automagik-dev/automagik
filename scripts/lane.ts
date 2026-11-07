@@ -97,6 +97,9 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // Windows ships the helper (RFC 0016 delivery 6) this rule changes on purpose.
 // The landing page (apps/landing: the page, its styles, assets and checks; #177) is static and
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
+// The server image (server/: the automagik-web Dockerfile, its build, smoke and entrypoint) is
+// built and smoked by CI only (.github/workflows/server-image.yml) and no release carries it
+// yet: it installs plugins from a pinned release, not from this checkout.
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
 // The Unfold bridge ships from Unfold's own release, not from this lane: its folder stays here
 // (built and tested) but a change to it cuts no release and reaches no install from here
@@ -105,7 +108,7 @@ const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-
   /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
-  /^apps\/landing\//];
+  /^apps\/landing\//, /^server\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
  * own entry folder, herdr-layout/ (the pack ships its automagik.json; RFC 0011).

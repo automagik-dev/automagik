@@ -1,0 +1,68 @@
+name: Server image
+
+# The Automagik server image (server/): the automagik-web profile on the pinned DeepSeek
+# Harness, with the plugins from one pinned release. Built and smoked here only: nothing is
+# pushed to a registry and no release carries the image yet. The smoke starts the container
+# with a named volume and checks the first-start seed, the 401 auth fence, the redacted log,
+# uid 1000, Docker's health check and a restart that keeps the profile (server/smoke.mjs).
+#
+# The plugins come from the release the Dockerfile pins, not from this checkout, so a plugin
+# source change does not rebuild it; a runtime-lock move does.
+
+on:
+  pull_request:
+    paths:
+      - server/**
+      - apps/desktop/runtime/package.json
+      - apps/desktop/runtime/package-lock.json
+      - apps/desktop/scripts/prune-runtime.mjs
+      - .github/workflows/server-image.yml
+  push:
+    branches: [dev]
+    paths:
+      - server/**
+      - apps/desktop/runtime/package.json
+      - apps/desktop/runtime/package-lock.json
+      - apps/desktop/scripts/prune-runtime.mjs
+      - .github/workflows/server-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Server image (build and smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      # The image runs Node 24; the build, smoke and unit-test scripts run on the runner's.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - name: Syntax
+        run: |
+          set -euo pipefail
+          for file in server/*.mjs server/test/*.mjs; do node --check "${file}"; done
+          sh -n server/bin/dsh
+          sh -n server/bin/pnpm
+
+      - name: Unit tests
+        run: node --test 'server/test/*.test.mjs'
+
+      - name: Build
+        run: node server/build.mjs --tag automagik-server:ci
+
+      - name: Smoke
+        run: node server/smoke.mjs automagik-server:ci
