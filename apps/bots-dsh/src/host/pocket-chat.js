@@ -3,22 +3,82 @@
 // runs, read from their DSH Session logs instead of a screen. Claude, Codex and omp panes keep
 // their transcript > status > screen sources unchanged: none of this touches them.
 //
-// - Read only. It lists, follows and pages. It never prompts, cancels, answers an approval or a
-//   question, and never opens DSH's owner event stream (`$events`), so a pending approval can
-//   never be routed to, or claimed by, the phone. A pending approval or question shows as a row
-//   that says to answer on the computer.
+// - Reads, and since RFC 0015's amendment (2026-11-07) three writes: send a prompt, interrupt the
+//   running turn, and answer one approval or question DSH raised. The writes exist only on a
+//   watch handle (a channel a socket connection subscribed to), never by terminal name, never as
+//   a DSH tool, never to an automation: `send`, `answer` and `interrupt` on the source itself
+//   stay refused. Without DSH's prompt and cancel the source stays read only, as before.
+// - Approvals and questions come from DSH's approval and question services: a listener on their
+//   answerer waterfalls (`approval/request`, `user-questions/request`) passes each request on at
+//   once and races the computer's answer against the phone's; the first answer wins, the other
+//   side closes with a receipt (Amendments, "Approvals on the phone, and the race").
 // - Own Bots only: each live Bot's own current chat Session. No group, task or archived Sessions,
-//   no subagents (a Session whose header says `origin: 'subagent'` is refused).
+//   no subagents (a Session whose header says `origin: 'subagent'` is refused). A project Bot is
+//   served only with the person's yes for its project (`shown`); global Bots need none.
 // - No import of a DSH package. The Session API is DSH 0.2.2's Session Controller (`follow`,
-//   `events`, `state`, `observeState`), reached through `ctx.sessionController`, behind a
-//   capability check and a lazy import of the adapter (pocket-chat-adapter.js). On a runtime
-//   without those methods the source is absent: nothing is listed and no socket is opened.
+//   `events`, `state`, `observeState`; `prompt` and `cancel` for writes), reached through
+//   `ctx.sessionController`, behind a capability check and a lazy import of the adapter
+//   (pocket-chat-adapter.js). On a runtime without the read methods the source is absent.
 // - Served to Pocket Link over a Unix socket in the team's home, owner-only (pocket-socket.js).
+import { randomUUID } from 'node:crypto'
+import { TEAM_LOOKUPS, teamToolOf } from './approvals.js'
 import { startPocketSocket } from './pocket-socket.js'
 
 /** The Session Controller methods this source needs (DSH 0.2.2); all of them, or none is used. */
 export const SESSION_METHODS = Object.freeze(['follow', 'events', 'state', 'observeState'])
 export const hasSessionApi = controller => controller != null && SESSION_METHODS.every(name => typeof controller[name] === 'function')
+/** The methods the writes need besides the reads; without both, the source stays read only. */
+export const WRITE_METHODS = Object.freeze(['prompt', 'cancel'])
+export const hasWriteApi = controller => hasSessionApi(controller) && WRITE_METHODS.every(name => typeof controller[name] === 'function')
+
+/** A send's text, and an answer's free text, at most this many UTF-8 bytes (Pocket Link's SEND_TEXT_MAX). */
+export const SEND_TEXT_MAX = 32 * 1024
+/** Phone ids kept per Session for the Retry dedupe. */
+export const KEEP_SENT_IDS = 64
+/** Settled requests kept per Session, for the phone's receipts on reconnect. */
+export const KEEP_SETTLED = 16
+/** Sessions whose settled requests are kept (oldest forgotten first). */
+export const KEEP_SETTLED_SESSIONS = 32
+/** Every prompt from the phone carries a request id that starts so (the log tells them apart). */
+export const REQUEST_PREFIX = 'pocket-'
+/** What an approval row offers the phone: one call, or no. Allow for session stays on the computer. */
+export const APPROVAL_CHOICES = Object.freeze(['allow', 'deny'])
+export const OTHER = 'other'
+const PHONE_OUTCOMES = { allow: 'allowed-once', deny: 'rejected' }
+const COMPUTER_OUTCOMES = { 'allowed-once': 'allow', rejected: 'deny' }
+const PHONE_ID = /^[A-Za-z0-9._:-]{1,128}$/
+
+// ---- the cleaner (RFC 0015, Design, "Input"): Pocket Link's chat/paste.js cleanChatText, the same
+// rules, kept here because a plugin never imports from the herdr pack.
+const ESC = '\u001b'
+const CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g
+const STRING = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d\u009e\u009f])[^\u0007\u001b\u0090\u0098\u009c-\u009f]*(?:\u0007|\u001b\\|\u009c)/g
+const OTHER_SEQUENCE = /\u001b[ -/]*[0-~]/g
+const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
+
+/**
+ * Paste markers, escape sequences, every C0 control but newline and tab, DEL and C1 go; CRLF
+ * becomes LF. Empty (or only whitespace) after cleaning is refused.
+ * @param {unknown} text
+ * @returns {{ ok: true, text: string } | { ok: false, reason: 'empty' | 'not-text' }}
+ */
+export function cleanChatText(text) {
+  if (typeof text !== 'string') return { ok: false, reason: 'not-text' }
+  const cleaned = text
+    .replaceAll(`${ESC}[200~`, '')
+    .replaceAll(`${ESC}[201~`, '')
+    .replace(STRING, '')
+    .replace(CSI, '')
+    .replace(OTHER_SEQUENCE, '')
+    .replace(/\r\n/g, '\n')
+    .replace(CONTROLS, '')
+  return cleaned.trim() === '' ? { ok: false, reason: 'empty' } : { ok: true, text: cleaned }
+}
+
+const bytes = text => Buffer.byteLength(text, 'utf8')
+/** A refused write, in the shapes `chat.*` answers (Pocket Link forwards them unchanged). */
+export const refused = (reason, extra = {}) => ({ ok: false, state: 'refused', reason, ...extra })
+const sessionOfAgent = agent => agent?.session?.id ?? agent?.id
 
 /** What every read-only row, status and refusal tells the person. */
 export const ANSWER_ON_COMPUTER = 'Answer on the computer'
@@ -107,11 +167,13 @@ export function rowsOf(event, scope) {
 }
 
 /** Pocket status from a Session state (`SessionState`, dsh-api-session-controller types.d.ts:578-588). */
-export function statusOf(state, turn = 0) {
+export function statusOf(state, turn = 0, { writable = false } = {}) {
   const pending = Array.isArray(state?.pendingInput) ? state.pendingInput : []
-  if (pending.includes('approval')) return { state: 'blocked', kind: 'permission', msg: ANSWER_ON_COMPUTER, turn }
-  if (pending.includes('question')) return { state: 'blocked', kind: 'question', msg: ANSWER_ON_COMPUTER, turn }
-  if (pending.length) return { state: 'blocked', kind: null, msg: ANSWER_ON_COMPUTER, turn }
+  // With writes, the phone answers from the row itself; the status no longer sends it away.
+  const msg = writable ? '' : ANSWER_ON_COMPUTER
+  if (pending.includes('approval')) return { state: 'blocked', kind: 'permission', msg, turn }
+  if (pending.includes('question')) return { state: 'blocked', kind: 'question', msg, turn }
+  if (pending.length) return { state: 'blocked', kind: null, msg, turn }
   return { state: state?.running === true ? 'working' : 'idle', kind: null, msg: '', turn }
 }
 
@@ -146,24 +208,41 @@ export function pageOf(rows, limit = PAGE_ROWS) {
 
 const seqOf = row => cursorOf(row.id)?.seq ?? -1
 
-/** What the phone may never do here, and why. */
+/** What the phone may never do by terminal name, and why: writes exist only on a watch handle. */
 export function refusal(id) {
   return { state: 'refused', ok: false, reason: 'read-only', message: ANSWER_ON_COMPUTER, ...(id === undefined ? {} : { id }) }
 }
+
+/** A row id for a request DSH raised: keyed by the tool call DSH's own card attaches to. */
+const requestRowId = (sessionId, seq, kind, key) => rowIdOf(sessionId, Math.max(0, seq), `${kind}-${encodeURIComponent(key)}`)
+
+/** Whether a project Bot has the person's yes; global Bots (`project: null`) need none. */
+const globalOnly = bot => bot?.project == null
 
 /**
  * The source: one follow per watched Bot's Session, shared by every listener of it.
  * @param {{ adapter: { follow(sessionId: string, signal: AbortSignal): AsyncIterable<any>,
  *   events(sessionId: string, page: { beforeSeq?: number, maxMessages?: number }, signal: AbortSignal): Promise<{ records: any[], hasMore: boolean }>,
- *   state(sessionId: string, signal: AbortSignal): Promise<any>, observeState(sessionId: string, signal: AbortSignal): AsyncIterable<any> },
- *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string }>>, timers?: typeof realTimers, pollMs?: number,
- *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void }} options
+ *   state(sessionId: string, signal: AbortSignal): Promise<any>, observeState(sessionId: string, signal: AbortSignal): AsyncIterable<any>,
+ *   prompt?(sessionId: string, prompt: { requestId: string, text: string }, signal: AbortSignal): Promise<any>, cancel?(sessionId: string): any },
+ *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string, project?: string | null }>>, timers?: typeof realTimers, pollMs?: number,
+ *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
+ *   shown?: (bot: { project?: string | null }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
  */
 export class DshChatSource {
-  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {} }) {
-    Object.assign(this, { adapter, bots, timers, pollMs, keep, maxFollowed, log })
+  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, chatOwner, now = Date.now }) {
+    Object.assign(this, { adapter, bots, timers, pollMs, keep, maxFollowed, log, shown, now })
+    /** Writes need the adapter's prompt and cancel, and the answerer listeners wired (install). */
+    this.writable = writable === true && typeof adapter?.prompt === 'function' && typeof adapter?.cancel === 'function'
+    this.chatOwner = chatOwner ?? (sessionId => [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.botId)
     /** botId -> entry */
     this.entries = new Map()
+    /** sessionId -> Map(rowId -> open request): what DSH waits on now, followed or not. */
+    this.open = new Map()
+    /** sessionId -> settled requests, newest last (KEEP_SETTLED). Memory only. */
+    this.settled = new Map()
+    /** sessionId -> request ids already prompted (KEEP_SENT_IDS), the phone's and the log's. */
+    this.sent = new Map()
   }
 
   /** The Bots a phone can open, each as `dsh:<botId>`. */
@@ -171,41 +250,62 @@ export class DshChatSource {
     const bots = await this.bots()
     return bots.map(bot => ({
       terminal: terminalOf(bot.id), machine: null, agent: 'dsh', title: bot.name ?? '',
-      status: this.entries.get(bot.id)?.status ?? statusOf(null), chat: 'session',
+      status: this.entries.get(bot.id)?.status ?? statusOf(null), chat: 'session', shown: this.shown(bot) === true,
     }))
   }
 
   /**
    * Start watching a Bot's chat. The listener gets a `snapshot` first, then `rows`, `status`,
-   * `approval` and `question` events, and `gone` if the Session stops being followable.
-   * @returns {Promise<{ ok: true, close(): void, backfill(before: string, limit?: number): Promise<any[]> } | { ok: false, reason: string }>}
+   * `approval` and `question` events, and `gone` if the Session stops being followable. With
+   * writes on, the handle also sends, interrupts and answers, for this chat only.
+   * @returns {Promise<{ ok: true, close(): void, backfill(before: string, limit?: number): Promise<any[]>,
+   *   send?: Function, interrupt?: Function, answer?: Function } | { ok: false, reason: string }>}
    */
   async watch(terminal, listener, { after } = {}) {
     const botId = botIdOf(terminal)
     if (botId === null) return { ok: false, reason: 'not-found' }
     const bot = (await this.bots()).find(item => item.id === botId)
     if (!bot) return { ok: false, reason: 'not-found' }
+    if (this.shown(bot) !== true) return { ok: false, reason: 'not-shown' }
     let entry = this.entries.get(botId)
     if (entry && entry.sessionId !== bot.sessionId) { this.drop(entry, 'moved'); entry = undefined }
     if (!entry) {
       if (this.entries.size >= this.maxFollowed) return { ok: false, reason: 'too-many' }
-      entry = this.open(bot)
+      entry = this.open_(bot)
       this.entries.set(botId, entry)
     }
     let opened
     try { opened = await entry.ready } catch { opened = { ok: false, reason: 'unavailable' } }
     if (!opened.ok) { this.drop(entry); return opened }
     entry.listeners.add(listener)
-    this.emitTo(listener, await this.snapshotFor(entry, after))
-    if (entry.question) this.emitTo(listener, { type: 'question', row: entry.question })
-    return {
+    const live = this.writable ? [...(this.open.get(entry.sessionId)?.values() ?? [])].map(request => request.row) : []
+    const snapshot = await this.snapshotFor(entry, after)
+    const firstApproval = live.find(row => row.kind === 'approval')
+    this.emitTo(listener, this.writable ? { ...snapshot, approval: firstApproval ?? null, settled: [...(this.settled.get(entry.sessionId) ?? [])] } : snapshot)
+    if (this.writable) {
+      for (const row of live) if (row !== firstApproval) this.emitTo(listener, { type: row.kind, row })
+    } else if (entry.question) {
+      this.emitTo(listener, { type: 'question', row: entry.question })
+    }
+    const writes = new AbortController()
+    let closed = false
+    const handle = {
       ok: true,
-      close: () => this.leave(entry, listener),
+      close: () => { closed = true; writes.abort(new Error('the phone left this chat')); this.leave(entry, listener) },
       backfill: (before, limit) => this.backfill(entry, before, limit),
     }
+    if (this.writable) {
+      const live_ = () => !closed && !entry.gone
+      Object.assign(handle, {
+        send: message => this.send_(entry, live_, writes.signal, message),
+        interrupt: () => this.interrupt_(entry, live_),
+        answer: message => this.answer_(entry, live_, message),
+      })
+    }
+    return handle
   }
 
-  open(bot) {
+  open_(bot) {
     const controller = new AbortController()
     const entry = {
       botId: bot.id, sessionId: bot.sessionId, controller, listeners: new Set(), rows: [], floorSeq: 0, cursor: -1,
@@ -225,6 +325,7 @@ export class DshChatSource {
     const records = Array.isArray(opening.records) ? opening.records : []
     entry.floorSeq = records.length ? records[0].event.seq : (Number.isSafeInteger(opening.cursor) ? opening.cursor + 1 : 0)
     entry.cursor = Number.isSafeInteger(opening.cursor) ? opening.cursor : -1
+    for (const record of records) this.noteRequestId(entry.sessionId, record.event)
     this.keepRows(entry, records.flatMap(record => rowsOf(record.event, entry.scope)))
     this.applyState(entry, await this.adapter.state(entry.sessionId, signal), { quiet: true })
     void this.pump(entry, stream)
@@ -250,6 +351,7 @@ export class DshChatSource {
         if (done || entry.gone) break
         if (frame?.type !== 'event' || !Number.isSafeInteger(frame.event?.seq)) continue
         entry.cursor = frame.event.seq
+        this.noteRequestId(entry.sessionId, frame.event)
         const rows = rowsOf(frame.event, entry.scope)
         if (rows.length) { this.keepRows(entry, rows); this.emit(entry, { type: 'rows', rows }) }
         // A call can be waiting for approval now; turn edges change what is running.
@@ -280,10 +382,13 @@ export class DshChatSource {
 
   applyState(entry, state, { quiet = false } = {}) {
     if (entry.gone || state == null) return
-    const status = statusOf(state, entry.scope.turn)
+    const status = statusOf(state, entry.scope.turn, { writable: this.writable })
     const changed = ['state', 'kind', 'msg', 'turn'].some(key => status[key] !== entry.status[key])
     entry.status = status
-    const row = pendingRowOf(state, entry.sessionId, entry.scope.turn)
+    entry.running = state.running === true
+    // With writes on, the open rows come from the requests DSH raised (the answerer listeners),
+    // never from the state too: one source, so a phone never sees the same wait twice.
+    const row = this.writable ? null : pendingRowOf(state, entry.sessionId, entry.scope.turn)
     const approval = row?.kind === 'approval' ? row : null
     const question = row?.kind === 'question' ? row : null
     if (quiet) { entry.approval = approval; entry.question = question; return }
@@ -331,6 +436,9 @@ export class DshChatSource {
 
   emitTo(listener, event) { try { listener(event) } catch {} }
   emit(entry, event) { for (const listener of entry.listeners) this.emitTo(listener, event) }
+  emitSession(sessionId, event) {
+    for (const entry of this.entries.values()) if (entry.sessionId === sessionId && !entry.gone) this.emit(entry, event)
+  }
 
   leave(entry, listener) {
     entry.listeners.delete(listener)
@@ -349,12 +457,276 @@ export class DshChatSource {
 
   close() { for (const entry of this.entries.values()) this.drop(entry, 'closed') }
 
-  // What a phone may do on a terminal and never on a DSH chat: each is refused, with no call.
+  // What a phone may do on a terminal and never by name on a DSH chat: each is refused, with no
+  // call. The writes are the watch handle's (one subscribed channel), never these.
   send(_terminal, message) { return refusal(message?.id) }
   sendHeld(_terminal, message) { return refusal(message?.id) }
   cancelHeld(_terminal, message) { return refusal(message?.id) }
   answer() { return refusal() }
   interrupt() { return refusal() }
+
+  // ---- the Retry dedupe: request ids already prompted, the phone's and the log's
+
+  noteRequestId(sessionId, event) {
+    const rpcId = event?.type === 'user/message' ? event.data?.source?.rpcId : undefined
+    if (typeof rpcId === 'string' && rpcId.startsWith(REQUEST_PREFIX)) this.remember(sessionId, rpcId)
+  }
+
+  remember(sessionId, requestId) {
+    const ids = this.sent.get(sessionId) ?? []
+    if (!ids.includes(requestId)) ids.push(requestId)
+    if (ids.length > KEEP_SENT_IDS) ids.splice(0, ids.length - KEEP_SENT_IDS)
+    this.sent.set(sessionId, ids)
+  }
+
+  /** Whether the Bot this chat follows is still served, on the Session the chat follows. */
+  async stillServed(entry) {
+    const bot = (await this.bots()).find(item => item.id === entry.botId)
+    if (!bot || bot.sessionId !== entry.sessionId) return 'not-watching'
+    if (this.shown(bot) !== true) return 'not-shown'
+    return null
+  }
+
+  /**
+   * A prompt to the Bot's current chat Session, queued behind a running turn (never `steer`).
+   * A known id is answered `sent` and prompts nothing: this memory, the Session log the follow
+   * read, and DSH's own check (it skips a prompt whose request id the inbox or log holds).
+   */
+  async send_(entry, live, signal, message) {
+    const id = message?.id
+    if (typeof id !== 'string' || !PHONE_ID.test(id)) return refused('invalid', { message: 'id' })
+    if (!live()) return refused('not-watching', { id })
+    if (typeof message.text !== 'string') return refused('invalid', { id, message: 'text' })
+    if (bytes(message.text) > SEND_TEXT_MAX) return refused('too-long', { id })
+    const cleaned = cleanChatText(message.text)
+    if (!cleaned.ok) return refused('empty', { id })
+    const requestId = id.startsWith(REQUEST_PREFIX) ? id : `${REQUEST_PREFIX}${id}`
+    if (this.sent.get(entry.sessionId)?.includes(requestId)) return { ok: true, state: 'sent', id, repeat: true }
+    const gate = await this.stillServed(entry)
+    if (gate) return refused(gate, { id })
+    if (!live() || signal.aborted) return refused('not-watching', { id })
+    let running = entry.running === true
+    try { running = (await this.adapter.state(entry.sessionId, signal))?.running === true } catch {}
+    if (!live() || signal.aborted) return refused('not-watching', { id })
+    try {
+      await this.adapter.prompt(entry.sessionId, { requestId, text: cleaned.text }, signal)
+    } catch (error) {
+      if (signal.aborted) return refused('not-watching', { id })
+      this.log('pocket chat: a send was not accepted: %s', error?.message ?? error)
+      return refused('offline', { id })
+    }
+    this.remember(entry.sessionId, requestId)
+    return { ok: true, state: running ? 'queued' : 'sent', id }
+  }
+
+  /** Cancel the running turn; with none running, `sent` and nothing done. Never escalates. */
+  async interrupt_(entry, live) {
+    if (!live()) return refused('not-watching')
+    const gate = await this.stillServed(entry)
+    if (gate) return refused(gate)
+    let running = entry.running === true
+    try { running = (await this.adapter.state(entry.sessionId, entry.controller.signal))?.running === true } catch {}
+    if (!running) return { ok: true, state: 'sent' }
+    if (!live()) return refused('not-watching')
+    try { await this.adapter.cancel(entry.sessionId) } catch (error) {
+      this.log('pocket chat: an interrupt was not accepted: %s', error?.message ?? error)
+      return refused('offline')
+    }
+    return { ok: true, state: 'sent' }
+  }
+
+  /**
+   * One answer to the request open now in this chat's Session, checked at answer time (never
+   * against what a channel was shown). Allow for session is never taken from the phone.
+   */
+  async answer_(entry, live, message) {
+    const { row, choice, text } = message ?? {}
+    if (typeof row !== 'string' || typeof choice !== 'string') return refused('invalid')
+    if (text !== undefined && typeof text !== 'string') return refused('invalid')
+    if (!live()) return refused('not-watching')
+    if (cursorOf(row)?.sessionId !== entry.sessionId) return refused('not-watching')
+    const gate = await this.stillServed(entry)
+    if (gate) return refused(gate)
+    const open = this.open.get(entry.sessionId)
+    const request = open?.get(row)
+    if (!request || request.done) {
+      const settled = this.settled.get(entry.sessionId)?.find(item => item.id === row)
+      // Withdrawn and a newer request open in its place: the row was replaced, not answered.
+      const replaced = settled?.outcome === 'withdrawn' && (open?.size ?? 0) > 0
+      return settled && !replaced ? refused('settled', { receipt: settled }) : refused('changed', { message: 'The question changed' })
+    }
+    const value = request.row.kind === 'approval' ? approvalAnswer(choice, text) : questionAnswer(request, choice, text)
+    if (!value.ok) return refused(value.reason)
+    const by = typeof message.by === 'string' ? message.by.slice(0, 120) : ''
+    if (!request.settle(value.value, { by: 'phone', ...(by ? { name: by } : {}), outcome: value.outcome })) {
+      const settled = this.settled.get(entry.sessionId)?.find(item => item.id === row)
+      return refused('settled', settled ? { receipt: settled } : {})
+    }
+    return { ok: true, state: 'sent' }
+  }
+
+  // ---- the answerer listeners: DSH's approval and question services, under the race rule
+
+  /**
+   * An `approval/request` waterfall step. Passed on at once (`next`); for a Bot's own chat it is
+   * also open to the phone until either side answers. The team's own lookups pass straight on:
+   * approvals.js answers them before anyone is asked.
+   */
+  raceApproval(request, next) {
+    const sessionId = sessionOfAgent(request?.agent)
+    if (!this.writable || typeof sessionId !== 'string' || this.chatOwner(sessionId) === undefined || TEAM_LOOKUPS.has(teamToolOf(request.toolName))) return next()
+    const callId = typeof request.callId === 'string' && request.callId ? request.callId : randomUUID()
+    const input = this.callInput(sessionId, request.callId)
+    const row = {
+      id: requestRowId(sessionId, this.cursorOfSession(sessionId), 'approval', callId), turn: this.turnOfSession(sessionId), at: this.now(), source: 'session', kind: 'approval',
+      tool: String(request.toolName ?? ''), summary: String(request.reason ?? request.toolName ?? '').slice(0, 500), input,
+      choices: [...APPROVAL_CHOICES], open: true, answerable: true, call: typeof request.callId === 'string' ? request.callId : null,
+    }
+    return this.hold(sessionId, row, request, next, value => (COMPUTER_OUTCOMES[value] === undefined ? null : { outcome: COMPUTER_OUTCOMES[value] }))
+  }
+
+  /** A `user-questions/request` waterfall step, the same way. One question with options is answerable. */
+  raceQuestion(request, next) {
+    const sessionId = sessionOfAgent(request?.agent)
+    if (!this.writable || typeof sessionId !== 'string' || this.chatOwner(sessionId) === undefined) return next()
+    const questions = Array.isArray(request?.questions) ? request.questions : []
+    const one = questions.length === 1 ? questions[0] : null
+    const callId = typeof request.wait?.callId === 'string' && request.wait.callId ? request.wait.callId : randomUUID()
+    const options = (one?.options ?? []).map(option => String(option?.label ?? ''))
+    const row = {
+      id: requestRowId(sessionId, this.cursorOfSession(sessionId), 'question', callId), turn: this.turnOfSession(sessionId), at: this.now(), source: 'session', kind: 'question',
+      prompt: one ? cut(String(one.question ?? ''), PREVIEW_MAX) : ANSWER_ON_COMPUTER, options, multi: one?.multiSelect === true,
+      answerable: one !== null && typeof one.id === 'string', open: true, call: typeof request.wait?.callId === 'string' ? request.wait.callId : null,
+    }
+    return this.hold(sessionId, row, request, next, (value) => {
+      const answer = Array.isArray(value?.answers) ? value.answers[0] : null
+      if (!answer) return null
+      const picked = Array.isArray(answer.selected) ? answer.selected.filter(label => options.includes(label)) : []
+      return { outcome: picked.length ? picked.join(', ') : 'answered' }
+    }, { question: one })
+  }
+
+  cursorOfSession(sessionId) { return [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.cursor ?? 0 }
+  turnOfSession(sessionId) { return [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.scope.turn ?? 0 }
+  callInput(sessionId, callId) {
+    const entry = [...this.entries.values()].find(item => item.sessionId === sessionId)
+    const rowId = typeof callId === 'string' ? entry?.scope.calls.get(callId) : undefined
+    const row = rowId === undefined ? undefined : entry.rows.find(item => item.id === rowId)
+    return typeof row?.input === 'string' ? cut(row.input, PREVIEW_MAX) : ''
+  }
+
+  /**
+   * Hold one request open to the phone while the rest of the chain (the computer's dialog) has
+   * it too. The first answer wins: the phone's resolves this step and withdraws the computer's
+   * dialog (the request signal the chain below sees is aborted, so DSH sends its `cancel`); the
+   * computer's resolves it and closes the phone's card. Either way the winner is recorded with a
+   * receipt from this record, never from DSH's frame. No answer is ever made here on its own.
+   */
+  hold(sessionId, row, request, next, receiptOf, extra = {}) {
+    const original = request.signal
+    if (original?.aborted) return next()
+    const withdraw = new AbortController()
+    const signal = original ? AbortSignal.any([original, withdraw.signal]) : withdraw.signal
+    // The chain below reads the request's signal; swapping it is how a phone answer reaches the
+    // computer's dialog. A request that will not take it is shown but not answerable.
+    let swapped = false
+    try { request.signal = signal; swapped = request.signal === signal } catch {}
+    const shown = swapped ? row : { ...row, answerable: false, ...(row.kind === 'approval' ? { choices: [] } : {}) }
+    return new Promise((resolve, reject) => {
+      const open = this.open.get(sessionId) ?? new Map()
+      this.open.set(sessionId, open)
+      const record = { row: shown, done: false, ...extra }
+      const finish = () => {
+        record.done = true
+        open.delete(shown.id)
+        if (!open.size && this.open.get(sessionId) === open) this.open.delete(sessionId)
+        original?.removeEventListener('abort', onWithdrawn)
+        if (swapped) { try { request.signal = original } catch {} }
+      }
+      const close = (receipt) => {
+        const closed = { ...shown, open: false, answerable: false, ...(receipt ? { receipt } : {}) }
+        this.emitSession(sessionId, { type: shown.kind, row: closed })
+      }
+      const keep = (receipt) => {
+        const list = this.settled.get(sessionId) ?? []
+        list.push(receipt)
+        if (list.length > KEEP_SETTLED) list.splice(0, list.length - KEEP_SETTLED)
+        this.settled.delete(sessionId)
+        this.settled.set(sessionId, list)
+        while (this.settled.size > KEEP_SETTLED_SESSIONS) this.settled.delete(this.settled.keys().next().value)
+      }
+      record.settle = (value, how) => {
+        if (record.done || !swapped || !shown.answerable) return false
+        finish()
+        const receipt = { id: shown.id, by: how.by, ...(how.name ? { name: how.name } : {}), outcome: how.outcome, at: this.now() }
+        keep(receipt)
+        resolve(value)
+        withdraw.abort(new Error('answered on the phone'))
+        close(receipt)
+        return true
+      }
+      // Withdrawn by DSH (the turn was interrupted, the Session stopped): "No longer needed".
+      const onWithdrawn = () => {
+        if (record.done) return
+        finish()
+        const receipt = { id: shown.id, by: null, outcome: 'withdrawn', at: this.now() }
+        keep(receipt)
+        close(receipt)
+      }
+      original?.addEventListener('abort', onWithdrawn, { once: true })
+      open.set(shown.id, record)
+      this.emitSession(sessionId, { type: shown.kind, row: shown })
+      Promise.resolve().then(next).then((value) => {
+        if (record.done) { if (!withdraw.signal.aborted) resolve(value); return }
+        finish()
+        const known = receiptOf(value)
+        const receipt = { id: shown.id, by: known ? 'computer' : null, outcome: known?.outcome ?? 'withdrawn', at: this.now() }
+        keep(receipt)
+        close(receipt)
+        resolve(value)
+      }, (error) => {
+        if (record.done) { if (!withdraw.signal.aborted) reject(error); return }
+        finish()
+        const receipt = { id: shown.id, by: null, outcome: 'withdrawn', at: this.now() }
+        keep(receipt)
+        close(receipt)
+        reject(error)
+      })
+    })
+  }
+}
+
+/** An approval answer from the phone: one call, or no. Never text, never allow for session. */
+function approvalAnswer(choice, text) {
+  if (text !== undefined) return { ok: false, reason: 'text-on-approval' }
+  const value = PHONE_OUTCOMES[choice]
+  return value === undefined ? { ok: false, reason: 'invalid' } : { ok: true, value, outcome: choice }
+}
+
+/**
+ * A question answer from the phone: an option by its number (1 first; a comma list on a
+ * multi-select), or `other` with one line of text on a single-select, forwarded unchanged.
+ */
+function questionAnswer(request, choice, text) {
+  const question = request.question
+  if (!request.row.answerable || !question) return { ok: false, reason: 'invalid' }
+  const options = request.row.options
+  if (choice === OTHER) {
+    if (request.row.multi || text === undefined) return { ok: false, reason: 'invalid' }
+    if (bytes(text) > SEND_TEXT_MAX) return { ok: false, reason: 'too-long' }
+    if (/[\r\n]/.test(text)) return { ok: false, reason: 'invalid' }
+    if (text.trim() === '') return { ok: false, reason: 'empty' }
+    const cleaned = cleanChatText(text)
+    if (!cleaned.ok) return { ok: false, reason: 'empty' }
+    if (cleaned.text !== text) return { ok: false, reason: 'invalid' }
+    return { ok: true, value: { answers: [{ id: question.id, selected: [], custom: text }] }, outcome: OTHER }
+  }
+  if (text !== undefined) return { ok: false, reason: 'invalid' }
+  const digit = d => /^[1-9][0-9]*$/.test(d) && Number(d) <= options.length
+  const picked = request.row.multi ? choice.split(',') : [choice]
+  if (!picked.length || !picked.every(digit) || new Set(picked).size !== picked.length) return { ok: false, reason: 'invalid' }
+  const selected = picked.map(d => options[Number(d) - 1])
+  return { ok: true, value: { answers: [{ id: question.id, selected }] }, outcome: selected.join(', ') }
 }
 
 /** The team's own live Bots, each with its current own-chat Session (never a group, task or archived one). */
@@ -364,34 +736,49 @@ export function ownBots(rt) {
     const bots = Object.values(rt.state?.bots ?? {})
     return bots
       .filter(bot => typeof bot?.id === 'string' && rt.botOf(bot.id) === bot)
-      .map(bot => ({ id: bot.id, name: typeof bot.name === 'string' ? bot.name : '', sessionId: rt.chatOf(bot.id) }))
+      .map(bot => ({ id: bot.id, name: typeof bot.name === 'string' ? bot.name : '', sessionId: rt.chatOf(bot.id), project: typeof bot.project === 'string' ? bot.project : null }))
       .filter(bot => typeof bot.sessionId === 'string' && bot.sessionId !== '')
   }
 }
 
 /**
  * Wire the source when the runtime has DSH 0.2.2's Session API and the team has a home; else
- * register nothing (the source is absent, and Pocket Link lists no DSH chats).
+ * register nothing (the source is absent, and Pocket Link lists no DSH chats). With DSH's prompt
+ * and cancel too, the answerer listeners are wired and the source takes writes; they reach DSH
+ * only through a socket subscription (pocket-socket.js), never as a tool or for an automation.
  */
 export function install(rt) {
   const { ctx } = rt
   const controller = ctx.get?.('sessionController') ?? ctx.sessionController
   if (!hasSessionApi(controller) || typeof rt.home !== 'string' || process.platform === 'win32') return
+  const writable = hasWriteApi(controller)
+  let source
+  if (writable) {
+    // Ahead of the computer's own answerer, which holds the request until someone answers; both
+    // listeners pass every request on at once, so the computer is never held up.
+    ctx.on('approval/request', (request, next) => (source ? source.raceApproval(request, next) : next()), { prepend: true })
+    ctx.on('user-questions/request', (request, next) => (source ? source.raceQuestion(request, next) : next()), { prepend: true })
+  }
+  const chatOwner = (sessionId) => {
+    const botId = rt.chatOwners?.get?.(sessionId)
+    return botId !== undefined && rt.chatOf?.(botId) === sessionId ? botId : undefined
+  }
   ctx.effect(() => {
-    let source
     let socket
     let stopped = false
     const started = (async () => {
       const { createAdapter } = await import('./pocket-chat-adapter.js')
       if (stopped) return
-      source = new DshChatSource({ adapter: createAdapter(controller), bots: ownBots(rt), log: (...args) => rt.warn?.(...args) })
+      source = new DshChatSource({ adapter: createAdapter(controller), bots: ownBots(rt), log: (...args) => rt.warn?.(...args), writable, chatOwner })
       socket = await startPocketSocket({ home: rt.home, source, log: (...args) => rt.warn?.(...args) })
       if (stopped) await socket.close()
     })().catch(error => rt.warn?.('omni-ui: Pocket chat is off: %s', error?.message ?? error))
     return async () => {
       stopped = true
       await started
-      source?.close()
+      const closing = source
+      source = undefined
+      closing?.close()
       await socket?.close()
     }
   }, 'ds-bot: pocket chat')

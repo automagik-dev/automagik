@@ -1,10 +1,12 @@
 // The Session Controller adapter for Pocket chat (#517), imported only when the runtime has the
 // methods (pocket-chat.js hasSessionApi). It speaks DSH 0.2.2-rc.1's Host Remote shapes
-// (@deepseek-ai/dsh-api-session-controller lib/types/index.d.ts:203-246, types.d.ts:386-473 and
-// 578-592) and imports no DSH package: the controller is the plugin's injected service.
+// (@deepseek-ai/dsh-api-session-controller lib/types/index.d.ts:166-215, types.d.ts:332-372, 386-473
+// and 578-592) and imports no DSH package: the controller is the plugin's injected service.
 //
-// Only reads. Every request names an ordinary Session address (`kind: 'session'`), never a
-// subagent address; nothing here calls prompt, cancel, updateQueue or a Remote event.
+// Every request names an ordinary Session address (`kind: 'session'`), never a subagent address.
+// Reads: follow, events, state, observeState. Writes (RFC 0015's amendment), present only when the
+// controller has them: one queued prompt with the phone's request id, and a cancel of the active
+// turn. Nothing here calls updateQueue, steers a turn or raises a Remote event.
 
 /** @param {any} controller  `ctx.sessionController` */
 export function createAdapter(controller) {
@@ -19,5 +21,12 @@ export function createAdapter(controller) {
     }, signal),
     state: (sessionId, signal) => controller.state({ sessionId }, signal),
     observeState: (sessionId, signal) => controller.observeState({ sessionId }, signal),
+    ...(typeof controller.prompt === 'function' && typeof controller.cancel === 'function'
+      ? {
+          // `queue`, never `steer`: a phone message never redirects a running turn.
+          prompt: (sessionId, { requestId, text }, signal) => controller.prompt({ requestId, sessionId, mode: 'queue', content: [{ type: 'text', text }] }, signal),
+          cancel: sessionId => controller.cancel({ sessionId }),
+        }
+      : {}),
   }
 }
