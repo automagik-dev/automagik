@@ -161,6 +161,11 @@ export const sandboxRootOf = (env = process.env) => join(env.HOME || homedir(), 
 export const sandboxWrapperOf = (env = process.env) => join(sandboxRootOf(env), SANDBOX_WRAPPER);
 /** The wrapper beside this module, in the pack release (or its am copy). */
 export const packWrapperOf = () => fileURLToPath(new URL("./bin/hc-socket-mask.mjs", import.meta.url));
+/** This module's own folder: the pack mod when the pack's CLI runs the installer. */
+export const packRootOf = () => dirname(dirname(packWrapperOf()));
+/** Only the pack's mod folder has the pane helper and runner the sandbox row masks. */
+export const sandboxCapable = (root = packRootOf()) => basename(root) === "am-sidebar"
+  && existsSync(join(root, "hcPane.mjs")) && existsSync(join(root, "bin", "run.sh"));
 /** The dsh-tui profile's patch file, where the sandbox row lives. */
 export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis.patch.yml");
 
@@ -174,6 +179,8 @@ export function installSandboxRow({ env = process.env } = {}) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
   const source = packWrapperOf();
+  const packRoot = packRootOf();
+  if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot };
   let changed = false;
   try {
     const want = readFileSync(source);
@@ -188,8 +195,8 @@ export function installSandboxRow({ env = process.env } = {}) {
     throw new Error(`cannot copy the sandbox wrapper to ${wrapper}: ${e?.message ?? e}`);
   }
   try {
-    const row = installRow({ profile, wrapper });
-    return { changed: changed || row.changed, wrapper, profile, backup: row.backup };
+    const row = installRow({ profile, wrapper, packRoot });
+    return { changed: changed || row.changed, wrapper, profile, packRoot, backup: row.backup };
   } catch (e) {
     throw new Error(`cannot install the sandbox row in ${profile}: ${e?.message ?? e}`);
   }
@@ -199,11 +206,13 @@ export function installSandboxRow({ env = process.env } = {}) {
 export function sandboxState(env = process.env) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
+  const packRoot = packRootOf();
+  const capable = sandboxCapable(packRoot);
   let current = false;
   try { current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper)); } catch { current = false; }
   let row;
-  try { row = checkRow({ profile, wrapper }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
-  return { wrapper, profile, current, row };
+  try { row = checkRow({ profile, wrapper, packRoot: capable ? packRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
+  return { wrapper, profile, packRoot, capable, current, row };
 }
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
@@ -490,7 +499,9 @@ export async function installDshTui(options = {}) {
       ? `dsh-TUI ${DSH_TUI.version} is already installed in the ${PROFILE} profile (${profile}).`
       : `DSH at ${dsh}: installed dsh-TUI ${DSH_TUI.version} in the ${PROFILE} profile (${profile}).`,
     `The ${SHIM} shim is at ${shim}${onPath(env, binDir) ? "" : `; add ${binDir} to PATH so Herdr's built-in menu entry finds it`}.`,
-    `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} (the hc proxy mask).`,
+    sandbox.skipped
+      ? "The dsh-tui profile's sandbox row was left to the pack's own dsh-tui install (this copy is not the pack's mod folder)."
+      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} and the pack folder it keeps read-only.`,
     guideBefore === null
       ? `Marked dsh-TUI's first-run guide done (${guide}; open it later with /setup).`
       : "Kept dsh-TUI's first-run guide state (a completed guide writes that file).",
@@ -648,12 +659,13 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
   const sandbox = sandboxState(env);
-  const sandboxOk = sandbox.current && sandbox.row.ok;
+  const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
   add("dsh-sandbox", sandboxOk || !installed,
-    !installed ? "not installed: the dsh-tui profile is not set up"
-      : sandboxOk ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper}`
-        : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
-          : sandbox.row.message,
+    !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
+      : !installed ? "not installed: the dsh-tui profile is not set up"
+        : sandbox.current && sandbox.row.ok ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper} and its pack folder`
+          : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
+            : sandbox.row.message,
     installLine);
 
   const broken = checks.some((check) => !check.ok);

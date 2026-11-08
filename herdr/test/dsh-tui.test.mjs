@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 
 import {
   DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
-  ownershipOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxState, sandboxWrapperOf, scopeReleaseAge,
+  ownershipOf, packRootOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxState, sandboxWrapperOf, scopeReleaseAge,
   shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
 
@@ -195,7 +195,8 @@ test("install copies the sandbox wrapper byte-equal and installs the managed dsh
   assert.ok(statSync(wrapper).mode & 0o111, "the wrapper is executable");
   const patch = readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "cordis.patch.yml"), "utf8");
   assert.match(patch, /^# dsh-sandbox begin$/m);
-  assert.ok(patch.includes(`runnerCommand: ['${wrapper}']`), patch);
+  assert.ok(patch.includes(`runnerCommand: ['${wrapper}', '--pack-root', '${packRootOf()}']`), patch);
+  assert.ok(patch.includes(`'--pack-root', '${packRootOf()}'`), "the row names the pack folder the wrapper keeps read-only");
   assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
   const state = sandboxState(s.env);
   assert.equal(state.current, true);

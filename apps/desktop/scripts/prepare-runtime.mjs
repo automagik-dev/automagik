@@ -60,6 +60,7 @@ for (const file of DSH_TUI_FILES) {
   if (!existsSync(join(dshTuiSource, file))) {
     throw new Error(`the shared dsh-TUI installer lacks ${join(dshTuiSource, file)}`)
   }
+  mkdirSync(dirname(join(dshTuiBuild, file)), { recursive: true })
   cpSync(join(dshTuiSource, file), join(dshTuiBuild, file))
 }
 // The child runner stays outside the app's asar so the packaged binary can run it as Node.

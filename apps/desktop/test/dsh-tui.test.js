@@ -7,7 +7,7 @@ import {
   chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, delimiter, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { SKIP, findDsh, panePathOf } from '../../../am/dshTui.mjs'
@@ -26,7 +26,7 @@ const SCRATCH = () => mkdtempSync(join(tmpdir(), 'automagik-dsh-tui-desktop-'))
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake dsh is a sh script' : false }
 
 test('the shipped module is the existing installer and every local module it imports', () => {
-  assert.deepEqual([...DSH_TUI_FILES], ['dshTui.mjs', 'layoutSafe.mjs', 'release.js'])
+  assert.deepEqual([...DSH_TUI_FILES], ['dshTui.mjs', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs'])
   for (const file of DSH_TUI_FILES) {
     assert.ok(existsSync(join(AM, file)), `${file} is missing from am/`)
   }
@@ -34,7 +34,8 @@ test('the shipped module is the existing installer and every local module it imp
   for (const file of DSH_TUI_FILES) {
     const text = readFileSync(join(AM, file), 'utf8')
     for (const match of text.matchAll(/from\s+["'](\.[^"']+)["']/g)) {
-      assert.ok(DSH_TUI_FILES.includes(basename(match[1])),
+      const shipped = match[1].replace(/^\.\//, '')
+      assert.ok(DSH_TUI_FILES.includes(shipped),
         `${file} imports ${match[1]}, which is not shipped`)
     }
   }
@@ -47,7 +48,10 @@ test('the shipped module folder loads as ESM with no package file above it', asy
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const dir = join(root, 'dsh-tui')
   mkdirSync(dir)
-  for (const file of DSH_TUI_FILES) copyFileSync(join(AM, file), join(dir, file))
+  for (const file of DSH_TUI_FILES) {
+    mkdirSync(dirname(join(dir, file)), { recursive: true })
+    copyFileSync(join(AM, file), join(dir, file))
+  }
   writeFileSync(join(dir, 'package.json'), DSH_TUI_PACKAGE)
   const mod = await import(pathToFileURL(join(dir, 'dshTui.mjs')).href)
   assert.equal(mod.PIN, PIN)

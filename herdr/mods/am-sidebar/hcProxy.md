@@ -61,7 +61,7 @@ ids are never reused, so a rename between the check and the call cannot redirect
 | `terminal.get`, `terminal.read`, `terminal.wait` | the caller itself, hcGuard's `teamOf` graph, and its own workers |
 | `terminal.send` | the same, plus hcGuard's pm/integrator/fixer widening for a bot whose bots.json entry has that rank, and the shared reviewer/fixer targets. The widening never reaches a worker pane |
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
-| `terminal.run` | only hcGuard's exact dsh-tui worker shape: `--bg`, `parent` = the caller, `cwd` under the caller's project `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, `/usr/bin/env PATH=<guard>:… dsh-tui -- <task>`, no `on`/`line`, identity env only, and a guard folder outside the writable project and app home. Only a ledger-bound bot pane starts a worker |
+| `terminal.run` | only hcGuard's exact dsh-tui worker shape: `--bg`, `parent` = the caller, `cwd` under the caller's project `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, then either `/usr/bin/env PATH=<guard>:… dsh-tui -- <task>` or the helper's `/usr/bin/env PATH=… /bin/sh <pack>/bin/run.sh <pack>/hcPane.mjs --bot <caller> --project <project> --worker -- dsh-tui -- <task>`, no `on`/`line`, identity env only. The sandbox row binds the pack folder read-only, so its guard/helper/runner cannot be rewritten; any other guard is refused inside the writable project and app home. Only a ledger-bound bot pane starts a worker |
 
 `terminal.send` keeps hc's `force`, `if` and `timeout`; `force` only skips the busy wait, and the
 target is still team-scoped.
@@ -130,6 +130,7 @@ namespace.
 The `terminal.run` shape also constrains a process, not the task text: a deliberately forged
 worker start can still choose the task word after `--`. The final fix for that is starting
 workers from the pack side rather than exposing `terminal.run` to the pane; the pack keeps the shape
-because its worker start still uses it. The guard folder and the resolved `dsh-tui` are additionally
+because its worker start still uses it. The pack's own guard, helper and runner are allowed inside the app home because the sandbox row
+binds the pack folder read-only (`--pack-root`); any other guard and the resolved `dsh-tui` are
 required to be outside the writable project and app home, and every PATH word must be absolute,
 so a file dropped in the worktree cannot pose as the pack's guard or program.

@@ -899,7 +899,8 @@ opted-in pane refuses to start while the profile's sandbox row is stale.
 
 The helper sets `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET` and `AM_HC_PROXY_SOCKET` for the
 pane; the DSH runner wrapper applies its mount rules and binds the proxy at the real core socket
-path, so the real socket folder is hidden. The wrapper is copied byte-equal from
+path, so the real socket folder is hidden, and binds the pack's own folder read-only so a
+sandboxed bot cannot rewrite its helper, runner or guard. The wrapper is copied byte-equal from
 `mods/am-sidebar/bin/hc-socket-mask.mjs` to `~/.local/share/automagik-herdr/dsh-sandbox/` by
 `dsh-tui install`, which also installs the profile's managed sandbox row. The proxy pins
 herdr-core 0.1.14 and refuses any other version; its socket lives in

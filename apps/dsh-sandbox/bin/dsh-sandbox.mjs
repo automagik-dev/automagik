@@ -34,6 +34,8 @@ export const END = '# dsh-sandbox end';
 export const PLACEHOLDER = '{{WRAPPER}}';
 /** The wrapper's failure signature, kept in sync with bin/hc-socket-mask.mjs. */
 export const FAILURE_SIGNATURE = 'hc-socket-mask: ';
+/** The wrapper's own word before its profile args: the pack folder to keep read-only. */
+export const PACK_ROOT_FLAG = '--pack-root';
 
 /** A YAML single-quoted scalar: the only quoting a path or signature here needs. */
 export function yamlQuote(value) {
@@ -41,12 +43,15 @@ export function yamlQuote(value) {
 }
 
 /** The managed block for an absolute wrapper path, byte for byte. */
-export function sandboxBlock(wrapper) {
+export function sandboxBlock(wrapper, packRoot = null) {
+  const runner = packRoot === null
+    ? `[${yamlQuote(wrapper)}]`
+    : `[${yamlQuote(wrapper)}, ${yamlQuote(PACK_ROOT_FLAG)}, ${yamlQuote(packRoot)}]`;
   return [
     BEGIN,
     '- id: sandbox',
     '  config:',
-    `    runnerCommand: [${yamlQuote(wrapper)}]`,
+    `    runnerCommand: ${runner}`,
     `    runnerFailureSignatures: [${yamlQuote(FAILURE_SIGNATURE)}]`,
     END,
   ].join('\n');
@@ -235,7 +240,7 @@ export function backupPath(profile, date = new Date()) {
  * Install (or re-install) the managed row. Returns the resolved paths, whether the profile
  * changed and the backup taken. Idempotent: an identical block is a no-op (no backup, no write).
  */
-export function installRow({ profile, wrapper, now = new Date() }) {
+export function installRow({ profile, wrapper, packRoot = null, now = new Date() }) {
   const wrapperPath = resolveWrapper(wrapper);
   const path = resolve(profile);
   let original = null;
@@ -244,7 +249,7 @@ export function installRow({ profile, wrapper, now = new Date() }) {
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  const block = sandboxBlock(wrapperPath);
+  const block = sandboxBlock(wrapperPath, packRoot);
   const next = original === null ? `${block}\n` : applyBlock(original, block);
   if (original !== null && next === original) {
     return { profile: path, wrapper: wrapperPath, changed: false, backup: null };
@@ -262,7 +267,7 @@ export function installRow({ profile, wrapper, now = new Date() }) {
 }
 
 /** Check the installed row without writing. `ok` false carries one clear reason. */
-export function checkRow({ profile, wrapper }) {
+export function checkRow({ profile, wrapper, packRoot = null }) {
   const path = resolve(profile);
   let wrapperPath;
   try {
@@ -285,7 +290,7 @@ export function checkRow({ profile, wrapper }) {
   if (problem) return { ok: false, message: `${problem} (${path})` };
   const { lines, begins, ends } = findManaged(text);
   const actual = lines.slice(begins[0], ends[0] + 1).join('\n');
-  if (actual !== sandboxBlock(wrapperPath)) {
+  if (actual !== sandboxBlock(wrapperPath, packRoot)) {
     return {
       ok: false,
       message: `the managed block in ${path} is not the row for ${wrapperPath} `
@@ -303,10 +308,12 @@ export function parseArgs(argv, env = process.env) {
   }
   let profile;
   let wrapper;
+  let packRoot = null;
   for (let at = 1; at < argv.length; at += 1) {
     const flag = argv[at];
     if (flag === '--profile' && argv[at + 1]) profile = argv[(at += 1)];
     else if (flag === '--wrapper' && argv[at + 1]) wrapper = argv[(at += 1)];
+    else if (flag === '--pack-root' && argv[at + 1]) packRoot = argv[(at += 1)];
     else return { error: `unknown or incomplete argument: ${flag}` };
   }
   if (!wrapper) return { error: '--wrapper is required' };
@@ -315,13 +322,14 @@ export function parseArgs(argv, env = process.env) {
   } catch (error) {
     return { error: error.message };
   }
-  return { command, profile, wrapper };
+  return { command, profile, wrapper, packRoot };
 }
 
 const USAGE = [
-  'usage: dsh-sandbox install [--profile <path>] --wrapper <absolute path>',
-  '       dsh-sandbox check   [--profile <path>] --wrapper <absolute path>',
+  'usage: dsh-sandbox install [--profile <path>] --wrapper <absolute path> [--pack-root <dir>]',
+  '       dsh-sandbox check   [--profile <path>] --wrapper <absolute path> [--pack-root <dir>]',
   '--profile defaults to $DSH_HOME/profiles/dsh-tui/cordis.patch.yml ($DSH_HOME is ~/.dsh)',
+  '--pack-root: the pack mod folder to bind read-only inside the sandbox (the wrapper mounts it)',
 ].join('\n');
 
 /** Run the CLI and return its exit code; the CLI guard at the bottom applies it. */
@@ -337,7 +345,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   }
   try {
     if (parsed.command === 'install') {
-      const result = installRow({ profile: parsed.profile, wrapper: parsed.wrapper });
+      const result = installRow({ profile: parsed.profile, wrapper: parsed.wrapper, packRoot: parsed.packRoot });
       const detail = !result.changed
         ? 'already current'
         : result.backup ? `backup ${result.backup}` : 'new profile';
@@ -346,7 +354,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
       );
       return 0;
     }
-    const result = checkRow({ profile: parsed.profile, wrapper: parsed.wrapper });
+    const result = checkRow({ profile: parsed.profile, wrapper: parsed.wrapper, packRoot: parsed.packRoot });
     if (!result.ok) {
       process.stderr.write(`${MSG_PREFIX}${result.message}\n`);
       return 1;

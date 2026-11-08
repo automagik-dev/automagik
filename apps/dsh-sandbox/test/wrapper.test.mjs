@@ -28,6 +28,8 @@ import {
   REAL_SOCKET,
   splitRunnerArgs,
   SWITCH,
+  ownArgs,
+  PACK_ROOT_FLAG,
 } from '../bin/hc-socket-mask.mjs';
 
 const WRAPPER = fileURLToPath(new URL('../bin/hc-socket-mask.mjs', import.meta.url));
@@ -658,4 +660,30 @@ test('the pure helper keeps the switch off and never asks for a socket list then
   assert.equal(result.masked, false);
   assert.equal(result.fatal, null);
   assert.deepEqual(result.notices, []);
+});
+
+test('--pack-root binds that folder read-only after the writable profile args', async () => {
+  const fixture = makeFixture();
+  const pack = join(fixture.root, 'pack');
+  mkdirSync(pack, { recursive: true });
+  const env = { [SWITCH]: '1', HOME: fixture.home, [REAL_SOCKET]: fixture.real, [PROXY_SOCKET]: fixture.proxy };
+  const own = ownArgs([PACK_ROOT_FLAG, pack, ...RUNNER_ARGS]);
+  assert.equal(own.packRoot, pack);
+  assert.deepEqual(own.args, RUNNER_ARGS);
+  const result = maskArgs(own.args, env, { containerSockets: [], packRoot: own.packRoot });
+  assert.equal(result.fatal, null);
+  const at = result.args.lastIndexOf('--ro-bind');
+  assert.ok(at > 0, result.args.join(' '));
+  assert.deepEqual(result.args.slice(at, at + 3), ['--ro-bind', pack, pack]);
+  assert.ok(at >= PROFILE_ARGS.length, 'the read-only bind comes after the profile args (and so after any writable workspace bind)');
+  assert.ok(at < result.args.lastIndexOf('--'), 'it is a mount, not the command');
+});
+
+test('--pack-root refuses a relative or missing folder', async () => {
+  const fixture = makeFixture();
+  const env = { [SWITCH]: '1', HOME: fixture.home, [REAL_SOCKET]: fixture.real, [PROXY_SOCKET]: fixture.proxy };
+  const relative = maskArgs(RUNNER_ARGS, env, { containerSockets: [], packRoot: 'pack' });
+  assert.match(relative.fatal, /--pack-root must be an absolute folder/);
+  const missing = maskArgs(RUNNER_ARGS, env, { containerSockets: [], packRoot: join(fixture.root, 'absent') });
+  assert.match(missing.fatal, /--pack-root .* is not a readable folder/);
 });
