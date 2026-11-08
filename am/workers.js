@@ -73,6 +73,36 @@ export function guardPath(path, agent) {
   return agent === "dsh-tui" ? guardPathWith(path, GUARD_DIR) : path;
 }
 
+/**
+ * The per-pane helper and the launcher that finds its Node (#631 PR B), beside this module.
+ * The helper starts the hc proxy before DSH, so the sandbox the pane later creates never sees
+ * an unsnapshotted roster or attach ledger. am carries byte-equal copies of both (am-copies).
+ */
+const dataHomeOf = (env = process.env) => env.XDG_DATA_HOME || (env.HOME ? `${env.HOME}/.local/share` : "");
+export const stableRootOf = (env = process.env) => {
+  const dataHome = dataHomeOf(env);
+  if (!dataHome) throw new Error("HOME or XDG_DATA_HOME is required for the stable pane helper");
+  return `${dataHome}/automagik-herdr/dsh-sandbox`;
+};
+export const stableGuardDir = (root) => `${root}/guard`;
+export const stableHelper = (root) => `${root}/hcPane.mjs`;
+export const stableRunner = (root) => `${root}/bin/run.sh`;
+/** The one opt-in for the per-pane proxy (#631 PR B); nothing sets it by default. */
+export const HC_PROXY_ENV = "AM_HC_PROXY";
+export const hcProxyEnabled = (env = process.env) => env[HC_PROXY_ENV] === "1";
+
+/**
+ * The pane command for a dsh-tui pane: `/bin/sh <run.sh> <hcPane.mjs> --bot <id> [--project
+ * <dir>] [--worker] -- <the agent's own argv>`. The helper starts the proxy, then runs the argv
+ * as its child; `run.sh` is the pack's Node finder (the core's PATH may have no node).
+ */
+export function paneArgs(argv, { botId, project = null, worker = false, stableRoot = null } = {}) {
+  if (typeof botId !== "string" || !botId) throw new Error("paneArgs needs the pane's bot id");
+  stableRoot ??= stableRootOf();
+  return ["/bin/sh", stableRunner(stableRoot), stableHelper(stableRoot), "--bot", botId,
+    ...(project ? ["--project", project] : []), ...(worker ? ["--worker"] : []), "--", ...argv];
+}
+
 // The usage-tagging contract (usagemeter reads these): a worker terminal carries
 // `worker.of=<botId>`, `branch=<branch>` and `worker.role=<role>`, and its cwd is the task
 // worktree. Started with Genie's task id (`--task`), it also carries `task=<id>`,
@@ -272,10 +302,12 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
  * `/usr/bin/env <login words>`, its template label kept. `agent` `dsh-tui`: the pack's
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
- * boundary (#624, #628, #631).
+ * boundary (#624, #628, #631). `sandbox`: a dsh-tui worker runs behind the per-pane hc proxy
+ * (hcPane.mjs) before DSH starts; `project` is the main checkout the proxy snapshots (omitted:
+ * the helper finds the project above the worktree).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
-  taskId, project, lead, space, login = [], templateArgv = null }) {
+  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -293,9 +325,13 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  const vars = envWords(path ? [`PATH=${guardPath(path, agent)}`] : [], login);
+  const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
+  const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
+  const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
-  return [...args, "--parent", parent, "--", ...env, ...argv, ...promptArgs(agent, task)];
+  const taskArgv = [...argv, ...promptArgs(agent, task)];
+  const launchArgv = sandboxRoot ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot: sandboxRoot }) : taskArgv;
+  return [...args, "--parent", parent, "--", ...env, ...launchArgv];
 }
 
 /** A program path's own name (`/bin/sh` is `sh`). */

@@ -14,7 +14,7 @@
 // runnerFailureSignatures entry: 'hc-socket-mask: '.
 import { spawn } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** Pane-start switch: '1' enables the mask; absent (or anything else) is off. */
@@ -25,6 +25,10 @@ export const REAL_SOCKET = 'AM_HC_REAL_SOCKET';
 export const PROXY_SOCKET = 'AM_HC_PROXY_SOCKET';
 /** Every line the wrapper prints starts with this; the profile's runnerFailureSignatures entry. */
 export const MSG_PREFIX = 'hc-socket-mask: ';
+/** The wrapper's own word before its profile args: the pack folder to keep read-only. */
+export const PACK_ROOT_FLAG = '--pack-root';
+/** The shared runtime folder holding every pane's proxy; the mask hides it whole. */
+export const PROXY_ROOT_NAME = 'automagik-hc-proxy';
 
 /**
  * The fixed container runtime sockets this cut knows. The pure helper in the tests receives its
@@ -55,6 +59,17 @@ export function splitRunnerArgs(args) {
   const at = args.indexOf('--');
   if (at === -1) return { profileArgs: [...args], command: null };
   return { profileArgs: args.slice(0, at), command: args.slice(at + 1) };
+}
+
+/** Strip the wrapper's own leading --pack-root words: the profile args follow them. */
+export function ownArgs(args) {
+  let at = 0;
+  let packRoot = null;
+  while (at + 1 < args.length && args[at] === PACK_ROOT_FLAG) {
+    packRoot = args[at + 1];
+    at += 2;
+  }
+  return { packRoot, args: args.slice(at) };
 }
 
 /** Whether `dir` is `target` itself or one of its ancestors (both absolute paths). */
@@ -94,6 +109,7 @@ export function maskArgs(args, env = process.env, options = {}) {
     containerSockets = containerSocketPaths(options.uid),
     stat = statSync,
     realpath = realpathSync,
+    packRoot = null,
   } = options;
   if (env[SWITCH] !== '1') return { args: [...args], fatal: null, notices: [], masked: false };
   const { profileArgs, command } = splitRunnerArgs(args);
@@ -132,12 +148,39 @@ export function maskArgs(args, env = process.env, options = {}) {
     return failed(args,
       `the proxy folder ${proxyDir} holds the real socket path: the mask would hide the proxy`);
   }
+  // Hide the shared parent, not just this pane's folder: another pane's proxy stays out of
+  // reach (same-uid sockets are otherwise indistinguishable), and only this pane's socket is
+  // bound at the real path.
+  const shared = dirname(proxyDir);
+  if (shared === proxyDir || shared === '/') {
+    return failed(args, `the proxy path ${proxy} has no shared automagik-hc-proxy parent`);
+  }
+  if (basename(shared) !== PROXY_ROOT_NAME) {
+    return failed(args, `the proxy parent ${shared} is not the ${PROXY_ROOT_NAME} folder`);
+  }
+  if (isSameOrAncestor(shared, real)) {
+    return failed(args, `the proxy parent ${shared} holds the real socket path: the mask would hide the real socket`);
+  }
   const mounts = ['--tmpfs', realDir];
   const notices = [];
   const notice = proxyNotice(proxy);
   if (notice) notices.push(notice);
   else mounts.push('--bind', proxy, real);
-  mounts.push('--tmpfs', proxyDir);
+  mounts.push('--tmpfs', shared);
+  // The pack's own folder (hcPane.mjs, run.sh, the guard) may sit inside the writable
+  // workspace/app home; shadow that grant with a read-only bind, last so it wins.
+  if (packRoot !== null) {
+    if (!isAbsolute(packRoot)) return failed(args, `${PACK_ROOT_FLAG} must be an absolute folder: ${packRoot}`);
+    if (packRoot === '/') return failed(args, `${PACK_ROOT_FLAG} / would make the whole sandbox read-only`);
+    let canonical;
+    try {
+      canonical = realpath(packRoot);
+      if (!stat(canonical).isDirectory()) throw new Error('not a directory');
+    } catch {
+      return failed(args, `${PACK_ROOT_FLAG} ${packRoot} is not a readable folder`);
+    }
+    mounts.push('--ro-bind', canonical, canonical);
+  }
   // ~/.ssh exists on most machines, but a fresh one may have none: then there is nothing to
   // hide. A directory (following symlinks) is shadowed; anything else is bound over.
   const ssh = join(env.HOME, '.ssh');
@@ -200,7 +243,8 @@ export function runBwrap(args) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const result = maskArgs(process.argv.slice(2), process.env);
+  const own = ownArgs(process.argv.slice(2));
+  const result = maskArgs(own.args, process.env, { packRoot: own.packRoot });
   for (const notice of result.notices) process.stderr.write(`${MSG_PREFIX}${notice}\n`);
   if (result.fatal) {
     process.stderr.write(`${MSG_PREFIX}${result.fatal}\n`);

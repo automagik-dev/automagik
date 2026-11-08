@@ -117,7 +117,15 @@ const agentParts = (run) => {
   if (w[0] !== "/usr/bin/env" || !w[at]?.startsWith("PATH=")) return { prefix: [], env: [], words: w };
   let i = at;
   while (i < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i])) i += 1;
-  return { prefix: w.slice(0, at), env: w.slice(at, i), words: w.slice(i) };
+  // A sandboxed dsh-tui pane runs through the per-pane hc helper (#631 PR B): the agent's words
+  // are after the helper's own `--`.
+  let words = w.slice(i);
+  const helper = words.findIndex((word) => /\/hcPane\.mjs$/.test(word));
+  if (helper >= 0) {
+    const cut = words.indexOf("--", helper);
+    words = cut < 0 ? [] : words.slice(cut + 1);
+  }
+  return { prefix: w.slice(0, at), env: w.slice(at, i), words };
 };
 const agentWords = (run) => agentParts(run).words;
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");

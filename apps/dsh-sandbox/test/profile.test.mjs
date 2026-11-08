@@ -367,14 +367,31 @@ test('the shipped profile row snippet is OFF by default and carries the placehol
   const snippet = readFileSync(new URL('../profile/sandbox-row.yml', import.meta.url), 'utf8');
   assert.match(snippet, /^- id: sandbox$/m);
   assert.match(snippet, /^ {2}config:$/m);
-  assert.ok(snippet.includes(`runnerCommand: ['${PLACEHOLDER}']`));
+  assert.ok(snippet.includes(`runnerCommand: ['${PLACEHOLDER}', '--pack-root', '{{PACK_ROOT}}']`));
   assert.ok(snippet.includes("runnerFailureSignatures: ['hc-socket-mask: ']"));
   assert.doesNotMatch(snippet, /danger-full-access|workspace-write/);
   // The helper and the snippet are one row: only the markers (the helper's) are extra.
   const rows = snippet.split('\n').filter((line) => line.trim() && !line.trim().startsWith('#'));
-  const blockRows = sandboxBlock(PLACEHOLDER).split('\n')
+  const blockRows = sandboxBlock(PLACEHOLDER, '{{PACK_ROOT}}').split('\n')
     .filter((line) => line !== BEGIN && line !== END);
   assert.deepEqual(rows, blockRows);
   // The runner's own prefix is the row's failure signature, so DSH reports it as a runner failure.
   assert.equal(WRAPPER_PREFIX, FAILURE_SIGNATURE);
+});
+
+test('the managed block lists the pack folder the wrapper keeps read-only', () => {
+  const block = sandboxBlock('/w/hc-socket-mask.mjs', '/packs/am-sidebar');
+  assert.ok(block.includes("runnerCommand: ['/w/hc-socket-mask.mjs', '--pack-root', '/packs/am-sidebar']"), block);
+  assert.ok(block.includes("runnerFailureSignatures: ['hc-socket-mask: ']"));
+});
+
+test('install and check carry --pack-root through the managed row', () => {
+  const fixture = makeFixture();
+  const pack = join(fixture.root, 'am-sidebar');
+  mkdirSync(pack);
+  installRow({ profile: fixture.profile, wrapper: fixture.wrapper, packRoot: pack, now: new Date(1) });
+  const text = readFileSync(fixture.profile, 'utf8');
+  assert.ok(text.includes(`'--pack-root', '${pack}'`), text);
+  assert.equal(checkRow({ profile: fixture.profile, wrapper: fixture.wrapper, packRoot: pack }).ok, true);
+  assert.equal(checkRow({ profile: fixture.profile, wrapper: fixture.wrapper }).ok, false);
 });

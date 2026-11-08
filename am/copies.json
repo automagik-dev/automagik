@@ -18,6 +18,14 @@
       "to": "am/bin/automagik-herdr.mjs"
     },
     {
+      "from": "herdr/mods/am-sidebar/bin/dsh-sandbox.mjs",
+      "to": "am/bin/dsh-sandbox.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/bin/hc-socket-mask.mjs",
+      "to": "am/bin/hc-socket-mask.mjs"
+    },
+    {
       "from": "herdr/mods/am-sidebar/bin/run.sh",
       "to": "am/bin/run.sh"
     },
@@ -52,6 +60,14 @@
     {
       "from": "herdr/mods/am-sidebar/hcGuard.mjs",
       "to": "am/hcGuard.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/hcPane.mjs",
+      "to": "am/hcPane.mjs"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/hcProxy.mjs",
+      "to": "am/hcProxy.mjs"
     },
     {
       "from": "herdr/mods/am-sidebar/inspect.js",
