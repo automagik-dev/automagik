@@ -6,17 +6,23 @@
 // (the numbers https://releases.herdr.dev/app/latest.json published for 0.1.13 when the pin was
 // made): no "latest" tag, no secrets. A bump changes VERSION and SHA256 together.
 //
-//   node .github/scripts/herdr-app-check.mjs [--pack <file.tgz>]
+//   node .github/scripts/herdr-app-check.mjs [--pack <file.tgz>] [--strict]
+//
+// Two outcomes, kept apart (#682). "Verified bad" is herdr-app running and a pack mod failing to
+// load: it always fails, in both modes, with herdr-app's own output. "Could not verify" is the
+// pinned build not being downloaded, unpacked or started (including a runner that cannot run it):
+// PR CI prints a ::warning:: naming the URL or cause and exits 0, while the release cut passes
+// --strict and fails. A sha256 mismatch is never could-not-verify: it means the pin changed, so it
+// always fails loudly, in both modes.
 //
 // Without --pack it builds the pack from HEAD with herdr/scripts/pack.mjs, the way release.yml
 // packs the tag, and checks the archive's mod folders, not the source tree. `herdr-app check`
 // loads the mod in-process: it needs the app's shared libraries (libxkbcommon-x11-0, which brings
 // libxcb-xkb1) but no X server, so no xvfb. Every result and the step's wall time are printed;
-// the run fails (exit 1, with herdr-app's own output for the mod) when the download, the sha256,
-// the app start, or any mod load fails. It never skips: a broken download or missing binary is a
-// failure like any other. Apache-2.0.
+// the run fails (exit 1, with herdr-app's own output for the mod) when a mod does not load. It
+// never skips. Apache-2.0.
 import { createHash } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -31,30 +37,35 @@ const BUILD = `https://releases.herdr.dev/app/${VERSION}/herdr-app-linux-x86_64.
 const BUDGET_MS = 2 * 60 * 1000;
 const CHECK_TIMEOUT_MS = 60 * 1000;
 
+/** A pinned build that could not be fetched, unpacked or started: warns unless --strict. */
+class CouldNotVerify extends Error {}
+
 const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 const fail = (message) => { throw new Error(message); };
+const unverified = (message) => { throw new CouldNotVerify(message); };
 const output = (r) => `${r.stdout ?? ""}${r.stderr ?? ""}`.trimEnd();
 
-/** `{ out }` from argv, or the usage. */
+/** `{ pack, strict }` from argv, or the usage. */
 function parseArgs(argv) {
-  const opts = { pack: null };
+  const opts = { pack: null, strict: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--pack" && argv[i + 1]) opts.pack = resolve(argv[++i]);
-    else throw new Error("usage: node .github/scripts/herdr-app-check.mjs [--pack <file.tgz>]");
+    else if (argv[i] === "--strict") opts.strict = true;
+    else throw new Error("usage: node .github/scripts/herdr-app-check.mjs [--pack <file.tgz>] [--strict]");
   }
   return opts;
 }
 
 /** The pack tarball from HEAD, exactly as release.yml builds it from the tag. */
-function buildPack(out) {
+function buildPack(file, out) {
   const script = join(REPO, "herdr", "scripts", "pack.mjs");
   if (!existsSync(script)) fail(`there is no pack builder at ${script}`);
-  const r = spawnSync(process.execPath, [script, "--repo", REPO, "--ref", "HEAD", "--out", out],
+  const r = spawnSync(process.execPath, [script, "--repo", REPO, "--ref", "HEAD", "--out", file],
     { encoding: "utf8", timeout: 120_000 });
   if (r.error || r.status !== 0) {
     fail(`the pack could not be built from HEAD (${r.error?.message ?? `exit ${r.status}`}):\n${output(r)}`);
   }
-  process.stdout.write(`${r.stdout}`);
+  out(`${r.stdout}`);
 }
 
 /** Extracts the pack and returns its folder, holding it to the PACK_MODS it claims to ship. */
@@ -73,32 +84,33 @@ function unpack(pack, dir, packMods) {
 }
 
 /** Downloads the pinned Linux build, checks the pinned sha256, and returns its executable. */
-async function installApp(tmp) {
+async function installApp(tmp, { buildUrl, fetchImpl, sha256 }) {
   const tarball = join(tmp, "herdr-app.tar.gz");
-  let response;
+  let bytes;
   try {
-    response = await fetch(BUILD, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+    const response = await fetchImpl(buildUrl, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+    if (!response.ok) unverified(`herdr-app ${VERSION} could not be downloaded from ${buildUrl}: HTTP ${response.status}`);
+    bytes = Buffer.from(await response.arrayBuffer());
   } catch (e) {
-    fail(`herdr-app ${VERSION} could not be downloaded from ${BUILD}: ${e.message}`);
+    if (e instanceof CouldNotVerify) throw e;
+    unverified(`herdr-app ${VERSION} could not be downloaded from ${buildUrl}: ${e.message}`);
   }
-  if (!response.ok) fail(`herdr-app ${VERSION} could not be downloaded from ${BUILD}: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
   const got = createHash("sha256").update(bytes).digest("hex");
-  if (got !== SHA256) {
-    fail(`herdr-app ${VERSION} does not match its pinned sha256: got ${got}, pinned ${SHA256} (${BUILD})`);
+  if (got !== sha256) {
+    fail(`herdr-app ${VERSION} does not match its pinned sha256: got ${got}, pinned ${sha256} (${buildUrl})`);
   }
   writeFileSync(tarball, bytes);
   const appDir = join(tmp, "app");
   mkdirSync(appDir);
   const r = spawnSync("tar", ["-xzf", tarball, "-C", appDir], { encoding: "utf8", timeout: 120_000 });
   if (r.error || r.status !== 0) {
-    fail(`herdr-app ${VERSION} could not be unpacked (${r.error?.message ?? `exit ${r.status}`}):\n${output(r)}`);
+    unverified(`herdr-app ${VERSION} could not be unpacked (${r.error?.message ?? `exit ${r.status}`}):\n${output(r)}`);
   }
   const bin = join(appDir, "herdr-app", "herdr-app");
   try {
     accessSync(bin, constants.X_OK);
   } catch {
-    fail(`herdr-app ${VERSION}'s tarball has no executable herdr-app/herdr-app`);
+    unverified(`herdr-app ${VERSION}'s tarball has no executable herdr-app/herdr-app`);
   }
   return bin;
 }
@@ -107,11 +119,11 @@ async function installApp(tmp) {
 function checkAppRuns(bin, env) {
   const r = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 30_000, env });
   if (r.error || r.status !== 0) {
-    fail(`herdr-app could not start (${r.error?.message ?? `exit ${r.status}`}):\n${output(r)}`);
+    unverified(`herdr-app could not start (${r.error?.message ?? `exit ${r.status}`}):\n${output(r)}`);
   }
   const line = String(r.stdout ?? "").trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
   if (line !== `herdr-app ${VERSION}`) fail(`herdr-app --version said "${line}", not "herdr-app ${VERSION}"`);
-  process.stdout.write(`${line}\n`);
+  return line;
 }
 
 /** `herdr-app check <mod>`: loads it once; returns null on success, else herdr-app's output. */
@@ -123,32 +135,44 @@ function checkMod(bin, dir, env) {
   return `herdr-app check could not load this mod (${reason}):\n${output(r)}`;
 }
 
-async function main() {
-  const started = Date.now();
-  const opts = parseArgs(process.argv.slice(2));
-  if (process.platform !== "linux" || process.arch !== "x64") {
-    fail(`the pinned herdr-app build is linux-x86_64; this runner is ${process.platform}-${process.arch}`);
-  }
-  const { PACK_MODS } = await import(pathToFileURL(join(REPO, "herdr", "mods", "am-sidebar", "release.js")).href);
-  if (!Array.isArray(PACK_MODS) || PACK_MODS.length === 0) fail("PACK_MODS is empty: there is no pack to check");
-
-  const tmp = mkdtempSync(join(tmpdir(), "herdr-app-check-"));
+/**
+ * The whole check. Returns the step's exit code: 0 on success, and 0 for a could-not-verify
+ * warning when --strict is absent. `deps` lets the rows swap fetch and the pin (no network);
+ * the CLI fills none of it.
+ */
+export async function run(argv = process.argv.slice(2), deps = {}) {
+  const out = deps.out ?? ((text) => process.stdout.write(text));
+  const err = deps.err ?? ((text) => process.stderr.write(text));
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const buildUrl = deps.buildUrl ?? BUILD;
+  const sha256 = deps.sha256 ?? SHA256;
+  let opts = { pack: null, strict: false };
+  let tmp = null;
   try {
+    opts = parseArgs(argv);
+    const started = Date.now();
+    if (process.platform !== "linux" || process.arch !== "x64") {
+      unverified(`the pinned herdr-app build is linux-x86_64; this runner is ${process.platform}-${process.arch}`);
+    }
+    const { PACK_MODS } = await import(pathToFileURL(join(REPO, "herdr", "mods", "am-sidebar", "release.js")).href);
+    if (!Array.isArray(PACK_MODS) || PACK_MODS.length === 0) fail("PACK_MODS is empty: there is no pack to check");
+
+    tmp = mkdtempSync(join(tmpdir(), "herdr-app-check-"));
     const pack = opts.pack ?? join(tmp, "automagik-herdr-pack.tgz");
     if (opts.pack) {
       if (!existsSync(pack)) fail(`there is no pack at ${pack}`);
-      process.stdout.write(`pack: ${pack}\n`);
+      out(`pack: ${pack}\n`);
     } else {
-      buildPack(pack);
+      buildPack(pack, out);
     }
     const packDir = unpack(pack, mkdtempSync(join(tmp, "pack-")), PACK_MODS);
 
-    const bin = await installApp(tmp);
-    process.stdout.write(`herdr-app ${VERSION}: sha256 ${SHA256} verified\n`);
+    const bin = await installApp(tmp, { buildUrl, fetchImpl, sha256 });
+    out(`herdr-app ${VERSION}: sha256 ${sha256} verified\n`);
     const home = join(tmp, "home");
     mkdirSync(home);
     const env = { ...process.env, HERDR_APP_HOME: home };
-    checkAppRuns(bin, env);
+    out(`${checkAppRuns(bin, env)}\n`);
 
     const checksStarted = Date.now();
     for (const mod of PACK_MODS) {
@@ -156,22 +180,29 @@ async function main() {
       const problem = checkMod(bin, join(packDir, mod), env);
       const took = secs(Date.now() - modStarted);
       if (problem) {
-        process.stderr.write(`herdr-app check ${mod}: FAILED (${took})\n${problem}\n`);
+        err(`herdr-app check ${mod}: FAILED (${took})\n${problem}\n`);
         fail(`herdr-app could not load ${mod}`);
       }
-      process.stdout.write(`herdr-app check ${mod}: passed (${took})\n`);
+      out(`herdr-app check ${mod}: passed (${took})\n`);
     }
     const total = Date.now() - started;
-    process.stdout.write(`herdr-app check: ${PACK_MODS.length} pack mods loaded in ${secs(Date.now() - checksStarted)};`
+    out(`herdr-app check: ${PACK_MODS.length} pack mods loaded in ${secs(Date.now() - checksStarted)};`
       + ` step wall time ${secs(total)} (budget under 2 minutes)\n`);
-    if (total > BUDGET_MS) process.stdout.write(`::warning::the herdr-app check took ${secs(total)}, over its 2-minute budget\n`);
+    if (total > BUDGET_MS) out(`::warning::the herdr-app check took ${secs(total)}, over its 2-minute budget\n`);
+    return 0;
+  } catch (e) {
+    if (e instanceof CouldNotVerify && !opts.strict) {
+      out(`::warning::${e.message}\n`);
+      return 0;
+    }
+    err(`herdr-app check: ${e.message}\n`);
+    err("::error::herdr-app check failed\n");
+    return 1;
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-main().catch((e) => {
-  process.stderr.write(`herdr-app check: ${e.message}\n`);
-  process.stderr.write("::error::herdr-app check failed\n");
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).href === import.meta.url) {
+  run().then((code) => { process.exitCode = code; });
+}
