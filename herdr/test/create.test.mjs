@@ -63,6 +63,7 @@ beforeEach((t) => {
   state.offline = new Set();
   state.calls = [];
   state.hcCalls = [];
+  state.trimExec = false;
 });
 
 const seed = (bots, extra = {}) => writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots, ...extra }, null, 2)}\n`);
@@ -660,6 +661,107 @@ test("a worktree space whose main checkout's bots.json is deleted: the form says
   assert.match(where, /repo\/\.herdr\/bots\.json is deleted: /);
   assert.match(where, /brings it back with this worktree's version/);
   assert.doesNotMatch(where, /modified|has local changes|isn't committed|stops on it/);
+});
+
+// #626: Herdr's exec may return stdout trimmed, turning v1's unstaged " D" into "D "; the
+// porcelain=v2 read keeps the state field explicit, so the form still says deleted.
+test("a trimmed status answer still reads the main checkout's deleted bots.json (porcelain v2)", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  rmSync(mainPath);
+  assert.equal(g("status", "--porcelain"), " D .herdr/bots.json\n");
+  state.trimExec = true; // what a Herdr whose exec trims stdout gives the rule
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  const where = textOf(nodes.get("bot-where"));
+  assert.match(where, /repo\/\.herdr\/bots\.json is deleted: /);
+  assert.match(where, /a merge pull brings it back with this worktree's version/);
+  assert.doesNotMatch(where, /has local changes|isn't committed/);
+});
+
+// #626: a committed deletion leaves porcelain empty, yet the pull ends in modify/delete; the
+// form warns about that conflict too.
+test("a worktree space whose main checkout has committed its bots.json deletion: the form warns the pull conflicts", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g(repo, "init", "-q");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "bots");
+  g(repo, "worktree", "add", "-q", "-b", "wt", wt);
+  // The worktree commits its change; main commits the deletion of the same file.
+  writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  g(wt, "add", ".");
+  g(wt, "commit", "-q", "-m", "worktree bots");
+  g(repo, "rm", "-q", ".herdr/bots.json");
+  g(repo, "commit", "-q", "-m", "delete bots");
+  assert.equal(g(repo, "status", "--porcelain"), "");
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  const where = textOf(nodes.get("bot-where"));
+  assert.match(where, /repo\/\.herdr\/bots\.json has a committed deletion: /);
+  assert.match(where, /ends in a modify\/delete conflict/);
+  assert.doesNotMatch(where, /isn't committed|has local changes|is deleted: a merge pull/);
+});
+
+// #626 F1: a main checkout that never had bots.json is not a committed deletion: the pull only
+// adds the worktree's file, so the form does not warn.
+test("a worktree space whose main checkout never had a bots.json: the form does not warn", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  mkdirSync(repo);
+  g(repo, "init", "-q");
+  g(repo, "commit", "-q", "--allow-empty", "-m", "init");
+  g(repo, "worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /committed deletion|modify\/delete|isn't committed|has local changes|is deleted/);
+});
+
+// #626 F1: main deleted bots.json before the worktree branched: the merge base has no file, so
+// the form does not warn; the merge only adds the worktree's file.
+test("a worktree space whose main deleted bots.json before branching: the form does not warn", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g(repo, "init", "-q");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "bots");
+  g(repo, "rm", "-q", ".herdr/bots.json");
+  g(repo, "commit", "-q", "-m", "delete bots");
+  g(repo, "worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(wt, ".herdr"));
+  writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  assert.equal(f.form.dir, wt);
+  assert.doesNotMatch(textOf(nodes.get("bot-where")), /committed deletion|modify\/delete/);
 });
 
 // ---- #85: the pick and attach lists draw the sidebar's known bots at once ----

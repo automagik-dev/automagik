@@ -181,7 +181,7 @@ export class BotForm {
     const text = dir === key || expected !== null ? expected : await readTextFile(`${key}/${BOTS_PATH}`, { on: machine });
     // readFrom: the file `text` came from; changes: the key's file a pull would stop on.
     const readFrom = dir === key || expected !== null ? dir : key;
-    return { dir, text, expected, readFrom, changes: dir !== key ? await changesIn(key) : null };
+    return { dir, text, expected, readFrom, changes: dir !== key ? await changesIn(key, dir) : null };
   }
 
   // A worktree edit (dir isn't the key): where it is saved, and when the sidebar shows it.
@@ -190,7 +190,8 @@ export class BotForm {
       + `${this.fileName(key)}, so this shows there once the worktree's change is merged and pulled.`;
     if (changes === "untracked") return `${where} ${this.fileName(key)} isn't committed: commit or remove it before pulling, or the pull stops on it.`;
     if (changes === "modified") return `${where} ${this.fileName(key)} has local changes: commit or discard them before pulling, or the pull stops on it.`;
-    if (changes === "deleted") return `${where} ${this.fileName(key)} is deleted: the pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead).`;
+    if (changes === "deleted") return `${where} ${this.fileName(key)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.`;
+    if (changes === "committed-deletion") return `${where} ${this.fileName(key)} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.`;
     return where;
   }
 
