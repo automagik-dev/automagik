@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open) |
+| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open; amended 2026-11-07: writes on DSH chats, global Bots included, see Amendments) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -327,6 +327,8 @@ second ALPN beside the session one:
   `chat.backfill {terminal, before, limit}`; `chat.send {terminal, text, id}` (answers `sent`,
   `queued`, `held` or `refused` with a reason); `chat.sendHeld` and `chat.cancelHeld`
   `{terminal, id}`; `chat.answer {terminal, row, choice, text?}` (`text`: a question's free text only); `chat.interrupt {terminal}`.
+  (Amended, 2026-11-07: on a `dsh:<botId>` chat, send, answer and interrupt stop being
+  refusals where the bridge's `hello` says `dshWrite: true`; see Amendments.)
 - **Limits.** A row's text is cut at 64 KiB and a tool output preview at 8 KiB, each with "open
   in terminal"; a backfill page is at most 200 rows and 1 MiB; a send at most 32 KiB; at most 8
   subscriptions per connection. The connection caps in `guard.mjs` (`MAX_OPEN`, `MAX_PENDING`,
@@ -403,6 +405,8 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   never registered as a DSH tool, never given to an automation or another plugin, and refused
   without a client that watches that terminal. Each carries the action the person took: the
   message they wrote, or the id of an open approval or question row the engine itself raised.
+  (Amended, 2026-11-07: the same rule for writes on DSH chats, through the owner-only
+  socket; see Amendments, "Threat model".)
 - **The per-project yes** (0014 Threat model, item 3). It lives in 0014's `shown[]`, keyed by
   (machine, project). This RFC adds nothing to it and reads no repo file: a chat opens only for a
   Bot already shown under that yes, or a terminal the person opens.
@@ -412,7 +416,8 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   label is never trusted more than the rule allows.
 - **What it can send.** Text, through the cleaner and the draft check; mapped approval and answer
   keys under the guards in "Input"; interrupt. Only on the person's action in a client, enforced
-  as in "Who can call the engine".
+  as in "Who can call the engine". (Amended, 2026-11-07: on a DSH chat also a prompt, a
+  cancel and one answer to a DSH request; see Amendments, "Threat model".)
 - **Rendering.** Transcript text is written by the agent and by whatever it read (web pages,
   files, tool output). It is shown as text or sanitized markdown, with no HTML and no remote load
   by itself, so a page the agent read cannot run in, or call home from, either window.
@@ -536,6 +541,275 @@ they stay below as the record.
    *Decided, as recommended:* (b) where it runs, folded into the hooks Start and Attach already
    write and into Q3's one-time offer, with (a)'s guards as the fallback everywhere else
    (delivery 8, after delivery 2).
+
+## Amendments
+
+### RFC 0015 (live chat projection): writes on `dsh:<botId>` chats
+
+**Accepted by the owner, 2026-11-07, with global Bots writable under the same limits.**
+
+Signed on PR #663 after the threat-model review by t2x5 and Reviewer t37n (wish
+`pocket-four-tabs`, Group 0b). Group 4 builds it; its code starts only after this PR merges.
+
+Owner decision D1 (wish `pocket-four-tabs`): **a paired phone can send, interrupt and approve in
+the team's DSH chats.** This reverses the read-only rule for `dsh:<botId>` chats: today the
+bridge refuses `chat.send`, `chat.interrupt`, `chat.answer`, `chat.sendHeld` and
+`chat.cancelHeld` on them (`herdr/mods/pocket-link/bridge/dsh-source.mjs:6-8`, `refusedDsh`), the
+socket answers every write `read-only` (`apps/bots-dsh/src/host/pocket-socket.js:7-9`), and
+bots-dsh never opens DSH's owner event stream `$events`
+(`apps/bots-dsh/src/host/pocket-chat.js:5-9`). Herdr terminals' chats (Design, "Input") do not
+change. `chat.sendHeld` and `chat.cancelHeld` stay refused on a DSH chat: a DSH Session has no
+half-typed terminal draft, so nothing is ever held.
+
+#### The socket's write methods
+
+The socket (`<team home>/pocket/chat.sock`) gains three methods. Each names the `channel` of a
+subscription the same connection opened (as `backfill` does today), never a bare terminal, so a
+write is bound to a chat someone is watching. Answers use the shapes `chat.*` already returns,
+so `dsh-source.mjs` forwards them unchanged.
+
+| Socket method | From the phone | Into DSH (Session Controller, DSH 0.2.2; Group 4 confirms each call) |
+|---|---|---|
+| `send {channel, text, id}` | `chat.send {terminal, text, id}` | a prompt (`SessionPromptRequest`) on the Bot's current chat Session, `mode: 'queue'`, `requestId` from the phone's `id` |
+| `interrupt {channel}` | `chat.interrupt {terminal}` | a cancel of the active turn (`SessionCancelRequest`) |
+| `answer {channel, row, choice, text?}` | `chat.answer {terminal, row, choice, text?}` | the result of the open approval or question named by `row` (below) |
+
+- **send.** The text goes through the same cleaner as a terminal send (Design, "Input": paste
+  markers, escape sequences, C0 but newline and tab, DEL, C1; CRLF to LF); empty after cleaning
+  is refused. Answers: `sent` when no turn runs, `queued` when one does (DSH queues it, as
+  Claude's queued prompt shows today), `refused` with a reason. Never `held`. `steer` is not
+  used: a phone message never redirects a running turn. **Retry dedupe** (required): bots-dsh
+  keeps the last 64 phone `id`s per followed Session in memory, and also looks the `id` up in
+  the Session log where DSH lets it (Open question 2). A `send` whose `id` it finds is answered
+  `sent` and not prompted again. The guarantee is conditional: while bots-dsh keeps running, a
+  Retry on "maybe not sent" (Phone route, "Reconnect") never sends a message twice. After a
+  bots-dsh restart the memory is gone, so it holds only if the log lookup works; until Group 4
+  proves that, a Retry after `reset` warns "This may send it twice".
+- **interrupt.** Cancels the running turn; with no turn running it answers `sent` and does
+  nothing. It never escalates and never repeats.
+- **answer.** `row` must name the approval or question that is open now in the Session this
+  `channel` follows, as the socket raised it for that Session. Having been sent once is not
+  enough: a new channel's snapshot re-sends the open rows, so the socket checks `row` at answer
+  time against that Session's current open request, never against what a channel was shown. A
+  row of another Session is refused `not-watching`; a row settled meanwhile `settled`; a row
+  replaced by a newer request `changed`. `choice` is `allow` (this one call), `deny`, or one of a
+  question's options. **Allow for session stays on the computer:** it is a grant for every later
+  matching call in that Session, not one call, so the phone never offers it and the socket
+  refuses it from the phone, even where DSH offers it. (Wish Group 5 lists it on the phone;
+  that needs a later amendment.) The bridge adds `by`, the paired phone's name from
+  `devices.json`, which the phone does not set. Anything else is refused.
+- **text** (a question's free text only). `text` is allowed only with `choice: "other"` on an
+  open **single-select** question row, the rule terminal chats use (`chat/question.js:103-107`).
+  It must be one line (no CR or LF), pass the same cleaner as a `send` unchanged (text the
+  cleaner would alter is refused, never silently rewritten), and be at most `SEND_TEXT_MAX`
+  (32 KiB) in UTF-8 bytes. It is then forwarded to DSH unchanged, as that question's answer.
+  Refused: `text` on an approval row, `text-on-approval`; `text` on a multi-select question,
+  with any `choice` but `"other"`, or `"other"` without `text`, `invalid`; `text` with a line
+  break or that the cleaner would change, `invalid`; `text` empty or blank, `empty`; `text`
+  over 32 KiB, `too-long`. On Retry the phone resends the same `row`, `choice` and `text`. It
+  stays one answer to a question DSH raised: never a prompt, never a message in the Session.
+- **Refusal reasons.** `read-only` (a socket or bridge without writes), `not-watching`,
+  `not-shown` (the per-project yes, below), `settled` (with the receipt), `changed` (the row is
+  no longer the open one: "The question changed"), `invalid` (an answer's `choice` or `text`
+  the row does not allow, above), `text-on-approval`, `empty`, `rate` (Limits), `too-long`,
+  `busy`, `offline`.
+
+#### Approvals on the phone, and the race
+
+- **How the approval reaches the phone.** bots-dsh opens `$events` as one more owner client,
+  the stream the computer's window already answers approvals from. A pending approval or
+  question of a Session it follows for a watching phone becomes an approval or question row
+  (`pocket-chat.js:125-126` today makes the read-only one) with `answerable: true`, the tool, its
+  input from DSH's request (cut at 8 KiB), and the choices DSH offers but allow for session
+  (below). The row id is DSH's id for
+  that request, so both windows name the same thing.
+- **Who wins: the first answer.** DSH settles each request once; the first answer to arrive,
+  from the computer or the phone, is the one applied. bots-dsh never answers on its own: no
+  default, no timeout answer. A waterfall it does not carry to a phone it passes on at once, so
+  it never holds up the computer. One it carries and has not answered never delays another
+  client's answer either: the computer's answer applies at once, as it does today.
+- **The other side closes with a receipt.** DSH's `cancel` frame names only the request, not
+  who answered or how, so every receipt comes from bots-dsh's own record, the settled entry
+  (below), never from the frame:
+  - *The phone answered first.* bots-dsh sent that result itself, so it records where (the
+    bridge's `by`), what (the choice) and when (the time DSH accepted it). DSH withdraws the
+    computer's dialog (its `cancel` frame). The Automagik window's chat shows "Answered on the
+    phone (*phone name*): Allow, 14:02", read from that entry, if bots-dsh's window code can draw
+    a line in that chat (Open question 4). Until that is proven, the computer's dialog just
+    closes; the receipt is the phone's and the settled entry's.
+  - *The computer answered first.* bots-dsh sent no result and gets DSH's `cancel`. Where is
+    known by elimination: the answer did not come through the socket, so the phone shows
+    "Answered on the computer" (any other owner client counts as the computer). What is read
+    from the Session's log (the tool ran, or was denied) when DSH records it there, and is left
+    out when it does not; the receipt never guesses an outcome. When is the time bots-dsh saw
+    the `cancel`. The card closes through the `open: false` row `pocket-chat.js:291` already
+    emits.
+  - A phone answer that arrives second is refused `settled` and carries the same receipt. The
+    receipt never names more of the input than the row already showed.
+- **Withdrawn.** A request DSH cancels itself (the turn was interrupted, the Session stopped)
+  closes on both sides as "No longer needed", with no answer.
+
+#### Settled requests on reconnect
+
+A phone can be away while its card is answered. Orca's answer (sweep note `sweep-orca.md:256`;
+`claude-settled-permission-requests.js`): keep the last settled ids beside the status.
+
+- Per followed Session, bots-dsh keeps the **last 16 settled requests**: id, outcome, where it
+  was answered, when. Memory only, never on disk, dropped with the Session's follow.
+- A `subscribe` snapshot carries the open approval (as today) and `settled: [...]`. The phone
+  closes every card whose id is in `settled`, with its receipt. A card that is neither open nor
+  in `settled` (older than the last 16, or the plugin restarted) closes as "Closed while you
+  were away", with no outcome claimed.
+- An answer the phone sent and did not see answered is never resent silently. Retry sends the
+  same `row`, `choice` and `text`; a request settled meanwhile answers `settled` with its receipt.
+
+#### Limits
+
+The chat route's limits stand (Phone route, "Limits": 32 KiB a send, 8 subscriptions a
+connection, `guard.mjs` caps), and the socket's (`pocket-socket.js:22-26`: 64 KiB a line, 4
+connections, 8 subscriptions, 4 MiB unsent). New:
+
+- one write in flight per phone and chat; a second gets `busy`;
+- a rate cap per paired phone, across all its connections and chats, counted by the bridge
+  and again by the socket: at most 20 writes a minute, and at most one `interrupt` per chat
+  every 5 s; past either, `rate`. The cap bounds a send-and-cancel loop; it does not stop a
+  stolen phone. Removing the phone (writes end within 2 s) is what stops it;
+- an `answer` only for the request open now in the channel's own Session, checked at answer
+  time (see **answer** above);
+- an answer's `text` only for a single-select question's `"other"`, one line, unchanged by the
+  cleaner, at most 32 KiB in bytes (see **text** above), counted in the same 20 writes a minute;
+- a `send` only to the Bot's current chat Session, never a group, task, archived or subagent
+  Session (the same set `pocket-chat.js:10-11` follows today);
+- at most 16 settled requests kept per Session (above).
+
+#### How the phone learns a bridge accepts writes
+
+Both peers ship apart (plugin, then Pocket Link copied by hand, then the app), so each side
+finds out what the other accepts, and fails closed to read-only.
+
+- **Socket to bridge.** A bridge that wants writes says so in its `hello`
+  (`{write: 1}`). A socket with writes answers that `hello` with `readOnly: false, write: 1` and
+  the write methods in `methods`; to a `hello` without it, it answers exactly as today
+  (`protocol: 1, readOnly: true`) and refuses writes on that connection. So an older bridge,
+  which drops any socket that is not `readOnly: true` (`dsh-source.mjs:143`), keeps reading
+  DSH chats from a newer plugin, and a newer bridge on an older plugin sees `readOnly: true`
+  and stays read-only.
+- **Bridge to phone.** The `herdr-pocket/chat/1` `hello` answer (`chat.mjs:174`) gains
+  `dshWrite: true` when the bridge has a socket that answered `write: 1`, and `chatStart: true`
+  later, for starting a chat (wish Group 5; its method is specified with that group). A phone
+  that sees no `dshWrite` keeps the DSH chat read-only, "Answer on the computer", as today.
+- **Why a flag, not `chat/2`.** This RFC makes a change in a method's meaning a new ALPN version
+  (Phone route; Contracts introduced). The methods' meaning does not change: `chat.send`,
+  `chat.interrupt` and `chat.answer` keep their parameters and their set of answers (`refused`
+  with a reason is already one), and what they do on a Herdr terminal is untouched. What changes
+  is which chats accept them, and a chat that does not still answers `refused`. That is a
+  capability, and `hello` already carries capabilities (`chat: 1`, `credit`, `limits`).
+- **An older phone on a newer bridge stays read-only.** It refuses DSH writes itself before
+  sending (`ChatClient.kt:11-13`), and it never reads `dshWrite`.
+
+#### Threat model (grows "Who can call the engine" and "What it can send")
+
+- **Who can reach the socket: unchanged.** The socket stays owner-only: folder 0700, socket
+  0600 (`pocket-socket.js:2-3`), and the bridge uses it only after `ownerOnly`
+  (`dsh-source.mjs`, #523, #548). Never a TCP port. Another account on the computer reaches no
+  write.
+- **Who can call a write.** Only `chat.*` on a paired `herdr-pocket/chat/1` connection, for a
+  terminal that same connection subscribes to (the bridge checks it; the socket checks the
+  channel). An unpaired key is closed before its header is read, as today. The writes are
+  served by the socket alone: they are never registered as a DSH tool, never given to an
+  automation, a Bot or another plugin, and no Session can call them. The DSH host also runs
+  plugins, tools and automations (as for the terminal engine): none of them reaches these
+  methods.
+- **Removing the phone ends its writes within 2 s.** The bridge's `revoke` runs every 2 s
+  (`bridge.mjs:213`) and on forget (`bridge.mjs:195`); it ends the phone's chat sessions, which
+  unsubscribes their channels, and the socket refuses a write on a closed channel. A write the
+  phone sent before that is either already in DSH (a prompt accepted, an approval settled) or
+  dropped; nothing of that phone's is queued for later.
+- **What it can send: grows.** Before: text, mapped keys and interrupt into Herdr terminals.
+  Now also, on a DSH chat: a prompt to the Bot's current chat Session, a cancel of its running
+  turn, and one answer to a request DSH raised: allow for that one call, deny, or a question's
+  option, or a single-select question's free text (`"other"`, one line, already clean, at most
+  32 KiB, forwarded unchanged), never allow for session; never free text to an approval. At
+  most 20 writes a minute per phone (Limits). Only on the person's action on the phone; the
+  engine and the plugin never answer by themselves.
+- **Who the log says sent it.** DSH writes a caller's `principal` only for a caller other than
+  the owner (`dsh-api-session-controller` types, `user-rpc` source), and the phone acts as the
+  owner, so a phone prompt is logged as the owner's. Its `requestId` starts `pocket-` so the
+  Session log tells phone prompts apart (Open question 2).
+- **A stolen paired phone, before and after.** Before: it read transcripts and typed into
+  Herdr terminals (the whole `hc connect` API, "Who can reach it"). Now also: it can prompt the
+  team's project Bots shown under a yes and the global Bots, the Main Bot included; stop their
+  turns; and approve or deny their tool calls one call at a time, at the level DSH's sandbox
+  gives that Session, at up to 20 writes a minute; and it sees each request's input. It cannot
+  grant allow for session, pick a project without the yes, start a Bot, change a Bot's settings
+  or its level, or reach the socket. Undo as before: remove the phone in Pocket Link (its
+  writes end within 2 s), or turn the bridge off.
+- **The per-project yes still gates the chat** (0014 Threat model, item 3; `shown[]`). A DSH
+  chat of a Bot whose project has no entry in the home file's `shown[]` is listed with
+  `shown: false`; `subscribe` and every write on it are refused `not-shown`, by the socket and
+  again by the bridge. A Team bubble for that project shows "Show in Automagik first" and opens
+  no DSH chat. Pairing never counts as the yes, and no `chat.*` method or socket method writes
+  `shown[]`: the yes is given only in Herdr or Automagik.
+- **Global Bots are writable from the phone, under the same limits** (owner decision at
+  signing, 2026-11-07: "include Main Bot"). Global Bots (`project: null`, the Main Bot
+  included) need no project yes to be shown (0014), and they are the team's widest Bots. The
+  phone may send, interrupt and answer on them under every rule above, with no exception: the
+  owner-only socket; a paired connection subscribed to that chat; 20 writes a minute and one
+  interrupt per chat every 5 s per phone; approvals one call at a time, never allow for
+  session; writes end within 2 s of removing the phone; the phone acts as the owner, and its
+  prompts carry a `pocket-` request id. The `shown[]` gate above still applies to project Bots
+  only. What this accepts: a paired or stolen phone can prompt, stop and approve one call at a
+  time on the Main Bot, with no project yes in between; removing the phone is the undo.
+- **Privacy.** What the person types or approves on the phone now goes to the computer's DSH.
+  Group 4's pocket PR says so in `apps/pocket/docs/privacy.md` in the same PR (Pocket's
+  AGENTS.md); this text changes nothing on the phone yet.
+
+#### Deliveries (wish Group 4; one PR a lane, in this order)
+
+1. **Plugin.** `pocket-socket.js` and `pocket-chat.js`: the write methods, the `$events` client,
+   the race rule, the 16 settled requests, the `hello` handshake, the `shown[]` gate. *Check:* a
+   write on an unwatched channel is refused; a write is not callable as a tool or by an
+   automation; an approval answered on the computer closes the phone's card with its receipt; a
+   phone answer that comes second gets `settled`; a `hello` without `write` gets today's answer
+   and no writes; a write on a global Bot (the Main Bot) is served under the same limits, with
+   no project yes; a project Bot without its yes gets `not-shown`; allow for session from the
+   phone is refused; the 21st write in a minute gets `rate`; a Retry with a known `id` prompts
+   nothing; a single-select question's `"other"` text reaches DSH byte-for-byte as that
+   question's answer; `text` on an approval gets `text-on-approval`; `text` on a multi-select
+   question, with another `choice`, with a line break or that the cleaner would change gets
+   `invalid`; empty `text` gets `empty`; `text` over 32 KiB gets `too-long`; a Retry resends the
+   same `text`.
+   *Rollback:* a release without the methods; bridges see `readOnly: true`.
+2. **Pocket Link** (herdr, copied by hand with the owner's OK). `dsh-source.mjs` asks for writes,
+   forwards them only to a socket that answered `write: 1`, refuses otherwise as today, and
+   `chat.mjs` answers `dshWrite`. *Check:* the `pocket-link` job; a removed phone's writes end
+   within 2 s; an old read-only socket still refuses writes. *Rollback:* copy the older mod.
+3. **Pocket.** `ChatClient.kt` sends DSH writes only when `dshWrite` is set; cards with receipts;
+   "maybe not sent" with Retry; `privacy.md`. *Check:* the Gradle gate; on a paired phone, a
+   message reaches the desktop DSH chat, an approval answered there runs the tool, interrupt
+   stops the turn. *Rollback:* a later release hides the writes (never a lower versionCode).
+
+#### Open questions (Group 4 answers each before its plugin PR)
+
+1. **The exact approval call, DSH 0.2.2.** Can a plugin be an in-process `$events` client, and
+   does DSH settle a request once when two clients answer it (one result applied, the other
+   client sent `cancel`)? And when one client answers while another still holds the request
+   unanswered, does the answer apply at once? The host has the first-answer rule for plugin
+   activations (`claimRequest`, "first answer wins", `dsh-cordis-host-runner` registry types);
+   this amendment needs it for tool approvals and questions. The types read here are the
+   harness's `0.2.1-rc.3`. If any answer is no, Group 4 stops and this section comes back for
+   review; the race rule does not change.
+2. **Does DSH accept a `requestId` that starts `pocket-`**, and can bots-dsh find one in the
+   Session log for the Retry dedupe? If not, bots-dsh keeps the phone's ids in memory per
+   Session, and the log does not tell phone prompts apart.
+3. **The bot id.** Whether the id bots-dsh serves as `dsh:<botId>` is the registry id for every
+   Bot (wish Group 2's check) decides how the `shown[]` gate finds a Bot's project.
+4. **The receipt in the Automagik window.** DSH's `cancel` carries no answerer, so the window's
+   "Answered on the phone" line can only come from bots-dsh's settled entry. Can bots-dsh's
+   window code draw that line in the chat where DSH's dialog was? If not, the computer shows no
+   receipt (its dialog closes), and the race rule does not change. A second point for the same
+   check: whether DSH's Session log records an approval's outcome, which the phone's "Answered on
+   the computer" receipt reads.
 
 ## Links
 

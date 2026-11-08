@@ -2,7 +2,7 @@
 title: "RFCs"
 type: moc
 created: 2026-11-01
-updated: 2026-11-06
+updated: 2026-11-07
 tags: [moc, rfcs]
 ---
 # RFCs
@@ -37,5 +37,6 @@ Monorepo RFCs that change Pocket's contract, privacy or permissions (they live i
 | RFC | Title | Status | Pocket's part |
 |---|---|---|---|
 | [0015](../../../../docs/rfcs/0015-live-chat-projection.md) | Live chat projection: an agent terminal as a chat, Pocket Link's chat route | Accepted | Delivery 5: the Chat tab; transcripts reach the phone, in memory only ([privacy](../privacy.md)) |
+| [0015, amendment](../../../../docs/rfcs/0015-live-chat-projection.md#amendments) | Writes on DSH chats: send, interrupt and approve from the phone | Accepted (2026-11-07) | `dshWrite` in the chat `hello`; first answer wins, the other card closes with a receipt; the per-project yes still gates project Bots; global Bots (Main Bot included) writable under the same limits; allow for session stays on the computer; privacy.md changes with the pocket PR |
 
 Back to the [docs home](../_index.md).
