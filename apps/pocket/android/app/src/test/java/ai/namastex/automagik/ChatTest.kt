@@ -499,7 +499,9 @@ class ChatTest {
         // A settled entry for a question never becomes a question card either.
         val q = Chat.reduce(away(), snapshot(settled = "[${settled("dsh:session-1:9#question-q1", outcome = "Postgres")}]"))
         assertNull(q.question); assertNull(q.approval)
-        assertEquals("question" to "Postgres", q.receipts.single().let { it.kind to it.outcome })
+        // Two receipts: the approval card that vanished (no entry), then the question's settled entry.
+        assertEquals(listOf(CARD to "", "dsh:session-1:9#question-q1" to "Postgres"), q.receipts.map { it.id to it.outcome })
+        assertEquals("question", q.receipts.last().kind)
     }
 
     /** Row 4: a reconnect with nothing settled shows nothing; so does the first snapshot of a chat, whatever settled[] holds. */
