@@ -9,9 +9,9 @@ sees. Until then this file is a rulebook and a runnable module, not behaviour.
 ## Run
 
 ```sh
-XDG_RUNTIME_DIR=/run/user/1000 node mods/am-sidebar/hcProxy.mjs \
+node mods/am-sidebar/hcProxy.mjs \
   --terminal t7 \
-  --upstream /run/user/1000/herdr-core/default.sock \
+  --upstream "$XDG_RUNTIME_DIR/herdr-core/default.sock" \
   --app-home /path/to/herdr-app-home
 ```
 
@@ -87,11 +87,10 @@ does not wire that; it only never falls back.
 
 ## What a filesystem mask cannot do
 
-The hc proxy filters one Unix socket. It does not filter the network: the sandbox still reaches
-every TCP listener on the box, including localhost admin ports, unless PR B adds a network
-namespace (or equivalent). A path mask hides files; it cannot hide a listening port. The PR that
-came with this file lists the box's listeners read-only so the owner can decide whether that is a
-separate item.
+The hc proxy filters one Unix socket. It does not filter the network: the network stays open,
+and a path mask cannot hide a listening port without a network namespace (or equivalent). Any
+service that must not be reachable belongs on a root-only Unix socket or behind a network
+namespace.
 
 The `terminal.run` shape also constrains a process, not the task text: a deliberately forged
 worker start can still choose the task word after `--`. The final fix for that is starting
