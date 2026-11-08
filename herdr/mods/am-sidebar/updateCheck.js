@@ -119,9 +119,9 @@ export function announce(check, get, set, notify) {
 // shared value can't interleave). REQUEST_KEY (written by am-status): "check now" or "install".
 
 /** The last check or install, and `busy` while one runs: `{ kind, current, latest, update, why,
- *  at, request, applyError, from, auto, autoFailed, autoHeld, landed, announced,
- *  busy: { what, since, id, request?, to?, from?, auto? } | null }`. auto: the setting as the last
- *  check read it (`{ on, skip, managed, why, at? }`); the rest: autoPlan and landing below. */
+ *  at, request, applyError, from, auto, autoFailed, autoHeld, landed, announced, check, restore,
+ *  restoreError, busy: { what, since, id, request?, to?, from?, auto? } | null }`. auto: the setting
+ *  as the last check read it (`{ on, skip, managed, why, at? }`); the rest: autoPlan and landing below. */
 export const STATE_KEY = "am.update.state";
 /** What am-status asks for: `{ id, what: "check" | "apply", at }`. */
 export const REQUEST_KEY = "am.update.request";
@@ -198,18 +198,63 @@ export function heldFrom(text, version) {
 }
 
 /**
+ * release.js RESTORE_FILE's note for `version`: `{ restore }` after a bad pack was put back,
+ * `{ error }` when it could not be, or null when the note is not this build's or is too old (a
+ * Herdr restarted long after the restore says nothing). The restored build reads it at load, since
+ * the build that asked for the update is usually reloaded away before its answer arrives.
+ */
+export function restoreFrom(text, version, now) {
+  let file = null;
+  try { file = JSON.parse(text); } catch { return null; }
+  if (!file || typeof file !== "object" || file.version !== version || typeof file.at !== "number") return null;
+  if (now - file.at >= LANDING_MS || file.at - now > 5_000) return null;
+  if (typeof file.error === "string" && file.error !== "") return { error: file.error };
+  if (typeof file.failedVersion !== "string" || file.failedVersion === "") return null;
+  const failed = Array.isArray(file.failed) ? file.failed.filter((m) => typeof m === "string" && m !== "") : [];
+  const mod = typeof file.mod === "string" && file.mod !== "" ? file.mod : failed[0] ?? null;
+  return { restore: { version, failedVersion: file.failedVersion, mod, failed: failed.length > 0 ? failed : (mod ? [mod] : []), checked: true } };
+}
+
+/**
+ * release.js CHECK_FILE's note for `version`: `{ from, unavailable }` when herdr-app could not
+ * judge the update just installed (it was kept), else null: another release's note, a stale one,
+ * or none. The new build reads it at load, since the build that ran the update is usually gone.
+ */
+export function checkFrom(text, version, now) {
+  let file = null;
+  try { file = JSON.parse(text); } catch { return null; }
+  if (!file || typeof file !== "object" || file.version !== version || typeof file.at !== "number") return null;
+  if (now - file.at >= LANDING_MS || file.at - now > 5_000) return null;
+  if (typeof file.unavailable !== "string" || file.unavailable === "") return null;
+  return { from: typeof file.from === "string" && file.from !== "" ? file.from : null, unavailable: file.unavailable };
+}
+
+/**
  * An install's answer (`node update.mjs apply`) as STATE_KEY fields over the `state` before it:
- * `{ kind: "installed", from, current, latest }` when a release went in; the check's own answer
- * when there was nothing to install; else the state as it was with `applyError` (why it failed),
- * so the bar still offers the update.
+ * `{ kind: "installed", from, current, latest }` when a release went in; `{ kind: "restored" }`
+ * when herdr-app check found a mod that does not load and update.mjs put the kept set back (the
+ * bad version is recorded as rolled back); `{ kind: "restore-failed" }` when that could not happen;
+ * the check's own answer when there was nothing to install; else the state as it was with
+ * `applyError` (why it failed), so the bar still offers the update.
  */
 export function applyPatch(result, state, now) {
   const answer = answerOf(result?.stdout);
   const version = answer?.installed?.version;
+  const restored = answer?.installed?.restored;
+  if (typeof version === "string" && restored && typeof restored.version === "string") {
+    return { kind: "restored", from: answer.current ?? state.current ?? null, current: restored.version,
+      latest: restored.version, update: null, why: null, applyError: null, at: now,
+      restore: { ...restored, failedVersion: restored.failedVersion ?? version }, check: answer.installed.check ?? null };
+  }
+  if (typeof version === "string" && typeof answer?.installed?.restoreError === "string") {
+    return { kind: "restore-failed", from: answer.current ?? state.current ?? null, current: version, latest: version,
+      update: null, why: null, applyError: null, at: now, restoreError: answer.installed.restoreError,
+      check: answer.installed.check ?? null };
+  }
   if (result?.code === 0 && typeof version === "string") {
     return { kind: "installed", from: answer.current ?? state.current ?? null, current: version, latest: version, update: null,
       why: null, applyError: null, at: now, restartBots: Array.isArray(answer.notice) && answer.notice.length > 0,
-      heldMods: heldOf(answer.installed.held) };
+      heldMods: heldOf(answer.installed.held), check: answer.installed.check ?? null };
   }
   // An install on its own that update.mjs held back (the setting, a rollback's skip, another run):
   // nothing happened and nothing is wrong; the check's answer stands.
@@ -222,6 +267,34 @@ export function applyPatch(result, state, now) {
   if (result?.code === 0 && answer && !answer.error && answer.installed === null) return checkPatch(result, now);
   const why = typeof answer?.error === "string" ? answer.error : result ? `exit ${result.code}` : "node not found";
   return { applyError: why, at: now };
+}
+
+/**
+ * The one notice after an update's own `herdr-app check` found a mod that does not load and the
+ * kept set went back (#652): the version that failed, the mods, and the version that is back.
+ */
+export function restoredNotice(restore) {
+  const failed = Array.isArray(restore?.failed) && restore.failed.length > 0
+    ? restore.failed : [restore?.mod].filter((m) => typeof m === "string" && m !== "");
+  const mods = failed.length > 0 ? failed.join(", ") : "a pack mod";
+  const bad = restore?.failedVersion ?? restore?.from ?? "The update";
+  const back = restore?.version ?? "the previous version";
+  return { title: `Automagik Herdr restored ${back}`, level: "warning",
+    body: `${bad} failed to load (${mods} failed herdr-app check): the previous version ${back} is back.` };
+}
+
+/** The one notice when the kept set itself could not be put back (#652): no crash, no retry loop. */
+export function restoreFailedNotice(why, version = "The update") {
+  const reason = String(why ?? "the previous version could not be restored").replace(/^could not restore:\s*/, "");
+  return { title: "Automagik Herdr could not restore the previous version", level: "error",
+    body: `${version} failed to load, but the previous version could not be restored: ${reason}. `
+      + `${version} is still installed; auto-update waits for a newer release.` };
+}
+
+/** One line for an install's notice when herdr-app could not judge the new pack (the update was kept). */
+export function checkNote(check) {
+  if (!check || check.checked !== false) return "";
+  return ` ${check.unavailable ?? "herdr-app check could not run"}: the update was kept, but its mods were not checked.`;
 }
 
 /** The install's notice: done (reload the mods to use it), or why it wasn't. */
@@ -355,28 +428,32 @@ export function landing(state, version, now) {
   if (typeof version !== "string" || version === "" || state?.announced === version) return null;
   const landed = objectOr(state?.landed, null);
   if (landed?.version === version && typeof landed.at === "number" && now - landed.at < LANDING_MS) {
-    return { ready: true, from: landed.from ?? null, restartBots: landed.restartBots === true, held: heldOf(landed.held) };
+    return { ready: true, from: landed.from ?? null, restartBots: landed.restartBots === true, held: heldOf(landed.held),
+      check: objectOr(landed.check, null) };
   }
   const busy = objectOr(state?.busy, null);
   if (busy?.what === "apply" && busy.announce === true && busy.to === version && typeof busy.since === "number" && now - busy.since < LANDING_MS) {
-    return { ready: false, from: busy.from ?? null, id: busy.id };
+    return { ready: false, from: busy.from ?? null, id: busy.id, check: null };
   }
   return null;
 }
 
-/** The notice after Herdr reloaded the mods into `version`. Bots are herdr-core's terminals: a mod
- *  reload doesn't touch them. A moved briefing hook (rare: the sidebar's folder renamed) does.
- *  `held`: the mods this install left in mods/ for a layout, each said with what retires it. */
-export function landedNotice(version, from, restartBots = false, held = []) {
+/**
+ * The notice after Herdr reloaded the mods into `version`. Bots are herdr-core's terminals: a mod
+ * reload doesn't touch them. A moved briefing hook (rare: the sidebar's folder renamed) does.
+ * `held`: the mods this install left in mods/ for a layout, each said with what retires it.
+ * `check`: an install whose herdr-app check could not run says so here, once (the update was kept).
+ */
+export function landedNotice(version, from, restartBots = false, held = [], check = null) {
   const back = from ? ` \`automagik-herdr update --rollback\` puts ${from} back.` : "";
   return { title: `Automagik Herdr updated to ${version}`, level: "success",
     body: (restartBots ? "Your bots kept running; restart each Claude bot (automagik-herdr restart <bot>) so it gets its briefing again."
-      : "Your bots kept running.") + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") + back };
+      : "Your bots kept running.") + checkNote(check) + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") + back };
 }
 
 /** The old build's notice when Herdr did not reload the mods within RELOAD_GRACE_MS. */
-export function noReloadNotice(version, held = []) {
+export function noReloadNotice(version, held = [], check = null) {
   return { title: `Automagik Herdr updated to ${version}`, level: "success",
     body: "Herdr did not reload its mods: quit Herdr (⌘Q) and open it again to use the new version."
-      + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") };
+      + checkNote(check) + heldOf(held).map((h) => ` ${heldModLine(h, version)}`).join("") };
 }
