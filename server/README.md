@@ -159,7 +159,9 @@ The volume flags above stay required. The image's WorkingDir is `/opt/automagik`
 volume as root, which would leave `/data/workspace` 0:0 755. The entrypoint prepares
 `/data/workspace` as uid 1000 and chdirs there afterwards, so no `oci.cwd` override is needed.
 An empty root-owned `/data/workspace` left on a volume by an older image is removed and
-recreated; a non-empty one is refused with the directory's uid 1000 message.
+recreated; a non-empty one is refused with the directory's uid 1000 message. An empty one that
+is itself a mount point is left in place and refused the same way: `rmdir` fails `EBUSY`, and
+the entrypoint never forces it.
 
 ## Visibility
 
@@ -184,11 +186,13 @@ docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 The **compressed** figure is the sum of the registry manifest's layer sizes (`.layers[].size`),
 the compressed blobs a pull fetches; it is not a `docker save | gzip` artifact. **Unpacked** is
 the sum of the 18 layers' regular-file payloads, counted layer by layer, so a file a later layer
-replaces or deletes is counted again in its own layer; this is what `docker image inspect .Size`
-reports (521.2 MiB for this image). **Flattened rootfs** is the other count: extract all 18 layers
-into one directory and sum the regular-file bytes that remain, 541,605,298 bytes (516.52 MiB).
-The earlier 193 MiB figure was a `docker save` gzip artifact of 202,734,124 bytes, a different
-count and never the image size.
+replaces or deletes is counted again in its own layer: 546,556,270 bytes (521.24 MiB).
+**Flattened rootfs** is the other count: extract all 18 layers into one directory and sum the
+regular-file bytes that remain, 541,605,298 bytes (516.52 MiB). `docker image inspect .Size`
+reports a different number that includes the store's layer accounting and compressed blobs
+(784,888,111 bytes, 748.5 MiB, with Docker 29.9.1's containerd store), so it is not the unpacked
+payload and is not used here. The earlier 193 MiB figure was a `docker save` gzip artifact of
+202,734,124 bytes, a different count and never the image size.
 
 `yoga` (IncusOS, Incus 7.6, ZFS), 2026-11-07, on the image in the table below. Pull and create
 are the Incus timings for the launch. Memory is the instance's cgroup (`memory.current`) unless
