@@ -847,13 +847,13 @@ test("start --machine under the sidebar's 30 s deadline (#444): too little left 
  * absolute run only this computer has), "there" (one both have) or null (no override). `shipped`:
  * vm has the shipped dsh-tui. `override` on the result is the override's first word.
  */
-function dshTuiScene(t, { terminals = [], override = null, shipped = true, guard = true } = {}) {
+function dshTuiScene(t, { terminals = [], override = null, shipped = true, guard = true, pack: packName = "vm-pack" } = {}) {
   const s = scene(t, { terminals });
   const file = join(s.project, ".herdr/bots.json");
   writeFileSync(file, readFileSync(file, "utf8").replace(/"agent": "claude"/, '"agent": "dsh-tui"'));
   if (shipped) exe(join(s.root, "vm-bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
   if (guard) {
-    const pack = join(s.root, "vm-pack");
+    const pack = join(s.root, packName);
     mkdirSync(join(pack, "bin"), { recursive: true });
     mkdirSync(join(pack, "guard"), { recursive: true });
     exe(join(pack, "bin", "automagik-herdr"), "#!/bin/sh\nexit 0\n");
@@ -930,6 +930,45 @@ test("start --machine of a dsh-tui bot without a guard: no PATH guard, no briefi
   assert.doesNotMatch(out.argv.join("\n"), /deny-by-default hc guard/);
   const said = out.warnings.filter((w) => /#624/.test(w) && /guard/.test(w));
   assert.equal(said.length, 1, out.warnings.join("\n"));
+  assert.match(said[0], /no automagik-herdr with guard\/hc and hcGuard\.mjs beside it was found/, "the guard was missing");
+  assert.doesNotMatch(said[0], /probe could not run/, "not a failed probe");
+});
+
+/** A dsh-tui start without the folder guard: no PATH guard, no paragraph, one #624 warning saying why. */
+function noGuardStart(t, options) {
+  const s = dshTuiScene(t, options);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  const run = s.calls().find((c) => c[0] === "run");
+  const pathWord = run[run.indexOf("--") + 2];
+  assert.equal(pathWord.split(":").some((dir) => dir.endsWith("/guard")), false, pathWord);
+  assert.doesNotMatch(out.argv.join("\n"), /deny-by-default hc guard/);
+  const said = out.warnings.filter((w) => /#624/.test(w) && /guard/.test(w));
+  assert.equal(said.length, 1, out.warnings.join("\n"));
+  return said[0];
+}
+
+test("start --machine of a dsh-tui bot: a guard folder with a space is left off PATH with the #624 warning", (t) => {
+  const said = noGuardStart(t, { pack: "vm pack" });
+  assert.match(said, /space or a colon/);
+});
+
+test("start --machine of a dsh-tui bot: a guard folder with a colon is left off PATH with the #624 warning", (t) => {
+  const said = noGuardStart(t, { pack: "vm:pack" });
+  assert.match(said, /space or a colon/);
+});
+
+test("start --machine of a dsh-tui bot: a failed guard probe is named as failed, not as a missing guard", (t) => {
+  const s = dshTuiScene(t);
+  s.setState((st) => { st.execTimedOut = ["automagik-herdr"]; });
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  const said = out.warnings.filter((w) => /#624/.test(w) && /guard/.test(w));
+  assert.equal(said.length, 1, out.warnings.join("\n"));
+  assert.match(said[0], /guard probe could not run there/);
+  assert.doesNotMatch(said[0], /no automagik-herdr/);
 });
 
 test("restart --machine #612: an argv built from the table gets the same fallback, and one warning", (t) => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
@@ -27,8 +28,7 @@ function patchSync(method, replace) {
   }
 }
 
-function runtime(t, saved) {
-  const home = fs.mkdtempSync(join(tmpdir(), 'ds-bot-store-'))
+function host(home, saved) {
   const statePath = join(home, 'state.json')
   if (saved !== undefined) fs.writeFileSync(statePath, typeof saved === 'string' ? saved : JSON.stringify(saved))
   const warnings = []
@@ -54,11 +54,24 @@ function runtime(t, saved) {
     disposed ??= Promise.all(disposers.splice(0).map(cleanup => cleanup()))
     return disposed
   }
+  return { rt, home, statePath, warnings, dispose }
+}
+
+function runtime(t, saved) {
+  const home = fs.mkdtempSync(join(tmpdir(), 'ds-bot-store-'))
+  const instance = host(home, saved)
   t.after(async () => {
-    await dispose()
+    await instance.dispose()
     fs.rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   })
-  return { rt, home, statePath, warnings, dispose }
+  return instance
+}
+
+const backupsIn = home => fs.readdirSync(home)
+  .filter(name => name.startsWith('state.json.broken-')).sort()
+const hashName = text => {
+  const digest = createHash('sha256').update(text).digest('hex').slice(0, 16)
+  return `state.json.broken-${digest}`
 }
 
 test('a failed state write rejects and leaves the saved file unchanged', async (t) => {
@@ -107,11 +120,14 @@ test('a failed state rename rejects and preserves the saved file', async (t) => 
 
 test('malformed state is backed up before a later save', async (t) => {
   const original = '{"version":1,'
-  const { rt, statePath } = runtime(t, original)
+  const { rt, home, statePath } = runtime(t, original)
+  const bytes = fs.readFileSync(statePath)
   await rt.load()
-  const backups = fs.readdirSync(rt.home).filter(name => name.startsWith('state.json.broken-'))
+  assert.deepEqual(fs.readFileSync(statePath), bytes,
+    'the corrupt file is left in place after its backup')
+  const backups = backupsIn(home)
   assert.equal(backups.length, 1)
-  assert.equal(fs.readFileSync(join(rt.home, backups[0]), 'utf8'), original)
+  assert.equal(fs.readFileSync(join(home, backups[0]), 'utf8'), original)
   rt.state.prefs.marker = 'recovered'
   await rt.save()
   assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).prefs.marker, 'recovered')
@@ -140,7 +156,9 @@ test('a non-object root is copied byte for byte before any rewrite', async (t) =
     const { rt, home, statePath, warnings } = runtime(t, original)
     const bytes = fs.readFileSync(statePath)
     await rt.load()
-    const backups = fs.readdirSync(home).filter(name => name.startsWith('state.json.broken-'))
+    assert.deepEqual(fs.readFileSync(statePath), bytes,
+      `${original} is left in place right after load`)
+    const backups = backupsIn(home)
     assert.equal(backups.length, 1, `${original} is set aside`)
     const copied = fs.readFileSync(join(home, backups[0]))
     assert.deepEqual(copied, bytes, `${original} is copied byte for byte`)
@@ -170,6 +188,105 @@ test('a non-object state stays read-only when its backup cannot be copied', asyn
   } finally {
     restore()
   }
+})
+
+test('a restart with the same corrupt bytes reuses its one backup', async (t) => {
+  const original = '{"version":1,'
+  const first = runtime(t, original)
+  await first.rt.load()
+  await first.dispose()
+  const backup = hashName(original)
+  assert.deepEqual(backupsIn(first.home), [backup], 'the backup is named from the content hash')
+  assert.equal(fs.readFileSync(join(first.home, 'state.json'), 'utf8'), original,
+    'the first load left it')
+  const kept = fs.statSync(join(first.home, backup))
+  const second = host(first.home)
+  try {
+    await second.rt.load()
+    assert.equal(second.rt.readOnly(), undefined, 'the reused backup keeps the team writable')
+    const warned = second.warnings.map(args => args.map(String).join(' '))
+    assert.ok(warned.some(line => line.includes('backed up as')), 'the reuse is still warned')
+  } finally {
+    await second.dispose()
+  }
+  assert.deepEqual(backupsIn(first.home), [backup], 'the same bytes add no second backup')
+  const again = fs.statSync(join(first.home, backup))
+  assert.equal(again.ino, kept.ino, 'the copy is reused, not rewritten')
+  assert.equal(again.mtimeMs, kept.mtimeMs)
+  assert.equal(fs.readFileSync(join(first.home, backup), 'utf8'), original)
+})
+
+test('a different corrupt content adds its own backup', async (t) => {
+  const firstBytes = '{"version":1,'
+  const first = runtime(t, firstBytes)
+  await first.rt.load()
+  await first.dispose()
+  const secondBytes = '[1,2]'
+  const second = host(first.home, secondBytes)
+  try {
+    await second.rt.load()
+  } finally {
+    await second.dispose()
+  }
+  const backups = backupsIn(first.home)
+  assert.deepEqual(backups, [hashName(firstBytes), hashName(secondBytes)].sort(),
+    'each backup is named from its own content')
+  const kept = backups.map(name => fs.readFileSync(join(first.home, name), 'utf8')).sort()
+  assert.deepEqual(kept, [firstBytes, secondBytes].sort())
+})
+
+test('a huge string root is sliced in the set-aside warning', async (t) => {
+  const root = JSON.stringify('x'.repeat(4096))
+  const { rt, statePath, warnings } = runtime(t, root)
+  const bytes = fs.readFileSync(statePath)
+  await rt.load()
+  assert.deepEqual(fs.readFileSync(statePath), bytes, 'the corrupt file is left where it was')
+  const error = warnings.map(args => String(args[2])).find(text => /not an object/.test(text))
+  assert.ok(error, 'the refusal is warned')
+  assert.match(error, /the saved team is "x{31}…, not an object/)
+  assert.equal(error.includes('x'.repeat(32)), false, 'the whole root is not in the warning')
+  assert.ok(error.length < 120, 'the warning keeps only a short prefix')
+})
+
+test('a deeply nested array root is set aside without serializing it', async (t) => {
+  const original = `${'['.repeat(10000)}1${']'.repeat(10000)}`
+  const { rt, home, statePath } = runtime(t, original)
+  const bytes = fs.readFileSync(statePath)
+  await rt.load()
+  assert.deepEqual(fs.readFileSync(statePath), bytes, 'the corrupt file is left in place')
+  const backups = backupsIn(home)
+  assert.deepEqual(backups, [hashName(original)], 'the deep list is set aside')
+  assert.deepEqual(fs.readFileSync(join(home, backups[0])), bytes)
+  assert.equal(rt.readOnly(), undefined)
+})
+
+test('an incomplete earlier backup is not reused', async (t) => {
+  const original = '[1,2]'
+  const { rt, home, statePath, warnings } = runtime(t, original)
+  const backup = join(home, hashName(original))
+  fs.writeFileSync(backup, '[1')
+  await rt.load()
+  assert.match(rt.readOnly(), /could not be read \(the set-aside backup is incomplete\)/)
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original, 'the original bytes stay in place')
+  assert.equal(fs.readFileSync(backup, 'utf8'), '[1', 'the earlier copy is kept for inspection')
+  assert.ok(warnings.some(([, , error]) => /not an object/.test(String(error))))
+  await rt.save()
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original,
+    'a read-only team does not overwrite it')
+})
+
+test('older timestamp backups are left untouched', async (t) => {
+  const original = '{"version":1,'
+  const { rt, home } = runtime(t, original)
+  const older = join(home, 'state.json.broken-1700000000000')
+  fs.writeFileSync(older, 'kept from an older version')
+  const before = fs.statSync(older)
+  await rt.load()
+  assert.equal(fs.readFileSync(older, 'utf8'), 'kept from an older version')
+  const after = fs.statSync(older)
+  assert.equal(after.ino, before.ino)
+  assert.equal(after.mtimeMs, before.mtimeMs)
+  assert.deepEqual(backupsIn(home), ['state.json.broken-1700000000000', hashName(original)].sort())
 })
 
 test('a real file saved before the version stamp is read, migrated, and written with version 1', async (t) => {

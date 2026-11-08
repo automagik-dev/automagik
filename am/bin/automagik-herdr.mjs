@@ -31,7 +31,7 @@ import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, HC_PROXY_ENV, hcProxyEnabled, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
-  SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
+  GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
@@ -181,8 +181,23 @@ function programPath(program) {
 }
 const onPath = (program) => programPath(program) !== null;
 
-/** A guard folder: its `hc` entry has `../hcGuard.mjs` beside it (the pack's or am's copy). */
-const isGuardDir = (dir) => existsSync(join(dir, "..", "hcGuard.mjs"));
+/** This CLI's guard folder and bytes: a copy must be byte-equal to them (#643). */
+const SELF_GUARD_BYTES = (() => { try { return readFileSync(join(GUARD_DIR, "..", "hcGuard.mjs")); } catch { return null; } })();
+const SELF_GUARD_DIR = (() => { try { return realpathSync(GUARD_DIR); } catch { return null; } })();
+/**
+ * A guard folder the CLI can vouch for (#643): this copy's own guard folder, or one whose
+ * hcGuard.mjs is byte-equal to this copy's. A planted hcGuard.mjs no longer hides a folder
+ * from realHcPath or gets a worker PATH word accepted.
+ */
+function isGuardDir(dir) {
+  if (typeof dir !== "string" || dir === "") return false;
+  let real;
+  try { real = realpathSync(dir); } catch { return false; }
+  if (SELF_GUARD_DIR && real === SELF_GUARD_DIR) return true;
+  let bytes;
+  try { bytes = readFileSync(join(dir, "..", "hcGuard.mjs")); } catch { return false; }
+  return SELF_GUARD_BYTES !== null && bytes.equals(SELF_GUARD_BYTES);
+}
 
 /**
  * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
@@ -1931,28 +1946,45 @@ async function agentThere(machine, argv, name, prepend = null, shipped = null) {
 
 /**
  * The hc guard folder beside `automagik-herdr` on `path`, that machine's pane PATH (#624): the
- * pack's or am's `bin/../guard`, with hcGuard.mjs beside it. Null when that machine has no
- * automagik-herdr there or no guard; a remote dsh-tui seat then gets no guard, and no briefing
- * paragraph claiming one.
+ * pack's or am's `bin/../guard`, with hcGuard.mjs beside it. Resolves `{ dir, why }`: `dir` is
+ * null when that machine has no automagik-herdr there, the probe could not run, or the folder
+ * a PATH word cannot carry (#643), and `why` says which. A remote dsh-tui seat then gets no
+ * guard, and no briefing paragraph claiming one.
  */
 const GUARD_PROBE_SH = `PATH=$1; export PATH
-p=$(command -v automagik-herdr 2>/dev/null) || exit 3
-case $p in /*) ;; *) exit 3 ;; esac
+p=$(command -v automagik-herdr 2>/dev/null) || exit 4
+case $p in /*) ;; *) exit 4 ;; esac
 while [ -L "$p" ]; do
-  to=$(readlink "$p") || break
+  to=$(readlink "$p") || exit 5
   case $to in /*) p=$to ;; *) p=$(dirname "$p")/$to ;; esac
 done
-dir=$(cd "$(dirname "$p")" && pwd -P) || exit 3
+dir=$(cd "$(dirname "$p")" && pwd -P) || exit 5
 guard=$dir/../guard
-[ -x "$guard/hc" ] && [ -f "$dir/../hcGuard.mjs" ] || exit 3
+[ -x "$guard/hc" ] && [ -f "$dir/../hcGuard.mjs" ] || exit 4
 cd "$guard" && pwd -P`;
 async function guardThere(machine, path) {
-  if (typeof path !== "string" || !path) return null;
+  if (typeof path !== "string" || !path) return { dir: null, why: "it gave no pane PATH to probe" };
   const r = await remoteIo.exec("sh", ["-c", GUARD_PROBE_SH, "sh", path], machine, { timeout: AGENT_WAIT_S });
-  if (r.code !== 0) return null;
+  if (r.code === -1) {
+    return { dir: null, why: `its guard probe could not run there (${hcSaid(r.stderr) || "no answer"})` };
+  }
+  if (r.code === 4) {
+    return { dir: null, why: "no automagik-herdr with guard/hc and hcGuard.mjs beside it was found on its pane PATH" };
+  }
+  if (r.code !== 0) {
+    return { dir: null, why: `its guard probe failed there (${hcSaid(r.stderr) || `exit ${r.code}`})` };
+  }
   const dir = r.stdout.trim();
+  // A guard folder goes into one PATH word: an absolute path with no control character, space
+  // or colon. #643 refuses the rest rather than break the word.
   // eslint-disable-next-line no-control-regex
-  return dir.startsWith("/") && !/[\x00-\x1f\x7f]/.test(dir) ? dir : null;
+  if (!dir.startsWith("/") || /[\x00-\x1f\x7f]/.test(dir)) {
+    return { dir: null, why: "its guard probe named no usable absolute folder" };
+  }
+  if (/[ :]/.test(dir)) {
+    return { dir: null, why: `the guard folder it found there (${dir}) has a space or a colon, so it cannot go on PATH` };
+  }
+  return { dir, why: null };
 }
 
 /**
@@ -2144,11 +2176,13 @@ async function seatOnMachine(project, bot, over = {}) {
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
   // A remote dsh-tui seat gets the guard its own machine has, resolved there (#624); with none,
-  // no guard on PATH and no briefing paragraph claiming one, and one warning says so.
-  const remoteGuard = agentKey === "dsh-tui" ? await guardThere(machine, there.path) : null;
+  // no guard on PATH and no briefing paragraph claiming one, and one warning says what the
+  // probe found: no guard, a failed probe, or a folder a PATH word cannot carry (#643).
+  const remote = agentKey === "dsh-tui" ? await guardThere(machine, there.path) : null;
+  const remoteGuard = remote?.dir ?? null;
   const guardWarnings = agentKey === "dsh-tui" && !remoteGuard
-    ? [`${bot.name} runs on ${machine} without the hc guard (#624): no automagik-herdr with guard/hc and `
-      + `hcGuard.mjs beside it was found on its pane PATH, so its hc calls are not guarded.`]
+    ? [`${bot.name} runs on ${machine} without the hc guard (#624): ${remote?.why ?? "its guard was not found"}; `
+      + `its hc calls are not guarded.`]
     : [];
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).

@@ -1,7 +1,8 @@
 // Store: the saved team (state.json), its migrations, the lock that keeps a second dsh
 // host on the same data from writing it, and the indexes that map a Session to the Bot
 // or group chat it belongs to.
-import { mkdirSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { constants, mkdirSync, statSync } from 'node:fs'
 import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 
 // The saved team's format. A file may carry an older version this build still reads and
@@ -74,23 +75,44 @@ export function install(rt) {
 
   // A file this host cannot read is copied aside byte for byte before anything can rewrite
   // it, so the person keeps the original bytes; a failed copy keeps the team read-only.
-  const setAside = async error => {
-    const backup = `${statePath}.broken-${Date.now()}`
-    try {
-      await copyFile(statePath, backup)
-      stuck = undefined
-      warn('ds-bot: unreadable state %s: %s; backed up as %s', statePath, error, backup)
-    } catch (copyError) {
-      stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
-      warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
+  // The name is the content's hash, so a restart that sees the same corrupt bytes finds and
+  // reuses that one copy instead of adding a timestamped backup on every restart.
+  let aside = false
+  const setAside = async (error, bytes) => {
+    aside = true
+    const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+    const backup = `${statePath}.broken-${digest}`
+    const identical = async () => {
+      try {
+        return (await readFile(backup)).equals(bytes)
+      } catch {
+        return false
+      }
     }
+    try {
+      // COPYFILE_EXCL: a complete copy an earlier load made is reused, never rewritten.
+      await copyFile(statePath, backup, constants.COPYFILE_EXCL)
+    } catch (copyError) {
+      // Reuse only a complete copy of exactly these bytes; a torn copy, or anything else
+      // at that name, keeps the team read-only instead of claiming a backup it lacks.
+      if (copyError?.code !== 'EEXIST' || !(await identical())) {
+        stuck = copyError?.code === 'EEXIST'
+          ? 'the set-aside backup is incomplete'
+          : copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
+        warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
+        return undefined
+      }
+    }
+    stuck = undefined
+    warn('ds-bot: unreadable state %s: %s; backed up as %s', statePath, error, backup)
     return undefined
   }
 
   const readFileState = async () => {
+    aside = false
     let contents
     try {
-      contents = await readFile(statePath, 'utf8')
+      contents = await readFile(statePath)
     } catch (error) {
       seen = stamp()
       if (error?.code === 'ENOENT') {
@@ -104,15 +126,21 @@ export function install(rt) {
     seen = stamp()
     let parsed
     try {
-      parsed = JSON.parse(contents)
+      parsed = JSON.parse(contents.toString('utf8'))
     } catch (error) {
-      return setAside(error)
+      return setAside(error, contents)
     }
     // A top level that is not a plain object is corrupt, not the format before the stamp:
     // it is set aside byte for byte and refused like an unparsable file, never migrated.
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      const what = Array.isArray(parsed) ? 'a list' : JSON.stringify(parsed)
-      return setAside(new Error(`the saved team is ${what}, not an object`))
+      // A list is described without serializing it: a deeply nested one would overflow
+      // JSON.stringify, and the warning only needs the shape anyway.
+      let what = 'a list'
+      if (!Array.isArray(parsed)) {
+        const shown = JSON.stringify(parsed)
+        what = shown.length > 32 ? `${headOf(shown, 32)}…` : shown
+      }
+      return setAside(new Error(`the saved team is ${what}, not an object`), contents)
     }
     // The file's own version decides: only a missing stamp is the format before this field,
     // and only an exact integer in the list is compatible. Any other value or type is refused
@@ -309,7 +337,9 @@ export function install(rt) {
     if (holder !== undefined) warn('ds-bot: %s', readOnly())
     const { migrated, stale } = adopt(await readFileState())
     if (holder !== undefined) return
-    if (migrated && stuck === undefined) {
+    // A file set aside just now stays where it is: the person's bytes were copied, and the
+    // fresh team reaches the disk on the next real save rather than within this read.
+    if (migrated && stuck === undefined && !aside) {
       // A failed write must not poison `loaded`: the migrated state stays in
       // memory and the next save() writes it.
       try {
