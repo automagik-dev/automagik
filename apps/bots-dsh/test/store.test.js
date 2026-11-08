@@ -136,7 +136,7 @@ test('malformed state stays read-only when its backup cannot be copied', async (
 })
 
 test('a non-object root is copied byte for byte before any rewrite', async (t) => {
-  for (const original of ['[]', 'null', '5', '"x"']) {
+  for (const original of ['[]', 'null', '5', '"x"', '[1,2]']) {
     const { rt, home, statePath, warnings } = runtime(t, original)
     const bytes = fs.readFileSync(statePath)
     await rt.load()
@@ -149,13 +149,14 @@ test('a non-object root is copied byte for byte before any rewrite', async (t) =
     assert.equal(Array.isArray(rt.state), false, `${original} never becomes the team`)
     assert.equal(typeof rt.state, 'object')
     assert.notEqual(rt.state, null)
+    assert.equal(Object.hasOwn(rt.state, '0'), false, `${original} is not merged into the team`)
     assert.equal(rt.state.version, 1, `${original} is replaced by the current format`)
   }
 })
 
 test('a non-object state stays read-only when its backup cannot be copied', async (t) => {
   const original = '[]'
-  const { rt, statePath } = runtime(t, original)
+  const { rt, home, statePath } = runtime(t, original)
   const restore = patch('copyFile', () => async () => {
     throw Object.assign(new Error('synthetic copy failure'), { code: 'EACCES' })
   })
@@ -165,6 +166,7 @@ test('a non-object state stays read-only when its backup cannot be copied', asyn
     rt.state.prefs.marker = 'not saved'
     await rt.save()
     assert.equal(fs.readFileSync(statePath, 'utf8'), original)
+    assert.deepEqual(fs.readdirSync(home).filter(name => name.startsWith('state.json.broken-')), [])
   } finally {
     restore()
   }
