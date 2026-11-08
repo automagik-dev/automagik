@@ -313,7 +313,7 @@ func (c Client) AgentWait(target string, timeout time.Duration) error {
 }
 
 // ProcessInfo is the pane's shell and foreground process group. The shell is
-// kept alive when a blocked agent is ended, so its layout stays available.
+// excluded from a blocked agent's stop request, so its layout stays available.
 type ProcessInfo struct {
 	ShellPID        int `json:"shell_pid"`
 	ForegroundGroup int `json:"foreground_process_group_id"`

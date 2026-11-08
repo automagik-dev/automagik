@@ -23,7 +23,9 @@ type ops interface {
 	AgentSubmitPending(paneID string) error
 	AgentStatus(target string) (string, error)
 	AgentWait(target string, timeout time.Duration) error
-	AgentEnd(paneID string) error
+	// AgentStop rechecks status and foreground identity before asking a blocked
+	// agent to stop. False means it is no longer blocked; resume the run.
+	AgentStop(paneID string) (blocked bool, err error)
 
 	WorkspaceClose(workspaceID string) error
 

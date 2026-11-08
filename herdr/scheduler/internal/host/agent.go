@@ -214,7 +214,13 @@ func (w agentWork) await(s Session, timeout time.Duration) error {
 				blockedSince = w.now()
 			}
 			if !w.a.WaitsOutBlocked() && w.now().Sub(blockedSince) > w.a.BlockedGrace() {
-				return w.blockedOutcome(s)
+				if err := w.blockedOutcome(s); err != nil {
+					return err
+				}
+				// The final status check saw the dialog clear. Resume waiting,
+				// and give any later blocked episode a fresh grace.
+				blockedSince = time.Time{}
+				continue
 			}
 			// A blocked wait returns at once. Pace it while the grace runs.
 			time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
@@ -245,13 +251,20 @@ func (w agentWork) blockedOutcome(s Session) error {
 	} else {
 		log.Printf("could not read the screen of %s: %v", s.PaneID, err)
 	}
-	if err := w.ops.AgentEnd(s.PaneID); err != nil {
-		log.Printf("could not end the blocked agent on %s: %v", s.PaneID, err)
+	blocked, err := w.ops.AgentStop(s.PaneID)
+	if !blocked {
+		return nil
 	}
-	if line == "" {
-		return fmt.Errorf("blocked on a dialog")
+	detail := "blocked on a dialog"
+	if line != "" {
+		detail += ": " + line
 	}
-	return fmt.Errorf("blocked on a dialog: %s", line)
+	if err != nil {
+		log.Printf("could not ask the agent to stop (SIGTERM) on %s: %v", s.PaneID, err)
+		return fmt.Errorf("%s; could not ask the agent to stop (SIGTERM): %w", detail, err)
+	}
+	log.Printf("%s: asked the agent to stop (SIGTERM); exit not confirmed", s.PaneID)
+	return fmt.Errorf("%s; asked the agent to stop (SIGTERM)", detail)
 }
 
 // agentGoneOutcome disambiguates herdr's agent_not_running: it means either

@@ -14,7 +14,7 @@ func agentWorkWith(ops ops, a config.Automation) agentWork {
 	return agentWork{ops: ops, knobs: fast(), a: a}
 }
 
-func TestAwaitBlockedPastGraceFailsWithScreenAndEndsAgent(t *testing.T) {
+func TestAwaitBlockedPastGraceFailsWithScreenAndStopRequest(t *testing.T) {
 	clock := time.Unix(0, 0)
 	ops := &fakeOps{
 		agentWait: func(string, time.Duration) error {
@@ -29,11 +29,11 @@ func TestAwaitBlockedPastGraceFailsWithScreenAndEndsAgent(t *testing.T) {
 	w := agentWorkWith(ops, config.Automation{}) // raw zero gets the default grace
 	w.clock = func() time.Time { return clock }
 	err := w.do(Session{PaneID: "w7:p2"}, 200*time.Millisecond)
-	if err == nil || err.Error() != "blocked on a dialog: Do you want to proceed?" {
+	if err == nil || err.Error() != "blocked on a dialog: Do you want to proceed?; asked the agent to stop (SIGTERM)" {
 		t.Fatalf("want the dialog line, got %v", err)
 	}
-	if ops.waits != 4 || ops.reads != 1 || strings.Join(ops.ended, "|") != "w7:p2" {
-		t.Fatalf("waits=%d reads=%d ended=%v", ops.waits, ops.reads, ops.ended)
+	if ops.waits != 4 || ops.reads != 1 || strings.Join(ops.stopRequests, "|") != "w7:p2" {
+		t.Fatalf("waits=%d reads=%d stopRequests=%v", ops.waits, ops.reads, ops.stopRequests)
 	}
 	if len(ops.closed) != 0 || len(ops.closedTabs) != 0 {
 		t.Fatal("blocked failure closed its layout")
@@ -60,8 +60,8 @@ func TestAwaitBlockedBlipsResetGraceThenDoneSucceeds(t *testing.T) {
 	if err := w.await(Session{PaneID: "p"}, time.Second); err != nil {
 		t.Fatalf("a blip failed: %v", err)
 	}
-	if ops.waits != len(states) || len(ops.ended) != 0 || ops.reads != 0 {
-		t.Fatalf("waits=%d ended=%v reads=%d", ops.waits, ops.ended, ops.reads)
+	if ops.waits != len(states) || len(ops.stopRequests) != 0 || ops.reads != 0 {
+		t.Fatalf("waits=%d stopRequests=%v reads=%d", ops.waits, ops.stopRequests, ops.reads)
 	}
 }
 
@@ -80,12 +80,12 @@ func TestAwaitMinusOneWaitsOutBlockedUntilTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "still working") || ops.waits < 2 {
 		t.Fatalf("waits=%d err=%v, want a timeout", ops.waits, err)
 	}
-	if len(ops.ended) != 0 || ops.reads != 0 {
-		t.Fatalf("ended=%v reads=%d", ops.ended, ops.reads)
+	if len(ops.stopRequests) != 0 || ops.reads != 0 {
+		t.Fatalf("stopRequests=%v reads=%d", ops.stopRequests, ops.reads)
 	}
 }
 
-func TestDoPreAwaitDialogsFailWithGraceAndEndAgent(t *testing.T) {
+func TestDoPreAwaitDialogsFailWithGraceAndStopRequest(t *testing.T) {
 	for _, phase := range []string{"start", "submit"} {
 		t.Run(phase, func(t *testing.T) {
 			clock := time.Unix(0, 0)
@@ -106,11 +106,11 @@ func TestDoPreAwaitDialogsFailWithGraceAndEndAgent(t *testing.T) {
 			w := agentWorkWith(ops, config.Automation{})
 			w.clock = func() time.Time { return clock }
 			err := w.do(Session{PaneID: "p"}, 200*time.Millisecond)
-			if err == nil || err.Error() != "blocked on a dialog: Do you trust this folder?" {
+			if err == nil || err.Error() != "blocked on a dialog: Do you trust this folder?; asked the agent to stop (SIGTERM)" {
 				t.Fatalf("want a blocked failure, got %v", err)
 			}
-			if strings.Join(ops.ended, "|") != "p" || ops.reads != 1 || ops.waits != 0 || len(ops.closed)+len(ops.closedTabs) != 0 {
-				t.Fatalf("ended=%v reads=%d waits=%d layout closes=%v/%v", ops.ended, ops.reads, ops.waits, ops.closed, ops.closedTabs)
+			if strings.Join(ops.stopRequests, "|") != "p" || ops.reads != 1 || ops.waits != 0 || len(ops.closed)+len(ops.closedTabs) != 0 {
+				t.Fatalf("stopRequests=%v reads=%d waits=%d layout closes=%v/%v", ops.stopRequests, ops.reads, ops.waits, ops.closed, ops.closedTabs)
 			}
 		})
 	}
@@ -145,8 +145,8 @@ func TestDoPreAwaitBlipClearsThenSubmitsPrompt(t *testing.T) {
 			if phase == "submit" {
 				wantSubmits = 2
 			}
-			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.ended) != 0 {
-				t.Fatalf("starts=%d submits=%d waits=%d ended=%v", ops.starts, ops.submits, ops.waits, ops.ended)
+			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.stopRequests) != 0 {
+				t.Fatalf("starts=%d submits=%d waits=%d stopRequests=%v", ops.starts, ops.submits, ops.waits, ops.stopRequests)
 			}
 		})
 	}
@@ -159,8 +159,8 @@ func TestDoPreAwaitMinusOneWaitsUntilTimeout(t *testing.T) {
 	}
 	w := agentWorkWith(ops, config.Automation{BlockedGraceMinutes: -1})
 	err := w.do(Session{PaneID: "p"}, 10*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "run timeout") || ops.reads != 0 || len(ops.ended) != 0 {
-		t.Fatalf("err=%v reads=%d ended=%v", err, ops.reads, ops.ended)
+	if err == nil || !strings.Contains(err.Error(), "run timeout") || ops.reads != 0 || len(ops.stopRequests) != 0 {
+		t.Fatalf("err=%v reads=%d stopRequests=%v", err, ops.reads, ops.stopRequests)
 	}
 }
 
@@ -190,8 +190,8 @@ func TestDoPreAwaitDialogClearsBeforeFirstRead(t *testing.T) {
 			if phase == "submit" {
 				wantSubmits = 2
 			}
-			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.ended) != 0 {
-				t.Fatalf("starts=%d submits=%d waits=%d ended=%v", ops.starts, ops.submits, ops.waits, ops.ended)
+			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.stopRequests) != 0 {
+				t.Fatalf("starts=%d submits=%d waits=%d stopRequests=%v", ops.starts, ops.submits, ops.waits, ops.stopRequests)
 			}
 		})
 	}

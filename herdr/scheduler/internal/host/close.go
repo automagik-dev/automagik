@@ -2,8 +2,9 @@ package host
 
 import "sync"
 
-// Shared-space closes in this scheduler serialize their read and act. A person
-// can still remove another tab after the read: we leave the last tab we can see.
+// Shared-space closes in one scheduler process serialize their read and act.
+// A person or another scheduler process (a manual run or second daemon) can
+// still remove another tab after the read: we leave the last tab we can see.
 var workspaceCloses = struct {
 	sync.Mutex
 	locks map[[2]string]*workspaceCloseLock

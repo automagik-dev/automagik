@@ -26,7 +26,7 @@ type fakeOps struct {
 	submitPending   func(paneID string) error
 	agentStatus     func(target string) (string, error)
 	agentWait       func(target string, d time.Duration) error
-	agentEnd        func(paneID string) error
+	agentStop       func(paneID string) (bool, error)
 	paneRun         func(paneID string, command ...string) error
 	paneRead        func(paneID string, lines int) (string, error)
 	lookPath        func(file string) error
@@ -37,12 +37,12 @@ type fakeOps struct {
 	session string
 	current string
 
-	starts  int
-	submits int
-	pending int
-	waits   int
-	reads   int
-	ended   []string
+	starts       int
+	submits      int
+	pending      int
+	waits        int
+	reads        int
+	stopRequests []string
 	// closed is every workspace close, closedTabs every tab close; the *In
 	// slices are the session each was aimed at.
 	closed     []string
@@ -142,12 +142,12 @@ func (f *fakeOps) AgentWait(target string, d time.Duration) error {
 	return f.agentWait(target, d)
 }
 
-func (f *fakeOps) AgentEnd(paneID string) error {
-	f.ended = append(f.ended, paneID)
-	if f.agentEnd != nil {
-		return f.agentEnd(paneID)
+func (f *fakeOps) AgentStop(paneID string) (bool, error) {
+	f.stopRequests = append(f.stopRequests, paneID)
+	if f.agentStop != nil {
+		return f.agentStop(paneID)
 	}
-	return nil
+	return true, nil
 }
 
 func (f *fakeOps) PaneRun(paneID string, command ...string) error {

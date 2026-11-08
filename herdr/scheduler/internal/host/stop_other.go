@@ -4,6 +4,6 @@ package host
 
 import "fmt"
 
-func (herdrOps) AgentEnd(string) error {
-	return fmt.Errorf("ending a foreground process group is unsupported on this platform")
+func (herdrOps) AgentStop(string) (bool, error) {
+	return true, fmt.Errorf("asking a foreground process group to stop is unsupported on this platform")
 }
