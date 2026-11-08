@@ -11,19 +11,42 @@ import { envWords } from "./logins.js";
 
 export { TEMPLATE_SHAPE };
 
+/** A Windows drive-letter path (`C:/x`, `C:\x`): `new URL` would read `C:` as a scheme. */
+const DRIVE_LETTER = /^[A-Za-z]:[\\/]/;
+/** A URL scheme (`file:`, `http:`), as opposed to a bare path. */
+const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+/** `path`'s folder plus `/guard`; a bare path loses its query/hash first. */
+function guardDirUnder(path) {
+  const file = path.replace(/[?#].*$/, "");
+  const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
+  return `${cut === -1 ? "." : file.slice(0, cut)}/guard`;
+}
+
 /**
  * The guard folder beside a mod file, from `import.meta.url`. Node gives a `file:` URL; Herdr's
  * mod runtime gives a bare path with its `?v=1` cache buster, which `new URL` cannot take as a
- * base. A bare path is stripped of its query/hash, then its folder gets `/guard`; never throws.
+ * base. A Windows drive-letter path is bare too: `new URL` would read `C:` as a scheme and drop
+ * the drive. A file: pathname that does not decode (a lone `%`) falls back to the undecoded
+ * pathname, never the raw `file:` string. A bare path is stripped of its query/hash, then its
+ * folder gets `/guard`; never throws.
  */
 export function guardDirOf(metaUrl) {
+  const raw = String(metaUrl);
+  if (DRIVE_LETTER.test(raw) || !SCHEME.test(raw)) return guardDirUnder(raw);
+  let pathname;
   try {
-    return decodeURIComponent(new URL("./guard/", metaUrl).pathname).replace(/\/+$/, "");
+    pathname = new URL("./guard/", raw).pathname;
   } catch {
-    const file = String(metaUrl).replace(/[?#].*$/, "");
-    const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
-    return `${cut === -1 ? "." : file.slice(0, cut)}/guard`;
+    // Not a URL this Node can read (say a relative path): the bare-path rule is all that is left.
+    return guardDirUnder(raw);
   }
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    // A lone `%` is not an escape: keep the pathname the parser gave.
+  }
+  return pathname.replace(/\/+$/, "");
 }
 
 /**
