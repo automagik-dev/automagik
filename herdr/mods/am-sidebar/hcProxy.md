@@ -153,4 +153,5 @@ installed shim under `~/.local/bin` and the stable root's parent are assumed rea
 sandbox, as the policy states; a stable root inside the project, the app home, the temp folder or
 the runtime folder is refused by `dsh-tui install` and by the proxy at start. The stable runner
 bakes one absolute node at install; a custom `NVM_DIR` or `AUTOMAGIK_HERDR_RUNTIME_DIRS` inside a
-writable tree is refused too.
+writable tree is refused too. A node upgrade (nvm, Homebrew, bun) needs `automagik-herdr dsh-tui
+install` again: the stable runner bakes one absolute node and a missing one is refused.

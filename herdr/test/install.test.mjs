@@ -50,7 +50,11 @@ const treeSum = (dir) => {
 /** herdr: true, an app with bundle id dev.herdr.app in the fake /Applications; a string, that bundle id. */
 function scratch(t, { herdr = true, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
-  const ext = realpathSync(mkdtempSync(join(ROOT, "..", ".ah-install-home-")));
+  const ext = (() => {
+    const checkout = process.cwd();
+    const underTmp = /^\/(private\/)?tmp(\/|$)/.test(checkout);
+    return realpathSync(mkdtempSync(join(underTmp ? process.env.HOME : join(checkout, ".."), ".ah-install-home-")));
+  })();
   t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(ext, { recursive: true, force: true }); });
   const home = join(ext, "home"), bin = join(ext, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
   const tmp = join(ext, "tmp");

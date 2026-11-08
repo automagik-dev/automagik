@@ -223,7 +223,18 @@ export function executionPathProblem({ stableRoot, env = process.env, project = 
     if (problem) return problem;
   }
   const baked = bakedNode === undefined ? bakedNodeOf(stableRoot) : bakedNode;
-  if (!baked) return `the stable runner ${join(stableRoot, STABLE_RUNNER)} has no baked node`;
+  if (!baked) return `the stable runner ${join(stableRoot, STABLE_RUNNER)} has no baked node; run automagik-herdr dsh-tui install again`;
+  const missing = bakedNodeProblem(baked);
+  if (missing) return missing;
+  if (bakedNode === undefined) {
+    try {
+      if (!readFileSync(join(stableRoot, STABLE_RUNNER)).equals(Buffer.from(stableRunnerText(baked)))) {
+        return `the stable runner ${join(stableRoot, STABLE_RUNNER)} does not match its baked node; run automagik-herdr dsh-tui install again`;
+      }
+    } catch {
+      return `the stable runner ${join(stableRoot, STABLE_RUNNER)} cannot be read; run automagik-herdr dsh-tui install again`;
+    }
+  }
   for (const candidate of [baked, node, ...nodeCandidates(env)]) {
     const problem = unsafePathProblem(candidate, "the node that runs the helper", { project, env });
     if (problem) return problem;
@@ -266,7 +277,9 @@ export function stableFilesCurrent(source, stable) {
       if (file === STABLE_RUNNER) continue;
       if (!readFileSync(join(source, file)).equals(readFileSync(join(stable, file)))) return false;
     }
-    if (!bakedNodeOf(stable)) return false;
+    const baked = bakedNodeOf(stable);
+    if (!baked) return false;
+    if (!readFileSync(join(stable, STABLE_RUNNER)).equals(Buffer.from(stableRunnerText(baked)))) return false;
     const guardSource = join(source, "guard"), guardStable = join(stable, "guard");
     const names = readdirSync(guardSource);
     if (names.length !== readdirSync(guardStable).length) return false;
@@ -299,6 +312,18 @@ export function bakedNodeOf(stableRoot) {
     return match ? match[1] : null;
   } catch {
     return null;
+  }
+}
+
+/** Why the baked node cannot run, or null: it must still be an executable file. */
+export function bakedNodeProblem(node) {
+  try {
+    const stat = statSync(node);
+    if (!stat.isFile()) throw new Error("not a file");
+    accessSync(node, constants.X_OK);
+    return null;
+  } catch {
+    return `the baked node ${node} is gone; run automagik-herdr dsh-tui install again`;
   }
 }
 

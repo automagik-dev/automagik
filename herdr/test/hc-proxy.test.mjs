@@ -51,7 +51,11 @@ function scene() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hcp-")));
   // HOME and the tool folder are outside /tmp: the stable copy, its runner and the dsh shim
   // must not sit under the literal temp folder the mask protects.
-  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".hcp-home-")));
+  const ext = (() => {
+    const checkout = process.cwd();
+    const underTmp = /^\/(private\/)?tmp(\/|$)/.test(checkout);
+    return realpathSync(mkdtempSync(join(underTmp ? process.env.HOME : join(checkout, ".."), ".hcp-home-")));
+  })();
   const app = join(root, "app"), project = join(root, "project"), home = join(ext, "home"), runtime = join(root, "run");
   const worktree = join(project, ".claude", "worktrees", "wt");
   const bin = join(ext, "bin");
@@ -577,6 +581,23 @@ test("the dsh a shim executes is checked by real path, and literal /tmp is refus
     startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
       env: { ...s.env, XDG_DATA_HOME: join(s.root, "data") } }),
     /the stable execution root .* is inside the literal temp folder/,
+  );
+});
+
+test("the stable runner must match its baked node, and the baked node must still exist", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  const runner = join(s.stableRoot, "bin", "run.sh");
+  const original = stableRunnerText(process.execPath);
+  writeFileSync(runner, original.replace(`exec '${process.execPath}'`, "exec '/bin/false'"));
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the stable runner .* does not match its baked node/,
+  );
+  const gone = join(s.project, "gone-node");
+  writeFileSync(runner, stableRunnerText(gone));
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the baked node .* is gone; run automagik-herdr dsh-tui install again/,
   );
 });
 

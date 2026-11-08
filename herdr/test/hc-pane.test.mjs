@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { installSandboxRow, sandboxRootOf } from "../mods/am-sidebar/dshTui.mjs";
+import { installSandboxRow, sandboxRootOf, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,11 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   // A short root: the per-pane socket path must fit the platform's sun_path bound.
   const shortBase = existsSync("/tmp") ? "/tmp" : tmpdir();
   const root = realpathSync(mkdtempSync(join(shortBase, "hp-")));
-  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".hp-home-")));
+  const ext = (() => {
+    const checkout = process.cwd();
+    const underTmp = /^\/(private\/)?tmp(\/|$)/.test(checkout);
+    return realpathSync(mkdtempSync(join(underTmp ? process.env.HOME : join(checkout, ".."), ".hp-home-")));
+  })();
   const app = join(root, "app"), project = join(root, "project"), home = join(ext, "home"), runtime = join(root, "run");
   const paneTmp = join(root, "pane-tmp");
   for (const dir of [app, join(app, "automagik-herdr"), project, join(project, ".herdr"), home, runtime, paneTmp]) {
@@ -114,7 +118,17 @@ test("a stale stable execution copy is refused before the proxy starts", async (
   const out = join(s.root, "child.json");
   const r = await runHelper(s, { out });
   assert.notEqual(r.code, 0);
-  assert.match(r.stderr, /sandbox row is not current/);
+  assert.match(r.stderr, /sandbox row is not current|sandbox is not usable/);
+  assert.equal(existsSync(out), false);
+});
+
+test("the helper refuses a stable runner whose baked node is gone", async (t) => {
+  const s = await scene(t);
+  writeFileSync(join(sandboxRootOf(s.env), "bin", "run.sh"), stableRunnerText(join(s.project, "gone-node")));
+  const out = join(s.root, "child.json");
+  const r = await runHelper(s, { out });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /the baked node .* is gone; run automagik-herdr dsh-tui install again/);
   assert.equal(existsSync(out), false);
 });
 
@@ -123,7 +137,7 @@ test("without the dsh-tui sandbox row the helper starts neither proxy nor pane (
   const out = join(s.root, "child.json");
   const r = await runHelper(s, { out });
   assert.notEqual(r.code, 0);
-  assert.match(r.stderr, /sandbox row is not current/);
+  assert.match(r.stderr, /sandbox row is not current|sandbox is not usable/);
   assert.match(r.stderr, /automagik-herdr dsh-tui install/);
   assert.equal(existsSync(out), false);
   assert.equal(existsSync(join(s.runtime, "automagik-hc-proxy")), false);

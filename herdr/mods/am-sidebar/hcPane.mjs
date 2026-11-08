@@ -21,7 +21,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sandboxState } from "./dshTui.mjs";
+import { executionPathProblem, sandboxRootOf, sandboxState } from "./dshTui.mjs";
 import { projectOfFolder, startProxy } from "./hcProxy.mjs";
 
 /** Every line this helper prints starts with this. */
@@ -93,6 +93,10 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
   if (args.bot && !project) throw new Error("--project is required (or the current folder must be inside a project)");
   if (!args.bot && (args.worker || args.project)) throw new Error("--worker and --project need --bot");
   const caller = args.bot ? { bot: args.bot, project: resolve(project), worker: args.worker } : undefined;
+  // The stable runner's baked node, the profile, the shim and the dsh it executes must still be
+  // usable and outside the writable trees before any proxy or child exists.
+  const executionProblem = executionPathProblem({ stableRoot: sandboxRootOf(env), env, project: caller?.project ?? process.cwd() });
+  if (executionProblem) throw new Error(`the dsh-tui profile's sandbox is not usable (${oneLine(executionProblem)})`);
   // Without the profile's sandbox row the pane would run unsandboxed while we set the switch:
   // the real socket would stay reachable. Refuse before any proxy or child exists.
   const sandbox = sandboxState(env);

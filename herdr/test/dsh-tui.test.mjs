@@ -31,7 +31,11 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
  */
 function scene(t, { dsh = true, config = {} } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dsh-tui-")));
-  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".dsh-tui-home-")));
+  const ext = (() => {
+    const checkout = process.cwd();
+    const underTmp = /^\/(private\/)?tmp(\/|$)/.test(checkout);
+    return realpathSync(mkdtempSync(join(underTmp ? process.env.HOME : join(checkout, ".."), ".dsh-tui-home-")));
+  })();
   t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(ext, { recursive: true, force: true }); });
   const home = join(ext, "home"), bin = join(ext, "bin"), log = join(root, "dsh.log");
   const paneTmp = join(root, "pane-tmp");
@@ -260,6 +264,15 @@ test("the stable copy from STABLE_FILES loads hcPane.mjs", async (t) => {
   assert.equal(installed.status, "installed", installed.detail);
   const mod = await import(`${pathToFileURL(join(sandboxRootOf(s.env), "hcPane.mjs")).href}?t=${Date.now()}`);
   assert.equal(typeof mod.runPane, "function");
+});
+
+test("sandboxState sees a stable runner whose exec line differs from its comment", async (t) => {
+  const s = scene(t);
+  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const runner = join(sandboxRootOf(s.env), "bin", "run.sh");
+  writeFileSync(runner, readFileSync(runner, "utf8").replace(/^exec .*/m, "exec '/bin/false'"));
+  assert.equal(sandboxState(s.env).current, false);
 });
 
 test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {
