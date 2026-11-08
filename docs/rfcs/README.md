@@ -44,7 +44,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0012](0012-am-cli-and-parts.md) | am, one CLI and parts | Accepted (delivery 2 partly merged: #254, #258; 1 is #263, open) | none (ships outside the five milestones) |
 | [0013](0013-work-code-switch.md) | The work and code switch | Accepted (deliveries 1-6 merged: #211, #238, #237, #259, #265, #272) | none (ships outside the five milestones) |
 | [0014](0014-shared-bot-registry.md) | Shared Bot registry | Accepted (delivery 1 merged: #260) | none (ships outside the five milestones) |
-| [0015](0015-live-chat-projection.md) | Live chat projection | Accepted (deliveries 1-3 merged: #267, #273, #280, #282) | none (ships outside the five milestones) |
+| [0015](0015-live-chat-projection.md) | Live chat projection | Accepted (deliveries 1-3 merged: #267, #273, #280, #282; amendment drafted 2026-11-07, owner gate: writes on DSH chats) | none (ships outside the five milestones) |
 | [0016](0016-windows-wslc.md) | Windows on a Linux sandbox (WSL containers) | Accepted (2026-11-04, by Felipe; answers: D38, D39, Q1-Q9) | not scheduled |
 
 Milestones, in the owner's order:
