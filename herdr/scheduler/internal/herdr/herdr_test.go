@@ -127,6 +127,29 @@ func TestTabCreate(t *testing.T) {
 	}
 }
 
+func TestPaneProcessInfo(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	argsFile := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HERDR_TEST_ARGS\"\nprintf '%s\\n' '{\"result\":{\"process_info\":{\"shell_pid\":200,\"foreground_process_group_id\":300}}}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("HERDR_TEST_ARGS", argsFile)
+	info, err := (Client{Session: "auto"}).PaneProcessInfo("w7:p2")
+	if err != nil || info.ShellPID != 200 || info.ForegroundGroup != 300 {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Fields(string(raw)); !reflect.DeepEqual(got, []string{"--session", "auto", "pane", "process-info", "--pane", "w7:p2"}) {
+		t.Fatalf("args=%v", got)
+	}
+}
+
 func TestTabClose(t *testing.T) {
 	args := fakeHerdr(t, `{"result":{}}`)
 	if err := (Client{}).TabClose("tb7"); err != nil {

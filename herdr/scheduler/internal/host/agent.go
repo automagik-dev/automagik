@@ -17,19 +17,69 @@ type agentWork struct {
 	ops   ops
 	knobs knobs
 	a     config.Automation
+	clock func() time.Time
+}
+
+func (w agentWork) now() time.Time {
+	if w.clock != nil {
+		return w.clock()
+	}
+	return time.Now()
 }
 
 func (w agentWork) do(s Session, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	if err := w.start(s); err != nil {
-		return fmt.Errorf("start %s agent: %w", w.a.Agent, err)
+		if !w.ops.HasCode(err, herdr.CodeAgentNotReady) {
+			return fmt.Errorf("start %s agent: %w", w.a.Agent, err)
+		}
+		// A blocked startup retains its agent in this pane. Wait for the
+		// dialog before submitting; starting a second agent would be wrong.
+		if err := w.waitBlocked(s, deadline); err != nil {
+			return err
+		}
 	}
-	if err := w.submit(s); err != nil {
+	for {
+		err := w.submit(s)
+		if err == nil {
+			break
+		}
+		if !w.ops.HasCode(err, herdr.CodeAgentBlocked) {
+			return err
+		}
+		if err := w.waitBlocked(s, deadline); err != nil {
+			return err
+		}
+	}
+	if err := w.await(s, time.Until(deadline)); err != nil {
 		return err
 	}
-	if err := w.await(s, timeout); err != nil {
-		return fmt.Errorf("waiting for the agent: %w", err)
-	}
 	return nil
+}
+
+// waitBlocked covers a dialog that prevents startup or prompt submission from
+// reaching await. Once it clears, the prompt still needs to be submitted.
+func (w agentWork) waitBlocked(s Session, deadline time.Time) error {
+	var since time.Time
+	for {
+		status, err := w.ops.AgentStatus(s.PaneID)
+		if err != nil {
+			return fmt.Errorf("read blocked agent status: %w", err)
+		}
+		if status != "blocked" {
+			return nil
+		}
+		if since.IsZero() {
+			since = w.now()
+		}
+		if !w.a.WaitsOutBlocked() && w.now().Sub(since) > w.a.BlockedGrace() {
+			return w.blockedOutcome(s)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("the agent was still blocked at the run timeout")
+		}
+		time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
+	}
 }
 
 // args assembles what gets forwarded to the agent executable. Model and MCP
@@ -141,6 +191,7 @@ func (w agentWork) working(s Session, within time.Duration) bool {
 func (w agentWork) await(s Session, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var last error
+	var blockedSince time.Time
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -152,17 +203,55 @@ func (w agentWork) await(s Session, timeout time.Duration) error {
 		slice := min(w.knobs.waitSlice, remaining)
 
 		err := w.ops.AgentWait(s.PaneID, slice)
-		if err == nil {
-			return nil
-		}
 		if w.ops.HasCode(err, herdr.CodeAgentGone) {
 			return w.agentGoneOutcome(s)
+		}
+		// AgentWait also settles on blocked. Check its status after each slice
+		// instead of recording a dialog as successful work.
+		status, statusErr := w.ops.AgentStatus(s.PaneID)
+		if statusErr == nil && status == "blocked" {
+			if blockedSince.IsZero() {
+				blockedSince = w.now()
+			}
+			if !w.a.WaitsOutBlocked() && w.now().Sub(blockedSince) > w.a.BlockedGrace() {
+				return w.blockedOutcome(s)
+			}
+			// A blocked wait returns at once. Pace it while the grace runs.
+			time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
+			continue
+		}
+		blockedSince = time.Time{}
+		if err == nil {
+			if statusErr != nil {
+				return fmt.Errorf("read agent status after waiting: %w", statusErr)
+			}
+			if status == "working" {
+				time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
+				continue
+			}
+			return nil
 		}
 		// The slice expired with the agent still working, which is the normal
 		// case. Keep it: if the deadline passes it is the most accurate thing
 		// we have to report.
 		last = err
 	}
+}
+
+func (w agentWork) blockedOutcome(s Session) error {
+	line := ""
+	if screen, err := w.ops.PaneRead(s.PaneID, 120); err == nil {
+		line = promptLine(screen)
+	} else {
+		log.Printf("could not read the screen of %s: %v", s.PaneID, err)
+	}
+	if err := w.ops.AgentEnd(s.PaneID); err != nil {
+		log.Printf("could not end the blocked agent on %s: %v", s.PaneID, err)
+	}
+	if line == "" {
+		return fmt.Errorf("blocked on a dialog")
+	}
+	return fmt.Errorf("blocked on a dialog: %s", line)
 }
 
 // agentGoneOutcome disambiguates herdr's agent_not_running: it means either

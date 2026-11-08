@@ -39,8 +39,9 @@ const (
 
 // CloseWorkspace says whether a run closes its workspace once it is done
 // (ADR 0012). The open workspace is otherwise the sign nobody read the run.
-// In existing mode it closes the tab this run opened, never the shared
-// workspace or another tab.
+// Existing mode asks for the tab this run opened, after checking that the tab
+// is not the space's last one at that moment. A person closing the other tabs
+// in between can still leave it last.
 type CloseWorkspace string
 
 const (

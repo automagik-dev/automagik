@@ -132,9 +132,10 @@ func (h *live) Do(s Session, a config.Automation, timeout time.Duration) error {
 
 // Close closes a done run's workspace in the session it was opened in, unless
 // its agent waits on a person: herdr's agent wait counts blocked as settled.
-// In existing mode it closes only the tab this run opened, never the shared
-// workspace, and closes nothing when it cannot tell that the tab is still there
-// and not the space's last one.
+// In existing mode it asks for the tab this run opened only after a read says
+// the tab is still listed and not the space's last one. A person closing the
+// other tabs in between can still leave it last, and the app then closes the
+// space; the scheduler itself asks for no space close in this mode.
 func (h *live) Close(s Session, a config.Automation) error {
 	ops := h.ops
 	if s.HerdrSession != "" {
@@ -150,8 +151,11 @@ func (h *live) Close(s Session, a config.Automation) error {
 			log.Printf("%s: done, but its tab stays open: the run has no tab id", a.Name)
 			return nil
 		}
+		unlock := lockWorkspaceClose(ops.CurrentSession(), s.WorkspaceID)
+		defer unlock()
 		// Closing the space's last tab closes the space with it, and a tab can
-		// disappear while the run works: only a known, non-last tab is safe.
+		// disappear while this close waits for the lock. Re-read under the lock
+		// just before acting: leave the last tab we can see.
 		tabs, err := ops.TabList(s.WorkspaceID)
 		if err != nil {
 			log.Printf("%s: done, but its tab stays open: cannot read the space's tabs (%v)", a.Name, err)
@@ -169,7 +173,7 @@ func (h *live) Close(s Session, a config.Automation) error {
 			return nil
 		}
 		if len(tabs) == 1 {
-			log.Printf("%s: done, but its tab stays open: it is the last one in its space, and closing it would close the workspace", a.Name)
+			log.Printf("%s: done, but its tab stays open: it is the last one in its space at the time of the check", a.Name)
 			return nil
 		}
 		return ops.TabClose(s.TabID)

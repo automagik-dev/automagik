@@ -267,6 +267,18 @@ automations:
     disabled: true                # optional: keep it, don't schedule it
 ```
 
+`blocked_grace_minutes` applies to both agent backends: `0` or an omitted key
+uses 2 minutes; `-1` waits until completion or the run timeout. A continuous
+blocked state past the grace fails the run with the dialog line and a notice.
+On hc the terminal is killed without removing its record. On herdr the scheduler
+reads `pane process-info` and sends SIGTERM only to the foreground process group;
+it refuses a missing, shell, or scheduler group and logs an unsuccessful stop.
+Neither failure path asks to close the pane, tab, or workspace.
+
+`ls --json` reports the effective grace (2 when the key is absent). A form that
+echoes that value back through `put` writes an explicit 2. A `put` that omits the
+key preserves the file's value; sending `0` removes the key and uses the default.
+
 For Copilot, `mcp_config` becomes `--additional-mcp-config @<path>`; the `@`
 tells Copilot to read the file rather than parse its path as inline JSON.
 Other agents still receive `--mcp-config <path>`.
@@ -291,9 +303,12 @@ Point several automations at the same `workspace_id` to collect their runs in on
 space. Each run opens a fresh tab labeled with its automation name and timestamp,
 uses `repo` as its working directory, and leaves your focus unchanged. Earlier tabs
 remain open for review; each run gets a distinct agent name. With
-`close_workspace: on-success` a successful run closes only the tab it opened — never
-the shared workspace or any other tab. If it is the space's last tab it stays open,
-because closing it would take the workspace with it.
+`close_workspace: on-success` a successful run asks to close only the tab it opened.
+Closes within this scheduler serialize per workspace and re-read its tabs under
+the lock immediately before acting: it leaves the last tab it can see. It also
+refuses when the list cannot be read or when the tab is no longer listed. A
+person closing the space's other tabs in between can still leave it last, and the
+app then takes the space with it.
 
 Like `root`, this mode works directly in `repo` and creates no Git worktree. Runs
 sharing a directory can see each other's file changes. `workspace_id` is required
@@ -366,9 +381,12 @@ want, move a cron — one character, and the file still says what happens.
 and nothing reaps them: a tab you have read is a tab you close. `cleanup` has
 nothing to say about them — there is no worktree and no branch, so the only trace a
 run leaves is its line in `history.jsonl`. Set `close_workspace: on-success` to have
-a successful run close its own tab; the shared workspace and every other tab stay.
-The run's tab stays open when it is the space's last one, since closing it would
-close the workspace, and when the space's tabs cannot be read or no longer list it.
+a successful run ask for its own tab; the scheduler issues no space close itself.
+Closes within this scheduler serialize per workspace and re-read under the lock:
+it leaves the last tab it can see. It refuses when the space's tabs cannot be
+read or when they no longer list it. A person closing the
+space's other tabs in the same moment can still leave it last, and the app then
+takes the space.
 
 **What happens to the worktrees?** They accumulate on purpose: a run whose workspace
 is still open is a run nobody has looked at, which makes the Herdr sidebar the inbox.

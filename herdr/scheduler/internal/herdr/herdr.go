@@ -276,6 +276,9 @@ const CodeWorkspaceGone = "workspace_not_found"
 // agent still loading its MCP servers takes longer than that to react.
 const CodeStalled = "agent_prompt_stalled"
 
+const CodeAgentNotReady = "agent_not_ready"
+const CodeAgentBlocked = "agent_blocked"
+
 // AgentSubmit types a prompt into the agent and asks herdr to confirm the
 // agent reacted. A CodeStalled error is inconclusive; callers should check the
 // status before giving up.
@@ -307,6 +310,21 @@ func (c Client) AgentSubmitPending(paneID string) error {
 func (c Client) AgentWait(target string, timeout time.Duration) error {
 	return c.run(nil, "agent", "wait", target,
 		"--timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
+}
+
+// ProcessInfo is the pane's shell and foreground process group. The shell is
+// kept alive when a blocked agent is ended, so its layout stays available.
+type ProcessInfo struct {
+	ShellPID        int `json:"shell_pid"`
+	ForegroundGroup int `json:"foreground_process_group_id"`
+}
+
+func (c Client) PaneProcessInfo(paneID string) (ProcessInfo, error) {
+	var res struct {
+		Info ProcessInfo `json:"process_info"`
+	}
+	err := c.run(&res, "pane", "process-info", "--pane", paneID)
+	return res.Info, err
 }
 
 // ErrGone means the run's workspace no longer exists — the expected outcome

@@ -23,6 +23,7 @@ type ops interface {
 	AgentSubmitPending(paneID string) error
 	AgentStatus(target string) (string, error)
 	AgentWait(target string, timeout time.Duration) error
+	AgentEnd(paneID string) error
 
 	WorkspaceClose(workspaceID string) error
 

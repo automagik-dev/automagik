@@ -30,12 +30,16 @@ type fakeHC struct {
 	runErr     error
 	delay      time.Duration // per Wait
 	onWait     func()        // lets a test advance its clock
+	onKill     func()        // lets a test change the space at the read/act boundary
 	calls      []string      // kill and rm, with their address
 	readCalls  int
 	killErr    error
 }
 
 func (f *fakeHC) Kill(address string) error {
+	if f.onKill != nil {
+		f.onKill()
+	}
 	f.calls = append(f.calls, "kill "+address)
 	return f.killErr
 }
@@ -312,6 +316,21 @@ func TestHCCloseExistingWithNoTabIDClosesNothing(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("closed a tab it could not name: %q", f.calls)
+	}
+}
+
+// The read and the kill cannot be one step: a person who closes the space's
+// other tab in between leaves the run's tab last. The scheduler still asks only
+// for its own terminal; the app is what closes a space whose last tab goes.
+func TestHCCloseExistingRaceAfterTheReadEndsOnlyItsTerminal(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	f.onKill = func() { f.terminals = []string{"t7"} }
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.calls, "|"); got != "kill t7|rm t7" {
+		t.Fatalf("calls %q, want only the run's terminal", got)
 	}
 }
 

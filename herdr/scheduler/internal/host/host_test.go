@@ -26,6 +26,7 @@ type fakeOps struct {
 	submitPending   func(paneID string) error
 	agentStatus     func(target string) (string, error)
 	agentWait       func(target string, d time.Duration) error
+	agentEnd        func(paneID string) error
 	paneRun         func(paneID string, command ...string) error
 	paneRead        func(paneID string, lines int) (string, error)
 	lookPath        func(file string) error
@@ -41,6 +42,7 @@ type fakeOps struct {
 	pending int
 	waits   int
 	reads   int
+	ended   []string
 	// closed is every workspace close, closedTabs every tab close; the *In
 	// slices are the session each was aimed at.
 	closed     []string
@@ -127,7 +129,7 @@ func (f *fakeOps) AgentSubmitPending(paneID string) error {
 
 func (f *fakeOps) AgentStatus(target string) (string, error) {
 	if f.agentStatus == nil {
-		return "working", nil
+		return "idle", nil
 	}
 	return f.agentStatus(target)
 }
@@ -138,6 +140,14 @@ func (f *fakeOps) AgentWait(target string, d time.Duration) error {
 		return nil
 	}
 	return f.agentWait(target, d)
+}
+
+func (f *fakeOps) AgentEnd(paneID string) error {
+	f.ended = append(f.ended, paneID)
+	if f.agentEnd != nil {
+		return f.agentEnd(paneID)
+	}
+	return nil
 }
 
 func (f *fakeOps) PaneRun(paneID string, command ...string) error {
@@ -454,7 +464,7 @@ func TestCloseCountsAWorkspaceAlreadyGoneAsClosed(t *testing.T) {
 }
 
 // Existing mode shares its workspace with every other tab: a successful run
-// closes only the tab it opened, and never the workspace.
+// asks to close its own tab and leaves the last tab it can see.
 func TestCloseExistingClosesOnlyTheRunsTab(t *testing.T) {
 	ops := &fakeOps{
 		agentStatus: func(string) (string, error) { return "idle", nil },
@@ -527,6 +537,34 @@ func TestCloseExistingLeavesATabThatIsNotListed(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), "not in the space's tab list") {
 		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+// The read and the close cannot be one step: a person who closes the space's
+// other tab in between leaves the run's tab last. The scheduler still asks only
+// for its own tab; the app is what closes a space whose last tab goes.
+func TestCloseExistingRaceAfterTheReadClosesOnlyItsTab(t *testing.T) {
+	tabs := []string{"tb7", "tb8"}
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return append([]string{}, tabs...), nil },
+		tabClose: func(string) error {
+			tabs = []string{"tb7"}
+			return nil
+		},
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ops.closedTabs, "|"); got != "tb7" {
+		t.Fatalf("closed tabs %q, want only tb7", got)
+	}
+	if len(ops.closed) != 0 {
+		t.Fatalf("the scheduler issued a space close: %q", ops.closed)
 	}
 }
 

@@ -49,13 +49,20 @@ internal/config/config.go      — patched: blocked_grace_minutes, its default a
 internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
 internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
 internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
-internal/herdr/herdr.go        — patched: tab create returns the tab id; tab list; tab close
-internal/herdr/herdr_test.go   — patched: tab id, tab list and tab close wire cases
-internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close skips a space's last tab
-internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close with and without another tab
-internal/host/host.go          — patched: Session carries the run's tab; existing mode closes only a known, non-last tab
-internal/host/host_test.go     — patched: own-tab close, last tab, unlisted tab, unreadable list, worktree/root unchanged
-internal/host/ops.go           — patched: TabCreate returns the tab id; TabList and TabClose are in the seam
+internal/herdr/herdr.go        — patched: tab id/list/close; pane process-info for ending a blocked agent
+internal/herdr/herdr_test.go   — patched: tab and pane process-info wire cases
+internal/host/agent.go         — patched: herdr blocked grace at startup/submit/wait; screen and agent end
+internal/host/agent_test.go    — patched: herdr blocked in each phase, blips, -1 waits
+internal/host/close.go         — added: read and close serialized per workspace within this scheduler
+internal/host/close_test.go    — added: concurrent closes on two tabs leave the last visible tab
+internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first
+internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close rows including the read/act race
+internal/host/host.go          — patched: Session carries the run's tab; existing mode asks only for a tab a read says is listed and not last
+internal/host/host_test.go     — patched: own-tab close, last tab, unlisted tab, unreadable list, race row, worktree/root unchanged
+internal/host/ops.go           — patched: tab operations and AgentEnd in the seam
+internal/host/stop_unix.go     — added: SIGTERM only the foreground job, refusing shell or scheduler groups
+internal/host/stop_unix_test.go — added: signal target and missing/shell/scheduler group refusals
+internal/host/stop_other.go    — added: unsupported platform stop reports an error
 internal/host/screen.go        — added: the dialog line read from a blocked screen
 internal/host/screen_test.go   — added: dialog line, control characters, the bound and the fallback
 internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default
@@ -65,20 +72,25 @@ README.md                      — patched: blocked_grace_minutes, and existing 
 ```
 
 Why: the #498 stopgap, two scheduler changes. An agent that stays `blocked` on a
-dialog longer than `blocked_grace_minutes` (default 2, `-1` keeps the old
-wait-for-the-timeout behaviour) now fails at once. The history error carries the
+dialog longer than `blocked_grace_minutes` on either agent backend (default 2,
+`-1` waits for completion or the timeout) now fails at once. The history error carries the
 dialog line from the screen, the failure goes out through notify, and the blocked
-terminal is ended; its workspace/tab stays open like any failed run's. And
-`close_workspace: on-success` is valid with `workspace: existing`: it closes only
-the tab the run opened, never the shared workspace or any other tab, and closes
-nothing when the run has no tab id, when the space's tabs cannot be read, or when
-its tab is no longer listed. On both backends the close is refused when the run's
-tab is the space's last one, because closing it takes the shared workspace with
-it: the app removes a tab when its last pane goes and the space with its last tab.
-On hc, where a terminal is the tab, that means ending the run's terminal only
-while another one remains in the space. Each refusal logs why. The loader no longer
-refuses that combination, and `ls --json` / `put` carry `blocked_grace_minutes`
-like the other keys.
+agent is ended without asking to close its layout. On hc the terminal is killed
+without removing its record. Herdr has no agent-stop API: the scheduler reads
+`pane process-info` and sends SIGTERM only to the foreground process group,
+refusing a missing, shell, or scheduler group. An unsuccessful stop is logged.
+
+`close_workspace: on-success` is valid with `workspace: existing`: it asks to
+close only the tab the run opened, and closes nothing when the run has no tab id,
+when the space's tabs cannot be read, when its tab is no longer listed, or when
+that tab is the space's last one at the time of the check. Within this scheduler,
+closes serialize per workspace (and Herdr session) and re-read under the lock
+immediately before acting: it leaves the last tab it can see. A person closing
+the other tabs between the read and the close can still leave it last, and the app then closes the space. The scheduler issues no
+space close itself in existing mode; on hc, where a terminal is the tab, it ends
+the run's terminal only while another one is there at that read. Each refusal logs
+why. The loader no longer refuses that combination, and `ls --json` / `put` carry
+`blocked_grace_minutes` like the other keys.
 
 The earlier patch is still why `close_workspace` exists in the API at all: the pack's
 panel sets it per automation (issue #498). `ls --json` names it for every entry, and

@@ -15,30 +15,37 @@ next one fail (#13). Users worked around it by telling the agent to run
 An opt-in key, `close_workspace: never | on-success`, default `never`. With
 `on-success` the runner records the run `done`, then asks the host to close
 the run's workspace, or the tab the run opened when the automation shares a
-workspace:
+workspace. Existing-mode closes within this scheduler serialize per workspace
+(and Herdr session) and re-read the tab list under the lock immediately before
+acting. This prevents two scheduler runs from each seeing two tabs and both
+closing. It leaves the last tab it can see:
 
 - TUI, `workspace: worktree | root`: `herdr workspace close <id>`. The worktree
   and its uncommitted files stay (measured 2026-11-04), so `cleanup` keeps its
   job.
 - TUI, `workspace: existing`: `herdr tab close <tab_id>`, aimed at the tab this
-  run created. The shared workspace and every other tab stay open. The space's
-  tabs are read first; a run whose tab is the space's last one, whose tab is no
-  longer listed, or whose tab list cannot be read closes nothing and says why in
-  the log. Closing the last tab would close the space with it.
+  run created. The space's tabs are read first; a run whose tab is the space's
+  last one at that moment, whose tab is no longer listed, or whose tab list
+  cannot be read closes nothing and says why in the log. A person closing the
+  other tabs between that read and the close can still leave it last; the
+  scheduler issues no space close itself, and the app then closes the space.
 - hc, `workspace: worktree | root`: `hc kill` then `hc rm` on the run's
   terminal. The app removes the space itself once its terminal is killed
   (measured 2026-11-04).
 - hc, `workspace: existing`: the same `hc kill` and `hc rm` on the run's
-  terminal, but only while another terminal remains in the space. The app
-  removes a tab when its last pane goes and the space with its last tab
-  (`remove_pane` → `remove_tab` → `remove_space`), so a run whose tab is the
-  space's only one closes nothing and says why in the log.
+  terminal, but only while another terminal remains at the time of the read.
+  The app removes a tab when its last pane goes and the space with its last tab
+  (`remove_pane` → `remove_tab` → `remove_space`). A person closing the other
+  tabs between the read and the kill can still leave it last; the scheduler
+  issues no space close itself, and the app then closes the space.
 
-A run whose agent ended `blocked` is not closed: Herdr's `agent wait` counts
-blocked as settled, so it is recorded `done` while waiting on a person. The hc
-host instead fails a run that stays blocked past `blocked_grace_minutes`
-(default 2, `-1` waits the timeout out) and ends that agent's terminal; like any
-failure, its space stays open.
+Both agent backends fail a run that stays blocked past `blocked_grace_minutes`
+(default 2, `-1` waits the timeout out), with the dialog line in history and a
+notice. Herdr's `agent wait` also settles on blocked, so the scheduler checks
+the status after every wait slice. On hc it kills the terminal without removing
+its record. On herdr it reads `pane process-info` and sends SIGTERM only to the
+foreground process group, refusing a missing, shell, or scheduler group. A stop
+failure is logged. Neither failure path asks to close the pane, tab, or space.
 
 ## Why
 

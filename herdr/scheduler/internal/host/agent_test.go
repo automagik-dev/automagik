@@ -2,6 +2,7 @@ package host
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,189 @@ import (
 
 func agentWorkWith(ops ops, a config.Automation) agentWork {
 	return agentWork{ops: ops, knobs: fast(), a: a}
+}
+
+func TestAwaitBlockedPastGraceFailsWithScreenAndEndsAgent(t *testing.T) {
+	clock := time.Unix(0, 0)
+	ops := &fakeOps{
+		agentWait: func(string, time.Duration) error {
+			clock = clock.Add(time.Minute)
+			return nil // Herdr settles immediately on blocked.
+		},
+		agentStatus: func(string) (string, error) { return "blocked", nil },
+		paneRead: func(string, int) (string, error) {
+			return "\x1b[31m│ Do you want to proceed? │\x1b[0m\n❯ 1. Yes\nEsc to cancel", nil
+		},
+	}
+	w := agentWorkWith(ops, config.Automation{}) // raw zero gets the default grace
+	w.clock = func() time.Time { return clock }
+	err := w.do(Session{PaneID: "w7:p2"}, 200*time.Millisecond)
+	if err == nil || err.Error() != "blocked on a dialog: Do you want to proceed?" {
+		t.Fatalf("want the dialog line, got %v", err)
+	}
+	if ops.waits != 4 || ops.reads != 1 || strings.Join(ops.ended, "|") != "w7:p2" {
+		t.Fatalf("waits=%d reads=%d ended=%v", ops.waits, ops.reads, ops.ended)
+	}
+	if len(ops.closed) != 0 || len(ops.closedTabs) != 0 {
+		t.Fatal("blocked failure closed its layout")
+	}
+}
+
+func TestAwaitBlockedBlipsResetGraceThenDoneSucceeds(t *testing.T) {
+	clock := time.Unix(0, 0)
+	states := []string{"blocked", "blocked", "working", "blocked", "blocked", "done"}
+	index := -1
+	ops := &fakeOps{
+		agentWait: func(string, time.Duration) error {
+			index++
+			clock = clock.Add(time.Minute)
+			if states[index] == "working" {
+				return apiErr("agent wait", "timeout")
+			}
+			return nil
+		},
+		agentStatus: func(string) (string, error) { return states[index], nil },
+	}
+	w := agentWorkWith(ops, config.Automation{BlockedGraceMinutes: 2})
+	w.clock = func() time.Time { return clock }
+	if err := w.await(Session{PaneID: "p"}, time.Second); err != nil {
+		t.Fatalf("a blip failed: %v", err)
+	}
+	if ops.waits != len(states) || len(ops.ended) != 0 || ops.reads != 0 {
+		t.Fatalf("waits=%d ended=%v reads=%d", ops.waits, ops.ended, ops.reads)
+	}
+}
+
+func TestAwaitMinusOneWaitsOutBlockedUntilTimeout(t *testing.T) {
+	clock := time.Unix(0, 0)
+	ops := &fakeOps{
+		agentWait: func(string, time.Duration) error {
+			clock = clock.Add(10 * time.Minute)
+			return nil
+		},
+		agentStatus: func(string) (string, error) { return "blocked", nil },
+	}
+	w := agentWorkWith(ops, config.Automation{BlockedGraceMinutes: -1})
+	w.clock = func() time.Time { return clock }
+	err := w.await(Session{PaneID: "p"}, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "still working") || ops.waits < 2 {
+		t.Fatalf("waits=%d err=%v, want a timeout", ops.waits, err)
+	}
+	if len(ops.ended) != 0 || ops.reads != 0 {
+		t.Fatalf("ended=%v reads=%d", ops.ended, ops.reads)
+	}
+}
+
+func TestDoPreAwaitDialogsFailWithGraceAndEndAgent(t *testing.T) {
+	for _, phase := range []string{"start", "submit"} {
+		t.Run(phase, func(t *testing.T) {
+			clock := time.Unix(0, 0)
+			ops := &fakeOps{
+				agentStatus: func(string) (string, error) {
+					clock = clock.Add(time.Minute)
+					return "blocked", nil
+				},
+				paneRead: func(string, int) (string, error) { return "Do you trust this folder?", nil },
+			}
+			if phase == "start" {
+				ops.agentStart = func(string, string, string, []string) error {
+					return apiErr("agent start", herdr.CodeAgentNotReady)
+				}
+			} else {
+				ops.agentSubmit = func(string, string) error { return apiErr("agent prompt", herdr.CodeAgentBlocked) }
+			}
+			w := agentWorkWith(ops, config.Automation{})
+			w.clock = func() time.Time { return clock }
+			err := w.do(Session{PaneID: "p"}, 200*time.Millisecond)
+			if err == nil || err.Error() != "blocked on a dialog: Do you trust this folder?" {
+				t.Fatalf("want a blocked failure, got %v", err)
+			}
+			if strings.Join(ops.ended, "|") != "p" || ops.reads != 1 || ops.waits != 0 || len(ops.closed)+len(ops.closedTabs) != 0 {
+				t.Fatalf("ended=%v reads=%d waits=%d layout closes=%v/%v", ops.ended, ops.reads, ops.waits, ops.closed, ops.closedTabs)
+			}
+		})
+	}
+}
+
+func TestDoPreAwaitBlipClearsThenSubmitsPrompt(t *testing.T) {
+	for _, phase := range []string{"start", "submit"} {
+		t.Run(phase, func(t *testing.T) {
+			checks := 0
+			ops := &fakeOps{agentStatus: func(string) (string, error) {
+				checks++
+				if checks == 1 {
+					return "blocked", nil
+				}
+				return "idle", nil
+			}}
+			if phase == "start" {
+				ops.agentStart = func(string, string, string, []string) error { return apiErr("agent start", herdr.CodeAgentNotReady) }
+			} else {
+				ops.agentSubmit = func(string, string) error {
+					if ops.submits == 1 {
+						return apiErr("agent prompt", herdr.CodeAgentBlocked)
+					}
+					return nil
+				}
+			}
+			w := agentWorkWith(ops, config.Automation{Prompt: "go"})
+			if err := w.do(Session{PaneID: "p"}, time.Second); err != nil {
+				t.Fatal(err)
+			}
+			wantSubmits := 1
+			if phase == "submit" {
+				wantSubmits = 2
+			}
+			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.ended) != 0 {
+				t.Fatalf("starts=%d submits=%d waits=%d ended=%v", ops.starts, ops.submits, ops.waits, ops.ended)
+			}
+		})
+	}
+}
+
+func TestDoPreAwaitMinusOneWaitsUntilTimeout(t *testing.T) {
+	ops := &fakeOps{
+		agentStart:  func(string, string, string, []string) error { return apiErr("agent start", herdr.CodeAgentNotReady) },
+		agentStatus: func(string) (string, error) { return "blocked", nil },
+	}
+	w := agentWorkWith(ops, config.Automation{BlockedGraceMinutes: -1})
+	err := w.do(Session{PaneID: "p"}, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "run timeout") || ops.reads != 0 || len(ops.ended) != 0 {
+		t.Fatalf("err=%v reads=%d ended=%v", err, ops.reads, ops.ended)
+	}
+}
+
+// The CLI's error proves a dialog existed even when it clears before the
+// first status read. This fast blip still submits the task and can succeed.
+func TestDoPreAwaitDialogClearsBeforeFirstRead(t *testing.T) {
+	for _, phase := range []string{"start", "submit"} {
+		t.Run(phase, func(t *testing.T) {
+			ops := &fakeOps{agentStatus: func(string) (string, error) { return "idle", nil }}
+			if phase == "start" {
+				ops.agentStart = func(string, string, string, []string) error {
+					return apiErr("agent start", herdr.CodeAgentNotReady)
+				}
+			} else {
+				ops.agentSubmit = func(string, string) error {
+					if ops.submits == 1 {
+						return apiErr("agent prompt", herdr.CodeAgentBlocked)
+					}
+					return nil
+				}
+			}
+			w := agentWorkWith(ops, config.Automation{Prompt: "go"})
+			if err := w.do(Session{PaneID: "p"}, time.Second); err != nil {
+				t.Fatal(err)
+			}
+			wantSubmits := 1
+			if phase == "submit" {
+				wantSubmits = 2
+			}
+			if ops.starts != 1 || ops.submits != wantSubmits || ops.waits != 1 || len(ops.ended) != 0 {
+				t.Fatalf("starts=%d submits=%d waits=%d ended=%v", ops.starts, ops.submits, ops.waits, ops.ended)
+			}
+		})
+	}
 }
 
 // ── starting the agent ──────────────────────────────────────────────

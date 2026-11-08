@@ -76,7 +76,7 @@ func (h *hcHost) Provision(a config.Automation) (Session, error) {
 	case config.WorkspaceExisting:
 		space = a.WorkspaceID
 		// The app adopts this terminal into the tab named by its label, so
-		// that id is what Close can later close without touching the space.
+		// that id identifies the run's own tab when Close checks the space.
 		tabID = newID("tb")
 	case config.WorkspaceRoot:
 	default:
@@ -194,23 +194,28 @@ func (h *hcHost) blockedOutcome(s Session) error {
 // reports done for an agent waiting on a person.
 //
 // In existing mode the tab is the run's, but the space is shared: the app
-// removes a space with its last tab, so a tab that is the only one there is
-// left open rather than taking the workspace with it.
+// removes a space with its last tab, so the space's terminals are read first
+// and the tab is left open when it is the only one at that moment. A person
+// closing the other tabs in between can still leave it last; the scheduler
+// itself asks for no space close in this mode.
 func (h *hcHost) Close(s Session, a config.Automation) error {
 	if a.Workspace == config.WorkspaceExisting {
 		if s.TabID == "" {
 			log.Printf("%s: done, but its tab stays open: the run has no tab id", a.Name)
 			return nil
 		}
+		unlock := lockWorkspaceClose("hc", s.WorkspaceID)
+		defer unlock()
+		// Re-read after acquiring the lock, immediately before the kill.
 		terminals, err := h.ops.Terminals(map[string]string{"herdr.space": s.WorkspaceID})
 		if err != nil {
 			log.Printf("%s: done, but its tab stays open: cannot tell whether it is the space's last one (%v)", a.Name, err)
 			return nil
 		}
 		// The run's tab id is minted for it alone, so any other terminal in
-		// the space is another tab: only then is closing this one safe.
+		// the space is another tab at this read. Leave the last tab we can see.
 		if len(terminals) <= 1 {
-			log.Printf("%s: done, but its tab stays open: it is the last one in its space, and closing it would close the workspace", a.Name)
+			log.Printf("%s: done, but its tab stays open: it is the last one in its space at the time of the check", a.Name)
 			return nil
 		}
 	}
