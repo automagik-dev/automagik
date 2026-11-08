@@ -138,8 +138,8 @@ const appHome = () => (process.env.HERDR_APP_HOME?.startsWith('/') ? process.env
 const engines = new ChatEngines({
   make: name => createEngine({ home: homedir(), appHome: appHome(), hcPath: hcPath(), env: { ...process.env, HC_SESSION: name }, log }),
 })
-// The Automagik Bots' chats, read only, from bots-dsh's owner-only socket in the team home (#517);
-// absent, it lists nothing.
+// The Automagik Bots' chats, from bots-dsh's owner-only socket in the team home (#517); absent, it
+// lists nothing. Writes on them go to it only when it answered `write: 1` (dsh-source.mjs).
 const dsh = new DshSource({ log })
 
 // Admitted (a paired key) and its header read, by guard.mjs, on the chat route.
@@ -156,7 +156,8 @@ async function chatRoute({ conn, bi, value, rest, peer: phone }) {
   live.add(open)
   const close = phones.open(phone, device.name)
   chat = new ChatConnection({
-    engine: withDsh(engine, dsh),
+    // by: the phone's name, which the socket records with an answer (who answered on the phone).
+    engine: withDsh(engine, dsh, { by: device.name }),
     // The paired key guard.mjs admitted: a Retry after a reconnect is the same message, typed once.
     device: phone,
     // The promise lets chat.mjs count bytes not yet taken (MAX_UNSENT).
@@ -165,6 +166,9 @@ async function chatRoute({ conn, bi, value, rest, peer: phone }) {
     log,
   })
   try {
+    // The hello answer says dshWrite only for a socket that answered write: 1: greet it first
+    // (absent resolves at once; a socket that does not answer waits at most REQUEST_MS).
+    await dsh.open().catch(() => null)
     if (rest.length) chat.feed(Buffer.from(rest))
     while (!chat.closed) {
       const data = await bi.recv.read(65536).catch(() => null)
