@@ -22,6 +22,9 @@ until SIGTERM/SIGINT and removes the socket. Starting fails closed when the core
 the caller is neither in the attach ledger nor a worker pane, the roster or ledger cannot be
 read, or the runtime folder is inside the writable project or app home.
 
+The 107-byte socket-path limit is Linux's; macOS's is 104, so a longer path fails at listen
+without the named error.
+
 ## What it speaks
 
 Plain-mode JSON-RPC 2.0, one message per line, exactly hc 0.1.14. It opens **one upstream
@@ -49,13 +52,17 @@ ids are never reused, so a rename between the check and the call cannot redirect
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
 | `terminal.run` | only hcGuard's exact dsh-tui worker shape: `--bg`, `parent` = the caller, `cwd` under the caller's project `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, `/usr/bin/env PATH=<guard>:… dsh-tui -- <task>`, no `on`/`line`, identity env only, and a guard folder outside the writable project and app home. Only a ledger-bound bot pane starts a worker |
 
+`terminal.send` keeps hc's `force`, `if` and `timeout`; `force` only skips the busy wait, and the
+target is still team-scoped.
+
 Everything else is refused with a JSON-RPC error whose message starts `hc-proxy: `, including
 `terminal.put`, `terminal.keys`, `terminal.attach`, `terminal.interrupt`, `terminal.keep`,
 `terminal.label` (on a non-own target), `file.*`, `doc.*`, `machine.*`, `server.*`,
 `events.subscribe`, `rpc.discover` and `templates.list`. `hello` is refused before it can switch
 the connection to framed mode.
 
-`terminal.label` is allowed on an own worker because the pack's worker start does **not** set the
+`terminal.label` forwards only `terminal` and `labels`; the 0.1.14 schema lists no caller for
+label. It is allowed on an own worker because the pack's worker start does **not** set the
 worker's tab label: `workerArgs` sets `worker.of`, `branch`, `worker.role`, `task*` and
 `herdr.space`, and the sidebar's `keptSteps` sets `herdr.space`/`herdr.tab` with a later
 `hc label` once the pane is in the window. Without that call the worker's tab marker could not be

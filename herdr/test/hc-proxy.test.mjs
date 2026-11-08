@@ -449,8 +449,10 @@ test("own-worker kill, rm and label are allowed; team and other workers are refu
   ]) {
     const answer = await (await clientFor(proxy.socket)).call(method, params);
     assert.ok(answer.result, `${method} on the caller's own worker: ${JSON.stringify(answer)}`);
-    assert.equal(fake.calls(method).at(-1).params.terminal, "t105");
-    assert.equal(fake.calls(method).at(-1).params.caller, "t100");
+    const forwarded = fake.calls(method).at(-1).params;
+    assert.equal(forwarded.terminal, "t105");
+    if (method === "terminal.label") assert.equal(forwarded.caller, undefined, "label carries no caller");
+    else assert.equal(forwarded.caller, "t100");
     for (const target of ["t101", "t121", "t106"]) {
       const before = fake.calls(method).length;
       const refused = await (await clientFor(proxy.socket)).call(method, { ...params, terminal: target });
@@ -459,6 +461,25 @@ test("own-worker kill, rm and label are allowed; team and other workers are refu
       assert.equal(fake.calls(method).length, before, `${method} ${target} never reached the core`);
     }
   }
+});
+
+test("terminal.label forwards only its schema fields and refuses a caller", async (t) => {
+  const { fake, proxy } = await sceneWithCore(t);
+  fake.clearLog();
+  const label = await (await clientFor(proxy.socket)).call("terminal.label", {
+    terminal: "t105", labels: { "herdr.tab": "tab-1" },
+  });
+  assert.ok(label.result, JSON.stringify(label));
+  assert.deepEqual(fake.calls("terminal.label").at(-1).params,
+    { terminal: "t105", labels: { "herdr.tab": "tab-1" } },
+    "label forwards exactly terminal and labels, no caller");
+  const before = fake.log.length;
+  const forged = await (await clientFor(proxy.socket)).call("terminal.label", {
+    terminal: "t105", labels: { "herdr.tab": "tab-1" }, caller: "t5q",
+  });
+  assert.ok(forged.error, "label refuses a caller it does not own");
+  assert.match(forged.error.message, /terminal\.label: unknown parameter caller/);
+  assert.equal(fake.log.length, before, "the caller-bearing label never reached the core");
 });
 
 test("a dead upstream answers an error and never falls back", async (t) => {

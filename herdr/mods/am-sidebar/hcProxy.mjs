@@ -59,9 +59,9 @@ const WORKER_LABELS = new Set([WORKER_OF_LABEL, "task", "task.project", "task.le
 /** The methods that carry a caller; the proxy overwrites it on every one. */
 const CALLER_METHODS = new Set([
   "terminal.get", "terminal.read", "terminal.wait", "terminal.send",
-  "terminal.kill", "terminal.rm", "terminal.label", "terminal.run",
+  "terminal.kill", "terminal.rm", "terminal.run",
 ]);
-const ALLOWED = new Set(["terminal.list", ...CALLER_METHODS]);
+const ALLOWED = new Set(["terminal.list", "terminal.label", ...CALLER_METHODS]);
 const OWN_WORKER_METHODS = new Set(["terminal.kill", "terminal.rm", "terminal.label"]);
 const TEAM_METHODS = new Set(["terminal.get", "terminal.read", "terminal.wait", "terminal.send"]);
 /** The exact parameters each method may forward; anything else is an unknown parameter. */
@@ -73,7 +73,7 @@ const METHOD_PARAMS = new Map([
   ["terminal.send", new Set(["terminal", "text", "wait", "force", "if", "timeout", "caller"])],
   ["terminal.kill", new Set(["terminal", "caller"])],
   ["terminal.rm", new Set(["terminal", "caller"])],
-  ["terminal.label", new Set(["terminal", "labels", "caller"])],
+  ["terminal.label", new Set(["terminal", "labels"])],
   ["terminal.run", new Set([
     "argv", "name", "cwd", "env", "labels", "parent", "no_parent", "no_notify", "outlive_parent",
     "die_with_parent", "rm", "keep", "wait", "timeout", "caller",
