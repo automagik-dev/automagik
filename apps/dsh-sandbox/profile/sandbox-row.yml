@@ -4,10 +4,11 @@
 # start; with the switch absent the wrapper runs bwrap with exactly the arguments it got, so a
 # profile that carries this row behaves as it does today.
 #
-# `{{WRAPPER}}` is a placeholder. Only `dsh-sandbox install` substitutes the absolute path to
-# bin/hc-socket-mask.mjs and writes this item inside its managed block; install refuses a
-# relative or missing wrapper path, and check fails on a relative one. Do not copy this file into
-# a profile by hand.
+# `{{WRAPPER}}` and `{{PACK_ROOT}}` are placeholders. Only `dsh-sandbox install` substitutes the
+# absolute path to bin/hc-socket-mask.mjs and the pack's own folder, and writes this item inside
+# its managed block; install refuses a relative or missing wrapper path, and check fails on a
+# relative one. The wrapper binds {{PACK_ROOT}} read-only inside the sandbox. Do not copy this
+# file into a profile by hand.
 #
 # Rollout: the pack copies the wrapper byte-equal from its release and runs the helper at
 # enablement; the proxy lane sets the switch and absolute AM_HC_REAL_SOCKET / AM_HC_PROXY_SOCKET
@@ -15,5 +16,5 @@
 # Nothing here is installed on a live profile until then (README.md, "Rollout").
 - id: sandbox
   config:
-    runnerCommand: ['{{WRAPPER}}']
+    runnerCommand: ['{{WRAPPER}}', '--pack-root', '{{PACK_ROOT}}']
     runnerFailureSignatures: ['hc-socket-mask: ']

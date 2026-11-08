@@ -31,9 +31,12 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
+import { stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
@@ -151,6 +154,286 @@ export function profileDirOf(dshHome) {
 }
 export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
 export const shimPathOf = (env = process.env) => join(binDirOf(env), SHIM);
+
+/** The app home a pack install uses, without the trailing slash. */
+const appHomeFor = (env = process.env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
+
+/** Real path, resolving the nearest existing ancestor and appending the rest for a missing child. */
+const realOrAbs = (path) => {
+  const abs = resolve(path);
+  try { return realpathSync(abs); } catch { /* missing: resolve its existing ancestor */ }
+  const parent = dirname(abs);
+  if (parent === abs) return abs;
+  return join(realOrAbs(parent), basename(abs));
+};
+/** Whether `child` is `parent` or beneath it, by real/resolved path. */
+const insidePath = (child, parent) => {
+  const at = realOrAbs(child), root = realOrAbs(parent);
+  const rel = relative(root, at);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+/**
+ * Why a stable execution root is unsafe, or null. It must be outside the project, the app home,
+ * the pane temp folder and the runtime folder: a bot that can write it could replace the helper
+ * or runner that the core starts outside the sandbox.
+ */
+export function defaultForbiddenRoots(env = process.env, project = process.cwd(), appHome = appHomeFor(env)) {
+  return [
+    ["the project", project],
+    ["the app home", appHome],
+    ["the temp folder", env.TMPDIR || tmpdir()],
+    ["the literal temp folder", "/tmp"],
+    ...(env.XDG_RUNTIME_DIR ? [["the runtime folder", env.XDG_RUNTIME_DIR]] : []),
+  ];
+}
+
+export function unsafePathProblem(path, label, { project = process.cwd(), env = process.env, appHome = appHomeFor(env), forbiddenRoots = undefined } = {}) {
+  const roots = forbiddenRoots ?? defaultForbiddenRoots(env, project, appHome);
+  for (const [why, parent] of roots) {
+    if (parent && insidePath(path, parent)) return `${label} ${path} is inside ${why}; refusing`;
+  }
+  return null;
+}
+/** The stable root's own refusal (the label the rows name). */
+export const stableRootProblem = (root, opts) => unsafePathProblem(root, "the stable execution root", opts);
+/** Every node/bun run.sh could pick: PATH words, the nvm versions, Homebrew and ~/.bun. */
+export function nodeCandidates(env = process.env, path = env.PATH || "") {
+  const out = new Set();
+  for (const dir of String(path).split(delimiter)) {
+    if (!dir) continue;
+    out.add(join(dir, "node"));
+    out.add(join(dir, "bun"));
+  }
+  const home = env.HOME || "";
+  if (home) {
+    const nvm = join(home, ".nvm", "versions", "node");
+    try { for (const version of readdirSync(nvm)) out.add(join(nvm, version, "bin", "node")); } catch { /* none */ }
+    out.add(join(home, ".bun", "bin", "bun"));
+  }
+  out.add("/opt/homebrew/bin/node");
+  out.add("/usr/local/bin/node");
+  return [...out].filter((candidate) => { try { return statSync(candidate).isFile(); } catch { return false; } });
+}
+
+/** Check the stable root, the DSH profile, the installed shim and every node run.sh could run. */
+export function executionPathProblem({ stableRoot, env = process.env, project = process.cwd(), node = process.execPath, bakedNode = undefined, forbiddenRoots = undefined } = {}) {
+  const paths = [
+    [stableRoot, "the stable execution root"],
+    [sandboxProfileOf(dshHomeOf(env)), "the DSH profile"],
+    [shimPathOf(env), "the dsh-tui shim"],
+  ];
+  for (const [path, label] of paths) {
+    const problem = unsafePathProblem(path, label, { project, env, forbiddenRoots });
+    if (problem) return problem;
+  }
+  const dsh = findDsh(env);
+  if (dsh) {
+    const problem = unsafePathProblem(dsh, "the dsh the shim executes", { project, env, forbiddenRoots });
+    if (problem) return problem;
+  }
+  const baked = bakedNode === undefined ? bakedNodeOf(stableRoot) : bakedNode;
+  if (!baked) return `the stable runner ${join(stableRoot, STABLE_RUNNER)} has no baked node; run automagik-herdr dsh-tui install again`;
+  const missing = bakedNodeProblem(baked);
+  if (missing) return missing;
+  if (bakedNode === undefined) {
+    try {
+      if (!readFileSync(join(stableRoot, STABLE_RUNNER)).equals(Buffer.from(stableRunnerText(baked)))) {
+        return `the stable runner ${join(stableRoot, STABLE_RUNNER)} does not match its baked node; run automagik-herdr dsh-tui install again`;
+      }
+    } catch {
+      return `the stable runner ${join(stableRoot, STABLE_RUNNER)} cannot be read; run automagik-herdr dsh-tui install again`;
+    }
+  }
+  for (const candidate of [baked, node, ...nodeCandidates(env)]) {
+    const problem = unsafePathProblem(candidate, "the node that runs the helper", { project, env, forbiddenRoots });
+    if (problem) return problem;
+  }
+  if (env.NVM_DIR) {
+    const problem = unsafePathProblem(env.NVM_DIR, "NVM_DIR", { project, env, forbiddenRoots });
+    if (problem) return problem;
+  }
+  for (const dir of String(env.AUTOMAGIK_HERDR_RUNTIME_DIRS || "").split(":")) {
+    if (!dir) continue;
+    const problem = unsafePathProblem(dir, "AUTOMAGIK_HERDR_RUNTIME_DIRS", { project, env, forbiddenRoots });
+    if (problem) return problem;
+  }
+  return null;
+}
+
+/** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). *//** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). */
+export const SANDBOX_DIR = "automagik-herdr/dsh-sandbox";
+export const SANDBOX_WRAPPER = "hc-socket-mask.mjs";
+export const sandboxRootOf = (env = process.env) => stableRootOf(env);
+export const sandboxWrapperOf = (env = process.env) => join(sandboxRootOf(env), SANDBOX_WRAPPER);
+/** The wrapper beside this module, in the pack release (or its am copy). */
+export const packWrapperOf = () => fileURLToPath(new URL("./bin/hc-socket-mask.mjs", import.meta.url));
+/** This module's own folder: the pack mod when the pack's CLI runs the installer. */
+export const packRootOf = () => dirname(dirname(packWrapperOf()));
+/** Only the pack's mod folder (or its stable copy) has the pane helper and runner. */
+export const sandboxCapable = (root = packRootOf()) => ["am-sidebar", "dsh-sandbox"].includes(basename(root))
+  && existsSync(join(root, "hcPane.mjs")) && existsSync(join(root, "bin", "run.sh"));
+
+/** Every file an unsandboxed worker start can reach, copied byte-equal to the stable folder. */
+export const STABLE_FILES = Object.freeze([
+  "hcPane.mjs", "hcProxy.mjs", "dshTui.mjs", "workers.js", "models.js", "model.js", "logins.js",
+  "attach.js", "hcGuard.mjs", "layoutSafe.mjs", "release.js", "retired.js", "bin/dsh-sandbox.mjs", "bin/run.sh",
+]);
+
+/** Whether every stable file is byte-equal to the pack's copy (a stale copy is never run). */
+export function stableFilesCurrent(source, stable) {
+  try {
+    for (const file of STABLE_FILES) {
+      if (file === STABLE_RUNNER) continue;
+      if (!readFileSync(join(source, file)).equals(readFileSync(join(stable, file)))) return false;
+    }
+    const baked = bakedNodeOf(stable);
+    if (!baked) return false;
+    if (!readFileSync(join(stable, STABLE_RUNNER)).equals(Buffer.from(stableRunnerText(baked)))) return false;
+    const guardSource = join(source, "guard"), guardStable = join(stable, "guard");
+    const names = readdirSync(guardSource);
+    if (names.length !== readdirSync(guardStable).length) return false;
+    for (const name of names) {
+      if (!readFileSync(join(guardSource, name)).equals(readFileSync(join(guardStable, name)))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The installed pack's mod folder, if it is there; else this module's own folder. */
+export function packSourceOf(env = process.env) {
+  const appHome = (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
+  const installed = join(appHome, "mods", "am-sidebar");
+  return existsSync(join(installed, "hcPane.mjs")) ? installed : packRootOf();
+}
+
+/** The stable runner: one absolute node, baked at install; no PATH, NVM_DIR or env search. */
+export const STABLE_RUNNER = "bin/run.sh";
+const shellQuote = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
+export function stableRunnerText(node) {
+  return `#!/bin/sh\n# Generated by dsh-tui install: one absolute node, no PATH/NVM/env search.\n# am-node: ${node}\nexec ${shellQuote(node)} "$@"\n`;
+}
+/** The node baked into a stable runner, or null. */
+export function bakedNodeOf(stableRoot) {
+  try {
+    const match = readFileSync(join(stableRoot, STABLE_RUNNER), "utf8").match(/^# am-node: (.+)$/m);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Why the baked node cannot run, or null: it must still be an executable file. */
+export function bakedNodeProblem(node) {
+  try {
+    const stat = statSync(node);
+    if (!stat.isFile()) throw new Error("not a file");
+    accessSync(node, constants.X_OK);
+    return null;
+  } catch {
+    return `the baked node ${node} is gone; run automagik-herdr dsh-tui install again`;
+  }
+}
+
+/** Copy the stable execution set from `source` to `stable`, keeping modes; returns changed paths. */
+function copyStable(source, stable, node) {
+  if (resolve(source) === resolve(stable)) return [];
+  const changed = [];
+  for (const file of STABLE_FILES) {
+    const from = join(source, file), to = join(stable, file);
+    const want = file === STABLE_RUNNER ? Buffer.from(stableRunnerText(node)) : readFileSync(from);
+    let have = null;
+    try { have = readFileSync(to); } catch { /* first copy */ }
+    if (!have || !want.equals(have)) {
+      mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+      if (file === STABLE_RUNNER) writeFileSync(to, want, { mode: 0o755 });
+      else {
+        copyFileSync(from, to);
+        chmodSync(to, statSync(from).mode & 0o777);
+      }
+      changed.push(to);
+    }
+  }
+  const guardFrom = join(source, "guard");
+  const guardTo = join(stable, "guard");
+  if (existsSync(guardFrom) && resolve(guardFrom) !== resolve(guardTo)) {
+    mkdirSync(guardTo, { recursive: true, mode: 0o700 });
+    for (const name of readdirSync(guardFrom)) {
+      const from = join(guardFrom, name), to = join(guardTo, name);
+      const want = readFileSync(from);
+      let have = null;
+      try { have = readFileSync(to); } catch { /* first copy */ }
+      if (!have || !want.equals(have)) {
+        copyFileSync(from, to);
+        chmodSync(to, statSync(from).mode & 0o777);
+        changed.push(to);
+      }
+    }
+  }
+  return changed;
+}
+/** The dsh-tui profile's patch file, where the sandbox row lives. */
+export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis.patch.yml");
+
+/**
+ * Copy the wrapper byte-equal from the pack to its stable path and install the managed sandbox
+ * row in the dsh-tui profile. The wrapper is what DSH runs for a sandboxed command; the row
+ * names it and its failure signature. Throws before writing a half result; an unchanged copy
+ * and an already-current row are no-ops.
+ */
+export function installSandboxRow({ env = process.env, project = null, forbiddenRoots = undefined } = {}) {
+  const wrapper = sandboxWrapperOf(env);
+  const profile = sandboxProfileOf(dshHomeOf(env));
+  const source = packWrapperOf();
+  const packRoot = packRootOf();
+  const stableRoot = sandboxRootOf(env);
+  if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot, stableRoot };
+  const cwd = process.cwd();
+  const cwdProject = existsSync(join(cwd, ".herdr", "bots.json")) || existsSync(join(cwd, ".git")) ? cwd : null;
+  const unsafe = executionPathProblem({ stableRoot, project: project ?? cwdProject, env, node: process.execPath, bakedNode: process.execPath, forbiddenRoots });
+  if (unsafe) throw new Error(unsafe);
+  let changed = false;
+  const copied = copyStable(packRoot, stableRoot, process.execPath);
+  changed = copied.length > 0;
+  try {
+    const want = readFileSync(source);
+    const have = existsSync(wrapper) ? readFileSync(wrapper) : null;
+    if (!have || !want.equals(have)) {
+      mkdirSync(dirname(wrapper), { recursive: true, mode: 0o700 });
+      copyFileSync(source, wrapper);
+      changed = true;
+    }
+    chmodSync(wrapper, 0o755);
+  } catch (e) {
+    throw new Error(`cannot copy the sandbox wrapper to ${wrapper}: ${e?.message ?? e}`);
+  }
+  try {
+    const row = installRow({ profile, wrapper, packRoot: stableRoot });
+    return { changed: changed || row.changed, wrapper, profile, packRoot: stableRoot, stableRoot, backup: row.backup };
+  } catch (e) {
+    throw new Error(`cannot install the sandbox row in ${profile}: ${e?.message ?? e}`);
+  }
+}
+
+/** The stable wrapper and the managed row, read-only (doctor and the tests). */
+export function sandboxState(env = process.env, { forbiddenRoots = undefined } = {}) {
+  const wrapper = sandboxWrapperOf(env);
+  const profile = sandboxProfileOf(dshHomeOf(env));
+  const stableRoot = sandboxRootOf(env);
+  const packRoot = packRootOf();
+  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot)
+    && executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots }) === null;
+  let current = false;
+  try {
+    current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))
+      && stableFilesCurrent(packSourceOf(env), stableRoot);
+  } catch { current = false; }
+  let row;
+  try { row = checkRow({ profile, wrapper, packRoot: capable ? stableRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
+  return { wrapper, profile, packRoot, stableRoot, capable, current, row };
+}
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
 export function findDsh(env = process.env) {
@@ -392,6 +675,17 @@ export async function installDshTui(options = {}) {
     return { status: "failed", changed: false, detail: `the install changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`, lines: [] };
   }
 
+  // #631 PR B: the dsh-tui profile's sandbox row names the pack's runner wrapper, copied
+  // byte-equal to a stable path. A failure here undoes the plugin add: a pane that sets
+  // DSH_SANDBOX_MASK must never run against a profile without the row.
+  let sandbox;
+  try {
+    sandbox = installSandboxRow({ env, forbiddenRoots: options.forbiddenRoots });
+  } catch (e) {
+    undo();
+    return { status: "failed", changed: false, detail: `${e?.message ?? e}; removed what was added.`, lines: [] };
+  }
+
   // The record follows the version this install set, so a later uninstall still knows it is ours.
   const recordText = `${JSON.stringify({ package: DSH_TUI.package, version: DSH_TUI.version, integrity: DSH_TUI.integrity }, null, 2)}\n`;
   const recordChanged = owns && recordBefore !== recordText;
@@ -425,6 +719,9 @@ export async function installDshTui(options = {}) {
       ? `dsh-TUI ${DSH_TUI.version} is already installed in the ${PROFILE} profile (${profile}).`
       : `DSH at ${dsh}: installed dsh-TUI ${DSH_TUI.version} in the ${PROFILE} profile (${profile}).`,
     `The ${SHIM} shim is at ${shim}${onPath(env, binDir) ? "" : `; add ${binDir} to PATH so Herdr's built-in menu entry finds it`}.`,
+    sandbox.skipped
+      ? "The dsh-tui profile's sandbox row was left to the pack's own dsh-tui install (this copy is not the pack's mod folder)."
+      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} and the stable folder it keeps read-only.`,
     guideBefore === null
       ? `Marked dsh-TUI's first-run guide done (${guide}; open it later with /setup).`
       : "Kept dsh-TUI's first-run guide state (a completed guide writes that file).",
@@ -434,7 +731,7 @@ export async function installDshTui(options = {}) {
   ];
   if (had.length && !aged && owns) lines.splice(2, 0, `The ${PROFILE} profile excludes ${PIN} from pnpm's release-age gate (exact version only).`);
   if (aged && had.includes(PIN) && owns) lines.splice(2, 0, `Removed the release-age exception for ${PIN}: it is older than the profile's minimumReleaseAge now.`);
-  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || recordChanged || staleRecord, lines, detail: lines[0] };
+  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || recordChanged || staleRecord || sandbox.changed, lines, detail: lines[0] };
 }
 
 /**
@@ -520,6 +817,7 @@ export function uninstallDshTui(options = {}) {
     lines.push(`The uninstall changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`);
   }
   lines.push(`Kept: DSH sessions (${dshHome}), dsh-TUI's own state (~/${TUI_DATA_DIR}) and the ${PROFILE} profile.`);
+  lines.push("Kept the dsh-tui profile's sandbox row and its stable wrapper: without the pack's pane switch the wrapper is a pass-through, and the next install reuses both.");
   return { status: failed ? "failed" : changed ? "removed" : "absent", changed, detail: lines[0], lines };
 }
 
@@ -528,7 +826,7 @@ export function uninstallDshTui(options = {}) {
  * the pinned one. Read-only. `{ code, checks }`: 0 healthy or installed, 1 broken, 2 not
  * installed or no dsh (not applicable).
  */
-export function doctorDshTui({ env = process.env, panePath } = {}) {
+export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = undefined } = {}) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ check, ok, detail, fix: ok ? null : fix });
   const shell = loginShellOf(env);
@@ -580,8 +878,18 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   const guide = read(join(env.HOME || homedir(), TUI_DATA_DIR, ONBOARDING_FILE));
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
+  const sandbox = sandboxState(env, { forbiddenRoots });
+  const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
+  add("dsh-sandbox", sandboxOk || !installed,
+    !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
+      : !installed ? "not installed: the dsh-tui profile is not set up"
+        : sandbox.current && sandbox.row.ok ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper} and its pack folder`
+          : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
+            : sandbox.row.message,
+    installLine);
+
   const broken = checks.some((check) => !check.ok);
-  const healthy = pinned && ours;
+  const healthy = pinned && ours && sandboxOk;
   return { code: broken ? 1 : healthy ? 0 : 2, checks };
 }
 

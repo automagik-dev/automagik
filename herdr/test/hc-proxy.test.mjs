@@ -8,19 +8,23 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
-  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
-  rmSync, statSync, writeFileSync,
+  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
+  rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "../mods/am-sidebar/workers.js";
+import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
+import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PROXY = join(here, "..", "mods", "am-sidebar", "hcProxy.mjs");
+const PROXY_HARNESS = join(here, "cli-proxy-harness.mjs");
+/** A path under literal /tmp (real path, so macOS /private/tmp works), never created. */
+const literalTmpData = () => join(realpathSync("/tmp"), `am-hc-literal-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`, "data");
 
 const ID = {
   main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", jun: "b-dddddddddd",
@@ -57,6 +61,18 @@ function scene() {
   }
   writeFileSync(join(bin, "dsh-tui"), "#!/bin/sh\nexit 0\n");
   chmodSync(join(bin, "dsh-tui"), 0o755);
+  // The installed shim lives under HOME/.local/bin; the worker PATH resolves dsh-tui there.
+  const shimDir = join(home, ".local", "bin");
+  mkdirSync(shimDir, { recursive: true });
+  writeFileSync(join(shimDir, "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(shimDir, "dsh-tui"), 0o755);
+  const paneTmp = join(root, "pane-tmp");
+  mkdirSync(paneTmp, { recursive: true });
+  const stableRoot = join(home, ".local", "share", "automagik-herdr", "dsh-sandbox");
+  const stableGuard = stableGuardDir(stableRoot);
+  for (const dir of [stableGuard, join(stableRoot, "bin")]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(stableRoot, "hcPane.mjs"), "// stable helper\n");
+  writeFileSync(join(stableRoot, "bin", "run.sh"), stableRunnerText(process.execPath), { mode: 0o755 });
   writeFileSync(join(project, ".herdr", "bots.json"), `${JSON.stringify(team(), null, 2)}\n`);
   const ledger = join(app, "automagik-herdr", "attach.jsonl");
   writeFileSync(ledger, `${JSON.stringify({
@@ -84,8 +100,10 @@ function scene() {
     rec("t120", { bot: ID.other }, { name: "other-bot" }),
     rec("t121", { [WORKER_OF_LABEL]: ID.cap }, { name: "cap-worker", parent: "t101", cwd: worktree }),
   ];
-  const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app };
-  return { root, app, project, home, runtime, worktree, bin, ledger, terminals, env };
+  const forbiddenRoots = [["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime]];
+  const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app, TMPDIR: paneTmp,
+    PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
+  return { root, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env, forbiddenRoots };
 }
 
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
@@ -94,7 +112,7 @@ async function sceneWithCore(t, { version = "0.1.14", proxy = true, proxyOptions
   const fake = await startFakeCore({ socket: join(s.root, "core.sock"), terminals: s.terminals, version });
   const proxies = [];
   const start = async (terminal = "t100", extra = {}) => {
-    const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env, ...extra });
+    const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env, forbiddenRoots: s.forbiddenRoots, ...extra });
     proxies.push(started);
     return started;
   };
@@ -168,9 +186,19 @@ class Client {
 
 const clientFor = (path) => Client.connect(path);
 
+/** The real hc run argv workerArgs emits for a worker, after hc's run's own `--`. */
+const workerCallArgs = (s, { sandbox = true } = {}) => {
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox, stableRoot: s.stableRoot });
+  return args.slice(args.indexOf("--") + 1);
+};
+const helperArgv = (s) => workerCallArgs(s);
+const plainArgv = (s) => workerCallArgs(s, { sandbox: false });
+
 /** The exact worker shape the pack's workerArgs emits, as hc's CLI turns it into RPC params. */
 const runParams = (s, extra = {}) => ({
-  argv: [ENV, `PATH=${GUARD_DIR}:${s.bin}:/usr/bin:/bin`, "dsh-tui", "--", "do the task"],
+  argv: helperArgv(s),
   name: "worker-one",
   cwd: s.worktree,
   env: { TERM: "xterm-256color", TERM_PROGRAM: "herdr" },
@@ -355,8 +383,8 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
   const bad = [
     ["an on param", { on: "mac" }],
     ["a line", { line: "echo hi" }],
-    ["a non-worker argv", { argv: ["sh", "-c", "id"] }],
-    ["a short argv", { argv: [ENV, `PATH=${GUARD_DIR}:/usr/bin`, "dsh-tui", "--"] }],
+    ["a non-worker argv", { argv: (() => { const a = helperArgv(s); a[11] = "sh"; return a; })() }],
+    ["a short argv", { argv: [ENV, `PATH=${s.stableGuard}:/usr/bin`, "dsh-tui", "--"] }],
     ["a parent that is not the caller", { parent: "t101" }],
     ["a cwd outside the worktrees", { cwd: s.root }],
     ["an extra label", { labels: { [WORKER_OF_LABEL]: ID.dev, bot: ID.dev } }],
@@ -365,18 +393,48 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
     ["an agent key", { agent: "omp" }],
     ["die_with_parent false", { die_with_parent: false }],
     ["no die_with_parent", { die_with_parent: undefined }],
-    ["a PATH without a guard", { argv: [ENV, "PATH=/usr/bin:/bin", "dsh-tui", "--", "task"] }],
+    ["a PATH without a guard", { argv: (() => { const a = helperArgv(s); a[1] = "PATH=/usr/bin:/bin"; return a; })() }],
     ["a guard inside the writable worktree", {
-      argv: [ENV, `PATH=${join(s.worktree, "guard")}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${join(s.worktree, "guard")}:/usr/bin:/bin`; return a; })(),
     }],
     ["a guard inside the writable app home", {
-      argv: [ENV, `PATH=${join(s.app, "guard")}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${join(s.app, "guard")}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui inside the writable worktree", {
-      argv: [ENV, `PATH=${GUARD_DIR}:${s.worktree}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${s.stableGuard}:${s.worktree}:${s.shimDir}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui that is not on the worker PATH", {
-      argv: [ENV, `PATH=${GUARD_DIR}:${s.home}`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${s.stableGuard}:${s.home}`; return a; })(),
+    }],
+    ["a planted guard folder outside both trees", {
+      argv: (() => {
+        const guard = join(s.root, "planted-guard");
+        mkdirSync(guard, { recursive: true });
+        writeFileSync(join(guard, "..", "hcGuard.mjs"), "// fake\n");
+        const a = helperArgv(s);
+        a[1] = `PATH=${guard}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
+    }],
+    ["a node planted inside the writable worktree", {
+      argv: (() => {
+        writeFileSync(join(s.worktree, "node"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(s.worktree, "node"), 0o755);
+        const a = helperArgv(s);
+        a[1] = `PATH=${s.stableGuard}:${s.worktree}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
+    }],
+    ["a dsh-tui planted outside both trees", {
+      argv: (() => {
+        const planted = join(s.root, "planted-bin");
+        mkdirSync(planted, { recursive: true });
+        writeFileSync(join(planted, "dsh-tui"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(planted, "dsh-tui"), 0o755);
+        const a = helperArgv(s);
+        a[1] = `PATH=${s.stableGuard}:${planted}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
     }],
     ["an env that is not identity only", { env: { LD_PRELOAD: "/tmp/escape.so" } }],
     ["a timeout", { timeout: 5 }],
@@ -397,6 +455,168 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
   const fromWorker = await (await clientFor(workerProxy.socket)).call("terminal.run", runParams(s, { parent: "t105" }));
   assert.ok(fromWorker.error);
   assert.match(fromWorker.error.message, /only a bot pane the attach ledger binds/);
+});
+
+test("the plain worker shape is refused, including the real default workerArgs output", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  fake.clearLog();
+  const plain = plainArgv(s);
+  assert.equal(plain.length, 5, plain.join(" "));
+  assert.deepEqual(plain.slice(2), ["dsh-tui", "--", "do the task"]);
+  for (const [name, argv] of [["hand-written", [ENV, `PATH=${GUARD_DIR}:${s.bin}:/usr/bin:/bin`, "dsh-tui", "--", "task"]],
+    ["real default workerArgs", plain]]) {
+    const before = fake.log.length;
+    const client = await clientFor(proxy.socket);
+    const answer = await client.call("terminal.run", runParams(s, { argv }));
+    client.close();
+    assert.ok(answer.error, `${name} is refused`);
+    assert.match(answer.error.message, /^hc-proxy: terminal\.run: argv is not the helper worker shape/);
+    assert.equal(fake.log.length, before, `${name} never reached the core`);
+  }
+});
+
+test("a dsh-tui that is not the installed shim is refused even with a matching PATH", async (t) => {
+  const { s } = await sceneWithCore(t);
+  const params = runParams(s);
+  const snapshot = { terminal: "t100", caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
+    appHome: s.app, path: s.env.PATH, stableRoot: s.stableRoot, shim: join(s.root, "another", "dsh-tui") };
+  assert.match(runProblem(params, snapshot), /dsh-tui is not the installed shim/);
+});
+
+test("the proxy refuses a recorded pane PATH inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  for (const [name, word] of [["project", s.project], ["app home", s.app], ["temp", s.paneTmp], ["runtime", s.runtime]]) {
+    await assert.rejects(
+      startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
+        env: { ...s.env, PATH: `${s.stableGuard}:${word}:/usr/bin:/bin` } }),
+      new RegExp(`the pane PATH word .* is inside the writable (project|app home)|the pane PATH word .* is inside the (temp|runtime) folder`),
+      name,
+    );
+  }
+});
+
+test("a renamed ancestor of the pack cannot change a worker's stable paths", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  const pack = join(s.root, "fake-pack");
+  mkdirSync(join(pack, "bin"), { recursive: true });
+  writeFileSync(join(pack, "hcPane.mjs"), "// pack\n");
+  writeFileSync(join(pack, "bin", "run.sh"), "#!/bin/sh\n");
+  renameSync(pack, join(s.root, "fake-pack-moved"));
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", cwd: s.worktree, parent: "t100", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`, project: s.project,
+    taskId: "gn-1", sandbox: true, stableRoot: s.stableRoot });
+  const argv = args.slice(args.indexOf("--") + 1);
+  assert.equal(argv.some((word) => word.includes("fake-pack")), false, "no pack path is in the worker start");
+  const answer = await (await clientFor(proxy.socket)).call("terminal.run", runParams(s, { argv }));
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.ok(fake.calls("terminal.run").length > 0);
+});
+
+test("the proxy refuses a stable execution root inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  for (const [name, dataHome] of [["project", s.project], ["app home", s.app], ["temp", s.paneTmp], ["runtime", s.runtime]]) {
+    await assert.rejects(
+      startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
+        env: { ...s.env, XDG_DATA_HOME: dataHome } }),
+      /the stable execution root .* is inside/,
+      name,
+    );
+  }
+});
+
+test("the proxy refuses a DSH profile, a shim, or a run.sh node inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "node"), 0o755);
+  const cases = [
+    ["profile", { DSH_HOME: s.project }, /the DSH profile .* is inside the project/],
+    ["shim", { HOME: s.project, DSH_HOME: join(s.root, "dsh"), XDG_DATA_HOME: join(s.root, "data") }, /the dsh-tui shim .* is inside the project/],
+    ["node", { PATH: s.project }, /the node that runs the helper .* is inside the project/],
+  ];
+  for (const [name, extra, re] of cases) {
+    await assert.rejects(
+      startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: { ...s.env, ...extra } }),
+      re,
+      name,
+    );
+  }
+});
+
+test("NVM_DIR, the runtime-dirs override, and a baked node inside the project are refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "node"), 0o755);
+  for (const [name, extra, re] of [
+    ["NVM_DIR", { NVM_DIR: s.project }, /NVM_DIR .* is inside the project/],
+    ["runtime dirs", { AUTOMAGIK_HERDR_RUNTIME_DIRS: s.project }, /AUTOMAGIK_HERDR_RUNTIME_DIRS .* is inside the project/],
+  ]) {
+    await assert.rejects(
+      startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: { ...s.env, ...extra } }),
+      re,
+      name,
+    );
+  }
+  writeFileSync(join(s.stableRoot, "bin", "run.sh"), stableRunnerText(join(s.project, "node")));
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the node that runs the helper .* is inside the project/,
+  );
+});
+
+test("the dsh a shim executes is checked by real path, and literal /tmp is refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "dsh-real"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "dsh-real"), 0o755);
+  symlinkSync(join(s.project, "dsh-real"), join(s.bin, "dsh"));
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the dsh the shim executes .* is inside the project/,
+  );
+  rmSync(join(s.bin, "dsh"));
+  const literal = { ...s.env, XDG_DATA_HOME: literalTmpData() };
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: literal }),
+    /the stable execution root .* is inside the literal temp folder/,
+  );
+});
+
+test("the stable runner must match its baked node, and the baked node must still exist", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  const runner = join(s.stableRoot, "bin", "run.sh");
+  const original = stableRunnerText(process.execPath);
+  writeFileSync(runner, original.replace(`exec '${process.execPath}'`, "exec '/bin/false'"));
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the stable runner .* does not match its baked node/,
+  );
+  const gone = join(s.project, "gone-node");
+  writeFileSync(runner, stableRunnerText(gone));
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the baked node .* is gone; run automagik-herdr dsh-tui install again/,
+  );
+});
+
+test("a missing path under literal /tmp or a symlinked temp root is refused", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-hc-missing-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const literal = join(realpathSync("/tmp"), `am-hc-literal-${process.pid}-${Date.now()}`, "data");
+  assert.match(stableRootProblem(literal), /inside the (literal )?temp folder/);
+  const real = join(root, "real-tmp");
+  const link = join(root, "link-tmp");
+  mkdirSync(real);
+  symlinkSync(real, link);
+  const missing = join(link, "new", "data");
+  assert.match(stableRootProblem(missing, { env: { ...process.env, TMPDIR: link } }), /the temp folder/);
+});
+
+test("the production default still refuses a stable root under literal /tmp", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  const env = { ...s.env, XDG_DATA_HOME: literalTmpData() };
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env }),
+    /the stable execution root .* is inside the literal temp folder/,
+  );
 });
 
 test("a rename between the check and the forward cannot redirect the target", async (t) => {
@@ -500,12 +720,13 @@ test("a version mismatch refuses to start and creates no socket", async (t) => {
   const { s, fake } = await sceneWithCore(t, { version: "0.1.18", proxy: false });
   const socket = join(s.runtime, "automagik-hc-proxy", "t100", "hc.sock");
   await assert.rejects(
-    startProxy({ terminal: "t100", upstream: fake.socket, appHome: s.app, env: s.env }),
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: fake.socket, appHome: s.app, env: s.env }),
     /0\.1\.18.*not the pinned 0\.1\.14/,
   );
   assert.equal(existsSync(socket), false, "no socket exists after the refusal");
 
-  const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+  const child = spawn(process.execPath, [PROXY_HARNESS, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+    cwd: s.root,
     env: { ...process.env, ...s.env },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -520,7 +741,8 @@ test("a version mismatch refuses to start and creates no socket", async (t) => {
 test("the CLI starts a proxy, serves it, and removes its socket on SIGTERM", async (t) => {
   const { s, fake } = await sceneWithCore(t, { proxy: false });
   const socket = join(s.runtime, "automagik-hc-proxy", "t100", "hc.sock");
-  const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+  const child = spawn(process.execPath, [PROXY_HARNESS, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+    cwd: s.root,
     env: { ...process.env, ...s.env },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -569,7 +791,7 @@ test("the socket lives in a 0700 folder outside the project, and an inside folde
   const inside = join(s.project, "run");
   mkdirSync(inside, { recursive: true });
   await assert.rejects(
-    startProxy({ terminal: "t100", upstream: proxy.policy.upstream, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: inside } }),
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: proxy.policy.upstream, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: inside } }),
     /inside the writable project/,
   );
 });
@@ -616,11 +838,12 @@ test("an over-limit socket path refuses to start with a named error", async (t) 
   const long = join(s.root, "x".repeat(120));
   mkdirSync(long, { recursive: true });
   await assert.rejects(
-    startProxy({ terminal: "t100", upstream: fake.socket, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: long } }),
-    new RegExp(`socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`),
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: fake.socket, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: long } }),
+    new RegExp(`socket path is \\d+ bytes, over the ${socketPathLimit()}-byte limit`),
   );
   assert.equal(existsSync(join(long, "automagik-hc-proxy")), false);
-  const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+  const child = spawn(process.execPath, [PROXY_HARNESS, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+    cwd: s.root,
     env: { ...process.env, ...s.env, XDG_RUNTIME_DIR: long },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -628,7 +851,7 @@ test("an over-limit socket path refuses to start with a named error", async (t) 
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   const [code] = await once(child, "exit");
   assert.equal(code, 1, stderr);
-  assert.match(stderr, new RegExp(`hc-proxy: socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`));
+  assert.match(stderr, new RegExp(`hc-proxy: socket path is \\d+ bytes, over the ${socketPathLimit()}-byte limit`));
 });
 
 test("the connection cap refuses the extra client with a proxy error", async (t) => {
@@ -672,4 +895,109 @@ test("a forwarded call other than wait times out", async (t) => {
 test("the version pin is one constant, 0.1.14", () => {
   assert.equal(HC_PIN, "0.1.14");
   assert.equal(readFileSync(PROXY, "utf8").includes('export const HC_PIN = "0.1.14"'), true);
+});
+
+test("the socket-path limit follows the platform: 104 on darwin, 107 on linux", async (t) => {
+  assert.equal(socketPathLimit("linux"), 107);
+  assert.equal(socketPathLimit("darwin"), 104);
+  const { s, proxy } = await sceneWithCore(t, { proxy: false });
+  assert.equal(proxy, null);
+  const long = `t${"a".repeat(120)}`;
+  s.terminals.push({ address: long, name: long, labels: { bot: ID.dev }, cwd: s.project, state: "live" });
+  const before = existsSync(join(s.runtime, "automagik-hc-proxy"));
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: long, upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env, platform: "darwin",
+      caller: { bot: ID.dev, project: s.project, worker: false }, bound: true }),
+    /over the 104-byte limit/,
+  );
+  assert.equal(existsSync(join(s.runtime, "automagik-hc-proxy")), before, "the refused start creates no folder");
+});
+
+test("terminal.run's closed set covers the real hc 0.1.14 params; --json is not an RPC member", () => {
+  // The real 0.1.14 request, captured on a pane with `hc run --bg --json` through a logging
+  // relay: argv, caller, cwd, die_with_parent, env, keep, labels, name, no_notify, no_parent,
+  // outlive_parent, parent, rm, timeout, wait. `--json` is CLI output only.
+  const real = ["argv", "caller", "cwd", "die_with_parent", "env", "keep", "labels", "name",
+    "no_notify", "no_parent", "outlive_parent", "parent", "rm", "timeout", "wait"];
+  const allowed = METHOD_PARAMS.get("terminal.run");
+  for (const key of real) assert.ok(allowed.has(key), `terminal.run allows ${key}`);
+  assert.equal(allowed.has("json"), false, "0.1.14 sends no json member");
+  assert.equal(allowed.has("line"), false, "line is refused by the worker shape");
+  assert.equal(allowed.has("on"), false, "on is refused by the worker shape");
+});
+
+test("the helper's explicit caller starts a bot seat before its attach row exists", async (t) => {
+  const { s, fake } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project, state: "live" });
+  const started = await startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t200", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: s.project, worker: false }, bound: true });
+  t.after(() => started.close());
+  assert.equal(started.policy.caller.bot, ID.dev);
+  assert.equal(started.snapshot.bound, true);
+  const client = await clientFor(started.socket);
+  const answer = await client.call("terminal.send", { terminal: "t101", text: "team" });
+  client.close();
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.equal(fake.calls("terminal.send")[0].params.caller, "t200");
+});
+
+test("an explicit caller whose pane label names another bot is refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+      caller: { bot: ID.other, project: s.project, worker: false } }),
+    /does not carry the bot label/,
+  );
+  await assert.rejects(
+    startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t105", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+      caller: { bot: ID.other, project: s.project, worker: true } }),
+    /is not a worker of/,
+  );
+});
+
+test("the docs say a roster change needs a pane restart", () => {
+  const readme = readFileSync(join(here, "..", "README.md"), "utf8");
+  const doc = readFileSync(join(here, "..", "mods", "am-sidebar", "hcProxy.md"), "utf8");
+  assert.match(readme, /roster change needs a pane restart/i);
+  assert.match(doc, /roster change needs a pane restart/i);
+});
+
+test("a sandboxed worker start: the real workerArgs output is accepted, and only for this caller", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox: true, stableRoot: s.stableRoot });
+  const cut = args.indexOf("--");
+  const argv = args.slice(cut + 1);
+  assert.equal(argv.length, 14, argv.join(" "));
+  const params = runParams(s, { argv, labels: { [WORKER_OF_LABEL]: ID.dev, branch: "feat/worker", "worker.role": "dev", task: "gn-1" } });
+  const client = await clientFor(proxy.socket);
+  const answer = await client.call("terminal.run", params);
+  client.close();
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.deepEqual(fake.calls("terminal.run")[0].params.argv, argv, "the real workerArgs output reached the core");
+  // The same shape for another bot or another project is refused before the core.
+  for (const [at, value] of [[6, ID.other], [8, "/tmp/not-the-project"]]) {
+    const before = fake.calls("terminal.run").length;
+    const bad = { ...params, argv: argv.map((word, i) => (i === at ? value : word)) };
+    const c = await clientFor(proxy.socket);
+    const refused = await c.call("terminal.run", bad);
+    c.close();
+    assert.ok(refused.error, `${at}: ${JSON.stringify(refused)}`);
+    assert.match(refused.error.message, /^hc-proxy: terminal\.run: /);
+    assert.equal(fake.calls("terminal.run").length, before, `${at}: never reached the core`);
+  }
+});
+
+test("the pack's own guard is allowed inside the app home; the worker shape is not widened", async (t) => {
+  const { s } = await sceneWithCore(t);
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", cwd: s.worktree, parent: "t100", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`, project: s.project, sandbox: true, stableRoot: s.stableRoot });
+  const argv = args.slice(args.indexOf("--") + 1);
+  const params = runParams(s, { argv });
+  const snapshot = { terminal: "t100", caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
+    appHome: join(here, "..", "mods", "am-sidebar"), path: s.env.PATH, stableRoot: s.stableRoot, shim: join(s.home, ".local", "bin", "dsh-tui") };
+  assert.equal(runProblem(params, snapshot), null, "the installed pack's own guard is the exception");
+  const forged = { ...params, argv: argv.map((word, i) => (i === 3 ? join(s.root, "bin", "run.sh") : word)) };
+  assert.match(runProblem(forged, snapshot), /helper runner is not the stable copy/);
 });

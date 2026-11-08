@@ -20,8 +20,8 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const DSH_TUI_LABEL = 'Set up DSH in Herdr…'
 export const DSH_TUI_LOG = 'dsh-tui.log'
 export const DSH_TUI_TIMEOUT_MS = 20 * 60_000
-/** am/dshTui.mjs and the two local modules it imports; prepare-runtime copies exactly these. */
-export const DSH_TUI_FILES = Object.freeze(['dshTui.mjs', 'layoutSafe.mjs', 'release.js'])
+/** am/dshTui.mjs and every local module it imports, plus the sandbox row's wrapper; prepare-runtime copies exactly these, keeping folders. */
+export const DSH_TUI_FILES = Object.freeze(['dshTui.mjs', 'workers.js', 'models.js', 'model.js', 'logins.js', 'retired.js', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs'])
 /** The shipped folder is ESM: its release.js has no package.json above it in a packaged app. */
 export const DSH_TUI_PACKAGE = '{"type":"module","private":true}\n'
 /** The patch line a shell config gets when the user bin folder is not on the login shell's PATH. */

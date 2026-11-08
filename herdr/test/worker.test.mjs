@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
 import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
-import { baseCandidates, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
+import { ENV, GUARD_DIR, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { readJsonLines } from "./log-lines.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -672,6 +672,28 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.deepEqual(legacy.argv, ["agy", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
+});
+
+test("the proxy opt-in is off unless AM_HC_PROXY is exactly 1", () => {
+  assert.equal(hcProxyEnabled({}), false);
+  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "0" }), false);
+  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "true" }), false);
+  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "1" }), true);
+});
+
+test("worker args: the default dsh-tui worker keeps the old argv; only sandbox:true wraps it", () => {
+  const args = workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: "dsh-tui", argv: ["dsh-tui"],
+    task: "fix it", path: "/bin" });
+  const tail = args.slice(args.indexOf("--") + 1);
+  assert.deepEqual(tail, [ENV, `PATH=${GUARD_DIR}:/bin`, "dsh-tui", "--", "fix it"]);
+});
+
+test("worker args: a sandboxed dsh-tui worker runs through the per-pane helper", () => {
+  const args = workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: "dsh-tui", argv: ["dsh-tui"],
+    task: "fix it", path: "/bin", project: "/p", sandbox: true, stableRoot: "/stable" });
+  const tail = args.slice(args.indexOf("--") + 1);
+  assert.deepEqual(tail, ["/usr/bin/env", `PATH=${stableGuardDir("/stable")}:/bin`, "/bin/sh", stableRunner("/stable"),
+    stableHelper("/stable"), "--bot", ID.dev, "--project", "/p", "--worker", "--", "dsh-tui", "--", "fix it"]);
 });
 
 test("workers.js: hc run arguments, slugs, worktree list, base order, ledger rows, session changes", () => {

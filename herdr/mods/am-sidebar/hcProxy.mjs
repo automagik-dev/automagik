@@ -1,41 +1,47 @@
 #!/usr/bin/env node
-// The per-pane hc proxy (#631 PR A). Plain-mode JSON-RPC only: one message per line, one
-// upstream connection per downstream client connection, one Unix socket per pane. It refuses
-// `hello`, so framed mode (and terminal.attach) is never reachable through it.
+// The per-pane hc proxy (#631). Plain-mode JSON-RPC only: one message per line, one upstream
+// connection per downstream client connection, one Unix socket per pane. It refuses `hello`,
+// so framed mode (and terminal.attach) is never reachable through it.
 //
-// OFF BY DEFAULT. Nothing imports this module: startArgs, workerArgs, install.sh, run.sh and
-// the launcher do not name it. PR B wires one proxy per sandboxed pane and masks the real core.
+// The per-pane helper (hcPane.mjs) starts it before DSH, and so before the sandbox exists; the
+// helper passes the caller the pack resolved outside the sandbox. The helper and the proxy are
+// one process: it ends with the pane, and there is no service to run.
 //
 // The policy is deny-by-default and is built from a snapshot taken at start: the attach ledger
 // (`<app home>/automagik-herdr/attach.jsonl`) and the project's `.herdr/bots.json` are read once
-// here and never again from the writable tree. A roster change needs a proxy restart. The
-// caller is the pane this proxy serves, fixed at start, and every forwarded request has its
-// `params.caller` overwritten with it. Targets are resolved with one short upstream
-// `terminal.get`, checked, and forwarded by resolved address, so a rename between the check and
-// the call cannot redirect it.
+// here and never again from the writable tree. A roster change needs a pane restart (a new
+// proxy is started with the new pane). The caller is the pane this proxy serves, fixed at
+// start, and every forwarded request has its `params.caller` overwritten with it. Targets are
+// resolved with one short upstream `terminal.get`, checked, and forwarded by resolved address,
+// so a rename between the check and the call cannot redirect it.
 //
 // Fail closed: a dead upstream is a JSON-RPC error, never a fallback. The upstream core must
-// answer `server.status` with HC_PIN or the proxy refuses to start. `hc` auto-starts a core when
-// it cannot connect; PR B must keep that from happening inside the sandbox (the wrapper or an
-// env switch). That is not wired here.
+// answer `server.status` with HC_PIN or the proxy refuses to start. A pane whose proxy cannot
+// start is not started at all (hcPane.mjs), so `hc` cannot auto-start a core inside the sandbox.
 //
 // Apache-2.0.
 
 import net from "node:net";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
+import { executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
-import { ENV, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
 export const HC_PIN = "0.1.14";
 /** The dedicated runtime folder, under $XDG_RUNTIME_DIR and outside any writable cwd. */
 export const SOCKET_FOLDER = "automagik-hc-proxy";
+/** The stable pane helper/runner a worker start may name; dsh-tui install writes them. */
+export const stablePaths = (env) => {
+  const root = stableRootOf(env);
+  return { root, guard: stableGuardDir(root), helper: stableHelper(root), runner: stableRunner(root) };
+};
 /** The most lines one terminal.read may ask for (the reply cap is the hard stop). */
 export const MAX_READ_LINES = 5000;
 /** A core reply line larger than this is refused with a clear error, never buffered. */
@@ -44,6 +50,10 @@ export const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 256 * 1024;
 /** A Unix socket path must fit in Linux's 108-byte sun_path, including its NUL. */
 export const MAX_SOCKET_PATH = 107;
+/** The platform's own sun_path bound: macOS accepts 104 bytes, Linux 107. */
+export const SOCKET_PATH_LIMITS = Object.freeze({ linux: 107, darwin: 104 });
+/** The socket-path byte limit for `platform` (an unknown platform takes Linux's bound). */
+export const socketPathLimit = (platform = process.platform) => SOCKET_PATH_LIMITS[platform] ?? MAX_SOCKET_PATH;
 /** The most client connections one pane socket accepts at once. */
 export const MAX_CONNECTIONS = 16;
 /** A connection with no request in flight is closed after this long. */
@@ -65,7 +75,7 @@ const ALLOWED = new Set(["terminal.list", "terminal.label", ...CALLER_METHODS]);
 const OWN_WORKER_METHODS = new Set(["terminal.kill", "terminal.rm", "terminal.label"]);
 const TEAM_METHODS = new Set(["terminal.get", "terminal.read", "terminal.wait", "terminal.send"]);
 /** The exact parameters each method may forward; anything else is an unknown parameter. */
-const METHOD_PARAMS = new Map([
+export const METHOD_PARAMS = new Map([
   ["terminal.list", new Set(["all", "labels"])],
   ["terminal.get", new Set(["terminal", "caller"])],
   ["terminal.read", new Set(["terminal", "lines", "caller"])],
@@ -119,11 +129,26 @@ function insideReal(child, parent) {
   return at === root || at.startsWith(`${root}${sep}`);
 }
 
+/** Whether `child` is `parent` or beneath it, by resolved path even when it does not exist. */
+function insideLexical(child, parent) {
+  const at = resolve(child);
+  const root = resolve(parent);
+  const rel = relative(root, at);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** Whether two paths are the same real path (false when either is gone). */
+function sameReal(a, b) {
+  const at = realOrNull(a);
+  const root = realOrNull(b);
+  return Boolean(at && root && at === root);
+}
+
 /** The app home hcGuard and the ledger use. */
 export const appHome = (env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
 
 /** The project a folder belongs to, as hcGuard's callerOf reads it. */
-function projectOfFolder(folder) {
+export function projectOfFolder(folder) {
   if (typeof folder !== "string" || !folder) return null;
   let at = realOrNull(folder);
   if (!at) return null;
@@ -203,7 +228,14 @@ function underWorktrees(cwd, project) {
 /**
  * Why `params` is not hcGuard.runProblem's exact dsh-tui worker shape, or null. This is the
  * argv check ported to the RPC params the CLI sends: the program, its PATH guard word, the one
- * task word, the parent, the worktree cwd, the worker labels, and the identity-only env.
+ * task word, the parent, the worktree cwd, the worker labels, and the identity-only env. It
+ * accepts only the per-pane helper shape
+ * `[/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
+ * --project, <caller project>, --worker, --, dsh-tui, --, <task>]`. The plain five-word shape is
+ * refused: a proxied pane can unset AM_HC_PROXY before its own worker start, and a plain worker
+ * would have no proxy of its own, so its sandbox would reach the real core one hop later. The
+ * pack's own guard is allowed even inside the app home, where the installed pack lives; any
+ * other copy is not.
  */
 export function runProblem(params, snapshot) {
   const p = isObject(params) ? params : {};
@@ -237,31 +269,57 @@ export function runProblem(params, snapshot) {
     }
   }
   const argv = p.argv;
-  if (!Array.isArray(argv) || argv.length !== 5) return "argv is not the worker shape";
+  if (!Array.isArray(argv) || argv.length !== 14) return "argv is not the helper worker shape";
   if (argv[0] !== ENV) return `the program is not ${ENV}`;
-  if (argv[2] !== "dsh-tui") return "the program is not dsh-tui";
   if (typeof argv[1] !== "string" || !argv[1].startsWith("PATH=")) return "no PATH word after the program";
+  if (typeof snapshot.path !== "string" || !snapshot.path) return "the proxy has no recorded pane PATH";
+  const expectedPath = `PATH=${guardPathWith(snapshot.path, stableGuardDir(snapshot.stableRoot))}`;
+  if (argv[1] !== expectedPath) return "the PATH is not the pack's own";
   const words = argv[1].slice("PATH=".length).split(delimiter);
-  const first = words[0];
-  if (!isAbsolute(first) || !isGuardFolder(first)) return "the PATH word does not start with a guard";
-  if (insideReal(first, snapshot.caller.project)) return "the PATH guard is inside the writable project";
-  if (snapshot.appHome && insideReal(first, snapshot.appHome)) return "the PATH guard is inside the writable app home";
   for (const word of words) if (!word || !isAbsolute(word)) return "a PATH word is not an absolute folder";
   const program = resolveOnPath("dsh-tui", words);
   if (!program) return "dsh-tui is not on the worker PATH";
+  // Only the installed shim, by real path: a dsh-tui planted anywhere else on the PATH
+  // (a temp or runtime folder, an extra grant) must never be started outside the sandbox.
+  if (!sameReal(program, snapshot.shim)) return "dsh-tui is not the installed shim";
   if (insideReal(program, snapshot.caller.project)) return "dsh-tui is inside the writable project";
   if (snapshot.appHome && insideReal(program, snapshot.appHome)) return "dsh-tui is inside the writable app home";
-  if (argv[3] !== "--") return "no -- before the task";
-  if (typeof argv[4] !== "string") return "the task is not the one -- <task> word";
+  // The sandboxed worker's own helper wrapper (#631 PR B), exactly as workerArgs builds it:
+  // [/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
+  //  --project, <caller project>, --worker, --, dsh-tui, --, <task>].
+  if (argv[2] !== "/bin/sh") return "the helper program is not /bin/sh";
+  if (argv[3] !== stableRunner(snapshot.stableRoot)) return "the helper runner is not the stable copy";
+  if (argv[4] !== stableHelper(snapshot.stableRoot)) return "the helper is not the stable copy";
+  if (argv[5] !== "--bot" || argv[6] !== snapshot.caller.bot) return "--bot is not the caller's bot";
+  if (argv[7] !== "--project" || !sameReal(argv[8], snapshot.caller.project)) return "--project is not the caller's project";
+  if (argv[9] !== "--worker") return "--worker is missing";
+  if (argv[10] !== "--") return "no -- before the helper's command";
+  if (argv[11] !== "dsh-tui") return "the helper's program is not dsh-tui";
+  if (argv[12] !== "--") return "no -- before the task";
+  if (typeof argv[13] !== "string") return "the task is not the one -- <task> word";
   return null;
+}
+
+/**
+ * The caller the per-pane helper passes at start: the pack works it out outside the sandbox
+ * (hcPane.mjs), so the proxy can snapshot the roster before DSH starts and before any sandbox
+ * exists. Returns { bot, project, worker }; the terminal's own labels are checked against it.
+ */
+export function explicitCaller(value) {
+  if (!isObject(value)) throw new Error("the caller must be an object");
+  const bot = typeof value.bot === "string" ? value.bot.trim() : "";
+  const project = typeof value.project === "string" ? value.project : "";
+  if (!bot) throw new Error("the caller has no bot id");
+  if (!project || !isAbsolute(project)) throw new Error("the caller's project must be an absolute folder");
+  return { bot, project: resolve(project), worker: value.worker === true };
 }
 
 /**
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome }) {
-  return { terminal, upstream, caller, file, bound, appHome, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot }) {
+  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, team: teamOf(file, caller) };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */
@@ -527,6 +585,7 @@ export async function startProxy(options = {}) {
   const home = options.appHome ?? appHome(env);
   const idleTimeoutMs = Number.isFinite(options.idleTimeoutMs) ? options.idleTimeoutMs : IDLE_TIMEOUT_MS;
   const forwardTimeoutMs = Number.isFinite(options.forwardTimeoutMs) ? options.forwardTimeoutMs : FORWARD_TIMEOUT_MS;
+  const explicit = options.caller === undefined || options.caller === null ? null : explicitCaller(options.caller);
 
   // 1. The core pin: fail closed before any socket exists.
   const status = await upstreamCall(upstream, "server.status", {});
@@ -541,16 +600,33 @@ export async function startProxy(options = {}) {
   const callerRecord = callerReply.result;
   if (!isObject(callerRecord)) throw new Error(`terminal.get ${terminal} returned no record`);
   const fold = ledgerSnapshot(home);
-  const bound = boundCaller(fold, terminal);
   let caller;
-  if (bound) {
-    if (!bound.project) throw new Error(`the attach ledger binds ${terminal} but names no project`);
-    caller = bound;
+  let bound;
+  if (explicit) {
+    // The helper (hcPane.mjs) resolved the caller outside the sandbox; the pane's own labels
+    // must still agree, so a helper started for another bot on this terminal is refused.
+    const labels = isObject(callerRecord.labels) ? callerRecord.labels : {};
+    if (explicit.worker) {
+      if (labels[WORKER_OF_LABEL] !== explicit.bot) throw new Error(`the caller ${terminal} is not a worker of ${explicit.bot}`);
+      bound = false;
+    } else {
+      if (labels.bot !== explicit.bot) throw new Error(`the caller ${terminal} does not carry the bot label ${explicit.bot}`);
+      bound = options.bound !== false;
+    }
+    caller = explicit;
   } else {
-    const of = isObject(callerRecord.labels) ? callerRecord.labels[WORKER_OF_LABEL] : null;
-    if (typeof of !== "string" || !of) throw new Error(`the caller ${terminal} is neither bound in the attach ledger nor a worker pane`);
-    caller = { bot: of, project: projectOfFolder(callerRecord.cwd), worker: true };
-    if (!caller.project) throw new Error(`the worker caller ${terminal} has no project above its cwd`);
+    const ledgerBound = boundCaller(fold, terminal);
+    if (ledgerBound) {
+      if (!ledgerBound.project) throw new Error(`the attach ledger binds ${terminal} but names no project`);
+      caller = ledgerBound;
+      bound = true;
+    } else {
+      const of = isObject(callerRecord.labels) ? callerRecord.labels[WORKER_OF_LABEL] : null;
+      if (typeof of !== "string" || !of) throw new Error(`the caller ${terminal} is neither bound in the attach ledger nor a worker pane`);
+      caller = { bot: of, project: projectOfFolder(callerRecord.cwd), worker: true };
+      if (!caller.project) throw new Error(`the worker caller ${terminal} has no project above its cwd`);
+      bound = false;
+    }
   }
   const botsPath = join(caller.project, ".herdr", "bots.json");
   let file;
@@ -562,15 +638,40 @@ export async function startProxy(options = {}) {
   if (!file.bots.some((bot) => bot.id === caller.bot)) {
     throw new Error(`the caller ${terminal}'s bot ${caller.bot} is not in ${join(caller.project, ".herdr", "bots.json")}`);
   }
-  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home };
+  // The PATH the proxy records is the one hcPane started it with, outside the sandbox. Every
+  // word must be outside the trees a sandboxed bot can write; a worker start may only repeat it.
+  const panePath = typeof env.PATH === "string" ? env.PATH : "";
+  if (!panePath) throw new Error("the pane PATH is not set; the proxy cannot pin the worker PATH");
+  const stableRoot = stableRootOf(env);
+  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env, node: process.execPath, forbiddenRoots: options.forbiddenRoots });
+  if (unsafe) throw new Error(unsafe);
+  const tempRoot = env.TMPDIR || tmpdir();
+  const forbidden = [
+    { root: caller.project, why: "the writable project" },
+    { root: home, why: "the writable app home" },
+    { root: tempRoot, why: "the temp folder" },
+    ...(env.XDG_RUNTIME_DIR ? [{ root: env.XDG_RUNTIME_DIR, why: "the runtime folder" }] : []),
+  ];
+  for (const word of panePath.split(delimiter)) {
+    if (!word || !isAbsolute(word)) throw new Error(`the pane PATH word ${word || "(empty)"} is not an absolute folder`);
+    if (sameReal(word, stableGuardDir(stableRoot))) continue;
+    const real = realOrNull(word);
+    for (const { root, why } of forbidden) {
+      if (real ? insideReal(real, root) : insideLexical(word, root)) {
+        throw new Error(`the pane PATH word ${word} is inside ${why}; refusing to start the proxy`);
+      }
+    }
+  }
+  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home, path: panePath, shim: shimPathOf(env), stableRoot };
   const policy = policyOf(snapshot);
   log({ ev: "snapshot", caller: caller.bot, project: caller.project, worker: caller.worker, bots: file.bots.length });
 
   // 3. The socket folder: 0700, outside the writable project and the app home.
   const socketPath = socketPathFor(env, terminal, caller.project, home);
   const pathBytes = Buffer.byteLength(socketPath);
-  if (pathBytes > MAX_SOCKET_PATH) {
-    throw new Error(`socket path is ${pathBytes} bytes, over the ${MAX_SOCKET_PATH}-byte limit`);
+  const pathLimit = socketPathLimit(options.platform ?? process.platform);
+  if (pathBytes > pathLimit) {
+    throw new Error(`socket path is ${pathBytes} bytes, over the ${pathLimit}-byte limit`);
   }
   prepareSocket(socketPath);
   const sessions = new Set();
@@ -895,7 +996,7 @@ function parseArgs(argv) {
 }
 
 /** Run the proxy until a signal; used when this file is the executable. */
-async function main(argv = process.argv.slice(2), env = process.env) {
+export async function main(argv = process.argv.slice(2), env = process.env, options = {}) {
   const args = parseArgs(argv);
   if (args.help) {
     process.stdout.write(`${USAGE}\n`);
@@ -909,6 +1010,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     appHome: typeof args["app-home"] === "string" ? args["app-home"] : undefined,
     env,
     log: (event) => process.stderr.write(`hc-proxy ${JSON.stringify(event)}\n`),
+    forbiddenRoots: options.forbiddenRoots,
   });
   const stop = () => {
     proxy.close().then(() => process.exit(0), () => process.exit(1));

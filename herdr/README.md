@@ -882,17 +882,37 @@ pack's own CLI still reaches the real `hc` for its trusted calls (system status,
 remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
 guarded pane.
 
-### The per-pane hc proxy (PR A, off by default)
+### The per-pane hc proxy (the sandbox boundary, opt-in)
 
-PR A ships the hard-boundary proxy in the pack but wires it nowhere: nothing in `startArgs`,
-`workerArgs`, `install.sh` or the launcher starts it, so the guard above is still what runs. Its
-own README, `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
-It snapshots the attach ledger and the project's `.herdr/bots.json` at start, so **a roster
-change needs a proxy restart**; it pins herdr-core 0.1.14 and refuses to start on any other
-version; its socket lives in `$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (0700
-folder, 0600 socket), outside the worktree and the app home. PR B wires it and masks the real
-core. The network stays open: the proxy filters the hc socket, not the box's TCP listeners, and
-localhost admin ports cannot be hidden without a network namespace.
+The proxy is **off by default**. One switch, `AM_HC_PROXY=1` in the environment that runs the
+Start (and so in the bot pane it starts), turns it on; nothing sets it and a default dsh-tui
+seat and worker keep their argv byte for byte. PR C turns it on for the PM.
+
+When it is on, a pack-started dsh-tui pane runs through one helper,
+`mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process **before DSH
+starts**, then runs the agent as its child. The proxy snapshots the attach ledger and the
+project's `.herdr/bots.json` before the pane can create a sandbox, and it ends when the pane
+ends. **A roster change needs a pane restart**, so the new pane's proxy reads the new file. A
+proxied bot cannot unset the switch in its own shell to start a plain worker: the proxy refuses
+the old five-word worker argv and accepts only the helper's own shape, which runs from a stable
+copy under the data home (never the writable pack folder). A node upgrade (nvm, Homebrew, bun)
+needs `dsh-tui install` again: the stable runner bakes one absolute node. Its own README,
+`mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
+A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again; an
+opted-in pane refuses to start while the profile's sandbox row is stale.
+
+The helper sets `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET` and `AM_HC_PROXY_SOCKET` for the
+pane; the DSH runner wrapper applies its mount rules and binds the proxy at the real core socket
+path, so the real socket folder is hidden, and binds the pack's own folder read-only so a
+sandboxed bot cannot rewrite its helper, runner or guard. The wrapper is copied byte-equal from
+`mods/am-sidebar/bin/hc-socket-mask.mjs` to `~/.local/share/automagik-herdr/dsh-sandbox/` by
+`dsh-tui install`, which also installs the profile's managed sandbox row. The proxy pins
+herdr-core 0.1.14 and refuses any other version; its socket lives in
+`$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (0700 folder, 0600 socket), outside
+the worktree and the app home. **Fail closed:** if the proxy cannot start, the pane's command is
+never started, so no sandbox exists and `hc` cannot auto-start a core inside one; a proxy that
+dies takes its pane with it. The network stays open: the proxy filters the hc socket, not the
+box's TCP listeners, and localhost admin ports cannot be hidden without a network namespace.
 
 ## The Create form
 

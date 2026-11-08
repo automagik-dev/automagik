@@ -178,6 +178,8 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(cwd, { recursive: true, force: true })", 1, "a temp folder the dsh plugin run works in (mkdtemp in tmpdir)"],
   ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(shim, { force: true })", 1, "the dsh-tui shim in ~/.local/bin: never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/dshTui.mjs", "removePath(join(profile, RECORD_FILE), { force: true })", 1, "the installer's own ownership record in the dsh-tui profile: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/bin/dsh-sandbox.mjs", "renameSync(tmp, path)", 1, "dsh-sandbox's atomic profile write: the dsh-tui profile's cordis.patch.yml under ~/.dsh (or $DSH_HOME), never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/bin/dsh-sandbox.mjs", "unlinkSync(tmp)", 1, "the sibling temp file of dsh-sandbox's atomic profile write: never mods/ or layouts/"],
 ];
 
 test("every rm, rename, unlink and cp outside layoutSafe.mjs is one the allowlist names", () => {

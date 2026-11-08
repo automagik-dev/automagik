@@ -5,18 +5,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
+import { workerArgs } from "../mods/am-sidebar/workers.js";
 import {
-  DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
-  ownershipOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, scopeReleaseAge, shimIsOurs, uninstallDshTui,
+  DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, installSandboxRow, lockIntegrity,
+  ownershipOf, packRootOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxRootOf, sandboxState, sandboxWrapperOf, scopeReleaseAge, STABLE_FILES,
+  shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 /** The pinned release's publish time: an hour before this run, so the fresh path never depends on the wall clock. */
 const PUBLISHED = new Date(Date.now() - 3600e3).toISOString();
+const rootsOf = (s) => [["the app home", join(s.home, ".config", "herdr-app")], ["the temp folder", join(s.root, "pane-tmp")]];
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 /**
@@ -30,8 +34,10 @@ function scene(t, { dsh = true, config = {} } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dsh-tui-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), log = join(root, "dsh.log");
+  const paneTmp = join(root, "pane-tmp");
   mkdirSync(home);
   mkdirSync(bin);
+  mkdirSync(paneTmp);
   writeFileSync(log, "");
   // The desktop profile, its settings and DSH's credentials: sentinels that must never change.
   mkdirSync(join(home, ".dsh", "profiles", "desktop"), { recursive: true });
@@ -139,8 +145,9 @@ exec "${process.execPath}" "${helper}" "$@"
   // A test run may point the scene's login shell at a wrapper (the hostile-login-PATH run);
   // named `sh`, it still maps to ~/.profile. Otherwise the POSIX login shell is used.
   const env = {
-    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath,
-    DSH_LOG: log, DSH_FAKE: cfgPath, AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
+    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath, TMPDIR: paneTmp,
+    DSH_LOG: log, DSH_FAKE: cfgPath,
+    AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
   };
   const pane = panePathOf({ env });
   assert.equal(pane.login, true, "the login shell answered");
@@ -170,7 +177,7 @@ function seedProfile(s, { version = DSH_TUI.version, record = false } = {}) {
 
 test("install pins exactly 0.19.0 with its integrity into the dsh-tui profile only", async (t) => {
   const s = scene(t);
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => Date.parse(PUBLISHED) + 3600e3 });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED, now: () => Date.parse(PUBLISHED) + 3600e3 });
   assert.equal(r.status, "installed", r.detail);
   const state = profileState(join(s.home, ".dsh"));
   assert.equal(state.pin, DSH_TUI.version);
@@ -184,9 +191,110 @@ test("install pins exactly 0.19.0 with its integrity into the dsh-tui profile on
   assert.equal(JSON.parse(readFileSync(join(state.dir, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the installer records that it added the pin");
 });
 
+test("install copies the sandbox wrapper byte-equal and installs the managed dsh-tui row", async (t) => {
+  const s = scene(t);
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "installed", r.detail);
+  const wrapper = sandboxWrapperOf(s.env);
+  assert.ok(existsSync(wrapper), wrapper);
+  assert.ok(readFileSync(wrapper).equals(readFileSync(packWrapperOf())), "the stable wrapper is the pack's, byte for byte");
+  assert.ok(statSync(wrapper).mode & 0o111, "the wrapper is executable");
+  const patch = readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "cordis.patch.yml"), "utf8");
+  assert.match(patch, /^# dsh-sandbox begin$/m);
+  const stableRoot = sandboxRootOf(s.env);
+  assert.ok(patch.includes(`runnerCommand: ['${wrapper}', '--pack-root', '${stableRoot}']`), patch);
+  assert.ok(patch.includes(`'--pack-root', '${stableRoot}'`), "the row names the stable folder the wrapper keeps read-only");
+  for (const file of STABLE_FILES) {
+    if (file === "bin/run.sh") continue;
+    assert.ok(readFileSync(join(stableRoot, file)).equals(readFileSync(join(packRootOf(), file))), `${file} is byte-equal`);
+  }
+  assert.ok(readFileSync(join(stableRoot, "bin", "run.sh"), "utf8").includes(`# am-node: ${process.execPath}`));
+  assert.ok(readFileSync(join(stableRoot, "guard", "hc")).equals(readFileSync(join(packRootOf(), "guard", "hc"))), "the guard is byte-equal");
+  assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
+  const state = sandboxState(s.env, { forbiddenRoots: rootsOf(s) });
+  assert.equal(state.current, true);
+  assert.equal(state.row.ok, true, state.row.message);
+});
+
+test("install refuses a stable execution root inside a writable tree", (t) => {
+  const s = scene(t);
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, XDG_DATA_HOME: s.root }, project: s.root }),
+    /the stable execution root .* is inside the project/,
+  );
+});
+
+test("install refuses a not-yet-created stable root under literal /tmp", (t) => {
+  const s = scene(t);
+  const missing = join(realpathSync("/tmp"), `am-hc-install-${process.pid}-${Date.now()}`, "data");
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, XDG_DATA_HOME: missing }, project: process.cwd() }),
+    /the stable execution root .* is inside the literal temp folder/,
+  );
+});
+
+test("install refuses a DSH profile or a node inside a writable tree", (t) => {
+  const s = scene(t);
+  writeFileSync(join(s.root, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.root, "node"), 0o755);
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: `${s.root}-data` }, project: s.root, forbiddenRoots: [["the project", s.root]] }),
+    /the DSH profile .* is inside the project/,
+  );
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: `${s.root}-home`, DSH_HOME: `${s.root}-dsh`, XDG_DATA_HOME: `${s.root}-data`, HERDR_APP_HOME: `${s.root}-app` }, project: s.root, forbiddenRoots: [["the project", s.root]] }),
+    /the node that runs the helper .* is inside the project/,
+  );
+});
+
+test("XDG_DATA_HOME names one stable root for install and the pane start", async (t) => {
+  const s = scene(t);
+  const dataHome = join(dirname(s.home), "data");
+  const env = { ...s.env, XDG_DATA_HOME: dataHome };
+  const installed = await installDshTui({ forbiddenRoots: rootsOf(s), env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const root = sandboxRootOf(env);
+  assert.equal(root, join(dataHome, "automagik-herdr", "dsh-sandbox"));
+  assert.ok(existsSync(join(root, "hcPane.mjs")));
+  assert.equal(sandboxState(env, { forbiddenRoots: rootsOf(s) }).current, true);
+  const args = workerArgs({ botId: "b-devdevdev", branch: "b", cwd: "/p/wt", parent: "t1", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "t", path: "/bin", project: "/p", sandbox: true, stableRoot: root });
+  const tail = args.slice(args.indexOf("--") + 1);
+  assert.ok(tail.includes(join(root, "hcPane.mjs")), "the start names the install's root");
+  assert.ok(tail.includes(join(root, "bin", "run.sh")));
+});
+
+test("the stable copy from STABLE_FILES loads hcPane.mjs", async (t) => {
+  const s = scene(t);
+  const installed = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const mod = await import(`${pathToFileURL(join(sandboxRootOf(s.env), "hcPane.mjs")).href}?t=${Date.now()}`);
+  assert.equal(typeof mod.runPane, "function");
+});
+
+test("sandboxState sees a stable runner whose exec line differs from its comment", async (t) => {
+  const s = scene(t);
+  const installed = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const runner = join(sandboxRootOf(s.env), "bin", "run.sh");
+  writeFileSync(runner, readFileSync(runner, "utf8").replace(/^exec .*/m, "exec '/bin/false'"));
+  assert.equal(sandboxState(s.env, { forbiddenRoots: rootsOf(s) }).current, false);
+});
+
+test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {
+  const s = scene(t);
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+  appendFileSync(sandboxWrapperOf(s.env), "\n// drift\n");
+  const report = doctorDshTui({ env: s.env, forbiddenRoots: rootsOf(s) });
+  const check = report.checks.find((c) => c.check === "dsh-sandbox");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /differs from the pack's/);
+  assert.equal(report.code, 1);
+});
+
 test("a lockfile integrity that is not the pin fails, removes what it added, and writes no shim", async (t) => {
   const s = scene(t, { config: { add: { integrity: "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" } } });
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "failed");
   assert.match(r.detail, /lockfile records .*not the pinned/);
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
@@ -199,7 +307,7 @@ test("the desktop profile, its settings and DSH's credentials are untouched", as
   const before = desktopFingerprint(join(s.home, ".dsh"));
   const desktop = (name) => readFileSync(join(s.home, ".dsh", "profiles", "desktop", name), "utf8");
   const pkg = desktop("package.json"), patch = desktop("cordis.patch.yml"), creds = readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8");
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "installed", r.detail);
   assert.deepEqual(desktopFingerprint(join(s.home, ".dsh")), before);
   assert.equal(desktop("package.json"), pkg);
@@ -210,7 +318,7 @@ test("the desktop profile, its settings and DSH's credentials are untouched", as
 
 test("the shim runs the dsh-tui profile and the TUI parses its startup flags", async (t) => {
   const s = scene(t);
-  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   const shimLog = join(s.root, "shim.log");
   writeFileSync(shimLog, "");
   // The profile is the one dsh-TUI itself creates: base + the TUI bundle, never a web template.
@@ -247,7 +355,7 @@ test("the shim runs the dsh-tui profile and the TUI parses its startup flags", a
 
 test("the shim sources only a safe provider env file, and leaves the arguments alone", async (t) => {
   const s = scene(t);
-  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   const guide = join(s.home, ".dsh", "deepseek.env");
   const boot = (args = [], extra = {}) => {
     const r = s.runShim(args, extra);
@@ -329,14 +437,14 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
 test("a fresh pane with the onboarding record starts clean, and a person's record is kept", async (t) => {
   const s = scene(t);
   const guide = join(s.home, ".dsh-tui", "onboarding.json");
-  assert.equal((await installDshTui({ env: s.env, publishedAt: PUBLISHED })).status, "installed");
+  assert.equal((await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED })).status, "installed");
   assert.equal(readFileSync(guide, "utf8"), "{\n  \"completed\": true,\n  \"version\": 1\n}\n");
   const boot = JSON.parse(s.runShim([]).stdout);
   assert.equal(boot.onboarding, false, "the wizard does not offer itself on a fresh pane");
   // A person completing the guide writes this file; install keeps their copy byte for byte.
   const theirs = "{\"completed\":true,\"version\":1,\"note\":\"walked it myself\"}\n";
   writeFileSync(guide, theirs);
-  const again = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const again = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(again.status, "installed");
   assert.match(again.lines.join("\n"), /Kept dsh-TUI's first-run guide state/);
   assert.equal(readFileSync(guide, "utf8"), theirs);
@@ -368,7 +476,7 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   const before = doctorDshTui({ env: s.env });
   assert.equal(before.code, 2);
   assert.equal(before.checks.find((c) => c.check === "dsh").detail, s.dsh);
-  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   const after = doctorDshTui({ env: s.env });
   assert.equal(after.code, 0, JSON.stringify(after.checks));
   assert.ok(after.checks.every((c) => c.ok), JSON.stringify(after.checks));
@@ -407,8 +515,8 @@ test("the pane PATH is the login shell's, read between its markers", (t) => {
 
 test("uninstall removes the plugin and the shim, and leaves a foreign shim alone", async (t) => {
   const s = scene(t);
-  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
-  const r = uninstallDshTui({ env: s.env });
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+  const r = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "removed", JSON.stringify(r));
   assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
@@ -420,7 +528,7 @@ test("uninstall removes the plugin and the shim, and leaves a foreign shim alone
   const foreign = scene(t);
   mkdirSync(join(foreign.home, ".local", "bin"), { recursive: true });
   writeFileSync(join(foreign.home, ".local", "bin", SHIM), "#!/bin/sh\nexec my-own-dsh \"$@\"\n");
-  const refused = await installDshTui({ env: foreign.env, publishedAt: PUBLISHED });
+  const refused = await installDshTui({ forbiddenRoots: rootsOf(s), env: foreign.env, publishedAt: PUBLISHED });
   assert.equal(refused.status, "failed");
   assert.match(refused.detail, /not this installer's/);
   assert.equal(readFileSync(join(foreign.home, ".local", "bin", SHIM), "utf8"), "#!/bin/sh\nexec my-own-dsh \"$@\"\n");
@@ -433,7 +541,7 @@ test("uninstall removes a shim released before the profile fix, as ours", (t) =>
   const shim = join(s.home, ".local", "bin", SHIM);
   mkdirSync(dirname(shim), { recursive: true });
   exe(shim, `#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`);
-  const r = uninstallDshTui({ env: s.env });
+  const r = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "removed", JSON.stringify(r));
   assert.equal(existsSync(shim), false);
   assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
@@ -449,7 +557,7 @@ test("no dsh: one honest line, nothing written", async (t) => {
   assert.equal(pane.config, "~/.profile");
   assert.equal(pane.path, "/usr/bin:/bin");
   assert.equal(findDsh({ ...s.env, PATH: pane.path }), null, "no dsh on the scene's pane PATH");
-  const r = await installDshTui({ env: s.env });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "skipped");
   assert.deepEqual(r.lines, [SKIP]);
   assert.match(r.lines[0], /^DSH is not installed \(no dsh on PATH\)/);
@@ -465,10 +573,10 @@ test("the release-age exception is exact, leaves other packages alone, and is pr
   const s = scene(t);
   const workspace = join(s.home, ".dsh", "profiles", PROFILE, "pnpm-workspace.yaml");
   const publishedAt = Date.parse(PUBLISHED);
-  const young = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 3600e3 });
+  const young = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 3600e3 });
   assert.equal(young.status, "installed", young.detail);
   assert.deepEqual(releaseAgeEntries(readFileSync(workspace, "utf8")), [PIN]);
-  const aged = await installDshTui({ env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 72 * 3600e3 });
+  const aged = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED, now: () => publishedAt + 72 * 3600e3 });
   assert.equal(aged.status, "installed");
   assert.deepEqual(releaseAgeEntries(readFileSync(workspace, "utf8")), []);
   assert.match(aged.lines.join("\n"), /Removed the release-age exception for .*older than the profile's minimumReleaseAge/);
@@ -484,17 +592,15 @@ test("the release-age exception is exact, leaves other packages alone, and is pr
 
 test("the CLI command installs, reports doctor JSON and uninstalls", async (t) => {
   const s = scene(t);
-  const installed = s.cli(["dsh-tui", "install", "--json"]);
-  assert.equal(installed.status, 0, installed.stderr);
-  assert.equal(JSON.parse(installed.stdout).status, "installed");
-  const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
-  assert.equal(doctor.status, 0, doctor.stderr);
-  const report = JSON.parse(doctor.stdout);
+  const { cmdDshTui } = await import(CLI);
+  const io = { env: s.env, forbiddenRoots: rootsOf(s) };
+  const installed = await cmdDshTui({ json: true }, ["install"], io);
+  assert.equal(installed.status, "installed", installed.detail);
+  const report = await cmdDshTui({ json: true }, ["doctor"], io);
   assert.equal(report.code, 0);
-  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide"]);
-  const removed = s.cli(["dsh-tui", "uninstall", "--json"]);
-  assert.equal(removed.status, 0, removed.stderr);
-  assert.equal(JSON.parse(removed.stdout).status, "removed");
+  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", "dsh-sandbox"]);
+  const removed = await cmdDshTui({ json: true }, ["uninstall"], io);
+  assert.equal(removed.status, "removed");
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
 });
 
@@ -502,10 +608,10 @@ test("a pack-owned pin from an earlier release is still the pack's after a pin b
   const s = scene(t);
   const profile = seedProfile(s, { version: "0.18.0", record: true });
   assert.equal(ownershipOf(profile).version, "0.18.0", "the record is read by package, not the current pin");
-  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const installed = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(installed.status, "installed", installed.detail);
   assert.equal(JSON.parse(readFileSync(join(profile, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the record follows the version the install set");
-  const r = uninstallDshTui({ env: s.env });
+  const r = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "removed");
   assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
@@ -515,7 +621,7 @@ test("a pack-owned pin from an earlier release is still the pack's after a pin b
 test("a pack-owned old pin uninstalls even when the current pin has moved on", (t) => {
   const s = scene(t);
   const profile = seedProfile(s, { version: "0.18.0", record: true });
-  const r = uninstallDshTui({ env: s.env });
+  const r = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "removed");
   assert.ok(s.calls().includes(`plugin --profile dsh-tui remove ${DSH_TUI.package}`));
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
@@ -525,7 +631,7 @@ test("a different version the person pinned is skipped, never replaced", async (
   const s = scene(t);
   const profile = seedProfile(s, { version: "0.18.0" });
   const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "skipped");
   assert.match(r.detail, /already pins .*0\.18\.0, not 0\.19\.0/);
   assert.match(r.detail, /left it and its lockfile unchanged/);
@@ -540,7 +646,7 @@ test("a person's pin is skipped without plugin add even at the pinned version; u
   const s = scene(t);
   const profile = seedProfile(s, { version: DSH_TUI.version });
   const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
-  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const installed = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(installed.status, "skipped", installed.detail);
   assert.match(installed.detail, /already pins .*0\.19\.0, which this installer did not add/);
   assert.deepEqual(s.calls(), [], "no plugin add over a pin it did not record");
@@ -548,7 +654,7 @@ test("a person's pin is skipped without plugin add even at the pinned version; u
   assert.equal(existsSync(join(profile, RECORD_FILE)), false);
   assert.equal(readFileSync(join(profile, "pnpm-lock.yaml"), "utf8"), lock, "the person's lockfile is untouched");
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
-  const r = uninstallDshTui({ env: s.env });
+  const r = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(r.status, "absent");
   assert.equal(s.calls().filter((line) => line.includes("remove")).length, 0, "no dsh plugin remove for a pin it did not add");
   assert.equal(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies[DSH_TUI.package], DSH_TUI.version);
@@ -563,7 +669,7 @@ test("a record whose pin the person moved is dropped, and their current pin is n
   // The person set the pin themselves after the pack recorded 0.18.0: still their pin.
   writeFileSync(join(profile, "package.json"), JSON.stringify({ dependencies: { [DSH_TUI.package]: DSH_TUI.version } }) + "\n");
   const lock = readFileSync(join(profile, "pnpm-lock.yaml"), "utf8");
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "skipped");
   assert.equal(r.changed, true, "the stale record was dropped");
   assert.match(r.detail, /already pins .*0\.19\.0, which this installer did not add/);
@@ -577,7 +683,7 @@ test("a dangling shim is present but broken; install refuses and uninstall leave
   const shim = join(s.home, ".local", "bin", SHIM);
   mkdirSync(dirname(shim), { recursive: true });
   symlinkSync(join(s.root, "missing-dsh-tui"), shim);
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "failed");
   assert.match(r.detail, /dangling link/);
   assert.ok(lstatSync(shim).isSymbolicLink());
@@ -585,7 +691,7 @@ test("a dangling shim is present but broken; install refuses and uninstall leave
   const d = doctorDshTui({ env: s.env });
   assert.equal(d.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
   assert.match(d.checks.find((c) => c.check === "dsh-tui-shim").detail, /unreadable/);
-  const u = uninstallDshTui({ env: s.env });
+  const u = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.match(u.lines.join("\n"), /dangling link/);
   assert.ok(lstatSync(shim).isSymbolicLink());
 });
@@ -599,7 +705,7 @@ test("a shim released before the profile fix is still ours and install replaces 
   assert.equal(stale.ok, false, "the released shim is not healthy: it still boots the tui profile");
   assert.match(stale.detail, /earlier release's shim/);
   assert.equal(stale.fix, "automagik-herdr dsh-tui install");
-  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "installed", r.detail);
   assert.equal(readFileSync(shim, "utf8"), SHIM_TEXT, "the old tui/no-profile shim is replaced");
   assert.equal(doctorDshTui({ env: s.env }).checks.find((c) => c.check === "dsh-tui-shim").ok, true);

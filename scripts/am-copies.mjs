@@ -30,6 +30,9 @@ export const ROOTS = ["bin/automagik-herdr.mjs", "briefing.mjs", "briefingEntry.
 export const EXTRA = [
   [`${SOURCE}/bin/automagik-herdr`, `${TARGET}/bin/automagik-herdr`],
   [`${SOURCE}/bin/run.sh`, `${TARGET}/bin/run.sh`],
+  [`${SOURCE}/bin/hc-socket-mask.mjs`, `${TARGET}/bin/hc-socket-mask.mjs`],
+  [`${SOURCE}/hcPane.mjs`, `${TARGET}/hcPane.mjs`],
+  [`${SOURCE}/hcProxy.mjs`, `${TARGET}/hcProxy.mjs`],
   [`${SOURCE}/guard/hc`, `${TARGET}/guard/hc`],
   [`${SOURCE}/hcGuard.mjs`, `${TARGET}/hcGuard.mjs`],
   [`${SOURCE}/pack-keys.json`, `${TARGET}/pack-keys.json`],
