@@ -135,6 +135,41 @@ test('malformed state stays read-only when its backup cannot be copied', async (
   }
 })
 
+test('a non-object root is copied byte for byte before any rewrite', async (t) => {
+  for (const original of ['[]', 'null', '5', '"x"']) {
+    const { rt, home, statePath, warnings } = runtime(t, original)
+    const bytes = fs.readFileSync(statePath)
+    await rt.load()
+    const backups = fs.readdirSync(home).filter(name => name.startsWith('state.json.broken-'))
+    assert.equal(backups.length, 1, `${original} is set aside`)
+    const copied = fs.readFileSync(join(home, backups[0]))
+    assert.deepEqual(copied, bytes, `${original} is copied byte for byte`)
+    const refused = warnings.some(([, , error]) => /not an object/.test(String(error)))
+    assert.ok(refused, `${original} is refused`)
+    assert.equal(Array.isArray(rt.state), false, `${original} never becomes the team`)
+    assert.equal(typeof rt.state, 'object')
+    assert.notEqual(rt.state, null)
+    assert.equal(rt.state.version, 1, `${original} is replaced by the current format`)
+  }
+})
+
+test('a non-object state stays read-only when its backup cannot be copied', async (t) => {
+  const original = '[]'
+  const { rt, statePath } = runtime(t, original)
+  const restore = patch('copyFile', () => async () => {
+    throw Object.assign(new Error('synthetic copy failure'), { code: 'EACCES' })
+  })
+  try {
+    await rt.load()
+    assert.match(rt.readOnly(), /could not be read \(EACCES\)/)
+    rt.state.prefs.marker = 'not saved'
+    await rt.save()
+    assert.equal(fs.readFileSync(statePath, 'utf8'), original)
+  } finally {
+    restore()
+  }
+})
+
 test('a real file saved before the version stamp is read, migrated, and written with version 1', async (t) => {
   // The bytes an older Omni wrote: no version key at all.
   const older = '{"revision":7,"mainBotId":"chief","bots":{"chief":{"id":"chief","name":"Omni"}},"rooms":{},"exchanges":[],"exchangeTurns":{},"questions":{}}'
