@@ -2,7 +2,7 @@
 title: "Using Automagik Pocket"
 type: guide
 created: 2026-11-01
-updated: 2026-11-06
+updated: 2026-11-07
 tags: [guide, users]
 ---
 # Using Automagik Pocket
@@ -21,7 +21,7 @@ Everything the [README](../../README.md) keeps short. Install and first connecti
   the computer. The QR scanner is bundled, so it works without Google Play services; the app asks
   for the camera the first time.
 - **No SSH.** The app no longer connects over SSH ([RFC 0008](../rfcs/0008-drop-ssh.md)). A
-  machine saved over SSH in an older version stays in **Machines**, greyed, with one button:
+  machine saved over SSH in an older version stays in **Settings → Machines**, greyed, with one button:
   **Pair with QR**. It opens the scanner; scan that computer's Pocket Link code and the old entry
   goes once it pairs. If that desktop wasn't paired yet, its new card takes the entry's place and
   keeps its core session; if it was, its existing card stays as it was. A cancelled or failed scan
@@ -32,21 +32,25 @@ Everything the [README](../../README.md) keeps short. Install and first connecti
 
 ## Tabs
 
-The bottom bar has four tabs. It hides while a terminal is open, and Back from a terminal returns
-to the tab you opened it from. Back on any other tab goes to Today. **Settings** is the gear at the
-top.
+The bottom bar has four tabs: **Home**, **Team**, **Code** and **Settings**
+([decision](../decisions/four-tabs.md)). The app opens on Team. The bar hides while a terminal is
+open, and Back from a terminal returns to the tab you opened it from. Back on any other tab goes to
+Team.
 
-- **Today** lists the agents that need you first, then the ones that finished, across every
-  connected machine. The counts at the top are needs you, working, machines connected
-  and, once a usage meter reports, spent today.
-- **Projects** has one card per git repository. Spaces in the same repository, like a squad's
-  worktrees, share one card. A folder that isn't a repository is a project of its own. Tap a card
-  for its tasks, spaces and agents.
-- **Projects → Spaces** is Herdr desktop's sidebar: spaces, their agents, git branch tails and
+- **Home** lists the agents that need you first, then the ones that finished, across every
+  connected machine; **Everything else** shows the working and idle ones. The counts at the top are
+  needs you, working, machines connected and, once a usage meter reports, spent today. Its tab
+  shows how many agents need you.
+- **Team** shows each project's bots with their pets. Its tab shows how many bots need you.
+- **Code → By repository** has one card per git repository. Spaces in the same repository, like a
+  squad's worktrees, share one card. A folder that isn't a repository is a project of its own. Tap
+  a card for its tasks, spaces and agents.
+- **Code → Spaces** is Herdr desktop's sidebar: spaces, their agents, git branch tails and
   nested worktrees, with the desktop's own program icons.
-- **Tasks** groups agents by branch: Needs you, Working, Done, then Idle. Work on `main`, `master`
-  or `dev`, or with no branch, is the project's **Untasked** row.
-- **Machines** lists your machines, with **Pair with Herdr desktop** and **Add machine**.
+- **Code → Tasks** groups agents by branch: Needs you, Working, Done, then Idle. Work on `main`,
+  `master` or `dev`, or with no branch, is the project's **Untasked** row.
+- **Settings** starts with your machines, with **Pair with Herdr desktop**, then the display,
+  alerts and About.
 - Spend appears once the [usage meter](#spend) runs on a machine.
 - Space names, tab order and splits come from the desktop's `herdr-app` document, including
   machines that a core forwards.
@@ -63,16 +67,16 @@ The Automagik usage meter ([usagemeter](https://github.com/automagik-dev/usageme
 tokens your coding agents use on each machine and publishes a small `herdr-meter` summary there.
 The Automagik Herdr pack installs it; Pocket Link doesn't.
 The app reads that summary from each machine you're connected to and sums it. It never writes it. With no meter on any machine,
-**Projects** shows one hint and no numbers.
+**Code → By repository** shows one hint and no numbers.
 
-- **Today:** **spent today**, from local midnight, across every reporting machine.
-- **Projects:** each repository's $ over the last 24 hours, plus its average $ per task, task count
+- **Home:** **spent today**, from local midnight, across every reporting machine.
+- **Code → By repository:** each repository's $ over the last 24 hours, plus its average $ per task, task count
   and active hours per task over 30 days. A chart shows today's $ by hour for all projects together,
   because the meter's hourly series isn't split by project.
 - **A project:** pick **24h**, **7d** or **30d** to see its tasks, cost per task (untasked work
   excluded), $ spent with tokens and the share read from cache, active hours per task, and its
   tasks by spend, finished ones included.
-- **Tasks:** each branch's $ and active hours over 30 days.
+- **Code → Tasks:** each branch's $ and active hours over 30 days.
 
 What the numbers mean:
 
@@ -121,7 +125,7 @@ What the numbers mean:
   own once the input line is empty. A message the phone never heard back about shows **Maybe not
   sent** with **Retry**, which never types it twice.
 - **Interrupt** stops the agent's turn, once, as Esc or Ctrl+C would.
-- **Bot chats** (Machines, on a connected computer) lists the Automagik Bots' chats. They are read
+- **Bot chats** (Settings → Machines, on a connected computer) lists the Automagik Bots' chats. They are read
   only on the phone: approvals and questions say "Answer on the computer", and there is no message box
   or Interrupt.
 - Chat text is plain text: HTML shows as the characters it is, nothing loads by itself, and a link

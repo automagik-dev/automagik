@@ -46,7 +46,7 @@ const val PREVIEW_MACHINE = "Preview machine"
 data class TerminalRef(val hostId: String, val address: String)
 data class PocketState(
     val hosts: List<HostProfile> = emptyList(), val machines: Map<String, MachineState> = emptyMap(),
-    /** The bottom tab or Settings ([Nav]); [project] ([Projects.Project.key]) and [space] are open over it, [selected] over all. */
+    /** The bottom tab ([Nav.TABS]); [project] ([Projects.Project.key]) and [space] are open over it, [selected] over all. */
     val screen: String = Nav.HOME, val space: Pair<String, String>? = null, val selected: TerminalRef? = null,
     val project: String? = null,
     val message: String? = null,
@@ -254,7 +254,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         detach()
         _state.update { it.copy(space = hostId to spaceId, selected = null) }
     }
-    fun openProject(key: String) { detach(); _state.update { it.copy(screen = Nav.PROJECTS, project = key, space = null, selected = null) } }
+    fun openProject(key: String) { detach(); _state.update { it.copy(screen = Nav.CODE, project = key, space = null, selected = null) } }
     fun setTerminalFullscreen(fullscreen: Boolean) { _state.update { it.copy(terminalFullscreen = fullscreen) } }
     fun selectTerminal(ref: TerminalRef) {
         Notify.cancel(getApplication(), ref)
@@ -264,7 +264,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(selected = ref, terminalStatus = "Connecting terminal…", screenText = "", terminalFullscreen = true, nativeAlternateScreen = false) }
     }
     fun backToList() { detach(); _state.update { it.copy(selected = null, terminalStatus = "") } }
-    fun showAll() { navigate(Nav.TODAY) }
+    fun showAll() { navigate(Nav.HOME_TAB) }
 
     /** [retry]: a background reconnect's attempt number; a failure schedules the next. */
     fun connect(profile: HostProfile, retry: Int = 0) {

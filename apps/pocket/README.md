@@ -29,7 +29,7 @@ The app connects through Pocket Link only.
    link.
 4. Done. The code works once, for 10 minutes, and ends when you close the dialog.
 
-Saved an SSH machine in an older version? It stays in **Machines**, greyed. Tap **Pair with QR**
+Saved an SSH machine in an older version? It stays in **Settings**, greyed. Tap **Pair with QR**
 on it and scan that computer's code; the old entry goes once it pairs
 ([RFC 0008](docs/rfcs/0008-drop-ssh.md)).
 
@@ -37,9 +37,10 @@ More detail: [docs/guides/using.md](docs/guides/using.md).
 
 ## What it does
 
-- **Today:** agents that need you first, then the ones that finished, across your machines.
-- **Projects:** your spaces grouped by git repository, with the desktop's spaces tree one tap away.
-- **Tasks:** agents by branch, needs you first.
+- **Home:** agents that need you first, then the ones that finished, across your machines.
+- **Team:** each project's bots, with their pets. The app opens here.
+- **Code:** your spaces grouped by git repository, the desktop's spaces tree, and agents by branch.
+- **Settings:** your machines and pairing, then the display, alerts and updates.
 - **Terminals:** any agent full screen, with its tabs, a key row and a message composer.
 - **Alerts:** Android notifications for Needs you and Done, with Reply, Yes/No and answer buttons,
   also while the app is open.

@@ -2,7 +2,7 @@
 title: "Automagik Pocket docs"
 type: moc
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-07
 tags: [moc, pocket, docs]
 aliases: ["docs", "Pocket docs"]
 ---
@@ -15,7 +15,7 @@ Rules for agents working in this repo: [AGENTS.md](../AGENTS.md).
 ## Use the app
 
 - [README](../README.md): install and connect.
-- [Using Automagik Pocket](guides/using.md): tabs (Today, Projects, Tasks, Machines), terminals, alerts, assistant, limits.
+- [Using Automagik Pocket](guides/using.md): tabs (Home, Team, Code, Settings), terminals, alerts, assistant, limits.
 - [Privacy policy](privacy.md): what the app handles and where it goes.
 - [Security](../SECURITY.md): report a vulnerability, check an APK.
 

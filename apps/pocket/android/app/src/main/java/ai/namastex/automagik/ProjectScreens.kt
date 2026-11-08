@@ -30,17 +30,33 @@ import androidx.compose.ui.unit.sp
 private fun word(rank: Int) = when (rank) { Cockpit.BLOCKED -> "blocked"; Cockpit.WORKING -> "working"; Cockpit.DONE -> "done"; else -> "idle" }
 private fun plural(n: Int, one: String, many: String = "${one}s") = "$n ${if (n == 1) one else many}"
 
-/** Projects: one card per repository, or the desktop's spaces tree as its sidebar draws it. */
-@Composable fun ProjectsScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>,
-                               tree: Boolean, onTree: (Boolean) -> Unit) {
-    val spend = rememberSpend(state)
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item(key = "views") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pill("By repository", !tree) { onTree(false) }
-                Pill("Spaces", tree) { onTree(true) }
-            }
+/** The Code tab's views, what the Projects and Tasks tabs were (docs/decisions/four-tabs.md). */
+object CodeView {
+    const val REPOS = "repos"
+    const val SPACES = "spaces"
+    const val TASKS = "tasks"
+}
+
+/** Code: one card per repository, the desktop's spaces tree, or the tasks by branch, picked with the pills on top. */
+@Composable fun CodeScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>,
+                           view: String, onView: (String) -> Unit, taskFilter: String?, onTaskFilter: (String?) -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(16.dp, 16.dp, 16.dp, 0.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("By repository", view == CodeView.REPOS) { onView(CodeView.REPOS) }
+            Pill("Spaces", view == CodeView.SPACES) { onView(CodeView.SPACES) }
+            Pill("Tasks", view == CodeView.TASKS) { onView(CodeView.TASKS) }
         }
+        Box(Modifier.weight(1f)) {
+            if (view == CodeView.TASKS) TasksScreen(vm, pulse, taskFilter, onTaskFilter)
+            else ProjectsScreen(state, vm, pulse, rows, tree = view == CodeView.SPACES)
+        }
+    }
+}
+
+/** Projects: one card per repository, or the desktop's spaces tree as its sidebar draws it. */
+@Composable fun ProjectsScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>, tree: Boolean) {
+    val spend = rememberSpend(state)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (tree) {
             sidebarRows(rows, state.space, state.selected, onToggle = { vm.toggleFold(it.key.removePrefix("m:")) },
                 onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
