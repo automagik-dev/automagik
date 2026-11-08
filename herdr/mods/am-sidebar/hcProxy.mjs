@@ -219,10 +219,13 @@ function underWorktrees(cwd, project) {
  * Why `params` is not hcGuard.runProblem's exact dsh-tui worker shape, or null. This is the
  * argv check ported to the RPC params the CLI sends: the program, its PATH guard word, the one
  * task word, the parent, the worktree cwd, the worker labels, and the identity-only env. It
- * accepts the plain shape and, when the pack's opt-in is on, the per-pane helper shape
+ * accepts only the per-pane helper shape
  * `[/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
- * --project, <caller project>, --worker, --, dsh-tui, --, <task>]`. The pack's own guard is
- * allowed even inside the app home, where the installed pack lives; any other copy is not.
+ * --project, <caller project>, --worker, --, dsh-tui, --, <task>]`. The plain five-word shape is
+ * refused: a proxied pane can unset AM_HC_PROXY before its own worker start, and a plain worker
+ * would have no proxy of its own, so its sandbox would reach the real core one hop later. The
+ * pack's own guard is allowed even inside the app home, where the installed pack lives; any
+ * other copy is not.
  */
 export function runProblem(params, snapshot) {
   const p = isObject(params) ? params : {};
@@ -256,9 +259,7 @@ export function runProblem(params, snapshot) {
     }
   }
   const argv = p.argv;
-  const plain = Array.isArray(argv) && argv.length === 5;
-  const helper = Array.isArray(argv) && argv.length === 14;
-  if (!plain && !helper) return "argv is not the worker shape";
+  if (!Array.isArray(argv) || argv.length !== 14) return "argv is not the helper worker shape";
   if (argv[0] !== ENV) return `the program is not ${ENV}`;
   if (typeof argv[1] !== "string" || !argv[1].startsWith("PATH=")) return "no PATH word after the program";
   const words = argv[1].slice("PATH=".length).split(delimiter);
@@ -275,12 +276,6 @@ export function runProblem(params, snapshot) {
   if (!program) return "dsh-tui is not on the worker PATH";
   if (insideReal(program, snapshot.caller.project)) return "dsh-tui is inside the writable project";
   if (snapshot.appHome && insideReal(program, snapshot.appHome)) return "dsh-tui is inside the writable app home";
-  if (plain) {
-    if (argv[2] !== "dsh-tui") return "the program is not dsh-tui";
-    if (argv[3] !== "--") return "no -- before the task";
-    if (typeof argv[4] !== "string") return "the task is not the one -- <task> word";
-    return null;
-  }
   // The sandboxed worker's own helper wrapper (#631 PR B), exactly as workerArgs builds it:
   // [/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
   //  --project, <caller project>, --worker, --, dsh-tui, --, <task>].

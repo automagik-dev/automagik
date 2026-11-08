@@ -168,9 +168,19 @@ class Client {
 
 const clientFor = (path) => Client.connect(path);
 
+/** The real hc run argv workerArgs emits for a worker, after hc's run's own `--`. */
+const workerCallArgs = (s, { sandbox = true } = {}) => {
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox });
+  return args.slice(args.indexOf("--") + 1);
+};
+const helperArgv = (s) => workerCallArgs(s);
+const plainArgv = (s) => workerCallArgs(s, { sandbox: false });
+
 /** The exact worker shape the pack's workerArgs emits, as hc's CLI turns it into RPC params. */
 const runParams = (s, extra = {}) => ({
-  argv: [ENV, `PATH=${GUARD_DIR}:${s.bin}:/usr/bin:/bin`, "dsh-tui", "--", "do the task"],
+  argv: helperArgv(s),
   name: "worker-one",
   cwd: s.worktree,
   env: { TERM: "xterm-256color", TERM_PROGRAM: "herdr" },
@@ -355,7 +365,7 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
   const bad = [
     ["an on param", { on: "mac" }],
     ["a line", { line: "echo hi" }],
-    ["a non-worker argv", { argv: ["sh", "-c", "id"] }],
+    ["a non-worker argv", { argv: (() => { const a = helperArgv(s); a[11] = "sh"; return a; })() }],
     ["a short argv", { argv: [ENV, `PATH=${GUARD_DIR}:/usr/bin`, "dsh-tui", "--"] }],
     ["a parent that is not the caller", { parent: "t101" }],
     ["a cwd outside the worktrees", { cwd: s.root }],
@@ -365,18 +375,18 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
     ["an agent key", { agent: "omp" }],
     ["die_with_parent false", { die_with_parent: false }],
     ["no die_with_parent", { die_with_parent: undefined }],
-    ["a PATH without a guard", { argv: [ENV, "PATH=/usr/bin:/bin", "dsh-tui", "--", "task"] }],
+    ["a PATH without a guard", { argv: (() => { const a = helperArgv(s); a[1] = "PATH=/usr/bin:/bin"; return a; })() }],
     ["a guard inside the writable worktree", {
-      argv: [ENV, `PATH=${join(s.worktree, "guard")}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${join(s.worktree, "guard")}:/usr/bin:/bin`; return a; })(),
     }],
     ["a guard inside the writable app home", {
-      argv: [ENV, `PATH=${join(s.app, "guard")}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${join(s.app, "guard")}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui inside the writable worktree", {
-      argv: [ENV, `PATH=${GUARD_DIR}:${s.worktree}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${GUARD_DIR}:${s.worktree}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui that is not on the worker PATH", {
-      argv: [ENV, `PATH=${GUARD_DIR}:${s.home}`, "dsh-tui", "--", "task"],
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${GUARD_DIR}:${s.home}`; return a; })(),
     }],
     ["an env that is not identity only", { env: { LD_PRELOAD: "/tmp/escape.so" } }],
     ["a timeout", { timeout: 5 }],
@@ -397,6 +407,24 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
   const fromWorker = await (await clientFor(workerProxy.socket)).call("terminal.run", runParams(s, { parent: "t105" }));
   assert.ok(fromWorker.error);
   assert.match(fromWorker.error.message, /only a bot pane the attach ledger binds/);
+});
+
+test("the plain worker shape is refused, including the real default workerArgs output", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  fake.clearLog();
+  const plain = plainArgv(s);
+  assert.equal(plain.length, 5, plain.join(" "));
+  assert.deepEqual(plain.slice(2), ["dsh-tui", "--", "do the task"]);
+  for (const [name, argv] of [["hand-written", [ENV, `PATH=${GUARD_DIR}:${s.bin}:/usr/bin:/bin`, "dsh-tui", "--", "task"]],
+    ["real default workerArgs", plain]]) {
+    const before = fake.log.length;
+    const client = await clientFor(proxy.socket);
+    const answer = await client.call("terminal.run", runParams(s, { argv }));
+    client.close();
+    assert.ok(answer.error, `${name} is refused`);
+    assert.match(answer.error.message, /^hc-proxy: terminal\.run: argv is not the helper worker shape/);
+    assert.equal(fake.log.length, before, `${name} never reached the core`);
+  }
 });
 
 test("a rename between the check and the forward cannot redirect the target", async (t) => {

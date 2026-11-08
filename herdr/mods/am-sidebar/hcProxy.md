@@ -61,7 +61,7 @@ ids are never reused, so a rename between the check and the call cannot redirect
 | `terminal.get`, `terminal.read`, `terminal.wait` | the caller itself, hcGuard's `teamOf` graph, and its own workers |
 | `terminal.send` | the same, plus hcGuard's pm/integrator/fixer widening for a bot whose bots.json entry has that rank, and the shared reviewer/fixer targets. The widening never reaches a worker pane |
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
-| `terminal.run` | only hcGuard's exact dsh-tui worker shape: `--bg`, `parent` = the caller, `cwd` under the caller's project `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, then either `/usr/bin/env PATH=<guard>:… dsh-tui -- <task>` or the helper's `/usr/bin/env PATH=… /bin/sh <pack>/bin/run.sh <pack>/hcPane.mjs --bot <caller> --project <project> --worker -- dsh-tui -- <task>`, no `on`/`line`, identity env only. The sandbox row binds the pack folder read-only, so its guard/helper/runner cannot be rewritten; any other guard is refused inside the writable project and app home. Only a ledger-bound bot pane starts a worker |
+| `terminal.run` | only the per-pane helper worker shape: `--bg`, `parent` = the caller, `cwd` under the caller's project `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, then `/usr/bin/env PATH=… /bin/sh <pack>/bin/run.sh <pack>/hcPane.mjs --bot <caller> --project <project> --worker -- dsh-tui -- <task>`, no `on`/`line`, identity env only. The old plain five-word shape (`/usr/bin/env PATH=… dsh-tui -- <task>`) is refused: a proxied bot could unset `AM_HC_PROXY` in its own shell, and a plain worker would have no proxy of its own, so its sandbox would reach the real core one hop later. The sandbox row binds the pack folder read-only, so its guard/helper/runner cannot be rewritten; any other guard is refused inside the writable project and app home. Only a ledger-bound bot pane starts a worker |
 
 `terminal.send` keeps hc's `force`, `if` and `timeout`; `force` only skips the busy wait, and the
 target is still team-scoped.
@@ -107,6 +107,14 @@ without a live proxy would create one inside its sandbox. The helper keeps that 
 if the proxy cannot start, the pane's command is not started at all, so no sandbox exists and
 there is no `hc` inside one to auto-start anything. A proxy that dies after start takes its
 pane with it.
+
+## Left for PR C
+
+The project's `.herdr/bots.json` and the attach ledger under the app home are writable inside the
+sandbox in the live configuration. The proxy's start-time snapshot stops a later edit from
+widening the running pane, but the edit persists and the next pane restart (a new proxy) reads
+it. PR C owns narrowing that for the PM; until then, a bot can widen its next start's team by
+editing either file now.
 
 ## Limits and the real hc 0.1.14 params
 

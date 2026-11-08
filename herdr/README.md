@@ -892,8 +892,10 @@ When it is on, a pack-started dsh-tui pane runs through one helper,
 `mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process **before DSH
 starts**, then runs the agent as its child. The proxy snapshots the attach ledger and the
 project's `.herdr/bots.json` before the pane can create a sandbox, and it ends when the pane
-ends. **A roster change needs a pane restart**, so the new pane's proxy reads the new file. Its
-own README, `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
+ends. **A roster change needs a pane restart**, so the new pane's proxy reads the new file. A
+proxied bot cannot unset the switch in its own shell to start a plain worker: the proxy refuses
+the old five-word worker argv and accepts only the helper's own shape. Its own README,
+`mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
 A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again; an
 opted-in pane refuses to start while the profile's sandbox row is stale.
 
