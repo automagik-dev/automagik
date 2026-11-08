@@ -23,6 +23,8 @@ import { startFakeCore } from "./fake-hc-core.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const PROXY = join(here, "..", "mods", "am-sidebar", "hcProxy.mjs");
 const PROXY_HARNESS = join(here, "cli-proxy-harness.mjs");
+/** A path under literal /tmp (real path, so macOS /private/tmp works), never created. */
+const literalTmpData = () => join(realpathSync("/tmp"), `am-hc-literal-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`, "data");
 
 const ID = {
   main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", jun: "b-dddddddddd",
@@ -571,7 +573,7 @@ test("the dsh a shim executes is checked by real path, and literal /tmp is refus
     /the dsh the shim executes .* is inside the project/,
   );
   rmSync(join(s.bin, "dsh"));
-  const literal = { ...s.env, XDG_DATA_HOME: join(s.root, "data") };
+  const literal = { ...s.env, XDG_DATA_HOME: literalTmpData() };
   await assert.rejects(
     startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: literal }),
     /the stable execution root .* is inside the literal temp folder/,
@@ -597,7 +599,7 @@ test("the stable runner must match its baked node, and the baked node must still
 
 test("the production default still refuses a stable root under literal /tmp", async (t) => {
   const { s } = await sceneWithCore(t, { proxy: false });
-  const env = { ...s.env, XDG_DATA_HOME: join(s.root, "data") };
+  const env = { ...s.env, XDG_DATA_HOME: literalTmpData() };
   await assert.rejects(
     startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env }),
     /the stable execution root .* is inside the literal temp folder/,
