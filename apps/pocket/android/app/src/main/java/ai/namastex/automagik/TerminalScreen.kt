@@ -89,7 +89,7 @@ import kotlin.math.roundToInt
     var controls by remember(ref) { mutableStateOf(false) }
     // The Chat tab (RFC 0015 delivery 5): the same agent as a chat, over the terminal's place; Show terminal comes back.
     val chatOffered = !state.demo && Chat.offered(terminal)
-    var chatView by remember(ref) { mutableStateOf(false) }
+    var chatView by remember(ref) { mutableStateOf(state.chatFirst) }
     if (chatView && chatOffered) {
         ChatPane(vm, ref, onShowTerminal = { chatView = false }, onBack = vm::backToList, modifier = Modifier.fillMaxSize().displayCutoutPadding().then(swipeable))
         return

@@ -4581,10 +4581,21 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     throw failed(opts.check ? "Couldn't check for updates" : "Not updated", e);
   }
   const { relinked, note } = opts.check ? { relinked: null, note: "" } : relink();
-  const meter = r.installed ? await meterAfterUpdate(io) : null;
+  const meter = r.installed && !r.installed.restored && !r.installed.restoreError ? await meterAfterUpdate(io) : null;
   if (opts.json) return opts.check ? r : { ...r, relinked, ...(meter ? { meter: meter.results } : {}) };
   const current = r.current ?? "not installed";
   if (r.disabled) return `Automagik Herdr ${current} is installed. Updates are off (${NO_UPDATE_ENV}=1).${note}`;
+  if (r.installed?.restored) {
+    const restore = r.installed.restored;
+    const mods = (restore.failed?.length ? restore.failed : [restore.mod]).filter(Boolean).join(", ");
+    const stopped = restore.unavailable ? `; ${restore.unavailable}` : "";
+    return `Automagik Herdr ${restore.failedVersion ?? r.installed.version} failed to load (${mods} failed herdr-app check${stopped}): `
+      + `restored ${restore.version}. The bad version is held back; a newer release installs on its own.${note}`;
+  }
+  if (r.installed?.restoreError) {
+    return `Automagik Herdr ${r.installed.version} failed to load, and ${r.installed.restoreError}. `
+      + `It is still installed; auto-update waits for a newer release.${note}`;
+  }
   if (r.installed) {
     return `Updated Automagik Herdr ${current} → ${r.installed.version}. The replaced pack is kept: \`automagik-herdr update --rollback\` puts it back. Herdr reloads its mods on its own.${note}${hooksLines(r.installed.hooks?.hooks)}${heldLines(r.installed)}${meter.lines.map((l) => `\n${l}`).join("")}`;
   }

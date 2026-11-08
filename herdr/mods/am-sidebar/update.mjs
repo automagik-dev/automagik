@@ -10,7 +10,15 @@
 //
 //   node update.mjs check             [--mods <dir>]   one JSON line: current, latest, update
 //   node update.mjs update [--check] [--json] [--mods <dir>]   install the latest release (apply: the same, JSON;
-//                                     apply --expect <v>: only if the latest is still <v>, else `refused`)
+//                                     apply --expect <v>: only if the latest is still <v>, else `refused`).
+//       After the swap it runs `herdr-app check` on every pack mod. When one fails to load it
+//       restores the kept set at once (the same rollback, still under the install lock) and
+//       records the bad version as rolled back, so auto-update waits for a newer release. Exit 5:
+//       installed, then restored; JSON `installed.restored` names the failed and the restored
+//       version and the mods that failed. A missing or unrunnable herdr-app keeps the update
+//       (`installed.check.checked` false, `unavailable` says why); `installed.restoreError` says
+//       why a restore could not happen (for example no previous version kept). Both are a notice,
+//       never a crash.
 //   node update.mjs rollback          [--mods <dir>]   swap the kept set back; one JSON line
 //   node update.mjs install --from <tgz> --version <v> [--sequence <n>] [--mods <dir>] [--adopt] [--setup]
 //       a tarball already checked against its .sha256 (install.sh); one JSON line. --setup also
@@ -51,8 +59,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
-  AUTO_FILE, CATALOG_URL, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
-  POINTER_URL, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
+  AUTO_FILE, CATALOG_URL, CHECK_FILE, HELD_FILE, OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_CATALOG_URLS, PACK_KEYS, PACK_KEYS_FILE, PACK_LAYOUT, PACK_NAME, POCKET_LINK, POINTER_SIG_URL,
+  POINTER_URL, RESTORE_FILE, TIMEOUT_MS, V020_LAYOUT_SHA256, autoHold, formatAuto, formatMarker, heldModLine, layoutNeeds, packOfPointer, parseAuto, parseMarker, parseSums,
   pickUpdate, updatesOff,
 } from "./release.js";
 import { ABSORBED, RENAMES, editTarget, own, renamedFrom } from "./migrate.js";
@@ -67,6 +75,8 @@ export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS,
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+/** How long one mod's `herdr-app check` may take before the update is kept and said as unchecked. */
+const CHECK_TIMEOUT_MS = 60_000;
 /** The version of a pack with no VERSION file: one installed before releases, older than any. */
 export const UNRELEASED = "0.0.0";
 
@@ -114,6 +124,29 @@ function saveHeld(modsDir, version, held) {
   const tmp = `${file}.${process.pid}`;
   writeFileSync(tmp, JSON.stringify({ version, held }));
   renameSync(tmp, file);
+}
+
+/** release.js RESTORE_FILE: what the restored build says once when the build that updated is gone. */
+function saveRestore(modsDir, record) {
+  const file = join(stateDirOf(modsDir), RESTORE_FILE);
+  const tmp = `${file}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(record));
+  renameSync(tmp, file);
+}
+
+/** release.js CHECK_FILE: what the new build says once when herdr-app could not judge the pack. */
+function saveCheck(modsDir, record) {
+  const file = join(stateDirOf(modsDir), CHECK_FILE);
+  const tmp = `${file}.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(record));
+  renameSync(tmp, file);
+}
+
+/** A previous update's restore or check note says nothing about this one. */
+function clearNotes(modsDir) {
+  for (const name of [RESTORE_FILE, CHECK_FILE]) {
+    try { rmSync(join(stateDirOf(modsDir), name), { force: true }); } catch {}
+  }
 }
 
 /**
@@ -1219,7 +1252,9 @@ export function placeLayout({ modsDir, tgzDir, record, log = () => {} }) {
 
 /**
  * `herdr-app check` on each of `mods`, its whole output shown on a failure. Returns `{ failed,
- * checked }`: the mods whose check failed, and false when herdr-app is not on PATH (said once).
+ * checked, unavailable }`: the mods whose check failed, whether the check ran at all, and why it
+ * could not run (herdr-app not on PATH, or the program could not start or finish: a spawn error,
+ * not a mod that failed to load). `checked` false means no mod was judged.
  */
 /**
  * The record's mods `herdr-app check` should load: all but the ones switched off (in
@@ -1231,20 +1266,31 @@ export const toCheck = (modsDir, mods) => mods.filter((m) => exists(join(modsDir
 export function checkMods({ modsDir, mods, log = () => {}, herdrApp = "herdr-app" }) {
   const failed = [];
   let haveHerdr = true;
+  let unavailable = null;
   for (const m of mods) {
     if (!haveHerdr) break;
     try {
-      execFileSync(herdrApp, ["check", join(modsDir, m)], { stdio: "pipe" });
+      execFileSync(herdrApp, ["check", join(modsDir, m)], { stdio: "pipe", timeout: CHECK_TIMEOUT_MS });
       log(`check passed: ${m}`);
     } catch (error) {
-      if (error.code === "ENOENT") { haveHerdr = false; log("herdr-app is not on PATH: no mod was checked"); break; }
-      failed.push(m);
-      const [first, ...rest] = String(error.stderr || error.stdout || error.message).trim().split("\n");
-      log(`check FAILED: ${m}: ${first}`);
-      for (const line of rest) log(`    ${line}`);
+      // A check that ran and said no: the mod does not load (a non-zero exit, its output shown).
+      if (typeof error.status === "number") {
+        failed.push(m);
+        const [first, ...rest] = String(error.stderr || error.stdout || error.message).trim().split("\n");
+        log(`check FAILED: ${m}: ${first}`);
+        for (const line of rest) log(`    ${line}`);
+        continue;
+      }
+      // The check itself could not run: herdr-app missing, unreadable, killed or timed out. No mod
+      // was judged, so an update must not restore on this.
+      haveHerdr = false;
+      unavailable = error.code === "ENOENT" ? "herdr-app is not on PATH"
+        : `the herdr-app check could not run (${String(error.message).split("\n")[0]})`;
+      log(`${unavailable}: no mod was checked`);
+      break;
     }
   }
-  return { failed, checked: haveHerdr && mods.length > 0 };
+  return { failed, checked: haveHerdr && mods.length > 0, unavailable };
 }
 
 /**
@@ -1320,7 +1366,7 @@ export const olderSequence = (record, pack) =>
  * record are read again: when autoHold says no, or another update or rollback runs, nothing is
  * downloaded: `{ ..., installed: null, held: why }`.
  */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false } = {}) {
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false, herdrApp = "herdr-app" } = {}) {
   const found = await checkForUpdate({ fetch, env, modsDir, keys });
   if (!found.update) return { ...found, installed: null };
   if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
@@ -1337,10 +1383,10 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
     if (late) return { ...found, current: late.current, update: null, installed: null };
     const hold = auto ? autoHold(found.update.version, autoStatus(modsDir)) : null;
     if (hold) return { ...found, auto: autoStatus(modsDir), installed: null, held: hold };
-    const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window });
+    const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp });
     // On its own, an install whose record wasn't written is a failure: the record still names the
-    // old version, and the next check would install it again.
-    if (auto && done.installed?.recorded === false) {
+    // old version, and the next check would install it again. A restore has rewritten its own.
+    if (auto && done.installed?.recorded === false && !done.installed?.restored) {
       throw new Error(`${found.update.version} went in, but the install record could not be written (${markerOf(modsDir)})`);
     }
     return done;
@@ -1349,12 +1395,86 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   }
 }
 
-async function downloadAndApply(found, { fetch, modsDir, log, binDir, window }) {
+/**
+ * After an update swaps the pack in: `herdr-app check` on every pack mod that is on (#652). When
+ * one fails to load the kept set is restored at once (the same rollback, under the install's lock)
+ * and the bad version becomes the rollback skip, so auto-update waits for a newer release. A
+ * missing or unrunnable herdr-app keeps the update (`checked: false`); a restore that cannot happen
+ * is said in `restoreError`, never thrown, so the update's own callers still answer. `version` is
+ * the release that was just installed, not the record's version: a restore rewrites that.
+ */
+function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herdr-app", binDir = null, window = false }) {
+  const list = toCheck(modsDir, mods);
+  if (list.length === 0) return { failed: [], checked: true, unavailable: null };
+  const result = checkMods({ modsDir, mods: list, log, herdrApp });
+  const unavailable = result.unavailable ?? null;
+  // A judged failure wins: one mod that does not load is enough to restore, even when a later
+  // check could not run. Only a run with no failed mod and no complete check keeps the update.
+  if (result.failed.length === 0 && !result.checked) {
+    return { failed: [], checked: false, unavailable: unavailable ?? "the herdr-app check did not run" };
+  }
+  if (result.failed.length === 0) return { ...result, checked: true };
+  const set = readSet(modsDir);
+  if (!set || set.mods.length === 0) {
+    log("could not restore: no previous version kept");
+    try { saveRestore(modsDir, { version, error: "could not restore: no previous version kept", unavailable, at: Date.now() }); } catch {}
+    return { ...result, checked: true, unavailable, restoreError: "could not restore: no previous version kept" };
+  }
+  // A kept set from before VERSION files (or one whose .pack has none) still names a version.
+  const backVersion = typeof set.version === "string" && set.version !== ""
+    ? set.version : readVersion(join(prevSetOf(modsDir), PACK_NAME));
+  // Written before the swap: Herdr reloads the restored build at once, possibly before this
+  // process answers, and that build says the one notice from it (updater.js `arrive`).
+  try {
+    saveRestore(modsDir, { version: backVersion, failedVersion: version, mod: result.failed[0],
+      failed: [...result.failed], checked: true, unavailable, at: Date.now() });
+  } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
+  try {
+    const back = rollbackLocked({ modsDir, log, binDir, window });
+    const restored = typeof back.version === "string" && back.version !== "" ? back.version : backVersion;
+    if (restored !== backVersion) {
+      try {
+        saveRestore(modsDir, { version: restored, failedVersion: version, mod: result.failed[0],
+          failed: [...result.failed], checked: true, unavailable, at: Date.now() });
+      } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
+    }
+    log(`restored ${restored}: ${result.failed.join(", ")} did not load`);
+    return { ...result, checked: true, unavailable, restored: { version: restored, failedVersion: version, mod: result.failed[0],
+      failed: [...result.failed], checked: true, ...(unavailable ? { unavailable } : {}) } };
+  } catch (error) {
+    // A kept set that is gone, or names a folder that is gone, is the same answer to the person:
+    // there is no previous version to put back. Anything else keeps its own why.
+    const why = /no earlier pack kept|nothing to roll back to|not there: nothing rolled back|kept set lists .* which is not there/.test(error.message)
+      ? "no previous version kept" : error.message;
+    log(`could not restore: ${why}`);
+    try { saveRestore(modsDir, { version, error: `could not restore: ${why}`, unavailable, at: Date.now() }); } catch {}
+    return { ...result, checked: true, unavailable, restoreError: `could not restore: ${why}` };
+  }
+}
+
+async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp }) {
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
     const before = oldSidebarHere(modsDir);
+    clearNotes(modsDir); // a previous update's notes are not this one's
     const installed = await applyUpdate({ tgzPath, version: found.update.version, sequence: found.update.sequence, modsDir, log });
+    // The swap is the point an update becomes live: check it before anything else touches the home.
+    const checked = checkUpdated({ modsDir, mods: installed.mods, version: found.update.version, log, herdrApp, binDir, window });
+    installed.check = { failed: checked.failed, checked: checked.checked, ...(checked.unavailable ? { unavailable: checked.unavailable } : {}) };
+    if (!checked.checked) {
+      try {
+        saveCheck(modsDir, { version: found.update.version, from: found.current ?? null,
+          unavailable: checked.unavailable, at: Date.now() });
+      } catch (error) { log(`warning: the check note was not saved (${error.message})`); }
+    }
+    if (checked.restored) {
+      // The kept set is back and its layout and hooks with it: the release's layout and migration
+      // belong to a pack that is no longer installed.
+      installed.restored = checked.restored;
+      return { ...found, installed };
+    }
+    if (checked.restoreError) installed.restoreError = checked.restoreError;
     // The release's layout, as install.sh --setup places it (D8: one the person edited is kept),
     // so an update shows what the release added to it; then the person's layouts are migrated.
     const tgzDir = join(dir, "layout");
@@ -1481,6 +1601,8 @@ async function main(argv) {
   if (command === "check" || (command === "update" && opts.check)) return checkForUpdate({ modsDir });
   if (command === "apply" || command === "update") {
     const r = await installUpdate({ modsDir, log: command === "update" ? log : undefined, expect: opts.expect ?? null, auto: Boolean(opts.auto), ...host });
+    // Exit 5: the release went in, herdr-app check failed and the kept set is back (its own notice).
+    if (r.installed?.restored) process.exitCode = 5;
     if (command === "update") notice(r.installed?.hooks?.hooks);
     // The mod's notice says whether running Claude bots need a restart for their briefings.
     if (command === "apply") return r.installed ? { ...r, notice: hooksNotice(r.installed.hooks?.hooks) } : r;

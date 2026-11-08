@@ -24,14 +24,14 @@ list, its needs-you deck and its progress strip.
   | Before | Now |
   |---|---|
   | Today | **Home**, unchanged: Needs you, then Done, with Working and Idle under **Everything else**; the counts and the spend tile on top; the needs-you badge |
-  | Teams | **Team**, unchanged for now, still the default and where Back goes |
-  | Projects, Tasks | **Code**, two views picked with pills: Spaces (the desktop's tree, with Tasks as its filter) and By repository |
+  | Teams | **Team**, one bubble per project ([Team bubbles](team-bubbles.md)), still the default and where Back goes |
+  | Projects, Tasks | **Code**: Spaces (the desktop's tree, Tasks as a filter) and By repository |
   | Machines, the gear | **Settings**, with the machines and pairing first |
 
 - Replaces in [Teams v1](teams-v1.md):
   - its tab list (five tabs plus a gear);
-  - the needs-you deck and the progress strip on Teams. Home takes needs-you. They still show on
-    Team until the Team bubbles (wish group 2) remove them.
+  - the needs-you deck and the progress strip on Teams. Home takes needs-you;
+    [Team bubbles](team-bubbles.md) removed them from Team.
 
 ## Current state
 

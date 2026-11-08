@@ -312,6 +312,19 @@ export const AUTO_FILE = "auto-update.json";
  * usually never hears back (updateCheck.js), and removes it when an install holds nothing.
  */
 export const HELD_FILE = "held-mods.json";
+/**
+ * Beside the record: `{ version, failedVersion, mod, failed, at }` after an update restored the
+ * kept set because herdr-app check found a mod that does not load, or `{ version, error, at }`
+ * when it could not restore. The build that asked for the update usually never hears back (the
+ * folders swap and Herdr reloads it), so the restored build reads this at load and says it once.
+ */
+export const RESTORE_FILE = "restored-mods.json";
+/**
+ * Beside the record: `{ version, from, unavailable, at }` when herdr-app could not judge the pack
+ * an update just installed (it is kept). The new build reads it at load, since the build that ran
+ * the update is usually reloaded away before its answer arrives; it says the update was not checked.
+ */
+export const CHECK_FILE = "unchecked-mods.json";
 
 /** The setting as `{ on, skip }`: on unless the file says `"auto": false`; skip a version or null. */
 export function parseAuto(text) {
