@@ -8970,7 +8970,8 @@ var PT_BR = {
   "This provider is not available in this DSH.": "Este provedor não está disponível neste DSH.",
   "Connected. Choose a model to use it.": "Conectado. Escolha um modelo para usar esta conta.",
   "This account is connected and turned off.": "Esta conta está conectada e desligada.",
-  "Sign in or connect an account": "Fazer login ou conectar uma conta",
+  "Sign in or use an API key": "Fazer login ou usar uma chave de API",
+  "Use a key or token": "Usar uma chave ou token",
   "Keys and sign-in details are kept out of the conversation.": "As chaves e os dados de login não entram na conversa.",
   "Back to models": "Voltar aos modelos",
   "Done": "Concluir",
@@ -12496,10 +12497,26 @@ var COMPANY_OF = { anthropic: "Anthropic", "acp-claude": "Anthropic", openai: "O
 var CLI_IDS = ["acp-claude", "acp-codex"];
 var accountRows = (reply) => [...reply?.rows ?? [], ...subscriptionRows(reply?.subscriptions)];
 var rowProvider = (row) => row.kind === "subscription" ? row.tile.provider : providerOf(row);
+function authMethodsOf(row) {
+  if (row.kind === "local") return [];
+  if (row.kind === "key" || row.kind === "gateway") return ["key"];
+  if (row.kind === "signin") {
+    const methods = [...row.signIn === true ? ["login"] : [], ...row.keyUrl ? ["key"] : []];
+    return methods.length ? methods : void 0;
+  }
+  if (row.kind === "subscription") {
+    if (["browser", "device"].includes(row.tile?.kind)) return ["login"];
+    if (row.tile?.kind === "token") return ["key"];
+  }
+  return void 0;
+}
 function providerAccounts(ais, acp) {
   return [
-    ...accountRows(ais).map((row) => ({ provider: rowProvider(row), name: row.name, company: COMPANY_OF[rowProvider(row)] ?? row.name, ready: row.ready === true && row.on === true, kind: row.kind })),
-    ...(acp?.available ? acp.agents ?? [] : []).map((agent) => ({ provider: agent.id, name: agent.id === "acp-claude" ? "Claude Code" : "Codex", company: COMPANY_OF[agent.id] ?? agent.name, kind: "cli", ready: agent.on === true && agent.signedIn === true && agent.connector.state === "ready" && !agent.restartNeeded }))
+    ...accountRows(ais).map((row) => {
+      const authMethods = authMethodsOf(row);
+      return { provider: rowProvider(row), name: row.name, company: COMPANY_OF[rowProvider(row)] ?? row.name, ready: row.ready === true && row.on === true, kind: row.kind, ...authMethods === void 0 ? {} : { authMethods } };
+    }),
+    ...(acp?.available ? acp.agents ?? [] : []).map((agent) => ({ provider: agent.id, name: agent.id === "acp-claude" ? "Claude Code" : "Codex", company: COMPANY_OF[agent.id] ?? agent.name, kind: "cli", authMethods: ["login"], ready: agent.on === true && agent.signedIn === true && agent.connector.state === "ready" && !agent.restartNeeded }))
   ];
 }
 async function listProviderAccounts(request2 = call) {
@@ -12571,6 +12588,8 @@ function ApiAccount({ provider, onConnected, onClose, request: request2 = call }
     }
   };
   const showForm = row && (editing || !row.ready && row.kind !== "signin" && row.kind !== "subscription");
+  const methods = row ? authMethodsOf(row) ?? [] : [];
+  const setupLabel = methods.includes("login") ? methods.includes("key") ? t("Sign in or use an API key") : t("Sign in to {name}", { name: row.name }) : row?.kind === "subscription" ? t("Use a key or token") : t("Use an API key");
   return (0, import_react9.createElement)(
     "div",
     { className: "oai-account-body" },
@@ -12583,7 +12602,8 @@ function ApiAccount({ provider, onConnected, onClose, request: request2 = call }
       { className: "oai-account-actions" },
       row.ready ? (0, import_react9.createElement)("p", { className: "oai-muted", role: "status" }, row.on ? t("Connected. Choose a model to use it.") : t("This account is connected and turned off.")) : null,
       row.ready && !row.on ? (0, import_react9.createElement)("button", { type: "button", className: "oai-primary", disabled: busy, onClick: enable }, t("Turn on")) : null,
-      (0, import_react9.createElement)("button", { type: "button", className: "oai-ghost", disabled: busy, onClick: () => setEditing(true) }, row.kind === "key" || row.kind === "signin" && !row.signIn ? t("Use an API key") : t("Sign in or connect an account"))
+      methods.length > 0 ? (0, import_react9.createElement)("button", { type: "button", className: "oai-ghost", disabled: busy, onClick: () => setEditing(true) }, setupLabel) : null,
+      !row.ready && row.kind === "signin" && methods.length === 0 ? (0, import_react9.createElement)("p", { className: "oai-muted" }, t("This DSH offers no {name} sign-in.", { name: row.name })) : null
     ) : null,
     (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Keys and sign-in details are kept out of the conversation.")),
     (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Back to models"))

@@ -1,7 +1,7 @@
 // The provider/model/account workflow with DSH's actual React in Chromium. The
 // host and login card are fakes: these checks never contact a provider or save a key.
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
@@ -25,6 +25,8 @@ const fixture = await build({
     contents: `
       import { createElement as h, useState, useMemo } from 'react'
       import { ModelMenu, MODEL_CSS } from './src/client/model-menu.js'
+      import { NATIVE_MODEL_CSS } from './src/client/native-model-seat.js'
+      import { SHELL_CSS } from './src/client/styles.js'
       const { createRoot } = window.nativeSeeds['react-dom/client']
       const models = [
         { ref:'deepseek-official/flash', provider:'deepseek-official', providerName:'DeepSeek', name:'Flash' },
@@ -33,8 +35,10 @@ const fixture = await build({
         { ref:'anthropic/sonnet', provider:'anthropic', providerName:'Anthropic API', name:'Sonnet API' },
         { ref:'acp-claude/default', provider:'acp-claude', providerName:'Claude Code', name:'Claude Code Default' },
         { ref:'custom/gpt', provider:'custom', providerName:'Company Gateway', name:'GPT Gateway' },
+        { ref:'ollama/local', provider:'ollama', providerName:'Ollama', name:'Local model' },
       ]
-      const rows = models.map(model => ({ provider:model.provider, name:model.providerName }))
+      const methods = { 'deepseek-official':['key'], openai:['key'], 'acp-codex':['login'], anthropic:['login','key'], 'acp-claude':['login'], ollama:[] }
+      const rows = models.filter(model=>model.provider!=='custom').map(model => ({ provider:model.provider, name:model.providerName, authMethods:methods[model.provider] }))
       window.evidence = { model:models[0].ref, checks:[], mutations:[], refreshes:0, auth:[], keyWrites:[], ready:[], hold:false }
       function Setup({provider,onConnected,onClose}) {
         const [key,setKey] = useState('')
@@ -46,9 +50,9 @@ const fixture = await build({
         }
         return h('section',{'aria-label':'Connect account'},
           h('span',null,provider),
-          h('label',null,'API key',h('input',{type:'password',value:key,onChange:event=>setKey(event.target.value)})),
-          h('button',{type:'button',onClick:()=>save('key')},'Save key'),
-          h('button',{type:'button',onClick:()=>save('login')},'Sign in'),
+          methods[provider]?.includes('key') ? h('label',null,'API key',h('input',{type:'password',value:key,onChange:event=>setKey(event.target.value)})) : null,
+          methods[provider]?.includes('key') ? h('button',{type:'button',onClick:()=>save('key')},'Save key') : null,
+          methods[provider]?.includes('login') ? h('button',{type:'button',onClick:()=>save('login')},'Sign in') : null,
           h('button',{type:'button',onClick:onClose},'Cancel'))
       }
       function App() {
@@ -80,7 +84,7 @@ const fixture = await build({
         return h(ModelMenu,{bot:{id:'bot',name:'Test Bot',model},roster:{models},actions,disabled:locked})
       }
       const style=document.createElement('style')
-      style.textContent=MODEL_CSS
+      style.textContent=SHELL_CSS + NATIVE_MODEL_CSS + MODEL_CSS
       document.head.appendChild(style)
       createRoot(document.getElementById('root')).render(h(App))
     `,
@@ -102,11 +106,7 @@ test('conversation model and account workflow preserves the chosen route until a
     subtest.after(() => assert.deepEqual(errors, [], 'the slot renders without browser errors'))
     await page.route('**/*', route => route.abort())
     await page.setContent(`<style>
-      :root{--bt-ink:#24212f;--bt-ink-2:#575265;--bt-ink-3:#797287;--bt-line:#ddd;--bt-main:#fff;--bt-surface:#fff;--bt-hover:#f0edf4;--bt-active:#ddd;--bt-accent:#4455ff;--bt-danger:#a20}
-      body{font:14px sans-serif;margin:20px}#root{position:fixed;bottom:30px;right:20px}
-      .bt-menu{position:fixed;display:flex;flex-direction:column;gap:2px;background:white;border:1px solid #ccc;border-radius:10px}
-      .bt-menu button{display:flex;align-items:center;width:100%;min-height:30px;border:0;border-radius:5px;padding:6px;text-align:left;background:transparent;color:inherit}
-      .bt-menu button:hover{background:#f0edf4}.bt-menu-label{flex:1}
+      body{font:14px sans-serif;margin:20px;background:var(--bt-main);color:var(--bt-ink)}#root{position:fixed;bottom:30px;right:20px}
     </style><button id="outside">Outside</button><div id="root"></div>`)
     await page.addScriptTag({ content: seedsBuild.outputFiles[0].text })
     await page.addScriptTag({ content: "window.require = name => window.nativeSeeds[name] ?? {};" })
@@ -119,23 +119,66 @@ test('conversation model and account workflow preserves the chosen route until a
     await page.getByRole('combobox', { name: 'Company', exact: true }).waitFor()
     assert.equal(await page.locator(':focus').getAttribute('aria-label'), 'Company', 'opening focuses the company selector')
     await page.getByRole('combobox', { name: /^Company/ }).selectOption(company)
-    if (provider) await page.getByRole('combobox', { name: /^Connection/ }).selectOption(provider)
+    if (provider) await connection(page, provider).click()
   }
+  const connection = (page, provider) => page.getByRole('radiogroup', { name: 'Connection', exact: true }).locator(`[role="radio"][data-provider="${provider}"]`)
 
   await t.test('company then connection distinguishes API models, CLI models and custom gateways', async s => {
     const page = await pageFor(s)
     await open(page, 'OpenAI', 'openai')
     assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['GPT API'])
-    await page.getByRole('combobox', { name: /^Connection/ }).selectOption('acp-codex')
+    assert.match(await connection(page, 'openai').textContent(), /API key only/)
+    assert.match(await connection(page, 'acp-codex').textContent(), /Sign in/)
+    assert.equal(await page.getByRole('button', { name: 'Save key', exact: true }).count(), 1)
+    assert.equal(await page.getByRole('button', { name: 'Sign in', exact: true }).count(), 0)
+    await connection(page, 'acp-codex').click()
     assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['GPT Codex'])
     await page.getByRole('combobox', { name: /^Company/ }).selectOption('Anthropic · Claude')
-    await page.getByRole('combobox', { name: /^Connection/ }).selectOption('acp-claude')
+    assert.match(await connection(page, 'anthropic').textContent(), /Sign in or API key/)
+    await connection(page, 'acp-claude').click()
     assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['Claude Code Default'])
     await page.getByRole('combobox', { name: /^Company/ }).selectOption('Company Gateway')
-    assert.equal(await page.getByRole('combobox', { name: /^Connection/ }).count(), 0)
+    assert.equal(await page.getByRole('button', { name: 'Save key', exact: true }).count(), 1)
+    assert.equal(await page.getByRole('button', { name: 'Sign in', exact: true }).count(), 0)
     assert.deepEqual(await page.getByRole('menuitemradio').allTextContents(), ['GPT Gateway'])
     await page.getByRole('combobox', { name: /^Company/ }).selectOption('New Provider')
-    assert.match(await page.getByRole('dialog').textContent(), /Connect this account to load its models/)
+    assert.match(await page.getByRole('dialog').textContent(), /Set up this provider in Models and providers/)
+    assert.equal(await page.getByRole('group', { name: 'Provider settings', exact: true }).count(), 1)
+    await page.getByRole('combobox', { name: 'Company', exact: true }).selectOption('Ollama')
+    assert.equal(await page.getByRole('group', { name: 'No account needed', exact: true }).count(), 1)
+    assert.equal(await page.getByRole('button', { name: 'Sign in', exact: true }).count(), 0)
+    assert.deepEqual(await page.evaluate(() => window.evidence.mutations), [])
+    assert.deepEqual(await page.evaluate(() => window.evidence.auth), [])
+  })
+
+  await t.test('a connection supporting both methods is in the sign-in group and offers both explicitly', async s => {
+    const page = await pageFor(s)
+    await open(page, 'Anthropic · Claude', 'anthropic')
+    const group = page.getByRole('group', { name: 'Sign in', exact: true })
+    assert.equal(await group.getByRole('radio').count(), 2)
+    assert.equal(await page.getByRole('group', { name: 'API key only', exact: true }).count(), 0)
+    await page.getByRole('button', { name: 'Sign in or use an API key', exact: true }).click()
+    const setup = page.getByRole('region', { name: 'Connect account' })
+    await setup.waitFor()
+    assert.equal(await setup.getByRole('button', { name: 'Save key', exact: true }).count(), 1)
+    assert.equal(await setup.getByRole('button', { name: 'Sign in', exact: true }).count(), 1)
+    assert.deepEqual(await page.evaluate(() => window.evidence.auth), [])
+  })
+
+  await t.test('connection radios support arrow, Home and End navigation without changing the model', async s => {
+    const page = await pageFor(s)
+    await open(page, 'OpenAI', 'openai')
+    await connection(page, 'openai').focus()
+    await page.keyboard.press('ArrowUp')
+    assert.equal(await connection(page, 'acp-codex').getAttribute('aria-checked'), 'true')
+    assert.equal(await page.locator(':focus').getAttribute('data-provider'), 'acp-codex')
+    assert.equal(await connection(page, 'openai').getAttribute('tabindex'), '-1')
+    await page.keyboard.press('End')
+    assert.equal(await connection(page, 'openai').getAttribute('aria-checked'), 'true')
+    await page.keyboard.press('Home')
+    assert.equal(await connection(page, 'acp-codex').getAttribute('aria-checked'), 'true')
+    await page.keyboard.press('ArrowDown')
+    assert.equal(await connection(page, 'openai').getAttribute('aria-checked'), 'true')
     assert.deepEqual(await page.evaluate(() => window.evidence.mutations), [])
     assert.deepEqual(await page.evaluate(() => window.evidence.auth), [])
   })
@@ -157,10 +200,11 @@ test('conversation model and account workflow preserves the chosen route until a
     await t.test(`${method} stays inside the chat; success refreshes without switching the model`, async s => {
       const page = await pageFor(s)
       await open(page, 'OpenAI', provider)
-      await page.getByRole('button', { name: 'Save key or sign in', exact: true }).click()
+      await page.getByRole('button', { name: method, exact: true }).click()
       const setup = page.getByRole('region', { name: 'Connect account' })
       await setup.waitFor()
-      assert.equal(await setup.locator('input').getAttribute('type'), 'password')
+      if (method === 'Save key') assert.equal(await setup.locator('input').getAttribute('type'), 'password')
+      else assert.equal(await setup.locator('input').count(), 0, 'CLI sign-in never suggests an API key')
       assert.deepEqual(await page.evaluate(() => window.evidence.auth), [], 'opening does not start authentication')
       if (method === 'Save key') await setup.getByLabel('API key', { exact: true }).fill('fake-test-key')
       await setup.getByRole('button', { name: method, exact: true }).click()
@@ -228,4 +272,72 @@ test('conversation model and account workflow preserves the chosen route until a
     await page.getByRole('dialog').waitFor({ state: 'detached' })
     assert.equal(await page.locator(':focus').getAttribute('class'), 'bt-model-trigger')
   })
+
+  for (const theme of ['light', 'dark']) {
+    await t.test(`${theme} theme keeps selected routes and focused controls legible`, async s => {
+      const page = await pageFor(s)
+      await page.evaluate(dark => {
+        document.body.toggleAttribute('data-ds-dark-theme', dark)
+        window.evidence.ready.push('openai')
+      }, theme === 'dark')
+      await open(page, 'OpenAI', 'openai')
+      await page.getByRole('menuitemradio', { name: 'GPT API', exact: true }).click()
+      await page.getByRole('dialog').waitFor({ state: 'detached' })
+      await open(page, 'OpenAI')
+      await page.keyboard.press('Tab')
+      const active = page.locator(':focus')
+      assert.equal(await active.getAttribute('role'), 'radio')
+      assert.equal(await active.getAttribute('aria-checked'), 'true')
+      const company = page.getByRole('combobox', { name: 'Company', exact: true })
+      assert.equal(await company.evaluate(element => getComputedStyle(element).colorScheme), theme)
+      const ratios = await page.getByRole('dialog').evaluate(dialog => {
+        const canvas = document.createElement('canvas')
+        canvas.width = canvas.height = 1
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        const rgba = value => {
+          context.clearRect(0, 0, 1, 1)
+          context.fillStyle = value
+          context.fillRect(0, 0, 1, 1)
+          const color = [...context.getImageData(0, 0, 1, 1).data]
+          color[3] /= 255
+          return color
+        }
+        const composite = (front, back) => front.slice(0, 3).map((channel, i) => channel * front[3] + back[i] * (1 - front[3]))
+        const background = element => {
+          const ancestors = []
+          for (let node = element; node; node = node.parentElement) ancestors.unshift(node)
+          return ancestors.reduce((color, node) => composite(rgba(getComputedStyle(node).backgroundColor), color), [255, 255, 255])
+        }
+        const luminance = color => color.slice(0, 3).map(channel => {
+          const value = channel / 255
+          return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4
+        }).reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0)
+        const contrast = (first, second) => {
+          const a = luminance(first)
+          const b = luminance(second)
+          return (Math.max(a, b) + .05) / (Math.min(a, b) + .05)
+        }
+        const results = [...dialog.querySelectorAll('select,option,.bt-model-connection-name,.bt-model-connection-method,.bt-model-connection-heading,.bt-menu-label,.bt-model-group')].map(element => {
+          const bg = background(element)
+          return { text: element.textContent.trim(), ratio: contrast(composite(rgba(getComputedStyle(element).color), bg), bg) }
+        })
+        const focused = document.activeElement
+        const focusStyle = getComputedStyle(focused)
+        return {
+          text: results,
+          focusWidth: parseFloat(focusStyle.outlineWidth),
+          focus: contrast(rgba(focusStyle.outlineColor), background(focused.parentElement)),
+        }
+      })
+      for (const { text, ratio } of ratios.text) assert.ok(ratio >= 4.5, `${theme}: ${text} text contrast ${ratio.toFixed(2)} must reach 4.5`)
+      assert.ok(ratios.focusWidth >= 2, `${theme}: keyboard focus has a visible outline`)
+      assert.ok(ratios.focus >= 3, `${theme}: focus contrast ${ratios.focus.toFixed(2)} must reach 3`)
+      s.diagnostic(`${theme}: minimum text contrast ${Math.min(...ratios.text.map(row => row.ratio)).toFixed(2)}:1; focus ${ratios.focus.toFixed(2)}:1`)
+      const folder = process.env.MODEL_PICKER_EVIDENCE_DIR
+      if (folder) {
+        mkdirSync(folder, { recursive: true })
+        await page.getByRole('dialog').screenshot({ path: join(folder, `${theme}-selected-focused.png`) })
+      }
+    })
+  }
 })

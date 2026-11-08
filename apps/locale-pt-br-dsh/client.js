@@ -1549,7 +1549,15 @@ const pack = createPack({
     "Leads the team": "Lidera a equipe",
     "Has a computer: ask it for code, files and commands.": "Tem computador: peça código, arquivos e comandos.",
     "Works in your Omni channels: ask it to read, send or answer messages there.": "Trabalha nos seus canais do Omni: peça para ler, enviar ou responder mensagens lá.",
-    "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo."
+    "Leads the team: ask it to plan work, make Bots and hand tasks to the right one.": "Lidera a equipe: peça para planejar o trabalho, criar Bots e passar cada tarefa ao Bot certo.",
+    "API key only": "Somente chave de API",
+    "Connection settings": "Configurações da conexão",
+    "No account needed": "Não precisa de conta",
+    "Provider settings": "Configurações do provedor",
+    "Set up this provider in Models and providers.": "Configure este provedor em Modelos e provedores.",
+    "Sign in": "Fazer login",
+    "Sign in or API key": "Login ou chave de API",
+    "Sign in or use an API key": "Fazer login ou usar chave de API"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

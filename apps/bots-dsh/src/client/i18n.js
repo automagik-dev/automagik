@@ -5,6 +5,14 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Sign in": "登录",
+  "API key only": "仅 API 密钥",
+  "No account needed": "无需账户",
+  "Provider settings": "服务商设置",
+  "Sign in or API key": "登录或 API 密钥",
+  "Sign in or use an API key": "登录或使用 API 密钥",
+  "Connection settings": "连接设置",
+  "Set up this provider in Models and providers.": "请在“模型和服务商”中设置此服务商。",
   "The API key could not be checked. Try again before changing models.": "无法检查 API 密钥。请重试后再切换模型。",
   "Save an API key for this provider before changing models.": "请先保存此服务商的 API 密钥，再切换模型。",
   "Sign in to this provider before changing models.": "请先登录此服务商，再切换模型。",

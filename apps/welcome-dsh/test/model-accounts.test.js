@@ -58,16 +58,40 @@ const plain = value => JSON.parse(JSON.stringify(value))
 test('account metadata includes disconnected providers and never exposes credential fields', () => {
   const { ui } = client()
   const rows = ui.providerAccounts({ rows: [
-    { id: 'claude', name: 'Claude', kind: 'signin', ready: false, on: false, apiKey: 'private' },
+    { id: 'claude', name: 'Claude', kind: 'signin', signIn: true, keyUrl: 'https://example.com/keys', ready: false, on: false, apiKey: 'private' },
     { id: 'openai', name: 'OpenAI API', kind: 'key', ready: true, on: false },
     { id: 'deepseek', name: 'DeepSeek', kind: 'key', ready: true, on: true },
+    { id: 'chatgpt', name: 'ChatGPT', kind: 'signin', signIn: true, ready: false, on: false },
+    { id: 'ollama', name: 'Ollama', kind: 'local', ready: true, on: true },
   ] }, { available: true, agents: [{ id: 'acp-codex', on: true, signedIn: false, connector: { state: 'ready' } }] })
   assert.deepEqual(plain(rows), [
-    { provider: 'anthropic', name: 'Claude', company: 'Anthropic', ready: false, kind: 'signin' },
-    { provider: 'openai', name: 'OpenAI API', company: 'OpenAI', ready: false, kind: 'key' },
-    { provider: 'deepseek', name: 'DeepSeek', company: 'DeepSeek', ready: true, kind: 'key' },
-    { provider: 'acp-codex', name: 'Codex', company: 'OpenAI', ready: false, kind: 'cli' },
+    { provider: 'anthropic', name: 'Claude', company: 'Anthropic', ready: false, kind: 'signin', authMethods: ['login', 'key'] },
+    { provider: 'openai', name: 'OpenAI API', company: 'OpenAI', ready: false, kind: 'key', authMethods: ['key'] },
+    { provider: 'deepseek', name: 'DeepSeek', company: 'DeepSeek', ready: true, kind: 'key', authMethods: ['key'] },
+    { provider: 'openai-codex', name: 'ChatGPT', company: 'OpenAI', ready: false, kind: 'signin', authMethods: ['login'] },
+    { provider: 'ollama', name: 'Ollama', company: 'Ollama', ready: true, kind: 'local', authMethods: [] },
+    { provider: 'acp-codex', name: 'Codex', company: 'OpenAI', ready: false, kind: 'cli', authMethods: ['login'] },
   ])
+})
+
+test('authentication capabilities follow available forms, including token-only subscriptions', () => {
+  const { ui } = client()
+  const rows = plain(ui.providerAccounts({ rows: [
+    { id: 'claude', name: 'Claude', kind: 'signin', signIn: false, keyUrl: 'https://example.com/keys' },
+    { id: 'chatgpt', name: 'ChatGPT', kind: 'signin', signIn: false, ready: true, found: 'Already signed in' },
+    { id: 'cliproxy', name: 'CLIProxyAPI', kind: 'gateway' },
+    { id: 'unknown', name: 'Unknown', kind: 'unknown', signIn: true },
+  ], subscriptions: { accounts: [], hidden: [] } }, null))
+  const methods = Object.fromEntries(rows.map(row => [row.provider, row.authMethods]))
+  assert.deepEqual(methods.anthropic, ['key'])
+  assert.equal(methods['openai-codex'], undefined)
+  assert.equal(Object.hasOwn(rows.find(row => row.provider === 'openai-codex'), 'authMethods'), false)
+  assert.deepEqual(methods.cliproxy, ['key'])
+  assert.equal(methods.unknown, undefined)
+  assert.equal(Object.hasOwn(rows.find(row => row.provider === 'unknown'), 'authMethods'), false)
+  assert.deepEqual(methods.perplexity, ['login'])
+  assert.deepEqual(methods.jetbrains, ['login'])
+  for (const provider of ['cursor', 'kiro', 'glm', 'qwen', 'cody', 'replit']) assert.deepEqual(methods[provider], ['key'])
 })
 
 test('the independent slot registers account metadata and its component with teardown', () => {
@@ -96,12 +120,30 @@ test('opening a provider only reads its state; sign-in waits for the user', asyn
   await mounted.settle()
   assert.deepEqual(calls, ['ais'])
   assert.equal(nodes(mounted.current, node => typeof node.type === 'function').length, 0)
-  button(mounted.current, 'Sign in or connect an account').props.onClick()
+  button(mounted.current, 'Sign in to ChatGPT').props.onClick()
   await mounted.settle()
   const [setup] = nodes(mounted.current, node => typeof node.type === 'function')
   assert.equal(setup.props.row.id, 'chatgpt')
   assert.equal(setup.props.cancelOnUnmount, true)
   mounted.unmount()
+})
+
+test('account setup labels distinguish available login, key, and local connections', async () => {
+  for (const [row, expected] of [
+    [{ id: 'claude', name: 'Claude', kind: 'signin', signIn: true, keyUrl: 'https://example.com/keys', ready: true }, 'Sign in or use an API key'],
+    [{ id: 'claude', name: 'Claude', kind: 'signin', signIn: false, keyUrl: 'https://example.com/keys', ready: true }, 'Use an API key'],
+    [{ id: 'ollama', name: 'Ollama', kind: 'local', ready: true }, null],
+    [{ id: 'chatgpt', name: 'ChatGPT', kind: 'signin', signIn: false, ready: false }, null],
+  ]) {
+    const { ui, mount } = client()
+    const request = async () => ({ rows: [{ ...row, on: true }] })
+    const provider = row.id === 'claude' ? 'anthropic' : row.id === 'chatgpt' ? 'openai-codex' : row.id
+    const mounted = mount(() => ui.ApiAccount({ provider, request }))
+    await mounted.settle()
+    const setupButtons = nodes(mounted.current, node => node.type === 'button' && node.props.className === 'oai-ghost')
+    assert.deepEqual(setupButtons.map(text), expected ? [expected] : [])
+    mounted.unmount()
+  }
 })
 
 test('enabling a connected provider refreshes the catalog without finishing onboarding or switching a model', async () => {

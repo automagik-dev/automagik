@@ -149,8 +149,11 @@ copy is in the `welcome.team` namespace, in English and pt-BR.
 
 The conversation's company and model picker opens the same key and sign-in forms through
 the `conversation.model.accounts` slot. Its component exposes an `accounts` descriptor with
-`providers()` metadata (`provider`, `name`, `company`, `kind`, `ready`) and `matches(provider)`;
+`providers()` metadata (`provider`, `name`, `company`, `kind`, `ready`, `authMethods`) and `matches(provider)`;
 the component receives `{ provider, onConnected, onClose }`. It loads independently of the Bot client bundle.
+`authMethods` contains `login` and/or `key` only when that setup is available: subscription
+tiles that accept pasted tokens advertise `key`, and local providers without authentication advertise neither.
+Unknown or unavailable setup methods omit `authMethods`; an empty list specifically identifies a local connection that needs no account.
 Opening the card only reads account state; signing in requires an explicit click. Keys go
 to DSH's credential store, and an authorized account enables its provider route. Completion
 refreshes the model catalog without changing the selected model or finishing onboarding.

@@ -43,6 +43,14 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Sign in": "登录",
+  "API key only": "仅 API 密钥",
+  "No account needed": "无需账户",
+  "Provider settings": "服务商设置",
+  "Sign in or API key": "登录或 API 密钥",
+  "Sign in or use an API key": "登录或使用 API 密钥",
+  "Connection settings": "连接设置",
+  "Set up this provider in Models and providers.": "请在“模型和服务商”中设置此服务商。",
   "The API key could not be checked. Try again before changing models.": "无法检查 API 密钥。请重试后再切换模型。",
   "Save an API key for this provider before changing models.": "请先保存此服务商的 API 密钥，再切换模型。",
   "Sign in to this provider before changing models.": "请先登录此服务商，再切换模型。",
@@ -4304,6 +4312,20 @@ var COMPANIES = {
   "kimi-coding": "Moonshot · Kimi"
 };
 var companyOf = (row) => COMPANIES[row.provider] ?? row.company ?? row.name ?? row.provider;
+function authMethodsOf(row) {
+  if (Array.isArray(row?.authMethods)) return row.authMethods.filter((method) => method === "login" || method === "key");
+  if (row?.key) return ["key"];
+  return void 0;
+}
+function connectionGroups(providers = []) {
+  const groups = new Map(["login", "key", "local", "settings"].map((id) => [id, []]));
+  for (const provider of providers) {
+    const methods = authMethodsOf(provider);
+    const kind = methods?.includes("login") ? "login" : methods?.includes("key") ? "key" : methods ? "local" : "settings";
+    groups.get(kind).push(provider);
+  }
+  return [...groups].filter(([, entries2]) => entries2.length > 0);
+}
 function modelCompanies(models = [], accounts = []) {
   const routes = /* @__PURE__ */ new Map();
   for (const row of accounts) {
@@ -4526,6 +4548,54 @@ function ProviderKeySetup({ provider, actions, onConnected, onClose }) {
     (0, import_react11.createElement)("button", { type: "button", disabled: busy, onClick: onClose }, t("Back to models"))
   );
 }
+var connectionKindLabel = (kind) => ({ login: t("Sign in"), key: t("API key only"), local: t("No account needed"), settings: t("Provider settings") })[kind];
+function ConnectionRows({ providers, current, disabled, onPick }) {
+  const navigate = (event) => {
+    if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    const rows2 = [...event.currentTarget.querySelectorAll("button[role=radio]:not(:disabled)")];
+    if (rows2.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const at = rows2.indexOf(event.target.closest("button[role=radio]"));
+    const next = event.key === "Home" ? 0 : event.key === "End" ? rows2.length - 1 : (at + (["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1) + rows2.length) % rows2.length;
+    rows2[next].focus();
+    onPick(rows2[next].dataset.provider);
+  };
+  return (0, import_react11.createElement)(
+    "div",
+    { className: "bt-model-connections", role: "radiogroup", "aria-label": t("Connection"), onKeyDown: navigate },
+    connectionGroups(providers).map(([kind, rows2]) => (0, import_react11.createElement)(
+      "div",
+      { key: kind, className: "bt-model-connection-group", role: "group", "aria-label": connectionKindLabel(kind) },
+      (0, import_react11.createElement)("div", { className: "bt-model-connection-heading", "aria-hidden": true }, connectionKindLabel(kind)),
+      rows2.map((row) => (0, import_react11.createElement)(
+        "button",
+        {
+          key: row.provider,
+          type: "button",
+          role: "radio",
+          "aria-checked": row.provider === current,
+          tabIndex: row.provider === current ? 0 : -1,
+          className: "bt-model-connection",
+          "data-provider": row.provider,
+          disabled,
+          onClick: () => onPick(row.provider)
+        },
+        (0, import_react11.createElement)(
+          "span",
+          { className: "bt-model-connection-copy" },
+          (0, import_react11.createElement)("span", { className: "bt-model-connection-name" }, row.name ?? row.provider),
+          (0, import_react11.createElement)("span", { className: "bt-model-connection-method" }, authMethodsOf(row)?.length === 2 ? t("Sign in or API key") : connectionKindLabel(kind))
+        ),
+        row.provider === current ? (0, import_react11.createElement)(CheckIcon) : null
+      ))
+    ))
+  );
+}
+function accountActionLabel(row) {
+  const methods = authMethodsOf(row);
+  return methods?.includes("login") ? methods.includes("key") ? t("Sign in or use an API key") : t("Sign in") : methods?.includes("key") ? t("Save key") : t("Connection settings");
+}
 function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick, onPickEffort, disabled = false }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu(360);
   const [accounts, setAccounts] = (0, import_react11.useState)([]);
@@ -4611,7 +4681,8 @@ function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick
   const models = roster.models ?? [];
   const companies = modelCompanies(offeredModels(models, current), accounts);
   const currentProvider = current?.split("/")[0];
-  const activeCompany = companies.find((row) => row.name === company) ?? companies.find((row) => row.providers.some((item) => item.provider === currentProvider)) ?? companies[0];
+  const preferredProvider = currentProvider ?? roster.defaultModel?.split("/")[0];
+  const activeCompany = companies.find((row) => row.name === company) ?? companies.find((row) => row.providers.some((item) => item.provider === preferredProvider)) ?? companies.find((row) => row.providers.some((item) => item.models.length > 0)) ?? companies.find((row) => row.providers.some((item) => (authMethodsOf(item)?.length ?? 0) > 0)) ?? companies[0];
   const activeProvider = activeCompany?.providers.find((row) => row.provider === provider) ?? activeCompany?.providers.find((row) => row.provider === currentProvider) ?? activeCompany?.providers[0];
   const accountEntry = (actions?.modelAccountEntries?.() ?? []).find((entry) => accountDescriptor(entry).matches?.(setup || activeProvider?.provider));
   const keySetup = activeProvider?.key?.writable === true && typeof actions?.setProviderKey === "function";
@@ -4670,26 +4741,23 @@ function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick
         } },
         companies.map((row) => (0, import_react11.createElement)("option", { key: row.name, value: row.name }, row.name))
       )),
-      activeCompany?.providers.length > 1 ? (0, import_react11.createElement)("label", { className: "bt-model-field" }, t("Connection"), (0, import_react11.createElement)(
-        "select",
-        { "aria-label": t("Connection"), value: activeProvider?.provider ?? "", disabled: busy, onChange: (event) => {
-          setProvider(event.target.value);
+      activeCompany ? (0, import_react11.createElement)(ConnectionRows, {
+        providers: activeCompany.providers,
+        current: activeProvider?.provider,
+        disabled: busy,
+        onPick: (value) => {
+          setProvider(value);
           setSetup("");
           setProblem("");
-        } },
-        activeCompany.providers.map((row) => (0, import_react11.createElement)(
-          "option",
-          { key: row.provider, value: row.provider },
-          activeCompany.providers.filter((other) => other.name === row.name).length > 1 ? `${row.name ?? row.provider} (${row.provider})` : row.name ?? row.provider
-        ))
-      )) : null,
+        }
+      }) : null,
       problem ? (0, import_react11.createElement)("div", { className: "bt-model-error", role: "alert" }, problem) : null,
       busy ? (0, import_react11.createElement)("div", { className: "bt-model-none", role: "status" }, t("Checking access…")) : null,
       setup && (accountEntry || keySetup) ? (0, import_react11.createElement)("div", { className: "bt-model-account-setup" }, (0, import_react11.createElement)(accountEntry?.component ?? ProviderKeySetup, { provider: setup, actions, onConnected: connected, onClose: () => setSetup("") })) : (0, import_react11.createElement)(
         import_react11.Fragment,
         null,
-        (accountEntry || keySetup) && activeProvider ? (0, import_react11.createElement)("button", { type: "button", disabled: busy, onClick: () => setSetup(activeProvider.provider) }, (0, import_react11.createElement)(KeyIcon), accountEntry ? t("Save key or sign in") : t("Save key")) : null,
-        activeProvider?.models.length > 0 ? (0, import_react11.createElement)("div", { role: "menu", "aria-label": t("Models") }, (0, import_react11.createElement)(ModelRows, { roster: { ...roster, models: activeProvider.models }, current, onPick: pick2, disabled: busy || disabled })) : (0, import_react11.createElement)("div", { className: "bt-model-none" }, t("Connect this account to load its models.")),
+        (accountEntry || keySetup) && activeProvider ? (0, import_react11.createElement)("button", { type: "button", className: "bt-model-connect-action", disabled: busy, onClick: () => setSetup(activeProvider.provider) }, (0, import_react11.createElement)(KeyIcon), accountActionLabel(activeProvider)) : null,
+        activeProvider?.models.length > 0 ? (0, import_react11.createElement)("div", { role: "menu", "aria-label": t("Models") }, (0, import_react11.createElement)(ModelRows, { roster: { ...roster, models: activeProvider.models }, current, onPick: pick2, disabled: busy || disabled })) : (0, import_react11.createElement)("div", { className: "bt-model-none" }, accountEntry || keySetup ? t("Connect this account to load its models.") : t("Set up this provider in Models and providers.")),
         activeProvider?.provider === currentProvider && effortRows(reasoning).length > 0 ? (0, import_react11.createElement)("div", { role: "menu", "aria-label": t("Thinking level") }, (0, import_react11.createElement)(EffortRows, { reasoning, current: picked, onPick: pickEffort })) : null
       ),
       manage ? (0, import_react11.createElement)("div", { className: "bt-menu-sep", role: "separator" }) : null,
@@ -4917,8 +4985,21 @@ var MODEL_CSS = `
 .bt-model-trigger[aria-expanded=true] .bt-model-caret{transform:rotate(180deg)}
 .bt-model-menu{overflow-y:auto;scrollbar-width:thin}
 .bt-model-account-menu{padding:10px;box-sizing:border-box}
-.bt-model-field{display:flex;flex-direction:column;gap:5px;padding:3px 2px 9px;font-size:12px;color:var(--bt-ink-2)}
-.bt-model-field select{width:100%;min-height:34px;padding:5px 8px;border:1px solid var(--bt-line);border-radius:8px;background:var(--bt-surface);color:var(--bt-ink);font:inherit}
+.bt-model-field{display:flex;flex-direction:column;gap:6px;padding:3px 2px 9px;font-size:12px;font-weight:600;color:var(--bt-ink)}
+.bt-model-field select{width:100%;min-height:38px;padding:7px 10px;border:1px solid var(--bt-line-2);border-radius:8px;background:var(--bt-card);color:var(--bt-ink);font:inherit;color-scheme:light}
+body[data-ds-dark-theme] .bt-model-field select{color-scheme:dark}
+.bt-model-field :is(option,optgroup){background:var(--bt-card);color:var(--bt-ink)}
+.bt-model-connections{display:grid;gap:10px;padding:2px 2px 10px}
+.bt-model-connection-group{display:grid;gap:4px}
+.bt-model-connection-heading{padding:2px 2px 4px;color:var(--bt-ink);font-size:12px;font-weight:600}
+.bt-model-menu .bt-model-connection{min-height:46px;padding:8px 10px;border:1px solid var(--bt-line-2);background:var(--bt-card);color:var(--bt-ink);justify-content:space-between}
+.bt-model-menu .bt-model-connection[aria-checked=true]{background:var(--bt-active,var(--bt-hover));border-color:var(--bt-accent);box-shadow:inset 3px 0 var(--bt-accent)}
+.bt-model-connection-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bt-model-connection-name{font-weight:600;white-space:normal}
+.bt-model-connection-method{font-size:11px;line-height:16px;color:var(--bt-ink)}
+.bt-model-menu .bt-model-connect-action{margin:2px 0 6px;padding:8px 10px;min-height:36px;background:var(--bt-card);border:1px solid var(--bt-line-2);font-weight:600}
+.bt-model-account-menu [role=menuitemradio][aria-checked=true]{background:var(--bt-active,var(--bt-hover));color:var(--bt-ink);box-shadow:inset 3px 0 var(--bt-accent)}
+.bt-model-account-menu .bt-model-group{color:var(--bt-ink);font-weight:600}
 .bt-model-error{padding:8px;margin:4px 0;border-radius:8px;background:var(--bt-hover);color:var(--bt-danger);font-size:12px;line-height:1.5;white-space:normal}
 .bt-model-account-setup{padding:6px 2px;white-space:normal}
 .bt-model-key-form{display:grid;gap:8px;font-size:12px}

@@ -10,6 +10,24 @@ const COMPANIES = {
 
 export const companyOf = row => COMPANIES[row.provider] ?? row.company ?? row.name ?? row.provider
 
+// Capabilities describe the connection form, not whether the account is signed in.
+// An absent declaration stays unknown; an explicit empty list is a local connection.
+export function authMethodsOf(row) {
+  if (Array.isArray(row?.authMethods)) return row.authMethods.filter(method => method === 'login' || method === 'key')
+  if (row?.key) return ['key']
+  return undefined
+}
+
+export function connectionGroups(providers = []) {
+  const groups = new Map(['login', 'key', 'local', 'settings'].map(id => [id, []]))
+  for (const provider of providers) {
+    const methods = authMethodsOf(provider)
+    const kind = methods?.includes('login') ? 'login' : methods?.includes('key') ? 'key' : methods ? 'local' : 'settings'
+    groups.get(kind).push(provider)
+  }
+  return [...groups].filter(([, entries]) => entries.length > 0)
+}
+
 export function modelCompanies(models = [], accounts = []) {
   const routes = new Map()
   for (const row of accounts) {

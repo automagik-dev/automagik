@@ -13,10 +13,29 @@ const CLI_IDS = ['acp-claude', 'acp-codex']
 const accountRows = reply => [...(reply?.rows ?? []), ...subscriptionRows(reply?.subscriptions)]
 const rowProvider = row => row.kind === 'subscription' ? row.tile.provider : providerOf(row)
 
+// Describe the setup this DSH actually offers. A vendor name or an existing account does
+// not imply a browser login: several subscription tiles only accept a pasted token.
+function authMethodsOf(row) {
+  if (row.kind === 'local') return []
+  if (row.kind === 'key' || row.kind === 'gateway') return ['key']
+  if (row.kind === 'signin') {
+    const methods = [...(row.signIn === true ? ['login'] : []), ...(row.keyUrl ? ['key'] : [])]
+    return methods.length ? methods : undefined
+  }
+  if (row.kind === 'subscription') {
+    if (['browser', 'device'].includes(row.tile?.kind)) return ['login']
+    if (row.tile?.kind === 'token') return ['key']
+  }
+  return undefined
+}
+
 export function providerAccounts(ais, acp) {
   return [
-    ...accountRows(ais).map(row => ({ provider: rowProvider(row), name: row.name, company: COMPANY_OF[rowProvider(row)] ?? row.name, ready: row.ready === true && row.on === true, kind: row.kind })),
-    ...(acp?.available ? acp.agents ?? [] : []).map(agent => ({ provider: agent.id, name: agent.id === 'acp-claude' ? 'Claude Code' : 'Codex', company: COMPANY_OF[agent.id] ?? agent.name, kind: 'cli', ready: agent.on === true && agent.signedIn === true && agent.connector.state === 'ready' && !agent.restartNeeded })),
+    ...accountRows(ais).map(row => {
+      const authMethods = authMethodsOf(row)
+      return { provider: rowProvider(row), name: row.name, company: COMPANY_OF[rowProvider(row)] ?? row.name, ready: row.ready === true && row.on === true, kind: row.kind, ...(authMethods === undefined ? {} : { authMethods }) }
+    }),
+    ...(acp?.available ? acp.agents ?? [] : []).map(agent => ({ provider: agent.id, name: agent.id === 'acp-claude' ? 'Claude Code' : 'Codex', company: COMPANY_OF[agent.id] ?? agent.name, kind: 'cli', authMethods: ['login'], ready: agent.on === true && agent.signedIn === true && agent.connector.state === 'ready' && !agent.restartNeeded })),
   ]
 }
 
@@ -86,6 +105,10 @@ export function ApiAccount({ provider, onConnected, onClose, request = call }) {
   // SignIn starts on mount, so show it only after the person chooses Sign in. Key forms
   // have no mount-time writes and can be offered immediately when no credential exists.
   const showForm = row && (editing || (!row.ready && row.kind !== 'signin' && row.kind !== 'subscription'))
+  const methods = row ? authMethodsOf(row) ?? [] : []
+  const setupLabel = methods.includes('login')
+    ? methods.includes('key') ? t('Sign in or use an API key') : t('Sign in to {name}', { name: row.name })
+    : row?.kind === 'subscription' ? t('Use a key or token') : t('Use an API key')
   return h('div', { className: 'oai-account-body' },
     problem ? h('p', { className: 'oai-error', role: 'alert' }, problem) : null,
     !row && !problem ? h('p', { className: 'oai-muted' }, t('Looking at what this computer has…')) : null,
@@ -94,7 +117,8 @@ export function ApiAccount({ provider, onConnected, onClose, request = call }) {
     row && !showForm ? h('div', { className: 'oai-account-actions' },
       row.ready ? h('p', { className: 'oai-muted', role: 'status' }, row.on ? t('Connected. Choose a model to use it.') : t('This account is connected and turned off.')) : null,
       row.ready && !row.on ? h('button', { type: 'button', className: 'oai-primary', disabled: busy, onClick: enable }, t('Turn on')) : null,
-      h('button', { type: 'button', className: 'oai-ghost', disabled: busy, onClick: () => setEditing(true) }, row.kind === 'key' || (row.kind === 'signin' && !row.signIn) ? t('Use an API key') : t('Sign in or connect an account'))) : null,
+      methods.length > 0 ? h('button', { type: 'button', className: 'oai-ghost', disabled: busy, onClick: () => setEditing(true) }, setupLabel) : null,
+      !row.ready && row.kind === 'signin' && methods.length === 0 ? h('p', { className: 'oai-muted' }, t('This DSH offers no {name} sign-in.', { name: row.name })) : null) : null,
     h('p', { className: 'oai-muted' }, t('Keys and sign-in details are kept out of the conversation.')),
     h('button', { type: 'button', className: 'oai-quiet', onClick: onClose }, t('Back to models')))
 }

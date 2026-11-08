@@ -7,7 +7,7 @@ import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
-import { chooseAccessibleModel, modelCompanies } from './model-companies.js'
+import { authMethodsOf, chooseAccessibleModel, connectionGroups, modelCompanies } from './model-companies.js'
 
 const MENU_EXIT_MS = 120
 // DSH stores only its declared registration options. Extension metadata travels
@@ -205,6 +205,40 @@ function ProviderKeySetup({ provider, actions, onConnected, onClose }) {
     h('button', { type: 'button', disabled: busy, onClick: onClose }, t('Back to models')))
 }
 
+const connectionKindLabel = kind => ({ login: t('Sign in'), key: t('API key only'), local: t('No account needed'), settings: t('Provider settings') })[kind]
+function ConnectionRows({ providers, current, disabled, onPick }) {
+  const navigate = event => {
+    if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return
+    const rows = [...event.currentTarget.querySelectorAll('button[role=radio]:not(:disabled)')]
+    if (rows.length === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const at = rows.indexOf(event.target.closest('button[role=radio]'))
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
+      : (at + (['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1) + rows.length) % rows.length
+    rows[next].focus()
+    onPick(rows[next].dataset.provider)
+  }
+  return h('div', { className: 'bt-model-connections', role: 'radiogroup', 'aria-label': t('Connection'), onKeyDown: navigate },
+    connectionGroups(providers).map(([kind, rows]) => h('div', { key: kind, className: 'bt-model-connection-group', role: 'group', 'aria-label': connectionKindLabel(kind) },
+      h('div', { className: 'bt-model-connection-heading', 'aria-hidden': true }, connectionKindLabel(kind)),
+      rows.map(row => h('button', {
+        key: row.provider, type: 'button', role: 'radio', 'aria-checked': row.provider === current,
+        tabIndex: row.provider === current ? 0 : -1,
+        className: 'bt-model-connection', 'data-provider': row.provider, disabled, onClick: () => onPick(row.provider),
+      },
+      h('span', { className: 'bt-model-connection-copy' },
+        h('span', { className: 'bt-model-connection-name' }, row.name ?? row.provider),
+        h('span', { className: 'bt-model-connection-method' }, authMethodsOf(row)?.length === 2 ? t('Sign in or API key') : connectionKindLabel(kind))),
+      row.provider === current ? h(CheckIcon) : null)))))
+}
+
+function accountActionLabel(row) {
+  const methods = authMethodsOf(row)
+  return methods?.includes('login') ? methods.includes('key') ? t('Sign in or use an API key') : t('Sign in')
+    : methods?.includes('key') ? t('Save key') : t('Connection settings')
+}
+
 function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick, onPickEffort, disabled = false }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu(360)
   const [accounts, setAccounts] = useState([])
@@ -278,8 +312,11 @@ function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick
   const models = roster.models ?? []
   const companies = modelCompanies(offeredModels(models, current), accounts)
   const currentProvider = current?.split('/')[0]
+  const preferredProvider = currentProvider ?? roster.defaultModel?.split('/')[0]
   const activeCompany = companies.find(row => row.name === company)
-    ?? companies.find(row => row.providers.some(item => item.provider === currentProvider)) ?? companies[0]
+    ?? companies.find(row => row.providers.some(item => item.provider === preferredProvider))
+    ?? companies.find(row => row.providers.some(item => item.models.length > 0))
+    ?? companies.find(row => row.providers.some(item => (authMethodsOf(item)?.length ?? 0) > 0)) ?? companies[0]
   const activeProvider = activeCompany?.providers.find(row => row.provider === provider)
     ?? activeCompany?.providers.find(row => row.provider === currentProvider) ?? activeCompany?.providers[0]
   const accountEntry = (actions?.modelAccountEntries?.() ?? []).find(entry => accountDescriptor(entry).matches?.(setup || activeProvider?.provider))
@@ -310,16 +347,15 @@ function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu bt-model-account-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'dialog', 'aria-label': t('Model for {name}', { name: bot.name }), 'aria-busy': busy, style: shownPlace, 'data-leaving': leaving || undefined },
       h('label', { className: 'bt-model-field' }, t('Company'), h('select', { 'aria-label': t('Company'), value: activeCompany?.name ?? '', disabled: busy, onChange: event => { setCompany(event.target.value); setProvider(''); setSetup(''); setProblem('') } },
         companies.map(row => h('option', { key: row.name, value: row.name }, row.name)))),
-      activeCompany?.providers.length > 1 ? h('label', { className: 'bt-model-field' }, t('Connection'), h('select', { 'aria-label': t('Connection'), value: activeProvider?.provider ?? '', disabled: busy, onChange: event => { setProvider(event.target.value); setSetup(''); setProblem('') } },
-        activeCompany.providers.map(row => h('option', { key: row.provider, value: row.provider },
-          activeCompany.providers.filter(other => other.name === row.name).length > 1 ? `${row.name ?? row.provider} (${row.provider})` : row.name ?? row.provider)))) : null,
+      activeCompany ? h(ConnectionRows, { providers: activeCompany.providers, current: activeProvider?.provider, disabled: busy,
+        onPick: value => { setProvider(value); setSetup(''); setProblem('') } }) : null,
       problem ? h('div', { className: 'bt-model-error', role: 'alert' }, problem) : null,
       busy ? h('div', { className: 'bt-model-none', role: 'status' }, t('Checking access…')) : null,
       setup && (accountEntry || keySetup) ? h('div', { className: 'bt-model-account-setup' }, h(accountEntry?.component ?? ProviderKeySetup, { provider: setup, actions, onConnected: connected, onClose: () => setSetup('') }))
         : h(Fragment, null,
-          (accountEntry || keySetup) && activeProvider ? h('button', { type: 'button', disabled: busy, onClick: () => setSetup(activeProvider.provider) }, h(KeyIcon), accountEntry ? t('Save key or sign in') : t('Save key')) : null,
+          (accountEntry || keySetup) && activeProvider ? h('button', { type: 'button', className: 'bt-model-connect-action', disabled: busy, onClick: () => setSetup(activeProvider.provider) }, h(KeyIcon), accountActionLabel(activeProvider)) : null,
           activeProvider?.models.length > 0 ? h('div', { role: 'menu', 'aria-label': t('Models') }, h(ModelRows, { roster: { ...roster, models: activeProvider.models }, current, onPick: pick, disabled: busy || disabled }))
-            : h('div', { className: 'bt-model-none' }, t('Connect this account to load its models.')),
+            : h('div', { className: 'bt-model-none' }, accountEntry || keySetup ? t('Connect this account to load its models.') : t('Set up this provider in Models and providers.')),
           activeProvider?.provider === currentProvider && effortRows(reasoning).length > 0 ? h('div', { role: 'menu', 'aria-label': t('Thinking level') }, h(EffortRows, { reasoning, current: picked, onPick: pickEffort })) : null),
       manage ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
       manage ? h('button', { type: 'button', role: 'menuitem', onClick: () => { close(); manage() } }, h(SlidersIcon), h('span', { className: 'bt-menu-label' }, t('Models and providers…'))) : null), document.body) : null)
@@ -528,8 +564,21 @@ export const MODEL_CSS = `
 .bt-model-trigger[aria-expanded=true] .bt-model-caret{transform:rotate(180deg)}
 .bt-model-menu{overflow-y:auto;scrollbar-width:thin}
 .bt-model-account-menu{padding:10px;box-sizing:border-box}
-.bt-model-field{display:flex;flex-direction:column;gap:5px;padding:3px 2px 9px;font-size:12px;color:var(--bt-ink-2)}
-.bt-model-field select{width:100%;min-height:34px;padding:5px 8px;border:1px solid var(--bt-line);border-radius:8px;background:var(--bt-surface);color:var(--bt-ink);font:inherit}
+.bt-model-field{display:flex;flex-direction:column;gap:6px;padding:3px 2px 9px;font-size:12px;font-weight:600;color:var(--bt-ink)}
+.bt-model-field select{width:100%;min-height:38px;padding:7px 10px;border:1px solid var(--bt-line-2);border-radius:8px;background:var(--bt-card);color:var(--bt-ink);font:inherit;color-scheme:light}
+body[data-ds-dark-theme] .bt-model-field select{color-scheme:dark}
+.bt-model-field :is(option,optgroup){background:var(--bt-card);color:var(--bt-ink)}
+.bt-model-connections{display:grid;gap:10px;padding:2px 2px 10px}
+.bt-model-connection-group{display:grid;gap:4px}
+.bt-model-connection-heading{padding:2px 2px 4px;color:var(--bt-ink);font-size:12px;font-weight:600}
+.bt-model-menu .bt-model-connection{min-height:46px;padding:8px 10px;border:1px solid var(--bt-line-2);background:var(--bt-card);color:var(--bt-ink);justify-content:space-between}
+.bt-model-menu .bt-model-connection[aria-checked=true]{background:var(--bt-active,var(--bt-hover));border-color:var(--bt-accent);box-shadow:inset 3px 0 var(--bt-accent)}
+.bt-model-connection-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bt-model-connection-name{font-weight:600;white-space:normal}
+.bt-model-connection-method{font-size:11px;line-height:16px;color:var(--bt-ink)}
+.bt-model-menu .bt-model-connect-action{margin:2px 0 6px;padding:8px 10px;min-height:36px;background:var(--bt-card);border:1px solid var(--bt-line-2);font-weight:600}
+.bt-model-account-menu [role=menuitemradio][aria-checked=true]{background:var(--bt-active,var(--bt-hover));color:var(--bt-ink);box-shadow:inset 3px 0 var(--bt-accent)}
+.bt-model-account-menu .bt-model-group{color:var(--bt-ink);font-weight:600}
 .bt-model-error{padding:8px;margin:4px 0;border-radius:8px;background:var(--bt-hover);color:var(--bt-danger);font-size:12px;line-height:1.5;white-space:normal}
 .bt-model-account-setup{padding:6px 2px;white-space:normal}
 .bt-model-key-form{display:grid;gap:8px;font-size:12px}
