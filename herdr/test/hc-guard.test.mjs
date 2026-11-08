@@ -661,7 +661,8 @@ test("a guard copy that calls its caller stops at once instead of looping", (t) 
 
 test("an older guard copy after this one cannot turn a refusal into an allow", (t) => {
   const s = scene(t);
-  const mod = join(s.root, "older-guard"), olderGuard = join(mod, "guard"), marker = join(mod, "older-ran");
+  const mod = join(s.root, "older-guard"), olderGuard = join(mod, "guard");
+  const log = join(mod, "older.log");
   mkdirSync(olderGuard, { recursive: true });
   for (const file of ["hcGuard.mjs", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
     copyFileSync(join(GUARD_DIR, "..", file), join(mod, file));
@@ -671,16 +672,35 @@ test("an older guard copy after this one cannot turn a refusal into an allow", (
     .replace('    if (reentry(env)) return refused("a re-entry: the guard already ran for this call");\n', "");
   assert.doesNotMatch(older, /reentry\(env\)/, "the copy ignores the marker");
   writeFileSync(join(mod, "hcGuard.mjs"), older);
-  copyFileSync(join(GUARD_DIR, "hc"), join(olderGuard, "hc-guard"));
-  chmodSync(join(olderGuard, "hc-guard"), 0o755);
-  writeFileSync(join(olderGuard, "hc"), `#!/bin/sh\n: > "${marker}"\nexec node "${join(olderGuard, "hc-guard")}" "$@"\n`);
+  // Its hc is only a pass-through to the stub, logging the lookups the current guard asks for.
+  writeFileSync(join(olderGuard, "hc"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${join(s.bin, "hc")}" "$@"\n`);
   chmodSync(join(olderGuard, "hc"), 0o755);
+  const path = `${GUARD_DIR}:${olderGuard}:${s.bin}:${dirname(process.execPath)}`;
+  const olderCalls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+  // A refused verb never resolves a real hc: the older copy is not even reached.
+  writeFileSync(log, "");
   writeFileSync(s.logPath, "");
-  const r = guardRun(s, ["exec", "echo", "x"], { PATH: `${GUARD_DIR}:${olderGuard}:${s.bin}:${dirname(process.execPath)}` });
-  assertRefused(r);
-  assert.match(r.stderr, /refused exec/);
-  assert.equal(existsSync(marker), false, "the older guard copy never ran");
+  const exec = guardRun(s, ["exec", "echo", "x"], { PATH: path });
+  assertRefused(exec);
+  assert.match(exec.stderr, /refused exec/);
+  assert.deepEqual(olderCalls(), [], "the older guard copy never ran for a refused verb");
   assert.deepEqual(calls(s), [], "the refusal came first; the stub never ran");
+  // send and label resolve their target through the older copy: its answers are the stub's
+  // (the pass-through), and the current guard still checks that target against the team it
+  // computed from bots.json, so a refused target stays refused.
+  for (const [args, why] of [
+    [["send", "t120", "hi"], /not in the caller's team/],
+    [["label", "t120", "role=reviewer"], /own worker/],
+  ]) {
+    writeFileSync(log, "");
+    writeFileSync(s.logPath, "");
+    const r = guardRun(s, args, { PATH: path });
+    assertRefused(r);
+    assert.match(r.stderr, why);
+    assert.ok(olderCalls().some((line) => line.startsWith("ls")), `the older copy answered ls: ${olderCalls()}`);
+    assert.ok(olderCalls().some((line) => line.startsWith("get t120")), `the older copy answered get t120: ${olderCalls()}`);
+    assert.equal(calls(s).some((argv) => argv[0] === args[0]), false, `${args[0]} never reached the stub`);
+  }
 });
 
 test("the guard shim's own failure lines name #628", (t) => {
