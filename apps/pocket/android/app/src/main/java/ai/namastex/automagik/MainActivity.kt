@@ -144,11 +144,15 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     // Hosts in the order they were saved, then any others: what the spaces tree, Projects and Tasks read.
     val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots, m.members) } } +
         state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots, m.members) }
-    val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
     val teams = rememberTeams(state, vm)
     // The Bots' `dsh:` chats, for Team's bubbles and Home's rows: a main bot's pane opens its DSH chat (RFC 0015 D29).
     val dsh = rememberDshChats(state, vm, reading = selected == null && state.screen in setOf(Nav.TEAM, Nav.HOME_TAB))
     val paneChats = remember(teams, dsh) { Teams.paneChats(Teams.bubbles(teams, dsh)) }
+    // Home counts the Bots' chats with the terminals: a chat that needs the person is a row, a Bot with a pane one row (#732).
+    val watched by vm.chatWatch.collectAsStateWithLifecycle()
+    val writes by vm.botWrites.collectAsStateWithLifecycle()
+    val chats = remember(dsh, watched, writes, teams) { Cockpit.chats(dsh, watched, writes, teams, System.currentTimeMillis()) }
+    val pulse = remember(sidebar, state.seen, chats) { Projects.pulse(sidebar, state.seen, chats) }
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
     val gitScreen = selected == null && state.screen == Nav.CODE
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
@@ -429,7 +433,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 item(key = "section:$rank") { SectionHeader(section.title, section.entries.size) }
                 section.entries.forEach { e ->
                     item(key = "c:${e.ref.hostId}:${e.ref.address}") {
-                        TerminalCard(e.terminal, location(e.ref), e.ref.address, status = Cockpit.status(e.terminal, Cockpit.seenKey(e.ref, e.terminal) in state.seen).let { word ->
+                        TerminalCard(e.terminal, location(e.ref), Cockpit.addressLabel(e.ref), status = Cockpit.status(e.terminal, Cockpit.seenKey(e.ref, e.terminal) in state.seen).let { word ->
                             if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }) { open(e.ref) }
                     }
                     items(e.kids, key = { "k:${it.first.hostId}:${it.first.address}" }) { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }

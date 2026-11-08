@@ -2,7 +2,7 @@
 title: "Privacy policy"
 type: policy
 created: 2026-11-01
-updated: 2026-11-07
+updated: 2026-11-08
 tags: [privacy, policy, play]
 ---
 # Automagik Pocket privacy policy
@@ -28,7 +28,7 @@ before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-de
 | Data | Where it goes | Why |
 |---|---|---|
 | Terminal screens, agent status, messages and replies you type or speak | Only between the phone and your machine | This is what the app is for |
-| Chat: an agent's transcript (its messages, tool calls with their input and output, approvals, questions and token counts) and the Automagik Bots' chats, sent by Pocket Link's chat route ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md)) | Only between the phone and your machine. Kept in memory while the chat is open, dropped when you leave it. While Home or Team shows, the list of the Bots' chats (each one's name, state and whether it is shown) is read every 30 seconds and kept in memory only. Never written to the phone's storage, never logged, never sent anywhere else | To show an agent as a chat beside its terminal. Tool output can hold secrets such as tokens; it is the same text the terminal already shows the phone, and it is not redacted |
+| Chat: an agent's transcript (its messages, tool calls with their input and output, approvals, questions and token counts) and the Automagik Bots' chats, sent by Pocket Link's chat route ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md)) | Only between the phone and your machine. Kept in memory while the chat is open, dropped when you leave it. While Home or Team shows, the list of the Bots' chats (each one's name, state and whether it is shown) is read every 30 seconds and kept in memory only, with what the phone saw of each chat's state between two readings and, for a request it saw answered, who answered and what (the Home row's Done line). Never written to the phone's storage, never logged, never sent anywhere else | To show an agent as a chat beside its terminal. Tool output can hold secrets such as tokens; it is the same text the terminal already shows the phone, and it is not redacted |
 | What you type, approve, deny or stop in an Automagik Bot's chat, when that computer's Pocket Link says it takes the phone's writes ([RFC 0015](../../../docs/rfcs/0015-live-chat-projection.md), Amendments, 2026-11-07) | Sent over Pocket Link to that computer's Automagik (DSH), and nowhere else: a message becomes your prompt in the Bot's current chat, recorded in that chat as yours; an approval or a question's answer settles that one request; Stop cancels the running turn. The computer records your phone's name with an approval you answer. Nothing of it is kept on the phone or logged | So you can talk to your Bots and answer their approvals from the phone. Only for the Bots the computer shows: a project's after its yes in Herdr or Automagik, and the global Bots, the Main Bot included. Allow for the whole session stays on the computer. Remove the phone in Pocket Link to end its writes within 2 seconds |
 | Paired machine details: name, session name, the desktop's Pocket Link ticket | Stays on the phone | To reconnect |
 | Machines saved over SSH by an older version: name, hostname, SSH user, port, session name, host key fingerprint | Stays on the phone and is never used to connect; deleted when you pair that computer with QR or remove it | So the card can ask you to pair it again ([RFC 0008](rfcs/0008-drop-ssh.md)) |

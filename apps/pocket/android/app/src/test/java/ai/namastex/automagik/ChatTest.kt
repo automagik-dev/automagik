@@ -424,9 +424,17 @@ class ChatTest {
     @Test fun theOpenChatsStateGoesIntoItsListRow() {
         fun row(t: String, status: String) = Chat.Terminal(t, "", "dsh", "Lead", status, "session")
         val list = listOf(row("dsh:session-1", "blocked"), row("dsh:session-2", "working"))
-        assertEquals(listOf("idle", "working"), Chat.withStatus(list, "dsh:session-1", "idle").map { it.status })
-        assertSame(list, Chat.withStatus(list, "dsh:session-1", "blocked"))
-        assertSame(list, Chat.withStatus(list, "dsh:other", "idle"))
-        assertSame(list, Chat.withStatus(list, "dsh:session-1", ""))
+        assertEquals(listOf("idle", "working"), Chat.withStatus(list, "dsh:session-1", Chat.Status("idle")).map { it.status })
+        assertSame(list, Chat.withStatus(list, "dsh:session-1", Chat.Status("blocked")))
+        assertSame(list, Chat.withStatus(list, "dsh:other", Chat.Status("idle")))
+        assertSame(list, Chat.withStatus(list, "dsh:session-1", Chat.Status("")))
+        // Blocked: the kind and what the open card asks go with it, for the Home row; idle clears the line.
+        val asked = Chat.withStatus(list, "dsh:session-1", Chat.Status("blocked", "question"), "Which branch?")
+        assertEquals(listOf("question", "Which branch?"), asked[0].let { listOf(it.kind, it.msg) })
+        assertEquals("", Chat.withStatus(asked, "dsh:session-1", Chat.Status("idle"))[0].msg)
+        val s = Chat.reduce(Chat.State("dsh:session-1"), j("""{"type":"question","row":{"id":"q1","kind":"question","prompt":"Which branch?","open":true}}"""))
+        assertEquals("Which branch?", Chat.asked(s))
+        assertEquals("Bash: npm test", Chat.asked(Chat.reduce(Chat.State("dsh:x"), j("""{"type":"approval","row":{"id":"a1","kind":"approval","tool":"Bash","summary":"npm test","open":true}}"""))))
+        assertEquals("", Chat.asked(Chat.State("dsh:x")))
     }
 }

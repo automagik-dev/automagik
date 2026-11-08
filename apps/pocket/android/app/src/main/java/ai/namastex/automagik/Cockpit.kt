@@ -55,5 +55,57 @@ object Cockpit {
     }
 
     /** The key a looked-at finished turn is remembered by; a new turn finishing shows as Done again. */
-    fun seenKey(ref: TerminalRef, t: CoreTerminal) = "${ref.hostId}|${ref.address}|${t.turn}"
+    fun seenKey(ref: TerminalRef, t: CoreTerminal) = seenKey(ref, t.turn)
+    fun seenKey(ref: TerminalRef, turn: Long) = "${ref.hostId}|${ref.address}|$turn"
+
+    // ---- The Automagik Bots' `dsh:` chats as Home agents (#732, RFC 0015 D29: one conversation, one row).
+    /** What a Bot chat's card says where a terminal's says its program. */
+    const val BOT = "Automagik Bot"
+    /** A blocked chat on a machine whose Pocket Link or Automagik takes no phone writes: the row says so. */
+    const val READ_ONLY = "Read only on the phone: answer on the computer"
+    /** A chat row's address on its card: the Session id says nothing to a person. */
+    fun addressLabel(ref: TerminalRef) = if (Chat.isDsh(ref.address)) "Bot chat" else ref.address
+
+    /**
+     * The chats' share of Home: [agents] are chats with no Herdr pane of their own, rows of their own on Home;
+     * [panes] are the panes of Bots that also have a chat, each with the chat's status word and kind, so the pane's
+     * row (which opens the chat, [Teams.paneChats]) takes the more urgent of the two and the Bot counts once.
+     */
+    data class Chats(val agents: List<Pair<TerminalRef, CoreTerminal>> = emptyList(), val panes: Map<TerminalRef, Pair<String, String>> = emptyMap())
+
+    /**
+     * Home's agents from the Bots' `dsh:` chats of every read machine ([dsh], by host id, as chat.list gave them):
+     * every shown chat (a chat listed `shown: false` opens nothing, so it is no row). The word is [watched]'s
+     * ([ChatWatch]), else the row's. A blocked chat's line is what it asks when the row says, else, on a machine that
+     * takes no phone writes ([writes]), [READ_ONLY]. A Bot with a labelled pane ([teams], by registry id as
+     * [Teams.bubbles] joins them) is its pane's row, in [Chats.panes].
+     */
+    fun chats(dsh: Map<String, List<Chat.Terminal>>, watched: Map<String, ChatWatch.Watched>, writes: Map<String, Boolean>,
+              teams: List<Teams.Team>, now: Long): Chats {
+        val agents = mutableListOf<Pair<TerminalRef, CoreTerminal>>()
+        val panes = mutableMapOf<TerminalRef, Pair<String, String>>()
+        for ((hostId, rows) in dsh) for (c in rows) {
+            if (!c.dsh || !c.shown) continue
+            val w = watched[ChatWatch.key(hostId, c.terminal)]
+            val word = w?.status ?: c.status.takeIf { it == "blocked" || it == "working" } ?: "idle"
+            val pane = teams.filter { it.hostId == hostId && !it.stale }.flatMap { it.bots }
+                .firstOrNull { b -> b.ref != null && (c.registryId?.let { it == b.id } ?: (c.terminal == Chat.DSH_PREFIX + b.id)) }?.ref
+            if (pane != null) { panes[pane] = word to c.kind; continue }
+            val message = when (word) {
+                "blocked" -> c.msg.ifBlank { if (writes[hostId] == true) "" else READ_ONLY }
+                "done" -> w?.receipt.orEmpty()
+                else -> ""
+            }
+            agents += TerminalRef(hostId, c.terminal) to CoreTerminal(c.terminal, c.title.ifBlank { BOT }, "", "live", word, BOT, message, 0, 0,
+                app = "dsh", statusMs = w?.since ?: now, turn = w?.turn ?: 0, kind = if (word == "blocked") c.kind else "")
+        }
+        return Chats(agents, panes)
+    }
+
+    /** [terminals] with each pane in [chats]' panes raised to its chat's word when that is the more urgent. */
+    fun raised(terminals: List<Pair<TerminalRef, CoreTerminal>>, chats: Chats): List<Pair<TerminalRef, CoreTerminal>> =
+        if (chats.panes.isEmpty()) terminals else terminals.map { (ref, t) ->
+            val (word, kind) = chats.panes[ref] ?: return@map ref to t
+            if (rank(word) > rank(t.status)) ref to t.copy(status = word, kind = kind) else ref to t
+        }
 }

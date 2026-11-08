@@ -943,6 +943,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** Each machine's Automagik Bot chats (read only), as chat.list gave them; null while loading. */
     private val _botChats = MutableStateFlow<Map<String, Result<List<Chat.Terminal>>?>>(emptyMap())
     val botChats = _botChats.asStateFlow()
+    /** What the phone saw of each Bot chat between readings ([ChatWatch]): Home's word for it and its receipt. */
+    private val _chatWatch = MutableStateFlow<Map<String, ChatWatch.Watched>>(emptyMap())
+    val chatWatch = _chatWatch.asStateFlow()
+    /** Whether each machine's bridge takes the phone's writes on its Bot chats (`dshWrite`), from the last listing. */
+    private val _botWrites = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val botWrites = _botWrites.asStateFlow()
     private var chatJob: Job? = null
     @Volatile private var chatRef: TerminalRef? = null
     @Volatile private var chatLink: ChatClient? = null
@@ -1017,10 +1023,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             "snapshot" -> resumeAttempt = 0
             "gone" -> if (s.resuming) resumeLater(ref, gen)
         }
-        if (s.dsh && s.connected) _botChats.update { m ->
-            val list = m[ref.hostId]?.getOrNull() ?: return@update m
-            val now = Chat.withStatus(list, ref.address, s.status.state)
-            if (now === list) m else m + (ref.hostId to Result.success(now))
+        if (s.dsh && s.connected) {
+            _botChats.update { m ->
+                val list = m[ref.hostId]?.getOrNull() ?: return@update m
+                val now = Chat.withStatus(list, ref.address, s.status, Chat.asked(s))
+                if (now === list) m else m + (ref.hostId to Result.success(now))
+            }
+            if (type == "snapshot" || type == "status") _chatWatch.update { ChatWatch.status(it, ChatWatch.key(ref.hostId, ref.address), s.status.state, System.currentTimeMillis()) }
         }
     }
 
@@ -1041,6 +1050,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         link.subscribe(terminal, after, { e ->
             chatUpdate(gen) { Chat.reduce(it, e) }
             val type = e.optString("type")
+            // A closed card's receipt goes on the chat's Home row, for its Done line.
+            if (Chat.isDsh(terminal)) Chat.receiptLine(e)?.let { line -> chatRef?.let { r -> _chatWatch.update { ChatWatch.receipt(it, ChatWatch.key(r.hostId, terminal), line) } } }
             viewModelScope.launch { chatEvent(gen, type) }
         }) { reason ->
             // Too slow to keep up: the bridge closed the stream; come back from the cursor.
@@ -1054,6 +1065,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** Closes the chat for [ref] (any chat when null); its rows are dropped. */
     fun closeChat(ref: TerminalRef? = null) {
         if (ref != null && ref != chatRef) return
+        // bots-dsh stops following a Bot chat no phone watches: what it lists next is not a finish ([ChatWatch.left]).
+        chatRef?.takeIf { Chat.isDsh(it.address) }?.let { r -> _chatWatch.update { ChatWatch.left(it, ChatWatch.key(r.hostId, r.address)) } }
         ++chatGen
         chatRef = null
         chatJob?.cancel(); chatJob = null
@@ -1178,9 +1191,10 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 coroutineScope {
                     val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
                     val link = openChatLink(hostId, scope) { }
-                    try { link.list().filter { it.dsh } } finally { link.close(); scope.cancel() }
+                    try { link.list().filter { it.dsh }.also { _botWrites.update { w -> w + (hostId to link.dshWrite) } } } finally { link.close(); scope.cancel() }
                 }
             }
+            result.getOrNull()?.let { rows -> _chatWatch.update { ChatWatch.read(it, hostId, rows, System.currentTimeMillis()) } }
             _botChats.update { it + (hostId to result) }
         }
     }
@@ -1221,8 +1235,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** Leaving a finished agent: like the desktop, looking at it turns its done into idle until it finishes another turn. */
     private fun markSeen() {
         val ref = state.value.selected ?: return
-        val t = state.value.machines[ref.hostId]?.terminals?.find { it.address == ref.address }?.takeIf { it.status == "done" } ?: return
-        val key = Cockpit.seenKey(ref, t)
+        // A Bot chat's Done is the phone's own ([ChatWatch]); a terminal's is the core's.
+        val key = if (Chat.isDsh(ref.address)) _chatWatch.value[ChatWatch.key(ref.hostId, ref.address)]?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(ref, it.turn) } ?: return
+            else state.value.machines[ref.hostId]?.terminals?.find { it.address == ref.address }?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(ref, it) } ?: return
         if (key in state.value.seen) return
         // Insertion order is kept, so the oldest go first past the cap.
         val seen = (state.value.seen + key).toList().takeLast(400).toSet()

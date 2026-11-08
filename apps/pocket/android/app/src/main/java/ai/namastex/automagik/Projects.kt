@@ -136,12 +136,16 @@ object Projects {
         val working get() = count(Cockpit.WORKING)
     }
 
-    /** [seen]: the [Cockpit.seenKey]s of finished turns the person looked at. */
-    fun pulse(hosts: List<SidebarHost>, seen: Set<String>): Pulse {
+    /**
+     * [seen]: the [Cockpit.seenKey]s of finished turns the person looked at. [chats]: the Automagik Bots' chats
+     * ([Cockpit.chats]), rows of Home beside the terminals (one per Bot, with its pane); projects and tasks stay the
+     * terminals', since a chat has no folder.
+     */
+    fun pulse(hosts: List<SidebarHost>, seen: Set<String>, chats: Cockpit.Chats = Cockpit.Chats()): Pulse {
         val all = hosts.flatMap { h -> h.terminals.filter { it.live }.map { TerminalRef(h.hostId, it.address) to it } }
         val paned = hosts.flatMap { h -> h.spaces.flatMap { s -> s.addresses.map { TerminalRef(h.hostId, it) } } }.toSet()
-        val sections = Cockpit.sections(all, { it in paned }) { r, t -> Cockpit.seenKey(r, t) in seen }
-        val projects = build(hosts, sections.flatMap { it.entries })
+        val sections = Cockpit.sections(Cockpit.raised(all, chats) + chats.agents, { it in paned || Chat.isDsh(it.address) }) { r, t -> Cockpit.seenKey(r, t) in seen }
+        val projects = build(hosts, sections.flatMap { s -> s.entries.filter { !Chat.isDsh(it.ref.address) } })
         return Pulse(sections, projects, tasks(projects), machinesConnected(hosts), hosts.sumOf { it.spaces.size })
     }
 

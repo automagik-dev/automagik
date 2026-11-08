@@ -27,6 +27,7 @@ are gone from Team ([Four tabs](four-tabs.md): Home has needs-you).
   `dsh:<sessionId>`; with no chat, the pane's projected chat (the terminal's Chat tab).
 - Home opens the same chat (#731, RFC 0015 D29: one live agent, every window): a Home row of the
   main bot's pane opens the chat its bubble opens (`Teams.paneChats`); any other row its terminal.
+  Home also counts the chats themselves (#732): [Home counts the Bots' chats](home-bot-chats.md).
 - A `dsh:` chat listed `shown: false` (a project with no yes in `shown[]`, RFC 0015 `:751-755`)
   says "Show in Automagik first" and opens nothing. A row with no `shown` field is shown.
 - A `dsh:` chat that matches no main bot gets no bubble; it stays in Settings, Bot chats.

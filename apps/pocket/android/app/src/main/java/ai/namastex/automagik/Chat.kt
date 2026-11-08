@@ -85,14 +85,21 @@ object Chat {
      * `dsh:<sessionId>`, the chat's one id.
      */
     data class Terminal(val terminal: String, val machine: String, val agent: String, val title: String, val status: String, val chat: String,
-                        val shown: Boolean = true, val registryId: String? = null) {
+                        val shown: Boolean = true, val registryId: String? = null,
+                        /** The rest of the row's status (bots-dsh pocket-chat.js `statusOf`): a blocked chat's kind (permission or
+                         *  question), its line (what is asked, or where to answer), and the Session's turn as bots-dsh counts it. */
+                        val kind: String = "", val msg: String = "", val turn: Long = 0) {
         /** An Automagik Bot's chat (listed by bots-dsh), not a terminal's. */
         val dsh: Boolean get() = isDsh(terminal)
         companion object {
-            fun parse(j: JSONObject) = Terminal(j.optString("terminal"), if (j.isNull("machine")) "" else j.optString("machine"),
-                j.optString("agent"), j.optString("title"), j.optJSONObject("status")?.optString("state").orEmpty(), j.optString("chat"),
-                j.opt("shown") != false,
-                (j.opt("registryId") as? String)?.takeIf { it.isNotBlank() })
+            fun parse(j: JSONObject): Terminal {
+                val status = j.optJSONObject("status")
+                return Terminal(j.optString("terminal"), if (j.isNull("machine")) "" else j.optString("machine"),
+                    j.optString("agent"), j.optString("title"), status?.optString("state").orEmpty(), j.optString("chat"),
+                    j.opt("shown") != false,
+                    (j.opt("registryId") as? String)?.takeIf { it.isNotBlank() },
+                    status?.clean("kind").orEmpty(), status?.clean("msg").orEmpty(), status?.optLong("turn", 0) ?: 0)
+            }
         }
     }
 
@@ -270,11 +277,39 @@ object Chat {
 
     /**
      * [list] with [terminal]'s state as the open chat last said it, so Team's bubble and Home's rows agree with the
-     * chat between two chat.list reads. The same list when nothing changes.
+     * chat between two chat.list reads: its state and kind, and as its line what the chat waits on ([question], the
+     * open card's text) while it is blocked, else nothing. The same list when nothing changes.
      */
-    fun withStatus(list: List<Terminal>, terminal: String, state: String): List<Terminal> =
-        if (state.isBlank() || list.none { it.terminal == terminal && it.status != state }) list
-        else list.map { if (it.terminal == terminal) it.copy(status = state) else it }
+    fun withStatus(list: List<Terminal>, terminal: String, status: Status, question: String = ""): List<Terminal> {
+        val state = status.state
+        if (state.isBlank()) return list
+        val msg = if (state == "blocked") question.ifBlank { list.find { it.terminal == terminal }?.msg.orEmpty() } else ""
+        if (list.none { it.terminal == terminal && (it.status != state || it.kind != status.kind || it.msg != msg) }) return list
+        return list.map { if (it.terminal == terminal) it.copy(status = state, kind = status.kind, msg = msg) else it }
+    }
+
+    /** The open card's text, for the chat's row on Home: the question, or the approval's tool and reason. */
+    fun asked(s: State): String = s.question?.prompt?.takeIf { it.isNotBlank() }
+        ?: s.approval?.let { a -> listOf(a.tool, a.summary).filter { it.isNotBlank() }.distinct().joinToString(": ") }.orEmpty()
+
+    /**
+     * The closing row's receipt (bots-dsh's settled entry on an approval or question event), as Home's Done line:
+     * who answered and what. Null for a row with no receipt.
+     */
+    fun receiptLine(e: JSONObject): String? {
+        if (e.optString("type") !in setOf("approval", "question")) return null
+        val row = e.optJSONObject("row") ?: return null
+        if (row.optBoolean("open", false)) return null
+        val r = row.optJSONObject("receipt") ?: return null
+        if (r.optString("outcome") == "withdrawn") return "No longer needed"
+        val outcome = when (val o = r.optString("outcome")) { "allow" -> "Allow"; "deny" -> "Deny"; else -> o }
+        val where = when (r.optString("by")) {
+            "phone" -> " on the phone" + r.optString("name").takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+            "computer" -> " on the computer"
+            else -> ""
+        }
+        return "Answered$where" + (if (outcome.isNotEmpty()) ": $outcome" else "")
+    }
 
     /** What a reconnect keeps of [s]: messages whose outcome is unknown (still sending, or maybe), as maybe, with Retry. */
     fun unknown(s: State): List<Message> = s.messages.filter { it.state == "maybe" || it.state == "sending" }.map { it.copy(state = "maybe") }
