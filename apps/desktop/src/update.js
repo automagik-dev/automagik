@@ -17,7 +17,8 @@ export const DESKTOP_TAG_PREFIX = 'v'
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/'
 const RELEASE_PAGE = 'https://github.com/automagik-dev/automagik/releases/tag/'
 export const FIRST_CHECK_MS = 20_000
-export const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
+// The app and plugin lanes share the same recurring check interval.
+export const CHECK_EVERY_MS = 15 * 60_000
 export const RETRY_MS = 30 * 60 * 1000
 // A network that changed or dropped during a check (Wi-Fi, a VPN, waking from sleep) is usually
 // back within a minute: such a failure is retried that soon, a few times, before RETRY_MS.
@@ -298,8 +299,8 @@ export async function fetchReleases(fetchImpl = fetch) {
 }
 
 /**
- * Checks after FIRST_CHECK_MS and every CHECK_EVERY_MS (sooner, after RETRY_MS, when a check
- * failed; after QUICK_RETRY_MS a few times when the failure is transient), and reports to
+ * Checks after FIRST_CHECK_MS and every CHECK_EVERY_MS (with an additional retry after RETRY_MS
+ * when a check failed; after QUICK_RETRY_MS a few times when the failure is transient), and reports to
  * `onState`:
  * - `auto`: `{ version, state: 'downloading', percent }`, then `{ version, state: 'ready' }`;
  *   `install()` restarts into the downloaded update, which otherwise installs on quit.

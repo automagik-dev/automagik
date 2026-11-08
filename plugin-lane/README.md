@@ -83,7 +83,8 @@ The signing key is the `PLUGIN_LANE_KEY` Actions secret. It exists only there.
 ## Consuming
 
 - **The desktop app** (`apps/desktop/src/lane.js`):
-  - It looks at the lane with its update checks: a minute after it starts, then hourly.
+  - It looks at the lane a minute after it starts, then every 15 minutes, using the same
+    recurring interval as app updates. Checks continue even when there is no newer version.
   - It downloads, checks and unpacks a lane meant for it, then stages it.
   - The next start puts the plugins in place before DSH starts. That start is a trial: the
     page must draw the Bot team within 45 s. Otherwise the previous plugins come back and
