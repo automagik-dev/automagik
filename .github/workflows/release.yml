@@ -244,6 +244,20 @@ jobs:
         working-directory: herdr
         run: node --test test/mod-imports.test.mjs
 
+      # The same mods through the app's own loader (#624, #652), headless: the pack this release
+      # would attach is built from this commit and every PACK_MODS mod must load in the pinned
+      # Linux herdr-app. A load failure stops the release and prints herdr-app's output for that
+      # mod. The version and sha256 are pinned in .github/scripts/herdr-app-check.mjs, never latest.
+      - name: herdr-app system libraries
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-x11-0 libxcb-xkb1
+
+      - name: Every pack mod loads in herdr-app
+        if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
+        run: node .github/scripts/herdr-app-check.mjs
+
       # Before the cut, so a release that packs the pack never goes out without a pointer the
       # installed packs trust: HERDR_PACK_KEY must be a key pack-keys.json lists (its keyId is the
       # entry with its public key). The HERDR_PACK_SIGNER variable picks the secret slot, so a
