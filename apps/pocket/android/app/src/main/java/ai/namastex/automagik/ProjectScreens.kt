@@ -3,12 +3,10 @@ package ai.namastex.automagik
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -30,49 +28,67 @@ import androidx.compose.ui.unit.sp
 private fun word(rank: Int) = when (rank) { Cockpit.BLOCKED -> "blocked"; Cockpit.WORKING -> "working"; Cockpit.DONE -> "done"; else -> "idle" }
 private fun plural(n: Int, one: String, many: String = "${one}s") = "$n ${if (n == 1) one else many}"
 
-/** The Code tab's views, what the Projects and Tasks tabs were (docs/decisions/four-tabs.md). */
+/** The Code tab's views: the desktop's spaces and bots tree, or one card per repository (docs/decisions/four-tabs.md). */
 object CodeView {
-    const val REPOS = "repos"
     const val SPACES = "spaces"
-    const val TASKS = "tasks"
+    const val REPOS = "repos"
 }
 
-/** Code: one card per repository, the desktop's spaces tree, or the tasks by branch, picked with the pills on top. */
+/** Code: the desktop's spaces tree (with its Tasks filter) or the repositories, picked with the pills on top. */
 @Composable fun CodeScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>,
-                           view: String, onView: (String) -> Unit, taskFilter: String?, onTaskFilter: (String?) -> Unit) {
+                           view: String, onView: (String) -> Unit, tasksOnly: Boolean, onTasksOnly: (Boolean) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(16.dp, 16.dp, 16.dp, 0.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("Spaces", view != CodeView.REPOS) { onView(CodeView.SPACES) }
             Pill("By repository", view == CodeView.REPOS) { onView(CodeView.REPOS) }
-            Pill("Spaces", view == CodeView.SPACES) { onView(CodeView.SPACES) }
-            Pill("Tasks", view == CodeView.TASKS) { onView(CodeView.TASKS) }
         }
         Box(Modifier.weight(1f)) {
-            if (view == CodeView.TASKS) TasksScreen(vm, pulse, taskFilter, onTaskFilter)
-            else ProjectsScreen(state, vm, pulse, rows, tree = view == CodeView.SPACES)
+            if (view == CodeView.REPOS) ProjectsScreen(state, vm, pulse)
+            else SpacesTree(state, vm, pulse, rows, tasksOnly, onTasksOnly)
         }
     }
 }
 
-/** Projects: one card per repository, or the desktop's spaces tree as its sidebar draws it. */
-@Composable fun ProjectsScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>, tree: Boolean) {
+/**
+ * The desktop's spaces and bots tree as its sidebar draws it, each project's bots grouped by its categories: Code's
+ * Spaces view and the terminal's drawer. The Tasks filter (what the Tasks tab was) keeps only the agents on a task
+ * branch. [onOpened] runs after a space or an agent is opened from it.
+ */
+@Composable fun SpacesTree(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, rows: List<SidebarRow>,
+                           tasksOnly: Boolean, onTasksOnly: (Boolean) -> Unit, onOpened: () -> Unit = {}) {
+    val tasks = pulse.tasks.filter { !it.untasked }
+    val onTask = remember(pulse) { tasks.flatMap { t -> t.agents.map { it.ref } }.toSet() }
+    val shown = if (tasksOnly) remember(rows, onTask) { Sidebar.only(rows, onTask) } else rows
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item(key = "filter") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("All", !tasksOnly) { onTasksOnly(false) }
+                Pill("Tasks ${tasks.size}", tasksOnly) { onTasksOnly(true) }
+            }
+        }
+        sidebarRows(shown, state.space, state.selected, onToggle = { vm.toggleFold(it.key.removePrefix("m:")) },
+            onSpace = { vm.selectSpace(it.hostId, it.space.id); onOpened() }, onTerminal = { vm.selectTerminal(it); onOpened() }, onStats = vm::openStats)
+        if (shown.none { it is SpaceRow }) item {
+            if (tasksOnly) Empty(Icons.Outlined.Checklist, "No tasks yet", "Agents show up here by branch: each branch is a task.")
+            else Empty(Icons.Outlined.FolderOpen, "No spaces yet", "Your spaces appear here when you connect.")
+        }
+    }
+}
+
+/** Code's repositories: one card per repository, with the usage meter's spend when one reports. */
+@Composable fun ProjectsScreen(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse) {
     val spend = rememberSpend(state)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (tree) {
-            sidebarRows(rows, state.space, state.selected, onToggle = { vm.toggleFold(it.key.removePrefix("m:")) },
-                onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
-            if (rows.none { it is SpaceRow }) item { Empty(Icons.Outlined.FolderOpen, "No spaces yet", "Your spaces appear here when you connect.") }
-        } else {
-            item(key = "spend") {
-                if (spend.coverage.none) MeterHint()
-                else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(Spend.coverageLine(spend.coverage), color = if (spend.coverage.complete) Muted else Blocked, fontSize = 12.sp)
-                    spend.hourly()?.let { HourChart(it) }
-                }
+        item(key = "spend") {
+            if (spend.coverage.none) MeterHint()
+            else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(Spend.coverageLine(spend.coverage), color = if (spend.coverage.complete) Muted else Blocked, fontSize = 12.sp)
+                spend.hourly()?.let { HourChart(it) }
             }
-            items(pulse.projects, key = { "p:${it.key}" }) { ProjectCard(it, spend.takeIf { s -> !s.coverage.none }) { vm.openProject(it.key) } }
-            if (pulse.projects.isEmpty()) item { Empty(Icons.Outlined.GridView, "No projects yet", "Each repository your spaces work in shows up here.") }
-            else if (!spend.coverage.none) item(key = "spend-notes") { Text(Spend.footnote(spend), color = Muted, fontSize = 11.sp, lineHeight = 15.sp) }
         }
+        items(pulse.projects, key = { "p:${it.key}" }) { ProjectCard(it, spend.takeIf { s -> !s.coverage.none }) { vm.openProject(it.key) } }
+        if (pulse.projects.isEmpty()) item { Empty(Icons.Outlined.GridView, "No projects yet", "Each repository your spaces work in shows up here.") }
+        else if (!spend.coverage.none) item(key = "spend-notes") { Text(Spend.footnote(spend), color = Muted, fontSize = 11.sp, lineHeight = 15.sp) }
     }
 }
 
@@ -189,45 +205,6 @@ private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, ag
             TerminalCard(a.terminal, listOfNotNull(a.space?.name, a.branch).joinToString(" · ").ifBlank { a.machine }, a.ref.address, status) { vm.selectTerminal(a.ref) }
             a.entry.kids.forEach { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }
         }
-    }
-}
-
-/** Tasks: every project's branches by status, Needs you first, with a project filter. */
-@Composable fun TasksScreen(vm: PocketViewModel, pulse: Projects.Pulse, filter: String?, onFilter: (String?) -> Unit) {
-    var idle by rememberSaveable { mutableStateOf(false) }
-    val state by vm.state.collectAsState()
-    val spend = rememberSpend(state).takeIf { !it.coverage.none }
-    val tasks = pulse.tasks.filter { filter == null || it.project == filter }
-    val board = Projects.board(tasks)
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item(key = "filter") {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pill("All ${pulse.tasks.size}", filter == null) { onFilter(null) }
-                pulse.projects.forEach { p ->
-                    val n = pulse.tasks.count { it.project == p.key }
-                    if (n > 0) Pill("${p.name} $n", filter == p.key) { onFilter(p.key) }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            Text("${plural(tasks.count { !it.untasked }, "task")} on branches · ${tasks.count { it.untasked }} untasked", color = Muted, fontSize = 12.sp)
-            if (spend != null) Text("$ and active time per task over 30 days, API-equivalent estimate" +
-                spend.pricesDate.takeIf { it.isNotBlank() }?.let { " (prices of $it)" }.orEmpty(), color = Muted, fontSize = 11.sp)
-        }
-        for ((rank, list) in board) {
-            val folded = rank == Cockpit.IDLE && !idle
-            item(key = "h:$rank") {
-                Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp).let { if (rank == Cockpit.IDLE) it.clickable { idle = !idle } else it },
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text("${stateName(word(rank)).uppercase()} · ${list.size}", color = if (rank == Cockpit.IDLE) Muted else stateColor(word(rank)),
-                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp, modifier = Modifier.weight(1f))
-                    if (rank == Cockpit.IDLE) Text(if (idle) "Hide" else "Show", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-            if (!folded) items(list, key = { "t:${it.project}:${it.branch}" }) {
-                TaskRow(it, showProject = true, spend = spend?.task(it.project, it.branch, Spend.Period.D30), onOpen = vm::selectTerminal)
-            }
-        }
-        if (board.isEmpty()) item { Empty(Icons.Outlined.Checklist, "No tasks yet", "Agents show up here by branch: each branch is a task.") }
     }
 }
 

@@ -97,8 +97,12 @@ object Teams {
     }
 
     // ---- The bot registry. One interface: moving to the shared registry (RFC 0014) swaps the reader, nothing else.
-    /** A bot as the registry defines it. [pet] is its pet id (`<character>-<colour>`), null for none. */
-    data class Member(val id: String, val name: String, val main: Boolean, val pet: String?)
+    /**
+     * A bot as the registry defines it. [pet] is its pet id (`<character>-<colour>`), null for none. [category], [lead],
+     * [rank] and [planned] place it in the desktop's tree (am-sidebar rows.js buildTree), which Code's drawer draws.
+     */
+    data class Member(val id: String, val name: String, val main: Boolean, val pet: String?, val category: String? = null,
+                      val lead: String? = null, val rank: String? = null, val planned: Boolean = false)
 
     interface BotRegistry {
         /** The registry file of the project at [projectKey], on that project's machine. */
@@ -116,7 +120,9 @@ object Teams {
                 val id = b.clean("id").trim().ifBlank { return@mapNotNull null }
                 val look = b.optJSONObject("look")
                 val pet = look?.let { "${it.clean("character")}-${it.clean("colour")}" }?.takeIf { petId(it) != null }
-                Member(id, b.clean("name").trim().ifBlank { id }, b.clean("kind") == "main", pet)
+                Member(id, b.clean("name").trim().ifBlank { id }, b.clean("kind") == "main", pet,
+                    b.clean("category").trim().ifBlank { null }, b.clean("lead").trim().ifBlank { null },
+                    b.clean("rank").trim().ifBlank { null }, b.optJSONObject("planned") != null)
             }.distinctBy { it.id }
         }.getOrDefault(emptyList())
     }

@@ -74,8 +74,16 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-@Composable fun TerminalScreen(vm: PocketViewModel, state: PocketState, terminal: CoreTerminal?, space: PocketSpace?) {
+/**
+ * Code's main view: the agent's terminal, or its Chat tab. [strip] is the agents of its space in the drawer's order (from
+ * [Sidebar.spaceAgents]); a sideways swipe on the chat or on the terminal's bars goes to the next or previous one
+ * ([onSwipe], [Sidebar.neighbour]), and [onDrawer] opens the spaces and bots tree.
+ */
+@Composable fun TerminalScreen(vm: PocketViewModel, state: PocketState, terminal: CoreTerminal?, space: PocketSpace?,
+                               strip: List<Pair<TerminalRef, String>> = emptyList(), onSwipe: (Int) -> Unit = {}, onDrawer: () -> Unit = {}) {
     val ref = state.selected ?: return
+    val swipe by rememberUpdatedState(onSwipe)
+    val swipeable = Modifier.pointerInput(Unit) { detectAgentSwipe { swipe(it) } }
     var message by remember(ref) { mutableStateOf("") }
     var showComposer by remember(ref) { mutableStateOf(false) }
     var controls by remember(ref) { mutableStateOf(false) }
@@ -83,7 +91,7 @@ import kotlin.math.roundToInt
     val chatOffered = !state.demo && Chat.offered(terminal)
     var chatView by remember(ref) { mutableStateOf(state.chatFirst) }
     if (chatView && chatOffered) {
-        ChatPane(vm, ref, onShowTerminal = { chatView = false }, onBack = vm::backToList, modifier = Modifier.fillMaxSize().displayCutoutPadding())
+        ChatPane(vm, ref, onShowTerminal = { chatView = false }, onBack = vm::backToList, modifier = Modifier.fillMaxSize().displayCutoutPadding().then(swipeable))
         return
     }
     // Full screen, scrolling back slides the space's tabs in over the terminal, like a phone browser's toolbar.
@@ -104,7 +112,7 @@ import kotlin.math.roundToInt
     val offline = !state.demo && machine?.connected != true
     Box(Modifier.fillMaxSize().background(TermBg).displayCutoutPadding()) {
         Column(Modifier.fillMaxSize()) {
-            if (!fullscreen) TerminalTabs(vm, state, space)
+            if (!fullscreen) TerminalTabs(vm, state, space, strip)
             // A new connection session recreates the view, which attaches the terminal again.
             key(ref, state.nativeDisplay, machine?.session) {
                 if (state.nativeDisplay) NativeTerminal(vm, state.screenText, state.nativeAlternateScreen, state.fontSize, Modifier.fillMaxWidth().weight(1f), onScroll)
@@ -121,7 +129,7 @@ import kotlin.math.roundToInt
                 }
                 IconButton(onClick = { showComposer = false; keyboard?.hide() }) { Icon(Icons.Outlined.Close, "Close composer", tint = Muted) }
             }
-            if (!fullscreen || controls) Row(Modifier.fillMaxWidth().background(Chrome).padding(horizontal = 10.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
+            if (!fullscreen || controls) Row(Modifier.fillMaxWidth().background(Chrome).then(swipeable).padding(horizontal = 10.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.terminalStatus, color = if (state.terminalStatus.startsWith("Live")) Muted else Accent, fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (chatOffered) TextButton(onClick = { controls = false; showComposer = false; chatView = true }) { Text("Chat", fontSize = 12.sp) }
                 IconButton(onClick = { showComposer = !showComposer; controls = false }) { Icon(Icons.Outlined.ChatBubbleOutline, "Toggle message composer", Modifier.size(20.dp), tint = if (showComposer) Accent else Muted) }
@@ -132,7 +140,7 @@ import kotlin.math.roundToInt
         AnimatedVisibility(fullscreen && !controls && tabsShown && tabbed, Modifier.align(Alignment.TopCenter).fillMaxWidth(),
             enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut()) {
             Column(Modifier.fillMaxWidth().background(Chrome.copy(alpha = .97f)).padding(end = 52.dp)) {
-                TerminalTabs(vm, state, space)
+                TerminalTabs(vm, state, space, strip)
                 HorizontalDivider(color = Border)
             }
         }
@@ -140,20 +148,21 @@ import kotlin.math.roundToInt
             IconButton(onClick = { controls = true }) { Icon(Icons.Outlined.MoreHoriz, "Terminal controls", tint = Muted) }
         }
         if (fullscreen && controls) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Chrome.copy(alpha = .97f))) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().then(swipeable), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = vm::backToList) { Icon(Icons.Outlined.ArrowBack, "Back to agents") }
+                IconButton(onClick = { controls = false; onDrawer() }) { Icon(Icons.Outlined.Menu, "Spaces and bots") }
                 Text(terminal?.title ?: ref.address, modifier = Modifier.weight(1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (chatOffered) TextButton(onClick = { controls = false; showComposer = false; chatView = true }) { Text("Chat") }
                 IconButton(onClick = { controls = false; vm.setTerminalFullscreen(false) }) { Icon(Icons.Outlined.FullscreenExit, "Exit full screen") }
                 IconButton(onClick = { controls = false }) { Icon(Icons.Outlined.Close, "Hide terminal controls") }
             }
-            TerminalTabs(vm, state, space)
+            TerminalTabs(vm, state, space, strip)
             HorizontalDivider(color = Border)
         }
     }
 }
 
-@Composable private fun TerminalTabs(vm: PocketViewModel, state: PocketState, space: PocketSpace?) {
+@Composable private fun TerminalTabs(vm: PocketViewModel, state: PocketState, space: PocketSpace?, strip: List<Pair<TerminalRef, String>>) {
     val ref = state.selected ?: return
     if (space != null && space.tabs.isNotEmpty()) Row(Modifier.fillMaxWidth().background(Chrome).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         space.tabs.forEach { tab ->
@@ -167,8 +176,15 @@ import kotlin.math.roundToInt
             }
         }
     }
+    // The agent strip: the space's agents as the drawer orders them, one tap each; a terminal the tree doesn't list
+    // (a plain shell) keeps its tab's terminals.
     val currentTab = space?.tabs?.find { ref.address in it.terminals }
-    if (currentTab != null && currentTab.terminals.size > 1) Row(Modifier.fillMaxWidth().background(Chrome).horizontalScroll(rememberScrollState()).padding(10.dp, 0.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    if (strip.size > 1) Row(Modifier.fillMaxWidth().background(Chrome).horizontalScroll(rememberScrollState()).padding(10.dp, 0.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        strip.forEach { (agent, label) ->
+            FilterChip(selected = agent == ref, onClick = { vm.selectTerminal(agent) }, label = { Text(label, fontSize = 10.sp) })
+        }
+    }
+    else if (currentTab != null && currentTab.terminals.size > 1) Row(Modifier.fillMaxWidth().background(Chrome).horizontalScroll(rememberScrollState()).padding(10.dp, 0.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         currentTab.terminals.forEach { address ->
             val t = state.machines[ref.hostId]?.terminals?.find { it.address == address }
             FilterChip(selected = address == ref.address, onClick = { vm.selectTerminal(TerminalRef(ref.hostId, address)) }, label = { Text(t?.title ?: address, fontSize = 10.sp) })

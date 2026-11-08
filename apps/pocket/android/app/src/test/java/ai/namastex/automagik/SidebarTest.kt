@@ -51,6 +51,8 @@ class SidebarTest {
             is SpaceRow -> "[${r.letter} ${r.color}] ${r.space.name}"
             is AgentRow -> "  ${r.program.key}: ${r.label}${r.machineLabel?.let { " @$it" } ?: ""} <${r.status}>"
             is KidRow -> "    ${r.lines.joinToString("")} ${r.program.key}: ${r.label} <${r.status}>"
+            is CategoryRow -> "  = ${r.title}"
+            is SleepingBotRow -> "  zz ${r.label}"
         }
     }
 
