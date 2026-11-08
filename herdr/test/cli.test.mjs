@@ -613,23 +613,21 @@ test("create: lead, category, planned, look, model pin from the agent's list onl
 
 // ---- edit, rm, category ----
 
-for (const leadState of ["planned", "missing"]) {
-  test(`#730 local save: two ${leadState} leads warn without blocking an unrelated edit`, (t) => {
-    const s = scene(t);
-    const file = team();
-    const lead = leadState === "planned" ? ID.plan : "b-zzzzzzzzzz";
-    for (const b of file.bots.slice(1, 3)) b.lead = lead;
-    s.seed(file);
-    const saved = s.cli(["edit", "Genie", "--role", "updated"]);
-    assert.equal(saved.code, 0, saved.err);
-    assert.equal(s.bots().bots[0].role, "updated");
-    for (const id of [ID.cap, ID.dev]) {
-      assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is ${leadState}; reports to the main bot`), saved.err);
-      assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
-      assert.equal(s.cli(["show", id, "--json"]).json().lead, ID.main);
-    }
-  });
-}
+test("#730 local save: two planned leads warn without blocking an unrelated edit", (t) => {
+  const s = scene(t);
+  const file = team();
+  const lead = ID.plan;
+  for (const b of file.bots.slice(1, 3)) b.lead = lead;
+  s.seed(file);
+  const saved = s.cli(["edit", "Genie", "--role", "updated"]);
+  assert.equal(saved.code, 0, saved.err);
+  assert.equal(s.bots().bots[0].role, "updated");
+  for (const id of [ID.cap, ID.dev]) {
+    assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is planned; reports to the main bot`), saved.err);
+    assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
+    assert.equal(s.cli(["show", id, "--json"]).json().lead, ID.main);
+  }
+});
 
 test("#730 local save: explicitly choosing a planned lead still refuses create and edit", (t) => {
   const s = scene(t);
@@ -644,6 +642,12 @@ test("#730 local save: explicitly choosing a planned lead still refuses create a
 });
 
 for (const [name, breakFile, why] of [
+  ["unknown lead", (f) => { f.bots[2].lead = "b-zzzzzzzzzz"; }, /lead b-zzzzzzzzzz is missing/],
+  ["empty lead", (f) => { f.bots[2].lead = ""; }, /lead  is missing/],
+  ["non-text number lead", (f) => { f.bots[2].lead = 42; }, /lead 42 is missing/],
+  ["non-text boolean lead", (f) => { f.bots[2].lead = false; }, /lead false is missing/],
+  ["non-text object lead", (f) => { f.bots[2].lead = {}; }, /lead \[object Object\] is missing/],
+  ["non-text array lead", (f) => { f.bots[2].lead = []; }, /lead  is missing/],
   ["duplicate ids", (f) => f.bots.push({ ...f.bots[2] }), /id used twice/],
   ["self lead", (f) => { f.bots[2].lead = ID.dev; }, /leads back to this bot/],
   ["lead cycle", (f) => { f.bots[1].lead = ID.dev; f.bots[2].lead = ID.cap; }, /leads back to this bot/],

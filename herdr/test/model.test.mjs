@@ -273,7 +273,7 @@ test("lead: a missing lead falls back to the main bot with a warning", () => {
   assert.equal(r.lead, ID.main);
   assert.match(r.warning, /missing/);
   assert.ok(parseBots(text(file)).warnings.some((w) => w.startsWith(ID.dev) && /missing/.test(w)));
-  assert.deepEqual(checkBots(file), []);
+  assert.ok(checkBots(file).some((e) => e.startsWith(ID.dev)));
 });
 
 test("lead: a planned lead falls back to the main bot with a warning", () => {

@@ -267,8 +267,8 @@ export function effectiveLead(file, botId) {
  * A category id that isn't a slug is refused only when it is new: one `before` (the file the
  * edit started from, its text or object; null: none) already lists stays writable, so a
  * hand-written file is never locked; it just gets no category= label (effectiveCategory).
- * Missing or planned leads use effectiveLead's main-bot fallback with a read warning;
- * they do not block unrelated saves. Self-leads and cycles still refuse a write.
+ * Planned leads use effectiveLead's main-bot fallback with a read warning and do not
+ * block unrelated saves. Missing leads, self-leads and cycles still refuse a write.
  */
 export function checkBots(file, before = null) {
   let had = before;
@@ -311,7 +311,7 @@ export function checkBots(file, before = null) {
       if (b.kind !== "member") continue;
       const { warning } = effectiveLead(file, b.id);
       const target = byId.get(b.lead);
-      if (warning && (b.lead === b.id || (target && !target.planned))) errors.push(`${b.id}: ${warning}`);
+      if (warning && (b.lead === b.id || !target?.planned)) errors.push(`${b.id}: ${warning}`);
     }
   }
   return errors;

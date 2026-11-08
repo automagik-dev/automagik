@@ -112,11 +112,11 @@ test("ls, show, edit, category and rm --machine work on the file there", (t) => 
 });
 
 const PLAN = "b-eeeeeeeeee", CAP = "b-bbbbbbbbbb";
-const fallbackTeam = (leadState = "planned") => ({
+const fallbackTeam = () => ({
   version: 1, categories: [], bots: [
     { id: MAIN, name: "Main", kind: "main" },
-    { id: CAP, name: "Captain", kind: "member", lead: leadState === "planned" ? PLAN : "b-zzzzzzzzzz" },
-    { id: DEV, name: "Dev", kind: "member", lead: leadState === "planned" ? PLAN : "b-zzzzzzzzzz" },
+    { id: CAP, name: "Captain", kind: "member", lead: PLAN },
+    { id: DEV, name: "Dev", kind: "member", lead: PLAN },
     { id: PLAN, name: "Studio", kind: "member", planned: { wave: 3 } },
   ].map((b) => ({ look: { character: "star", colour: "blue" }, role: "", instructions: "", agent: "claude", ...b })),
 });
@@ -125,22 +125,20 @@ const seedFallbackTeam = (s, file) => {
   writeFileSync(s.botsPath, `${JSON.stringify(file, null, 2)}\n`);
 };
 
-for (const leadState of ["planned", "missing"]) {
-  test(`#730 linked save: two ${leadState} leads warn without blocking an unrelated edit`, (t) => {
-    const s = scene(t);
-    seedFallbackTeam(s, fallbackTeam(leadState));
-    const lead = leadState === "planned" ? PLAN : "b-zzzzzzzzzz";
-    const saved = s.cli(["edit", "Main", ...s.on, "--role", "updated"]);
-    assert.equal(saved.code, 0, saved.err);
-    assert.equal(s.bots().bots[0].role, "updated");
-    for (const id of [CAP, DEV]) {
-      assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is ${leadState}; reports to the main bot`), saved.err);
-      assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
-      assert.equal(s.cli(["show", id, ...s.on, "--json"]).json().lead, MAIN);
-    }
-    assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.includes("vm")));
-  });
-}
+test("#730 linked save: two planned leads warn without blocking an unrelated edit", (t) => {
+  const s = scene(t);
+  seedFallbackTeam(s, fallbackTeam());
+  const lead = PLAN;
+  const saved = s.cli(["edit", "Main", ...s.on, "--role", "updated"]);
+  assert.equal(saved.code, 0, saved.err);
+  assert.equal(s.bots().bots[0].role, "updated");
+  for (const id of [CAP, DEV]) {
+    assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is planned; reports to the main bot`), saved.err);
+    assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
+    assert.equal(s.cli(["show", id, ...s.on, "--json"]).json().lead, MAIN);
+  }
+  assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.includes("vm")));
+});
 
 test("#730 linked save: explicitly choosing a planned lead still refuses create and edit", (t) => {
   const s = scene(t);
@@ -155,6 +153,12 @@ test("#730 linked save: explicitly choosing a planned lead still refuses create 
 });
 
 for (const [name, breakFile, why] of [
+  ["unknown lead", (f) => { f.bots[2].lead = "b-zzzzzzzzzz"; }, /lead b-zzzzzzzzzz is missing/],
+  ["empty lead", (f) => { f.bots[2].lead = ""; }, /lead  is missing/],
+  ["non-text number lead", (f) => { f.bots[2].lead = 42; }, /lead 42 is missing/],
+  ["non-text boolean lead", (f) => { f.bots[2].lead = false; }, /lead false is missing/],
+  ["non-text object lead", (f) => { f.bots[2].lead = {}; }, /lead \[object Object\] is missing/],
+  ["non-text array lead", (f) => { f.bots[2].lead = []; }, /lead  is missing/],
   ["duplicate ids", (f) => f.bots.push({ ...f.bots[2] }), /id used twice/],
   ["self lead", (f) => { f.bots[2].lead = DEV; }, /leads back to this bot/],
   ["lead cycle", (f) => { f.bots[1].lead = DEV; f.bots[2].lead = CAP; }, /leads back to this bot/],
