@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, shared, setShared, updates, layout, panes, readTextFile, appHome, home, exec, openOverlay, closeOverlay, watchFolder } from "herdr";
