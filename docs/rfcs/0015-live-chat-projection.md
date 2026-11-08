@@ -85,6 +85,10 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2ws), each as recommended
   machines before #206) approvals fall back to the screen under the guards in "Input".
   herdr-core's status stays the gate either way.
 
+See [RFC 0014](0014-shared-bot-registry.md), Amendments (2026-11-07): D30 does not cover a
+universal Bot. Its runtime is a DSH Session on `acp-claude`, so this projection never
+runs for it: its Herdr face is a pane on that DSH Session, not a projected Claude pane.
+
 Everything else in Design is this RFC's proposal. No question is open.
 
 ## Design

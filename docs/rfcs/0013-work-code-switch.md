@@ -141,6 +141,11 @@ What stays apart: the Bot team's Sessions, rooms, memory and schedules are never
 pack. Herdr's layout, spaces and attach ledger (`~/.config/herdr-app`) are read by the app only
 through the herdr-app CLI.
 
+Universal Bots ([RFC 0014](0014-shared-bot-registry.md), Amendments, 2026-11-07): the switch
+picks which face is in front, and both faces show the Bot's one DSH Session. Its Herdr face is
+a pane that reads and types into that Session through the desktop host (or `dsh-tui --resume`
+once the host has let go of it), not a projected Claude pane. The pack still reads no DSH files.
+
 ### Cross-OS
 
 All three OSes ship at once (D27).

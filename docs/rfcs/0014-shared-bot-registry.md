@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; delivery 1 merged: #260) |
+| Status | Accepted (every question answered: see Decided and proposed; delivery 1 merged: #260; amended 2026-11-07: universal Bots, see Amendments) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | plugin (3.N.P), desktop (3.N), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -438,6 +438,67 @@ Undo: delete the file, or revert the delivery; `state.json` keeps every DSH Bot.
    without a chat, and Code still reaches them.
 
 RFC 0013's delivery 8 can start after deliveries 1-3.
+
+## Amendments
+
+### Universal Bots: one Bot, one DSH Session, two faces (2026-11-07)
+
+Owner decision D4 (Felipe, 2026-11-07, relayed by t3q1; wish `pocket-four-tabs`, Group 0a): a
+project's orchestrator is one Bot. It is defined once in this registry, runs as Claude Code
+through DSH's ACP route, and shows as a DSH chat in work mode and in Herdr in code mode. Pocket
+shows it once. The dsh-tui question this raised was spiked before this text was written:
+[dsh-tui-resume-spike.md](../research/dsh-tui-resume-spike.md).
+
+**The field.** Per Bot, `universal`, a boolean.
+
+- Default: `true` for a repo file's `main` Bot (the project's one main Bot, D2), `false` for
+  every other Bot, the home file's included.
+- `universal: false` on a main Bot opts it out; `universal: true` makes any other Bot universal.
+- A reader that predates the field keeps it as an unknown field (Q15) and treats the Bot as it
+  does today.
+
+**The runtime.** A universal Bot runs as one DSH Session on the `acp-claude` route
+([RFC 0003](0003-model-routes-and-acp.md): `@agentclientprotocol/claude-agent-acp` over the
+person's own `claude` CLI), served by the desktop app's DSH host (`DSH_HOME` is
+`~/.automagik/desktop/dsh`, `apps/desktop/src/dsh.js:771`).
+
+- It gets DSH's tool set and DSH's approvals, as RFC 0003's Amendments give every ACP Session.
+- Its model and effort are `dsh.model` and `dsh.effort`. Herdr's `agent`, `model` and `worker`
+  fields do not start anything for it: Herdr starts no Claude pane for a universal Bot.
+- The Session is the Bot's only runtime. Nothing else runs Claude Code for that Bot, so there
+  is never a second conversation to keep in step.
+- It still needs the project's yes (Q17, `shown[]`): without it the Session is not started and
+  the Bot stays in Herdr, as an unpicked Bot does today. Being universal is never that yes.
+
+**The faces.** [RFC 0013](0013-work-code-switch.md)'s mode picks which face is in front. Both
+faces show the same Session.
+
+- **DSH face (work).** The bots-dsh chat of that Session, in the Automagik window, and on the
+  phone as `dsh:<botId>` (`herdr/mods/pocket-link/bridge/dsh-source.mjs:1-4`).
+- **Herdr face (code).** A Herdr pane on the Bot's folder that shows the same DSH Session. It is
+  never a projected Claude pane (RFC 0015) and never a second runtime. DSH lets one process
+  write a Session at a time (the spike), so while the desktop host serves the Session the pane
+  is a read-and-type view of it: it reads the Session through the host and sends through the
+  host. `dsh-tui --resume <id>` takes the Session over only when the desktop host is not
+  holding it (a handoff, not a shared pane). Wish Group 6 builds the view.
+
+**What this supersedes, for universal Bots only.**
+
+- `:77-85`: Q19's "not ACP" and D30's live model. A universal Bot's chat is its DSH Session, not
+  a projection of a terminal agent. Its input and approvals go through DSH (the adapter's
+  `canUseTool`, then DSH's approval service), not terminal keys.
+- `:215-217`: "An exposed Bot has no DSH Session", and Code showing the agent as a terminal. A
+  universal Bot has exactly one DSH Session, and Code shows that Session.
+
+What does not change:
+
+- D30, Q19 and "One conversation" hold for every Bot that is not universal. Workers, helpers
+  and every other Herdr code Bot stay live terminal agents, projected by RFC 0015.
+- Q14's per-app model fields hold for those Bots.
+- The lines above are left as written, so these citations keep their numbers.
+
+The identity check (one Bot id in both apps, wish Group 2) and the faces (wish Group 6) build
+on this amendment.
 
 ## Open questions
 
