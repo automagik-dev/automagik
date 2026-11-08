@@ -2,7 +2,7 @@
 title: "Decisions"
 type: moc
 created: 2026-11-01
-updated: 2026-11-07
+updated: 2026-11-08
 tags: [moc, decisions]
 ---
 # Decisions
@@ -23,5 +23,6 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [Pocket Link doesn't install the usage meter](pocket-link-no-meter-installer.md) | Implemented | automagik-dev/automagik-pocket#53 |
 | [Four tabs: Home, Team, Code, Settings](four-tabs.md) | Implemented | automagik-dev/automagik#664 |
 | [Team: one bubble per project, keyed by registry bot id](team-bubbles.md) | Implemented | automagik-dev/automagik#674 |
+| [A DSH chat reconnects by itself; the phone needs no dedupe flag](dsh-chat-resume.md) | Implemented | |
 
 Back to the [docs home](../_index.md).

@@ -486,4 +486,23 @@ class TeamsTest {
         assertEquals("Yesterday", Teams.time(java.time.Instant.parse("2026-11-02T23:59:00Z").toEpochMilli(), now, zone))
         assertEquals("2026-11-03", Teams.day(now, zone))
     }
+
+    /**
+     * Rows "a Main Bot's Team bubble opens its DSH chat" and Home's needs-you rows (#731, RFC 0015 D29): the main
+     * bot's pane maps to the chat its bubble opens, so Home opens the same chat. No chat, a chat not shown or a
+     * DSH-only bot (no pane) leaves Home's rows on their terminals.
+     */
+    @Test fun aMainBotsPaneOnHomeOpensTheSameDshChatAsItsBubble() {
+        val chat = TerminalRef("h1", "dsh:session-1")
+        val bubbles = opensOn("h1", dshRow("session-1", status = "blocked", registryId = "b-aaaaaaaaaa"))
+        assertEquals(Teams.Opens.DshChat(chat), bubbles[0].opens)
+        assertEquals(mapOf(TerminalRef("h1", "t1") to chat), Teams.paneChats(bubbles))
+        assertEquals(emptyMap<TerminalRef, TerminalRef>(), Teams.paneChats(opensOn("h1")))
+        assertEquals(emptyMap<TerminalRef, TerminalRef>(),
+            Teams.paneChats(opensOn("h1", dshRow("session-1", shown = false, registryId = "b-aaaaaaaaaa"))))
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.ASLEEP, "", 0L, null, "")
+        val dshOnly = Teams.bubbles(listOf(Teams.Team("h|x", "h", "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))),
+            mapOf("h" to listOf(dshRow("b-main", status = "blocked"))))
+        assertEquals(emptyMap<TerminalRef, TerminalRef>(), Teams.paneChats(dshOnly))
+    }
 }

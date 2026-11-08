@@ -95,7 +95,8 @@ object SpaceIcons {
  * ahead with an amber halo and a haptic tick). A bubble opens its bot's chat: the `dsh:` chat of a universal or DSH bot,
  * else the projected chat of a Herdr-only main bot's terminal ([Teams.bubbles]).
  */
-@Composable fun TeamsScreen(state: PocketState, vm: PocketViewModel, teams: List<Teams.Team>, onOpen: (Teams.Opens) -> Unit) {
+@Composable fun TeamsScreen(state: PocketState, vm: PocketViewModel, teams: List<Teams.Team>, dsh: Map<String, List<Chat.Terminal>>,
+                            onOpen: (Teams.Opens) -> Unit) {
     val celebrations by vm.celebrations.collectAsState()
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val ordered = remember(teams) { Teams.order(teams) }
@@ -109,7 +110,6 @@ object SpaceIcons {
         if (was != null && Teams.jumped(was, ordered).isNotEmpty()) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         before = ordered.map { it.id }
     }
-    val dsh = rememberDshChats(state, vm)
     val shown = if (selected == null) ordered else listOf(selected)
     val bubbles = remember(shown, dsh) { Teams.bubbles(shown, dsh) }
     val offline = teams.any { it.stale }
@@ -139,13 +139,14 @@ object SpaceIcons {
 }
 
 /**
- * Each connected, paired machine's `dsh:` chats, read again every 30 s while Team shows. A reading in flight or failed
- * keeps the last good one, so a bubble does not flip between its chat and its terminal.
+ * Each connected, paired machine's `dsh:` chats, read again every 30 s while [reading] (Home or Team shows). A reading
+ * in flight or failed keeps the last good one, so a bubble or a Home row does not flip between its chat and its
+ * terminal.
  */
-@Composable private fun rememberDshChats(state: PocketState, vm: PocketViewModel): Map<String, List<Chat.Terminal>> {
+@Composable fun rememberDshChats(state: PocketState, vm: PocketViewModel, reading: Boolean): Map<String, List<Chat.Terminal>> {
     val hosts = state.hosts.filter { it.paired && state.machines[it.id]?.connected == true }.map { it.id }
-    LaunchedEffect(hosts, state.demo) {
-        if (state.demo) return@LaunchedEffect
+    LaunchedEffect(hosts, state.demo, reading) {
+        if (state.demo || !reading) return@LaunchedEffect
         while (true) { hosts.forEach(vm::loadBotChats); delay(30_000) }
     }
     val read by vm.botChats.collectAsState()

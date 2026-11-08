@@ -263,7 +263,7 @@ object Teams {
 
     /** What tapping a bubble opens. */
     sealed interface Opens {
-        /** The bot's `dsh:` chat (a universal or DSH bot), read only. */
+        /** The bot's `dsh:` chat (a universal or DSH bot); it takes writes when the bridge says `dshWrite`. */
         data class DshChat(val ref: TerminalRef) : Opens
         /** A Herdr-only main bot: its terminal's projected chat. */
         data class TerminalChat(val ref: TerminalRef) : Opens
@@ -304,6 +304,16 @@ object Teams {
         }
         Bubble(t, bot, opens)
     }
+
+    /**
+     * Home's rows (RFC 0015 D29: one live agent, every window): each main bot's pane whose bubble opens the bot's
+     * `dsh:` chat maps to that chat, so a Home row of the pane opens the same chat its Team bubble does. A pane whose
+     * chat is listed `shown: false`, or that has no chat, is not in the map and opens its terminal as before.
+     */
+    fun paneChats(bubbles: List<Bubble>): Map<TerminalRef, TerminalRef> = bubbles.mapNotNull { b ->
+        val pane = b.main?.ref ?: return@mapNotNull null
+        (b.opens as? Opens.DshChat)?.let { pane to it.ref }
+    }.toMap()
 
     /** The `dsh:` chat of registry bot [id]: by its served registry id, else (none) `dsh:<id>`. */
     private fun mainChat(id: String, chats: List<Chat.Terminal>) =

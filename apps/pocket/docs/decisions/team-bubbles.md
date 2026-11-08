@@ -3,7 +3,7 @@ title: "Team: one bubble per project, keyed by registry bot id"
 type: decision
 status: Implemented
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-08
 pr: "automagik-dev/automagik#674"
 tags: [decisions, teams, bots, chat]
 ---
@@ -23,8 +23,10 @@ are gone from Team ([Four tabs](four-tabs.md): Home has needs-you).
 - One identity: the bot's `dsh:` chat on that machine and its pane labelled `bot=<id>` are the
   same bot, by registry id, so they make one bubble. A chat is the bot's by the `registryId`
   bots-dsh serves on its row; a row without one only when it is `dsh:<id>` itself. The chat wins
-  the tap (a universal or DSH bot, read only), under its own `dsh:<sessionId>`; with no chat, the
-  pane's projected chat (the terminal's Chat tab).
+  the tap (a universal or DSH bot; it takes writes when the bridge says `dshWrite`), under its own
+  `dsh:<sessionId>`; with no chat, the pane's projected chat (the terminal's Chat tab).
+- Home opens the same chat (#731, RFC 0015 D29: one live agent, every window): a Home row of the
+  main bot's pane opens the chat its bubble opens (`Teams.paneChats`); any other row its terminal.
 - A `dsh:` chat listed `shown: false` (a project with no yes in `shown[]`, RFC 0015 `:751-755`)
   says "Show in Automagik first" and opens nothing. A row with no `shown` field is shown.
 - A `dsh:` chat that matches no main bot gets no bubble; it stays in Settings, Bot chats.
@@ -42,7 +44,9 @@ before #684) keeps the old match, so a universal bot's bubble still opens its te
 - `Teams.bubbles`, `Teams.lineOf`, `Teams.Opens`:
   `android/app/src/main/java/ai/namastex/automagik/Teams.kt`. Tested in `TeamsTest`.
 - `TeamsScreen` and `BubbleRow`: `android/app/src/main/java/ai/namastex/automagik/TeamsScreen.kt`.
-- The `dsh:` chat list is read every 30 s while Team shows (`rememberDshChats`).
+- The `dsh:` chat list is read every 30 s while Home or Team shows (`rememberDshChats`). The open
+  chat's state goes into its row between reads (`Chat.withStatus`).
+- How a DSH chat comes back after a bots-dsh restart: [DSH chat resume](dsh-chat-resume.md).
 
 ## Related
 
