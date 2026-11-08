@@ -572,7 +572,7 @@ so `dsh-source.mjs` forwards them unchanged.
 |---|---|---|
 | `send {channel, text, id}` | `chat.send {terminal, text, id}` | a prompt (`SessionPromptRequest`) on the Bot's current chat Session, `mode: 'queue'`, `requestId` from the phone's `id` |
 | `interrupt {channel}` | `chat.interrupt {terminal}` | a cancel of the active turn (`SessionCancelRequest`) |
-| `answer {channel, row, choice}` | `chat.answer {terminal, row, choice}` | the result of the open approval or question named by `row` (below) |
+| `answer {channel, row, choice, text?}` | `chat.answer {terminal, row, choice, text?}` | the result of the open approval or question named by `row` (below) |
 
 - **send.** The text goes through the same cleaner as a terminal send (Design, "Input": paste
   markers, escape sequences, C0 but newline and tab, DEL, C1; CRLF to LF); empty after cleaning
@@ -598,10 +598,17 @@ so `dsh-source.mjs` forwards them unchanged.
   refuses it from the phone, even where DSH offers it. (Wish Group 5 lists it on the phone;
   that needs a later amendment.) The bridge adds `by`, the paired phone's name from
   `devices.json`, which the phone does not set. Anything else is refused.
+- **text** (a question's free text only). `text` is accepted only with `choice: "other"` on an
+  open question row that offers free text, as on terminal chats (Design, "Input"). It goes
+  through the same cleaner as a `send`, and is at most 32 KiB after cleaning. Refused:
+  `text` on an approval row, `text` on a question without free text or with any other
+  `choice`, `choice: "other"` without `text`, and `text` empty after cleaning, all `invalid`;
+  `text` over 32 KiB, `too-long`. It stays one answer to a question DSH raised: never a prompt,
+  never sent to a Session as a message.
 - **Refusal reasons.** `read-only` (a socket or bridge without writes), `not-watching`,
   `not-shown` (the per-project yes, below), `settled` (with the receipt), `changed` (the row is
-  no longer the open one: "The question changed"), `rate` (Limits), `too-long`, `busy`,
-  `offline`.
+  no longer the open one: "The question changed"), `invalid` (an answer's `choice` or `text`
+  the row does not allow, above), `rate` (Limits), `too-long`, `busy`, `offline`.
 
 #### Approvals on the phone, and the race
 
@@ -665,6 +672,8 @@ connections, 8 subscriptions, 4 MiB unsent). New:
   stolen phone. Removing the phone (writes end within 2 s) is what stops it;
 - an `answer` only for the request open now in the channel's own Session, checked at answer
   time (see **answer** above);
+- an answer's `text` only for a question's free text, cleaned, at most 32 KiB (see **text**
+  above), counted in the same 20 writes a minute;
 - a `send` only to the Bot's current chat Session, never a group, task, archived or subagent
   Session (the same set `pocket-chat.js:10-11` follows today);
 - at most 16 settled requests kept per Session (above).
@@ -715,7 +724,7 @@ finds out what the other accepts, and fails closed to read-only.
 - **What it can send: grows.** Before: text, mapped keys and interrupt into Herdr terminals.
   Now also, on a DSH chat: a prompt to the Bot's current chat Session, a cancel of its running
   turn, and one answer to a request DSH raised: allow for that one call, deny, or a question's
-  option, never allow for session. At most 20 writes a minute per phone (Limits). Only on the
+  option or free text (cleaned, 32 KiB), never allow for session. At most 20 writes a minute per phone (Limits). Only on the
   person's action on the phone; the engine and the plugin never answer by themselves.
 - **Who the log says sent it.** DSH writes a caller's `principal` only for a caller other than
   the owner (`dsh-api-session-controller` types, `user-rpc` source), and the phone acts as the
@@ -759,7 +768,9 @@ finds out what the other accepts, and fails closed to read-only.
    and no writes; a write on a global Bot (the Main Bot) is served under the same limits, with
    no project yes; a project Bot without its yes gets `not-shown`; allow for session from the
    phone is refused; the 21st write in a minute gets `rate`; a Retry with a known `id` prompts
-   nothing.
+   nothing; a question's free text arrives cleaned as that question's answer; `text` on an
+   approval, on a question without free text or with another `choice` gets `invalid`, and over
+   32 KiB gets `too-long`.
    *Rollback:* a release without the methods; bridges see `readOnly: true`.
 2. **Pocket Link** (herdr, copied by hand with the owner's OK). `dsh-source.mjs` asks for writes,
    forwards them only to a socket that answered `write: 1`, refuses otherwise as today, and
