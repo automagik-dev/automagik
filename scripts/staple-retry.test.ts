@@ -35,6 +35,37 @@ const fail = (output: string, status = 68): Reply => ({ status, output });
 const nsurl = (code: number, text = 'The network connection was lost.') =>
   `Error Domain=NSURLErrorDomain Code=${code} "${text}" UserInfo={NSLocalizedDescription=${text}}`;
 
+// The exact v3.98.0 mac failure (#704): the outer NSURLErrorDomain -1005 carries the same
+// connection loss as a nested kCFErrorDomainCFNetwork -1005 inside NSUnderlyingError. The
+// runner's home path is left out; every error domain, code, key and line is as logged.
+const nestedTransientFailure = (): string =>
+  [
+    'Processing: dist/Automagik-3.98.0-mac-arm64.dmg',
+    'error is Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost." ' +
+      'UserInfo={_kCFStreamErrorCodeKey=-4, NSUnderlyingError=0x60000360ca20 {Error ' +
+      'Domain=kCFErrorDomainCFNetwork Code=-1005 "(null)" UserInfo={NSErrorPeerAddressKey=' +
+      '<CFData 0x600001b19d60 [0x1f5acffa8]>{length = 16, capacity = 16, bytes = ' +
+      '0x100201bb11fa61270000000000000000}, _kCFStreamErrorCodeKey=-4, ' +
+      '_kCFStreamErrorDomainKey=4}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask ' +
+      '<A9D05D66-2666-40C2-A499-2C9B427E0714>.<1>, _NSURLErrorRelatedURLSessionTaskErrorKey=(',
+    '    "LocalDataTask <A9D05D66-2666-40C2-A499-2C9B427E0714>.<1>"',
+    '), NSLocalizedDescription=The network connection was lost., ' +
+      'NSErrorFailingURLStringKey=https://api.apple-cloudkit.com/database/1/' +
+      'com.apple.gk.ticket-delivery/production/public/records/lookup, ' +
+      'NSErrorFailingURLKey=https://api.apple-cloudkit.com/database/1/' +
+      'com.apple.gk.ticket-delivery/production/public/records/lookup, ' +
+      '_kCFStreamErrorDomainKey=4}',
+    "CloudKit's response is inconsistent with expections: (null)",
+    'The staple and validate action failed! Error 68.',
+  ].join('\n');
+
+// The shape that ended v3.98.0 attempt 2 before the workflow retry could run: electron-builder's
+// own staple (@electron/notarize staple.ts:16) hits the same outer -1005 with the nested
+// CFNetwork pair, then throws "Failed to staple your application with code: 68". The same
+// classifier decides both the workflow's and electron-builder's round-trip, so both retry.
+const electronBuilderStapleFailure = (): string =>
+  `${nestedTransientFailure()}\nFailed to staple your application with code: 68`;
+
 // xcrun answers from a numbered plan (status line, then output) and logs its whole argv; sleep
 // logs its argument and returns immediately. Both append to one event log, so the waits are
 // proven to sit between the attempts and before the re-staple, not merely to have happened.
@@ -99,6 +130,7 @@ function harness() {
   for (const path of [callsPath, sleepsPath, eventsPath]) writeFileSync(path, '');
 
   return {
+    dir,
     artifact,
     run(replies: Reply[], delays?: string, artifactPath = artifact) {
       replies.forEach((reply, index) => {
@@ -144,6 +176,19 @@ describe('the first attempt succeeds', () => {
     expect(run.events).toEqual([staple(h.artifact), validate(h.artifact)]);
     expect(run.out).toContain('attempt 1/3 succeeded: staple and validate');
   });
+
+  test('an .app bundle directory is an artifact too, not "not found"', () => {
+    const h = harness();
+    const app = join(h.dir, 'Automagik-9.9.9-arm64.app');
+    mkdirSync(join(app, 'Contents'), { recursive: true });
+    writeFileSync(join(app, 'Contents', 'Info.plist'), 'already notarized app bytes\n');
+    // Fail-before: the old `[[ -f ]]` guard exited 2 "artifact not found" before any xcrun.
+    const run = h.run(roundTrip(app), undefined, app);
+    expect(run.status).toBe(0);
+    expect(run.out).not.toContain('artifact not found');
+    expect(run.events).toEqual([staple(app), validate(app)]);
+    expect(run.out).toContain('attempt 1/3 succeeded: staple and validate');
+  });
 });
 
 describe('a transient NSURLErrorDomain failure is retried after 10 s', () => {
@@ -173,6 +218,57 @@ describe('a transient NSURLErrorDomain failure is retried after 10 s', () => {
     expect(run.status).toBe(0);
     expect(run.sleeps).toEqual(['10']);
     expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+  });
+
+  test('the real v3.98.0 nested kCFErrorDomainCFNetwork pair retries after 10 s (#704)', () => {
+    const h = harness();
+    const run = h.run([fail(nestedTransientFailure()), ok(), ok()]);
+    // The fail-before proof: the pre-fix classifier failed fast on the nested pair, and this
+    // assertion prints the whole script output on that failure.
+    expect(run.out).not.toContain('failing on the first response, not retrying');
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.events).toEqual([
+      staple(h.artifact),
+      'sleep 10',
+      staple(h.artifact),
+      validate(h.artifact),
+    ]);
+    expect(run.out).toContain("attempt 1/3 failed at 'stapler staple' (exit 68)");
+    expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
+    expect(run.out).toContain('attempt 2/3 succeeded: staple and validate');
+  });
+
+  test('the electron-builder staple failure shape retries after 10 s (#704)', () => {
+    const h = harness();
+    const run = h.run([fail(electronBuilderStapleFailure()), ok(), ok()]);
+    // Fail-before: the pre-fix classifier parsed the nested CFNetwork pair as a refusal and
+    // failed on the first response; these assertions print the script output when it does.
+    expect(run.out).not.toContain('failing on the first response, not retrying');
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.events).toEqual([
+      staple(h.artifact),
+      'sleep 10',
+      staple(h.artifact),
+      validate(h.artifact),
+    ]);
+    expect(run.out).toContain("attempt 1/3 failed at 'stapler staple' (exit 68)");
+    expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
+  });
+
+  test('a direct kCFErrorDomainCFNetwork Code=-1005 is the same transient failure', () => {
+    const h = harness();
+    const output = 'Error Domain=kCFErrorDomainCFNetwork Code=-1005 "(null)"';
+    const run = h.run([ok(), fail(output), ok(), ok()]);
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
   });
 
   test('a transient failure on staple, not validate, still retries the whole round-trip', () => {
@@ -241,6 +337,7 @@ describe('a failure that is not transient fails on the first response', () => {
   }
   firstResponse('status: Invalid beside a transient -1005', `${nsurl(-1005)}\nstatus: Invalid`);
   firstResponse('another domain', 'Error Domain=NSCocoaErrorDomain Code=-1005 "no"');
+  firstResponse('CFNetwork Code=-2 alone', 'Error Domain=kCFErrorDomainCFNetwork Code=-2 "no"');
   firstResponse('a mixed transient and non-transient pair', `${nsurl(-1005)}\nError Domain=NSURLErrorDomain Code=-2`);
   firstResponse('free text only', 'The network connection was lost. (NSURLErrorDomain -1005)');
   firstResponse('a missing code', 'Error Domain=NSURLErrorDomain');

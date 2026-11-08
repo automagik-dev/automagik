@@ -45,6 +45,11 @@ protocols:
 # install) or unprivileged user namespaces, which Ubuntu 24.04+ restricts. The launcher
 # the hook writes picks --no-sandbox only when neither is available (an AppImage there).
 afterPack: scripts/after-pack.cjs
+# macOS: notarize the signed app without stapling, then staple and validate it through the
+# retrying script (scripts/staple-retry.sh) before the zip/dmg targets are packed, so the
+# updater's zip carries the stapled app. `mac.notarize` below is off because electron-builder's
+# own integration always staples right after notarizing (#704).
+afterSign: scripts/after-sign.cjs
 linux:
   target:
     - AppImage
@@ -97,8 +102,14 @@ mac:
   category: public.app-category.productivity
   icon: assets/icon.png
   # Signed with the Developer ID in the build machine's keychain (none found: unsigned), under
-  # the hardened runtime. Notarized when APPLE_KEYCHAIN_PROFILE names a notarytool profile.
+  # the hardened runtime. Notarized (and then stapled) when the App Store Connect API key is in
+  # APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER: afterSign notarizes the app without
+  # stapling and the retry script staples+validates it, both before the zip/dmg targets.
   hardenedRuntime: true
+  # electron-builder's @electron/notarize integration notarizes and staples in one step, with no
+  # `staple: false` in the installed version (2.5.0). The unprotected staple is the round-trip
+  # (#704) that killed v3.98.0 attempt 2; afterSign does the two steps separately instead.
+  notarize: false
   entitlements: assets/entitlements.mac.plist
   # Voice chat: macOS asks once, with this line, the first time a chat listens.
   # Local network: without this line macOS never asks, and every connection to a LAN address

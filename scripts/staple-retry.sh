@@ -3,21 +3,31 @@
 #
 #   scripts/staple-retry.sh <artifact>
 #
+# The artifact is a notarized .app bundle or .dmg: `xcrun stapler` handles both. On macOS the
+# updater's zip is packed from the .app, so the .app is stapled first (the build's afterSign hook,
+# apps/desktop/scripts/after-sign.cjs) and the dmg later (the workflow).
+#
 # `xcrun stapler staple` asks Apple's notary service for the ticket (api.apple-cloudkit.com), and
 # `xcrun stapler validate` asks again. A dropped connection there says nothing about the artifact:
 # the notarization already succeeded, and the same command on the same bytes works on the next
 # try. This runs the staple/validate round-trip up to 3 times, waiting 10 s, 30 s and then 90 s
-# (the last wait is before the re-staple pass), and only when the failure parses as an NSError
-# domain AND code in the transient set:
+# (the last wait is before the re-staple pass), and only when the failure's TOP-LEVEL NSError pair
+# has a domain AND code in the transient set:
 #
 #   NSURLErrorDomain -1001 (timed out), -1004 (cannot connect), -1005 (connection lost),
 #   -1009 (offline)
+#   kCFErrorDomainCFNetwork, the same codes: a direct CFNetwork connection failure is the same
+#   transient failure, and it is also the NSUnderlyingError of the NSURLErrorDomain one.
 #
-# Any other domain or code, a missing or unparsable domain/code, `status: Invalid`, and every
-# other failure (a real rejection, a missing stapler, a bad artifact) fails on the first response
-# and is never retried. The error output stays in the log. After the three attempts, one re-staple
-# pass (staple again, then validate; stapling is idempotent) runs before the final failure: the
-# artifact is already notarized, so there is no re-notarization and no rebuild.
+# NSError nests its underlying error in the outer UserInfo (`NSUnderlyingError=0x... {Error
+# Domain=... Code=...}`); only the top-level pairs decide a retry, so the nested CFNetwork pair of
+# the real -1005 is part of the same transient failure, not a refusal reason.
+#
+# Any other top-level domain or code, a missing or unparsable domain/code, `status: Invalid`, and
+# every other failure (a real rejection, a missing stapler, a bad artifact) fails on the first
+# response and is never retried. The error output stays in the log. After the three attempts, one
+# re-staple pass (staple again, then validate; stapling is idempotent) runs before the final
+# failure: the artifact is already notarized, so there is no re-notarization and no rebuild.
 #
 # Every attempt logs its number, the parsed Domain/Code, and the action taken (retry in Ns,
 # non-transient -> fail, re-staple, success), so the job log alone diagnoses the step.
@@ -29,6 +39,7 @@ set -euo pipefail
 
 readonly MAX_ATTEMPTS=3
 readonly TRANSIENT_DOMAIN="NSURLErrorDomain"
+readonly CFNETWORK_DOMAIN="kCFErrorDomainCFNetwork"
 readonly TRANSIENT_CODES=(-1001 -1004 -1005 -1009)
 
 die() {
@@ -40,7 +51,8 @@ if [[ $# -ne 1 || -z ${1:-} ]]; then
   die "usage: $0 <artifact>"
 fi
 artifact=$1
-[[ -f ${artifact} ]] || die "artifact not found: ${artifact}"
+# A file (.dmg) or a directory (.app bundle): stapler takes either.
+[[ -e ${artifact} ]] || die "artifact not found: ${artifact}"
 command -v xcrun >/dev/null 2>&1 || die "xcrun is not on PATH"
 
 IFS=' ' read -r -a delays <<< "${STAPLE_RETRY_DELAYS:-10 30 90}"
@@ -57,6 +69,7 @@ last_status=0
 failure_reason=""
 error_domains=()
 error_codes=()
+error_levels=()
 
 # Run one command, keep its stdout and stderr in step_output and still print them, and return its
 # exit status.
@@ -84,28 +97,55 @@ run_round_trip() {
 }
 
 # Collect every `Domain=<domain> Code=<code>` and `(<domain> error <code>.)` pair in step_output
-# into error_domains/error_codes. The domain and the code are what decide a retry; free text such
-# as "The network connection was lost" does not.
+# into error_domains/error_codes, with `top` or `nested` in error_levels. The outer NSError opens
+# its UserInfo with `{`, and an underlying error is another pair inside it, so brace depth tells
+# the top-level pair (the one that decides a retry) from the nested one. The domain and the code
+# are what decide a retry; free text such as "The network connection was lost" does not.
 collect_error_pairs() {
-  local matches match inner
+  local line rest match prefix inner i ch depth=0
   error_domains=()
   error_codes=()
-  matches=$(printf '%s\n' "${step_output}" |
-    grep -oE 'Domain=[A-Za-z0-9_.-]+[[:space:]]+Code=-?[0-9]+|\([A-Za-z0-9_.-]+ error -?[0-9]+\.?\)' || true)
-  while IFS= read -r match; do
-    [[ -n ${match} ]] || continue
-    if [[ ${match} == Domain=* ]]; then
-      inner=${match#Domain=}
-      error_domains+=("${inner%%[[:space:]]*}")
-      error_codes+=("${match##*Code=}")
-    else
-      inner=${match#(}
-      inner=${inner%)}
-      inner=${inner%.}
-      error_domains+=("${inner%% error *}")
-      error_codes+=("${inner##* error }")
-    fi
-  done <<< "${matches}"
+  error_levels=()
+  while IFS= read -r line || [[ -n ${line} ]]; do
+    rest=${line}
+    while [[ ${rest} =~ (Domain=[A-Za-z0-9_.-]+[[:space:]]+Code=-?[0-9]+|\([A-Za-z0-9_.-]+[[:space:]]+error[[:space:]]+-?[0-9]+\.?\)) ]]; do
+      match=${BASH_REMATCH[0]}
+      prefix=${rest%%"${match}"*}
+      for ((i = 0; i < ${#prefix}; i++)); do
+        ch=${prefix:i:1}
+        if [[ ${ch} == '{' ]]; then
+          depth=$((depth + 1))
+        elif [[ ${ch} == '}' ]]; then
+          depth=$((depth - 1))
+        fi
+      done
+      if [[ ${match} == Domain=* ]]; then
+        inner=${match#Domain=}
+        error_domains+=("${inner%%[[:space:]]*}")
+        error_codes+=("${match##*Code=}")
+      else
+        inner=${match#(}
+        inner=${inner%)}
+        inner=${inner%.}
+        error_domains+=("${inner%% error *}")
+        error_codes+=("${inner##* error }")
+      fi
+      if (( depth == 0 )); then
+        error_levels+=("top")
+      else
+        error_levels+=("nested")
+      fi
+      rest=${rest#*"${match}"}
+    done
+    for ((i = 0; i < ${#rest}; i++)); do
+      ch=${rest:i:1}
+      if [[ ${ch} == '{' ]]; then
+        depth=$((depth + 1))
+      elif [[ ${ch} == '}' ]]; then
+        depth=$((depth - 1))
+      fi
+    done
+  done <<< "${step_output}"
 }
 
 log_parsed_errors() {
@@ -127,10 +167,17 @@ is_transient_code() {
   return 1
 }
 
-# Return 0 only when step_output holds at least one error pair and every pair is a transient
-# NSURLErrorDomain network failure. Otherwise set failure_reason and return 1.
+is_transient_domain() {
+  local domain=$1
+  [[ ${domain} == "${TRANSIENT_DOMAIN}" || ${domain} == "${CFNETWORK_DOMAIN}" ]]
+}
+
+# Return 0 only when step_output holds at least one TOP-LEVEL error pair and every top-level pair
+# is a transient network failure. A pair nested inside the outer UserInfo/NSUnderlyingError is
+# part of that same failure and does not decide the retry. Otherwise set failure_reason and
+# return 1.
 classify_failure() {
-  local i
+  local i top_level_pairs=0
   collect_error_pairs
   log_parsed_errors
   failure_reason=""
@@ -138,17 +185,23 @@ classify_failure() {
     failure_reason="notary status: Invalid is a rejection"
     return 1
   fi
-  if (( ${#error_domains[@]} == 0 )); then
-    failure_reason="the output has no parsable error Domain/Code"
+  for ((i = 0; i < ${#error_domains[@]}; i++)); do
+    if [[ ${error_levels[i]} == top ]]; then
+      top_level_pairs=$((top_level_pairs + 1))
+    fi
+  done
+  if (( top_level_pairs == 0 )); then
+    failure_reason="the output has no parsable top-level error Domain/Code"
     return 1
   fi
-  for i in "${!error_domains[@]}"; do
-    if [[ ${error_domains[i]} != "${TRANSIENT_DOMAIN}" ]]; then
-      failure_reason="Domain=${error_domains[i]} Code=${error_codes[i]} is not ${TRANSIENT_DOMAIN}"
+  for ((i = 0; i < ${#error_domains[@]}; i++)); do
+    [[ ${error_levels[i]} == top ]] || continue
+    if ! is_transient_domain "${error_domains[i]}"; then
+      failure_reason="top-level Domain=${error_domains[i]} Code=${error_codes[i]} is not a transient network domain (not ${TRANSIENT_DOMAIN}/${CFNETWORK_DOMAIN})"
       return 1
     fi
     if ! is_transient_code "${error_codes[i]}"; then
-      failure_reason="Domain=${TRANSIENT_DOMAIN} Code=${error_codes[i]} is not transient (not ${TRANSIENT_CODES[*]})"
+      failure_reason="top-level Domain=${error_domains[i]} Code=${error_codes[i]} is not transient (not ${TRANSIENT_CODES[*]})"
       return 1
     fi
   done
