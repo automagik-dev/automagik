@@ -49,7 +49,8 @@ The owner's answers to this RFC's questions 1 to 6 (2026-11-08):
   frozen after it.
 - The Intel Mac build stays for good: every meter release ships `usagemeter-darwin-x86_64`, and
   it is not dropped after the cutover. D28 still drops Intel Mac for every other part; the meter
-  is the one exception. How the build reaches an Intel Mac is still open (question 8).
+  is the one exception. How the build reaches an Intel Mac is Open question 8, proposed and
+  pending the owner; A (am runs there for its meter verbs only) is recommended.
 - The standalone installer is retired for `am meter install`. The upstream bridge release points
   there, and Pocket Link's docs follow.
 - The capability is `meter.usage@1`. Its major is not tied to `schema_version`: the doc keeps
@@ -168,10 +169,10 @@ Proposed `meter/usagemeter/part.json`:
   know D28's targets only.
 - How an Intel Mac gets the meter: proposed, pending the owner (Open question 8). RFC 0012
   refuses am on an Intel Mac, and the standalone installer is retired, so as written the build
-  has no route. Recommended: am runs on an Intel Mac for its meter verbs only (`am meter
-  install`, `status` and `uninstall`), with every other part and the code set still refused
-  there. This follows from question 4. The alternative keeps the standalone installer for Intel
-  Mac only, against question 5.
+  has no route. Recommended, A: am runs on an Intel Mac for its meter verbs only (`am meter
+  install`, `am meter status`, `am meter uninstall`), with every other part and the code set
+  still refused there. This follows from question 4. The alternative, B, keeps the standalone
+  installer for Intel Mac only, against question 5.
 - `entry`: a binary has no folder to run from, so its entries are am's own `meter` verbs.
   Proposed: an entry whose first word is `am` runs the am that is installing. Code gaps: today
   `meter uninstall` takes no `--local`, and there is no `meter doctor`.
@@ -389,12 +390,12 @@ additive change bumps neither.
 
 ### Ports of genie's metering
 
-Open; to be answered by RFC 0018 (#764), the meter query contract. genie (genie-rs) has metering of
-its own; ports of it come from genie's specs and acceptance tests. Workers build them under this
-RFC's contract: the meter lane, the build rule, and the `herdr-meter` doc's keeper and versioning
-rules. What is ported, where it lives (modules of this crate or crates beside it under `meter/`),
-and which acceptance tests come with it, is RFC 0018's to say. genie's reader moving to
-`meter.usage@1` is coordinated there too.
+Open; the owner answers it through RFC 0018 (#764), the meter query contract, which genie reviews as
+the reader. genie (genie-rs) has metering of its own; ports of it come from genie's specs and
+acceptance tests. Workers build them under this RFC's contract: the meter lane, the build rule, and
+the `herdr-meter` doc's keeper and versioning rules. What is ported, where it lives (modules of this
+crate or crates beside it under `meter/`), and which acceptance tests come with it, is RFC 0018's to
+say. genie's reader moving to `meter.usage@1` is coordinated there too.
 
 ## Contracts introduced
 
@@ -468,13 +469,14 @@ Each is one pull request with an independent review.
    installs the pointer's build, refuses a lower sequence and leaves a newer binary alone.
    *Rollback:* revert the pack; it installs from the last pin.
 7. **The part in am** (am, RFC 0012 delivery 8). `am install automagik.usagemeter`, the object
-   `artifact`, `meter doctor`, and `meter uninstall --local`.
+   `artifact`, `meter doctor`, and `meter uninstall --local`. Its Intel Mac route (am's meter
+   verbs on an Intel Mac, or not) waits for Open question 8's answer; the rest goes ahead.
    *Check:* `am doctor` lists the meter; install, rollback and uninstall on a temp home.
-8. **Ports of genie's metering.** Open; to be answered by RFC 0018 (#764).
-9. **Retire the standalone installer** (meter; after 6 and 7). Remove
-   `meter/usagemeter/install.sh`, its test and the CI job's installer step; repoint any doc that
-   still names it to `am meter install`. If Open question 8 keeps it for Intel Mac, this
-   delivery narrows it to that instead.
+8. **Ports of genie's metering.** Waits for Open question 7's answer (RFC 0018, #764).
+9. **Retire the standalone installer** (meter; after 6 and 7). Waits for Open question 8's
+   answer. Remove `meter/usagemeter/install.sh`, its test and the CI job's installer step;
+   repoint any doc that still names it to `am meter install`. If question 8 keeps it for Intel
+   Mac, this delivery narrows it to that instead.
    *Check:* `git grep` finds no reference to the crate's `install.sh`; the `usagemeter` job is
    green.
    *Rollback:* revert.
@@ -485,13 +487,17 @@ Questions 1 to 6 were answered by the owner on 2026-11-08 and are in Decided. us
 nine commits came from automagik-pocket's `meter/`, already here under `apps/pocket/meter/` with
 other ids (deleted since); they are imported anyway, as question 2 decided.
 
-7. **Ports of genie's metering.** Open; to be answered by RFC 0018 (#764): what is ported, where
-   it lives (this crate, or crates beside it under `meter/` with a workspace), which genie specs
-   and acceptance tests come with it, and who reviews them.
-8. **The Intel Mac route.** Question 4 keeps `usagemeter-darwin-x86_64` for good, but RFC 0012
-   refuses am on an Intel Mac and question 5 retires the standalone installer. Options:
-   - A. am runs on an Intel Mac for its meter verbs only (`am meter install`, `status`,
-     `uninstall`); every other part and the code set stay refused there. Follows from question 4.
+7. **Ports of genie's metering.** Open; the owner answers it through RFC 0018 (#764), which genie
+   reviews as the reader: what is ported, where it lives (this crate, or crates beside it under
+   `meter/` with a workspace), which genie specs and acceptance tests come with it, and who
+   reviews them. Delivery 8 waits for it.
+8. **The Intel Mac route.** Open; the owner answers it, asked through the orchestrator; A is
+   recommended. Delivery 9, and delivery 7's Intel Mac route, wait for it. Question 4 keeps
+   `usagemeter-darwin-x86_64` for good, but RFC 0012 refuses am on an Intel Mac and question 5
+   retires the standalone installer. Options:
+   - A. am runs on an Intel Mac for its meter verbs only (`am meter install`, `am meter status`,
+     `am meter uninstall`); every other part and the code set stay refused there. Follows from
+     question 4.
    - B. The standalone installer stays, for Intel Mac only. Against question 5.
 
    Recommended: A. One installer and one trust path (the signed `meter-lane`) for every machine;
