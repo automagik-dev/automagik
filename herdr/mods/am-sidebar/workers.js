@@ -6,7 +6,6 @@
 // briefing hook share it. Apache-2.0.
 
 import { AGENTS, effortArgs, hasEffortFlag, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
-import { homedir } from "node:os";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
 
@@ -79,8 +78,12 @@ export function guardPath(path, agent) {
  * The helper starts the hc proxy before DSH, so the sandbox the pane later creates never sees
  * an unsnapshotted roster or attach ledger. am carries byte-equal copies of both (am-copies).
  */
-const dataHomeOf = (env = process.env) => env.XDG_DATA_HOME || `${env.HOME || homedir()}/.local/share`;
-export const stableRootOf = (env = process.env) => `${dataHomeOf(env)}/automagik-herdr/dsh-sandbox`;
+const dataHomeOf = (env = process.env) => env.XDG_DATA_HOME || (env.HOME ? `${env.HOME}/.local/share` : "");
+export const stableRootOf = (env = process.env) => {
+  const dataHome = dataHomeOf(env);
+  if (!dataHome) throw new Error("HOME or XDG_DATA_HOME is required for the stable pane helper");
+  return `${dataHome}/automagik-herdr/dsh-sandbox`;
+};
 export const stableGuardDir = (root) => `${root}/guard`;
 export const stableHelper = (root) => `${root}/hcPane.mjs`;
 export const stableRunner = (root) => `${root}/bin/run.sh`;
@@ -93,8 +96,9 @@ export const hcProxyEnabled = (env = process.env) => env[HC_PROXY_ENV] === "1";
  * <dir>] [--worker] -- <the agent's own argv>`. The helper starts the proxy, then runs the argv
  * as its child; `run.sh` is the pack's Node finder (the core's PATH may have no node).
  */
-export function paneArgs(argv, { botId, project = null, worker = false, stableRoot = stableRootOf() } = {}) {
+export function paneArgs(argv, { botId, project = null, worker = false, stableRoot = null } = {}) {
   if (typeof botId !== "string" || !botId) throw new Error("paneArgs needs the pane's bot id");
+  stableRoot ??= stableRootOf();
   return ["/bin/sh", stableRunner(stableRoot), stableHelper(stableRoot), "--bot", botId,
     ...(project ? ["--project", project] : []), ...(worker ? ["--worker"] : []), "--", ...argv];
 }
@@ -303,7 +307,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * the helper finds the project above the worktree).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
-  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = stableRootOf() }) {
+  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -321,11 +325,12 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
-  const guard = sandbox === true && agent === "dsh-tui" ? stableGuardDir(stableRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
+  const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
+  const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
   const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
   const taskArgv = [...argv, ...promptArgs(agent, task)];
-  const launchArgv = sandbox === true && agent === "dsh-tui" ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot }) : taskArgv;
+  const launchArgv = sandboxRoot ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot: sandboxRoot }) : taskArgv;
   return [...args, "--parent", parent, "--", ...env, ...launchArgv];
 }
 

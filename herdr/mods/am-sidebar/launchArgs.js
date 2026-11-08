@@ -57,7 +57,7 @@ export function startRefusal(file, botId) {
  * agent, or no `sandbox`, keeps the argv byte for byte as before. The guard is a guardrail, not
  * a boundary (#624; #628 is the full send/keys/attach scope; #631 is the hard boundary).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined, project = cwd, sandbox = false, stableRoot = stableRootOf() }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined, project = cwd, sandbox = false, stableRoot = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -65,10 +65,11 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  const guardDir = sandbox === true && agent === "dsh-tui" ? stableGuardDir(stableRoot)
+  const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
+  const guardDir = sandboxRoot ? stableGuardDir(sandboxRoot)
     : guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
   const vars = envWords([...(path ? [`PATH=${guardPathWith(path, guardDir)}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
-  const launchArgv = sandbox === true && agent === "dsh-tui" ? paneArgs(argv, { botId, project, stableRoot }) : argv;
+  const launchArgv = sandboxRoot ? paneArgs(argv, { botId, project, stableRoot: sandboxRoot }) : argv;
   return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...launchArgv];
 }
 
