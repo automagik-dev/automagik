@@ -182,8 +182,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         }
         // Older versions made an SSH key for everyone; it goes once no machine saved over SSH is left.
         dropSshKeyIfUnused()
-        // Opening the app checks for an update (setForeground); this tells a waiting one when installing would interrupt.
-        Updater.usage = { val s = state.value; Updater.Usage(foreground, s.selected != null, watchText.isNotEmpty()) }
         ProgramIcons.load(application)
         // Teams: each reading of the connected machines replaces their rows in the cache and raises today's peaks; a new
         // merge in a feed celebrates its bots; pets and space images the phone lacks are fetched once. Only while the app is
@@ -505,6 +503,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // Android lets the watch service start only from the foreground.
         if (shown) { watchText = ""; syncWatch(); kickSlowReconnects() }
         if (shown) Updater.opened() else Updater.left()
+    }
+    // Opening the app checks for an update (setForeground); this tells a waiting one when installing would interrupt.
+    // Registered after the fields its lambda reads (onScreen, watchText): Updater can call it while this view model is
+    // still being constructed (a download finishing then), and a registration before them would read a null field (#762).
+    init {
+        Updater.usage = { val s = state.value; Updater.Usage(foreground, s.selected != null, watchText.isNotEmpty()) }
     }
     private suspend fun alert(found: List<Alerts.Alert>, client: CoreClient) {
         val s = state.value
