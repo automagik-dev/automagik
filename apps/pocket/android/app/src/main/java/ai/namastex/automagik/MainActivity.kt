@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.text.KeyboardActions
@@ -140,8 +142,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     }
     val disconnected = state.machines.values.none { it.connected || it.terminals.isNotEmpty() }
     // Hosts in the order they were saved, then any others: what the spaces tree, Projects and Tasks read.
-    val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) } } +
-        state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots) }
+    val sidebar = state.hosts.mapNotNull { h -> state.machines[h.id]?.let { m -> SidebarHost(h.id, h.name, m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots, m.members) } } +
+        state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots, m.members) }
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
     val teams = rememberTeams(state, vm)
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
@@ -175,25 +177,41 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val project = state.project?.let { key -> pulse.projects.find { it.key == key } }
     val root = selected == null && state.space == null && state.project == null && state.screen in Nav.TABS
     // Kept here, not in the tabs, so a terminal opened from a tab comes back to the same view of it.
-    var codeView by rememberSaveable { mutableStateOf(CodeView.REPOS) }
-    var taskFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var codeView by rememberSaveable { mutableStateOf(CodeView.SPACES) }
+    var tasksOnly by rememberSaveable { mutableStateOf(false) }
     val keyboard = WindowInsets.isImeVisible
+    // Code, the desktop's Herdr window made mobile: the spaces and bots tree opens as a drawer over the terminal, and a
+    // sideways swipe goes to the next or previous agent of the space, in the tree's order.
+    val rows = remember(sidebar, state.folded) { Sidebar.rows(sidebar, vm.programs, state.folded) }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
+    LaunchedEffect(selected == null) { if (selected == null) drawer.snapTo(DrawerValue.Closed) }
+    val swipe: (Int) -> Unit = { step -> selected?.let { Sidebar.neighbour(rows, it, step) }?.let(vm::selectTerminal) }
+    val strip = remember(rows, selected) { selected?.let { Sidebar.strip(rows, it) }.orEmpty() }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
+        ModalDrawerSheet(drawerContainerColor = Canvas) {
+            Text("Spaces", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(20.dp, 18.dp, 20.dp, 4.dp))
+            SpacesTree(state, vm, pulse, rows, tasksOnly, { tasksOnly = it }) { scope.launch { drawer.close() } }
+        }
+    }) {
     Scaffold(containerColor = Canvas, snackbarHost = { SnackbarHost(snackbar) },
         modifier = Modifier.imePadding(),
         contentWindowInsets = if (immersive) WindowInsets(0, 0, 0, 0) else ScaffoldDefaults.contentWindowInsets,
         topBar = {
             if (!immersive) Column(Modifier.background(Chrome).statusBarsPadding()) {
-                Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val swiping by rememberUpdatedState(swipe)
+                Row(Modifier.fillMaxWidth().height(60.dp).then(if (selected != null) Modifier.pointerInput(Unit) { detectAgentSwipe { swiping(it) } } else Modifier)
+                    .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (selected == null && !root) IconButton(onClick = { vm.back() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back") }
                     else if (selected == null) { Spacer(Modifier.width(8.dp)); Brand(25); Spacer(Modifier.width(11.dp)) }
-                    else Spacer(Modifier.width(12.dp))
+                    else IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Outlined.Menu, "Spaces and bots") }
                     Column(Modifier.weight(1f)) {
                         val (title, subtitle) = when {
                             selected != null -> (terminal?.title ?: selected.address) to (terminalSpace?.name ?: "Terminal")
                             space != null -> space.name to "Space"
                             project != null -> project.name to project.remote.ifBlank { null }
                             state.screen == Nav.SETTINGS -> "Settings" to "${pulse.machines} connected"
-                            state.screen == Nav.CODE && codeView == CodeView.TASKS -> "Code" to pulse.tasks.size.let { if (it == 1) "1 task" else "$it tasks" }
                             state.screen == Nav.CODE -> "Code" to pulse.projects.size.let { if (it == 1) "1 project" else "$it projects" }
                             state.screen == Nav.TEAM -> "Team" to teams.sumOf { it.bots.size }.let { n ->
                                 "${if (n == 1) "1 bot" else "$n bots"} · ${teams.sumOf { it.working }} working" }
@@ -222,22 +240,22 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.needsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
     ) { padding ->
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
-            val rows = remember(sidebar, state.folded) { Sidebar.rows(sidebar, vm.programs, state.folded) }
             when {
                 // An Automagik Bot's chat has no terminal: the chat alone, read only.
                 selected != null && Chat.readOnly(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
-                selected != null -> TerminalScreen(vm, state, terminal, terminalSpace)
+                selected != null -> TerminalScreen(vm, state, terminal, terminalSpace, strip, swipe) { scope.launch { drawer.open() } }
                 space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
                 state.screen == Nav.SETTINGS -> SettingsScreen(state, vm, MachineActions(pair = { pairDesktop = true }, repair = ::repair, connect = { vm.connect(it) },
                     edit = { editHost = it }, disconnect = { vm.disconnect(it) }, remove = vm::removeHost, botChats = { botChats = it.id }))
                 state.screen == Nav.CODE && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
-                state.screen == Nav.CODE -> CodeScreen(state, vm, pulse, rows, codeView, { codeView = it }, taskFilter) { taskFilter = it }
+                state.screen == Nav.CODE -> CodeScreen(state, vm, pulse, rows, codeView, { codeView = it }, tasksOnly) { tasksOnly = it }
                 // Team opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
                 state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { vm.selectTerminal(it) }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
                 else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
             }
         } }
+    }
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)

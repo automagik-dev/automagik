@@ -9,7 +9,8 @@ object Nav {
     /** Home: the needs-you cockpit, with spend as a chip (it was Today). */
     const val HOME_TAB = "overview"
     const val TEAM = "teams"
-    /** Code: the projects, the desktop's spaces tree and the tasks (it was Projects and Tasks). */
+    /** Code: the desktop's Herdr window made mobile: the spaces and bots tree as a drawer over the terminal, with the
+     *  repositories, and Tasks as a filter of the tree (it was Projects and Tasks). */
     const val CODE = "projects"
     /** Settings, with the machines and pairing (it was the gear and Machines). */
     const val SETTINGS = "settings"
