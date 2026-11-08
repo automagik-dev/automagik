@@ -251,15 +251,18 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     }
 }
 
-/** The Automagik Bots' chats on machine [hostId] (read only), to open one. */
+/** The Automagik Bots' chats on machine [hostId], and whether its bridge takes phone writes there, to open one. */
 @Composable fun BotChatsDialog(vm: PocketViewModel, hostId: String, onDismiss: () -> Unit) {
     LaunchedEffect(hostId) { vm.loadBotChats(hostId) }
     val result = vm.botChats.collectAsStateWithLifecycle().value[hostId]
+    val writable = vm.botWrites.collectAsStateWithLifecycle().value[hostId]
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Bot chats") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                Text("Read only: approvals and questions are answered on the computer.", fontSize = 12.sp, color = Muted)
-                Spacer(Modifier.height(10.dp))
+                ChatActions.botChatsLine(writable)?.let { line ->
+                    Text(line, fontSize = 12.sp, color = Muted)
+                    Spacer(Modifier.height(10.dp))
+                }
                 when {
                     result == null -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     result.isFailure -> Text(result.exceptionOrNull()?.message ?: "Couldn’t read the chats.", fontSize = 13.sp, color = Blocked)
