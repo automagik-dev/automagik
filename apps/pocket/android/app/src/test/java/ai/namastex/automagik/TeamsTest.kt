@@ -154,11 +154,6 @@ class TeamsTest {
         assertEquals(emptyList<String>(), Teams.jumped(listOf("b", "a"), Teams.order(listOf(a, b))))
     }
 
-    @Test fun allListsEveryBotMostUrgentFirst() {
-        val rows = Teams.allRows(listOf(team("a", Teams.IDLE, Teams.WORKING), team("b", Teams.NEEDS_YOU, Teams.ASLEEP)))
-        assertEquals(listOf(Teams.NEEDS_YOU, Teams.WORKING, Teams.IDLE, Teams.ASLEEP), rows.map { it.second.pose })
-    }
-
     // ---- icons and colours
 
     @Test fun iconsFollowHerdrsSpaceIconAndFallBackToTheLetter() {
@@ -187,17 +182,9 @@ class TeamsTest {
         assertEquals(SpaceColors.rgb("ansi12", true), Teams.colorRgb("ansi12", dark = true))
     }
 
-    // ---- the strip: null is "–", zero is a number
+    // ---- agent time and today's peak
 
-    @Test fun stripShowsADashForMissingFiguresAndZeroAsZero() {
-        val none = Teams.strip(listOf(team("a", Teams.IDLE)), peak = null)
-        assertEquals(Teams.Strip(null, null, null), none)
-        assertEquals("–", Fmt.count(none.merged))
-        assertEquals("–", Fmt.minutes(none.agentMin))
-        val some = Teams.strip(listOf(team("a").copy(merged = 7.0, agentMin = 132.0), team("b").copy(merged = 0.0), team("c")), peak = 3)
-        assertEquals(Teams.Strip(7.0, 132.0, 3), some)
-        assertEquals("2h 12m", Fmt.minutes(some.agentMin))
-        assertEquals("0", Fmt.count(Teams.strip(listOf(team("b").copy(merged = 0.0)), 0).merged))
+    @Test fun feedTasksGiveAgentMinutesAndWorkingCountsGivePeaks() {
         assertNull(Teams.agentMinutes(null))
         assertNull(Teams.agentMinutes(SpaceFeed.Project(null, null, null, null, null, emptyMap())))
         assertEquals(0.0, Teams.agentMinutes(SpaceFeed.Project(null, null, null, null, null, emptyMap(), emptyList()))!!, 0.0)
@@ -346,34 +333,86 @@ class TeamsTest {
         assertEquals(TerminalRef("h1", "t1"), Teams.build("h1", outside, 10_000L)[0].bots.single { it.id == "b-aaaaaaaaaa" }.ref)
     }
 
-    // ---- the deck
+    // ---- answers
 
-    @Test fun aFailedAnswerKeepsItsCardAndOnlyASentOneLeaves() {
-        val teams = Teams.build(mapOf("h1" to machine()), 10_000L)
-        val card = Teams.deck(teams).single().second
+    @Test fun onlyAnAnswerThatReachedTheAgentCountsAsSent() {
         for (outcome in listOf("Not sent: Machine isn’t connected. Open Automagik to reconnect.", "Not confirmed: check the agent before trying again.",
                 "Not sent: its options changed. Open the agent to answer.")) assertTrue(outcome, !Teams.sent(outcome))
         assertTrue(Teams.sent("You chose: Yes"))
-        // Not sent: nothing is added to the answered set, so the card stays.
-        assertEquals(listOf(card), (Teams.deckView(teams, emptySet(), anyConnected = true) as Teams.DeckView.Cards).cards.map { it.second })
-        assertEquals(Teams.DeckView.Clear, Teams.deckView(teams, setOf(Teams.deckKey(card)), anyConnected = true))
     }
 
-    @Test fun aDisconnectIsOfflineNotAllClear() {
-        val live = Teams.build(mapOf("h1" to machine()), 10_000L)
-        val dropped = Teams.merge(emptyList(), live, read = emptySet(), known = setOf("h1"))
-        assertEquals(Teams.DeckView.Offline(1), Teams.deckView(dropped, emptySet(), anyConnected = false))
-        assertEquals(Teams.DeckView.Offline(0), Teams.deckView(emptyList(), emptySet(), anyConnected = false))
-        assertEquals(Teams.DeckView.Clear, Teams.deckView(listOf(team("a", Teams.WORKING)), emptySet(), anyConnected = true))
+    // ---- Team: one bubble per project
+
+    private fun dshRow(id: String, status: String = "working", shown: Boolean? = null) = Chat.Terminal.parse(JSONObject()
+        .put("terminal", "dsh:$id").put("machine", JSONObject.NULL).put("agent", "dsh").put("title", "Lead")
+        .put("status", JSONObject().put("state", status)).put("chat", "session").apply { if (shown != null) put("shown", shown) })
+
+    @Test fun aDshChatAndAHerdrPaneOfOneRegistryIdAreOneBubble() {
+        val teams = Teams.build(mapOf("h1" to machine()), 10_000L)
+        // The main bot b-aaaaaaaaaa has a labelled pane (t1) and a dsh: chat under the same id: one bubble, the chat's.
+        val bubbles = Teams.bubbles(teams, mapOf("h1" to listOf(dshRow("b-aaaaaaaaaa"), dshRow("b-zzzzzzzzzz"))))
+        assertEquals(listOf("h1||/work/example", "h1||/work/site"), bubbles.map { it.id })
+        val example = bubbles[0]
+        assertEquals("b-aaaaaaaaaa", example.main?.id)
+        assertEquals("Lead", example.main?.name)
+        assertEquals("kitty-blue", example.main?.pet)
+        assertEquals(Teams.Opens.DshChat(TerminalRef("h1", "dsh:b-aaaaaaaaaa")), example.opens)
+        // A dsh: chat no registry lists as a main bot is no bubble of its own.
+        assertEquals(1, bubbles.count { it.main?.id == "b-aaaaaaaaaa" })
+        assertTrue(bubbles.none { it.main?.id == "b-zzzzzzzzzz" })
+        // Without the chat, the same main bot opens its pane's projected chat.
+        assertEquals(Teams.Opens.TerminalChat(TerminalRef("h1", "t1")), Teams.bubbles(teams, emptyMap())[0].opens)
+        // A chat of another machine is not this bot's.
+        assertEquals(Teams.Opens.TerminalChat(TerminalRef("h1", "t1")), Teams.bubbles(teams, mapOf("h2" to listOf(dshRow("b-aaaaaaaaaa"))))[0].opens)
     }
 
-    @Test fun aSwipeFollowsTheAxisItMovedMostAlong() {
-        val t = 100f
-        assertEquals(Teams.Swipe.OPEN, Teams.swipe(dx = 120f, dy = -200f, t, canYes = true, canNo = true))   // diagonal, mostly up
-        assertEquals(Teams.Swipe.YES, Teams.swipe(dx = 200f, dy = -120f, t, canYes = true, canNo = true))   // diagonal, mostly right
-        assertEquals(Teams.Swipe.NO, Teams.swipe(dx = -150f, dy = 0f, t, canYes = true, canNo = true))
-        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 150f, dy = 0f, t, canYes = false, canNo = true))   // no Yes to send
-        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 60f, dy = -80f, t, canYes = true, canNo = true))    // too short
+    @Test fun twoSpacesOfOneRepoAreOneBubble() {
+        // s1 (/work/example) and s2 (/work/example-wt) share one git dir: one project, one bubble.
+        val bubbles = Teams.bubbles(Teams.build(mapOf("h1" to machine()), 10_000L), emptyMap())
+        assertEquals(2, bubbles.size)
+        assertEquals(1, bubbles.count { it.team.key == "/work/example" })
+        assertEquals("Example", bubbles[0].team.name)
+    }
+
+    @Test fun aProjectWithoutAMainBotSaysSoInTheDesktopsWords() {
+        val site = Teams.bubbles(Teams.build(mapOf("h1" to machine()), 10_000L), emptyMap())[1]
+        assertNull(site.main)
+        assertNull(site.opens)
+        assertEquals("No main bot in this project", Teams.lineOf(site))
+        // A project whose bots are all members has no main bot either.
+        val members = Teams.bubbles(listOf(team("m", Teams.WORKING, Teams.NEEDS_YOU)), emptyMap()).single()
+        assertNull(members.main)
+        assertEquals(Teams.NO_MAIN, Teams.lineOf(members))
+    }
+
+    @Test fun aChatListedNotShownOpensNothingAndAskForTheYes() {
+        val teams = Teams.build(mapOf("h1" to machine()), 10_000L)
+        val hidden = Teams.bubbles(teams, mapOf("h1" to listOf(dshRow("b-aaaaaaaaaa", shown = false))))[0]
+        assertEquals(Teams.Opens.NotShown, hidden.opens)
+        assertEquals("Show in Automagik first", Teams.lineOf(hidden))
+        // A row with no shown field (today's bots-dsh, which serves every Bot) is shown.
+        assertEquals(true, dshRow("b-aaaaaaaaaa").shown)
+        assertEquals(Teams.Opens.DshChat(TerminalRef("h1", "dsh:b-aaaaaaaaaa")), Teams.bubbles(teams, mapOf("h1" to listOf(dshRow("b-aaaaaaaaaa", shown = true))))[0].opens)
+    }
+
+    @Test fun aDshOnlyMainBotTakesItsPoseFromTheChatAndAStaleProjectOpensNothing() {
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.ASLEEP, "", 0L, null, "")
+        val t = Teams.Team("h|x", "h", "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))
+        val b = Teams.bubbles(listOf(t), mapOf("h" to listOf(dshRow("b-main", status = "blocked")))).single()
+        assertEquals(Teams.NEEDS_YOU, b.main?.pose)
+        assertTrue(b.needsYou)
+        assertEquals(Teams.Opens.DshChat(TerminalRef("h", "dsh:b-main")), b.opens)
+        assertNull(Teams.bubbles(listOf(t.copy(stale = true)), mapOf("h" to listOf(dshRow("b-main")))).single().opens)
+    }
+
+    @Test fun aBubbleShowsMarkupAsText() {
+        val raw = "<img src=x onerror=alert(1)> <script>alert(1)</script>"
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.WORKING, raw, 1L, TerminalRef("h", "t1"), "")
+        val b = Teams.bubbles(listOf(Teams.Team("h|x", "h", "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))), emptyMap()).single()
+        assertEquals(raw, Teams.lineOf(b))
+        // The chat it opens shows the same text as prose, tags and all (RFC 0015 :254-255).
+        val blocks = ChatText.blocks(raw)
+        assertEquals(listOf(ChatText.Prose(listOf(ChatText.Plain(raw)))), blocks)
     }
 
     @Test fun rowsRoundTripTheModel() {

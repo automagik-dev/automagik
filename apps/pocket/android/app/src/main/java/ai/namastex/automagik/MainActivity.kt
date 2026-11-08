@@ -233,7 +233,13 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 state.screen == Nav.CODE && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
                 state.screen == Nav.CODE -> CodeScreen(state, vm, pulse, rows, codeView, { codeView = it }, taskFilter) { taskFilter = it }
                 // Team opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
-                state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { vm.selectTerminal(it) }
+                state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { opens ->
+                    when (opens) {
+                        is Teams.Opens.DshChat -> vm.selectTerminal(opens.ref)
+                        is Teams.Opens.TerminalChat -> vm.selectTerminal(opens.ref, chat = true)
+                        Teams.Opens.NotShown -> Unit
+                    }
+                }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
                 else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
             }

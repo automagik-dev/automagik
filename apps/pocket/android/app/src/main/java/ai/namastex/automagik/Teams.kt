@@ -249,39 +249,62 @@ object Teams {
         t.needsYou > 0 && was >= 0 && i < was
     }.map { it.value.id }
 
-    /** Every bot of [teams] with its project, for the All list: most needing the person first, then the latest. */
-    fun allRows(teams: List<Team>): List<Pair<Team, Bot>> = teams.flatMap { t -> t.bots.map { t to it } }
-        .sortedWith(compareBy<Pair<Team, Bot>> { urgency(it.second.pose) }.thenByDescending { it.second.statusMs }
-            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.second.name }.thenBy { it.first.id })
+    // ---- Team: one bubble per project, the project's main bot (RFC 0014 `:145`, Herdr's `kind: "main"`).
+    /** The desktop's words for a project with no main bot (herdr/mods/am-sidebar/create.js:991). */
+    const val NO_MAIN = "No main bot in this project"
+    /** A DSH chat whose project has no yes in the home file's `shown[]` (RFC 0015 `:751-755`): no chat opens. */
+    const val NOT_SHOWN = "Show in Automagik first"
 
-    /** The swipe deck: every bot waiting on the person that can be answered now, oldest request first. */
+    /** What tapping a bubble opens. */
+    sealed interface Opens {
+        /** The bot's `dsh:` chat (a universal or DSH bot), read only. */
+        data class DshChat(val ref: TerminalRef) : Opens
+        /** A Herdr-only main bot: its terminal's projected chat. */
+        data class TerminalChat(val ref: TerminalRef) : Opens
+        /** A DSH chat listed `shown: false`: the bubble says [NOT_SHOWN] and opens nothing. */
+        data object NotShown : Opens
+    }
+
+    /** One project's bubble: its main bot (null: [NO_MAIN]) and what a tap opens (null: nothing, as for an asleep bot). */
+    data class Bubble(val team: Team, val main: Bot?, val opens: Opens?) {
+        val id get() = team.id
+        val needsYou get() = main?.needsYou == true
+    }
+
+    /** A `dsh:` chat's status (bots-dsh pocket-chat.js statusOf) as a pose. */
+    fun poseOfChat(state: String): String = when (state) {
+        "blocked" -> NEEDS_YOU; "working" -> WORKING; "idle" -> IDLE; else -> ASLEEP
+    }
+
+    /**
+     * One bubble per project, in [teams]' order. Bots are one by registry id: the main bot's `dsh:<id>` chat on its
+     * machine ([dsh], by host id, as chat.list gave it) and its labelled pane are the same bot, so they make one bubble.
+     * The chat wins the tap (a universal or DSH bot); with none, the pane's projected chat. A stale project (its machine
+     * not connected) opens nothing. A `dsh:` chat no registry lists as a main bot is not a bubble.
+     */
+    fun bubbles(teams: List<Team>, dsh: Map<String, List<Chat.Terminal>>): List<Bubble> = teams.map { t ->
+        val main = t.bots.firstOrNull { it.main } ?: return@map Bubble(t, null, null)
+        val chat = if (t.stale) null else dsh[t.hostId]?.find { it.readOnly && it.terminal == Chat.DSH_PREFIX + main.id }
+        val bot = if (chat != null && main.ref == null) main.copy(pose = poseOfChat(chat.status)) else main
+        val opens = when {
+            chat != null && !chat.shown -> Opens.NotShown
+            chat != null -> Opens.DshChat(TerminalRef(t.hostId, chat.terminal))
+            main.ref != null -> Opens.TerminalChat(main.ref)
+            else -> null
+        }
+        Bubble(t, bot, opens)
+    }
+
+    /** A bubble's second line: [NO_MAIN], [NOT_SHOWN], else its bot's ([line]). */
+    fun lineOf(b: Bubble): String = when {
+        b.main == null -> NO_MAIN
+        b.opens == Opens.NotShown -> NOT_SHOWN
+        else -> line(b.main)
+    }
+
+    /** Every bot waiting on the person that can be answered now, oldest request first. */
     fun deck(teams: List<Team>): List<Pair<Team, Bot>> = teams.filter { !it.stale }
         .flatMap { t -> t.bots.filter { it.needsYou && it.ref != null }.map { t to it } }.sortedBy { it.second.statusMs }
-    /** One request: a new request from the same pane (a later status) is another card. */
-    fun deckKey(b: Bot) = "${b.ref?.hostId}|${b.ref?.address}|${b.statusMs}"
-
-    /** What the deck shows: the cards left, "all clear", or offline (requests it can't reach, or no machine at all). */
-    sealed interface DeckView {
-        data class Cards(val cards: List<Pair<Team, Bot>>) : DeckView
-        data object Clear : DeckView
-        /** [waiting]: the requests last seen on machines the phone can't reach now. */
-        data class Offline(val waiting: Int) : DeckView
-    }
-    fun deckView(teams: List<Team>, answered: Set<String>, anyConnected: Boolean): DeckView {
-        val cards = deck(teams).filter { deckKey(it.second) !in answered }
-        if (cards.isNotEmpty()) return DeckView.Cards(cards)
-        val waiting = teams.filter { it.stale }.sumOf { it.needsYou }
-        return if (waiting > 0 || !anyConnected) DeckView.Offline(waiting) else DeckView.Clear
-    }
-
-    /** A swipe's answer, by the axis it moved most along: up opens, right is Yes, left is No; short of [threshold], none. */
-    enum class Swipe { YES, NO, OPEN, NONE }
-    fun swipe(dx: Float, dy: Float, threshold: Float, canYes: Boolean, canNo: Boolean): Swipe = when {
-        -dy > kotlin.math.abs(dx) -> if (-dy > threshold) Swipe.OPEN else Swipe.NONE
-        dx > threshold && canYes -> Swipe.YES
-        dx < -threshold && canNo -> Swipe.NO
-        else -> Swipe.NONE
-    }
     /** Whether an answer reached the agent ([PocketViewModel.choose]'s outcome): only then does its card leave the deck. */
     fun sent(outcome: String) = outcome.startsWith("You chose")
 
@@ -295,14 +318,7 @@ object Teams {
             c.copy(stale = true, bots = sortBots(c.bots.map { it.copy(ref = null) }))
         }
 
-    // ---- The progress strip: tasks done, agent time, peak simultaneous agents.
-    /** [scope] is "" for All, else the project's id. */
-    data class Strip(val merged: Double?, val agentMin: Double?, val peak: Int?)
-    fun strip(teams: List<Team>, peak: Int?): Strip {
-        val merged = teams.mapNotNull { it.merged }.takeIf { it.isNotEmpty() }?.sum()
-        val minutes = teams.mapNotNull { it.agentMin }.takeIf { it.isNotEmpty() }?.sum()
-        return Strip(merged, minutes, peak)
-    }
+    // ---- Today's peak of simultaneous agents (TeamsDb).
     /** Working bots now, for today's peak: All ("") and each project. */
     fun working(teams: List<Team>): Map<String, Int> =
         teams.associate { it.id to it.working } + ("" to teams.sumOf { it.working })
