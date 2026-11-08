@@ -688,6 +688,9 @@ test('writes: a project Bot without its yes is listed shown:false; subscribe and
   w.handle.close()
 })
 
+const PIXEL = 'key-pixel-1'
+const OTHER_PHONE = 'key-other-2'
+
 /** A socket host with a writable source and a clock the test moves. */
 async function writeHost(s, controller = fakeController(sessions()), rt = team()) {
   const clock = { at: 1_000_000 }
@@ -718,14 +721,14 @@ test('writes: hello {write:1} gets readOnly:false with the write methods; a hell
 test('writes: a write from an unwatched chat (no subscription on this connection) is refused not-watching and reaches no controller method', async (t) => {
   const s = scope(t)
   const { controller, server, c } = await writeHost(s)
-  assert.deepEqual((await c.ask('send', { channel: 9, text: 'x', id: 'u1' })).result, { ok: false, state: 'refused', reason: 'not-watching', id: 'u1' })
-  assert.equal((await c.ask('interrupt', { channel: 9 })).result.reason, 'not-watching')
-  assert.equal((await c.ask('answer', { channel: 9, row: 'r', choice: 'allow' })).result.reason, 'not-watching')
+  assert.deepEqual((await c.ask('send', { channel: 9, phone: PIXEL, text: 'x', id: 'u1' })).result, { ok: false, state: 'refused', reason: 'not-watching', id: 'u1' })
+  assert.equal((await c.ask('interrupt', { channel: 9, phone: PIXEL })).result.reason, 'not-watching')
+  assert.equal((await c.ask('answer', { channel: 9, phone: PIXEL, row: 'r', choice: 'allow' })).result.reason, 'not-watching')
   // Another connection's channel is not this one's.
   const other = s.client(server.path)
   await other.ask('hello', { write: 1 })
   await other.ask('subscribe', { terminal: 'dsh:omni', channel: 4 })
-  assert.equal((await c.ask('send', { channel: 4, text: 'x', id: 'u2' })).result.reason, 'not-watching')
+  assert.equal((await c.ask('send', { channel: 4, phone: PIXEL, text: 'x', id: 'u2' })).result.reason, 'not-watching')
   assert.ok(!controller.calls.includes('prompt') && !controller.calls.includes('cancel'))
 })
 
@@ -735,13 +738,13 @@ test('writes: the Main Bot (a global Bot) takes writes under the same limits, wi
   rt.state.bots.omni.main = true
   const { controller, c } = await writeHost(s, fakeController(sessions()), rt)
   await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
-  assert.equal((await c.ask('send', { channel: 1, text: 'hi main', id: 'g1', by: 'Pixel' })).result.state, 'sent')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'hi main', id: 'g1', by: 'Pixel' })).result.state, 'sent')
   assert.equal(controller.prompts[0].sessionId, 's-omni-2')
-  for (let i = 1; i < MAX_WRITES_PER_MINUTE; i++) await c.ask('send', { channel: 1, text: 'x', id: `g${i + 1}`, by: 'Pixel' })
-  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'g21', by: 'Pixel' })).result.reason, 'rate')
+  for (let i = 1; i < MAX_WRITES_PER_MINUTE; i++) await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: `g${i + 1}`, by: 'Pixel' })
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'g21', by: 'Pixel' })).result.reason, 'rate')
 })
 
-test('writes: the 21st write in a minute gets rate, across chats and connections of one phone; a second interrupt within 5 s gets rate', async (t) => {
+test('writes: the limits count per paired phone key: two connections of one phone share one cap of 20 a minute', async (t) => {
   const s = scope(t)
   const { server, c, clock } = await writeHost(s)
   await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
@@ -749,22 +752,73 @@ test('writes: the 21st write in a minute gets rate, across chats and connections
   const c2 = s.client(server.path)
   await c2.ask('hello', { write: 1 })
   await c2.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
-  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.state, 'sent')
-  clock.at += INTERRUPT_EVERY_MS - 1
-  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.reason, 'rate')
-  // Another chat has its own 5 s.
-  assert.equal((await c.ask('interrupt', { channel: 2, by: 'Pixel' })).result.state, 'sent')
-  clock.at += 1
-  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.state, 'sent')
-  for (let i = 3; i < MAX_WRITES_PER_MINUTE; i++) {
+  for (let i = 0; i < MAX_WRITES_PER_MINUTE; i++) {
     const [via, channel] = i % 2 ? [c, 2] : [c2, 1]
-    assert.equal((await via.ask('send', { channel, text: 'x', id: `w${i}`, by: 'Pixel' })).result.state, 'sent', `write ${i + 1}`)
+    assert.equal((await via.ask('send', { channel, phone: PIXEL, text: 'x', id: `w${i}`, by: 'Pixel' })).result.state, 'sent', `write ${i + 1}`)
   }
-  assert.equal((await c2.ask('send', { channel: 1, text: 'x', id: 'w21', by: 'Pixel' })).result.reason, 'rate')
-  // Another phone has its own count; a minute later this one writes again.
-  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'o1', by: 'Other' })).result.state, 'sent')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'w21', by: 'Pixel' })).result.reason, 'rate')
+  assert.equal((await c2.ask('interrupt', { channel: 1, phone: PIXEL })).result.reason, 'rate', 'interrupts count in the 20')
   clock.at += 60_000
-  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'w22', by: 'Pixel' })).result.state, 'sent')
+  assert.equal((await c2.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'w22', by: 'Pixel' })).result.state, 'sent')
+})
+
+test('writes: two phones have independent caps, 20 a minute and one interrupt per chat every 5 s each', async (t) => {
+  const s = scope(t)
+  const { c, clock } = await writeHost(s)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  await c.ask('subscribe', { terminal: 'dsh:ada', channel: 2 })
+  assert.equal((await c.ask('interrupt', { channel: 1, phone: PIXEL })).result.state, 'sent')
+  assert.equal((await c.ask('interrupt', { channel: 1, phone: OTHER_PHONE })).result.state, 'sent', 'the other phone has its own 5 s')
+  clock.at += INTERRUPT_EVERY_MS - 1
+  assert.equal((await c.ask('interrupt', { channel: 1, phone: PIXEL })).result.reason, 'rate')
+  assert.equal((await c.ask('interrupt', { channel: 1, phone: OTHER_PHONE })).result.reason, 'rate')
+  assert.equal((await c.ask('interrupt', { channel: 2, phone: PIXEL })).result.state, 'sent', 'another chat has its own 5 s')
+  clock.at += 1
+  assert.equal((await c.ask('interrupt', { channel: 1, phone: PIXEL })).result.state, 'sent')
+  // A refused write counts nothing: Pixel has 3 so far, the other phone 1.
+  for (let i = 3; i < MAX_WRITES_PER_MINUTE; i++) assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: `p${i}` })).result.state, 'sent')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'p20' })).result.reason, 'rate')
+  for (let i = 1; i < MAX_WRITES_PER_MINUTE; i++) assert.equal((await c.ask('send', { channel: 2, phone: OTHER_PHONE, text: 'x', id: `o${i}` })).result.state, 'sent', `other ${i + 1}`)
+  assert.equal((await c.ask('send', { channel: 2, phone: OTHER_PHONE, text: 'x', id: 'o20' })).result.reason, 'rate')
+})
+
+test('writes: a rename or a spoofed by changes no count: by is for receipts only', async (t) => {
+  const s = scope(t)
+  const { c } = await writeHost(s)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  // One phone under many names: one bucket.
+  for (let i = 0; i < MAX_WRITES_PER_MINUTE; i++) {
+    assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: `n${i}`, by: `Pixel ${i}` })).result.state, 'sent')
+  }
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'n20', by: 'Renamed' })).result.reason, 'rate')
+  // A by that names the other phone neither escapes this cap nor spends the other one's.
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'n21', by: 'Other' })).result.reason, 'rate')
+  assert.equal((await c.ask('send', { channel: 1, phone: OTHER_PHONE, text: 'x', id: 'o1', by: 'Pixel' })).result.state, 'sent')
+  // The name still reaches the receipt.
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const { outcome } = askApproval(source, pc)
+  await settle()
+  await w.handle.answer({ row: openRow(w, 'approval').id, choice: 'allow', by: 'Renamed' })
+  await outcome
+  assert.equal(w.events.filter(e => e.type === 'approval').at(-1).row.receipt.name, 'Renamed')
+  w.handle.close()
+})
+
+test('writes: a write without a paired phone key is refused read-only, never counted per connection', async (t) => {
+  const s = scope(t)
+  const { controller, c } = await writeHost(s)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  for (const phone of [undefined, '', 7, 'has space', 'x'.repeat(257)]) {
+    for (const [method, params] of [['send', { text: 'x', id: 'a1', by: 'Pixel' }], ['interrupt', { by: 'Pixel' }], ['answer', { row: 'r', choice: 'allow' }]]) {
+      const answer = (await c.ask(method, { channel: 1, ...params, ...(phone === undefined ? {} : { phone }) })).result
+      assert.equal(answer.reason, 'read-only', `${method} ${String(phone).slice(0, 20)}`)
+    }
+  }
+  assert.ok(!controller.calls.includes('prompt') && !controller.calls.includes('cancel'))
+  // None of those counted: a keyed phone still has its whole 20.
+  for (let i = 0; i < MAX_WRITES_PER_MINUTE; i++) assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: `k${i}` })).result.state, 'sent')
 })
 
 test('writes: one write in flight per phone and chat; a second gets busy', async (t) => {
@@ -774,13 +828,13 @@ test('writes: one write in flight per phone and chat; a second gets busy', async
   controller.promptGate = () => new Promise(resolve => { release = resolve })
   const { c } = await writeHost(s, controller)
   await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
-  const first = c.ask('send', { channel: 1, text: 'slow', id: 'b1', by: 'Pixel' })
+  const first = c.ask('send', { channel: 1, phone: PIXEL, text: 'slow', id: 'b1', by: 'Pixel' })
   for (let i = 0; i < 50 && !release; i++) await settle()
-  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'b2', by: 'Pixel' })).result.reason, 'busy')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'b2', by: 'Pixel' })).result.reason, 'busy')
   controller.promptGate = null
   release()
   assert.equal((await first).result.state, 'sent')
-  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'b3', by: 'Pixel' })).result.state, 'sent')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'x', id: 'b3', by: 'Pixel' })).result.state, 'sent')
 })
 
 test('writes: a removed phone\'s writes end within 2 s: unsubscribe aborts the write in flight and refuses the next at once', async (t) => {
@@ -792,13 +846,13 @@ test('writes: a removed phone\'s writes end within 2 s: unsubscribe aborts the w
   })
   const { c } = await writeHost(s, controller)
   await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
-  const pending = c.ask('send', { channel: 1, text: 'held', id: 'x1' })
+  const pending = c.ask('send', { channel: 1, phone: PIXEL, text: 'held', id: 'x1' })
   for (let i = 0; i < 50 && !controller.calls.includes('prompt'); i++) await settle()
   const removed = Date.now()
   await c.ask('unsubscribe', { channel: 1 })
   assert.equal((await pending).result.reason, 'not-watching')
   assert.ok(aborted !== null && aborted - removed < 2000)
-  assert.equal((await c.ask('send', { channel: 1, text: 'later', id: 'x2' })).result.reason, 'not-watching')
+  assert.equal((await c.ask('send', { channel: 1, phone: PIXEL, text: 'later', id: 'x2' })).result.reason, 'not-watching')
   assert.equal(controller.prompts.length, 0)
 })
 

@@ -9,8 +9,11 @@
 // after?}, unsubscribe {channel}, backfill {channel, before, limit?}.
 //
 // Writes, only on a connection whose `hello` asked for them (`{ write: 1 }`) and only when the
-// source takes them: send {channel, text, id, by?}, interrupt {channel, by?}, answer {channel, row,
-// choice, text?, by?}. Each names a channel this same connection subscribed to, never a terminal.
+// source takes them: send {channel, phone, text, id, by?}, interrupt {channel, phone, by?}, answer
+// {channel, phone, row, choice, text?, by?}. Each names a channel this same connection subscribed
+// to, never a terminal. `phone` is the paired phone's key, set by the bridge: the limits count per
+// phone by it, across connections, and a write without one is refused `read-only`. `by` is the
+// phone's name, for receipts only: renaming a phone, or a `by` naming another, changes no count.
 // To a `hello` without `write` the answer is today's (`readOnly: true`) and every write is refused
 // `read-only`, so an older bridge stays read only. Every other method is answered `read-only`.
 import { lstatSync, unlinkSync } from 'node:fs'
@@ -26,11 +29,13 @@ export const PROTOCOL = 1
 export const METHODS = Object.freeze(['hello', 'list', 'subscribe', 'unsubscribe', 'backfill'])
 /** The write methods, served only to a connection that asked for them in its hello. */
 export const WRITE_METHODS = Object.freeze(['send', 'interrupt', 'answer'])
-/** Writes per paired phone (`by`, else the connection) in a minute, across its chats. */
+/** Writes per paired phone (its `phone` key) in a minute, across its chats and connections. */
 export const MAX_WRITES_PER_MINUTE = 20
 export const WRITE_WINDOW_MS = 60_000
 /** At most one interrupt per phone and chat this often. */
 export const INTERRUPT_EVERY_MS = 5_000
+/** A paired phone's key as the bridge sends it (an id or key fingerprint, never a name). */
+export const PHONE_KEY = /^[A-Za-z0-9+/=._:-]{1,256}$/
 /** One request line at most (a request is small); past it the connection ends. */
 export const MAX_LINE = 64 * 1024
 export const MAX_CONNECTIONS = 4
@@ -133,10 +138,9 @@ async function start({ home, source, log, lstatNow, now }) {
   }
   const connections = new Set()
   const limits = writeLimits(now)
-  let serial = 0
   const server = createServer(socket => {
     if (connections.size >= MAX_CONNECTIONS) { socket.destroy(); return }
-    const connection = serve(socket, source, log, limits, `connection:${++serial}`)
+    const connection = serve(socket, source, log, limits)
     connections.add(connection)
     socket.once('close', () => { connections.delete(connection); connection.close() })
   })
@@ -165,7 +169,7 @@ async function start({ home, source, log, lstatNow, now }) {
 }
 
 /** One reader of the socket (and writer, when its hello asked and the source takes writes). */
-function serve(socket, source, log, limits, self) {
+function serve(socket, source, log, limits) {
   let buffer = ''
   let closed = false
   let writes = false
@@ -227,10 +231,12 @@ function serve(socket, source, log, limits, self) {
         if (!writes) return readOnly(id)
         const method = message.method
         const ref = method === 'send' && typeof params.id === 'string' ? { id: params.id } : {}
+        // No paired phone's key, no write: never counted per connection, never by name.
+        if (typeof params.phone !== 'string' || !PHONE_KEY.test(params.phone)) return { id, result: refusedWrite('read-only', ref) }
+        const phone = params.phone
         const handle = subs.get(params.channel)
         if (!handle || typeof handle[method] !== 'function') return { id, result: refusedWrite('not-watching', ref) }
         const by = typeof params.by === 'string' && params.by !== '' ? params.by : undefined
-        const phone = by === undefined ? self : `phone:${by}`
         const chat = terminals.get(params.channel)
         const key = `${phone}\0${chat}`
         if (limits.busy(key)) return { id, result: refusedWrite('busy', ref) }
