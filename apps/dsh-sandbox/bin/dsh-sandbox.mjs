@@ -34,7 +34,9 @@ export const END = '# dsh-sandbox end';
 export const PLACEHOLDER = '{{WRAPPER}}';
 /** The wrapper's failure signature, kept in sync with bin/hc-socket-mask.mjs. */
 export const FAILURE_SIGNATURE = 'hc-socket-mask: ';
-/** The wrapper's own word before its profile args: the pack folder to keep read-only. */
+/**
+ * The wrapper's own word before its profile args: the stable folder whose data parent it mounts.
+ */
 export const PACK_ROOT_FLAG = '--pack-root';
 
 /** A YAML single-quoted scalar: the only quoting a path or signature here needs. */
@@ -329,7 +331,7 @@ const USAGE = [
   'usage: dsh-sandbox install [--profile <path>] --wrapper <absolute path> [--pack-root <dir>]',
   '       dsh-sandbox check   [--profile <path>] --wrapper <absolute path> [--pack-root <dir>]',
   '--profile defaults to $DSH_HOME/profiles/dsh-tui/cordis.patch.yml ($DSH_HOME is ~/.dsh)',
-  '--pack-root: the pack mod folder to bind read-only inside the sandbox (the wrapper mounts it)',
+  '--pack-root: the stable execution folder; the wrapper mounts its data parent read-only',
 ].join('\n');
 
 /** Run the CLI and return its exit code; the CLI guard at the bottom applies it. */

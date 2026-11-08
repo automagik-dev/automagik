@@ -31,12 +31,15 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync,
+  mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
+  writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
-import { stableRootOf } from "./workers.js";
+import { approvedRootOf } from "./approved.js";
+import { dataRootOf, stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
@@ -158,13 +161,29 @@ export const shimPathOf = (env = process.env) => join(binDirOf(env), SHIM);
 /** The app home a pack install uses, without the trailing slash. */
 const appHomeFor = (env = process.env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
 
-/** Real path, resolving the nearest existing ancestor and appending the rest for a missing child. */
-const realOrAbs = (path) => {
+/** The most symlinks one path may resolve through before it is refused. */
+export const MAX_SYMLINK_DEPTH = 32;
+/**
+ * Real path, resolving the nearest existing ancestor and appending the rest for a missing child.
+ * A symlink at the final component is followed even when its target is missing (realpathSync
+ * would call the link absent and return the link itself); a loop or a chain over
+ * MAX_SYMLINK_DEPTH is refused, never resolved.
+ */
+export const realOrAbs = (path, depth = 0, seen = new Set()) => {
   const abs = resolve(path);
+  let info = null;
+  try { info = lstatSync(abs); } catch { /* missing: resolve its existing ancestor */ }
+  if (info?.isSymbolicLink()) {
+    if (depth >= MAX_SYMLINK_DEPTH)
+      throw new Error(`more than ${MAX_SYMLINK_DEPTH} symlinks resolving ${abs}`);
+    if (seen.has(abs)) throw new Error(`symlink loop resolving ${abs}`);
+    seen.add(abs);
+    return realOrAbs(resolve(dirname(abs), readlinkSync(abs)), depth + 1, seen);
+  }
   try { return realpathSync(abs); } catch { /* missing: resolve its existing ancestor */ }
   const parent = dirname(abs);
   if (parent === abs) return abs;
-  return join(realOrAbs(parent), basename(abs));
+  return join(realOrAbs(parent, depth, seen), basename(abs));
 };
 /** Whether `child` is `parent` or beneath it, by real/resolved path. */
 const insidePath = (child, parent) => {
@@ -197,6 +216,33 @@ export function unsafePathProblem(path, label, { project = process.cwd(), env = 
 }
 /** The stable root's own refusal (the label the rows name). */
 export const stableRootProblem = (root, opts) => unsafePathProblem(root, "the stable execution root", opts);
+
+/**
+ * Why the approved data root cannot be trusted, or null. The data root holds both the stable
+ * execution folder and the approved rosters, so one read-only sandbox bind covers both: it must
+ * be outside the project, the app home, the temp folder and the runtime folder, and the stable
+ * root must stay beneath it. Use the same forbidden roots as the stable execution check.
+ */
+export function approvedDataRootProblem({ env = process.env, project = process.cwd(),
+  appHome = appHomeFor(env), forbiddenRoots = undefined } = {}) {
+  const root = dataRootOf(env);
+  const stable = stableRootOf(env);
+  const records = approvedRootOf(env);
+  if (!isAbsolute(root)) return `the approved data root ${root} is not absolute; refusing`;
+  if (!insidePath(stable, root) || realOrAbs(stable) === realOrAbs(root)) {
+    return `the stable execution root ${stable} is not beneath the approved data root ${root}`;
+  }
+  if (!insidePath(records, root) || realOrAbs(records) === realOrAbs(root)) {
+    return `the approved roster folder ${records} is not beneath the data root ${root}`;
+  }
+  const roots = forbiddenRoots ?? defaultForbiddenRoots(env, project, appHome);
+  for (const [why, parent] of roots) {
+    if (parent && insidePath(root, parent)) {
+      return `the approved data root ${root} is inside ${why}; refusing`;
+    }
+  }
+  return null;
+}
 /** Every node/bun run.sh could pick: PATH words, the nvm versions, Homebrew and ~/.bun. */
 export function nodeCandidates(env = process.env, path = env.PATH || "") {
   const out = new Set();
@@ -276,8 +322,9 @@ export const sandboxCapable = (root = packRootOf()) => ["am-sidebar", "dsh-sandb
 
 /** Every file an unsandboxed worker start can reach, copied byte-equal to the stable folder. */
 export const STABLE_FILES = Object.freeze([
-  "hcPane.mjs", "hcProxy.mjs", "dshTui.mjs", "workers.js", "models.js", "model.js", "logins.js",
-  "attach.js", "hcGuard.mjs", "layoutSafe.mjs", "release.js", "retired.js", "bin/dsh-sandbox.mjs", "bin/run.sh",
+  "hcPane.mjs", "hcProxy.mjs", "approved.js", "dshTui.mjs", "workers.js", "models.js", "model.js",
+  "logins.js", "attach.js", "hcGuard.mjs", "layoutSafe.mjs", "release.js", "retired.js",
+  "bin/dsh-sandbox.mjs", "bin/run.sh",
 ]);
 
 /** Whether every stable file is byte-equal to the pack's copy (a stale copy is never run). */
@@ -392,8 +439,12 @@ export function installSandboxRow({ env = process.env, project = null, forbidden
   if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot, stableRoot };
   const cwd = process.cwd();
   const cwdProject = existsSync(join(cwd, ".herdr", "bots.json")) || existsSync(join(cwd, ".git")) ? cwd : null;
-  const unsafe = executionPathProblem({ stableRoot, project: project ?? cwdProject, env, node: process.execPath, bakedNode: process.execPath, forbiddenRoots });
+  const where = project ?? cwdProject;
+  const unsafe = executionPathProblem({ stableRoot, project: where, env, node: process.execPath,
+    bakedNode: process.execPath, forbiddenRoots });
   if (unsafe) throw new Error(unsafe);
+  const unsafeData = approvedDataRootProblem({ env, project: where, forbiddenRoots });
+  if (unsafeData) throw new Error(unsafeData);
   let changed = false;
   const copied = copyStable(packRoot, stableRoot, process.execPath);
   changed = copied.length > 0;
@@ -423,8 +474,15 @@ export function sandboxState(env = process.env, { forbiddenRoots = undefined } =
   const profile = sandboxProfileOf(dshHomeOf(env));
   const stableRoot = sandboxRootOf(env);
   const packRoot = packRootOf();
-  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot)
-    && executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots }) === null;
+  const unsafe = executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots });
+  let dataRootProblem;
+  try {
+    dataRootProblem = approvedDataRootProblem({ env, project: process.cwd(), forbiddenRoots });
+  } catch (e) {
+    dataRootProblem = `the approved data root cannot be checked: ${e?.message ?? e}`;
+  }
+  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot) && unsafe === null
+    && dataRootProblem === null;
   let current = false;
   try {
     current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))
@@ -432,7 +490,7 @@ export function sandboxState(env = process.env, { forbiddenRoots = undefined } =
   } catch { current = false; }
   let row;
   try { row = checkRow({ profile, wrapper, packRoot: capable ? stableRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
-  return { wrapper, profile, packRoot, stableRoot, capable, current, row };
+  return { wrapper, profile, packRoot, stableRoot, capable, current, row, unsafe, dataRootProblem };
 }
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
@@ -721,7 +779,8 @@ export async function installDshTui(options = {}) {
     `The ${SHIM} shim is at ${shim}${onPath(env, binDir) ? "" : `; add ${binDir} to PATH so Herdr's built-in menu entry finds it`}.`,
     sandbox.skipped
       ? "The dsh-tui profile's sandbox row was left to the pack's own dsh-tui install (this copy is not the pack's mod folder)."
-      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} and the stable folder it keeps read-only.`,
+      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} `
+        + "and the data folder it keeps read-only.",
     guideBefore === null
       ? `Marked dsh-TUI's first-run guide done (${guide}; open it later with /setup).`
       : "Kept dsh-TUI's first-run guide state (a completed guide writes that file).",
@@ -879,13 +938,18 @@ export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = und
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
   const sandbox = sandboxState(env, { forbiddenRoots });
-  const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
+  // A data root in a writable tree is a failed check, even when the stable copy is absent.
+  const sandboxProblem = sandbox.dataRootProblem;
+  const sandboxOk = sandboxProblem === null
+    && (!sandbox.capable || (sandbox.current && sandbox.row.ok));
   add("dsh-sandbox", sandboxOk || !installed,
-    !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
-      : !installed ? "not installed: the dsh-tui profile is not set up"
-        : sandbox.current && sandbox.row.ok ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper} and its pack folder`
-          : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
-            : sandbox.row.message,
+    sandboxProblem ? sandboxProblem
+      : !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
+        : !installed ? "not installed: the dsh-tui profile is not set up"
+          : sandbox.current && sandbox.row.ok
+            ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper} and its data folder`
+            : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
+              : sandbox.row.message,
     installLine);
 
   const broken = checks.some((check) => !check.ok);

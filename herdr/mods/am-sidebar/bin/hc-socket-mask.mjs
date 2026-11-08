@@ -25,7 +25,7 @@ export const REAL_SOCKET = 'AM_HC_REAL_SOCKET';
 export const PROXY_SOCKET = 'AM_HC_PROXY_SOCKET';
 /** Every line the wrapper prints starts with this; the profile's runnerFailureSignatures entry. */
 export const MSG_PREFIX = 'hc-socket-mask: ';
-/** The wrapper's own word before its profile args: the pack folder to keep read-only. */
+/** The wrapper's own word before its profile args: the stable folder whose data parent it binds. */
 export const PACK_ROOT_FLAG = '--pack-root';
 /** The shared runtime folder holding every pane's proxy; the mask hides it whole. */
 export const PROXY_ROOT_NAME = 'automagik-hc-proxy';
@@ -167,8 +167,9 @@ export function maskArgs(args, env = process.env, options = {}) {
   if (notice) notices.push(notice);
   else mounts.push('--bind', proxy, real);
   mounts.push('--tmpfs', shared);
-  // The pack's own folder (hcPane.mjs, run.sh, the guard) may sit inside the writable
-  // workspace/app home; shadow that grant with a read-only bind, last so it wins.
+  // The data parent (automagik-herdr: the stable execution folder and the approved rosters)
+  // may sit inside the writable workspace/app home; shadow that grant with one read-only bind
+  // of the parent, last so it wins. Both children stay outside a sandbox's writable set.
   if (packRoot !== null) {
     if (!isAbsolute(packRoot)) return failed(args, `${PACK_ROOT_FLAG} must be an absolute folder: ${packRoot}`);
     if (packRoot === '/') return failed(args, `${PACK_ROOT_FLAG} / would make the whole sandbox read-only`);
@@ -179,7 +180,13 @@ export function maskArgs(args, env = process.env, options = {}) {
     } catch {
       return failed(args, `${PACK_ROOT_FLAG} ${packRoot} is not a readable folder`);
     }
-    mounts.push('--ro-bind', canonical, canonical);
+    const parent = dirname(canonical);
+    if (basename(canonical) !== 'dsh-sandbox' || basename(parent) !== 'automagik-herdr'
+      || parent === '/' || parent === canonical) {
+      return failed(args,
+        `${PACK_ROOT_FLAG} ${packRoot} is not a <data home>/automagik-herdr/dsh-sandbox folder`);
+    }
+    mounts.push('--ro-bind', parent, parent);
   }
   // ~/.ssh exists on most machines, but a fresh one may have none: then there is nothing to
   // hide. A directory (following symlinks) is shadowed; anything else is bound over.

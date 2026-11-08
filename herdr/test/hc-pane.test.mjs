@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { installSandboxRow, sandboxRootOf, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
+import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,18 +41,23 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   const roots = [["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime]];
   const harness = join(root, "helper-test.mjs");
   writeFileSync(harness, `import { runPane } from ${JSON.stringify(pathToFileURL(HELPER).href)};\ntry { process.exit(await runPane(process.argv.slice(2), process.env, { forbiddenRoots: ${JSON.stringify(roots)} })); } catch (e) { console.error("hc-pane: " + String(e?.message ?? e).replace(/\\s+/g, " ")); process.exit(1); }\n`);
-  const env = { ...process.env, XDG_RUNTIME_DIR: runtime, HOME: home, DSH_HOME: join(home, ".dsh"), HERDR_APP_HOME: app,
-    TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket };
+  const env = { ...process.env, XDG_RUNTIME_DIR: runtime, XDG_DATA_HOME: join(home, ".local",
+    "share"),
+    HOME: home, DSH_HOME: join(home, ".dsh"), HERDR_APP_HOME: app, TMPDIR: paneTmp,
+    HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket };
   if (sandboxRow) installSandboxRow({ env, forbiddenRoots: roots });
+  approveProject({ project, env, approvedAt: "2026-11-01T00:00:00.000Z", approvedBy: "test" });
   return { root, app, project, home, runtime, socket, fake, env, harness };
 }
 
 /** Run the helper with a child Node script that records the environment it was given. */
-function runHelper(s, { bot = ID.dev, project = s.project, worker = false, out, childScript = envScript, extraArgs = [] } = {}) {
+function runHelper(s, { bot = ID.dev, project = s.project, worker = false, cwd = s.project,
+  out, childScript = envScript, extraArgs = [] } = {}) {
   const args = [s.harness, ...(bot ? ["--bot", bot] : []), ...(project ? ["--project", project] : []),
     ...(worker ? ["--worker"] : []), ...extraArgs, "--", process.execPath, "-e", childScript];
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { env: { ...s.env, PANE_OUT: out }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, args, { cwd, env: { ...s.env, PANE_OUT: out },
+      stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -181,4 +187,45 @@ test("the pack's sandbox wrapper and helper are byte-equal to the DSH lane's sou
     assert.ok(readFileSync(from).equals(readFileSync(to)), `${to} is byte-equal to ${from}`);
     assert.ok(statSync(to).mode & 0o111, `${to} is executable`);
   }
+});
+
+test("G1 (o): a worker without --project is refused, never falls back to its cwd", async (t) => {
+  const s = await scene(t, { labels: { "worker.of": ID.dev }, address: "t302" });
+  const worktree = join(s.project, ".claude", "worktrees", "worker");
+  mkdirSync(join(worktree, ".herdr"), { recursive: true });
+  writeFileSync(join(worktree, ".herdr", "bots.json"),
+    readFileSync(join(s.project, ".herdr", "bots.json")));
+  s.fake.state.terminals[0].cwd = worktree;
+  const out = join(s.root, "worker.json");
+  const r = await runHelper(s, { worker: true, project: null, cwd: worktree, out });
+  assert.notEqual(r.code, 0, "the worker pane was not started");
+  assert.match(r.stderr, /--project is required for a worker/);
+  assert.match(r.stderr, /never the worktree/);
+  assert.equal(existsSync(out), false);
+});
+
+test("G1 (b): a working-tree roster edit warns once and the pane still starts", async (t) => {
+  const s = await scene(t);
+  const bots = JSON.parse(readFileSync(join(s.project, ".herdr", "bots.json"), "utf8"));
+  bots.bots[0].rank = "pm";
+  writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(bots, null, 2)}\n`);
+  const out = join(s.root, "child.json");
+  const r = await runHelper(s, { out });
+  assert.equal(r.code, 0, r.stderr);
+  const lines = r.stderr.split("\n").filter(Boolean);
+  assert.equal(lines.length, 1, "one warning line, no other noise");
+  assert.match(lines[0], /^hc-pane: /);
+  assert.match(lines[0], /automagik-herdr proxy approve/);
+  const got = JSON.parse(readFileSync(out, "utf8"));
+  assert.equal(got.socket, true, "the approved roster still started the proxy");
+});
+
+test("G1 (c): a missing record refuses a proxied pane before the child starts", async (t) => {
+  const s = await scene(t);
+  rmSync(recordFileOf(s.project, s.env));
+  const out = join(s.root, "child.json");
+  const r = await runHelper(s, { out });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /no approved roster .*automagik-herdr proxy approve/s);
+  assert.equal(existsSync(out), false);
 });

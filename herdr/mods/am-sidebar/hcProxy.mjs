@@ -7,13 +7,16 @@
 // helper passes the caller the pack resolved outside the sandbox. The helper and the proxy are
 // one process: it ends with the pane, and there is no service to run.
 //
-// The policy is deny-by-default and is built from a snapshot taken at start: the attach ledger
-// (`<app home>/automagik-herdr/attach.jsonl`) and the project's `.herdr/bots.json` are read once
-// here and never again from the writable tree. A roster change needs a pane restart (a new
-// proxy is started with the new pane). The caller is the pane this proxy serves, fixed at
-// start, and every forwarded request has its `params.caller` overwritten with it. Targets are
-// resolved with one short upstream `terminal.get`, checked, and forwarded by resolved address,
-// so a rename between the check and the call cannot redirect it.
+// The policy is deny-by-default and is built once at start. A proxied pane (the helper's
+// explicit caller) reads the project's approved roster, a record outside the project written
+// only by `automagik-herdr proxy approve`; a working-tree roster that differs warns once and
+// the approved one stays in force, and a missing record refuses the pane. The by-hand path
+// (no explicit caller) keeps the attach ledger and the working `.herdr/bots.json` reads. A
+// roster change needs a pane restart (a new proxy is started with the new pane). The caller is
+// the pane this proxy serves, fixed at start, and every forwarded request has its
+// `params.caller` overwritten with it. Targets are resolved with one short upstream
+// `terminal.get`, checked, and forwarded by resolved address, so a rename between the check
+// and the call cannot redirect it.
 //
 // Fail closed: a dead upstream is a JSON-RPC error, never a fallback. The upstream core must
 // answer `server.status` with HC_PIN or the proxy refuses to start. A pane whose proxy cannot
@@ -27,9 +30,10 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { executionPathProblem, shimPathOf } from "./dshTui.mjs";
+import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
 import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, WORKER_OF_LABEL } from "./workers.js";
 
@@ -311,7 +315,14 @@ export function explicitCaller(value) {
   const project = typeof value.project === "string" ? value.project : "";
   if (!bot) throw new Error("the caller has no bot id");
   if (!project || !isAbsolute(project)) throw new Error("the caller's project must be an absolute folder");
-  return { bot, project: resolve(project), worker: value.worker === true };
+  let real;
+  try {
+    real = realpathSync(project);
+    if (!statSync(real).isDirectory()) throw new Error("not a folder");
+  } catch {
+    throw new Error(`the caller's project ${project} is not a folder`);
+  }
+  return { bot, project: real, worker: value.worker === true };
 }
 
 /**
@@ -573,7 +584,7 @@ function methodRefusal(method) {
 
 /**
  * Start one pane's proxy. Resolves once the socket is listening; every check before that is a
- * refusal to start (the pin, the caller, the ledger, bots.json, the socket folder).
+ * refusal to start (the pin, the caller, the approved roster, the socket folder).
  */
 export async function startProxy(options = {}) {
   const env = options.env ?? process.env;
@@ -594,12 +605,12 @@ export async function startProxy(options = {}) {
   if (version !== HC_PIN) throw new Error(`the upstream core is ${version ?? "unknown"}, not the pinned ${HC_PIN}; refusing to start`);
   log({ ev: "pin", version });
 
-  // 2. The caller: its record, then the attach ledger snapshot and bots.json snapshot.
+  // 2. The caller: the pane's own record. A proxied pane (the helper's explicit caller) reads
+  // only the approved roster; the by-hand path keeps the ledger and the working file.
   const callerReply = await upstreamCall(upstream, "terminal.get", { terminal });
   if (callerReply.error) throw new Error(`the caller ${terminal} is not a live terminal: ${oneLine(callerReply.error.message)}`);
   const callerRecord = callerReply.result;
   if (!isObject(callerRecord)) throw new Error(`terminal.get ${terminal} returned no record`);
-  const fold = ledgerSnapshot(home);
   let caller;
   let bound;
   if (explicit) {
@@ -615,6 +626,8 @@ export async function startProxy(options = {}) {
     }
     caller = explicit;
   } else {
+    // The by-hand path only: an explicit caller never opens the ledger (C1/G2).
+    const fold = ledgerSnapshot(home);
     const ledgerBound = boundCaller(fold, terminal);
     if (ledgerBound) {
       if (!ledgerBound.project) throw new Error(`the attach ledger binds ${terminal} but names no project`);
@@ -628,23 +641,59 @@ export async function startProxy(options = {}) {
       bound = false;
     }
   }
+  // The stable root's own check first (it names literal /tmp too), then the data root: the
+  // sandbox binds that parent read-only once, so a data root inside a writable tree is refused
+  // before its record could be trusted.
+  const stableRoot = stableRootOf(env);
+  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env,
+    node: process.execPath, forbiddenRoots: options.forbiddenRoots });
+  if (unsafe) throw new Error(unsafe);
+  const dataWhy = approvedDataRootProblem({ env, project: caller.project, appHome: home,
+    forbiddenRoots: options.forbiddenRoots });
+  if (dataWhy) throw new Error(dataWhy);
   const botsPath = join(caller.project, ".herdr", "bots.json");
   let file;
-  try {
-    ({ file } = parseBots(readFileSync(botsPath, "utf8")));
-  } catch (e) {
-    throw new Error(`cannot read the roster ${botsPath}: ${oneLine(e.message)}`);
+  let rosterPath;
+  if (explicit) {
+    let approved;
+    try {
+      approved = readApprovedRecord({ project: caller.project, env });
+    } catch (e) {
+      throw new Error(`the approved roster is not usable: ${oneLine(e.message)}`);
+    }
+    file = approved.file;
+    rosterPath = approved.path;
+    let working = null;
+    try {
+      // Compare only a regular file: a symlink or a FIFO planted in the writable project is
+      // never opened here, and counts as different.
+      const info = lstatSync(botsPath);
+      if (info.isFile() && !info.isSymbolicLink()) working = readFileSync(botsPath, "utf8");
+    } catch { /* missing or unreadable: it differs */ }
+    if (working === null || sha256Of(working) !== approved.record.sha256) {
+      log({ ev: "roster_unapproved",
+        message: `the working-tree roster ${botsPath} differs from the approved one; `
+          + "the approved roster is in force. Run "
+          + `\`automagik-herdr proxy approve --project ${caller.project}\` to approve it.` });
+    }
+  } else {
+    try {
+      ({ file } = parseBots(readFileSync(botsPath, "utf8")));
+    } catch (e) {
+      throw new Error(`cannot read the roster ${botsPath}: ${oneLine(e.message)}`);
+    }
+    rosterPath = botsPath;
   }
   if (!file.bots.some((bot) => bot.id === caller.bot)) {
-    throw new Error(`the caller ${terminal}'s bot ${caller.bot} is not in ${join(caller.project, ".herdr", "bots.json")}`);
+    const hint = explicit
+      ? `; run \`automagik-herdr proxy approve --project ${caller.project}\`` : "";
+    throw new Error(`the caller ${terminal}'s bot ${caller.bot} `
+      + `is not in the roster ${rosterPath}${hint}`);
   }
   // The PATH the proxy records is the one hcPane started it with, outside the sandbox. Every
   // word must be outside the trees a sandboxed bot can write; a worker start may only repeat it.
   const panePath = typeof env.PATH === "string" ? env.PATH : "";
   if (!panePath) throw new Error("the pane PATH is not set; the proxy cannot pin the worker PATH");
-  const stableRoot = stableRootOf(env);
-  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env, node: process.execPath, forbiddenRoots: options.forbiddenRoots });
-  if (unsafe) throw new Error(unsafe);
   const tempRoot = env.TMPDIR || tmpdir();
   const forbidden = [
     { root: caller.project, why: "the writable project" },

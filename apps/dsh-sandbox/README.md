@@ -43,8 +43,11 @@ ships no mask path for them, so there is nothing to enable there until that land
   absolute path: unset or relative is fatal (the wrapper cannot hide a folder it cannot name,
   and another pane's proxy could be impersonated).
 - `--pack-root <dir>`: the wrapper's own leading word before the bwrap profile args, written by
-  `dsh-sandbox install` into the row. The wrapper binds that folder read-only last, so the pack's
-  `hcPane.mjs`, `bin/run.sh` and guard cannot be rewritten from inside a writable workspace.
+  `dsh-sandbox install` into the row. It names the stable execution folder
+  (`<data home>/automagik-herdr/dsh-sandbox`); the wrapper binds its parent
+  (`<data home>/automagik-herdr`) read-only last, so the pack's `hcPane.mjs`, `bin/run.sh`,
+  guard and the approved rosters under `approved/` cannot be rewritten from inside a writable
+  workspace.
 - `hc-socket-mask: `: the prefix of every wrapper line. It is the profile row's
   `runnerFailureSignatures` entry, so DSH reports a wrapper refusal as a runner failure.
 
@@ -84,10 +87,12 @@ the `--`, in this order:
    Only paths that exist are masked; a test passes its own fake list, so no test looks at a live
    `docker.sock`.
 
-5. When the row carries `--pack-root`, `--ro-bind <that folder> <that folder>`, after the
+5. When the row carries `--pack-root`, `--ro-bind <its parent> <its parent>`, after the
    profile args and the masks above, so it wins over a writable workspace bind. The pack's
-   helper, runner and guard live there; without this a sandboxed bot inside the writable project
-   could rewrite them and start a worker that runs the changed file outside the sandbox.
+   helper, runner and guard and the approved rosters live under that parent (the stable folder
+   and `approved/`); without this a sandboxed bot inside the writable project could rewrite them
+   and start a worker that runs the changed file outside the sandbox, or forge its next
+   approval.
 
 Everything else is the profile's own bwrap policy (`--ro-bind / /`, `--dev /dev`,
 `--unshare-pid`, `--proc /proc`, `--die-with-parent`, the workspace binds). The wrapper adds no
@@ -105,7 +110,8 @@ Before running `bwrap`, the wrapper refuses with one `hc-socket-mask: ` line and
   another pane's proxy could be impersonated);
 - `HOME` is absent or not absolute (the runner will not guess where `~/.ssh` is);
 - the runner arguments have no `--` separator (the command cannot be preserved);
-- `--pack-root` is relative, missing or not a folder (the pack folder could not be made read-only);
+- `--pack-root` is relative, missing or not a folder, or is not
+  `<data home>/automagik-herdr/dsh-sandbox` (the data parent could not be made read-only);
 - the proxy parent is not the `automagik-hc-proxy` folder, or it is the real socket path or an
   ancestor of it (masking it would hide the real socket or a shared system folder);
 - `AM_HC_PROXY_SOCKET` is absolute but its folder is the real socket path or one of its parents
@@ -164,15 +170,16 @@ to `~/.dsh`.
 # Install (or re-install) the managed row. The wrapper must exist, be executable and be named by
 # an absolute path (a relative one is refused).
 node apps/dsh-sandbox/bin/dsh-sandbox.mjs install \
-  --wrapper /path/to/hc-socket-mask.mjs --pack-root /path/to/am-sidebar
+  --wrapper /path/to/hc-socket-mask.mjs --pack-root /path/to/data/automagik-herdr/dsh-sandbox
 
 # Check it without writing: exit 0 when the block is there exactly once and matches.
 node apps/dsh-sandbox/bin/dsh-sandbox.mjs check \
-  --wrapper /path/to/hc-socket-mask.mjs --pack-root /path/to/am-sidebar
+  --wrapper /path/to/hc-socket-mask.mjs --pack-root /path/to/data/automagik-herdr/dsh-sandbox
 
 # A temp profile, as the tests and the pack's dry run use.
 node apps/dsh-sandbox/bin/dsh-sandbox.mjs install \
-  --profile /tmp/cordis.patch.yml --wrapper /path/to/hc-socket-mask.mjs --pack-root /path/to/am-sidebar
+  --profile /tmp/cordis.patch.yml --wrapper /path/to/hc-socket-mask.mjs \
+  --pack-root /path/to/data/automagik-herdr/dsh-sandbox
 ```
 
 `install` backs an existing profile up to
