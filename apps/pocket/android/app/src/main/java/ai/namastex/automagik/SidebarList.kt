@@ -10,6 +10,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -53,6 +55,8 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
                 is SpaceRow -> SpaceLine(row, activeSpace == (row.hostId to row.space.id), onStats) { onSpace(row) }
                 is AgentRow -> AgentLine(row, focused == TerminalRef(row.hostId, row.terminal.address), onStats) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
                 is KidRow -> KidLine(row, focused == TerminalRef(row.hostId, row.terminal.address), onStats) { onTerminal(TerminalRef(row.hostId, row.terminal.address)) }
+                is CategoryRow -> CategoryLine(row)
+                is SleepingBotRow -> SleepingBotLine(row)
             }
         }
     }
@@ -110,7 +114,7 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
 
 @Composable private fun AgentLine(row: AgentRow, focused: Boolean, onStats: (StatsSheet) -> Unit, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(32.dp).clip(RoundedCornerShape(8.dp)).background(if (focused) SidebarSelected else Color.Transparent)
-        .clickable(onClick = onClick).padding(start = if (row.nested) 44.dp else 28.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        .clickable(onClick = onClick).padding(start = (if (row.nested) 44 else 28).dp + TREE_STEP * row.depth, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         ProgramIcon(row.program, 14)
         Spacer(Modifier.width(8.dp))
         Text(row.label, color = if (row.status == "idle" && !focused) SidebarMuted else Ink, fontSize = 12.5.sp, maxLines = 1,
@@ -124,7 +128,7 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
 
 @Composable private fun KidLine(row: KidRow, focused: Boolean, onStats: (StatsSheet) -> Unit, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(30.dp).clip(RoundedCornerShape(8.dp)).background(if (focused) Raised else Color.Transparent)
-        .clickable(onClick = onClick).padding(start = if (row.nested) 50.dp else 34.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        .clickable(onClick = onClick).padding(start = (if (row.nested) 50 else 34).dp + TREE_STEP * row.depth, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         row.lines.forEach { TreeLine(it) }
         ProgramIcon(row.program, 13)
         Spacer(Modifier.width(7.dp))
@@ -132,6 +136,29 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
         row.bot?.let { b -> Spacer(Modifier.width(4.dp)); StatsButton { onStats(BotSheet(b)) } }
         Spacer(Modifier.width(if (row.bot != null) 4.dp else 8.dp))
         StatusMark(row.status)
+    }
+}
+
+/** How far each level of a project's bot tree indents. */
+private val TREE_STEP = 12.dp
+
+/** A category of the bot tree: its title, as the desktop heads a group of the main bot's reports. */
+@Composable private fun CategoryLine(row: CategoryRow) {
+    Row(Modifier.fillMaxWidth().height(26.dp).padding(start = (if (row.nested) 44 else 28).dp + TREE_STEP, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(row.title.ifBlank { row.id }, color = SidebarDim, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A bot with no pane: dimmed, nothing to open. */
+@Composable private fun SleepingBotLine(row: SleepingBotRow) {
+    Row(Modifier.fillMaxWidth().height(32.dp).padding(start = (if (row.nested) 44 else 28).dp + TREE_STEP * row.depth, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.SmartToy, null, Modifier.size(14.dp), tint = SidebarDim)
+        Spacer(Modifier.width(8.dp))
+        Text(row.label, color = SidebarDim, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(if (row.planned) "planned" else "asleep", color = SidebarDim, fontSize = 10.sp, maxLines = 1)
+        Spacer(Modifier.width(8.dp))
     }
 }
 
@@ -192,4 +219,16 @@ fun LazyListScope.sidebarRows(rows: List<SidebarRow>, activeSpace: Pair<String, 
     "program" -> Icons.Outlined.Code to Ink
     "agent" -> Icons.Outlined.SmartToy to Ink
     else -> (if (p.icon.contains("agent") || !p.tint) Icons.Outlined.SmartToy else Icons.Outlined.Terminal) to Ink
+}
+
+/** How far a sideways drag goes before it counts as a swipe to another agent. */
+private val SWIPE = 56.dp
+
+/** A sideways swipe: to the left is the next agent (+1), to the right the previous one (-1); taps pass through. */
+suspend fun PointerInputScope.detectAgentSwipe(onSwipe: (Int) -> Unit) {
+    var total = 0f
+    detectHorizontalDragGestures(onDragStart = { total = 0f },
+        onDragEnd = { if (kotlin.math.abs(total) > SWIPE.toPx()) onSwipe(if (total < 0) 1 else -1) }) { change, dx ->
+        total += dx; change.consume()
+    }
 }

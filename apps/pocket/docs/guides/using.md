@@ -46,9 +46,12 @@ Team.
   squad's worktrees, share one card. A folder that isn't a repository is a project of its own. Tap
   a card for its tasks, spaces and agents.
 - **Code → Spaces** is Herdr desktop's sidebar: spaces, their agents, git branch tails and
-  nested worktrees, with the desktop's own program icons.
-- **Code → Tasks** groups agents by branch: Needs you, Working, Done, then Idle. Work on `main`,
-  `master` or `dev`, or with no branch, is the project's **Untasked** row.
+  nested worktrees, with the desktop's own program icons. Each project's bots sit under its first
+  space as the desktop groups them: the main bot, then its categories, members under their lead.
+  **Tasks** on top keeps only the agents working on a branch (not `main`, `master` or `dev`).
+- Open an agent and its terminal fills the screen. **☰** opens the same tree as a drawer; the strip
+  of names under the tabs, or a sideways swipe on the chat or on the terminal's bars, moves to the
+  next or previous agent of the space.
 - **Settings** starts with your machines, with **Pair with Herdr desktop**, then the display,
   alerts and About.
 - Spend appears once the [usage meter](#spend) runs on a machine.
@@ -76,7 +79,6 @@ The app reads that summary from each machine you're connected to and sums it. It
 - **A project:** pick **24h**, **7d** or **30d** to see its tasks, cost per task (untasked work
   excluded), $ spent with tokens and the share read from cache, active hours per task, and its
   tasks by spend, finished ones included.
-- **Code → Tasks:** each branch's $ and active hours over 30 days.
 
 What the numbers mean:
 

@@ -25,7 +25,7 @@ list, its needs-you deck and its progress strip.
   |---|---|
   | Today | **Home**, unchanged: Needs you, then Done, with Working and Idle under **Everything else**; the counts and the spend tile on top; the needs-you badge |
   | Teams | **Team**, one bubble per project ([Team bubbles](team-bubbles.md)), still the default and where Back goes |
-  | Projects, Tasks | **Code**, three views picked with pills: By repository, Spaces, Tasks |
+  | Projects, Tasks | **Code**: Spaces (the desktop's tree, Tasks as a filter) and By repository |
   | Machines, the gear | **Settings**, with the machines and pairing first |
 
 - Replaces in [Teams v1](teams-v1.md):
@@ -41,7 +41,19 @@ list, its needs-you deck and its progress strip.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
 - Home is `OverviewScreen` with no space (`MainActivity.kt:238`), the spend tile `SpendCount`
   (`MainActivity.kt:360`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
-- Code: `CodeScreen`, `android/app/src/main/java/ai/namastex/automagik/ProjectScreens.kt:41`.
+- Code (wish group 3), the desktop's Herdr window made mobile:
+  - The spaces and bots tree (`Sidebar.rows`, drawn by `sidebarRows`) places each project's bots under
+    its first space, grouped as the desktop groups them: the main bot, then categories in
+    `bots.json` order, each one's bots by rank, members under their lead (`BotTree`, a port of
+    am-sidebar `rows.js` `buildTree`). A bot's pane is not listed again as a plain agent.
+  - It is Code's Spaces view and the terminal's drawer (the menu button), both `SpacesTree` in
+    `ProjectScreens.kt`. Its Tasks pill (`Sidebar.only`) keeps the agents on a task branch: the
+    Tasks view is gone.
+  - The terminal is the main view, with its Chat tab and Show terminal. The agent strip lists the
+    space's agents in the tree's order (`Sidebar.strip`), and a sideways swipe on the chat or on the
+    terminal's bars goes to the next or previous one in the space (`Sidebar.neighbour`).
+  - Tested in `CodeTreeTest`, against the desktop's own recorded fixture
+    (`herdr/test/fixtures/sidebar/owner-2026-11-02.json` and its golden).
 - Settings: `SettingsScreen` starts with `MachinesSection`
   (`android/app/src/main/java/ai/namastex/automagik/Screens.kt:92`, `:162`). **+** in its top bar
   pairs a machine.
@@ -50,8 +62,8 @@ list, its needs-you deck and its progress strip.
 
 1. Which mobile UX guidance applies to the bar and the tabs (targets, safe areas, the keyboard)?
    — the owner.
-2. Code as the desktop's Herdr window (a drawer tree, the terminal, Tasks as a filter) is wish
-   group 3; until then Code keeps today's Projects and Tasks screens. — the Mobile Captain.
+2. Swiping on the terminal's own screen (not only its bars) would need the terminal view to give
+   up horizontal drags; left out until the UX guidance says how it should feel. — the owner.
 
 ## Related
 
