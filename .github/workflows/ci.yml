@@ -127,8 +127,11 @@ jobs:
         run: node scripts/catalog.mjs --check
 
       # release.js and install.sh pin each usagemeter build by sha256: checked against the release.
+      # The public download URL is tried first; this token serves the API asset route when it fails.
       - name: usagemeter pin
         if: steps.changed.outputs.herdr == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/usagemeter-pin.mjs
 
       # The Automations panel installs our scheduler release and pins its darwin sha256s
