@@ -34,10 +34,26 @@ released from its own repository. Three things follow from where it is today:
   reads it (`Spend.kt`, `SpaceFeed.kt`), genie will, and nothing here tests a reader against what
   the meter writes.
 
-The closed draft #298 planned the import inside RFC 0011 and is the starting point here. This RFC
-replaces it: its folder, trust step and schema keeping differ, as said below.
+The closed draft automagik-dev/automagik#298 planned the import inside RFC 0011 and is the
+starting point here. This RFC replaces it: its folder, trust step and schema keeping differ, as
+said below.
 
 ## Decided
+
+The owner's answers to this RFC's questions 1 to 6 (2026-11-08):
+
+- Folder: `meter/usagemeter/`.
+- History: the whole upstream history is imported, its first nine commits included.
+- Upstream's open pull requests automagik-dev/usagemeter#6 and automagik-dev/usagemeter#7 merge
+  upstream first; the final import is pinned to upstream `dev`'s last commit, and upstream is
+  frozen after it.
+- The Intel Mac build stays for good: every meter release ships `usagemeter-darwin-x86_64`, and
+  it is not dropped after the cutover. D28 still drops Intel Mac for every other part; the meter
+  is the one exception.
+- The standalone installer is retired for `am meter install`. The upstream bridge release points
+  there, and Pocket Link's docs follow.
+- The capability is `meter.usage@1`. Its major is not tied to `schema_version`: the doc keeps
+  `schema_version` 2. genie's reader moves to `meter.usage@1`, coordinated with genie's design.
 
 From the Meter Captain's brief (2026-11-08); the owner confirms them when scheduling this RFC:
 
@@ -56,18 +72,19 @@ Proposed here: everything else. Where a sentence proposes rather than records, i
 
 ### Where the crate lives
 
-Proposed: `meter/usagemeter/`, the crate as it is upstream (`Cargo.toml`, `Cargo.lock`, `src/`,
+Decided: `meter/usagemeter/`, the crate as it is upstream (`Cargo.toml`, `Cargo.lock`, `src/`,
 `tests/`, its `install.sh` and `scripts/`), with its own `part.json` at its root.
 
 - `meter/` is already Meter's folder: `meter/statusline` (the Claude Code status line and the
   limits logger) sits there, and the Meter Captain owns both. One folder per product keeps
   `meter/` the one place to look, and keeps the lane rule short.
-- Not `apps/usagemeter/` (#298's choice). `apps/` holds the DSH plugins and the apps; a folder
-  there that is not a plugin reads as a desktop change in every rule written for `apps/`.
+- Not `apps/usagemeter/` (automagik-dev/automagik#298's choice). `apps/` holds the DSH plugins
+  and the apps; a folder there that is not a plugin reads as a desktop change in every rule
+  written for `apps/`.
 - Not `crates/usagemeter/`. There is one crate. A `crates/` folder would suggest a shared Cargo
   workspace for the whole repository, which nothing else needs. If genie's ports add crates,
   they go beside it under `meter/`, and whether `meter/` then gets a workspace is decided with
-  them (Open question 7).
+  them (RFC 0018).
 
 ### The import
 
@@ -83,9 +100,10 @@ repository with its history"):
   differs from the root's.
 - The pull request merges as a merge commit, never squashed or rebased, so the imported commits
   keep their ids; `commitlint.yml` already skips an import merge's second-parent history.
-- Upstream has two open pull requests, #6 (worker-ledger tagging) and #7 (the state folder
-  `~/.automagik/meter`). Proposed: both merge upstream first, the final import is pinned to
-  upstream `dev`'s last commit, and upstream is frozen after it (Open question 3).
+- Upstream has two open pull requests, automagik-dev/usagemeter#6 (worker-ledger tagging) and
+  automagik-dev/usagemeter#7 (the state folder `~/.automagik/meter`). Decided: both merge
+  upstream first, the final import is pinned to upstream `dev`'s last commit, and upstream is
+  frozen after it.
 - No old tags come in: `v0.1.0` to `v0.3.0` are not releases of this repository.
 
 ### Version
@@ -106,12 +124,13 @@ Proposed `meter/usagemeter/part.json`:
   "title": "usagemeter, the token meter",
   "kind": "binary",
   "paths": ["meter/usagemeter/**"],
-  "provides": ["meter.herdr-meter@2"],
+  "provides": ["meter.usage@1"],
   "requires": [],
   "os": ["macos", "linux"],
   "targets": "fleet",
   "artifact": {
     "darwin-arm64": "usagemeter-darwin-arm64",
+    "darwin-x86_64": "usagemeter-darwin-x86_64",
     "linux-x86_64": "usagemeter-linux-x86_64",
     "linux-aarch64": "usagemeter-linux-aarch64"
   },
@@ -126,8 +145,9 @@ Proposed `meter/usagemeter/part.json`:
 ```
 
 - `id` is permanent once released. `kind: binary`, like `automagik.am`.
-- `provides`: the doc it writes, as a capability whose major is the doc's `schema_version`
-  (below). A fork that writes the same doc keeps it and names this part in `replaces`.
+- `provides`: the usage data it writes, as the capability `meter.usage@1` (decided). Its major
+  is not tied to the doc's `schema_version`, which stays 2 (below). A fork that writes the same
+  doc keeps it and names this part in `replaces`.
 - `os`: macOS and Linux. Windows runs it inside the WSL container guest (RFC 0016), where am
   sees Linux and the Linux build already works.
 - `targets: fleet`: every connected machine, under the part's own consent, as `am meter install`
@@ -137,14 +157,20 @@ Proposed `meter/usagemeter/part.json`:
   names `meterFleet.js`'s `PLATFORMS` maps `uname -sm` to) to asset name. Code gap: am's reader
   and `parts.mjs` accept a string only. The names stay today's, because a versioned release
   already holds the version, and the binary installs under one fixed name anyway.
-  `usagemeter-darwin-x86_64` is built only through the bridge (Open question 4).
+- Intel Mac (decided): `darwin-x86_64` is a target for good. am applies D28's targets to every
+  part (RFC 0012), and D28 leaves out Intel Mac; the meter is the one exception, so am takes a
+  binary part's targets from its `artifact` keys when it has them. Code gap: am and `parts.mjs`
+  know D28's targets only. Every other part, am included, stays off Intel Mac, and the code set
+  is still refused there: on an Intel Mac the meter installs on its own, through
+  `am meter install`.
 - `entry`: a binary has no folder to run from, so its entries are am's own `meter` verbs.
   Proposed: an entry whose first word is `am` runs the am that is installing. Code gaps: today
   `meter uninstall` takes no `--local`, and there is no `meter doctor`.
-- `writes`: the binary, and the state folder #7 moves to. Before #7, the state is
-  `~/Library/Application Support/automagik/` on macOS and `~/.local/state/automagik/` on Linux;
-  #7 migrates it once. The `herdr-meter` doc is written to herdr-core, not to a file, so it is
-  not a `writes` entry; its contract is below.
+- `writes`: the binary, and the state folder automagik-dev/usagemeter#7 moves to. Before it,
+  the state is `~/Library/Application Support/automagik/` on macOS and
+  `~/.local/state/automagik/` on Linux; that pull request migrates it once. The `herdr-meter`
+  doc is written to herdr-core, not to a file, so it is not a `writes` entry; its contract is
+  below.
 - No `herdr` manifest declares `~/.local/bin/usagemeter` (RFC 0012), so rule 7's overlap check
   passes. `install.sh` and the pack's `meter install` keep writing it until the cutover; after
   it they install through the same pointer this part uses.
@@ -192,12 +218,13 @@ Proposed `meter/usagemeter/part.json`:
   macOS, plus the installer's test while the installer exists. Its actions are pinned by SHA, as
   every action here is.
 - A file directly under `meter/` that is neither (a future `meter/Cargo.toml`) matches no part
-  and would cut a full release. That is on purpose: it is decided with Open question 7.
+  and would cut a full release. That is on purpose: it is decided with RFC 0018.
 
 ### Release and trust
 
-On a release that builds the meter, a CI job builds each target from the tag (the Linux builds
-static, musl, and checked to be static) and attaches the binaries and `usagemeter.SHA256SUMS` to
+On a release that builds the meter, a CI job builds each of the four targets from the tag (macOS
+arm64 and x86_64, Linux x86_64 and aarch64; the Linux builds static, musl, and checked to be
+static) and attaches the binaries and `usagemeter.SHA256SUMS` to
 `vX.Y.Z`. The checksums file is renamed because a full release's desktop build writes its own
 `SHA256SUMS` to the same release. Then a pointer says which build is newest.
 
@@ -309,9 +336,9 @@ Version 2, top level. "Read" marks what a reader here uses today:
 A token object (`d1`, `d7`, `d30`, `untasked`, `*_other`): `in`, `cr`, `cw`, `out`, `rs`
 (already inside `out`), `un` (known only as a total), `usd`, `usd_rep` (the part the harness
 reported), `unpriced`. A zero field is left out, and a window with no usage is left out. Total
-tokens are `in + cr + cw + out + un`. The `space` block is not written by the meter yet (upstream
-#6 builds toward it); Pocket already reads `space.version` 1, so it is part of the contract from
-the start, versioned on its own.
+tokens are `in + cr + cw + out + un`. The `space` block is not written by the meter yet
+(automagik-dev/usagemeter#6 builds toward it); Pocket already reads `space.version` 1, so it is
+part of the contract from the start, versioned on its own.
 
 **The keeper.** Proposed: `meter/schema/herdr-meter.v2.schema.json` (JSON Schema 2020-12) and
 `meter/schema/fixtures/`: a full doc, a cut one (`projects_other`, `tasks_other`, `truncated`),
@@ -332,8 +359,12 @@ when `meter/schema/` changes.
 changing its type, unit or meaning bumps it to 3. A bump ships readers first: Pocket and genie
 learn version 3 before the meter writes it. A reader that meets a version it does not know shows
 that machine as "update needed" and never guesses numbers (Pocket's `Unsupported` does this
-today). The same rules hold for `space.version` inside the doc, and the capability major in
-`part.json` follows `schema_version`.
+today). The same rules hold for `space.version` inside the doc.
+
+The capability `meter.usage@1` is versioned on its own (decided): its major is not
+`schema_version`, and the two numbers are never made to match. Proposed: a `schema_version` bump
+that breaks a reader also bumps the capability's major, so a part that requires `meter.usage@1`
+is never handed a doc it cannot read; an additive change bumps neither.
 
 ### The build rule
 
@@ -348,17 +379,20 @@ today). The same rules hold for `space.version` inside the doc, and the capabili
 
 ### Ports of genie's metering
 
-To be decided. genie (genie-rs) has metering of its own. Ports of it into this crate come later,
-from genie's specs and acceptance tests, once genie's design arrives. Workers build them under
-this RFC's contract: the meter lane, the build rule, and the `herdr-meter` doc's keeper and
-versioning rules. What is ported, where it lives (modules of this crate or crates beside it under
-`meter/`), and which acceptance tests come with it, is Open question 7.
+Answered by RFC 0018 (the meter query contract), which comes in its own pull request. genie
+(genie-rs) has metering of its own; ports of it come from genie's specs and acceptance tests.
+Workers build them under this RFC's contract: the meter lane, the build rule, and the
+`herdr-meter` doc's keeper and versioning rules. What is ported, where it lives (modules of this
+crate or crates beside it under `meter/`), and which acceptance tests come with it, is RFC
+0018's to say. genie's reader moving to `meter.usage@1` is coordinated there too.
 
 ## Contracts introduced
 
-- Part id `automagik.usagemeter` and capability `meter.herdr-meter@2`. Permanent once released.
+- Part id `automagik.usagemeter` and capability `meter.usage@1`. Permanent once released.
 - Lane kind `meter`; `scripts/lane.ts meter` and `meter-since`.
-- Assets on `vX.Y.Z`: `usagemeter-<os>-<arch>` and `usagemeter.SHA256SUMS`.
+- Assets on `vX.Y.Z`: `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
+  `usagemeter-linux-x86_64`, `usagemeter-linux-aarch64` and `usagemeter.SHA256SUMS`. The Intel
+  Mac asset is part of every meter release for good.
 - The rolling `meter-lane` release (`meter.json`, `meter.json.sig`), the secrets `METER_LANE_KEY`
   and `METER_LANE_KEY_NEXT`, the variable `METER_LANE_SIGNER`, the dispatch input
   `replace_unverified_meter_pointer`, and `meter/usagemeter/meter-keys.json`.
@@ -405,7 +439,8 @@ Each is one pull request with an independent review.
    and its job, warning while no key is listed.
    *Check:* lane tests: a meter-only diff is `meter`, meter with herdr is `herdr` and builds
    both, a statusline-only diff ships nothing; `meter-lane.test.ts` with a per-run key refuses a
-   lower sequence and an unverified posted pointer; the first meter release carries the assets.
+   lower sequence and an unverified posted pointer; the first meter release carries all four
+   assets, `usagemeter-darwin-x86_64` included.
    *Rollback:* revert; installs keep the pin.
 5. **Keys** (the owner). `meter-lane.ts keygen`; `meter-keys.json` and its copies in am and the
    pack.
@@ -419,38 +454,32 @@ Each is one pull request with an independent review.
 7. **The part in am** (am, RFC 0012 delivery 8). `am install automagik.usagemeter`, the object
    `artifact`, `meter doctor`, and `meter uninstall --local`.
    *Check:* `am doctor` lists the meter; install, rollback and uninstall on a temp home.
-8. **Ports of genie's metering.** To be decided (Open question 7).
+8. **Ports of genie's metering.** Planned in RFC 0018 (the meter query contract), its own pull
+   request.
 
 ## Open questions
 
-1. **Folder.** Recommended: `meter/usagemeter/` (above), over `apps/usagemeter/` (#298) and
-   `crates/usagemeter/`.
-2. **Import every commit?** usagemeter's first nine commits came from automagik-pocket's `meter/`,
-   which is already here under `apps/pocket/meter/` with other ids (deleted since). Recommended:
-   yes. "With its history" means the whole log, and cutting it rewrites parents and loses blame.
-3. **Upstream #6 and #7.** Recommended: merge both upstream, then pin the final import to
-   upstream `dev` and freeze upstream. The other way, reopening them here after the import,
-   delays the state-folder fix.
-4. **The Intel Mac build.** D28 dropped Intel Mac. Recommended: build `usagemeter-darwin-x86_64`
-   only until the cutover ends, for installs that have it, then drop it.
-5. **The standalone installer.** upstream's `install.sh` checks `SHA256SUMS` only. Recommended:
-   retire it for am's one-liner (`am meter install --local`), which already verifies a signed
-   pointer, and let the upstream bridge release point there; Pocket Link's docs follow.
-6. **Capability name.** Recommended: `meter.herdr-meter@2`, its major tied to `schema_version`.
-7. **Ports of genie's metering.** What is ported, where it lives (this crate, or crates beside it
-   under `meter/` with a workspace), which genie specs and acceptance tests come with it, and who
-   reviews them. To be decided when genie's design arrives.
+Questions 1 to 6 were answered by the owner on 2026-11-08 and are in Decided. usagemeter's first
+nine commits came from automagik-pocket's `meter/`, already here under `apps/pocket/meter/` with
+other ids (deleted since); they are imported anyway, as question 2 decided.
+
+7. **Ports of genie's metering.** Answered by RFC 0018 (the meter query contract), which comes in
+   its own pull request: what is ported, where it lives (this crate, or crates beside it under
+   `meter/` with a workspace), which genie specs and acceptance tests come with it, and who
+   reviews them.
 
 ## Links
 
 - RFCs: [0011](0011-monorepo-parts-and-releases.md) parts, lanes and the signed pointers;
   [0012](0012-am-cli-and-parts.md) `part.json`, "Sources and trust", Open question 5, delivery 8;
-  [0016](0016-windows-wslc.md) Windows via WSLC.
-- Closed draft #298 (usagemeter's import in RFC 0011).
+  [0016](0016-windows-wslc.md) Windows via WSLC; 0018, the meter query contract (its own pull
+  request).
+- Closed draft automagik-dev/automagik#298 (usagemeter's import in RFC 0011).
 - Code: `scripts/lane.ts` (`NEVER_SHIPPED`, `kindOf`, `amPaths`), `scripts/herdr-lane.ts`,
   `scripts/am-lane.ts`, `am/part.json`, `herdr/mods/am-sidebar/meterFleet.js` and its copy in
   `am/`, `herdr/mods/am-sidebar/release.js` (`USAGEMETER`), `herdr/install.sh`,
   `herdr/scripts/usagemeter-pin.mjs`, `meter/statusline/`, `.github/workflows/ci.yml` (`meter`).
 - Readers: `apps/pocket/android/app/src/main/java/ai/namastex/automagik/Spend.kt` and
   `SpaceFeed.kt`.
-- Upstream: `automagik-dev/usagemeter` (README, "Summary doc schema"; pull requests #6 and #7).
+- Upstream: `automagik-dev/usagemeter` (README, "Summary doc schema"); pull requests
+  automagik-dev/usagemeter#6 and automagik-dev/usagemeter#7.
