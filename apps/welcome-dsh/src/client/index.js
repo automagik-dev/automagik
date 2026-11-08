@@ -21,7 +21,10 @@ const STEPS = [
   { id: 'omni-connect-ai', order: -200, component: ConnectAiStep },
 ]
 
-export const inject = ['slots']
+// The welcome's copy comes from DSH's locale service (i18n.js). The client boot starts entries
+// together, so the service can arrive after this plugin applies: declare it, as DSH's own UI
+// plugins do, and the shell parks this one until there is a locale to read.
+export const inject = ['slots', 'locale']
 
 function installStyles() {
   const style = document.createElement('style')
@@ -33,7 +36,8 @@ function installStyles() {
 
 export function apply(ctx) {
   ctx.effect(installStyles, 'omni-ai: stage styles')
-  // The welcome's copy, in the DSH language (i18n.js).
+  // The welcome's copy, in the DSH language (i18n.js). The locale service is in `inject`, so
+  // it is there when this runs; without one, copy stays English.
   ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ai: team step copy')
   ctx.effect(() => installVeil(), 'omni-ai: the table over DSH\'s first frame')
   // ui-settings declares the slot in its own apply, which may run after this one.
