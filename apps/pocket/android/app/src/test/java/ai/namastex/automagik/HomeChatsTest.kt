@@ -77,22 +77,53 @@ class HomeChatsTest {
         assertEquals(listOf("dsh:s1"), refs(again, Cockpit.DONE)); assertEquals("", again.sections.single().entries.single().terminal.message)
     }
 
-    /** Row: a DSH chat with a Herdr pane counts once (RFC 0015 D29): the pane's row, raised to the chat's word, opens the chat. */
+    /** Row: a DSH chat with a Herdr pane counts once (RFC 0015 D29): the pane's row, raised to the chat, opens the chat. */
     @Test fun aBotWithAChatAndAPaneIsOneRow() {
-        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.WORKING, "", 0L, TerminalRef(host, "t1"), "")
+        val paneRef = TerminalRef(host, "t1"); val chatRef = TerminalRef(host, "dsh:s1")
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.WORKING, "", 0L, paneRef, "")
         val team = Teams.Team("$host||/w", host, "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))
-        val rows = listOf(row("s1", "blocked", kind = "question", registryId = "b-main"))
+        val rows = listOf(row("s1", "blocked", kind = "question", msg = "Which branch?", registryId = "b-main"))
         val c = chats(rows, teams = listOf(team))
-        assertTrue(c.agents.isEmpty()); assertEquals(mapOf(TerminalRef(host, "t1") to ("blocked" to "question")), c.panes)
+        assertTrue(c.agents.isEmpty()); assertEquals(setOf(paneRef), c.panes.keys); assertEquals(chatRef, c.panes.getValue(paneRef).chat)
         val p = pulse(c, pane("t1", "working", bot = "b-main"), pane("t2", "working"))
         assertEquals(1, p.needsYou); assertEquals(listOf("t1"), refs(p, Cockpit.BLOCKED)); assertEquals(listOf("t2"), refs(p, Cockpit.WORKING))
-        assertEquals("question", p.sections.first().entries.single().terminal.kind)
+        // The row is the chat's: its kind, its line (the question), its turn and time; the pane's name and folder stay.
+        val e = p.sections.first().entries.single().terminal
+        assertEquals(listOf("question", "Which branch?", 1L, 100L, "claude-code"), listOf(e.kind, e.message, e.turn, e.statusMs, e.title))
         // The pane's own word stays when it is the more urgent; a stale project's pane joins nothing.
-        assertEquals(listOf("t1"), refs(pulse(chats(listOf(row("s1", "idle", registryId = "b-main")), teams = listOf(team)), pane("t1", "blocked", bot = "b-main")), Cockpit.BLOCKED))
+        val own = pulse(chats(listOf(row("s1", "idle", registryId = "b-main")), teams = listOf(team)), pane("t1", "blocked", bot = "b-main"))
+        assertEquals(listOf("t1"), refs(own, Cockpit.BLOCKED)); assertTrue(own.fromChat.isEmpty())
         val stale = chats(rows, teams = listOf(team.copy(stale = true, bots = listOf(lead.copy(ref = null)))))
         assertEquals(listOf("dsh:s1"), stale.agents.map { it.first.address })
         // An older bots-dsh serves no registry id: `dsh:<id>` itself is the Bot's.
-        assertEquals(mapOf(TerminalRef(host, "t1") to ("blocked" to "")), chats(listOf(row("b-main", "blocked")), teams = listOf(team)).panes)
+        assertEquals(setOf(paneRef), chats(listOf(row("b-main", "blocked")), teams = listOf(team)).panes.keys)
+    }
+
+    /** The joined row's Done is the chat's: its receipt is the line, and looking at the chat clears it. The pane's own Done keeps its own key. */
+    @Test fun aJoinedRowsDoneIsTheChatsAndClearsWithTheChatsKey() {
+        val paneRef = TerminalRef(host, "t1"); val chatRef = TerminalRef(host, "dsh:s1"); val key = ChatWatch.key(host, "dsh:s1")
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.IDLE, "", 0L, paneRef, "")
+        val team = Teams.Team("$host||/w", host, "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))
+        val rows = listOf(row("s1", "idle", registryId = "b-main"))
+        var watched = ChatWatch.read(emptyMap(), host, listOf(row("s1", "blocked", registryId = "b-main")), 100)
+        watched = ChatWatch.receipt(watched, key, "Answered on the phone: Allow")
+        watched = ChatWatch.read(watched, host, rows, 200)
+        val done = pulse(chats(rows, watched, teams = listOf(team)), pane("t1", "idle", bot = "b-main"))
+        val e = done.sections.single().entries.single()
+        assertEquals(Cockpit.DONE, e.rank); assertEquals(paneRef, e.ref); assertEquals("Answered on the phone: Allow", e.terminal.message)
+        // Its seen key is the chat's, the one PocketViewModel.markSeen adds when the chat is looked at; the pane's own does nothing.
+        assertEquals(Cockpit.seenKey(chatRef, 1L), done.seenKey(e.ref, e.terminal))
+        val seenChat = pulse(chats(rows, watched, teams = listOf(team)), pane("t1", "idle", bot = "b-main"), seen = setOf(Cockpit.seenKey(chatRef, 1L)))
+        assertEquals(listOf("t1"), refs(seenChat, Cockpit.IDLE))
+        val seenPane = pulse(chats(rows, watched, teams = listOf(team)), pane("t1", "idle", bot = "b-main"), seen = setOf(Cockpit.seenKey(paneRef, 1L)))
+        assertEquals(listOf("t1"), refs(seenPane, Cockpit.DONE))
+        // The pane's own Done (the chat idle) keeps the pane's key, which looking at the row from Home also marks.
+        val paneDone = pulse(chats(rows, ChatWatch.read(emptyMap(), host, rows, 100), teams = listOf(team)), pane("t1", "done", bot = "b-main"))
+        val pe = paneDone.sections.single().entries.single()
+        assertEquals(Cockpit.DONE, pe.rank); assertEquals(Cockpit.seenKey(paneRef, pe.terminal), paneDone.seenKey(pe.ref, pe.terminal))
+        // A chat-only Done clears with the chat's key as before.
+        val alone = pulse(chats(rows, watched), seen = setOf(Cockpit.seenKey(chatRef, 1L)))
+        assertEquals(listOf("dsh:s1"), refs(alone, Cockpit.IDLE))
     }
 
     /** Row: a read-only needs-you row says it cannot answer. */

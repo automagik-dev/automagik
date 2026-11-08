@@ -55,6 +55,8 @@ data class PocketState(
     val terminalFullscreen: Boolean = true, val nativeAlternateScreen: Boolean = false,
     /** [selected] opens on its Chat tab (a Team bubble of a Herdr-only main bot), when its terminal offers one. */
     val chatFirst: Boolean = false,
+    /** The Home row [selected] was opened from, when it is another agent: a Bot's pane whose row opens its chat. */
+    val row: TerminalRef? = null,
     val fontSize: Int = DEFAULT_FONT_SIZE, val modifiers: KeyModifiers = KeyModifiers(),
     val refreshing: Boolean = false,
     /** A Pocket Link pairing is in progress. */
@@ -258,13 +260,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun openProject(key: String) { detach(); _state.update { it.copy(screen = Nav.CODE, project = key, space = null, selected = null) } }
     fun setTerminalFullscreen(fullscreen: Boolean) { _state.update { it.copy(terminalFullscreen = fullscreen) } }
-    /** [chat]: open on the terminal's Chat tab (its projected chat) instead of the terminal. */
-    fun selectTerminal(ref: TerminalRef, chat: Boolean = false) {
+    /**
+     * [chat]: open on the terminal's Chat tab (its projected chat) instead of the terminal. [row]: the Home row this
+     * was opened from, when it is another agent (a Bot's pane whose row opens the Bot's chat): looking at the chat
+     * is looking at that row too ([markSeen]).
+     */
+    fun selectTerminal(ref: TerminalRef, chat: Boolean = false, row: TerminalRef? = null) {
         Notify.cancel(getApplication(), ref)
         if (state.value.selected == ref) return
         detach()
         // The terminal covers the tab it was opened from, which stays as it was for Back.
-        _state.update { it.copy(selected = ref, chatFirst = chat, terminalStatus = "Connecting terminal…", screenText = "", terminalFullscreen = true, nativeAlternateScreen = false) }
+        _state.update { it.copy(selected = ref, chatFirst = chat, row = row?.takeIf { it != ref }, terminalStatus = "Connecting terminal…", screenText = "", terminalFullscreen = true, nativeAlternateScreen = false) }
     }
     fun backToList() { detach(); _state.update { it.copy(selected = null, terminalStatus = "") } }
     fun showAll() { navigate(Nav.HOME_TAB) }
@@ -1234,13 +1240,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     /** Leaving a finished agent: like the desktop, looking at it turns its done into idle until it finishes another turn. */
     private fun markSeen() {
-        val ref = state.value.selected ?: return
-        // A Bot chat's Done is the phone's own ([ChatWatch]); a terminal's is the core's.
-        val key = if (Chat.isDsh(ref.address)) _chatWatch.value[ChatWatch.key(ref.hostId, ref.address)]?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(ref, it.turn) } ?: return
-            else state.value.machines[ref.hostId]?.terminals?.find { it.address == ref.address }?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(ref, it) } ?: return
-        if (key in state.value.seen) return
+        val s = state.value
+        val ref = s.selected ?: return
+        // A Bot chat's Done is the phone's own ([ChatWatch]); a terminal's is the core's. A chat opened from its
+        // pane's Home row ([PocketState.row]) is that pane looked at too.
+        fun paneKey(r: TerminalRef) = s.machines[r.hostId]?.terminals?.find { it.address == r.address }?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(r, it) }
+        val keys = listOfNotNull(
+            if (Chat.isDsh(ref.address)) _chatWatch.value[ChatWatch.key(ref.hostId, ref.address)]?.takeIf { it.status == "done" }?.let { Cockpit.seenKey(ref, it.turn) } else paneKey(ref),
+            s.row?.takeIf { !Chat.isDsh(it.address) }?.let(::paneKey)).filter { it !in s.seen }
+        if (keys.isEmpty()) return
         // Insertion order is kept, so the oldest go first past the cap.
-        val seen = (state.value.seen + key).toList().takeLast(400).toSet()
+        val seen = (s.seen + keys).toList().takeLast(400).toSet()
         prefs.edit { putString("seen_done", JSONArray(seen.toList()).toString()) }
         _state.update { it.copy(seen = seen) }
     }

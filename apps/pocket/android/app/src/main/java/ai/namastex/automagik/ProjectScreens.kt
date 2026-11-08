@@ -201,7 +201,7 @@ object CodeView {
 private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, agents: List<Projects.Agent>, prefix: String) {
     items(agents.sortedBy { Projects.urgency(it.rank) }, key = { "$prefix:${it.ref.hostId}:${it.ref.address}" }) { a ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val status = Cockpit.status(a.terminal, Cockpit.seenKey(a.ref, a.terminal) in state.seen).let { if (a.rank == Cockpit.BLOCKED) "blocked" else it }
+            val status = Cockpit.status(a.terminal, pulse.seenKey(a.ref, a.terminal) in state.seen).let { if (a.rank == Cockpit.BLOCKED) "blocked" else it }
             TerminalCard(a.terminal, listOfNotNull(a.space?.name, a.branch).joinToString(" · ").ifBlank { a.machine }, a.ref.address, status) { vm.selectTerminal(a.ref) }
             a.entry.kids.forEach { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }
         }

@@ -66,12 +66,15 @@ object Cockpit {
     /** A chat row's address on its card: the Session id says nothing to a person. */
     fun addressLabel(ref: TerminalRef) = if (Chat.isDsh(ref.address)) "Bot chat" else ref.address
 
+    /** A Bot's chat joined to its pane: the chat's ref and the chat as a Home agent. */
+    data class Join(val chat: TerminalRef, val terminal: CoreTerminal)
     /**
      * The chats' share of Home: [agents] are chats with no Herdr pane of their own, rows of their own on Home;
-     * [panes] are the panes of Bots that also have a chat, each with the chat's status word and kind, so the pane's
-     * row (which opens the chat, [Teams.paneChats]) takes the more urgent of the two and the Bot counts once.
+     * [panes] are the panes of Bots that also have a chat, each with its chat, so the pane's row (which opens the
+     * chat, [Teams.paneChats]) takes the chat's word, line and turn when the chat is the more urgent ([raised]), and
+     * the Bot counts once.
      */
-    data class Chats(val agents: List<Pair<TerminalRef, CoreTerminal>> = emptyList(), val panes: Map<TerminalRef, Pair<String, String>> = emptyMap())
+    data class Chats(val agents: List<Pair<TerminalRef, CoreTerminal>> = emptyList(), val panes: Map<TerminalRef, Join> = emptyMap())
 
     /**
      * Home's agents from the Bots' `dsh:` chats of every read machine ([dsh], by host id, as chat.list gave them):
@@ -83,29 +86,43 @@ object Cockpit {
     fun chats(dsh: Map<String, List<Chat.Terminal>>, watched: Map<String, ChatWatch.Watched>, writes: Map<String, Boolean>,
               teams: List<Teams.Team>, now: Long): Chats {
         val agents = mutableListOf<Pair<TerminalRef, CoreTerminal>>()
-        val panes = mutableMapOf<TerminalRef, Pair<String, String>>()
+        val panes = mutableMapOf<TerminalRef, Join>()
         for ((hostId, rows) in dsh) for (c in rows) {
             if (!c.dsh || !c.shown) continue
             val w = watched[ChatWatch.key(hostId, c.terminal)]
             val word = w?.status ?: c.status.takeIf { it == "blocked" || it == "working" } ?: "idle"
-            val pane = teams.filter { it.hostId == hostId && !it.stale }.flatMap { it.bots }
-                .firstOrNull { b -> b.ref != null && (c.registryId?.let { it == b.id } ?: (c.terminal == Chat.DSH_PREFIX + b.id)) }?.ref
-            if (pane != null) { panes[pane] = word to c.kind; continue }
             val message = when (word) {
                 "blocked" -> c.msg.ifBlank { if (writes[hostId] == true) "" else READ_ONLY }
                 "done" -> w?.receipt.orEmpty()
                 else -> ""
             }
-            agents += TerminalRef(hostId, c.terminal) to CoreTerminal(c.terminal, c.title.ifBlank { BOT }, "", "live", word, BOT, message, 0, 0,
+            val ref = TerminalRef(hostId, c.terminal)
+            val agent = CoreTerminal(c.terminal, c.title.ifBlank { BOT }, "", "live", word, BOT, message, 0, 0,
                 app = "dsh", statusMs = w?.since ?: now, turn = w?.turn ?: 0, kind = if (word == "blocked") c.kind else "")
+            val pane = teams.filter { it.hostId == hostId && !it.stale }.flatMap { it.bots }
+                .firstOrNull { b -> b.ref != null && (c.registryId?.let { it == b.id } ?: (c.terminal == Chat.DSH_PREFIX + b.id)) }?.ref
+            if (pane != null) panes[pane] = Join(ref, agent) else agents += ref to agent
         }
         return Chats(agents, panes)
     }
 
-    /** [terminals] with each pane in [chats]' panes raised to its chat's word when that is the more urgent. */
-    fun raised(terminals: List<Pair<TerminalRef, CoreTerminal>>, chats: Chats): List<Pair<TerminalRef, CoreTerminal>> =
-        if (chats.panes.isEmpty()) terminals else terminals.map { (ref, t) ->
-            val (word, kind) = chats.panes[ref] ?: return@map ref to t
-            if (rank(word) > rank(t.status)) ref to t.copy(status = word, kind = kind) else ref to t
+    /** [terminals] with the panes raised to their chats ([raised]), and which pane's row is now its chat's, by the chat ref. */
+    data class Raised(val terminals: List<Pair<TerminalRef, CoreTerminal>>, val fromChat: Map<TerminalRef, TerminalRef> = emptyMap())
+
+    /**
+     * [terminals] with each pane in [chats]' panes raised to its chat when the chat's word is the more urgent: the
+     * row takes the chat's word, kind, line, turn and time, so it says what the chat asks or how it was answered,
+     * and its Done is the chat's ([Projects.Pulse.seenKey]). The pane's own word stays when it is the more urgent.
+     */
+    fun raised(terminals: List<Pair<TerminalRef, CoreTerminal>>, chats: Chats): Raised {
+        if (chats.panes.isEmpty()) return Raised(terminals)
+        val fromChat = mutableMapOf<TerminalRef, TerminalRef>()
+        val out = terminals.map { (ref, t) ->
+            val j = chats.panes[ref] ?: return@map ref to t
+            if (rank(j.terminal.status) <= rank(t.status)) return@map ref to t
+            fromChat[ref] = j.chat
+            ref to t.copy(status = j.terminal.status, kind = j.terminal.kind, message = j.terminal.message, turn = j.terminal.turn, statusMs = j.terminal.statusMs)
         }
+        return Raised(out, fromChat)
+    }
 }
