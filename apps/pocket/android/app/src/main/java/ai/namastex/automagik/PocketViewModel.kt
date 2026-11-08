@@ -53,6 +53,8 @@ data class PocketState(
     val terminalStatus: String = "", val demo: Boolean = false, val sending: Boolean = false,
     val nativeDisplay: Boolean = false, val screenText: String = "",
     val terminalFullscreen: Boolean = true, val nativeAlternateScreen: Boolean = false,
+    /** [selected] opens on its Chat tab (a Team bubble of a Herdr-only main bot), when its terminal offers one. */
+    val chatFirst: Boolean = false,
     val fontSize: Int = DEFAULT_FONT_SIZE, val modifiers: KeyModifiers = KeyModifiers(),
     val refreshing: Boolean = false,
     /** A Pocket Link pairing is in progress. */
@@ -256,12 +258,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun openProject(key: String) { detach(); _state.update { it.copy(screen = Nav.CODE, project = key, space = null, selected = null) } }
     fun setTerminalFullscreen(fullscreen: Boolean) { _state.update { it.copy(terminalFullscreen = fullscreen) } }
-    fun selectTerminal(ref: TerminalRef) {
+    /** [chat]: open on the terminal's Chat tab (its projected chat) instead of the terminal. */
+    fun selectTerminal(ref: TerminalRef, chat: Boolean = false) {
         Notify.cancel(getApplication(), ref)
         if (state.value.selected == ref) return
         detach()
         // The terminal covers the tab it was opened from, which stays as it was for Back.
-        _state.update { it.copy(selected = ref, terminalStatus = "Connecting terminal…", screenText = "", terminalFullscreen = true, nativeAlternateScreen = false) }
+        _state.update { it.copy(selected = ref, chatFirst = chat, terminalStatus = "Connecting terminal…", screenText = "", terminalFullscreen = true, nativeAlternateScreen = false) }
     }
     fun backToList() { detach(); _state.update { it.copy(selected = null, terminalStatus = "") } }
     fun showAll() { navigate(Nav.HOME_TAB) }

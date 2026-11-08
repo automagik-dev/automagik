@@ -64,11 +64,17 @@ object Chat {
     /** A message this phone wrote, by its own id: sending, sent, queued, held (with why), refused, or maybe not sent. */
     data class Message(val id: String, val text: String, val state: String, val why: String = "", val reason: String = "")
 
-    data class Terminal(val terminal: String, val machine: String, val agent: String, val title: String, val status: String, val chat: String) {
+    /**
+     * A chat.list row. [shown]: false when bots-dsh lists a project Bot whose project has no yes in `shown[]` (RFC 0015
+     * `:751-755`); a row without the field (an older bots-dsh, which serves every Bot) is shown.
+     */
+    data class Terminal(val terminal: String, val machine: String, val agent: String, val title: String, val status: String, val chat: String,
+                        val shown: Boolean = true) {
         val readOnly: Boolean get() = Chat.readOnly(terminal)
         companion object {
             fun parse(j: JSONObject) = Terminal(j.optString("terminal"), if (j.isNull("machine")) "" else j.optString("machine"),
-                j.optString("agent"), j.optString("title"), j.optJSONObject("status")?.optString("state").orEmpty(), j.optString("chat"))
+                j.optString("agent"), j.optString("title"), j.optJSONObject("status")?.optString("state").orEmpty(), j.optString("chat"),
+                j.opt("shown") != false)
         }
     }
 
