@@ -22,7 +22,7 @@
 // the run fails (exit 1, with herdr-app's own output for the mod) when a mod does not load. It
 // never skips. Apache-2.0.
 import { createHash } from "node:crypto";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -86,14 +86,15 @@ function unpack(pack, dir, packMods) {
 /** Downloads the pinned Linux build, checks the pinned sha256, and returns its executable. */
 async function installApp(tmp, { buildUrl, fetchImpl, sha256 }) {
   const tarball = join(tmp, "herdr-app.tar.gz");
-  let response;
+  let bytes;
   try {
-    response = await fetchImpl(buildUrl, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+    const response = await fetchImpl(buildUrl, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+    if (!response.ok) unverified(`herdr-app ${VERSION} could not be downloaded from ${buildUrl}: HTTP ${response.status}`);
+    bytes = Buffer.from(await response.arrayBuffer());
   } catch (e) {
+    if (e instanceof CouldNotVerify) throw e;
     unverified(`herdr-app ${VERSION} could not be downloaded from ${buildUrl}: ${e.message}`);
   }
-  if (!response.ok) unverified(`herdr-app ${VERSION} could not be downloaded from ${buildUrl}: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
   const got = createHash("sha256").update(bytes).digest("hex");
   if (got !== sha256) {
     fail(`herdr-app ${VERSION} does not match its pinned sha256: got ${got}, pinned ${sha256} (${buildUrl})`);
@@ -202,6 +203,6 @@ export async function run(argv = process.argv.slice(2), deps = {}) {
   }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).href === import.meta.url) {
   run().then((code) => { process.exitCode = code; });
 }

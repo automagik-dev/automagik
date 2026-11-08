@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,6 +19,7 @@ const { PACK_MODS } = await import(pathToFileURL(join(REPO, "herdr", "mods", "am
 const BUILD = "https://releases.herdr.dev/app/0.1.13/herdr-app-linux-x86_64.tar.gz";
 const skip = process.platform !== "linux" || process.arch !== "x64"
   ? "the pinned herdr-app build is linux-x86_64" : false;
+const symlinkSkip = process.platform === "win32" ? "a directory symlink needs extra privilege on Windows" : false;
 
 function scratch(t) {
   const dir = mkdtempSync(join(tmpdir(), "herdr-app-check-test-"));
@@ -44,10 +45,10 @@ function packTarball(dir) {
 }
 
 /** A fake herdr-app: it answers --version and check like the pinned one, except when told to fail. */
-function appTarball(dir, { failMod = null, exitsOnVersion = 0 } = {}) {
+function appTarball(dir, { failMod = null, exitsOnVersion = 0, versionLine = "herdr-app 0.1.13" } = {}) {
   const top = join(dir, "app");
   mkdirSync(join(top, "herdr-app"), { recursive: true });
-  const lines = ["#!/bin/sh", 'if [ "$1" = "--version" ]; then', '  echo "herdr-app 0.1.13"', `  exit ${exitsOnVersion}`, "fi",
+  const lines = ["#!/bin/sh", 'if [ "$1" = "--version" ]; then', `  echo "${versionLine}"`, `  exit ${exitsOnVersion}`, "fi",
     'if [ "$1" = "check" ]; then'];
   if (failMod) {
     lines.push('  case "$2" in', `    */${failMod}) echo "cannot resolve module node:url" >&2; exit 9 ;;`, "  esac");
@@ -107,6 +108,28 @@ test("a download failure warns and exits 0 by default, and fails with --strict",
   assert.match(strict.err, /::error::herdr-app check failed/);
 });
 
+test("a download body that aborts mid-read is could-not-verify", { skip }, async (t) => {
+  const dir = scratch(t);
+  const pack = packTarball(dir);
+  const deps = {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => { throw new Error("terminated: other side closed"); },
+    }),
+    sha256: "0".repeat(64),
+    buildUrl: BUILD,
+  };
+  const relaxed = await invoke(["--pack", pack], deps);
+  assert.equal(relaxed.code, 0, "a body cut mid-read is still a failed download, not verified bad");
+  assert.match(relaxed.out, /::warning::/);
+  assert.match(relaxed.out, /could not be downloaded from/);
+  assert.match(relaxed.out, /terminated: other side closed/, "the warning names the cause");
+  const strict = await invoke(["--pack", pack, "--strict"], deps);
+  assert.equal(strict.code, 1, "the release cut still fails");
+  assert.match(strict.err, /terminated: other side closed/);
+});
+
 test("a sha256 mismatch fails loudly in both modes", { skip }, async (t) => {
   const dir = scratch(t);
   const pack = packTarball(dir);
@@ -136,6 +159,20 @@ test("an app that cannot start warns by default and fails with --strict", { skip
   assert.match(strict.err, /could not start/);
 });
 
+test("a --version text mismatch is hard in both modes", { skip }, async (t) => {
+  const dir = scratch(t);
+  const pack = packTarball(dir);
+  const app = appTarball(dir, { versionLine: "herdr-app 0.1.12" });
+  const deps = { fetchImpl: serve(app), sha256: sha256Of(app), buildUrl: BUILD };
+  for (const strict of [false, true]) {
+    const label = strict ? "--strict" : "default";
+    const r = await invoke(["--pack", pack, ...(strict ? ["--strict"] : [])], deps);
+    assert.equal(r.code, 1, `${label}: a different version string is a failure`);
+    assert.match(r.err, /herdr-app --version said "herdr-app 0\.1\.12"/);
+    assert.doesNotMatch(r.out, /::warning::/, `${label}: a version mismatch is never could-not-verify`);
+  }
+});
+
 test("a clean pack passes with no warning", { skip }, async (t) => {
   const dir = scratch(t);
   const pack = packTarball(dir);
@@ -146,6 +183,15 @@ test("a clean pack passes with no warning", { skip }, async (t) => {
   assert.match(r.out, new RegExp(`herdr-app check: ${PACK_MODS.length} pack mods loaded`));
   assert.match(r.out, /sha256 [0-9a-f]{64} verified/);
   assert.doesNotMatch(`${r.out}${r.err}`, /::warning::/);
+});
+
+test("a symlinked invocation still runs the entry guard", { skip: symlinkSkip }, (t) => {
+  const dir = scratch(t);
+  symlinkSync(join(REPO, ".github"), join(dir, ".github"), "dir");
+  const linked = join(dir, ".github", "scripts", "herdr-app-check.mjs");
+  const r = spawnSync(process.execPath, [linked, "--bogus"], { encoding: "utf8" });
+  assert.equal(r.status, 1, `the guard must run the check through a symlink, not exit 0: ${r.stderr}`);
+  assert.match(r.stderr, /usage: node \.github\/scripts\/herdr-app-check\.mjs/);
 });
 
 test("the release cut runs the check with --strict; PR CI keeps the default", () => {
