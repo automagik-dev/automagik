@@ -250,9 +250,9 @@ test('a socket that answered write: 1 gets send, interrupt and answer on the pho
     assert.deepEqual(stopped.result, { state: 'sent' })
     const writes = w.sock.requests.filter(m => ['send', 'answer', 'interrupt'].includes(m.method)).map(m => [m.method, m.params])
     assert.deepEqual(writes, [
-      ['send', { channel: w.socketChannel, text: 'line one\nline two', id: 'm-7' }],
-      ['answer', { channel: w.socketChannel, row: 'dsh:s1:9#question', choice: 'other', text: 'Use the staging box', by: 'Pixel' }],
-      ['interrupt', { channel: w.socketChannel }],
+      ['send', { channel: w.socketChannel, text: 'line one\nline two', id: 'm-7', by: 'Pixel', phone: 'phone-key' }],
+      ['answer', { channel: w.socketChannel, row: 'dsh:s1:9#question', choice: 'other', text: 'Use the staging box', by: 'Pixel', phone: 'phone-key' }],
+      ['interrupt', { channel: w.socketChannel, by: 'Pixel', phone: 'phone-key' }],
     ])
     // Nothing is held on a DSH chat, so held messages stay refused and never reach the socket.
     for (const method of ['chat.sendHeld', 'chat.cancelHeld']) {
@@ -347,6 +347,86 @@ test('the bridge counts too: one write in flight per chat, 20 a minute per phone
   }
 })
 
+/** One more phone on the writer's source, subscribed to dsh:omni. */
+async function another(w, { device, by }) {
+  const p = phone(withDsh(fakeEngine(), w.dsh, { by }), { device })
+  const subscribed = w.sock.requests.filter(m => m.method === 'subscribe').length
+  await p.call('chat.subscribe', { terminal: 'dsh:omni' })
+  await until(() => w.sock.requests.filter(m => m.method === 'subscribe').length > subscribed)
+  return p
+}
+
+const writesAt = (sock) => sock.requests.filter(m => ['send', 'answer', 'interrupt'].includes(m.method))
+
+test('two phones on one bridge: each write names its own phone, and each phone has its own 20 a minute and interrupt every 5 s', async () => {
+  const w = await writer({ device: 'key-a', by: 'Pixel' })
+  try {
+    const b = await another(w, { device: 'key-b', by: 'Galaxy' })
+    assert.equal((await w.p.call('chat.interrupt', { terminal: 'dsh:omni' })).result.state, 'sent')
+    assert.equal((await w.p.call('chat.interrupt', { terminal: 'dsh:omni' })).result.reason, 'rate')
+    assert.equal((await b.call('chat.interrupt', { terminal: 'dsh:omni' })).result.state, 'sent', 'A\'s interrupt does not hold B\'s')
+    for (let i = 1; i < WRITES_PER_MINUTE; i++) assert.equal((await w.p.call('chat.send', { terminal: 'dsh:omni', text: 'x', id: `a${i}` })).result.state, 'sent')
+    assert.equal((await w.p.call('chat.send', { terminal: 'dsh:omni', text: 'x', id: 'a21' })).result.reason, 'rate')
+    assert.equal((await b.call('chat.send', { terminal: 'dsh:omni', text: 'x', id: 'b1' })).result.state, 'sent', 'A\'s 20 do not count against B')
+    // The socket can count per phone: every write carries the phone's key and name, set by the bridge.
+    const byPhone = {}
+    for (const m of writesAt(w.sock)) byPhone[`${m.params.phone} ${m.params.by}`] = (byPhone[`${m.params.phone} ${m.params.by}`] ?? 0) + 1
+    assert.deepEqual(byPhone, { 'key-a Pixel': WRITES_PER_MINUTE, 'key-b Galaxy': 2 })
+  } finally {
+    await w.done()
+  }
+})
+
+test('one phone on two connections: one 20 a minute across both, counted by its paired key', async () => {
+  const w = await writer({ device: 'key-a' })
+  try {
+    const second = await another(w, { device: 'key-a', by: 'Pixel' })
+    for (let i = 0; i < WRITES_PER_MINUTE; i++) {
+      const p = i % 2 ? second : w.p
+      assert.equal((await p.call('chat.send', { terminal: 'dsh:omni', text: 'x', id: `m${i}` })).result.state, 'sent', `write ${i + 1}`)
+    }
+    assert.deepEqual((await second.call('chat.send', { terminal: 'dsh:omni', text: 'x', id: 'm21' })).result, { state: 'refused', ok: false, reason: 'rate', id: 'm21' })
+    assert.equal((await w.p.call('chat.interrupt', { terminal: 'dsh:omni' })).result.reason, 'rate')
+    assert.equal(writesAt(w.sock).length, WRITES_PER_MINUTE)
+  } finally {
+    await w.done()
+  }
+})
+
+test('a phone cannot name itself: by and phone in its params are not what reaches the socket', async () => {
+  const w = await writer({ device: 'phone-key', by: 'Pixel' })
+  try {
+    await w.p.call('chat.send', { terminal: 'dsh:omni', text: 'hi', id: 'm1', by: 'Evil', phone: 'other-key' })
+    await w.p.call('chat.answer', { terminal: 'dsh:omni', row: 'r1', choice: 'deny', by: 'Evil', phone: 'other-key' })
+    await w.p.call('chat.interrupt', { terminal: 'dsh:omni', by: 'Evil', phone: 'other-key' })
+    assert.deepEqual(writesAt(w.sock).map(m => [m.method, m.params.by, m.params.phone]), [
+      ['send', 'Pixel', 'phone-key'], ['answer', 'Pixel', 'phone-key'], ['interrupt', 'Pixel', 'phone-key'],
+    ])
+    // Through the source itself too: params never override the bridge's by and phone.
+    await w.dsh.write(w.p.conn.client, 'dsh:omni', 'send', { text: 'x', id: 'm2', by: 'Evil', phone: 'other-key' }, { by: 'Pixel' })
+    assert.deepEqual(writesAt(w.sock).at(-1).params, { channel: w.socketChannel, text: 'x', id: 'm2', by: 'Pixel', phone: 'phone-key' })
+  } finally {
+    await w.done()
+  }
+})
+
+test('a connection with no paired key writes nothing: refused read-only, nothing at the socket', async () => {
+  const w = await writer()
+  try {
+    for (const device of [undefined, '']) {
+      const p = await another(w, { device, by: 'Pixel' })
+      for (const [method, params] of [
+        ['chat.send', { terminal: 'dsh:omni', text: 'hi', id: 'm1' }],
+        ['chat.answer', { terminal: 'dsh:omni', row: 'r1', choice: 'allow' }],
+        ['chat.interrupt', { terminal: 'dsh:omni' }],
+      ]) assert.equal((await p.call(method, params)).result.reason, 'read-only', `${method} with device ${JSON.stringify(device)}`)
+    }
+    assert.equal(writesAt(w.sock).length, 0)
+  } finally {
+    await w.done()
+  }
+})
+
 test('a removed phone\'s writes end within 2 s: revoke closes its chat, the socket hears unsubscribe, nothing more is sent', async () => {
   let hold = null
   const w = await writer({ requestMs: 300, reply: { send: (m) => (m.params.id === 'late' ? (hold = m, null) : { result: { state: 'sent', id: m.params.id } }) } })
@@ -366,7 +446,7 @@ test('a removed phone\'s writes end within 2 s: revoke closes its chat, the sock
     await settle()
     assert.equal(w.sock.requests.length, before)
     // Even through the source itself, a closed subscription writes nothing.
-    const direct = await w.dsh.write(w.p.conn.client, 'dsh:omni', 'send', { text: 'after', id: 'after' })
+    const direct = await w.dsh.write(w.p.conn.client, 'dsh:omni', 'send', { text: 'after', id: 'after' }, { by: 'Pixel' })
     assert.equal(direct.reason, 'not-watching')
     // The write sent before removal ends at the socket's timeout into a closed connection: dropped, no error.
     assert.equal((await inFlight), undefined, 'a closed connection answers nothing')

@@ -6,7 +6,10 @@
 // A DSH chat can be listed, subscribed and paged. Writes (RFC 0015, Amendments, "writes on
 // `dsh:<botId>` chats"): the bridge asks for them in its `hello` (`{write: 1}`); a socket that
 // answers `readOnly: false, write: 1` gets chat.send, chat.interrupt and chat.answer as its send,
-// interrupt and answer, each on the channel this connection subscribed to that chat. A socket that
+// interrupt and answer, each on the channel this connection subscribed to that chat, each with the
+// paired phone's `by` (its name, devices.json) and `phone` (its paired key, the one guard.mjs
+// admitted), both set here and never by the phone, so the socket counts its caps per phone too.
+// A connection with no paired key writes nothing (`read-only`). A socket that
 // answers `readOnly: true` (an older plugin) gets none: every write is refused `read-only`, as
 // before writes. chat.sendHeld and chat.cancelHeld are always refused (a DSH Session holds no
 // draft). The socket's answers come back unchanged, its refusals as `refused` with its reason
@@ -120,7 +123,7 @@ export class DshSource {
     this.writes = new Set()
     /** channel -> { listener, status, approval, client, terminal } */
     this.subs = new Map()
-    /** phone (client.device, else its connection) -> { times: number[], interrupts: Map<terminal, number>, busy: Set<terminal> } */
+    /** paired key (client.device) -> { times: number[], interrupts: Map<terminal, number>, busy: Set<terminal> } */
     this.phones = new Map()
     this.nextId = 1
     this.nextChannel = 1
@@ -263,13 +266,17 @@ export class DshSource {
    * A phone's write on a DSH chat: `method` is send, interrupt or answer, `params` what the
    * socket method takes but the channel. Forwarded only to a socket that answered `write: 1`, on
    * the channel this same connection (`client`) subscribed to `terminal`; never opens a socket.
+   * `by` is the phone's name; the phone is `client.device`, its paired key: without one (not a
+   * paired connection) nothing is written. Both go to the socket after `params`, so nothing in
+   * them can stand in for another phone.
    */
-  async write(client, terminal, method, params = {}) {
+  async write(client, terminal, method, params = {}, { by = 'Phone' } = {}) {
     const id = method === 'send' ? params.id : undefined
     if (!this.socket || this.socket.destroyed || !this.writes.has(method)) return refusedDsh(id)
+    const key = client?.device
+    if (typeof key !== 'string' || !key) return refusedDsh(id)
     const channel = [...this.subs.entries()].find(([, s]) => s.client === client && s.terminal === terminal)?.[0]
     if (channel === undefined) return refused('not-watching', id)
-    const key = client?.device ?? client?.connection ?? client
     const phone = this.phones.get(key) ?? { times: [], interrupts: new Map(), busy: new Set() }
     this.phones.set(key, phone)
     const now = this.now()
@@ -281,7 +288,7 @@ export class DshSource {
     if (method === 'interrupt') phone.interrupts.set(terminal, now)
     phone.busy.add(terminal)
     try {
-      const result = await this.ask(method, { channel, ...params })
+      const result = await this.ask(method, { channel, ...params, by, phone: key })
       if (!result || typeof result !== 'object' || Array.isArray(result)) return refused('failed', id)
       return id === undefined || Object.hasOwn(result, 'id') ? result : { ...result, id }
     } catch (error) {
@@ -313,12 +320,12 @@ export function withDsh(engine, dsh, { by = 'Phone' } = {}) {
       return [...terminals, ...bots]
     },
     watch: (terminal, client, listener) => (isDsh(terminal) ? dsh.watch(terminal, client, listener) : engine.watch(terminal, client, listener)),
-    send: (client, terminal, m) => (isDsh(terminal) ? dsh.write(client, terminal, 'send', { text: m?.text, id: m?.id }) : engine.send(client, terminal, m)),
+    send: (client, terminal, m) => (isDsh(terminal) ? dsh.write(client, terminal, 'send', { text: m?.text, id: m?.id }, { by }) : engine.send(client, terminal, m)),
     sendHeld: (client, terminal, m) => (isDsh(terminal) ? refusedDsh(m?.id) : engine.sendHeld(client, terminal, m)),
     cancelHeld: (client, terminal, m) => (isDsh(terminal) ? refusedDsh(m?.id) : engine.cancelHeld(client, terminal, m)),
     answer: (client, terminal, a) => (isDsh(terminal)
-      ? dsh.write(client, terminal, 'answer', { row: a?.row, choice: a?.choice, ...(typeof a?.text === 'string' ? { text: a.text } : {}), by })
+      ? dsh.write(client, terminal, 'answer', { row: a?.row, choice: a?.choice, ...(typeof a?.text === 'string' ? { text: a.text } : {}) }, { by })
       : engine.answer(client, terminal, a)),
-    interrupt: (client, terminal) => (isDsh(terminal) ? dsh.write(client, terminal, 'interrupt') : engine.interrupt(client, terminal)),
+    interrupt: (client, terminal) => (isDsh(terminal) ? dsh.write(client, terminal, 'interrupt', {}, { by }) : engine.interrupt(client, terminal)),
   }
 }
