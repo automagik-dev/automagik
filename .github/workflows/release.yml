@@ -256,7 +256,7 @@ jobs:
 
       - name: Every pack mod loads in herdr-app
         if: steps.new.outputs.release == 'true' && steps.lane.outputs.herdr == 'yes'
-        run: node .github/scripts/herdr-app-check.mjs
+        run: node .github/scripts/herdr-app-check.mjs --strict
 
       # Before the cut, so a release that packs the pack never goes out without a pointer the
       # installed packs trust: HERDR_PACK_KEY must be a key pack-keys.json lists (its keyId is the
