@@ -77,15 +77,19 @@ object Chat {
     /**
      * A chat.list row. [shown]: false when bots-dsh lists a project Bot whose project has no yes in `shown[]` (RFC 0015
      * `:751-755`); a row without the field (an older bots-dsh, which serves every Bot) is shown.
+     * [registryId]: the registry Bot's `b-...` id bots-dsh serves beside the Session id (#672);
+     * null when it has none or an older bots-dsh leaves the field out. [terminal] stays
+     * `dsh:<sessionId>`, the chat's one id.
      */
     data class Terminal(val terminal: String, val machine: String, val agent: String, val title: String, val status: String, val chat: String,
-                        val shown: Boolean = true) {
+                        val shown: Boolean = true, val registryId: String? = null) {
         /** An Automagik Bot's chat (listed by bots-dsh), not a terminal's. */
         val dsh: Boolean get() = isDsh(terminal)
         companion object {
             fun parse(j: JSONObject) = Terminal(j.optString("terminal"), if (j.isNull("machine")) "" else j.optString("machine"),
                 j.optString("agent"), j.optString("title"), j.optJSONObject("status")?.optString("state").orEmpty(), j.optString("chat"),
-                j.opt("shown") != false)
+                j.opt("shown") != false,
+                (j.opt("registryId") as? String)?.takeIf { it.isNotBlank() })
         }
     }
 

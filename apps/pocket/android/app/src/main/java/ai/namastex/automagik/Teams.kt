@@ -283,14 +283,18 @@ object Teams {
     }
 
     /**
-     * One bubble per project, in [teams]' order. Bots are one by registry id: the main bot's `dsh:<id>` chat on its
-     * machine ([dsh], by host id, as chat.list gave it) and its labelled pane are the same bot, so they make one bubble.
-     * The chat wins the tap (a universal or DSH bot); with none, the pane's projected chat. A stale project (its machine
-     * not connected) opens nothing. A `dsh:` chat no registry lists as a main bot is not a bubble.
+     * One bubble per project, in [teams]' order. Bots are one by registry id: the main bot's `dsh:`
+     * chat on its machine ([dsh], by host id, as chat.list gave it) and its labelled pane are the
+     * same bot, so they make one bubble. A chat is the main bot's by the
+     * [Chat.Terminal.registryId] bots-dsh serves (#672); a row that serves none (an older bots-dsh)
+     * only when it is `dsh:<id>` itself. The chat wins the tap (a universal or DSH bot), under its
+     * own `dsh:<sessionId>`; with none, the pane's projected chat. A stale project (its machine not
+     * connected) opens nothing. A `dsh:` chat no registry lists as a main bot is not a bubble.
      */
     fun bubbles(teams: List<Team>, dsh: Map<String, List<Chat.Terminal>>): List<Bubble> = teams.map { t ->
         val main = t.bots.firstOrNull { it.main } ?: return@map Bubble(t, null, null)
-        val chat = if (t.stale) null else dsh[t.hostId]?.find { it.dsh && it.terminal == Chat.DSH_PREFIX + main.id }
+        val chats = dsh[t.hostId].orEmpty().filter { it.dsh }
+        val chat = if (t.stale) null else mainChat(main.id, chats)
         val bot = if (chat != null && main.ref == null) main.copy(pose = poseOfChat(chat.status)) else main
         val opens = when {
             chat != null && !chat.shown -> Opens.NotShown
@@ -300,6 +304,11 @@ object Teams {
         }
         Bubble(t, bot, opens)
     }
+
+    /** The `dsh:` chat of registry bot [id]: by its served registry id, else (none) `dsh:<id>`. */
+    private fun mainChat(id: String, chats: List<Chat.Terminal>) =
+        chats.find { it.registryId == id }
+        ?: chats.find { it.registryId == null && it.terminal == Chat.DSH_PREFIX + id }
 
     /** A bubble's second line: [NO_MAIN], [NOT_SHOWN], else its bot's ([line]). */
     fun lineOf(b: Bubble): String = when {

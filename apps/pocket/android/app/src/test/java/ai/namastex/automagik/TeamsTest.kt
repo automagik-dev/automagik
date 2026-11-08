@@ -343,9 +343,66 @@ class TeamsTest {
 
     // ---- Team: one bubble per project
 
-    private fun dshRow(id: String, status: String = "working", shown: Boolean? = null) = Chat.Terminal.parse(JSONObject()
-        .put("terminal", "dsh:$id").put("machine", JSONObject.NULL).put("agent", "dsh").put("title", "Lead")
-        .put("status", JSONObject().put("state", status)).put("chat", "session").apply { if (shown != null) put("shown", shown) })
+    /** A bots-dsh row for `dsh:<id>`; [registryId] as given (JSONObject.NULL: null), else none. */
+    private fun dshRow(
+        id: String, status: String = "working", shown: Boolean? = null, registryId: Any? = null,
+    ) = Chat.Terminal.parse(JSONObject()
+        .put("terminal", "dsh:$id").put("machine", JSONObject.NULL).put("agent", "dsh")
+        .put("title", "Lead").put("status", JSONObject().put("state", status))
+        .put("chat", "session")
+        .apply {
+            if (shown != null) put("shown", shown)
+            if (registryId != null) put("registryId", registryId)
+        })
+
+    private val pane = Teams.Opens.TerminalChat(TerminalRef("h1", "t1"))
+    private fun opensOn(host: String, vararg rows: Chat.Terminal) =
+        Teams.bubbles(Teams.build(mapOf("h1" to machine()), 10_000L), mapOf(host to rows.toList()))
+
+    @Test fun aRegistryIdMatchWinsAndTheTapKeepsTheSessionId() {
+        // bots-dsh lists main bot b-aaaaaaaaaa under its Session id, its registry id beside (#684).
+        val row = dshRow("session-1", status = "blocked", registryId = "b-aaaaaaaaaa")
+        assertEquals("b-aaaaaaaaaa", row.registryId)
+        val b = opensOn("h1", row)[0]
+        assertEquals("b-aaaaaaaaaa", b.main?.id)
+        assertEquals(Teams.Opens.DshChat(TerminalRef("h1", "dsh:session-1")), b.opens)
+        // A row that served no id but is dsh:<id> itself loses to the registry id match.
+        val both = opensOn("h1", dshRow("b-aaaaaaaaaa"), row)[0].opens
+        assertEquals(Teams.Opens.DshChat(TerminalRef("h1", "dsh:session-1")), both)
+        // A served id is the answer: a dsh:<id> row serving another bot's id is not this bot's.
+        val other = dshRow("b-aaaaaaaaaa", registryId = "b-nnnnnnnnnn")
+        assertEquals(pane, opensOn("h1", other)[0].opens)
+    }
+
+    @Test fun aNullOrMissingRegistryIdKeepsTodaysMatchAndTerminalFallback() {
+        for (rid in listOf(null, JSONObject.NULL, "", 7)) {
+            // Absent, null, blank or not a string: no registry id, never an error.
+            assertNull(dshRow("session-1", registryId = rid).registryId)
+            // A Session id chat with none opens the main bot's terminal chat, as before #672.
+            assertEquals(pane, opensOn("h1", dshRow("session-1", registryId = rid))[0].opens)
+            // A dsh:<registry id> row with none still matches by its id.
+            val same = opensOn("h1", dshRow("b-aaaaaaaaaa", registryId = rid))[0].opens
+            assertEquals(Teams.Opens.DshChat(TerminalRef("h1", "dsh:b-aaaaaaaaaa")), same)
+        }
+    }
+
+    @Test fun aRegistryIdChatListedNotShownStaysUnclickable() {
+        val row = dshRow("session-1", shown = false, registryId = "b-aaaaaaaaaa")
+        val hidden = opensOn("h1", row)[0]
+        assertEquals(Teams.Opens.NotShown, hidden.opens)
+        assertEquals(Teams.NOT_SHOWN, Teams.lineOf(hidden))
+    }
+
+    @Test fun aRegistryIdOfAnotherMachineOrNoMainBotMakesNoMatchAndNoBubble() {
+        // The same registry id listed by another machine's bots-dsh is not this project's bot.
+        assertEquals(pane, opensOn("h2", dshRow("session-1", registryId = "b-aaaaaaaaaa"))[0].opens)
+        // An id no registry lists as a main bot is no bubble; the main bot keeps its pane.
+        val unknown = opensOn("h1", dshRow("session-2", registryId = "b-zzzzzzzzzz"))
+        assertEquals(listOf("h1||/work/example", "h1||/work/site"), unknown.map { it.id })
+        assertTrue(unknown.none { it.main?.id == "b-zzzzzzzzzz" })
+        assertEquals(pane, unknown[0].opens)
+        assertNull(unknown[1].opens)
+    }
 
     @Test fun aDshChatAndAHerdrPaneOfOneRegistryIdAreOneBubble() {
         val teams = Teams.build(mapOf("h1" to machine()), 10_000L)

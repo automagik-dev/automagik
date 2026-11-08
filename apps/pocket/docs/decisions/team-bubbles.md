@@ -20,18 +20,22 @@ are gone from Team ([Four tabs](four-tabs.md): Home has needs-you).
 - A project is what Team already groups by: the spaces of one repository on one machine (the
   Space Row key). The main bot is the registry's `kind: "main"` bot (RFC 0014 `:145`). With none,
   the bubble says "No main bot in this project", the desktop's words (`create.js:991`).
-- One identity: the bot's `dsh:<id>` chat on that machine and its pane labelled `bot=<id>` are the
-  same bot, by registry id, so they make one bubble. The chat wins the tap (a universal or DSH
-  bot, read only); with no chat, the pane's projected chat (the terminal's Chat tab).
+- One identity: the bot's `dsh:` chat on that machine and its pane labelled `bot=<id>` are the
+  same bot, by registry id, so they make one bubble. A chat is the bot's by the `registryId`
+  bots-dsh serves on its row; a row without one only when it is `dsh:<id>` itself. The chat wins
+  the tap (a universal or DSH bot, read only), under its own `dsh:<sessionId>`; with no chat, the
+  pane's projected chat (the terminal's Chat tab).
 - A `dsh:` chat listed `shown: false` (a project with no yes in `shown[]`, RFC 0015 `:751-755`)
   says "Show in Automagik first" and opens nothing. A row with no `shown` field is shown.
 - A `dsh:` chat that matches no main bot gets no bubble; it stays in Settings, Bot chats.
 
-## Known gap
+## Registry id match (#672)
 
-The id bots-dsh serves today is a DSH Session id, not the Herdr registry id
-([#672](https://github.com/automagik-dev/automagik/issues/672)). Until universal bots run under
-their registry id, a bubble opens the main bot's terminal chat.
+Closed by [#672](https://github.com/automagik-dev/automagik/issues/672): a `dsh:` row's id is a
+DSH Session id, not the Herdr registry id, so bots-dsh serves the registry Bot's `b-...` id beside
+it as `registryId` (automagik-dev/automagik#684) and Team matches on that, on the same machine
+only. A row whose `registryId` is null (bots-dsh found no registry Bot) or absent (a bots-dsh
+before #684) keeps the old match, so a universal bot's bubble still opens its terminal chat.
 
 ## Current state
 
