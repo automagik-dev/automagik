@@ -1549,11 +1549,19 @@ const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((
   .map((k) => `${k} ${w[k]}`).join(" · ") : "");
 
 const proxyStateText = (state) => `working ${state.working ? "on" : "off"}; approved `
-  + `${state.approved === null ? "missing" : state.approved ? "on" : "off"}`
+  + `${state.error ? "unknown" : state.approved === null ? "missing" : state.approved ? "on" : "off"}`
   + `${state.error ? `; ${state.error}` : ""}`;
 
-function proxyEnabled(state, platform = process.platform) {
-  try { return approvedProxyEnabled(state, platform); }
+const proxyWarning = (state) => `WARNING hc proxy: ${state.error}; working switch off; `
+  + "starting plain; run automagik-herdr proxy approve";
+const reportProxyWarning = (warning) => report([warning]);
+
+function proxyEnabled(state, platform = process.platform, warn = reportProxyWarning) {
+  try {
+    const enabled = approvedProxyEnabled(state, platform);
+    if (platform === "linux" && state.error && !state.working) warn(proxyWarning(state));
+    return enabled;
+  }
   catch (e) { throw new CliError(e.message); }
 }
 
@@ -1561,6 +1569,7 @@ function proxyEnabled(state, platform = process.platform) {
 // use the switch, so a linked non-Linux launch needs no approval probe.
 async function proxyStateOn(project, bot) {
   const { key, machine } = project;
+  let path;
   try {
     const location = await remoteIo.exec("sh", ["-c",
       'CDPATH= cd -- "$1" || exit 1; pwd -P; '
@@ -1572,7 +1581,8 @@ async function proxyStateOn(project, bot) {
       throw new Error("the target's approval location is invalid");
     }
     const hash = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
-    const path = `${root}/${hash}.json`;
+    // Same canonical key and suffix as approved.js recordFileOf; fixture test pins both.
+    path = `${root}/${hash}.json`;
     const mode = await remoteIo.exec("sh", ["-c",
       'if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 3; fi; '
       + '[ -f "$1" ] && [ ! -L "$1" ] || exit 1; stat -c %a -- "$1" 2>/dev/null || stat -f %Lp "$1"',
@@ -1586,17 +1596,24 @@ async function proxyStateOn(project, bot) {
     if (text === null) throw new Error("the target's approved record disappeared");
     return proxyStateFor(bot, parseApprovedRecord(text, canonical).file);
   } catch (e) {
-    return proxyStateFor(bot, null, e);
+    return proxyStateFor(bot, null,
+      `invalid approved record ${path ?? `for project ${key}`}: ${e?.message ?? e}`);
   }
 }
 
-async function checkLinkedProxy(project, bot, agent) {
+async function checkLinkedProxy(project, bot, agent, warn = reportProxyWarning) {
   if (agent !== "dsh-tui") return;
   const target = await remoteIo.exec("uname", ["-s"], project.machine,
     { timeout: AGENT_WAIT_S });
-  if (target.code !== 0) throw new CliError("hc proxy: cannot check the target platform");
+  if (target.code !== 0) {
+    const why = String(target.stderr || target.stdout || `exit ${target.code}`)
+      .replace(/\s+/g, " ").trim();
+    const state = proxyStateFor(bot, null, `cannot check the target platform: ${why}`);
+    proxyEnabled(state, "linux", warn);
+    return;
+  }
   if (!/^Linux(?:\s|$)/.test(target.stdout)) return;
-  if (proxyEnabled(await proxyStateOn(project, bot), "linux")) {
+  if (proxyEnabled(await proxyStateOn(project, bot), "linux", warn)) {
     throw new CliError("hc proxy: start this opted-in bot on its own computer; "
       + "linked Linux launches cannot verify the proxy execution path.");
   }
@@ -2387,7 +2404,7 @@ async function startOnMachine(opts, project, bot) {
 async function restartOnMachine(opts, project, bot, entry) {
   if (opts.space) throw new CliError("--space and --tab are this computer's window places; a restart on a linked machine keeps the old pane's.", 2);
   const { file, key, machine } = project;
-  await checkLinkedProxy(project, bot, opts.agent ?? bot.agent);
+  await checkLinkedProxy(project, bot, opts.agent ?? bot.agent, () => {});
   const m = await connectedMachine(machine, "nothing was restarted");
   const view = await attachView();
   const held = liveFor(view, bot.id, project);
@@ -2591,7 +2608,8 @@ async function launchSeat(project, bot, over = {}) {
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
   const proxyOn = agentKey === "dsh-tui" && proxyEnabled(
-    approvedProxyState({ project: key, bot }));
+    approvedProxyState({ project: key, bot }), process.platform,
+    (warning) => briefed.warnings.push(warning));
   const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}),
     ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
@@ -3005,12 +3023,14 @@ function byHand(p, parent) {
 }
 
 /** A --tree helper is another start: resolve its own bot's approved switch afresh too. */
-function helperCommand(p) {
+function helperCommand(p, warn = () => {}) {
   const path = launchPath(p.argv[0], p.cwd).path;
   if (!p.proxyIdentity) return { argv: p.argv, path };
   const { botId, project } = p.proxyIdentity;
   const bot = loadProject(project).file.bots.find((entry) => entry.id === botId) ?? { id: botId };
-  if (!proxyEnabled(approvedProxyState({ project, bot }))) return { argv: p.argv, path };
+  if (!proxyEnabled(approvedProxyState({ project, bot }), process.platform, warn)) {
+    return { argv: p.argv, path };
+  }
   return { argv: paneArgs(p.argv, p.proxyIdentity),
     path: guardPathWith(path, stableGuardDir(stableRootOf())) };
 }
@@ -3054,7 +3074,7 @@ async function rerunHelpers(plans, parent, say) {
     const login = claudeLogin(p.argv, loginWarnings);
     for (const w of loginWarnings) say(`${who}: ${w}`);
     let command;
-    try { command = helperCommand(p); }
+    try { command = helperCommand(p, say); }
     catch (e) { failed(e.message); continue; }
     const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, ...command, login }));
     let address = null;
@@ -4654,7 +4674,8 @@ async function cmdWorker(opts, rest) {
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
-        approvedProxyState({ project: project.key, bot })) });
+        approvedProxyState({ project: project.key, bot }), process.platform,
+        (warning) => warnings.push(warning)) });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -4920,6 +4941,9 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
     r.bots = [];
     try {
       const project = io.project ?? await projectFor(opts);
+      const approval = approvedProxyState({ project: project.key, bot: { id: "" }, env });
+      if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
+        detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
       const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
       const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
       r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
@@ -4931,7 +4955,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
     }
     for (const bot of r.bots) {
       const state = bot.hcProxyState;
-      const needsApproval = Boolean(state.error) || (state.working && state.approved !== true);
+      const needsApproval = state.working && state.approved !== true;
       const ok = !bot.applicable || (!needsApproval
         && (state.approved !== true || !bot.terminal || bot.up));
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,

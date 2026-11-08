@@ -4,14 +4,24 @@
 `hcProxy` boolean in the project's **approved roster snapshot**, read afresh at each start,
 restart and worker start. Edit the working value with
 `automagik-herdr edit <bot> --hc-proxy on|off`, then run `automagik-herdr proxy approve`
-and review the diff before restarting. Approved on stays on if a pane changes or removes
+and review the diff before restarting. A valid approved on stays on if a pane changes or removes
 the working key. Working on with approval off or missing refuses and names `proxy approve`;
-an unreadable or corrupt approval also refuses. Approved off (or no record with working off)
+an invalid approval refuses only when the working switch is on. With working off, an invalid
+record starts plain with the existing argv byte for byte and a loud STDERR warning naming
+the record, the problem and `automagik-herdr proxy approve`. An invalid record cannot be
+trusted to say on. This applies to starts, restarts, tree helpers, workers and linked starts.
+Doctor prints a project WARN row for invalid approval, whatever the switches.
+Approved off (or no record with working off)
 keeps the existing command byte for byte. Only approved `true` on Linux wraps a
 pack-started dsh-tui bot or dsh-tui worker in `hcPane.mjs`. Other agents and templates keep their
 existing launch. `AM_HC_PROXY` no longer enables anything: the saved setting belongs to one bot.
 `automagik-herdr show <bot>` reports both working and approved values, including missing
 approval. Editing it never restarts a running pane.
+
+**Known limit:** if a bot was approved on, its working switch was turned off, and the approved
+record is also invalid, it starts plain with that warning. A sandboxed pane cannot write the
+approved record, so only an outside change can cause this combination. Repair the record and
+review `proxy approve` before restarting to restore the intended setting.
 
 The helper starts the proxy **before DSH** and closes it when the child ends. A failed proxy
 start never launches the child; a listening proxy that errors or closes ends the child and
@@ -43,7 +53,8 @@ terminal on the computer running that bot:
 3. Run `automagik-herdr restart <bot>`. Check that bot before opting in the next.
 4. To roll back, run `automagik-herdr edit <bot> --hc-proxy off`, then
    `automagik-herdr proxy approve --project <project>` (review the diff), then
-   `automagik-herdr restart <bot>`. Off without approval keeps the pane proxied.
+   `automagik-herdr restart <bot>`. With a valid approved-on record, off without approval
+   keeps the pane proxied; the invalid-record exception above starts plain with a warning.
    Existing workers keep their launch until restarted;
    end and relaunch any workers that also need rollback.
 
@@ -51,6 +62,9 @@ Linked starts and restarts check the target platform first. Non-Linux ignores th
 On Linux they read the target's approved record and refuse an unapproved opt-in; approved on
 refuses because that path cannot verify the stable proxy execution path. Start it locally
 on the target computer instead.
+If checking the target platform fails, working off starts plain with a loud STDERR warning;
+working on refuses. An unreadable or invalid linked approval follows the same on/off rule
+as a local start.
 
 ## Run
 

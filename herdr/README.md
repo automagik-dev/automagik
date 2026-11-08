@@ -890,7 +890,13 @@ The proxy is **off by default** for every bot. Set the bot entry's `hcProxy` boo
 entry in the approved snapshot, read at each start, restart and worker start. Approved on stays
 on when a pane changes the working key to false or removes it. Working on with approval off
 or missing refuses with an instruction to run `automagik-herdr proxy approve` first.
-Unreadable approval also refuses. `show` and `dsh-tui doctor` print both values; doctor warns
+Invalid approval refuses working on. Working off starts plain, preserving its argv, with a
+loud STDERR warning naming the record, the problem and `automagik-herdr proxy approve`:
+invalid approval cannot be trusted to say on. Known limit: previously approved on plus a
+working off edit and an invalid record starts plain with that warning. A sandboxed pane
+cannot write the approved record; only an outside change can cause that combination.
+`show` and `dsh-tui doctor` print both values; doctor warns about invalid approval regardless
+of the switches, and warns
 when working off still has a running proxy and retains install checks for a malformed roster.
 Only Linux
 pack-started dsh-tui seats and dsh-tui workers get the helper. `AM_HC_PROXY` no longer opts in
@@ -901,6 +907,8 @@ then `restart <bot>`; end and relaunch any existing workers that also need rollb
 Linked starts check the target platform and, on Linux, the target's approved switch.
 Approved on refuses until they can verify the proxy execution path; start locally on the
 target computer instead. Non-Linux targets ignore the switch.
+If the target platform cannot be checked, working off starts plain with a warning and working
+on refuses.
 
 When it is on, a pack-started dsh-tui pane runs through one helper,
 `mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process

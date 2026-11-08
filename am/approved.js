@@ -156,17 +156,25 @@ export function proxyStateFor(bot, file = null, error = null) {
 
 /** Fresh read for each start, restart, worker start, or diagnostic. Never cached. */
 export function approvedProxyState({ project, bot, env = process.env }) {
+  let path;
   try {
-    return proxyStateFor(bot, readApprovedRecord({ project, env }).file);
+    path = recordFileOf(project, env);
+    return proxyStateFor(bot, readApprovedRecord({ project, env, path }).file);
   } catch (e) {
-    return proxyStateFor(bot, null, e?.code === "ENOENT" ? null : e);
+    return proxyStateFor(bot, null, e?.code === "ENOENT" ? null
+      : `invalid approved record ${path ?? project}: ${e?.message ?? e}`);
   }
 }
 
-/** Fail closed on unreadable approval or an unapproved opt-in. Non-Linux ignores the switch. */
+/** Invalid approval cannot supply a value: only a working opt-in refuses. Callers warn off. */
 export function approvedProxyEnabled(state, platform = process.platform) {
   if (platform !== "linux") return false;
-  if (state.error) throw new Error(`hc proxy: ${state.error}; run automagik-herdr proxy approve first`);
+  if (state.error) {
+    if (state.working) {
+      throw new Error(`hc proxy: ${state.error}; run automagik-herdr proxy approve first`);
+    }
+    return false;
+  }
   if (state.working && state.approved !== true) {
     throw new Error("hc proxy: working switch is on but approval is off or missing; "
       + "run automagik-herdr proxy approve first");

@@ -203,6 +203,43 @@ test("worker refuses unapproved working on and corrupt approval without a plain 
   }
 });
 
+test("the same invalid record warns off to plain worker argv and refuses working on",
+  { skip: process.platform !== "linux" }, (t) => {
+  const file = team();
+  Object.assign(file.bots[2], { agent: "dsh-tui", worker: { agent: "dsh-tui" } });
+  const s = scene(t, { file });
+  exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  const args = ["worker", "do the task", "--branch", "feat/invalid", "--json"];
+  const initialState = readFileSync(join(s.root, "hc.json"));
+  const baseline = s.cli(args);
+  assert.equal(baseline.code, 0, baseline.err);
+  const plain = s.runs().at(-1);
+  // Reuse the fixture worktree; only the terminal and ledger state return to their start.
+  writeFileSync(join(s.root, "hc.json"), initialState);
+  rmSync(join(s.app, "automagik-herdr/workers.jsonl"), { force: true });
+  rmSync(join(s.app, "automagik-herdr/attach.jsonl"), { force: true });
+  assert.equal(s.cli(["edit", "Dev", "--hc-proxy", "on"]).code, 0);
+  const { path, record } = s.approve();
+  assert.equal(s.cli(["edit", "Dev", "--hc-proxy", "off"]).code, 0);
+  const corrupt = JSON.stringify({ ...record, sha256: "invalid" });
+  writeFileSync(path, corrupt);
+  const off = s.cli(args);
+  assert.equal(off.code, 0, off.err);
+  assert.deepEqual(s.runs().at(-1), plain, "invalid approval preserves the whole worker argv");
+  assert.equal((off.err.match(/WARNING hc proxy:/g) ?? []).length, 1);
+  assert.ok(off.err.includes(path));
+  assert.match(off.err, /does not match its sha256.*starting plain.*automagik-herdr proxy approve/);
+  assert.doesNotMatch(off.out, /^WARNING hc proxy:/m);
+  writeFileSync(join(s.root, "hc.json"), initialState);
+  const before = s.runs().length;
+  assert.equal(s.cli(["edit", "Dev", "--hc-proxy", "on"]).code, 0);
+  const on = s.cli(args);
+  assert.notEqual(on.code, 0);
+  assert.match(on.err, /does not match its sha256.*automagik-herdr proxy approve first/);
+  assert.equal(s.runs().length, before);
+  assert.equal(readFileSync(path, "utf8"), corrupt, "both sides used the same corrupt record");
+});
+
 test("a dsh-tui worker reads its bot's approved switch; other agents keep the ordinary launch",
   { skip: process.platform !== "linux" }, (t) => {
   const file = team();
