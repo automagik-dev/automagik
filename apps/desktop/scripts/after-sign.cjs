@@ -23,8 +23,33 @@ const STAPLE_RETRY = resolve(__dirname, '..', '..', '..', 'scripts', 'staple-ret
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options })
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
-  return { status: result.status ?? 1, output, error: result.error }
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: result.error,
+  }
+}
+
+// notarytool in JSON mode still prints its human progress to stderr; the verdict is the last
+// JSON object on stdout. This is apps/desktop/src/dsh-tui.js's lastJson, copied because that
+// module is ESM and this hook is CommonJS: scan the lines from the end and take the last one
+// that parses as a JSON object.
+function lastJson(text) {
+  const lines = String(text ?? '').trim().split(/\r?\n/)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line.startsWith('{')) continue
+    try { return JSON.parse(line) } catch { /* not the verdict */ }
+  }
+  return null
+}
+
+/** Print one child stream's lines to the build log; stdout and stderr stay separate. */
+function printOutput(stream, text) {
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (line.trim()) console.log(`[after-sign] ${stream}: ${line}`)
+  }
 }
 
 exports.default = async function afterSign(context) {
@@ -53,7 +78,10 @@ exports.default = async function afterSign(context) {
       { cwd: dirname(appPath) },
     )
     if (zip.status !== 0) {
-      throw new Error(`after-sign: failed to zip the app for notarization (exit ${zip.status})\n\n${zip.output}`)
+      const detail = `${zip.stdout}${zip.stderr}`.trim()
+      throw new Error(
+        `after-sign: failed to zip the app for notarization (exit ${zip.status})${detail ? `\n\n${detail}` : ''}`,
+      )
     }
 
     console.log('[after-sign] notarizing the app with notarytool (no staple in this step)')
@@ -62,13 +90,11 @@ exports.default = async function afterSign(context) {
       '--key', key, '--key-id', keyId, '--issuer', issuer,
       '--wait', '--timeout', '30m', '--output-format', 'json',
     ])
-    if (submit.output) console.log(submit.output)
-    let verdict = null
-    try {
-      verdict = JSON.parse(submit.output)
-    } catch {
-      // The raw output is already printed; the check below names the unparsable verdict.
-    }
+    // notarytool prints human progress on stderr even in JSON mode: log both streams, but
+    // read the verdict from stdout only, so a progress line can never hide an acceptance.
+    printOutput('notarytool stdout', submit.stdout)
+    printOutput('notarytool stderr', submit.stderr)
+    const verdict = lastJson(submit.stdout)
     if (submit.status !== 0 || verdict?.status !== 'Accepted') {
       throw new Error(
         `after-sign: the app was not accepted by the notary service (exit ${submit.status}, status: ${verdict?.status ?? 'unparsable'})`,

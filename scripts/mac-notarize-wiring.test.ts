@@ -6,7 +6,7 @@
 // validates the .app before the zip/dmg targets. The workflow keeps the dmg's own submit + retry
 // and validates the app extracted from the updater zip. This harness proves the wiring with a
 // fake xcrun/ditto, so it runs on Linux; the real notarization is macOS-only.
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -31,15 +31,19 @@ const readLines = (path: string): string[] => {
   }
 };
 
-// The hook's process: notarytool answers from AFTER_SIGN_TEST_VERDICT, ditto writes the zip it
-// is asked for, and both append their argv to one log. The order is then proven, not assumed:
-// ditto zip, notarytool submit, then the retry script's staple and validate — no stapler inside
-// the notarization step, and the script gets the .app, not the zip.
+// The hook's process: notarytool answers from AFTER_SIGN_TEST_VERDICT and, when asked, writes a
+// progress line to stderr first; ditto writes the zip it is asked for, and both append their
+// argv to one log. The order is then proven, not assumed: ditto zip, notarytool submit, then the
+// retry script's staple and validate — no stapler inside the notarization step, and the script
+// gets the .app, not the zip.
 const XCRUN = `#!/usr/bin/env bash
 set -u
 printf 'xcrun %s\\n' "$*" >> "\${AFTER_SIGN_TEST_CALLS:?}"
 case "$*" in
   "notarytool submit "*)
+    if [[ -n "\${AFTER_SIGN_TEST_PROGRESS:-}" ]]; then
+      printf '%s\\n' "\${AFTER_SIGN_TEST_PROGRESS}" >&2
+    fi
     printf '%s\\n' "\${AFTER_SIGN_TEST_VERDICT:?}"
     ;;
   "stapler staple "*)
@@ -62,6 +66,7 @@ exit 0
 
 interface HookOptions {
   verdict?: string;
+  progress?: string;
   key?: boolean;
   platform?: string;
   stapleFails?: boolean;
@@ -89,6 +94,7 @@ function hookHarness(options: HookOptions = {}) {
     PATH: `${bin}:${process.env.PATH ?? ''}`,
     AFTER_SIGN_TEST_CALLS: calls,
     AFTER_SIGN_TEST_VERDICT: options.verdict ?? '{"id":"test-id","status":"Accepted"}',
+    AFTER_SIGN_TEST_PROGRESS: options.progress,
     AFTER_SIGN_TEST_STAPLE_FAIL: options.stapleFails ? '1' : undefined,
     STAPLE_RETRY_DELAYS: '0 0 0',
     APPLE_API_KEY: options.key === false ? undefined : key,
@@ -143,6 +149,28 @@ describe('afterSign notarizes without stapling, then staples the app through the
     expect(calls[1]).not.toContain('Automagik.app');
     expect(calls[2]).toBe(`xcrun stapler staple ${h.app}`);
     expect(calls[3]).toBe(`xcrun stapler validate ${h.app}`);
+  });
+
+  test('notarytool progress on stderr does not hide the accepted verdict on stdout', async () => {
+    const progress = 'Processing file: Automagik.zip';
+    const h = hookHarness({ progress });
+    const logs: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((...args) => {
+      logs.push(args.map(String).join(' '));
+    });
+    try {
+      const { error } = await h.run();
+      expect(error).toBeNull();
+      const calls = h.calls();
+      expect(calls.length).toBe(4);
+      expect(calls[1]?.startsWith('xcrun notarytool submit ')).toBe(true);
+      expect(calls[2]).toBe(`xcrun stapler staple ${h.app}`);
+      expect(calls[3]).toBe(`xcrun stapler validate ${h.app}`);
+      expect(logs.join('\n')).toContain(progress);
+      expect(logs.join('\n')).toContain('notarization accepted');
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('a rejection (status: Invalid) fails before any staple', async () => {
