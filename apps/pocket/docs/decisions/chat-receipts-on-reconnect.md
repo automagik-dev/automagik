@@ -35,8 +35,13 @@ Issue #733, left over from #680.
   and the known ids are carried across the reconnect (`Chat.carry`), as the unknown messages are.
 - **Nothing added to the bridge or bots-dsh.** `settled[]` is used as it is; the kind of a card
   the phone never saw is read from bots-dsh's row id (`…#approval-<call>`, `…#question-<call>`).
-  A turn that finished while the phone was away is not a settled request and gets no receipt; the
-  chat's status line already says the Bot is idle.
+- **No receipt for a finished turn (decided, not left out).** `settled[]` carries answered
+  requests only (approvals and questions), so a turn that finished while the phone was away shows
+  as the chat's idle status line and gets no receipt. A turn-finished receipt would need something
+  the snapshot does not carry today; it is a follow-up, not part of this change.
+- **"Away" is the link dropping while the chat screen stays open** (the screen off, the app in
+  the background, Pocket Link or bots-dsh restarting). Leaving the chat drops its state, receipts
+  included, as [privacy](../privacy.md) says; coming back to it later is a first snapshot again.
 
 ## Current state
 
