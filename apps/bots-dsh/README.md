@@ -245,6 +245,12 @@ Each result starts with a `Search backend: …` line that names the path it took
 
 Another plugin can also set the search provider while dsh runs, after the profile patch. When you turn such a plugin off, check this setting again.
 
+**Web fetch**: the app and server profiles leave DSH's local `web-fetch-http` provider on.
+`web_fetch` uses the same address lists as the Bot browser (Settings → Browser → Address
+lists); with both lists empty, localhost, LAN and tailnet URLs are fetched by default. A
+deny entry wins over an allow entry, and a non-empty allow list limits fetches to those
+targets too.
+
 ## Bot browser
 
 Every Bot has a browser of its own, on by default (`browserPlugin: false` turns it off). It is the Chrome, Edge, Chromium or Brave already on this computer, driven through `playwright-core`: nothing is downloaded. Without one, a Bot that needs a browser says so and asks you to install Chrome.
@@ -253,6 +259,12 @@ Every Bot has a browser of its own, on by default (`browserPlugin: false` turns 
 - **Tabs come back**: the Bot's open tabs (address and title) are saved there as they change and reopen at its next browser call after a crash or a restart. A browser that went away (closed, crashed) opens again at that call.
 - **What a Bot does**: `browser_open`, `browser_snapshot` (the page as an accessibility tree, each element with a ref), `browser_click`, `browser_type`, `browser_select`, `browser_press`, `browser_upload`, `browser_tabs`, `browser_back` and `browser_screenshot`. Page content is treated as data, never as instructions.
 - **What asks you first**: posting, uploading, downloading and deleting, each through dsh's approval. A delete needs a second, confirmed click. Settings → Browser lets a Bot do some of these on a site for an hour, until the end of the day, for 7 days or for good. Card fields are never typed, and a payment always goes back to you.
+- **Address lists**: every address opens by default, including localhost, LAN and tailnet
+  targets. Settings → Browser → Address lists holds this profile's deny list and allow list.
+  A deny entry always wins; when the allow list is not empty, only matching targets open.
+  An entry is an IPv4 or IPv6 address, a CIDR range, or a hostname (`example.com` covers
+  its subdomains; `*.example.com` is accepted). The same lists apply to `web_fetch`.
+  Clear both to allow everything.
 - **Files**: downloads go to the Bot's working folder or the team folder; uploads come only from those.
 - **Handing over**: for a sign-in, a payment or a check, the Bot calls `browser_handoff` and a card in its chat asks you to take over, skip, or say you are done. While you hold the browser, its tools refuse; the window is a normal browser window on your screen.
 - **The window**: on macOS and Windows, and on Linux with a display, the browser opens as a window you can watch. On Linux without a display it runs headless (`browserHeadless`).

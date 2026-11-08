@@ -8,13 +8,12 @@
   config:
     searchProvider: auto
     fetchProvider: http
-# No local web fetch. DSH's HTTP provider has no private-address guard, and the Bot team reads
-# text from external channels: with web fetch on, a prompt injection reaches this machine's
-# localhost services. DSH exposes no "public addresses only" switch, so the provider is off
-# for every Session of this profile; web search (above), the browser tools and the file tools
-# are unaffected.
+# Web fetch is on. DSH's HTTP provider has no address policy of its own, so bots-dsh gates
+# the web_fetch tool with the address lists on Settings -> Browser. Both lists start empty:
+# local, LAN and tailnet targets are reachable by default. A deny entry always wins, and a
+# non-empty allow list limits both web_fetch and the Bot browser to those targets.
 - id: web-fetch-http
-  disabled: true
+  disabled: false
 # Read before write stays on: dsh 0.2.2 ships the policy row disabled, so write would overwrite
 # and edit would replace a file the model never read. apply_patch stays off (dsh 0.2.2-rc.1
 # already disables it in this profile's presets): it applies hunks on context alone, bypassing

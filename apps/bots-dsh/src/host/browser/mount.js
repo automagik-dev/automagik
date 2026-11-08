@@ -66,9 +66,34 @@ async function saveShot(ctx, value) {
 
 /**
  * @param {any} ctx
- * @param {{ toolDefs: any[], defineTool: Function, keyOf: (exec: any) => Promise<string|undefined>, profileRoot: string, downloadRoot?: string, downloadRoots?: (botId: string) => Promise<string[]>, uploadRoots?: (botId: string) => Promise<string[]>, headless: boolean, playwrightUrl?: string, executablePath?: string, actionTimeout?: number, authorize?: (exec: any, botId: string, action: any) => Promise<void>, completeFor?: (exec: any) => Function, connect?: (botId: string, downloadRoots?: string[]) => Promise<string>, getHold?: (botId: string) => any, onHold?: (botId: string, hold: any) => void, subscribeHolds?: (listener: (botId: string, hold: any) => void) => (() => void) | undefined, openSession?: typeof openBotBrowser, api?: object }} options
+ * @param {{
+ *   toolDefs: any[],
+ *   defineTool: Function,
+ *   keyOf: (exec: any) => Promise<string|undefined>,
+ *   profileRoot: string,
+ *   downloadRoot?: string,
+ *   downloadRoots?: (botId: string) => Promise<string[]>,
+ *   uploadRoots?: (botId: string) => Promise<string[]>,
+ *   headless: boolean,
+ *   playwrightUrl?: string,
+ *   executablePath?: string,
+ *   actionTimeout?: number,
+ *   authorize?: (exec: any, botId: string, action: any) => Promise<void>,
+ *   completeFor?: (exec: any) => Function,
+ *   connect?: (botId: string, downloadRoots?: string[]) => Promise<string>,
+ *   getHold?: (botId: string) => any,
+ *   onHold?: (botId: string, hold: any) => void,
+ *   subscribeHolds?: (listener: (botId: string, hold: any) => void) => (() => void) | undefined,
+ *   openSession?: typeof openBotBrowser,
+ *   addressPolicy?: { check: Function },
+ *   api?: object,
+ * }} options
  */
-export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless, playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold, subscribeHolds, openSession = openBotBrowser, api }) {
+export function mountBrowserPlugin(ctx, {
+  toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless,
+  playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold,
+  subscribeHolds, openSession = openBotBrowser, addressPolicy, api,
+}) {
   const sessions = new Map()
   // Each Bot's saved tabs (tabs.js), read once and then kept as its sessions save them.
   const savedTabs = new Map()
@@ -159,6 +184,7 @@ export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRo
               onHold: hold => onHold?.(botId, hold),
               uploadRoots: uploadRoots ? () => uploadRoots(botId) : undefined,
               onTabs: tabs => savedTabs.set(botId, tabs),
+              addressPolicy,
             })
           })
           sessions.set(botId, opening)

@@ -155,6 +155,7 @@ export function install(rt) {
     getHold: botId => rt.browserChannel?.holdOf(botId) ?? null,
     onHold: (botId, hold) => rt.browserChannel?.setHold(botId, hold && handoffHold(rt, botId, hold)),
     subscribeHolds: listener => rt.browserChannel?.subscribeHolds?.(listener),
+    addressPolicy: rt.addressPolicy,
     authorize: (exec, botId, action) => authorizeBrowserAction(rt, exec, botId, action),
     completeFor: rt.config.browserComplete
       ? () => rt.config.browserComplete

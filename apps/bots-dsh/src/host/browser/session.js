@@ -89,9 +89,26 @@ async function loadChromium(playwrightUrl) {
 /**
  * The Bot's tabs come back when its browser opens with none (tabs.js), and are saved as they
  * change; `onTabs` hears each saved list.
- * @param {{ botId: string, profileRoot: string, headless?: boolean, playwrightUrl?: string, executablePath?: string, actionTimeout?: number, downloadDir?: string | (() => Promise<string | undefined>), uploadRoots?: () => Promise<string[]>, connect?: (botId: string) => Promise<string>, getHold?: () => any, onHold?: (hold: any) => void, onTabs?: (tabs: any) => void }} options
+ * @param {{
+ *   botId: string,
+ *   profileRoot: string,
+ *   headless?: boolean,
+ *   playwrightUrl?: string,
+ *   executablePath?: string,
+ *   actionTimeout?: number,
+ *   downloadDir?: string | (() => Promise<string | undefined>),
+ *   uploadRoots?: () => Promise<string[]>,
+ *   connect?: (botId: string) => Promise<string>,
+ *   getHold?: () => any,
+ *   onHold?: (hold: any) => void,
+ *   onTabs?: (tabs: any) => void,
+ *   addressPolicy?: { check: Function },
+ * }} options
  */
-export async function openBotBrowser({ botId, profileRoot, downloadDir, headless = true, playwrightUrl, executablePath, actionTimeout = ACTION_TIMEOUT, connect, getHold, onHold, uploadRoots, onTabs }) {
+export async function openBotBrowser({
+  botId, profileRoot, downloadDir, headless = true, playwrightUrl, executablePath,
+  actionTimeout = ACTION_TIMEOUT, connect, getHold, onHold, uploadRoots, onTabs, addressPolicy,
+}) {
   const getDownloadDir = typeof downloadDir === 'function' ? downloadDir : async () => downloadDir
   const userDataDir = join(profileRoot, botId)
   const chromium = await loadChromium(playwrightUrl)
@@ -109,7 +126,11 @@ export async function openBotBrowser({ botId, profileRoot, downloadDir, headless
       args: ['--disable-dev-shm-usage'],
     })
   if (!context) throw new Error('The app browser relay has no browser context.')
-  const page = await restoreTabs(context, userDataDir, context.pages()[0] ?? await context.newPage())
+  const first = context.pages()[0] ?? await context.newPage()
+  const allowed = addressPolicy === undefined
+    ? undefined
+    : url => addressPolicy.check(url, 'open').then(d => d.allowed, () => true)
+  const page = await restoreTabs(context, userDataDir, first, allowed)
   const cookieFile = join(userDataDir, 'cookies.json')
   if (!browser) {
     try {
@@ -117,10 +138,17 @@ export async function openBotBrowser({ botId, profileRoot, downloadDir, headless
       if (Array.isArray(saved) && saved.length > 0) await context.addCookies(saved)
     } catch { /* no cookies yet */ }
   }
-  return createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir: getDownloadDir, actionTimeout, getHold, onHold, uploadRoots, onTabs: onTabs ?? (() => {}) })
+  const session = createSession({ context, browser, page, botId, userDataDir, cookieFile,
+    downloadDir: getDownloadDir, actionTimeout, getHold, onHold, uploadRoots,
+    onTabs: onTabs ?? (() => {}), addressPolicy })
+  await session.addressReady
+  return session
 }
 
-export function createSession({ context, browser, page, botId, userDataDir, cookieFile, downloadDir, actionTimeout, getHold, onHold, uploadRoots, onTabs }) {
+export function createSession({
+  context, browser, page, botId, userDataDir, cookieFile, downloadDir, actionTimeout,
+  getHold, onHold, uploadRoots, onTabs, addressPolicy,
+}) {
   const pages = new Set()
   const unknownByOrigin = new Map()
   const unknownPageOrigins = new WeakMap()
@@ -132,6 +160,21 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
   let activeDownloads = null
   let pendingDelete = null
   let pendingDeleteLocator = null
+  const refusedByPage = new WeakMap()
+  let removal = () => {}
+  let addressReady = Promise.resolve()
+
+  const refusalOf = async (url) => {
+    if (addressPolicy?.check === undefined) return undefined
+    try {
+      const decision = await addressPolicy.check(String(url), 'open')
+      if (decision?.allowed !== false) return undefined
+      const message = decision.message ?? 'This address is blocked by the profile.'
+      return Object.assign(new Error(message), { code: 'ADDRESS_REFUSED' })
+    } catch {
+      return undefined
+    }
+  }
 
   const ready = () => {
     const externalHold = getHold?.()
@@ -171,6 +214,32 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
 
   for (const target of context.pages()) trackPage(target)
   context.on('page', target => trackPage(target, true))
+  if (typeof context.route === 'function') {
+    const guard = async route => {
+      try {
+        const request = route.request()
+        if (typeof request?.isNavigationRequest !== 'function' || !request.isNavigationRequest()) {
+          return route.continue()
+        }
+        const frame = request.frame?.()
+        const target = frame?.page?.()
+        if (target === undefined || frame !== target.mainFrame?.()) return route.continue()
+        const refusal = await refusalOf(request.url())
+        if (refusal === undefined) return route.continue()
+        refusedByPage.set(target, refusal)
+        return route.abort('blockedbyclient')
+      } catch {
+        return route.continue().catch(() => {})
+      }
+    }
+    try {
+      addressReady = Promise.resolve(context.route('**/*', guard)).then(() => {
+        removal = () => { void context.unroute?.('**/*', guard) }
+      }, () => {})
+    } catch {
+      addressReady = Promise.resolve()
+    }
+  }
   const keeper = onTabs !== undefined ? keepTabs({ context, dir: userDataDir, activePage: () => activePage(), onSave: onTabs }) : undefined
   // A browser that goes away (a killed Chrome, a dropped app relay, a crashed app page) ends
   // the session; the Bot's next call opens a new one.
@@ -213,6 +282,11 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
     if (!target) throw new Error('The browser has no open tabs.')
     await waitForPageReady(target)
     await new Promise(resolve => setTimeout(resolve, 150))
+    const refusal = refusedByPage.get(target)
+    if (refusal !== undefined) {
+      refusedByPage.delete(target)
+      throw refusal
+    }
   }
 
   async function tabs() {
@@ -503,6 +577,12 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
         if (target.url().startsWith('chrome-error://')) throw new Error('the browser page navigated to an error page')
         return await snapshotText()
       } catch (error) {
+        if (error?.code === 'ADDRESS_REFUSED') throw error
+        const refusal = refusedByPage.get(target)
+        if (refusal !== undefined) {
+          refusedByPage.delete(target)
+          throw refusal
+        }
         return unknownResult(action, error, target)
       } finally {
         target.off('request', onRequest)
@@ -514,7 +594,17 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
 
   async function finishAction(perform) {
     return captureAction(async () => {
-      await perform()
+      try {
+        await perform()
+      } catch (error) {
+        const target = activePage()
+        const refusal = target === null ? undefined : refusedByPage.get(target)
+        if (refusal !== undefined) {
+          refusedByPage.delete(target)
+          throw refusal
+        }
+        throw error
+      }
       await settle()
       return snapshotText()
     })
@@ -533,6 +623,7 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
   return {
     botId,
     userDataDir,
+    addressReady,
     get hold() { return hold },
     get lastImage() { return lastImage },
     takeLastImage() {
@@ -545,7 +636,20 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
       ready()
       await clearPendingDelete()
       const target = activePage()
-      return finishAction(() => target.goto(String(url), { waitUntil: 'domcontentloaded', timeout: 30_000 }), target)
+      const refusal = await refusalOf(url)
+      if (refusal !== undefined) throw refusal
+      return finishAction(async () => {
+        try {
+          await target.goto(String(url), { waitUntil: 'domcontentloaded', timeout: 30_000 })
+        } catch (error) {
+          const blocked = target.isClosed() ? undefined : refusedByPage.get(target)
+          if (blocked !== undefined) {
+            refusedByPage.delete(target)
+            throw blocked
+          }
+          throw error
+        }
+      }, target)
     },
     tabs,
     async selectTab(index) {
@@ -777,6 +881,7 @@ export function createSession({ context, browser, page, botId, userDataDir, cook
       else closedListeners.add(listener)
     },
     async close() {
+      removal()
       keeper?.stop()
       if (browser) { await browser.close().catch(() => {}); return }
       const cookies = await context.cookies().catch(() => [])
