@@ -9,6 +9,9 @@
 // Re-recorded for #231's parent mark: the owner fixture's two cases add one parent-<bot> node
 // on each of three bots (hc parent t1m, lead's pane t201); with those nodes left out, every
 // case's --full tree equals dev's before #231, and the other cases' sha256 are unchanged.
+// Re-recorded for the machine header's Move to top: every header but the first gains a hidden
+// machine-top-<machine> node and every header an on_hover call; with those left out, every
+// case's --full tree equals dev's at 0524c6e1 (no saved order draws the machines as before).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

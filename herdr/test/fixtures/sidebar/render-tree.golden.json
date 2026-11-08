@@ -1,6 +1,6 @@
 {
  "recorded owner fixture": {
-  "sha256": "293caafc48fdc7dd6876116c3fb07aa92a90ba3fcfa7e6251459a197060951a4",
+  "sha256": "347e0ad5ee5744b83335d5be9c6398a29206b90a6c4dd6cc93986f052745f09a",
   "ids": [
    "space-new",
    "space-list",
@@ -100,11 +100,13 @@
    "ag-t220",
    "ag-t221",
    "machine-machine-1",
+   "machine-top-machine-1",
    "space-machine-1/sp4434df202411577677487460552a0562",
    "space-icon-machine-1/sp4434df202411577677487460552a0562",
    "space-add-machine-1/sp4434df202411577677487460552a0562",
    "ag-machine-1/t1",
    "machine-machine-2",
+   "machine-top-machine-2",
    "space-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
    "space-icon-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
    "space-add-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
@@ -113,6 +115,7 @@
    "space-add-machine-2/sp1c84590def1c3b61a3066c61de5be811",
    "ag-machine-2/t11",
    "machine-machine-3",
+   "machine-top-machine-3",
    "space-machine-3/spae18c14e4779e8610a17d3c784b99773",
    "space-icon-machine-3/spae18c14e4779e8610a17d3c784b99773",
    "space-add-machine-3/spae18c14e4779e8610a17d3c784b99773",
@@ -125,6 +128,7 @@
    "space-icon-machine-3/sp1499a6e23d2ad7b5663fce95d3714cec",
    "space-add-machine-3/sp1499a6e23d2ad7b5663fce95d3714cec",
    "machine-machine-4",
+   "machine-top-machine-4",
    "space-machine-4/sp714fec2bb43835f49822013dadd6f74b",
    "space-icon-machine-4/sp714fec2bb43835f49822013dadd6f74b",
    "space-add-machine-4/sp714fec2bb43835f49822013dadd6f74b",
@@ -132,6 +136,7 @@
    "ag-machine-4/t4",
    "ag-machine-4/t2",
    "machine-machine-5",
+   "machine-top-machine-5",
    "space-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
    "space-icon-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
    "space-add-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
@@ -175,7 +180,7 @@
   ]
  },
  "recorded owner fixture, a bot's helper focused": {
-  "sha256": "cb7a7d1f735b9d080c4147ba4bf1090b6f3734a0694f3aaf10836eb0a3abb37a",
+  "sha256": "3918f6d35cc12ad9ba15ccbf7f54d7c92c316041201064881143a289299f9707",
   "ids": [
    "space-new",
    "space-list",
@@ -275,11 +280,13 @@
    "ag-t220",
    "ag-t221",
    "machine-machine-1",
+   "machine-top-machine-1",
    "space-machine-1/sp4434df202411577677487460552a0562",
    "space-icon-machine-1/sp4434df202411577677487460552a0562",
    "space-add-machine-1/sp4434df202411577677487460552a0562",
    "ag-machine-1/t1",
    "machine-machine-2",
+   "machine-top-machine-2",
    "space-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
    "space-icon-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
    "space-add-machine-2/sp83dab17a9bf46c437d8bb2b8854e8fd1",
@@ -288,6 +295,7 @@
    "space-add-machine-2/sp1c84590def1c3b61a3066c61de5be811",
    "ag-machine-2/t11",
    "machine-machine-3",
+   "machine-top-machine-3",
    "space-machine-3/spae18c14e4779e8610a17d3c784b99773",
    "space-icon-machine-3/spae18c14e4779e8610a17d3c784b99773",
    "space-add-machine-3/spae18c14e4779e8610a17d3c784b99773",
@@ -300,6 +308,7 @@
    "space-icon-machine-3/sp1499a6e23d2ad7b5663fce95d3714cec",
    "space-add-machine-3/sp1499a6e23d2ad7b5663fce95d3714cec",
    "machine-machine-4",
+   "machine-top-machine-4",
    "space-machine-4/sp714fec2bb43835f49822013dadd6f74b",
    "space-icon-machine-4/sp714fec2bb43835f49822013dadd6f74b",
    "space-add-machine-4/sp714fec2bb43835f49822013dadd6f74b",
@@ -307,6 +316,7 @@
    "ag-machine-4/t4",
    "ag-machine-4/t2",
    "machine-machine-5",
+   "machine-top-machine-5",
    "space-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
    "space-icon-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
    "space-add-machine-5/sp7d0bbd8daa04996cf63795fc5bb4dc91",
@@ -350,7 +360,7 @@
   ]
  },
  "synthetic n=1, a sub-agent focused": {
-  "sha256": "001fd9d1d944ad088c885ba1decf5dbf6b0000e20989049c3c18c8a645ba260f",
+  "sha256": "9d1c683c0104aff03a0872ea0faf9687390fdf2a3ef6e6c3567f61652279cd59",
   "ids": [
    "space-new",
    "space-list",
@@ -392,11 +402,14 @@
    "ag-t31",
    "unknown-t31",
    "machine-away",
+   "machine-top-away",
    "machine-new-away",
    "machine-boot",
+   "machine-top-boot",
    "machine-add-boot",
    "machine-loading-boot",
    "machine-hx",
+   "machine-top-hx",
    "machine-add-hx",
    "machine-new-hx"
   ],
@@ -416,7 +429,7 @@
   ]
  },
  "synthetic n=4, a bot's helper focused": {
-  "sha256": "e5df4228fadd39db149cbccec769a931df9d171ae1845cad006bbed947db93fc",
+  "sha256": "5e875e5cc225d8d52b2220ea2311a6fcd8fababf7e86e659ec37faf8f9329ac0",
   "ids": [
    "space-new",
    "space-list",
@@ -517,11 +530,14 @@
    "ag-t101",
    "unknown-t101",
    "machine-away",
+   "machine-top-away",
    "machine-new-away",
    "machine-boot",
+   "machine-top-boot",
    "machine-add-boot",
    "machine-loading-boot",
    "machine-hx",
+   "machine-top-hx",
    "machine-add-hx",
    "space-s3",
    "space-add-s3",
@@ -590,7 +606,7 @@
   ]
  },
  "synthetic n=4, a member bot focused": {
-  "sha256": "8599f524a794d49542e3fc3c5d91891567330dff26e9685d3cd950f87b441ecc",
+  "sha256": "2e979957cea76e64524176253cdc318d95242a0766d470406a2417491a1ce43c",
   "ids": [
    "space-new",
    "space-list",
@@ -691,11 +707,14 @@
    "ag-t101",
    "unknown-t101",
    "machine-away",
+   "machine-top-away",
    "machine-new-away",
    "machine-boot",
+   "machine-top-boot",
    "machine-add-boot",
    "machine-loading-boot",
    "machine-hx",
+   "machine-top-hx",
    "machine-add-hx",
    "space-s3",
    "space-add-s3",
@@ -764,7 +783,7 @@
   ]
  },
  "synthetic n=6, an agent focused": {
-  "sha256": "d2daaa89938c624419905d0a8eb85a015997936cf279b93930b02aa8bf1f0bbf",
+  "sha256": "e54911925b1373091bc9d49c2bbb0ccdd9c571765c93a431cac4942656ea7169",
   "ids": [
    "space-new",
    "space-list",
@@ -924,11 +943,14 @@
    "ag-t171",
    "unknown-t171",
    "machine-away",
+   "machine-top-away",
    "machine-new-away",
    "machine-boot",
+   "machine-top-boot",
    "machine-add-boot",
    "machine-loading-boot",
    "machine-hx",
+   "machine-top-hx",
    "machine-add-hx",
    "space-s5",
    "space-add-s5",
