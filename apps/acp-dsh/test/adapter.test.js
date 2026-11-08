@@ -25,6 +25,9 @@ function host({ answer = 'allowed-once' } = {}) {
   const registered = {}
   const asked = []
   const disposers = []
+  // What the fake scope's tools.register recorded, and which registrations were disposed (#667).
+  const registrations = []
+  const disposals = []
   const agents = new Map()
   const scopes = new Map()
   const listeners = new Map()
@@ -45,14 +48,29 @@ function host({ answer = 'allowed-once' } = {}) {
       session: { id, header: { cwd }, append },
       model: { current: () => ({ provider, model: 'default' }) },
       options: { provider },
+      // Idle by default; DSH dispatches agent/status on the running -> idle edge.
+      status: 'idle',
       ctx: {
         tools: {
           register: (def, options = {}) => {
-            assert.ok(!tools.has(def.name), 'registered once')
+            // dsh-tools refuses a second registration of one name in one scope: this is the
+            // "already registered in this scope" failure a plugin reload used to hit (#667).
+            if (tools.has(def.name)) throw new Error(`already registered in this scope: ${def.name}`)
             names.push(def.name)
             tools.set(def.name, def)
             conditions.set(def.name, options.when)
-            return () => { tools.delete(def.name); conditions.delete(def.name) }
+            let live = true
+            const dispose = () => {
+              if (!live) return
+              live = false
+              tools.delete(def.name)
+              conditions.delete(def.name)
+              const at = names.indexOf(def.name)
+              if (at !== -1) names.splice(at, 1)
+              disposals.push({ id, name: def.name })
+            }
+            registrations.push({ id, name: def.name, dispose })
+            return dispose
           },
         },
       },
@@ -77,7 +95,7 @@ function host({ answer = 'allowed-once' } = {}) {
   const agent = addAgent('s1')
   const ctx = {
     llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} } },
-    agents: { get: id => agents.get(id) },
+    agents: { get: id => agents.get(id), list: () => [...agents.values()] },
     get: name => (name === 'approval' ? { request: async (req) => { asked.push(req); return typeof answer === 'function' ? answer(req) : answer } } : undefined),
     on: (name, listener) => { listeners.set(name, [...(listeners.get(name) ?? []), listener]); return () => {} },
     effect: (fn) => { disposers.push(fn()) },
@@ -100,6 +118,13 @@ function host({ answer = 'allowed-once' } = {}) {
     appended,
     close,
     registered,
+    ctx,
+    registrations,
+    disposals,
+    // A plugin reload: the old module and adapter go, DSH keeps the agents and their scoped
+    // tools, and the reloaded adapter is constructed over them (its constructor takes over the
+    // agents that are idle). Old listeners are not re-emitted here, as DSH disposed them.
+    reload: () => new AcpAdapter(ctx, new Map([['acp-fake', {}]]), { dshTools: () => false }),
   }
   return h
 }
@@ -1812,5 +1837,112 @@ test('probe (delivery 6): codex\'s unstructured MCP calls stay unmatched — no 
     assert.equal(drift.adapter.live.get('s1').drifted, false)
   } finally {
     drift.close()
+  }
+})
+
+// ---- a plugin reload over live chats (#667)
+
+const MIRROR = Symbol.for('@automagik/acp-dsh/mirror-registration')
+const registrationsOf = (h, id) => h.registrations.filter(entry => entry.id === id)
+const disposalsOf = (h, id) => h.disposals.filter(entry => entry.id === id)
+
+test('a plugin reload takes over an idle live chat without a double registration (#667)', async () => {
+  const h = host()
+  try {
+    // A chat created after this plugin loaded: only agent/created registers it.
+    const live = h.addAgent('live')
+    h.emit('agent/created', { agent: live })
+    assert.deepEqual(h.namesOf('live'), [TOOL_NAME])
+    assert.equal(registrationsOf(h, 'live').length, 1)
+
+    // The reload: a new adapter over the same agent and its scoped tools. The construction
+    // takeover finds the old registration through the symbol and replaces it — no
+    // "already registered in this scope", and the old exact disposer ran once.
+    h.reload()
+    assert.equal(h.namesOf('live').length, 1, 'one acp_tool in the scope')
+    assert.deepEqual(disposalsOf(h, 'live'), [{ id: 'live', name: TOOL_NAME }])
+    assert.equal(registrationsOf(h, 'live').length, 2)
+    assert.equal(h.toolsOf('live').size, 1)
+
+    // The next step's pre-step resolution admits it under the per-step rule (#662), and a DSH
+    // route or no selection still admits nothing.
+    assert.ok((await h.admit('live', { provider: 'acp-fake', model: 'default' })).has(TOOL_NAME), 'the next step resolves acp_tool')
+    assert.deepEqual([...(await h.admit('live', { provider: 'deepseek-official', model: 'deepseek-flash' }))], [])
+    assert.deepEqual([...(await h.admit('live', undefined))], [])
+
+    // A second reload takes over again, from the adapter that is current now; re-running the
+    // registration for the current adapter is a no-op (agent/created and the takeover both call it).
+    const again = h.reload()
+    assert.equal(disposalsOf(h, 'live').length, 2)
+    assert.equal(h.namesOf('live').length, 1)
+    const before = registrationsOf(h, 'live').length
+    again.registerMirror(live)
+    assert.equal(registrationsOf(h, 'live').length, before)
+  } finally {
+    h.close()
+  }
+})
+
+test('a running chat keeps its registration for the turn and is replaced on the idle edge (#667)', async () => {
+  const h = host()
+  try {
+    const live = h.addAgent('live')
+    h.emit('agent/created', { agent: live })
+    assert.deepEqual(h.namesOf('live'), [TOOL_NAME])
+
+    // DSH resolved the running step's tools before the reload: replacing the registration now
+    // would close that step's admission and fail its mirrored call as UNKNOWN_TOOL.
+    live.status = 'running'
+    const reloaded = h.reload()
+    assert.deepEqual(disposalsOf(h, 'live'), [], 'the running turn keeps the old registration')
+    assert.equal(registrationsOf(h, 'live').length, 1)
+    assert.ok((await h.admit('live', { provider: 'acp-fake', model: 'default' })).has(TOOL_NAME), 'the running step keeps acp_tool')
+
+    // The agent/status idle edge is where the reloaded adapter replaces it.
+    live.status = 'idle'
+    reloaded.registerMirror(live)
+    assert.deepEqual(disposalsOf(h, 'live'), [{ id: 'live', name: TOOL_NAME }])
+    assert.equal(registrationsOf(h, 'live').length, 2)
+    assert.deepEqual(h.namesOf('live'), [TOOL_NAME])
+    assert.ok((await h.admit('live', { provider: 'acp-fake', model: 'default' })).has(TOOL_NAME))
+  } finally {
+    h.close()
+  }
+})
+
+test('the kept disposer is idempotent, and a fresh or missing Session still behaves (#667)', () => {
+  const h = host()
+  try {
+    const live = h.addAgent('live')
+    h.emit('agent/created', { agent: live })
+    const stored = live[MIRROR]
+    assert.equal(stored.adapter, h.adapter)
+    assert.equal(typeof stored.dispose, 'function')
+
+    // The exact disposer: calling it again is a no-op, and the scope loses the tool once.
+    stored.dispose()
+    stored.dispose()
+    assert.deepEqual(disposalsOf(h, 'live'), [{ id: 'live', name: TOOL_NAME }])
+    assert.deepEqual(h.namesOf('live'), [])
+
+    // A reloaded adapter takes the scope over even after that external disposal: it calls the
+    // already-spent disposer (no second removal, no throw) and registers once.
+    h.reload()
+    assert.deepEqual(disposalsOf(h, 'live'), [{ id: 'live', name: TOOL_NAME }])
+    assert.deepEqual(h.namesOf('live'), [TOOL_NAME])
+    assert.equal(registrationsOf(h, 'live').length, 2)
+
+    // A fresh agent registers once, with the same per-step condition.
+    const fresh = h.addAgent('fresh')
+    h.adapter.registerMirror(fresh)
+    assert.deepEqual(h.namesOf('fresh'), [TOOL_NAME])
+
+    // A Session with no live agent still fails clearly, naming the Session.
+    assert.throws(
+      () => h.adapter.scope('gone'),
+      error => error.code === 'acp_agent_missing' && /gone/.test(error.message),
+    )
+  } finally {
+    h.close()
   }
 })
