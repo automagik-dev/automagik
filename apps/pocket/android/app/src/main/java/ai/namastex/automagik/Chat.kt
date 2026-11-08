@@ -27,6 +27,12 @@ object Chat {
     private val AGENTS = setOf("claude-code", "claude", "codex", "omp")
     /** Rows kept per open chat; older ones come back with Load earlier. */
     const val MAX_ROWS = 1000
+    /** Receipts kept per chat until dismissed: as many as bots-dsh keeps settled per Session (pocket-chat.js `KEEP_SETTLED`). */
+    const val MAX_RECEIPTS = 16
+    /** Request ids whose end the phone knows, kept so a reconnect never receipts one twice. */
+    const val MAX_DONE = 64
+    /** A card that was open when the phone left and is neither open nor in `settled[]` on reconnect: no outcome is claimed. */
+    const val CLOSED_AWAY = "Closed while you were away"
 
     /** An Automagik Bot's chat: no terminal pane, approvals answered as DSH raised them. */
     fun isDsh(terminal: String) = terminal.startsWith(DSH_PREFIX)
@@ -103,6 +109,21 @@ object Chat {
         }
     }
 
+    /** An approval or question card the phone showed open and has not seen close: its kind and what it asked. */
+    data class Card(val id: String, val kind: String, val label: String)
+
+    /**
+     * A card that closed while the phone was away (RFC 0015, "Settled requests on reconnect"; #733): bots-dsh's settled
+     * entry for the request (`{id, by, name?, outcome, at}`, pocket-chat.js `hold`), or, with none (older than the 16
+     * kept, or bots-dsh restarted), the closing alone with no outcome claimed. It stays until dismissed. [label] is
+     * what the card asked, when the phone saw it. [at] is bots-dsh's clock for a settled entry, the phone's otherwise.
+     */
+    data class Receipt(val id: String, val kind: String, val label: String = "", val by: String = "", val name: String = "",
+                       val outcome: String = "", val at: Long = 0) {
+        /** bots-dsh said how it ended; false for a card that only vanished. */
+        val settled: Boolean get() = outcome.isNotEmpty()
+    }
+
     data class State(
         val terminal: String, val rows: List<Row> = emptyList(), val screen: List<Row> = emptyList(),
         val status: Status = Status(), val approval: Row? = null, val question: Row? = null,
@@ -119,7 +140,15 @@ object Chat {
         /** The bridge's hello said `dshWrite: true`: a DSH chat takes send, answer and interrupt. */
         val dshWrite: Boolean = false,
         /** A DSH chat whose bots-dsh socket went away ([RESUMABLE]): the phone connects again by itself. */
-        val resuming: Boolean = false
+        val resuming: Boolean = false,
+        /** The cards this DSH chat showed open and has not seen close: what a reconnect's receipt names ([carry]). */
+        val cards: List<Card> = emptyList(),
+        /** Receipts for cards that closed while the phone was away, oldest first, until dismissed ([MAX_RECEIPTS]). */
+        val receipts: List<Receipt> = emptyList(),
+        /** Request ids whose end the phone already knows (closed in view, receipted, or settled before the chat opened). */
+        val done: List<String> = emptyList(),
+        /** A snapshot has been folded in: the next one is a reconnect, and what settled since gets a receipt. */
+        val synced: Boolean = false
     ) {
         val readOnly: Boolean get() = Chat.readOnly(terminal, dshWrite)
         val dsh: Boolean get() = isDsh(terminal)
@@ -128,25 +157,29 @@ object Chat {
         val oldest get() = rows.firstOrNull()?.id
     }
 
-    /** One event from a subscription's stream (chat.mjs `event`), folded into [s]. Unknown events change nothing. */
-    fun reduce(s: State, e: JSONObject): State = when (e.optString("type")) {
+    /**
+     * One event from a subscription's stream (chat.mjs `event`), folded into [s]. Unknown events change nothing. [now]
+     * dates a receipt for a card that vanished with no settled entry.
+     */
+    fun reduce(s: State, e: JSONObject, now: Long = System.currentTimeMillis()): State = when (e.optString("type")) {
         "snapshot" -> {
             val rows = e.optJSONArray("rows").rows()
             val kept = if (e.optBoolean("reset")) rows else merge(s.rows, rows)
-            s.copy(rows = kept.takeLast(MAX_ROWS), screen = e.optJSONArray("screen").rows(),
+            val approval = Row.parse(e.optJSONObject("approval"))?.takeIf { it.open }
+            val question = Row.parse(e.optJSONObject("question"))?.takeIf { it.open }
+            reconnected(s, approval, question, e.optJSONArray("settled"), now).copy(rows = kept.takeLast(MAX_ROWS), screen = e.optJSONArray("screen").rows(),
                 status = Status.parse(e.optJSONObject("status")) ?: s.status,
-                approval = Row.parse(e.optJSONObject("approval"))?.takeIf { it.open },
-                question = Row.parse(e.optJSONObject("question"))?.takeIf { it.open },
+                approval = approval, question = question,
                 messages = held(s.messages, e.optJSONArray("held")), connected = true, gone = false, offline = false, error = null,
-                resuming = false)
+                resuming = false, synced = true)
         }
         "rows" -> s.copy(rows = merge(s.rows, e.optJSONArray("rows").rows()).takeLast(MAX_ROWS))
         "screen" -> s.copy(screen = e.optJSONArray("rows").rows())
         "status" -> s.copy(status = Status.parse(e.optJSONObject("status")) ?: s.status,
             question = s.question.takeIf { e.optJSONObject("status")?.optString("state") == "blocked" })
         "source" -> s.copy(screenOnly = e.optString("source") == "none")
-        "approval" -> Row.parse(e.optJSONObject("row")).let { r -> s.copy(approval = r?.takeIf { it.open }) }
-        "question" -> s.copy(question = Row.parse(e.optJSONObject("row")))
+        "approval" -> Row.parse(e.optJSONObject("row")).let { r -> card(s.copy(approval = r?.takeIf { it.open }), r) }
+        "question" -> Row.parse(e.optJSONObject("row")).let { r -> card(s.copy(question = r), r) }
         "held" -> message(s, e.optString("id")) { it.copy(state = "held", why = e.optString("why")) }
         "sent" -> message(s, e.optString("id")) { it.copy(state = e.optString("state", "sent").ifBlank { "sent" }, why = "") }
         "sending" -> message(s, e.optString("id")) { it.copy(state = "sending", why = "") }
@@ -155,6 +188,82 @@ object Chat {
         "gone" -> gone(s, e.optString("reason"))
         "offline" -> s.copy(offline = true, approval = null, question = null)
         else -> s
+    }
+
+    /**
+     * What a snapshot of a DSH chat says about the cards the phone had ([State.cards]) and bots-dsh's `settled[]`
+     * (RFC 0015, "Settled requests on reconnect"). A settled entry is only ever a receipt: it never opens a card, and
+     * one for the card the snapshot shows open is left alone. The first snapshot of a chat takes `settled[]` as history
+     * (nothing is receipted); every later one is a reconnect, and each entry the phone has not seen end gets one receipt.
+     * A card that is neither open nor settled closes as [CLOSED_AWAY]. An id is receipted once, however many reconnects.
+     */
+    private fun reconnected(s: State, approval: Row?, question: Row?, settled: JSONArray?, now: Long): State {
+        if (!s.dsh) return s
+        val live = listOfNotNull(approval, question)
+        val liveIds = live.map { it.id }.toSet()
+        val done = s.done.toMutableList()
+        val fresh = mutableListOf<Receipt>()
+        for (i in 0 until (settled?.length() ?: 0)) {
+            val r = settled?.optJSONObject(i) ?: continue
+            val id = r.optString("id").takeIf { it.isNotEmpty() } ?: continue
+            if (id in done || id in liveIds) continue
+            done += id
+            if (!s.synced) continue
+            val card = s.cards.find { it.id == id }
+            fresh += Receipt(id, card?.kind ?: kindOf(id), card?.label.orEmpty(), r.clean("by"), r.clean("name"), r.clean("outcome"),
+                r.optLong("at", 0).takeIf { it > 0 } ?: now)
+        }
+        for (card in s.cards) if (card.id !in liveIds && card.id !in done) { done += card.id; fresh += Receipt(card.id, card.kind, card.label, at = now) }
+        return s.copy(cards = live.map(::cardOf), done = done.takeLast(MAX_DONE), receipts = (s.receipts + fresh).takeLast(MAX_RECEIPTS))
+    }
+
+    /** An approval or question event on a DSH chat: an open row is a card the phone has; a closed one is done. */
+    private fun card(s: State, r: Row?): State = when {
+        r == null || !s.dsh -> s
+        r.open -> s.copy(cards = (s.cards.filterNot { it.id == r.id } + cardOf(r)).takeLast(MAX_RECEIPTS))
+        else -> s.copy(cards = s.cards.filterNot { it.id == r.id }, done = (s.done.filterNot { it == r.id } + r.id).takeLast(MAX_DONE))
+    }
+
+    private fun cardOf(r: Row) = Card(r.id, r.kind, labelOf(r))
+
+    /** What a card asks: the approval's tool and reason, or the question. */
+    fun labelOf(r: Row): String = if (r.kind == "question") r.prompt else listOf(r.tool, r.summary).filter { it.isNotBlank() }.distinct().joinToString(": ")
+
+    /** A request's kind from bots-dsh's row id (`…#approval-<call>`, `…#question-<call>`, pocket-chat.js `requestRowId`). */
+    private fun kindOf(id: String) = when { "#question-" in id -> "question"; "#approval-" in id -> "approval"; else -> "request" }
+
+    /** The receipt [id] dismissed: gone for good, since its id stays known ([State.done]). */
+    fun dismissReceipt(s: State, id: String) = s.copy(receipts = s.receipts.filterNot { it.id == id })
+
+    /**
+     * What a reconnect of the same chat keeps of [s] beside [unknown]: the cards it showed (so a reconnect can say
+     * what closed), its receipts, the request ids it knows ended, and that it had a snapshot (so the next is a reconnect).
+     */
+    fun carry(s: State?, into: State): State = if (s == null) into else into.copy(cards = s.cards, receipts = s.receipts, done = s.done, synced = s.synced)
+
+    /** A receipt's heading: the Bot, the kind of card and when it closed (as [time] renders [Receipt.at]). */
+    fun receiptHeading(r: Receipt, bot: String, time: String): String =
+        listOf(bot, when (r.kind) { "approval" -> "Approval"; "question" -> "Question"; else -> "Request" }, time).filter { it.isNotBlank() }.joinToString(" · ")
+
+    /** What a receipt says happened while the phone was away; never more than bots-dsh's entry holds. */
+    fun receiptText(r: Receipt): String = when {
+        !r.settled -> CLOSED_AWAY
+        r.outcome == "withdrawn" -> "No longer needed"
+        else -> "Answered${whereOf(r.by, r.name)} while you were away" + outcomeOf(r.outcome).let { if (it.isNotEmpty()) ": $it" else "" }
+    }
+
+    /** A settled receipt as Home's Done line ([receiptLine]'s words); null for a card that only vanished. */
+    fun doneLine(r: Receipt): String? = when {
+        !r.settled -> null
+        r.outcome == "withdrawn" -> "No longer needed"
+        else -> "Answered${whereOf(r.by, r.name)}" + outcomeOf(r.outcome).let { if (it.isNotEmpty()) ": $it" else "" }
+    }
+
+    private fun outcomeOf(o: String) = when (o) { "allow" -> "Allow"; "deny" -> "Deny"; else -> o }
+    private fun whereOf(by: String, name: String) = when (by) {
+        "phone" -> " on the phone" + name.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+        "computer" -> " on the computer"
+        else -> ""
     }
 
     /** The mark on an assistant row whose turn was interrupted. */
@@ -263,13 +372,8 @@ object Chat {
     private fun receipt(r: JSONObject?): String {
         if (r == null) return "Already answered."
         if (r.optString("outcome") == "withdrawn") return "No longer needed."
-        val outcome = when (val o = r.optString("outcome")) { "allow" -> "Allow"; "deny" -> "Deny"; else -> o }
-        val where = when (r.optString("by")) {
-            "phone" -> "on the phone" + r.optString("name").takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
-            "computer" -> "on the computer"
-            else -> ""
-        }
-        return listOf("Already answered", where).filter { it.isNotEmpty() }.joinToString(" ") + (if (outcome.isNotEmpty()) ": $outcome." else ".")
+        val outcome = outcomeOf(r.optString("outcome"))
+        return "Already answered" + whereOf(r.clean("by"), r.clean("name")) + (if (outcome.isNotEmpty()) ": $outcome." else ".")
     }
 
     /** A send that got no answer (the link dropped, or it timed out): never sent again by itself, shown with Retry. */
@@ -289,8 +393,7 @@ object Chat {
     }
 
     /** The open card's text, for the chat's row on Home: the question, or the approval's tool and reason. */
-    fun asked(s: State): String = s.question?.prompt?.takeIf { it.isNotBlank() }
-        ?: s.approval?.let { a -> listOf(a.tool, a.summary).filter { it.isNotBlank() }.distinct().joinToString(": ") }.orEmpty()
+    fun asked(s: State): String = s.question?.prompt?.takeIf { it.isNotBlank() } ?: s.approval?.let(::labelOf).orEmpty()
 
     /**
      * The closing row's receipt (bots-dsh's settled entry on an approval or question event), as Home's Done line:
@@ -302,13 +405,8 @@ object Chat {
         if (row.optBoolean("open", false)) return null
         val r = row.optJSONObject("receipt") ?: return null
         if (r.optString("outcome") == "withdrawn") return "No longer needed"
-        val outcome = when (val o = r.optString("outcome")) { "allow" -> "Allow"; "deny" -> "Deny"; else -> o }
-        val where = when (r.optString("by")) {
-            "phone" -> " on the phone" + r.optString("name").takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
-            "computer" -> " on the computer"
-            else -> ""
-        }
-        return "Answered$where" + (if (outcome.isNotEmpty()) ": $outcome" else "")
+        val outcome = outcomeOf(r.optString("outcome"))
+        return "Answered" + whereOf(r.clean("by"), r.clean("name")) + (if (outcome.isNotEmpty()) ": $outcome" else "")
     }
 
     /** What a reconnect keeps of [s]: messages whose outcome is unknown (still sending, or maybe), as maybe, with Retry. */

@@ -437,4 +437,148 @@ class ChatTest {
         assertEquals("Bash: npm test", Chat.asked(Chat.reduce(Chat.State("dsh:x"), j("""{"type":"approval","row":{"id":"a1","kind":"approval","tool":"Bash","summary":"npm test","open":true}}"""))))
         assertEquals("", Chat.asked(Chat.State("dsh:x")))
     }
+
+    // ---- receipts for cards that closed while the phone was away (#733, RFC 0015 "Settled requests on reconnect")
+
+    private val CARD = "dsh:session-1:7#approval-c1"
+    private fun dshApproval(id: String = CARD, open: Boolean = true) =
+        """{"id":"$id","kind":"approval","source":"session","tool":"Bash","summary":"npm test","input":"npm test","call":"c1","choices":["allow","deny"],"open":$open,"answerable":true}"""
+    private fun settled(id: String = CARD, by: String = "computer", outcome: String = "allow", at: Long = 1_700_000_000_000) =
+        """{"id":"$id","by":"$by","outcome":"$outcome","at":$at}"""
+    private fun snapshot(approval: String = "null", settled: String = "[]") =
+        j("""{"type":"snapshot","rows":[],"screen":[],"status":{"state":"idle"},"approval":$approval,"held":[],"settled":$settled}""")
+    /** The chat with the card open, then its link dropped: what PocketViewModel.openChat starts the reconnect from. */
+    private fun away(): Chat.State {
+        val withCard = Chat.reduce(blocked(dshLive()), j("""{"type":"approval","row":${dshApproval()}}"""))
+        assertEquals(CARD, withCard.approval?.id)
+        val dropped = Chat.reduce(withCard, j("""{"type":"gone","reason":"unavailable"}"""))
+        assertNull(dropped.approval)
+        return Chat.carry(dropped, Chat.State("dsh:session-1", messages = Chat.unknown(dropped), dshWrite = true, resuming = true))
+    }
+
+    /** Row 1: disconnect, answer on the desktop, reconnect: one receipt card, naming the card, who answered, what and when. */
+    @Test fun aCardAnsweredOnTheComputerWhileAwayComesBackAsOneReceipt() {
+        val back = Chat.reduce(away(), snapshot(settled = "[${settled()}]"), now = 5)
+        val r = back.receipts.single()
+        assertEquals(listOf(CARD, "approval", "Bash: npm test", "computer", "allow", 1_700_000_000_000L), listOf(r.id, r.kind, r.label, r.by, r.outcome, r.at))
+        assertTrue(r.settled)
+        assertEquals("Answered on the computer while you were away: Allow", Chat.receiptText(r))
+        assertEquals("Answered on the computer: Allow", Chat.doneLine(r))
+        assertEquals("Omni · Approval · 14:02", Chat.receiptHeading(r, "Omni", "14:02"))
+        assertEquals("Approval · 14:02", Chat.receiptHeading(r, "", "14:02"))
+        assertNull("the settled entry never reopens the card", back.approval)
+        assertTrue(back.connected); assertTrue(back.synced); assertTrue(back.cards.isEmpty())
+        // The other outcomes read as bots-dsh recorded them, never more.
+        assertEquals("Answered on the phone (Pixel 8) while you were away: Deny", Chat.receiptText(r.copy(by = "phone", name = "Pixel 8", outcome = "deny")))
+        assertEquals("No longer needed", Chat.receiptText(r.copy(by = "", outcome = "withdrawn")))
+        assertEquals("Answered while you were away: Option B", Chat.receiptText(r.copy(by = "", outcome = "Option B")))
+    }
+
+    /** Row 2: a second reconnect (and a `slow` resubscribe into the same state) does not duplicate the receipt. */
+    @Test fun aSecondReconnectDoesNotDuplicateTheReceipt() {
+        val once = Chat.reduce(away(), snapshot(settled = "[${settled()}]"))
+        val again = Chat.reduce(once, snapshot(settled = "[${settled()}]"))
+        assertEquals(listOf(CARD), again.receipts.map { it.id })
+        val dropped = Chat.reduce(again, j("""{"type":"gone","reason":"closed"}"""))
+        val third = Chat.reduce(Chat.carry(dropped, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[${settled()}]"))
+        assertEquals(listOf(CARD), third.receipts.map { it.id })
+        assertEquals(1, third.receipts.size)
+    }
+
+    /** Row 3: a settled entry is only ever a receipt; the card the snapshot shows open stays open and is not receipted. */
+    @Test fun aSettledEntryNeverReopensALiveCard() {
+        // Settled while away, but nothing of it in the snapshot's approval: no card.
+        val closed = Chat.reduce(away(), snapshot(approval = "null", settled = "[${settled()}]"))
+        assertNull(closed.approval); assertNull(closed.question)
+        assertTrue(ChatActions.choices(closed, closed.approval).isEmpty())
+        // Still open on the computer (and, contradictorily, in settled[]): the live card wins and gets no receipt.
+        val open = Chat.reduce(away(), snapshot(approval = dshApproval(), settled = "[${settled()}]"))
+        assertEquals(CARD, open.approval?.id)
+        assertTrue(open.receipts.isEmpty())
+        assertEquals(listOf(CARD), open.cards.map { it.id })
+        // A settled entry for a question never becomes a question card either.
+        val q = Chat.reduce(away(), snapshot(settled = "[${settled("dsh:session-1:9#question-q1", outcome = "Postgres")}]"))
+        assertNull(q.question); assertNull(q.approval)
+        assertEquals("question" to "Postgres", q.receipts.single().let { it.kind to it.outcome })
+    }
+
+    /** Row 4: a reconnect with nothing settled shows nothing; so does the first snapshot of a chat, whatever settled[] holds. */
+    @Test fun anEmptySettledListShowsNothing() {
+        val fresh = Chat.reduce(Chat.State("dsh:session-1", dshWrite = true), snapshot(settled = "[]"))
+        assertTrue(fresh.receipts.isEmpty())
+        val quiet = Chat.reduce(Chat.carry(Chat.reduce(fresh, j("""{"type":"gone","reason":"closed"}""")), Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[]"))
+        assertTrue(quiet.receipts.isEmpty())
+        val absent = Chat.reduce(Chat.carry(fresh, Chat.State("dsh:session-1", dshWrite = true)), j("""{"type":"snapshot","rows":[],"screen":[],"status":{"state":"idle"},"approval":null,"held":[]}"""))
+        assertTrue("an older bots-dsh without settled[]", absent.receipts.isEmpty())
+        // The first snapshot of a chat: settled[] is history the phone was never shown, not news.
+        val history = (0 until 16).joinToString(",") { settled("dsh:session-1:$it#approval-h$it") }
+        val first = Chat.reduce(Chat.State("dsh:session-1", dshWrite = true), snapshot(settled = "[$history]"))
+        assertTrue(first.receipts.isEmpty())
+        assertEquals(16, first.done.size)
+        // ...and a reconnect after it receipts only what settled since, bounded.
+        val later = Chat.reduce(Chat.carry(first, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[$history,${settled("dsh:session-1:20#approval-new")}]"))
+        assertEquals(listOf("dsh:session-1:20#approval-new"), later.receipts.map { it.id })
+        assertEquals("", later.receipts.single().label)
+        assertEquals("approval", later.receipts.single().kind)
+        // A terminal's chat has no settled[] and no receipts.
+        assertTrue(Chat.reduce(Chat.carry(state("t1"), Chat.State("t1")), snapshot(settled = "[${settled()}]")).receipts.isEmpty())
+    }
+
+    /** Row 5: dismissing removes the receipt, and it does not come back on the next reconnect. */
+    @Test fun aDismissedReceiptDoesNotComeBack() {
+        val once = Chat.reduce(away(), snapshot(settled = "[${settled()}]"))
+        val dismissed = Chat.dismissReceipt(once, CARD)
+        assertTrue(dismissed.receipts.isEmpty())
+        val dropped = Chat.reduce(dismissed, j("""{"type":"gone","reason":"unavailable"}"""))
+        val back = Chat.reduce(Chat.carry(dropped, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[${settled()}]"))
+        assertTrue(back.receipts.isEmpty())
+        assertEquals(dismissed, Chat.dismissReceipt(dismissed, "nothing"))
+    }
+
+    /** A card that is neither open nor settled on reconnect (older than the 16 kept, or bots-dsh restarted) closes with no outcome. */
+    @Test fun aCardThatVanishedWithNoSettledEntryClosesAsClosedWhileAway() {
+        val back = Chat.reduce(away(), snapshot(settled = "[]"), now = 42)
+        val r = back.receipts.single()
+        assertEquals(listOf(CARD, "approval", "Bash: npm test", "", 42L), listOf(r.id, r.kind, r.label, r.outcome, r.at))
+        assertFalse(r.settled)
+        assertEquals(Chat.CLOSED_AWAY, Chat.receiptText(r))
+        assertNull("no outcome is claimed on Home either", Chat.doneLine(r))
+        assertNull(back.approval)
+        // Once, however many reconnects.
+        assertEquals(1, Chat.reduce(back, snapshot(settled = "[]")).receipts.size)
+        // The same without any settled field at all (an older bots-dsh).
+        assertEquals(Chat.CLOSED_AWAY, Chat.receiptText(Chat.reduce(away(), j("""{"type":"snapshot","rows":[],"screen":[],"status":{"state":"idle"},"approval":null,"held":[]}""")).receipts.single()))
+    }
+
+    /** A card the phone saw close in view is done: its settled entry on the next reconnect is not news. */
+    @Test fun aCardClosedInViewIsNotReceiptedOnReconnect() {
+        val withCard = Chat.reduce(blocked(dshLive()), j("""{"type":"approval","row":${dshApproval()}}"""))
+        assertEquals(listOf(CARD), withCard.cards.map { it.id })
+        val closed = Chat.reduce(withCard, j("""{"type":"approval","row":${dshApproval(open = false)}}"""))
+        assertNull(closed.approval); assertTrue(closed.cards.isEmpty()); assertEquals(listOf(CARD), closed.done)
+        val dropped = Chat.reduce(closed, j("""{"type":"gone","reason":"unavailable"}"""))
+        val back = Chat.reduce(Chat.carry(dropped, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[${settled()}]"))
+        assertTrue(back.receipts.isEmpty())
+        // A question card the same way, by its own label.
+        val q = """{"id":"dsh:session-1:9#question-q1","kind":"question","prompt":"Which database?","options":["Postgres","SQLite"],"open":true,"answerable":true}"""
+        val asked = Chat.reduce(dshLive(), j("""{"type":"question","row":$q}"""))
+        assertEquals(listOf("question" to "Which database?"), asked.cards.map { it.kind to it.label })
+        val gone = Chat.reduce(asked, j("""{"type":"gone","reason":"closed"}"""))
+        val r = Chat.reduce(Chat.carry(gone, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[${settled("dsh:session-1:9#question-q1", outcome = "Postgres")}]")).receipts.single()
+        assertEquals("Which database?", r.label)
+        assertEquals("Answered on the computer while you were away: Postgres", Chat.receiptText(r))
+        assertEquals("Question", Chat.receiptHeading(r, "", ""))
+    }
+
+    /** Receipts are a bounded history: the newest 16 stay. */
+    @Test fun receiptsAreBounded() {
+        var s = Chat.reduce(Chat.State("dsh:session-1", dshWrite = true), snapshot())
+        for (i in 0 until 20) {
+            val dropped = Chat.reduce(Chat.reduce(s, j("""{"type":"approval","row":${dshApproval("dsh:session-1:$i#approval-c$i")}}""")), j("""{"type":"gone","reason":"closed"}"""))
+            s = Chat.reduce(Chat.carry(dropped, Chat.State("dsh:session-1", dshWrite = true)), snapshot(settled = "[${settled("dsh:session-1:$i#approval-c$i")}]"))
+        }
+        assertEquals(Chat.MAX_RECEIPTS, s.receipts.size)
+        assertEquals("dsh:session-1:19#approval-c19", s.receipts.last().id)
+        assertEquals("dsh:session-1:4#approval-c4", s.receipts.first().id)
+    }
 }
