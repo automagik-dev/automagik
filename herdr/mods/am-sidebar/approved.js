@@ -132,14 +132,46 @@ export function readApprovedRecord({ project, env = process.env, path = undefine
       throw new Error(`cannot read the approved record ${file}: permission denied`);
     throw e;
   }
-  const record = checkedRecord(text, main);
+  return { ...parseApprovedRecord(text, main), path: file, text };
+}
+
+/** Check record bytes read on the project's own computer (including linked reads). */
+export function parseApprovedRecord(text, project) {
+  const record = checkedRecord(text, project);
   let roster;
   try {
     roster = parseBots(record.roster).file;
   } catch (e) {
-    throw new Error(`the approved roster for ${main} is not valid: ${e?.message ?? e}`);
+    throw new Error(`the approved roster for ${project} is not valid: ${e?.message ?? e}`);
   }
-  return { record, file: roster, path: file, text };
+  return { record, file: roster };
+}
+
+/** Both switch values; a missing record or bot is distinct from an approved off value. */
+export function proxyStateFor(bot, file = null, error = null) {
+  const approved = file?.bots.find((entry) => entry.id === bot.id);
+  return { working: bot.hcProxy === true, approved: approved ? approved.hcProxy === true : null,
+    error: error ? String(error?.message ?? error).replace(/\s+/g, " ").trim() : null };
+}
+
+/** Fresh read for each start, restart, worker start, or diagnostic. Never cached. */
+export function approvedProxyState({ project, bot, env = process.env }) {
+  try {
+    return proxyStateFor(bot, readApprovedRecord({ project, env }).file);
+  } catch (e) {
+    return proxyStateFor(bot, null, e?.code === "ENOENT" ? null : e);
+  }
+}
+
+/** Fail closed on unreadable approval or an unapproved opt-in. Non-Linux ignores the switch. */
+export function approvedProxyEnabled(state, platform = process.platform) {
+  if (platform !== "linux") return false;
+  if (state.error) throw new Error(`hc proxy: ${state.error}; run automagik-herdr proxy approve first`);
+  if (state.working && state.approved !== true) {
+    throw new Error("hc proxy: working switch is on but approval is off or missing; "
+      + "run automagik-herdr proxy approve first");
+  }
+  return state.approved === true;
 }
 
 /** Write one record atomically with mode 0600; returns the path. */
@@ -192,6 +224,10 @@ export function rosterDiff(previousText, rosterText) {
       lines.push(`~ ${name}: lead ${was.lead ?? "none"} -> ${bot.lead ?? "none"}`);
     }
     if (was.kind !== bot.kind) lines.push(`~ ${name}: kind ${was.kind} -> ${bot.kind}`);
+    if ((was.hcProxy === true) !== (bot.hcProxy === true)) {
+      lines.push(`~ ${name}: hcProxy ${was.hcProxy === true ? "on" : "off"} -> `
+        + `${bot.hcProxy === true ? "on" : "off"}`);
+    }
   }
   return lines;
 }

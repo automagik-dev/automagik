@@ -13,6 +13,8 @@ import { doctorBotProxies, installSandboxRow, sandboxRootOf, stableRunnerText } 
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { runPane } from "../mods/am-sidebar/hcPane.mjs";
 import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { attachLine, attachPath, attachRow } from "../mods/am-sidebar/attach.js";
+import { cmdDshTui } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -145,6 +147,18 @@ test("doctor reports each saved switch and probes only its bound proxy, without 
   const rollingBack = (await status())[0];
   assert.equal(rollingBack.hcProxy, false);
   assert.equal(rollingBack.up, true, "saved off does not pretend the old proxy has stopped");
+  assert.equal(rollingBack.warning, true, "L2: incomplete rollback is a visible warning");
+  assert.match(rollingBack.detail, /rollback not finished/);
+  writeFileSync(attachPath(s.app), attachLine(attachRow({ event: "attach", bot: bot.id,
+    project: s.project, terminal: "t300", core: "fixture", created_ms: 1, by: "test" })),
+  { mode: 0o600 });
+  const io = { env: s.env, project: { key: s.project, file: { bots: [bot] } },
+    forbiddenRoots: [["the project", s.project], ["the app home", s.app],
+      ["the temp folder", s.env.TMPDIR], ["the runtime folder", s.runtime]] };
+  const report = await cmdDshTui({ json: true }, ["doctor"], io);
+  assert.equal(report.checks.find((row) => row.check === `hc-proxy:${bot.id}`).warning, true);
+  const text = await cmdDshTui({}, ["doctor"], io);
+  assert.match(text, /WARN hc-proxy:.*rollback not finished/);
   await proxy.close();
   const before = s.fake.log.length;
   assert.equal((await status())[0].up, false);

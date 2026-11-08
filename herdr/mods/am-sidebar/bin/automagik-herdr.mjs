@@ -30,8 +30,10 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, HC_NAME_MAX, hcProxyEnabled, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
-  GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
+import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
+  GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
+  ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
+  sessionRow, stableGuardDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
@@ -47,7 +49,8 @@ import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui } from "../dshTui.mjs";
-import { approveProject, projectKey, recordFileOf } from "../approved.js";
+import { approveProject, approvedProxyEnabled, approvedProxyState, parseApprovedRecord,
+  projectKey, proxyStateFor, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -1081,7 +1084,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
-         [--hc-proxy on|off]            per-bot Linux proxy; default off, restart to apply
+         [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
+                                       (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
@@ -1207,9 +1211,11 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 dsh-TUI's state and the profile stay)
   dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
                                 whether the profile is the pinned one, plus each bot's hcProxy
-                                setting and whether its attached proxy answers (read-only)
+                                working and approved settings and whether its attached proxy
+                                answers (read-only); off with proxy up warns: rollback unfinished
   proxy approve --project <dir> approve a project's working .herdr/bots.json as the proxy's
-                                roster: print the diff against the previous approval, then
+                                roster and hcProxy switch: print the diff against the previous
+                                approval, then
                                 write the record 0600 outside the project. The proxy reads
                                 only this record: a working-tree edit warns until approved,
                                 and a missing record refuses a proxied pane. Approving is the
@@ -1542,11 +1548,67 @@ function lsLines(projects) {
 const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((k) => typeof w[k] === "string" && w[k])
   .map((k) => `${k} ${w[k]}`).join(" · ") : "");
 
+const proxyStateText = (state) => `working ${state.working ? "on" : "off"}; approved `
+  + `${state.approved === null ? "missing" : state.approved ? "on" : "off"}`
+  + `${state.error ? `; ${state.error}` : ""}`;
+
+function proxyEnabled(state, platform = process.platform) {
+  try { return approvedProxyEnabled(state, platform); }
+  catch (e) { throw new CliError(e.message); }
+}
+
+// Read approval on the target, never from this computer's data root. Only Linux launches
+// use the switch, so a linked non-Linux launch needs no approval probe.
+async function proxyStateOn(project, bot) {
+  const { key, machine } = project;
+  try {
+    const location = await remoteIo.exec("sh", ["-c",
+      'CDPATH= cd -- "$1" || exit 1; pwd -P; '
+      + 'printf "%s\\n" "${XDG_DATA_HOME:-$HOME/.local/share}/automagik-herdr/approved"',
+      "sh", key], machine, { timeout: AGENT_WAIT_S });
+    if (location.code !== 0) throw new Error("cannot locate the target's approved roster");
+    const [canonical, root, extra] = location.stdout.trimEnd().split("\n");
+    if (!canonical?.startsWith("/") || !root?.startsWith("/") || extra !== undefined) {
+      throw new Error("the target's approval location is invalid");
+    }
+    const hash = createHash("sha256").update(canonical).digest("hex").slice(0, 32);
+    const path = `${root}/${hash}.json`;
+    const mode = await remoteIo.exec("sh", ["-c",
+      'if [ ! -e "$1" ] && [ ! -L "$1" ]; then exit 3; fi; '
+      + '[ -f "$1" ] && [ ! -L "$1" ] || exit 1; stat -c %a -- "$1" 2>/dev/null || stat -f %Lp "$1"',
+      "sh", path], machine, { timeout: AGENT_WAIT_S });
+    if (mode.code === 3) return proxyStateFor(bot);
+    if (mode.code !== 0 || !/^[0-7]{3,4}\s*$/.test(mode.stdout)
+      || (parseInt(mode.stdout, 8) & 0o077) !== 0) {
+      throw new Error("the target's approved record is unreadable or not private");
+    }
+    const text = await readRemoteText(remoteIo, machine, path);
+    if (text === null) throw new Error("the target's approved record disappeared");
+    return proxyStateFor(bot, parseApprovedRecord(text, canonical).file);
+  } catch (e) {
+    return proxyStateFor(bot, null, e);
+  }
+}
+
+async function checkLinkedProxy(project, bot, agent) {
+  if (agent !== "dsh-tui") return;
+  const target = await remoteIo.exec("uname", ["-s"], project.machine,
+    { timeout: AGENT_WAIT_S });
+  if (target.code !== 0) throw new CliError("hc proxy: cannot check the target platform");
+  if (!/^Linux(?:\s|$)/.test(target.stdout)) return;
+  if (proxyEnabled(await proxyStateOn(project, bot), "linux")) {
+    throw new CliError("hc proxy: start this opted-in bot on its own computer; "
+      + "linked Linux launches cannot verify the proxy execution path.");
+  }
+}
+
 async function cmdShow(opts, [ref]) {
   const project = await projectFor(opts);
   const bot = await botIn(project, ref, opts);
   const { view, hcError } = await viewOrError();
   const info = { ...describe(project, bot, view, hcError), instructions: bot.instructions };
+  info.hcProxyState = project.machine ? await proxyStateOn(project, bot)
+    : approvedProxyState({ project: project.key, bot });
   if (opts.json) return info;
   return [
     `${info.name} (${info.id})`, `  project      ${info.project}${info.machine ? ` on ${info.machine}` : ""}`, `  kind         ${info.kind}`,
@@ -1557,7 +1619,7 @@ async function cmdShow(opts, [ref]) {
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
     `  rank         ${info.rank ?? "-"}`,
-    `  hc proxy     ${info.hcProxy ? "on (Linux; restart to apply)" : "off"}`,
+    `  hc proxy     ${proxyStateText(info.hcProxyState)}`,
     `  worker       ${workerText(info.worker) || "-"}`,
     ...(info.worker?.swap ? [`  swap         ${workerText(info.worker.swap)} (planned swaps: about 1 task in 3)`] : []),
     ...(info.warning ? [`  warning      ${info.warning}`] : []),
@@ -2193,12 +2255,7 @@ async function windowPlaceOn(machine, key) {
  */
 async function seatOnMachine(project, bot, over = {}) {
   const { file, key, machine } = project;
-  // A linked launch has no verified stable proxy execution path yet. Never silently start
-  // an opted-in dsh-tui pane with the ordinary remote argv.
-  if (bot.hcProxy === true && (over.agent ?? bot.agent) === "dsh-tui") {
-    throw new CliError("hc proxy: start this opted-in bot on its own computer; "
-      + "linked launches cannot verify the proxy execution path.");
-  }
+  await checkLinkedProxy(project, bot, over.agent ?? bot.agent);
   const m = await connectedMachine(machine, "nothing was started");
   const agentKey = over.agent ?? bot.agent;
   const agent = agentTable()[agentKey];
@@ -2330,12 +2387,7 @@ async function startOnMachine(opts, project, bot) {
 async function restartOnMachine(opts, project, bot, entry) {
   if (opts.space) throw new CliError("--space and --tab are this computer's window places; a restart on a linked machine keeps the old pane's.", 2);
   const { file, key, machine } = project;
-  // A linked launch has no verified stable proxy execution path yet. Never silently start
-  // an opted-in dsh-tui pane with the ordinary remote argv.
-  if (bot.hcProxy === true && (opts.agent ?? bot.agent) === "dsh-tui") {
-    throw new CliError("hc proxy: start this opted-in bot on its own computer; "
-      + "linked launches cannot verify the proxy execution path.");
-  }
+  await checkLinkedProxy(project, bot, opts.agent ?? bot.agent);
   const m = await connectedMachine(machine, "nothing was restarted");
   const view = await attachView();
   const held = liveFor(view, bot.id, project);
@@ -2538,9 +2590,8 @@ async function launchSeat(project, bot, over = {}) {
   }
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
-  // One saved switch for this bot, re-read for every start/restart. The pane's CLI reads
-  // the same bot entry for its workers; a process-wide environment cannot opt in others.
-  const proxyOn = hcProxyEnabled(bot) && agentKey === "dsh-tui";
+  const proxyOn = agentKey === "dsh-tui" && proxyEnabled(
+    approvedProxyState({ project: key, bot }));
   const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}),
     ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
@@ -2944,13 +2995,24 @@ const shellWord = (w) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(w) ? w : `'${String(w)
  */
 function byHand(p, parent) {
   const loginWarnings = [];
-  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path,
+  const args = helperArgs({ name: p.name, cwd: p.cwd, labels: p.labels, parent, ...helperCommand(p),
     login: claudeLogin(p.argv, loginWarnings) });
   const notes = [p.session ? `# resumes session ${p.session}` : "# no session id known: it resumes its folder's latest conversation"];
   // A record that can't be followed: the line carries the default login's words, and says so.
   for (const w of loginWarnings) notes.push(`# ${w}`);
   if (p.worker) notes.push(`# a worker: its workers-ledger row (task ${p.worker.task ?? "none"}) isn't copied, so history won't link the new terminal`);
   return { line: ["hc", ...args].map(shellWord).join(" "), notes };
+}
+
+/** A --tree helper is another start: resolve its own bot's approved switch afresh too. */
+function helperCommand(p) {
+  const path = launchPath(p.argv[0], p.cwd).path;
+  if (!p.proxyIdentity) return { argv: p.argv, path };
+  const { botId, project } = p.proxyIdentity;
+  const bot = loadProject(project).file.bots.find((entry) => entry.id === botId) ?? { id: botId };
+  if (!proxyEnabled(approvedProxyState({ project, bot }))) return { argv: p.argv, path };
+  return { argv: paneArgs(p.argv, p.proxyIdentity),
+    path: guardPathWith(path, stableGuardDir(stableRootOf())) };
 }
 
 /**
@@ -2971,7 +3033,9 @@ async function rerunHelpers(plans, parent, say) {
   for (const [i, p] of plans.entries()) {
     const who = `${p.replaced}${p.name && p.name !== p.replaced ? ` (${p.name})` : ""}`;
     const failed = (why) => {
-      const hand = byHand(p, parent);
+      let hand;
+      try { hand = byHand(p, parent); }
+      catch { hand = { line: "# repair approval before restarting this helper", notes: [] }; }
       out[i].error = why;
       out[i].by_hand = hand.line;
       say(`${who} wasn't run again: ${why}. Its conversation is kept; to run it again by hand:\n  ${hand.line}\n  ${hand.notes.join("\n  ")}`);
@@ -2989,7 +3053,10 @@ async function rerunHelpers(plans, parent, say) {
     const loginWarnings = [];
     const login = claudeLogin(p.argv, loginWarnings);
     for (const w of loginWarnings) say(`${who}: ${w}`);
-    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, argv: p.argv, path: launchPath(p.argv[0], p.cwd).path, login }));
+    let command;
+    try { command = helperCommand(p); }
+    catch (e) { failed(e.message); continue; }
+    const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, ...command, login }));
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (r.code !== 0 || !address) { failed(`hc run failed (${(r.stderr || r.stdout).trim()})`); continue; }
@@ -3054,7 +3121,7 @@ async function rerunHelpers(plans, parent, say) {
  * or, with `freshShared`, those helpers start a new conversation; the bot itself never does
  * (restart it with --fresh). Resolves { tree: [plan + { worker, binding }], treeWarnings }.
  */
-async function treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force, freshShared, run }) {
+async function treePlans({ project, bot, old, helpers, view, ledger, agents, knownSession, force, freshShared, run }) {
   const doomed = doomedHelpers(helpers);
   const me = process.env.HC_TERMINAL_ID;
   const mine = me && doomed.find((h) => [h.address, h.name].includes(me));
@@ -3079,7 +3146,12 @@ async function treePlans({ bot, old, helpers, view, ledger, agents, knownSession
     const agentKey = agentKeyOfArgv(h.foreground?.argv, agents) ?? worker?.agent ?? null;
     // A helper that is itself a bot (attached by hand): its binding moves with it.
     const binding = view.byTerminal.get(h.address)?.binding ?? null;
-    return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null, agents, fresh }), worker, binding };
+    const proxyIdentity = agentKey === "dsh-tui" && process.platform === "linux" ? {
+      botId: binding?.bot ?? worker?.botId ?? h.labels?.[WORKER_OF_LABEL] ?? bot.id,
+      project: binding?.project ?? worker?.project ?? project.key, worker: !binding,
+    } : null;
+    return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
+      agents, fresh }), worker, binding, proxyIdentity };
   };
   let tree = doomed.map((h) => planOf(h));
   const broken = tree.filter((p) => p.error).map((p) => p.error);
@@ -3087,6 +3159,7 @@ async function treePlans({ bot, old, helpers, view, ledger, agents, knownSession
   if (broken.length || gone.length) {
     throw new CliError(`${[...broken, ...gone].join("; ")}. Nothing was started. Restart without --tree (--force ends ${old.address}'s helpers with it).`);
   }
+  for (const plan of tree) if (plan.proxyIdentity) helperCommand(plan);
   const whoOf = (p) => p.name ?? p.replaced;
   const runs = () => [run, ...tree.map((p) => ({ who: whoOf(p), agent: p.agent, cwd: p.cwd, session: p.session, mode: p.mode }))];
   // Two of them naming one session would run it in two panes at once.
@@ -3221,7 +3294,7 @@ async function cmdRestart(opts, [ref]) {
     sharedNote = note;
   }
   const { tree, treeWarnings } = old && opts.tree
-    ? await treePlans({ bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
+    ? await treePlans({ project, bot, old, helpers, view, ledger, agents, knownSession, force: opts.force, freshShared: opts["fresh-shared"],
       run: { who: bot.name, agent: plan.agent, cwd, session: resumeId, mode: plan.mode } })
     : { tree: [], treeWarnings: [] };
   // --tree: the old pane and its helpers idle first (no turn ends once two panes could hold the bot's session).
@@ -4579,7 +4652,9 @@ async function cmdWorker(opts, rest) {
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
-      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: hcProxyEnabled(bot) && plan.agent === "dsh-tui" });
+      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
+      sandbox: plan.agent === "dsh-tui" && proxyEnabled(
+        approvedProxyState({ project: project.key, bot })) });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -4842,20 +4917,31 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   const env = io.env ?? process.env;
   if (verb === "doctor") {
     const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
-    const project = io.project ?? await projectFor(opts);
-    const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
-    const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
-    r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
-      bindings, env });
+    r.bots = [];
+    try {
+      const project = io.project ?? await projectFor(opts);
+      const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
+      const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
+      r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
+        bindings, env });
+    } catch (e) {
+      r.checks.push({ check: "roster", ok: false,
+        detail: String(e?.message ?? e).replace(/\s+/g, " "), fix: "repair the project roster" });
+      r.code = 1;
+    }
     for (const bot of r.bots) {
-      const ok = !bot.hcProxy || !bot.applicable || !bot.terminal || bot.up;
-      r.checks.push({ check: `hc-proxy:${bot.id}`, ok,
-        detail: `${bot.name}: hcProxy ${bot.hcProxy ? "on" : "off"}; ${bot.detail}`,
-        fix: ok ? null : `automagik-herdr restart ${bot.id}` });
+      const state = bot.hcProxyState;
+      const needsApproval = Boolean(state.error) || (state.working && state.approved !== true);
+      const ok = !bot.applicable || (!needsApproval
+        && (state.approved !== true || !bot.terminal || bot.up));
+      r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
+        detail: `${bot.name}: hcProxy ${proxyStateText(state)}; ${bot.detail}`,
+        fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
+          : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;
     }
     exitAfter.code = r.code;
-    return opts.json ? r : r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
+    return opts.json ? r : r.checks.map((c) => `${!c.ok ? "FAIL" : c.warning ? "WARN" : "ok  "} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
   }
   // A test's own publish time: the registry is never reached for a file:// run or a unit test.
   const published = Object.hasOwn(env, "AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED")

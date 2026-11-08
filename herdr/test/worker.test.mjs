@@ -14,6 +14,8 @@ import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-side
 import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
+import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
+import { fixturePaneEdit } from "./fixture-pane-edit.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -73,7 +75,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
   writeFileSync(appState, JSON.stringify({ down: true }));
   writeFileSync(appLog, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+  const env = { ...process.env, XDG_DATA_HOME: join(root, "data"), PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   delete env.HC_TERMINAL_ID;
   const cli = (args, { from = "t1", cwd = project, env: extra = {} } = {}) => {
@@ -102,7 +104,8 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     Object.assign(st.terminals.find((x) => x.address === address), { state: "finished", finished_ms: Date.now() - ago });
     writeFileSync(statePath, JSON.stringify(st));
   };
-  return { root, project, app, path: env.PATH, cli, cliAsync, spawnCli, calls, runs, hcState, ledger, bots, finish, setWindow, windowNow, appDos };
+  const approve = () => approveProject({ project, env, approvedBy: "tester" });
+  return { root, project, app, approve, env, path: env.PATH, cli, cliAsync, spawnCli, calls, runs, hcState, ledger, bots, finish, setWindow, windowNow, appDos };
 }
 /** hc's templates in the scenes: one Codex seat with its own provider, one hc can't place. */
 const TEMPLATES = [
@@ -161,12 +164,52 @@ test("M4: switch off keeps the complete worker argv byte for byte against C1", (
     .split(GUARD_DIR).join("<guard>")), baseline);
 });
 
-test("a dsh-tui worker reads its bot's switch; other agents keep the ordinary launch",
+test("M7: fixture pane edits cannot disable the approved switch at the next worker start",
+  { skip: process.platform !== "linux" }, (t) => {
+  for (const remove of [false, true]) {
+    const file = team();
+    Object.assign(file.bots[2], { agent: "dsh-tui", worker: { agent: "dsh-tui" }, hcProxy: true });
+    const s = scene(t, { file });
+    s.approve();
+    exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+    fixturePaneEdit(s, remove, 2);
+    const result = s.cli(["worker", "do the task", "--branch", "feat/approved", "--json"]);
+    assert.equal(result.code, 0, result.err);
+    assert.ok(s.runs().at(-1).some((word) => word.endsWith("/hcPane.mjs")));
+  }
+});
+
+test("worker refuses unapproved working on and corrupt approval without a plain fallback",
+  { skip: process.platform !== "linux" }, (t) => {
+  for (const approval of ["missing", "off", "bot missing", "corrupt"]) {
+    const file = team();
+    Object.assign(file.bots[2], { agent: "dsh-tui", worker: { agent: "dsh-tui" } });
+    const s = scene(t, { file });
+    exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+    if (approval !== "missing") {
+      if (approval === "bot missing") {
+        const path = join(s.project, ".herdr/bots.json");
+        writeFileSync(path, JSON.stringify({ ...file, bots: file.bots.slice(0, 2) }));
+        s.approve();
+        writeFileSync(path, JSON.stringify(file));
+      } else s.approve();
+      if (approval === "corrupt") writeFileSync(recordFileOf(s.project, s.env), "{broken");
+    }
+    assert.equal(s.cli(["edit", "Dev", "--hc-proxy", "on"]).code, 0);
+    const result = s.cli(["worker", "do the task", "--branch", "feat/refused", "--json"]);
+    assert.notEqual(result.code, 0, result.err);
+    assert.match(result.err, /run automagik-herdr proxy approve first/);
+    assert.equal(s.runs().length, 0);
+  }
+});
+
+test("a dsh-tui worker reads its bot's approved switch; other agents keep the ordinary launch",
   { skip: process.platform !== "linux" }, (t) => {
   const file = team();
   Object.assign(file.bots[2], { agent: "dsh-tui", worker: { agent: "dsh-tui" }, hcProxy: true });
   const s = scene(t, { file });
   exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  s.approve();
   const wrapped = s.cli(["worker", "do the task", "--branch", "feat/proxy", "--json"]);
   assert.equal(wrapped.code, 0, wrapped.err);
   const words = s.runs().at(-1);

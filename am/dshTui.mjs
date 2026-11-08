@@ -39,7 +39,7 @@ import net from "node:net";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
-import { approvedRootOf } from "./approved.js";
+import { approvedProxyState, approvedRootOf } from "./approved.js";
 import { dataRootOf, stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
@@ -911,6 +911,7 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
     const binding = bindings.get(bot.id);
     const applicable = process.platform === "linux" && bot.agent === "dsh-tui";
     const row = { id: bot.id, name: bot.name, hcProxy: bot.hcProxy === true, applicable,
+      hcProxyState: approvedProxyState({ project, bot, env }),
       terminal: binding?.project === project ? binding.terminal : null, up: false };
     if (!row.terminal) return { ...row, detail: "no attached local pane" };
     if (!isAbsolute(env.XDG_RUNTIME_DIR ?? "") || !/^t[0-9a-z]+$/.test(row.terminal)) {
@@ -921,7 +922,9 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
       if (!lstatSync(socket).isSocket()) return { ...row, detail: "proxy path is not a socket" };
       row.up = await proxyAnswers(socket, binding, bot, timeoutMs);
     } catch { /* absent or unreadable: down, never fall back to the real socket */ }
-    return { ...row, detail: row.up ? "proxy is up" : "proxy is down or not responding" };
+    return { ...row, warning: row.up && !row.hcProxy,
+      detail: row.up ? (!row.hcProxy ? "proxy is up; rollback not finished" : "proxy is up")
+        : "proxy is down or not responding" };
   }));
 }
 

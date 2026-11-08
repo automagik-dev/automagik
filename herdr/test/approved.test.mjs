@@ -90,6 +90,7 @@ test("G1 (e): approve prints added, removed, rank, lead and kind changes through
   const next = team();
   next.bots = next.bots.filter((b) => b.id !== ID.dev);
   next.bots.find((b) => b.id === ID.cap).rank = "pm";
+  next.bots.find((b) => b.id === ID.cap).hcProxy = true;
   next.bots.find((b) => b.id === ID.jun).lead = ID.cap;
   next.bots.find((b) => b.id === ID.rev).kind = "main";
   next.bots.push(bot("b-zzzzzzzzzz", "member", { name: "Injected" }));
@@ -100,6 +101,7 @@ test("G1 (e): approve prints added, removed, rank, lead and kind changes through
   assert.match(r.out, /^- b-cccccccccc Dev \(removed\)$/m);
   assert.match(r.out, /^\+ b-zzzzzzzzzz Injected \(added\)$/m);
   assert.match(r.out, /^~ b-bbbbbbbbbb Captain: rank captain -> pm$/m);
+  assert.match(r.out, /^~ b-bbbbbbbbbb Captain: hcProxy off -> on$/m);
   assert.match(r.out, /^~ b-dddddddddd Junior: lead b-cccccccccc -> b-bbbbbbbbbb$/m);
   assert.match(r.out, /^~ b-eeeeeeeeee Reviewer: kind member -> main$/m);
   assert.match(r.out, /record: .* \(0600\)/);
