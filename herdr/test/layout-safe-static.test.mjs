@@ -156,6 +156,8 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/main.js", "fs.unlink(file)", 1, "a pasted image in <app home>/paste-tmp/"],
   ["herdr/mods/am-sidebar/spaceIcon.js", "fs.unlink(scratch)", 1, "a space icon the sidebar wrote under <app home>/space-icons/ (spaceIconModel.js leftover) or its scratch file"],
   ["herdr/mods/am-sidebar/spaceIcon.js", "fs.unlink(`${appHome()}/${drop}`)", 2, "a space icon the sidebar wrote under <app home>/space-icons/ (spaceIconModel.js leftover) or its scratch file"],
+  ["herdr/mods/am-sidebar/hcProxy.mjs", "unlinkSync(path)", 1, "the proxy's own stale per-pane socket under $XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/hcProxy.mjs", "unlinkSync(socketPath)", 2, "the proxy's own per-pane socket when it closes or a start fails after listen: never mods/ or layouts/"],
   ["herdr/mods/am-quota/switch.js", "fs.unlink(p)", 1, "am-quota's Codex payload under its data folder (write.js payloadDir)"],
   ["herdr/mods/am-quota/switch.js", "unlink(scratch)", 1, "am-quota's Codex payload under its data folder (write.js payloadDir)"],
   ["am/lib/self.mjs", "cpSync(dir, staging, { recursive: true, verbatimSymlinks: true })", 1, "am's parts store ($AM_HOME/parts: am's own record, versions and links), never Herdr's app home"],

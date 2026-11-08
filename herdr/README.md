@@ -882,6 +882,18 @@ pack's own CLI still reaches the real `hc` for its trusted calls (system status,
 remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
 guarded pane.
 
+### The per-pane hc proxy (PR A, off by default)
+
+PR A ships the hard-boundary proxy in the pack but wires it nowhere: nothing in `startArgs`,
+`workerArgs`, `install.sh` or the launcher starts it, so the guard above is still what runs. Its
+own README, `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
+It snapshots the attach ledger and the project's `.herdr/bots.json` at start, so **a roster
+change needs a proxy restart**; it pins herdr-core 0.1.14 and refuses to start on any other
+version; its socket lives in `$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (0700
+folder, 0600 socket), outside the worktree and the app home. PR B wires it and masks the real
+core. The network stays open: the proxy filters the hc socket, not the box's TCP listeners, and
+localhost admin ports cannot be hidden without a network namespace.
+
 ## The Create form
 
 **New bot** at the foot of the sidebar opens the form: a live preview of the bot's character,
