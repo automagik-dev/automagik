@@ -129,34 +129,48 @@ function harness() {
   const eventsPath = join(dir, 'events.log');
   for (const path of [callsPath, sleepsPath, eventsPath]) writeFileSync(path, '');
 
+  const run = (
+    replies: Reply[],
+    delays?: string,
+    artifactPath = artifact,
+    extraArgs: string[] = [],
+  ) => {
+    replies.forEach((reply, index) => {
+      writeFileSync(join(plan, String(index + 1)), `${reply.status ?? 0}\n${reply.output ?? ''}`);
+    });
+    const env: Record<string, string> = {
+      PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      LC_ALL: 'C',
+      STAPLE_TEST_CALLS: callsPath,
+      STAPLE_TEST_SLEEPS: sleepsPath,
+      STAPLE_TEST_EVENTS: eventsPath,
+      STAPLE_TEST_STATE: state,
+      STAPLE_TEST_PLAN: plan,
+    };
+    if (delays !== undefined) env.STAPLE_RETRY_DELAYS = delays;
+    const result = spawnSync('bash', [SCRIPT, ...extraArgs, artifactPath], {
+      encoding: 'utf8',
+      env,
+      timeout: 20_000,
+    });
+    return {
+      status: result.status,
+      error: result.error?.message,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+      out: `${result.stdout ?? ''}${result.stderr ?? ''}`,
+      calls: readLines(callsPath),
+      sleeps: readLines(sleepsPath),
+      events: readLines(eventsPath),
+    };
+  };
+
   return {
     dir,
     artifact,
-    run(replies: Reply[], delays?: string, artifactPath = artifact) {
-      replies.forEach((reply, index) => {
-        writeFileSync(join(plan, String(index + 1)), `${reply.status ?? 0}\n${reply.output ?? ''}`);
-      });
-      const env: Record<string, string> = {
-        PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-        LC_ALL: 'C',
-        STAPLE_TEST_CALLS: callsPath,
-        STAPLE_TEST_SLEEPS: sleepsPath,
-        STAPLE_TEST_EVENTS: eventsPath,
-        STAPLE_TEST_STATE: state,
-        STAPLE_TEST_PLAN: plan,
-      };
-      if (delays !== undefined) env.STAPLE_RETRY_DELAYS = delays;
-      const result = spawnSync('bash', [SCRIPT, artifactPath], { encoding: 'utf8', env, timeout: 20_000 });
-      return {
-        status: result.status,
-        error: result.error?.message,
-        stdout: result.stdout ?? '',
-        stderr: result.stderr ?? '',
-        out: `${result.stdout ?? ''}${result.stderr ?? ''}`,
-        calls: readLines(callsPath),
-        sleeps: readLines(sleepsPath),
-        events: readLines(eventsPath),
-      };
+    run,
+    runValidateOnly(replies: Reply[], delays?: string, artifactPath = artifact) {
+      return run(replies, delays, artifactPath, ['--validate-only']);
     },
   };
 }
@@ -188,6 +202,47 @@ describe('the first attempt succeeds', () => {
     expect(run.out).not.toContain('artifact not found');
     expect(run.events).toEqual([staple(app), validate(app)]);
     expect(run.out).toContain('attempt 1/3 succeeded: staple and validate');
+  });
+});
+
+describe('--validate-only runs only the validate through the same transient retry', () => {
+  test('a transient -1005 on the first validate retries after 10 s and passes', () => {
+    const h = harness();
+    const run = h.runValidateOnly([fail(nsurl(-1005)), ok()]);
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.events).toEqual([validate(h.artifact), 'sleep 10', validate(h.artifact)]);
+    expect(run.out).toContain("attempt 1/3 failed at 'stapler validate' (exit 68)");
+    expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
+    expect(run.out).toContain('attempt 2/3 succeeded: validate');
+  });
+
+  test('a real rejection fails on the first attempt, with no retry and no staple', () => {
+    const h = harness();
+    // Fail-before: the pre-fix workflow ran one bare `xcrun stapler validate`; the mode did not
+    // exist, so this row failed on the script's usage check instead of classifying the rejection.
+    const run = h.runValidateOnly([fail(nsurl(-2)), ok()]);
+    expect(run.status).not.toBe(0);
+    expect(run.sleeps).toEqual([]);
+    expect(run.events).toEqual([validate(h.artifact)]);
+    expect(run.out).toContain('Code=-2 is not transient');
+    expect(run.out).toContain('failing on the first response, not retrying');
+  });
+
+  test('three transient failures wait 10, 30, 90 s and fail without a re-staple pass', () => {
+    const h = harness();
+    const transient = () => fail(nsurl(-1005));
+    const run = h.runValidateOnly([transient(), transient(), transient()]);
+    expect(run.status).not.toBe(0);
+    expect(run.sleeps).toEqual(['10', '30', '90']);
+    expect(run.events).toEqual([
+      validate(h.artifact), 'sleep 10',
+      validate(h.artifact), 'sleep 30',
+      validate(h.artifact), 'sleep 90',
+    ]);
+    expect(run.out).toContain('giving up after 3 transient validate attempts');
+    expect(run.out).not.toContain('re-staple pass');
   });
 });
 
@@ -419,15 +474,31 @@ describe('the workflow calls the script through a path that resolves from the jo
     expect(existsSync(resolve(ROOT, workingDirectory, 'scripts/staple-retry.sh'))).toBe(false);
   });
 
+  test('the extracted updater-zip app is validated with --validate-only, not a bare xcrun', () => {
+    const lines = readFileSync(WORKFLOW, 'utf8').split('\n');
+    const line = lines.find((text) => text.includes('--validate-only')) ?? '';
+    expect(line).not.toBe('');
+    expect(line).toContain(
+      '"${GITHUB_WORKSPACE}/scripts/staple-retry.sh" --validate-only "${apps[0]}"',
+    );
+    // Fail-before: v3.104.0 line 217 was this bare one-shot validate, which failed on a real
+    // transient -1005 instead of retrying, so the pre-fix file matches this pattern.
+    expect(lines.some((text) => /^\s*xcrun stapler validate/.test(text))).toBe(false);
+  });
+
   test('notarytool stays outside the retry and spctl/restamp/blockmap follow it', () => {
     const text = readFileSync(WORKFLOW, 'utf8');
     const at = (needle: string) => text.indexOf(needle);
-    const script = at('staple-retry.sh');
-    expect(script).toBeGreaterThan(-1);
-    expect(at('notarytool submit')).toBeGreaterThan(-1);
-    expect(at('notarytool submit')).toBeLessThan(script);
+    const zipValidate = at('staple-retry.sh" --validate-only "${apps[0]}"');
+    const submit = at('notarytool submit "${dmg}"');
+    const dmgRetry = at('staple-retry.sh" "${dmg}"');
+    expect(zipValidate).toBeGreaterThan(-1);
+    expect(submit).toBeGreaterThan(-1);
+    expect(dmgRetry).toBeGreaterThan(-1);
+    expect(zipValidate).toBeLessThan(submit);
+    expect(submit).toBeLessThan(dmgRetry);
     for (const after of ['spctl --assess', 'restamp-feed.mjs', 'rm -f "${dmg}.blockmap"']) {
-      expect(at(after)).toBeGreaterThan(script);
+      expect(at(after)).toBeGreaterThan(dmgRetry);
     }
     // The script itself cannot re-notarize or rebuild: it only runs xcrun stapler.
     const sh = readFileSync(join(ROOT, 'scripts/staple-retry.sh'), 'utf8');
