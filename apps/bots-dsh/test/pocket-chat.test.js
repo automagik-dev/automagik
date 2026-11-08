@@ -1143,3 +1143,58 @@ test('install reads shown[] from the registry path it is given', async (t) => {
   c.socket.destroy()
   await within(ctx.dispose())
 })
+
+// ---- the registry id on the listing (#672): each chat keeps dsh:<sessionId> and adds registryId
+
+test('lists registryId beside the unchanged dsh:<sessionId>: an id or null, always present (#672)', async () => {
+  const rt = team()
+  rt.state.bots['unfold-root'] = { id: 'unfold-root', name: 'Main' }
+  const source = new DshChatSource({
+    adapter: createAdapter(fakeController(sessions())),
+    bots: ownBots(rt),
+    timers,
+    registryIdOf: bot => (bot.name === 'Ada' ? REG : null),
+  })
+  const rows = await source.list()
+  const byTerminal = new Map(rows.map(row => [row.terminal, row]))
+  assert.deepEqual([...byTerminal.keys()], ['dsh:omni', 'dsh:ada', 'dsh:unfold-root'])
+  // The registered Bot carries its registry id; the unregistered and host-pinned Bots carry null.
+  assert.equal(byTerminal.get('dsh:ada').registryId, REG)
+  assert.equal(byTerminal.get('dsh:omni').registryId, null)
+  assert.equal(byTerminal.get('dsh:unfold-root').registryId, null)
+  // The property is present on every row, even when null.
+  for (const row of rows) assert.ok(Object.hasOwn(row, 'registryId'), `${row.terminal} must carry registryId`)
+  // The Session id, the chat kind and the watch path are unchanged.
+  assert.equal(byTerminal.get('dsh:ada').terminal, 'dsh:ada')
+  assert.equal(byTerminal.get('dsh:ada').chat, 'session')
+  assert.equal(byTerminal.get('dsh:omni').terminal, 'dsh:omni')
+  const handle = await source.watch('dsh:ada', () => {})
+  assert.equal(handle.ok, true)
+  handle.close()
+  // A source built without a registry reader (install's default) still lists the key as null.
+  const plain = await sourceOf(fakeController(sessions()), rt).list()
+  for (const row of plain) assert.equal(row.registryId, null)
+})
+
+test('#674 stays: a project Bot without its yes lists shown:false and still carries its registry id (#672)', async (t) => {
+  const dir = tempHome()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = homeFile(dir)
+  const rt = registryTeam()
+  const reader = shownReader({ path })
+  const source = new DshChatSource({
+    adapter: createAdapter(fakeController(sessions())),
+    bots: ownBots(rt, reader),
+    shown: reader.shown,
+    registryIdOf: reader.registryIdOf,
+    chatOwner: sessionId => (sessionId === 'ada' ? REG : OWNERS[sessionId]),
+    timers,
+  })
+  const rows = await source.list()
+  const reg = rows.find(row => row.terminal === `dsh:${REG}`)
+  // #674's gate is intact: no yes means shown:false and no watch, and the row still names its Bot.
+  assert.equal(reg.shown, false)
+  assert.equal(reg.registryId, REG)
+  assert.equal(reg.chat, 'session')
+  assert.deepEqual(await source.watch(`dsh:${REG}`, () => {}), { ok: false, reason: 'not-shown' })
+})
