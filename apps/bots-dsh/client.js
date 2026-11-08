@@ -355,6 +355,13 @@ var ZH = {
   Details: "详情",
   Browser: "浏览器",
   "Browser access": "浏览器权限",
+  "Address lists": "地址列表",
+  "Deny list": "拒绝列表",
+  "Allow list": "允许列表",
+  "One IPv4/IPv6 address, CIDR range or hostname per line.": "每行一个 IPv4/IPv6 地址、CIDR 范围或主机名。",
+  "Empty allows every address not denied above. When set, only these open.": "留空时，除上方拒绝的地址外都允许；填写后只允许这些地址。",
+  "Save address lists": "保存地址列表",
+  ["Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open."]: "默认允许所有地址，包括 localhost、局域网和 tailnet。拒绝项始终优先；允许列表有内容时，只允许匹配的地址。",
   "Bots browse, click and fill in forms freely. Posting, uploading, downloading and deleting ask you first unless you allow them here. Payments are always yours: the Bot hands the page to you.": "Bot 可以自由浏览、点击和填写表单。发布、上传、下载和删除会先征求你的同意，除非你在这里预先允许。付款始终由你自己完成：Bot 会把页面交给你。",
   "Allowed actions": "已允许的操作",
   "Nothing allowed yet.": "还没有允许的操作。",
@@ -10653,6 +10660,8 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-browser-form>.bt-set-row>.bt-set-control{flex:1;min-width:0}
 .bt-browser-form>.bt-set-row+.bt-set-row{border-top:.5px solid var(--bt-line)}
 .bt-browser-site{max-width:320px}
+.bt-browser-list{width:100%;min-height:82px;max-height:180px;resize:vertical;box-sizing:border-box;
+font:12px/17px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto}
 .bt-browser-form-foot{display:flex;justify-content:flex-end;padding:10px 12px;border-top:.5px solid var(--bt-line)}
 @media(max-width:700px){.bt-browser-grant{flex-wrap:wrap}.bt-browser-grant-who{flex:1}.bt-browser-grant-meta{order:3;flex:1 0 100%}}
 .bt-set-paste{flex-direction:column;align-items:stretch;gap:8px}
@@ -19394,6 +19403,7 @@ function ConnectorsPage({ roster, actions }) {
 
 // src/client/browser-settings.js
 var import_react56 = require("react");
+var ADDRESS_NOTE = "Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open. ";
 var ACTIONS = [["post", "Post"], ["upload", "Upload"], ["download", "Download"], ["delete", "Delete"]];
 var DURATIONS = [["hour", "1 hour"], ["today", "Today"], ["week", "7 days"], ["permanent", "Permanent"]];
 var expired = (grant) => Number.isFinite(grant.until) && grant.until <= Date.now();
@@ -19417,7 +19427,18 @@ function BrowserPage({ roster, actions, run: run2, Section: Section2, Row: Row3 
   const [kinds, setKinds] = (0, import_react56.useState)(["post"]);
   const [duration2, setDuration] = (0, import_react56.useState)("hour");
   const [busy, setBusy] = (0, import_react56.useState)(false);
+  const prefs = roster.prefs ?? {};
+  const [allow, setAllow] = (0, import_react56.useState)((prefs.browserAllow ?? []).join("\n"));
+  const [deny, setDeny] = (0, import_react56.useState)((prefs.browserDeny ?? []).join("\n"));
+  const [savingLists, setSavingLists] = (0, import_react56.useState)(false);
   const selectedBot = bots.find((bot) => bot.id === botId);
+  const listed = (value) => value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+  const saveLists = (event) => {
+    event.preventDefault();
+    if (savingLists) return;
+    setSavingLists(true);
+    void run2(actions.setPrefs({ browserAllow: listed(allow), browserDeny: listed(deny) })).finally(() => setSavingLists(false));
+  };
   (0, import_react56.useEffect)(() => {
     if (!bots.some((bot) => bot.id === botId)) setBotId(bots[0]?.id ?? "");
   }, [bots, botId]);
@@ -19458,6 +19479,52 @@ function BrowserPage({ roster, actions, run: run2, Section: Section2, Row: Row3 
       Section2,
       { title: t("Browser access") },
       (0, import_react56.createElement)("p", { className: "bt-browser-note" }, t("Bots browse, click and fill in forms freely. Posting, uploading, downloading and deleting ask you first unless you allow them here. Payments are always yours: the Bot hands the page to you."))
+    ),
+    (0, import_react56.createElement)(
+      Section2,
+      { title: t("Address lists") },
+      (0, import_react56.createElement)("p", { className: "bt-browser-note" }, t(ADDRESS_NOTE)),
+      (0, import_react56.createElement)(
+        "form",
+        { className: "bt-browser-form", onSubmit: saveLists },
+        (0, import_react56.createElement)(
+          Row3,
+          {
+            label: t("Deny list"),
+            hint: t("One IPv4/IPv6 address, CIDR range or hostname per line.")
+          },
+          (0, import_react56.createElement)("textarea", {
+            className: "bt-select bt-browser-list",
+            rows: 4,
+            value: deny,
+            placeholder: "169.254.169.254\n10.0.0.0/8\n*.internal.example",
+            onChange: (event) => setDeny(event.target.value)
+          })
+        ),
+        (0, import_react56.createElement)(
+          Row3,
+          {
+            label: t("Allow list"),
+            hint: t("Empty allows every address not denied above. When set, only these open.")
+          },
+          (0, import_react56.createElement)("textarea", {
+            className: "bt-select bt-browser-list",
+            rows: 4,
+            value: allow,
+            placeholder: "localhost\n100.64.0.0/10\n*.tailnet.ts.net",
+            onChange: (event) => setAllow(event.target.value)
+          })
+        ),
+        (0, import_react56.createElement)(
+          "div",
+          { className: "bt-browser-form-foot" },
+          (0, import_react56.createElement)(
+            "button",
+            { type: "submit", className: "bt-soft", disabled: savingLists },
+            savingLists ? t("Saving…") : t("Save address lists")
+          )
+        )
+      )
     ),
     (0, import_react56.createElement)(
       Section2,

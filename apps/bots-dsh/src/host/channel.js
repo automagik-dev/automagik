@@ -10,6 +10,7 @@ import { install as installSide } from './side.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
+import { normalizeAddressList } from './browser/address-policy.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
@@ -195,6 +196,20 @@ export function install(rt) {
       // may grow more states later.
       if (body.thinking === true) state.prefs.thinking = true
       else if (body.thinking === false || body.thinking === null) delete state.prefs.thinking
+    }
+    // The Bot browser's and web_fetch's address lists. Both default to empty, which
+    // allows every address, including localhost, LAN and tailnet targets.
+    for (const [key, label] of [['browserAllow', 'Allow list'], ['browserDeny', 'Deny list']]) {
+      if (body[key] === undefined) continue
+      if (body[key] === null) {
+        delete state.prefs[key]
+        continue
+      }
+      try {
+        state.prefs[key] = normalizeAddressList(body[key], label)
+      } catch (error) {
+        throw invalid(error.message)
+      }
     }
     // The team default: the permission level a new Bot starts with.
     if (body.permission !== undefined) {

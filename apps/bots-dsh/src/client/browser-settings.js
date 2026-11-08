@@ -2,6 +2,8 @@ import { createElement as h, useEffect, useState } from 'react'
 import { BotAvatar } from './mark.js'
 import { dateLocale, t } from './i18n.js'
 
+const ADDRESS_NOTE = 'Every address opens by default, including localhost, LAN and tailnet. '
+  + 'A deny entry always wins. When the allow list has entries, only matching addresses open. '
 const ACTIONS = [['post', 'Post'], ['upload', 'Upload'], ['download', 'Download'], ['delete', 'Delete']]
 const DURATIONS = [['hour', '1 hour'], ['today', 'Today'], ['week', '7 days'], ['permanent', 'Permanent']]
 const expired = grant => Number.isFinite(grant.until) && grant.until <= Date.now()
@@ -32,7 +34,19 @@ export function BrowserPage({ roster, actions, run, Section, Row }) {
   const [kinds, setKinds] = useState(['post'])
   const [duration, setDuration] = useState('hour')
   const [busy, setBusy] = useState(false)
+  const prefs = roster.prefs ?? {}
+  const [allow, setAllow] = useState((prefs.browserAllow ?? []).join('\n'))
+  const [deny, setDeny] = useState((prefs.browserDeny ?? []).join('\n'))
+  const [savingLists, setSavingLists] = useState(false)
   const selectedBot = bots.find(bot => bot.id === botId)
+  const listed = value => value.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)
+  const saveLists = event => {
+    event.preventDefault()
+    if (savingLists) return
+    setSavingLists(true)
+    void run(actions.setPrefs({ browserAllow: listed(allow), browserDeny: listed(deny) }))
+      .finally(() => setSavingLists(false))
+  }
 
   useEffect(() => {
     if (!bots.some(bot => bot.id === botId)) setBotId(bots[0]?.id ?? '')
@@ -71,6 +85,34 @@ export function BrowserPage({ roster, actions, run, Section, Row }) {
   return h('div', { className: 'bt-browser-settings' },
     h(Section, { title: t('Browser access') },
       h('p', { className: 'bt-browser-note' }, t('Bots browse, click and fill in forms freely. Posting, uploading, downloading and deleting ask you first unless you allow them here. Payments are always yours: the Bot hands the page to you.'))),
+    h(Section, { title: t('Address lists') },
+      h('p', { className: 'bt-browser-note' }, t(ADDRESS_NOTE)),
+      h('form', { className: 'bt-browser-form', onSubmit: saveLists },
+        h(Row, {
+          label: t('Deny list'),
+          hint: t('One IPv4/IPv6 address, CIDR range or hostname per line.'),
+        },
+          h('textarea', {
+            className: 'bt-select bt-browser-list',
+            rows: 4,
+            value: deny,
+            placeholder: '169.254.169.254\n10.0.0.0/8\n*.internal.example',
+            onChange: event => setDeny(event.target.value),
+          })),
+        h(Row, {
+          label: t('Allow list'),
+          hint: t('Empty allows every address not denied above. When set, only these open.'),
+        },
+          h('textarea', {
+            className: 'bt-select bt-browser-list',
+            rows: 4,
+            value: allow,
+            placeholder: 'localhost\n100.64.0.0/10\n*.tailnet.ts.net',
+            onChange: event => setAllow(event.target.value),
+          })),
+        h('div', { className: 'bt-browser-form-foot' },
+          h('button', { type: 'submit', className: 'bt-soft', disabled: savingLists },
+            savingLists ? t('Saving…') : t('Save address lists'))))),
     h(Section, { title: t('Allowed actions') },
       grants.length === 0
         ? h(Row, { label: t('Nothing allowed yet.') })

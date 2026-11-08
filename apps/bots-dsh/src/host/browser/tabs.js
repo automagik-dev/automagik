@@ -36,16 +36,25 @@ export function readSavedTabs(dir) {
 
 /**
  * A browser that opens with no web page gets the saved tabs back, `page` (its first tab) taking
- * the first one; the rest open after it. Returns the tab that was active.
+ * the first one; the rest open after it. `allowed` filters a saved address (the profile's
+ * address policy); a refused tab is dropped, never reopened. Returns the tab that was active.
  */
-export async function restoreTabs(context, dir, page) {
+export async function restoreTabs(context, dir, page, allowed) {
   const saved = readSavedTabs(dir)
   if (saved.tabs.length === 0 || context.pages().some(target => isWeb(target.url()))) return page
+  const tabs = []
+  for (const tab of saved.tabs) {
+    if (allowed === undefined || await allowed(tab.url)) tabs.push(tab)
+  }
+  if (tabs.length === 0) return page
+  const active = Math.max(0, Math.min(saved.active, tabs.length - 1))
   const pages = [page]
-  for (let index = 1; index < saved.tabs.length; index += 1) pages.push(await context.newPage())
-  saved.tabs.forEach((tab, index) => restoring.set(pages[index], tab))
-  await Promise.all(saved.tabs.map((tab, index) => pages[index].goto(tab.url, { waitUntil: 'commit', timeout: RESTORE_TIMEOUT_MS }).catch(() => {})))
-  return pages[saved.active] ?? page
+  for (let index = 1; index < tabs.length; index += 1) pages.push(await context.newPage())
+  tabs.forEach((tab, index) => restoring.set(pages[index], tab))
+  const opening = tabs.map((tab, index) => pages[index]
+    .goto(tab.url, { waitUntil: 'commit', timeout: RESTORE_TIMEOUT_MS }).catch(() => {}))
+  await Promise.all(opening)
+  return pages[active] ?? page
 }
 
 /**
