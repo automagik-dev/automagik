@@ -1,12 +1,18 @@
-// The read-only local socket Pocket Link reads the team's Bot chats from (#517). A Unix domain
-// socket in the team's home, `<team home>/pocket/chat.sock`: the folder is 0700 and the socket
-// 0600, so only the person's own account reaches it. Never a TCP port, never on Windows.
+// The local socket Pocket Link reads the team's Bot chats from (#517), and writes to them since RFC
+// 0015's amendment (2026-11-07). A Unix domain socket in the team's home,
+// `<team home>/pocket/chat.sock`: the folder is 0700 and the socket 0600, so only the person's own
+// account reaches it. Never a TCP port, never on Windows.
 //
 // Wire: one JSON object per line each way. Requests `{ id, method, params }`; answers
 // `{ id, result }` or `{ id, error: { kind, message } }`; chat events `{ channel, event }` on the
 // channel the client named in its subscribe. Methods: hello, list, subscribe {terminal, channel,
-// after?}, unsubscribe {channel}, backfill {channel, before, limit?}. Every other method, every
-// write among them, is answered `read-only`: the socket accepts no writes.
+// after?}, unsubscribe {channel}, backfill {channel, before, limit?}.
+//
+// Writes, only on a connection whose `hello` asked for them (`{ write: 1 }`) and only when the
+// source takes them: send {channel, text, id, by?}, interrupt {channel, by?}, answer {channel, row,
+// choice, text?, by?}. Each names a channel this same connection subscribed to, never a terminal.
+// To a `hello` without `write` the answer is today's (`readOnly: true`) and every write is refused
+// `read-only`, so an older bridge stays read only. Every other method is answered `read-only`.
 import { lstatSync, unlinkSync } from 'node:fs'
 import { chmod, lstat, mkdir } from 'node:fs/promises'
 import { createConnection, createServer } from 'node:net'
@@ -18,6 +24,13 @@ export const DIR_MODE = 0o700
 export const SOCKET_MODE = 0o600
 export const PROTOCOL = 1
 export const METHODS = Object.freeze(['hello', 'list', 'subscribe', 'unsubscribe', 'backfill'])
+/** The write methods, served only to a connection that asked for them in its hello. */
+export const WRITE_METHODS = Object.freeze(['send', 'interrupt', 'answer'])
+/** Writes per paired phone (`by`, else the connection) in a minute, across its chats. */
+export const MAX_WRITES_PER_MINUTE = 20
+export const WRITE_WINDOW_MS = 60_000
+/** At most one interrupt per phone and chat this often. */
+export const INTERRUPT_EVERY_MS = 5_000
 /** One request line at most (a request is small); past it the connection ends. */
 export const MAX_LINE = 64 * 1024
 export const MAX_CONNECTIONS = 4
@@ -30,6 +43,34 @@ export const CLOSE_GRACE_MS = 500
 export const socketPathOf = home => join(home, SOCKET_DIR, SOCKET_NAME)
 
 const readOnly = id => ({ id, error: { kind: 'read-only', message: 'This socket only reads; answer on the computer.' } })
+const refusedWrite = (reason, extra = {}) => ({ ok: false, state: 'refused', reason, ...extra })
+
+/**
+ * The write limits one host keeps across its connections: 20 writes a minute per phone and one
+ * interrupt per phone and chat every 5 s (`rate`), one write in flight per phone and chat (`busy`).
+ */
+export function writeLimits(now = Date.now) {
+  const writes = new Map()
+  const interrupts = new Map()
+  const inFlight = new Set()
+  return {
+    busy: key => inFlight.has(key),
+    begin: key => inFlight.add(key),
+    end: key => inFlight.delete(key),
+    /** Count one write, or say it is past a cap (and count nothing). */
+    take(phone, chat, interrupt) {
+      const at = now()
+      const recent = (writes.get(phone) ?? []).filter(time => at - time < WRITE_WINDOW_MS)
+      writes.set(phone, recent)
+      if (recent.length >= MAX_WRITES_PER_MINUTE) return false
+      const last = interrupts.get(`${phone}\0${chat}`)
+      if (interrupt && last !== undefined && at - last < INTERRUPT_EVERY_MS) return false
+      recent.push(at)
+      if (interrupt) interrupts.set(`${phone}\0${chat}`, at)
+      return true
+    },
+  }
+}
 
 /** Whether something answers on `path` (another host serving the same team). */
 function answers(path) {
@@ -64,17 +105,18 @@ const served = 'another host already serves this team to Pocket'
 
 /**
  * Serve `source` (a pocket-chat.js DshChatSource) on the team home's socket. `lstat` is the
- * synchronous lstat of the stale socket's re-check (tests stand in for it).
- * @param {{ home: string, source: any, log?: (...args: any[]) => void, lstat?: typeof lstatSync }} options
+ * synchronous lstat of the stale socket's re-check (tests stand in for it); `now` the clock of the
+ * write limits.
+ * @param {{ home: string, source: any, log?: (...args: any[]) => void, lstat?: typeof lstatSync, now?: () => number }} options
  * @returns {Promise<{ path: string, close(): Promise<void> }>}
  */
-export function startPocketSocket({ home, source, log = () => {}, lstat: lstatNow = lstatSync }) {
-  return queue(socketPathOf(home), () => start({ home, source, log, lstatNow }))
+export function startPocketSocket({ home, source, log = () => {}, lstat: lstatNow = lstatSync, now = Date.now }) {
+  return queue(socketPathOf(home), () => start({ home, source, log, lstatNow, now }))
 }
 
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.ctimeMs === b.ctimeMs && a.birthtimeMs === b.birthtimeMs
 
-async function start({ home, source, log, lstatNow }) {
+async function start({ home, source, log, lstatNow, now }) {
   const dir = join(home, SOCKET_DIR)
   await mkdir(dir, { recursive: true, mode: DIR_MODE })
   const folder = await lstat(dir)
@@ -90,9 +132,11 @@ async function start({ home, source, log, lstatNow }) {
     if (now && sameFile(now, existing)) unlinkSync(path)
   }
   const connections = new Set()
+  const limits = writeLimits(now)
+  let serial = 0
   const server = createServer(socket => {
     if (connections.size >= MAX_CONNECTIONS) { socket.destroy(); return }
-    const connection = serve(socket, source, log)
+    const connection = serve(socket, source, log, limits, `connection:${++serial}`)
     connections.add(connection)
     socket.once('close', () => { connections.delete(connection); connection.close() })
   })
@@ -120,12 +164,15 @@ async function start({ home, source, log, lstatNow }) {
   }
 }
 
-/** One reader of the socket. */
-function serve(socket, source, log) {
+/** One reader of the socket (and writer, when its hello asked and the source takes writes). */
+function serve(socket, source, log, limits, self) {
   let buffer = ''
   let closed = false
+  let writes = false
   /** channel -> handle (or a pending marker while its watch opens) */
   const subs = new Map()
+  /** channel -> the terminal it watches */
+  const terminals = new Map()
   const write = (message) => {
     if (closed || socket.destroyed) return
     if (socket.writableLength > MAX_UNSENT) { end(); return }
@@ -136,6 +183,7 @@ function serve(socket, source, log) {
     closed = true
     for (const handle of subs.values()) handle?.close?.()
     subs.clear()
+    terminals.clear()
   }
   const end = () => { close(); socket.destroy() }
 
@@ -144,7 +192,12 @@ function serve(socket, source, log) {
     const params = message?.params && typeof message.params === 'object' ? message.params : {}
     switch (message?.method) {
       case 'hello':
-        return { id, result: { protocol: PROTOCOL, readOnly: true, methods: METHODS } }
+        // Writes only for a bridge that asks, and only when the source takes them: an older
+        // bridge, which drops any socket that is not `readOnly: true`, gets today's answer.
+        writes = params.write === 1 && source.writable === true
+        return writes
+          ? { id, result: { protocol: PROTOCOL, readOnly: false, write: 1, methods: [...METHODS, ...WRITE_METHODS], dedupe: 'log' } }
+          : { id, result: { protocol: PROTOCOL, readOnly: true, methods: METHODS } }
       case 'list':
         return { id, result: { terminals: await source.list() } }
       case 'subscribe': {
@@ -157,13 +210,42 @@ function serve(socket, source, log) {
         if (!handle.ok) { subs.delete(channel); return { id, error: { kind: handle.reason, message: handle.reason } } }
         if (closed || !subs.has(channel)) { handle.close(); return { id, error: { kind: 'closed', message: 'closed' } } }
         subs.set(channel, handle)
+        terminals.set(channel, terminal)
         return { id, result: { channel } }
       }
       case 'unsubscribe': {
         const handle = subs.get(params.channel)
         subs.delete(params.channel)
+        terminals.delete(params.channel)
+        // Ends the channel's writes too: one in flight is aborted, a later one is `not-watching`.
         handle?.close()
         return { id, result: {} }
+      }
+      case 'send':
+      case 'interrupt':
+      case 'answer': {
+        if (!writes) return readOnly(id)
+        const method = message.method
+        const ref = method === 'send' && typeof params.id === 'string' ? { id: params.id } : {}
+        const handle = subs.get(params.channel)
+        if (!handle || typeof handle[method] !== 'function') return { id, result: refusedWrite('not-watching', ref) }
+        const by = typeof params.by === 'string' && params.by !== '' ? params.by : undefined
+        const phone = by === undefined ? self : `phone:${by}`
+        const chat = terminals.get(params.channel)
+        const key = `${phone}\0${chat}`
+        if (limits.busy(key)) return { id, result: refusedWrite('busy', ref) }
+        if (!limits.take(phone, chat, method === 'interrupt')) return { id, result: refusedWrite('rate', ref) }
+        limits.begin(key)
+        try {
+          const args = method === 'send'
+            ? { text: params.text, id: params.id, ...(by ? { by } : {}) }
+            : method === 'answer'
+              ? { row: params.row, choice: params.choice, ...(params.text === undefined ? {} : { text: params.text }), ...(by ? { by } : {}) }
+              : undefined
+          return { id, result: await handle[method](args) }
+        } finally {
+          limits.end(key)
+        }
       }
       case 'backfill': {
         const handle = subs.get(params.channel)

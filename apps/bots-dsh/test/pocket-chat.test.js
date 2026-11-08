@@ -10,9 +10,9 @@ import { join, relative } from 'node:path'
 import { test } from 'node:test'
 import { createAdapter } from '../src/host/pocket-chat-adapter.js'
 import {
-  ANSWER_ON_COMPUTER, DshChatSource, cursorOf, hasSessionApi, install, ownBots, rowIdOf, rowsOf, statusOf,
+  ANSWER_ON_COMPUTER, DshChatSource, KEEP_SENT_IDS, KEEP_SETTLED, SEND_TEXT_MAX, cursorOf, hasSessionApi, hasWriteApi, install, ownBots, rowIdOf, rowsOf, statusOf,
 } from '../src/host/pocket-chat.js'
-import { CLOSE_GRACE_MS, MAX_LINE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
+import { CLOSE_GRACE_MS, INTERRUPT_EVERY_MS, MAX_LINE, MAX_WRITES_PER_MINUTE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
 import { fakeContext } from './fake-ctx.js'
 
 // ---- the fake Session Controller
@@ -75,9 +75,17 @@ function fakeController(sessions) {
       observers.set(sessionId, stream)
       return stream
     },
-    // Writes a read-only source must never reach.
-    async prompt() { calls.push('prompt') },
-    cancel() { calls.push('cancel') },
+    // Writes: a read-only source never reaches them; a writable one only through a watch handle.
+    prompts: [],
+    promptGate: null,
+    async prompt(request, signal) {
+      calls.push('prompt')
+      if (this.promptGate) await this.promptGate(signal)
+      signal?.throwIfAborted?.()
+      this.prompts.push(request)
+      return { accepted: true }
+    },
+    cancel(request) { calls.push('cancel'); this.cancels = [...(this.cancels ?? []), request]; return { accepted: true } },
     // Test helpers.
     append(sessionId, record) { live(sessionId).records.push(record); followers.get(sessionId)?.push(record) },
     observe(sessionId, state) { observers.get(sessionId)?.push(state) },
@@ -134,8 +142,8 @@ const watcher = () => {
 test('lists only the team\'s own live Bots, each with its own current chat Session', async () => {
   const rt = team()
   assert.deepEqual(await ownBots(rt)(), [
-    { id: 'omni', name: 'Omni', sessionId: 's-omni-2' },
-    { id: 'ada', name: 'Ada', sessionId: 'ada' },
+    { id: 'omni', name: 'Omni', sessionId: 's-omni-2', project: null },
+    { id: 'ada', name: 'Ada', sessionId: 'ada', project: null },
   ])
   const listed = await sourceOf(fakeController(sessions()), rt).list()
   assert.deepEqual(listed.map(row => [row.terminal, row.agent, row.chat, row.title]), [['dsh:omni', 'dsh', 'session', 'Omni'], ['dsh:ada', 'dsh', 'session', 'Ada']])
@@ -518,7 +526,8 @@ test('with the Session API, install loads the adapter lazily and serves the sock
   // Disposed after the test whatever happens (a second dispose is a no-op), before the home goes.
   s.defer(() => ctx.dispose())
   install(rtFor(ctx, s.home))
-  assert.deepEqual(ctx.calls, ['effect ds-bot: pocket chat'])
+  // The answerer listeners (writes) and the effect: no tool, route, service or command.
+  assert.deepEqual(ctx.calls, ['on approval/request (prepend)', 'on user-questions/request (prepend)', 'effect ds-bot: pocket chat'])
   let found = null
   for (let i = 0; i < 200 && !found; i++) {
     try { found = lstatSync(s.path) } catch { await new Promise(resolve => setTimeout(resolve, 10)) }
@@ -529,4 +538,467 @@ test('with the Session API, install loads the adapter lazily and serves the sock
   c.socket.destroy()
   await within(ctx.dispose())
   assert.throws(() => lstatSync(s.path), { code: 'ENOENT' })
+})
+
+// ---- writes on DSH chats (RFC 0015, Amendments, 2026-11-07)
+
+const OWNERS = { 's-omni-2': 'omni', ada: 'ada' }
+/** A source that takes writes: what install wires when DSH has prompt and cancel. */
+const writableOf = (controller, rt = team(), options = {}) => new DshChatSource({
+  adapter: createAdapter(controller), bots: ownBots(rt), timers, writable: true, chatOwner: sessionId => OWNERS[sessionId], ...options,
+})
+const agentOf = sessionId => ({ id: `agent-${sessionId}`, session: { id: sessionId } })
+
+/**
+ * The chain below this plugin's listener: the computer's dialog. Like DSH's gateway it reads the
+ * request's signal when the request reaches it, holds the request until the computer answers,
+ * and withdraws its dialog (DSH's `cancel`) when that signal aborts.
+ */
+function computer() {
+  const dialogs = []
+  const next = request => () => new Promise((resolve, reject) => {
+    const dialog = { request, answer: resolve, withdrawn: false }
+    dialogs.push(dialog)
+    const signal = request.signal
+    const withdraw = () => { dialog.withdrawn = true; reject(new Error('cancelled')) }
+    if (signal?.aborted) withdraw()
+    else signal?.addEventListener('abort', withdraw, { once: true })
+  })
+  return { dialogs, next }
+}
+
+function askApproval(source, pc, { sessionId = 's-omni-2', callId = 'c1', toolName = 'bash', signal } = {}) {
+  const request = { agent: agentOf(sessionId), toolName, callId, reason: `run ${toolName}`, ...(signal ? { signal } : {}) }
+  return { request, outcome: source.raceApproval(request, pc.next(request)) }
+}
+
+function askQuestion(source, pc, question, { sessionId = 's-omni-2', callId = 'q1' } = {}) {
+  const request = { agent: agentOf(sessionId), questions: [question], wait: { callId } }
+  return { request, answer: source.raceQuestion(request, pc.next(request)) }
+}
+
+async function watching(source, terminal = 'dsh:omni') {
+  const w = watcher()
+  const handle = await source.watch(terminal, w.listener)
+  assert.equal(handle.ok, true)
+  return { ...w, handle }
+}
+
+const openRow = (w, kind) => w.events.filter(e => e.type === kind && e.row.open !== false).at(-1)?.row
+
+test('writes: never callable by terminal name, as a DSH tool or by an automation; install registers no tool, route or service', async (t) => {
+  const controller = fakeController(sessions())
+  assert.equal(hasWriteApi(controller), true)
+  const source = writableOf(controller)
+  for (const [name, args] of [['send', ['dsh:omni', { text: 'x', id: 'm1' }]], ['answer', ['dsh:omni', { row: 'r', choice: 'allow' }]], ['interrupt', ['dsh:omni']]]) {
+    assert.equal(source[name](...args).reason, 'read-only', name)
+  }
+  assert.deepEqual(controller.calls, [])
+  // Only a watch handle (a subscribed channel) carries the writes.
+  const w = await watching(source)
+  assert.equal(typeof w.handle.send, 'function')
+  w.handle.close()
+  const s = scope(t)
+  const ctx = fakeContext({ services: { sessionController: fakeController(sessions()) } })
+  s.defer(() => ctx.dispose())
+  const rt = rtFor(ctx, s.home)
+  install(rt)
+  assert.ok(!ctx.calls.some(call => /^(tool|route|provide|prompt|command) /.test(call)), ctx.calls.join(', '))
+  assert.equal(ctx.registeredTools.size, 0)
+  assert.ok(!Object.keys(rt).some(key => /send|interrupt|answer/i.test(key)))
+})
+
+test('writes: a read-only source (no prompt or cancel) gives handles no writes', async () => {
+  const { prompt, cancel, ...reads } = fakeController(sessions())
+  assert.equal(hasWriteApi(reads), false)
+  const source = new DshChatSource({ adapter: createAdapter(reads), bots: ownBots(team()), timers, writable: true })
+  assert.equal(source.writable, false)
+  const handle = await source.watch('dsh:omni', () => {})
+  assert.equal(handle.send, undefined)
+  handle.close()
+})
+
+test('writes: send prompts the Bot\'s current chat Session, queued, with a pocket- request id; sent idle, queued while a turn runs', async () => {
+  const all = sessions()
+  const controller = fakeController(all)
+  const w = await watching(writableOf(controller))
+  assert.deepEqual(await w.handle.send({ text: 'hello\r\nthere', id: 'p1' }), { ok: true, state: 'sent', id: 'p1' })
+  assert.deepEqual(controller.prompts[0], { requestId: 'pocket-p1', sessionId: 's-omni-2', mode: 'queue', content: [{ type: 'text', text: 'hello\nthere' }] })
+  all['s-omni-2'].running = true
+  assert.deepEqual(await w.handle.send({ text: 'next', id: 'pocket-p2' }), { ok: true, state: 'queued', id: 'pocket-p2' })
+  assert.equal(controller.prompts[1].requestId, 'pocket-p2')
+  assert.ok(controller.prompts.every(prompt => prompt.mode === 'queue'))
+  w.handle.close()
+})
+
+test('writes: send cleans the text; empty after cleaning is refused empty, over 32 KiB too-long, a bad id invalid', async () => {
+  const controller = fakeController(sessions())
+  const w = await watching(writableOf(controller))
+  assert.equal((await w.handle.send({ text: '\u001b[31m \u0007', id: 'e1' })).reason, 'empty')
+  assert.equal((await w.handle.send({ text: 'é'.repeat(SEND_TEXT_MAX / 2 + 1), id: 'e2' })).reason, 'too-long')
+  assert.equal((await w.handle.send({ text: 'ok', id: 'bad id!' })).reason, 'invalid')
+  assert.equal((await w.handle.send({ text: 'a\u001b[200~b\u0000c', id: 'e3' })).state, 'sent')
+  assert.equal(controller.prompts.length, 1)
+  assert.equal(controller.prompts[0].content[0].text, 'abc')
+  w.handle.close()
+})
+
+test('writes: a Retry with a known id prompts nothing (64 ids kept per Session, and the ids the Session log holds)', async () => {
+  const all = sessions()
+  all['s-omni-2'].records.push(userAt(7, 'from before a restart', { kind: 'user', rpcId: 'pocket-old' }))
+  const controller = fakeController(all)
+  const w = await watching(writableOf(controller))
+  assert.deepEqual(await w.handle.send({ text: 'again', id: 'old' }), { ok: true, state: 'sent', id: 'old', repeat: true })
+  assert.equal(controller.prompts.length, 0)
+  await w.handle.send({ text: 'once', id: 'r1' })
+  assert.equal((await w.handle.send({ text: 'once', id: 'r1' })).repeat, true)
+  assert.equal(controller.prompts.length, 1)
+  for (let i = 0; i < KEEP_SENT_IDS; i++) await w.handle.send({ text: `n${i}`, id: `n${i}` })
+  // r1 is past the 64 kept; DSH's own request-id check is what stops that one now.
+  assert.equal((await w.handle.send({ text: 'once', id: 'r1' })).repeat, undefined)
+  w.handle.close()
+})
+
+test('writes: interrupt cancels a running turn; with none running it answers sent and calls nothing', async () => {
+  const all = sessions()
+  const controller = fakeController(all)
+  const w = await watching(writableOf(controller))
+  assert.deepEqual(await w.handle.interrupt(), { ok: true, state: 'sent' })
+  assert.ok(!controller.calls.includes('cancel'))
+  all['s-omni-2'].running = true
+  assert.deepEqual(await w.handle.interrupt(), { ok: true, state: 'sent' })
+  assert.deepEqual(controller.cancels, [{ sessionId: 's-omni-2' }])
+  w.handle.close()
+})
+
+test('writes: a project Bot without its yes is listed shown:false; subscribe and every write get not-shown; global Bots need no yes', async () => {
+  const rt = team()
+  rt.state.bots.ada.project = '/repo/a'
+  let yes = false
+  const source = writableOf(fakeController(sessions()), rt, { shown: bot => bot.project == null || yes })
+  const listed = await source.list()
+  assert.deepEqual(listed.map(row => [row.terminal, row.shown]), [['dsh:omni', true], ['dsh:ada', false]])
+  assert.deepEqual(await source.watch('dsh:ada', () => {}), { ok: false, reason: 'not-shown' })
+  yes = true
+  const w = await watching(source, 'dsh:ada')
+  yes = false
+  assert.equal((await w.handle.send({ text: 'x', id: 'a1' })).reason, 'not-shown')
+  assert.equal((await w.handle.interrupt()).reason, 'not-shown')
+  assert.equal((await w.handle.answer({ row: rowIdOf('ada', 0, 'approval-c1'), choice: 'allow' })).reason, 'not-shown')
+  w.handle.close()
+})
+
+/** A socket host with a writable source and a clock the test moves. */
+async function writeHost(s, controller = fakeController(sessions()), rt = team()) {
+  const clock = { at: 1_000_000 }
+  const source = writableOf(controller, rt)
+  const server = await s.start({ source, now: () => clock.at })
+  const c = s.client(server.path)
+  const hello = (await c.ask('hello', { write: 1 })).result
+  return { controller, source, server, c, clock, hello }
+}
+
+test('writes: hello {write:1} gets readOnly:false with the write methods; a hello without it gets today\'s answer and no writes', async (t) => {
+  const s = scope(t)
+  const { server, hello } = await writeHost(s)
+  assert.deepEqual(hello, { protocol: 1, readOnly: false, write: 1, methods: ['hello', 'list', 'subscribe', 'unsubscribe', 'backfill', 'send', 'interrupt', 'answer'], dedupe: 'log' })
+  const old = s.client(server.path)
+  assert.deepEqual((await old.ask('hello')).result, { protocol: 1, readOnly: true, methods: ['hello', 'list', 'subscribe', 'unsubscribe', 'backfill'] })
+  await old.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  for (const method of ['send', 'interrupt', 'answer', 'sendHeld', 'cancelHeld']) {
+    assert.equal((await old.ask(method, { channel: 1, text: 'x', id: 'o1', row: 'r', choice: 'allow' })).error.kind, 'read-only', method)
+  }
+  // A read-only source answers a write hello as read only too.
+  const s2 = scope(t)
+  const ro = await s2.start({ source: sourceOf(fakeController(sessions())) })
+  const c2 = s2.client(ro.path)
+  assert.equal((await c2.ask('hello', { write: 1 })).result.readOnly, true)
+})
+
+test('writes: a write from an unwatched chat (no subscription on this connection) is refused not-watching and reaches no controller method', async (t) => {
+  const s = scope(t)
+  const { controller, server, c } = await writeHost(s)
+  assert.deepEqual((await c.ask('send', { channel: 9, text: 'x', id: 'u1' })).result, { ok: false, state: 'refused', reason: 'not-watching', id: 'u1' })
+  assert.equal((await c.ask('interrupt', { channel: 9 })).result.reason, 'not-watching')
+  assert.equal((await c.ask('answer', { channel: 9, row: 'r', choice: 'allow' })).result.reason, 'not-watching')
+  // Another connection's channel is not this one's.
+  const other = s.client(server.path)
+  await other.ask('hello', { write: 1 })
+  await other.ask('subscribe', { terminal: 'dsh:omni', channel: 4 })
+  assert.equal((await c.ask('send', { channel: 4, text: 'x', id: 'u2' })).result.reason, 'not-watching')
+  assert.ok(!controller.calls.includes('prompt') && !controller.calls.includes('cancel'))
+})
+
+test('writes: the Main Bot (a global Bot) takes writes under the same limits, with no project yes', async (t) => {
+  const s = scope(t)
+  const rt = team()
+  rt.state.bots.omni.main = true
+  const { controller, c } = await writeHost(s, fakeController(sessions()), rt)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  assert.equal((await c.ask('send', { channel: 1, text: 'hi main', id: 'g1', by: 'Pixel' })).result.state, 'sent')
+  assert.equal(controller.prompts[0].sessionId, 's-omni-2')
+  for (let i = 1; i < MAX_WRITES_PER_MINUTE; i++) await c.ask('send', { channel: 1, text: 'x', id: `g${i + 1}`, by: 'Pixel' })
+  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'g21', by: 'Pixel' })).result.reason, 'rate')
+})
+
+test('writes: the 21st write in a minute gets rate, across chats and connections of one phone; a second interrupt within 5 s gets rate', async (t) => {
+  const s = scope(t)
+  const { server, c, clock } = await writeHost(s)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  await c.ask('subscribe', { terminal: 'dsh:ada', channel: 2 })
+  const c2 = s.client(server.path)
+  await c2.ask('hello', { write: 1 })
+  await c2.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.state, 'sent')
+  clock.at += INTERRUPT_EVERY_MS - 1
+  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.reason, 'rate')
+  // Another chat has its own 5 s.
+  assert.equal((await c.ask('interrupt', { channel: 2, by: 'Pixel' })).result.state, 'sent')
+  clock.at += 1
+  assert.equal((await c.ask('interrupt', { channel: 1, by: 'Pixel' })).result.state, 'sent')
+  for (let i = 3; i < MAX_WRITES_PER_MINUTE; i++) {
+    const [via, channel] = i % 2 ? [c, 2] : [c2, 1]
+    assert.equal((await via.ask('send', { channel, text: 'x', id: `w${i}`, by: 'Pixel' })).result.state, 'sent', `write ${i + 1}`)
+  }
+  assert.equal((await c2.ask('send', { channel: 1, text: 'x', id: 'w21', by: 'Pixel' })).result.reason, 'rate')
+  // Another phone has its own count; a minute later this one writes again.
+  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'o1', by: 'Other' })).result.state, 'sent')
+  clock.at += 60_000
+  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'w22', by: 'Pixel' })).result.state, 'sent')
+})
+
+test('writes: one write in flight per phone and chat; a second gets busy', async (t) => {
+  const s = scope(t)
+  const controller = fakeController(sessions())
+  let release
+  controller.promptGate = () => new Promise(resolve => { release = resolve })
+  const { c } = await writeHost(s, controller)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  const first = c.ask('send', { channel: 1, text: 'slow', id: 'b1', by: 'Pixel' })
+  for (let i = 0; i < 50 && !release; i++) await settle()
+  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'b2', by: 'Pixel' })).result.reason, 'busy')
+  controller.promptGate = null
+  release()
+  assert.equal((await first).result.state, 'sent')
+  assert.equal((await c.ask('send', { channel: 1, text: 'x', id: 'b3', by: 'Pixel' })).result.state, 'sent')
+})
+
+test('writes: a removed phone\'s writes end within 2 s: unsubscribe aborts the write in flight and refuses the next at once', async (t) => {
+  const s = scope(t)
+  const controller = fakeController(sessions())
+  let aborted = null
+  controller.promptGate = signal => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { aborted = Date.now(); reject(signal.reason) }, { once: true })
+  })
+  const { c } = await writeHost(s, controller)
+  await c.ask('subscribe', { terminal: 'dsh:omni', channel: 1 })
+  const pending = c.ask('send', { channel: 1, text: 'held', id: 'x1' })
+  for (let i = 0; i < 50 && !controller.calls.includes('prompt'); i++) await settle()
+  const removed = Date.now()
+  await c.ask('unsubscribe', { channel: 1 })
+  assert.equal((await pending).result.reason, 'not-watching')
+  assert.ok(aborted !== null && aborted - removed < 2000)
+  assert.equal((await c.ask('send', { channel: 1, text: 'later', id: 'x2' })).result.reason, 'not-watching')
+  assert.equal(controller.prompts.length, 0)
+})
+
+test('approvals: the phone answers first: the tool gets allowed-once, the computer\'s dialog is withdrawn, the receipt names the phone', async () => {
+  const source = writableOf(fakeController(sessions()), team(), { now: () => 42 })
+  const w = await watching(source)
+  const pc = computer()
+  const turn = new AbortController()
+  const { request, outcome } = askApproval(source, pc, { signal: turn.signal })
+  await settle()
+  assert.equal(pc.dialogs.length, 1, 'passed on at once: the computer has it too')
+  const row = openRow(w, 'approval')
+  assert.equal(row.answerable, true)
+  assert.deepEqual(row.choices, ['allow', 'deny'])
+  assert.equal(row.tool, 'bash')
+  assert.equal(row.input, '{"cmd":"ls"}')
+  assert.deepEqual(await w.handle.answer({ row: row.id, choice: 'allow', by: 'Pixel' }), { ok: true, state: 'sent' })
+  assert.equal(await outcome, 'allowed-once')
+  await settle()
+  assert.equal(pc.dialogs[0].withdrawn, true)
+  assert.equal(request.signal, turn.signal, 'the request\'s own signal is back')
+  assert.equal(turn.signal.aborted, false, 'the turn goes on')
+  const closed = w.events.filter(e => e.type === 'approval').at(-1).row
+  assert.equal(closed.open, false)
+  assert.deepEqual(closed.receipt, { id: row.id, by: 'phone', name: 'Pixel', outcome: 'allow', at: 42 })
+  // A second answer is refused settled, with the same receipt.
+  assert.deepEqual(await w.handle.answer({ row: row.id, choice: 'deny' }), { ok: false, state: 'refused', reason: 'settled', receipt: closed.receipt })
+  w.handle.close()
+})
+
+test('approvals: answered on the computer first: the phone\'s card closes with its receipt, a phone answer that comes second gets settled', async () => {
+  const source = writableOf(fakeController(sessions()), team(), { now: () => 7 })
+  const w = await watching(source)
+  const pc = computer()
+  const { outcome } = askApproval(source, pc)
+  await settle()
+  const row = openRow(w, 'approval')
+  pc.dialogs[0].answer('rejected')
+  assert.equal(await outcome, 'rejected')
+  const closed = w.events.filter(e => e.type === 'approval').at(-1).row
+  assert.deepEqual(closed.receipt, { id: row.id, by: 'computer', outcome: 'deny', at: 7 })
+  const late = await w.handle.answer({ row: row.id, choice: 'allow' })
+  assert.equal(late.reason, 'settled')
+  assert.deepEqual(late.receipt, closed.receipt)
+  w.handle.close()
+})
+
+test('approvals: one-call answers only: allow for session or any other choice is invalid, text on an approval is text-on-approval', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const { outcome } = askApproval(source, pc)
+  await settle()
+  const row = openRow(w, 'approval')
+  assert.ok(!row.choices.some(choice => /session|always/.test(choice)))
+  for (const choice of ['allow-session', 'allow-always', 'allowed-once', 'yes']) {
+    assert.equal((await w.handle.answer({ row: row.id, choice })).reason, 'invalid', choice)
+  }
+  assert.equal((await w.handle.answer({ row: row.id, choice: 'allow', text: 'sure' })).reason, 'text-on-approval')
+  assert.equal(openRow(w, 'approval').id, row.id, 'still open')
+  assert.equal((await w.handle.answer({ row: row.id, choice: 'deny' })).ok, true)
+  assert.equal(await outcome, 'rejected')
+  w.handle.close()
+})
+
+test('approvals: an answer is bound to the request open at answer time: replaced gets changed, another Session\'s row not-watching', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const first = new AbortController()
+  const one = askApproval(source, pc, { callId: 'c1', signal: first.signal })
+  await settle()
+  const old = openRow(w, 'approval')
+  // DSH withdraws it (the turn was interrupted) and asks again: the old row is no longer the open one.
+  first.abort()
+  await one.outcome.catch(() => {})
+  assert.equal(w.events.filter(e => e.type === 'approval').at(-1).row.receipt.outcome, 'withdrawn')
+  const two = askApproval(source, pc, { callId: 'c2' })
+  await settle()
+  const now = openRow(w, 'approval')
+  assert.notEqual(now.id, old.id)
+  assert.equal((await w.handle.answer({ row: old.id, choice: 'allow' })).reason, 'changed')
+  assert.equal((await w.handle.answer({ row: rowIdOf('ada', 0, 'approval-c9'), choice: 'allow' })).reason, 'not-watching')
+  assert.equal((await w.handle.answer({ row: now.id, choice: 'allow' })).ok, true)
+  assert.equal(await two.outcome, 'allowed-once')
+  w.handle.close()
+})
+
+test('approvals: the listeners pass every request on at once and never answer on their own; lookups and other Sessions skip the phone', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  // A group or task Session (not a Bot's own chat) and the team's own lookups go straight on.
+  const group = { agent: agentOf('s-group-omni'), toolName: 'bash', callId: 'g1' }
+  void source.raceApproval(group, pc.next(group))
+  const lookup = { agent: agentOf('s-omni-2'), toolName: 'mcp__dsh__list_bots', callId: 'l1' }
+  void source.raceApproval(lookup, pc.next(lookup))
+  assert.equal(pc.dialogs.length, 2, 'passed on synchronously')
+  assert.equal(w.events.filter(e => e.type === 'approval').length, 0)
+  // An own-chat request waits for someone; nothing answers it by itself.
+  const { outcome } = askApproval(source, pc)
+  let done = false
+  void outcome.then(() => { done = true })
+  for (let i = 0; i < 20; i++) await settle()
+  assert.equal(done, false)
+  pc.dialogs[2].answer('allowed-once')
+  assert.equal(await outcome, 'allowed-once')
+  w.handle.close()
+})
+
+test('approvals: a new channel\'s snapshot re-sends the open rows and the settled receipts, 16 kept per Session', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const keepOpen = await watching(source)
+  const pc = computer()
+  for (let i = 0; i < KEEP_SETTLED + 2; i++) {
+    const { outcome } = askApproval(source, pc, { callId: `s${i}` })
+    await settle()
+    pc.dialogs.at(-1).answer('allowed-once')
+    await outcome
+  }
+  const { outcome } = askApproval(source, pc, { callId: 'open1' })
+  await settle()
+  const late = await watching(source)
+  const snapshot = late.last('snapshot')
+  assert.equal(snapshot.approval.call, 'open1')
+  assert.equal(snapshot.approval.answerable, true)
+  assert.equal(snapshot.settled.length, KEEP_SETTLED)
+  assert.ok(snapshot.settled.every(item => item.by === 'computer' && item.outcome === 'allow'))
+  assert.ok(!snapshot.settled.some(item => item.id.includes('approval-s0')), 'the oldest are dropped')
+  assert.equal((await late.handle.answer({ row: snapshot.approval.id, choice: 'deny' })).ok, true)
+  assert.equal(await outcome, 'rejected')
+  keepOpen.handle.close()
+  late.handle.close()
+})
+
+test('questions: a single-select "other" text reaches DSH byte-for-byte as that question\'s answer; a Retry with the same text gets settled', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const { answer } = askQuestion(source, pc, { id: 'which', question: 'Which one?', options: [{ label: 'A' }, { label: 'B' }] })
+  await settle()
+  const row = openRow(w, 'question')
+  assert.deepEqual([row.prompt, row.options, row.multi, row.answerable], ['Which one?', ['A', 'B'], false, true])
+  const text = '  naïve — "C", tab\there  '
+  assert.deepEqual(await w.handle.answer({ row: row.id, choice: 'other', text }), { ok: true, state: 'sent' })
+  assert.deepEqual(await answer, { answers: [{ id: 'which', selected: [], custom: text }] })
+  assert.equal(pc.dialogs[0].withdrawn, true)
+  const retry = await w.handle.answer({ row: row.id, choice: 'other', text })
+  assert.equal(retry.reason, 'settled')
+  assert.equal(retry.receipt.outcome, 'other')
+  w.handle.close()
+})
+
+test('questions: text refusals: multi-select, another choice or other without text invalid; a line break or cleaner change invalid; blank empty; over 32 KiB too-long', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const single = askQuestion(source, pc, { id: 'q', question: 'Pick', options: [{ label: 'A' }] }, { callId: 'q1' })
+  await settle()
+  const row = openRow(w, 'question')
+  const cases = [
+    [{ choice: '1', text: 'x' }, 'invalid'],
+    [{ choice: 'other' }, 'invalid'],
+    [{ choice: 'other', text: 'two\nlines' }, 'invalid'],
+    [{ choice: 'other', text: 'cr\ronly' }, 'invalid'],
+    [{ choice: 'other', text: 'bell\u0007' }, 'invalid'],
+    [{ choice: 'other', text: 'esc\u001b[31m' }, 'invalid'],
+    [{ choice: 'other', text: '' }, 'empty'],
+    [{ choice: 'other', text: '   \t ' }, 'empty'],
+    [{ choice: 'other', text: 'x'.repeat(SEND_TEXT_MAX + 1) }, 'too-long'],
+  ]
+  for (const [message, reason] of cases) assert.equal((await w.handle.answer({ row: row.id, ...message })).reason, reason, JSON.stringify(message).slice(0, 60))
+  assert.equal(openRow(w, 'question').id, row.id, 'still open after every refusal')
+  assert.equal((await w.handle.answer({ row: row.id, choice: 'other', text: 'x'.repeat(SEND_TEXT_MAX) })).ok, true, '32 KiB exactly is taken')
+  await single.answer
+  const multi = askQuestion(source, pc, { id: 'm', question: 'Pick some', options: [{ label: 'A' }, { label: 'B' }], multiSelect: true }, { callId: 'q2' })
+  await settle()
+  const many = openRow(w, 'question')
+  assert.equal((await w.handle.answer({ row: many.id, choice: 'other', text: 'free' })).reason, 'invalid')
+  assert.equal((await w.handle.answer({ row: many.id, choice: '1', text: 'free' })).reason, 'invalid')
+  assert.equal((await w.handle.answer({ row: many.id, choice: '1,1' })).reason, 'invalid')
+  assert.equal((await w.handle.answer({ row: many.id, choice: '3' })).reason, 'invalid')
+  assert.equal((await w.handle.answer({ row: many.id, choice: '2,1' })).ok, true)
+  assert.deepEqual(await multi.answer, { answers: [{ id: 'm', selected: ['B', 'A'] }] })
+  w.handle.close()
+})
+
+test('questions: answered on the computer first closes the phone\'s card with the picked labels; a question DSH withdraws closes as withdrawn', async () => {
+  const source = writableOf(fakeController(sessions()))
+  const w = await watching(source)
+  const pc = computer()
+  const { answer } = askQuestion(source, pc, { id: 'q', question: 'Pick', options: [{ label: 'A' }, { label: 'B' }] })
+  await settle()
+  const row = openRow(w, 'question')
+  pc.dialogs[0].answer({ answers: [{ id: 'q', selected: ['B'], custom: 'not shown on the receipt' }] })
+  await answer
+  const closed = w.events.filter(e => e.type === 'question').at(-1).row
+  assert.equal(closed.receipt.by, 'computer')
+  assert.equal(closed.receipt.outcome, 'B')
+  assert.ok(!JSON.stringify(closed.receipt).includes('not shown'))
+  assert.equal((await w.handle.answer({ row: row.id, choice: '1' })).reason, 'settled')
+  w.handle.close()
 })
