@@ -723,6 +723,10 @@ test("a version mismatch refuses to start and creates no socket", async (t) => {
 
 test("the CLI starts a proxy, serves it, and removes its socket on SIGTERM", async (t) => {
   const { s, fake } = await sceneWithCore(t, { proxy: false });
+  if (/^\/(private\/)?tmp(\/|$)/.test(s.stableRoot)) {
+    t.skip("the stable execution root is inside the literal temp folder; refusing");
+    return;
+  }
   const socket = join(s.runtime, "automagik-hc-proxy", "t100", "hc.sock");
   const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
     env: { ...process.env, ...s.env },
@@ -817,6 +821,10 @@ test("an unknown parameter is refused on every allowed method", async (t) => {
 
 test("an over-limit socket path refuses to start with a named error", async (t) => {
   const { s, fake } = await sceneWithCore(t, { proxy: false });
+  if (/^\/(private\/)?tmp(\/|$)/.test(s.stableRoot)) {
+    t.skip("the stable execution root is inside the literal temp folder; refusing");
+    return;
+  }
   const long = join(s.root, "x".repeat(120));
   mkdirSync(long, { recursive: true });
   await assert.rejects(

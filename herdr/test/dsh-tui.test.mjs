@@ -229,11 +229,11 @@ test("install refuses a DSH profile or a node inside a writable tree", (t) => {
   writeFileSync(join(s.root, "node"), "#!/bin/sh\nexit 0\n");
   chmodSync(join(s.root, "node"), 0o755);
   assert.throws(
-    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: join(dirname(s.home), "data") }, project: s.root }),
+    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: `${s.root}-data` }, project: s.root, forbiddenRoots: [["the project", s.root]] }),
     /the DSH profile .* is inside the project/,
   );
   assert.throws(
-    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: join(dirname(s.home), "node-home"), DSH_HOME: join(dirname(s.home), "dsh"), XDG_DATA_HOME: join(dirname(s.home), "data"), HERDR_APP_HOME: join(dirname(s.home), "app") }, project: s.root }),
+    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: `${s.root}-home`, DSH_HOME: `${s.root}-dsh`, XDG_DATA_HOME: `${s.root}-data`, HERDR_APP_HOME: `${s.root}-app` }, project: s.root, forbiddenRoots: [["the project", s.root]] }),
     /the node that runs the helper .* is inside the project/,
   );
 });
@@ -274,6 +274,10 @@ test("sandboxState sees a stable runner whose exec line differs from its comment
 
 test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {
   const s = scene(t);
+  if (/^\/(private\/)?tmp(\/|$)/.test(sandboxRootOf(s.env))) {
+    t.skip("the stable execution root is inside the literal temp folder; refusing");
+    return;
+  }
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   appendFileSync(sandboxWrapperOf(s.env), "\n// drift\n");
   const report = doctorDshTui({ env: s.env });
