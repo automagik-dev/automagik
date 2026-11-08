@@ -383,6 +383,14 @@ object ChatActions {
     }
 
     /**
+     * The write state the Bot chats dialog may claim: the machine's last-known `dshWrite` only once this load's
+     * listing has arrived. While it loads ([result] null) or after it failed, the dialog claims neither state, so a
+     * value an earlier poll recorded never sits beside the spinner or the error.
+     */
+    fun botChatsWritable(result: Result<*>?, lastKnown: Boolean?): Boolean? =
+        if (result?.isSuccess == true) lastKnown else null
+
+    /**
      * What the chat's bottom line says when there is no message box, so a chat that cannot send always says why and
      * never drops a message silently: ended, offline, reconnecting, not connected, or read only. Null: the box shows
      * (or the chat is still connecting, which the list says).

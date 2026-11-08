@@ -255,7 +255,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 @Composable fun BotChatsDialog(vm: PocketViewModel, hostId: String, onDismiss: () -> Unit) {
     LaunchedEffect(hostId) { vm.loadBotChats(hostId) }
     val result = vm.botChats.collectAsStateWithLifecycle().value[hostId]
-    val writable = vm.botWrites.collectAsStateWithLifecycle().value[hostId]
+    val writable = ChatActions.botChatsWritable(result, vm.botWrites.collectAsStateWithLifecycle().value[hostId])
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Bot chats") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {

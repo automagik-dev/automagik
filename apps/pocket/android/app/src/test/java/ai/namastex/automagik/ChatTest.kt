@@ -425,6 +425,20 @@ class ChatTest {
         assertNull(ChatActions.botChatsLine(null))
     }
 
+    /**
+     * Row "the Bot chats dialog claims no write state until its listing arrives": an earlier poll's `dshWrite` is
+     * not shown while this load runs or after it failed, and is shown once it succeeds.
+     */
+    @Test fun botChatsDialogClaimsNoWriteStateWhileLoadingOrAfterAFailedRead() {
+        assertNull(ChatActions.botChatsWritable(null, true))
+        assertNull(ChatActions.botChatsWritable(null, false))
+        assertNull(ChatActions.botChatsWritable(Result.failure<List<String>>(RuntimeException("link down")), true))
+        assertNull(ChatActions.botChatsWritable(Result.failure<List<String>>(RuntimeException("link down")), false))
+        assertEquals(true, ChatActions.botChatsWritable(Result.success(listOf("t1")), true))
+        assertEquals(false, ChatActions.botChatsWritable(Result.success(emptyList<String>()), false))
+        assertNull(ChatActions.botChatsWritable(Result.success(listOf("t1")), null))
+    }
+
     /** Row "interrupt stops the turn and the row reads stopped": bots-dsh marks the cut assistant row `interrupted`. */
     @Test fun anInterruptedTurnReadsStopped() {
         val working = Chat.reduce(dshLive(), j("""{"type":"status","status":{"state":"working"}}"""))
