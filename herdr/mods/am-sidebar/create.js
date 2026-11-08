@@ -184,14 +184,19 @@ export class BotForm {
     return { dir, text, expected, readFrom, changes: dir !== key ? await changesIn(key, dir) : null };
   }
 
-  // A worktree edit (dir isn't the key): where it is saved, and when the sidebar shows it.
+  // A worktree edit (dir isn't the key): where it is saved, and when the sidebar shows it. The
+  // warning sentences are the CLI's worktreeNote's, word for word (#665): only the file shown
+  // may differ.
   worktreeNote(dir, key, changes, saved = false) {
     const where = `${saved ? "Saved" : "Saves"} in ${this.fileName(dir)}, this worktree's file. The sidebar reads `
       + `${this.fileName(key)}, so this shows there once the worktree's change is merged and pulled.`;
-    if (changes === "untracked") return `${where} ${this.fileName(key)} isn't committed: commit or remove it before pulling, or the pull stops on it.`;
-    if (changes === "modified") return `${where} ${this.fileName(key)} has local changes: commit or discard them before pulling, or the pull stops on it.`;
-    if (changes === "deleted") return `${where} ${this.fileName(key)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.`;
-    if (changes === "committed-deletion") return `${where} ${this.fileName(key)} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.`;
+    const file = this.fileName(key);
+    if (changes === "untracked") return `${where} ${file} isn't committed: commit or remove it before pulling, or the pull stops on it.`;
+    if (changes === "modified") return `${where} ${file} has local changes: commit or discard them before pulling, or the pull stops on it.`;
+    if (changes === "deleted") return `${where} ${file} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.`;
+    if (changes === "deleted-autostash") return `${where} ${file} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true with rebase.autoStash=true stashes the deletion and lets the pull through, then the stash apply conflicts (UD).`;
+    if (changes === "staged-deletion") return `${where} ${file} has a staged deletion: restore and commit the file, or unstage the deletion, before pulling; committing the deletion ends the pull in a modify/delete conflict.`;
+    if (changes === "committed-deletion") return `${where} ${file} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.`;
     return where;
   }
 

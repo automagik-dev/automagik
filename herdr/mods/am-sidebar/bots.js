@@ -333,21 +333,29 @@ export async function editFolderOf(folder, key, machine = null) {
  * What git says about `key`'s .herdr/bots.json (this machine): "untracked" when git doesn't
  * know the file, "modified" when it is committed but has local changes, "deleted" when it is
  * committed and deleted in the working tree without that deletion being staged,
- * "committed-deletion" when HEAD has no file, `dir` (the worktree an edit came from) does, and
- * the merge base of HEAD and that worktree had it; null when it is clean or git can't say. A
- * pull that brings a worktree's committed file stops on the first two (#234, #332); an unstaged
- * deletion is restored by a merge pull and refused by a rebase pull instead (#626); a deletion
- * committed after the worktree branched ends in modify/delete too, one before it only adds.
+ * "deleted-autostash" when that deletion would be stashed for a rebase pull instead
+ * (rebase.autoStash=true), "staged-deletion" when the deletion is staged, "committed-deletion"
+ * when HEAD has no file, `dir` (the worktree an edit came from) does, and the merge base of HEAD
+ * and that worktree had it; null when it is clean or git can't say. A pull that brings a
+ * worktree's committed file stops on the first two (#234, #332); an unstaged deletion is
+ * restored by a merge pull and refused by a rebase pull instead (#626); a deletion committed
+ * after the worktree branched ends in modify/delete too, one before it only adds.
  */
 export async function changesIn(key, dir = null) {
   try {
+    const git = gitOn(null);
     // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
     // space to a trimmed stdout, while a v2 record's "1" is its first character (#626).
-    const out = (await gitOn(null)(["status", "--porcelain=v2", "--", BOTS_PATH], key)) ?? "";
+    const out = (await git(["status", "--porcelain=v2", "--", BOTS_PATH], key)) ?? "";
     if (!out.trim()) return await committedDeletion(key, dir);
     const line = out.split("\n").find((l) => l);
     if (line.startsWith("? ")) return "untracked";
-    if (line.startsWith("1 ") && line.split(" ")[1] === ".D") return "deleted";
+    if (line.startsWith("1 ")) {
+      const state = line.split(" ")[1];
+      // A staged deletion is not "modified": committing it turns the pull into modify/delete (#665).
+      if (state === "D.") return "staged-deletion";
+      if (state === ".D") return (await git(["config", "--bool", "--get", "rebase.autoStash"], key))?.trim() === "true" ? "deleted-autostash" : "deleted";
+    }
     return "modified";
   } catch { return null; }
 }

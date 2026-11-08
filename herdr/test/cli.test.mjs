@@ -27,13 +27,16 @@ const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const FAKE_PGREP = new URL("./fake-pgrep.mjs", import.meta.url).pathname;
+const FAKE_GIT = new URL("./fake-git-trim.mjs", import.meta.url).pathname;
+const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
-/** A scratch world: a git project, a fake hc, a fake home and app home. */
-function scene(t, { terminals = [], briefing = true, window = { down: true } } = {}) {
+/** A scratch world: a git project, a fake hc, a fake home and app home. `trimsGit`: a git whose
+ * stdout is trimmed, as a Herdr exec would answer the rule (#626, #665). */
+function scene(t, { terminals = [], briefing = true, window = { down: true }, trimsGit = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
@@ -46,6 +49,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true } } =
   exe(join(bin, "herdr-app"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_APP}" "$@"\n`);
   // The spare shell's children: never the host's processes.
   exe(join(bin, "pgrep"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_PGREP}" "$@"\n`);
+  if (trimsGit) exe(join(bin, "git"), `#!/bin/sh\nREAL_GIT="${REAL_GIT}" exec "${process.execPath}" "${FAKE_GIT}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
   const home = join(root, "home");
@@ -212,7 +216,7 @@ test("a worktree with no bots.json of its own: the first edit starts from the ma
   assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, "the same format as any save");
   assert.equal(readFileSync(s.botsPath, "utf8"), mainText);
   // The main checkout's file was never committed: the note says its pull would stop on it.
-  assert.match(r.err, new RegExp(`${s.botsPath} isn't committed: commit or remove it before pulling, or git pull stops on it`));
+  assert.match(r.err, new RegExp(`${s.botsPath} isn't committed: commit or remove it before pulling, or the pull stops on it`));
   // The second edit's guard checks the worktree's file (now there), not the main checkout's text.
   const e = s.cli(["edit", r.json().id, "--role", "scouting"], { cwd: wt });
   assert.equal(e.code, 0, e.err);
@@ -252,7 +256,7 @@ test("a worktree edit warns when the main checkout's bots.json has local changes
   // An edit from the worktree warns: a pull bringing it home stops on the main checkout's changes.
   const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
   assert.equal(r.code, 0, r.err);
-  assert.match(r.err, new RegExp(`${s.botsPath} has local changes: commit or discard them before pulling, or git pull stops on it`));
+  assert.match(r.err, new RegExp(`${s.botsPath} has local changes: commit or discard them before pulling, or the pull stops on it`));
   assert.doesNotMatch(r.err, /isn't committed/);
   // The worktree's change merged: git stops on the local changes; discarded, it goes in.
   git(wt, "add", ".herdr/bots.json");
@@ -299,9 +303,28 @@ test("a worktree edit says the main checkout's bots.json is deleted, and the pul
   assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
 });
 
+// #665: a Herdr whose exec trims stdout gives the rule " D" without its leading space. The
+// CLI's runProgram does not trim, so this feeds it a git that does: porcelain v2's explicit
+// state field keeps the deletion deleted (a v1 two-byte read would say modified).
+test("a trimmed git status answer still reads the main checkout's deleted bots.json (porcelain v2)", (t) => {
+  const s = scene(t, { trimsGit: true });
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  rmSync(s.botsPath);
+  assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n", "the real answer has the leading space a trim eats");
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} is deleted: `));
+  assert.match(r.err, /a merge pull brings it back with this worktree's version/);
+  assert.doesNotMatch(r.err, /has local changes|isn't committed/);
+});
+
 // #626: the deleted note assumed a merge pull. With pull.rebase=true git refuses an unstaged
-// deletion instead, so the note names both modes.
-test("a worktree edit names both pull modes for the main checkout's deleted bots.json", (t) => {
+// deletion instead, so the note names both modes; #665: with rebase.autoStash off it says that.
+test("a worktree edit names the rebase pull mode for the main checkout's deleted bots.json (rebase.autoStash off)", (t) => {
   const s = scene(t);
   s.seed(team());
   git(s.project, "add", ".herdr/bots.json");
@@ -309,12 +332,14 @@ test("a worktree edit names both pull modes for the main checkout's deleted bots
   const wt = join(s.root, "wt");
   git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
   git(s.project, "config", "pull.rebase", "true");
+  git(s.project, "config", "rebase.autoStash", "false");
   rmSync(s.botsPath);
   assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n");
   const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, new RegExp(`${s.botsPath} is deleted: a merge pull brings it back with this worktree's version`));
   assert.match(r.err, /pull\.rebase=true refuses the pull until the deletion is committed or discarded/);
+  assert.doesNotMatch(r.err, /autoStash/);
   assert.doesNotMatch(r.err, /a pull here brings it back/);
   // As the note says: the rebase pull refuses while the deletion is unstaged, the file stays gone.
   git(wt, "add", ".herdr/bots.json");
@@ -326,6 +351,69 @@ test("a worktree edit names both pull modes for the main checkout's deleted bots
   git(s.project, "pull", "-q", "--no-rebase", ".", "wt");
   assert.equal(git(s.project, "status", "--porcelain"), "");
   assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+});
+
+// #665: with rebase.autoStash=true git stashes the unstaged deletion and lets the rebase pull
+// through; the stash apply then conflicts (UD), so the note says that instead of "refuses".
+test("a worktree edit says rebase.autoStash stashes the deleted bots.json and the stash apply conflicts", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  // The worktree commits an edit of the same file; main deletes it, unstaged.
+  const wtPath = join(wt, ".herdr/bots.json");
+  const file = JSON.parse(readFileSync(wtPath, "utf8"));
+  file.bots.find((b) => b.id === ID.dev).role = "worktree edit";
+  writeFileSync(wtPath, `${JSON.stringify(file, null, 2)}\n`);
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "worktree bots");
+  git(s.project, "config", "pull.rebase", "true");
+  git(s.project, "config", "rebase.autoStash", "true");
+  rmSync(s.botsPath);
+  assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n");
+  const r = s.cli(["edit", ID.dev, "--role", "ranging"], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} is deleted: `));
+  assert.match(r.err, /pull\.rebase=true with rebase\.autoStash=true stashes the deletion and lets the pull through/);
+  assert.match(r.err, /then the stash apply conflicts \(UD\)/);
+  assert.doesNotMatch(r.err, /refuses the pull until/);
+  // As the note says: the pull goes through, and its autostash apply conflicts (UD).
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "ranging");
+  git(s.project, "pull", ".", "wt");
+  assert.match(git(s.project, "status", "--porcelain=v2"), /^u UD /m);
+  assert.equal(existsSync(s.botsPath), true, "the pull brought the file back before the stash apply");
+});
+
+// #665: a staged deletion ("1 D.") read as "modified", whose "commit or discard" advice could
+// commit the deletion and hit modify/delete. It has its own state and wording instead.
+test("a worktree edit gives a staged bots.json deletion its own note, and the pull refuses it", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  git(s.project, "rm", "-q", ".herdr/bots.json");
+  assert.match(git(s.project, "status", "--porcelain=v2"), /^1 D\. /m);
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} has a staged deletion: restore and commit the file, or unstage the deletion, before pulling`));
+  assert.match(r.err, /committing the deletion ends the pull in a modify\/delete conflict/);
+  assert.doesNotMatch(r.err, /has local changes|isn't committed|is deleted:/);
+  // As the note says: the staged deletion stops the pull (committed, it would conflict instead).
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "scout");
+  assert.throws(() => git(s.project, "pull", "--no-rebase", ".", "wt"),
+    (err) => /Your local changes to the following files would be overwritten/.test(String(err.stderr)));
+  // Unstaging it leaves an unstaged deletion, which the merge pull restores.
+  git(s.project, "restore", "--staged", ".herdr/bots.json");
+  assert.match(git(s.project, "status", "--porcelain=v2"), /^1 \.D /m);
+  git(s.project, "pull", "-q", "--no-rebase", ".", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.equal(readFileSync(s.botsPath, "utf8"), readFileSync(join(wt, ".herdr/bots.json"), "utf8"));
 });
 
 // #626: a committed deletion leaves porcelain empty, so the old note was silent, yet the pull
