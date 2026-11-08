@@ -108,6 +108,17 @@ To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `-
 
 - `client-connection-cookie-lax.patch` (dsh 0.2.2-rc.1): the browser-session cookie is `SameSite=Lax` instead of `Strict`, so a launch link opened from a phone camera or QR — a top-level cross-site navigation — reaches `./` with the cookie and does not get the 401 failed-authentication page (#632). `HttpOnly`, the computed `Secure` attribute and the 303 are unchanged; the desktop runtime and the server image both apply this patch. **Delete it in the DSH release whose browser-session cookie is Lax.**
 
+- `web-launch-token-persistence.patch` (dsh 0.2.2-rc.1): `dsh web` records the launch URL
+  (with its per-process token) in `$DSH_HOME/launch-url`, mode `0600`, replacing the previous
+  start's file and removing it when the profile shuts down. Without it a `--no-open` start whose
+  stdout was lost has no way back to the URL, and a 401 tells the caller to reopen a URL that
+  cannot be obtained (#361). The 401 wording names the file; it is carried in
+  `client-connection-cookie-lax.patch`, which owns that one file, so each patch still applies to
+  the pinned package on its own. The file is a credential: never log or commit it. The desktop
+  launcher reads it when dsh's output is unavailable and removes a previous start's before it
+  spawns. The desktop runtime and the server image both apply this patch. **Delete it in the DSH
+  release that persists the launch URL itself.**
+
 - `layout-widths-persistence.patch` (dsh 0.2.2-rc.1): the client layout saves the sidebar and right panel widths in localStorage under `dsh.layout.widths` and restores them when the client plugin reloads, so a reload no longer resets them to 280 and the 45% first-open width (#483). It persists the width the user chose on a drag or a right panel open, keeps that right panel preference when the viewport shrinks (the renderer's 300..70% clamp is display-only), reopens the sidebar at its last positive width after a collapse, restores a hand-stored sidebar `0` as 280 (a collapse is runtime state, not a preference), and ignores missing, unreadable or invalid stored values. The desktop runtime and the server image both apply this patch. **Delete it in the DSH release whose ui-layout persists the panel widths itself.**
 
 ### The icon

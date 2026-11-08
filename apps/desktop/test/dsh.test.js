@@ -6,7 +6,15 @@ import { delimiter, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { test } from 'node:test'
-import { appHome, backupSettings, backupSettingsOrLog, dshEnv, dshRun, forgetDshLogins, freePort, guardContents, installProfile, keepPort, launchPort, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch, migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths, serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort, storeLayoutOf, toolFileOf, writeTools } from '../src/dsh.js'
+import {
+  appHome, backupSettings, backupSettingsOrLog, dshEnv, dshRun, forgetDshLogins, freePort,
+  guardContents, installProfile, keepPort, LAUNCH_URL_FILE, launchPort, launchUrlFileOf,
+  launchUrlFromFile, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch,
+  migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree,
+  preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths,
+  serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort,
+  storeLayoutOf, toolFileOf, writeTools,
+} from '../src/dsh.js'
 import { batchSafe } from '../scripts/batch-spawn.mjs'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
@@ -272,6 +280,57 @@ test('the launch URL is read from dsh\'s output, only for the port it was given'
   assert.equal(launchUrlOf(line, 5000), null)
   assert.equal(launchUrlOf('dsh web: http://0.0.0.0:41149/?token=x', 41149), null)
   assert.equal(launchUrlOf('no url here'), null)
+})
+
+test('the launch URL file is read only for the port it names', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'omni-desktop-launch-file-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const file = launchUrlFileOf(join(root, 'dsh'))
+  assert.equal(LAUNCH_URL_FILE, 'launch-url')
+  assert.equal(file, join(root, 'dsh', 'launch-url'))
+  assert.equal(launchUrlFromFile(file, 41149), null, 'a missing file has no URL')
+  mkdirSync(join(root, 'dsh'), { recursive: true })
+  writeFileSync(file, 'http://127.0.0.1:41149/?token=abc123\n')
+  assert.equal(launchUrlFromFile(file, 41149), 'http://127.0.0.1:41149/?token=abc123')
+  assert.equal(launchUrlFromFile(file, 5000), null, 'another port is another dsh')
+  writeFileSync(file, 'http://0.0.0.0:41149/?token=abc123\n')
+  assert.equal(launchUrlFromFile(file, 41149), null, 'only the loopback address counts')
+  writeFileSync(file, 'not a launch URL\n')
+  assert.equal(launchUrlFromFile(file, 41149), null, 'garbage is ignored')
+})
+
+test('a start falls back to the launch URL file when dsh\'s output is lost', async (t) => {
+  const scope = scratch(t, 'omni-desktop-launch-file-start-')
+  const { root } = scope
+  const urlFile = launchUrlFileOf(join(root, 'dsh'))
+  mkdirSync(join(root, 'dsh'), { recursive: true })
+  writeFileSync(urlFile, 'http://127.0.0.1:1/?token=stale\n')
+  const bin = join(root, 'file-dsh.mjs')
+  writeFileSync(bin, `
+import { existsSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+const port = args[args.indexOf('--port') + 1]
+const file = process.env.LAUNCH_FILE
+process.stdout.write('dsh is starting without its launch line\\n')
+if (existsSync(file)) {
+  process.stderr.write('the previous start\\'s launch file is still there\\n')
+  process.exit(4)
+}
+setTimeout(() => writeFileSync(file, 'http://127.0.0.1:' + port + '/?token=file-token\\n'), 100)
+setInterval(() => {}, 1000)
+`)
+  const port = await freePort()
+  const { child, url } = await startDsh({
+    node: process.execPath,
+    bin,
+    env: { ...process.env, LAUNCH_FILE: urlFile },
+    port,
+    cwd: root,
+    urlFile,
+  })
+  scope.stop = () => stopDsh(child)
+  assert.equal(url, `http://127.0.0.1:${port}/?token=file-token`)
+  await stopDsh(child)
 })
 
 test('a start forgets the dsh logins earlier starts left, and nothing else of the host', async () => {
@@ -976,6 +1035,7 @@ test('main.js guards the origin as it is now, and loads only the URL pageUrlOf h
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
   assert.match(main, /guard: \(\) => harden\(\(\) => dshOrigin\)/)
   assert.match(main, /const url = pageUrlOf\(running, dshOrigin\)[\s\S]{0,120}loadURL\(url\)/)
-  assert.match(main, /serveDsh\(\{ run: dshProcess,/)
+  assert.match(main, /serveDsh\(\{\s*run: dshProcess,/)
+  assert.match(main, /urlFile/)
   assert.equal(/stopDsh\(|dshChild/.test(main), false, 'every way out stops dshProcess, the current dsh')
 })

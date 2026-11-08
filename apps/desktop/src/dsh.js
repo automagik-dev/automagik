@@ -737,6 +737,22 @@ export function launchUrlOf(text, port) {
   return match[1]
 }
 
+/** The name of the file dsh's web app records this process's launch URL in, under DSH_HOME. */
+export const LAUNCH_URL_FILE = 'launch-url'
+
+/** The launch URL file in `dshHome`. */
+export const launchUrlFileOf = dshHome => join(dshHome, LAUNCH_URL_FILE)
+
+/**
+ * The launch URL recorded in `file` for `port`, or null when the file is missing, unreadable or
+ * names another origin or port: a file from a previous start must never sign this one in.
+ */
+export function launchUrlFromFile(file, port) {
+  let text
+  try { text = readFileSync(file, 'utf8').trim() } catch { return null }
+  return launchUrlOf(`dsh web: ${text}`, port)
+}
+
 /**
  * Drops every dsh login cookie the app's session kept for dsh's host. dsh names one per
  * host:port and keeps it for days, but cookies ignore the port, so each start on a new port added
@@ -801,40 +817,65 @@ export const busyFileOf = home => join(home, 'busy.json')
  * URL. `node` is the executable that runs dsh: Electron itself (with ELECTRON_RUN_AS_NODE),
  * or a Node in tests. Output goes to `log` (a writable stream) when given. `onSpawn` gets
  * the process at once, so a quit while dsh starts can stop it, and the app can answer its
- * messages (the Bot browser bridge, main.js) from the start.
+ * messages (the Bot browser bridge, main.js) from the start. `urlFile` is the file dsh's web
+ * app records the URL in: the previous start's is removed, and it is read when output is lost.
  */
-export function startDsh({ node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn }) {
+export function startDsh({
+  node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn, urlFile,
+}) {
+  // A file left by an earlier start must not sign this one in: dsh writes its own once it is
+  // ready, and this start falls back to it when dsh's output is unavailable.
+  if (urlFile) rmSync(urlFile, { force: true })
   const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   })
   onSpawn?.(child)
   const ready = new Promise((done, fail) => {
     let seen = ''
-    const timer = setTimeout(() => fail(new Error(`dsh did not start within ${Math.round(timeoutMs / 1000)} s`)), timeoutMs)
+    let poll = null
+    let timer = null
+    const stop = () => {
+      clearTimeout(timer)
+      if (poll !== null) clearInterval(poll)
+    }
+    const succeed = (url) => {
+      stop()
+      done(url)
+    }
+    const failWith = (error) => {
+      stop()
+      fail(error)
+    }
+    timer = setTimeout(
+      () => failWith(new Error(`dsh did not start within ${Math.round(timeoutMs / 1000)} s`)),
+      timeoutMs,
+    )
     const onData = (chunk) => {
       log?.write(chunk)
       seen = `${seen}${chunk}`.slice(-4096)
       const url = launchUrlOf(seen, port)
-      if (url) {
-        clearTimeout(timer)
-        done(url)
-      }
+      if (url) succeed(url)
     }
     child.stdout.on('data', onData)
     child.stderr.on('data', onData)
+    if (urlFile) {
+      // dsh's web app also records the URL here (runtime patch web-launch-token-persistence):
+      // when its stdout is lost, the file is how the app still learns the launch URL.
+      poll = setInterval(() => {
+        const url = launchUrlFromFile(urlFile, port)
+        if (url) succeed(url)
+      }, 50)
+      poll.unref?.()
+    }
     child.once('exit', (code, signal) => {
-      clearTimeout(timer)
       const error = new Error(`dsh exited before it was ready (${signal ?? code})`)
       // Its listener could not bind the port: something took it after the app looked. Only
       // dsh's own listen error for this very address counts (dsh-host-webserver listen), never
       // other log text that names the code.
       if (listenFailed(seen, port)) error.code = 'EADDRINUSE'
-      fail(error)
+      failWith(error)
     })
-    child.once('error', (error) => {
-      clearTimeout(timer)
-      fail(error)
-    })
+    child.once('error', (error) => failWith(error))
   })
   return ready.then(url => ({ child, url }), (error) => {
     stopDsh(child)

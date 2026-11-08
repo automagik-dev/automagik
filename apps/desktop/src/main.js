@@ -20,7 +20,12 @@ import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
 import { dismissSplash, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
-import { ANONYMOUS_ID, appHome, automagikHome, backupSettingsOrLog, busyFileOf, dshEnv, dshRun, forgetDshLogins, privacyFileOf, privacyPatchOf, guardContents, installProfile, launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh, storeLayoutOf, writeTools } from './dsh.js'
+import {
+  ANONYMOUS_ID, appHome, automagikHome, backupSettingsOrLog, busyFileOf, dshEnv, dshRun,
+  forgetDshLogins, launchUrlFileOf, privacyFileOf, privacyPatchOf, guardContents, installProfile,
+  launchPort, pageUrlOf, pinProfileStore, portFileOf, preloadOf, resourcesOf, serveDsh,
+  storeLayoutOf, writeTools,
+} from './dsh.js'
 import { BotCursor } from './bot-cursor.js'
 import { BotRelay } from './bot-relay.js'
 import { BotViews, isBotId, isTabId } from './bot-views.js'
@@ -298,7 +303,18 @@ function spawnDsh(port, steps) {
   }
   // Only a port dsh bound and served on is kept for the next launch (dsh.js serveDsh).
   const onUnkept = error => startLog(`${new Date().toISOString()} start: port not kept (${error.message})\n`)
-  return serveDsh({ run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env: dshEnv({ home, electronAsNode: true, binDir, preload, privacy }), port, onPort, onUnkept, cwd: home, log, privacy: overlay, onSpawn: (child) => { child.on('message', message => answerDsh(child, message)); steps.mark('dsh spawned') } })
+  const env = dshEnv({ home, electronAsNode: true, binDir, preload, privacy })
+  // dsh's web app records its launch URL here (runtime patch web-launch-token-persistence); the
+  // launcher reads it when dsh's output is unavailable.
+  const urlFile = launchUrlFileOf(join(home, 'dsh'))
+  return serveDsh({
+    run: dshProcess, portFile: portFileOf(home), node: process.execPath, bin: resources.bin, env,
+    urlFile, port, onPort, onUnkept, cwd: home, log, privacy: overlay,
+    onSpawn: (child) => {
+      child.on('message', message => answerDsh(child, message))
+      steps.mark('dsh spawned')
+    },
+  })
     .then((running) => {
       dsh = running
       steps.mark('dsh ready')

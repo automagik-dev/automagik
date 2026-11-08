@@ -1,0 +1,63 @@
+--- a/@deepseek-ai/dsh-web-app/lib/index.js
++++ b/@deepseek-ai/dsh-web-app/lib/index.js
+@@ -4 +4,3 @@
+-import { dirname, join } from "node:path";
++import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { dirname, join, resolve } from "node:path";
+@@ -37,0 +40,2 @@
++/** This process's launch URL, kept owner-only in DSH_HOME so a lost stdout can be recovered. */
++const LAUNCH_URL_FILENAME = "launch-url";
+@@ -127,0 +132,37 @@
++/** The DSH home as dsh resolves it: $DSH_HOME (with ~ expanded), else ~/.dsh. */
++function dshHome() {
++	const configured = process.env.DSH_HOME?.trim();
++	if (configured === void 0 || configured === "") return join(homedir(), ".dsh");
++	if (configured === "~") return homedir();
++	if (configured.startsWith("~/") || configured.startsWith("~\\")) {
++		return join(homedir(), configured.slice(2));
++	}
++	return resolve(configured);
++}
++/** The launch URL file in DSH_HOME. */
++function launchUrlPath() {
++	return join(dshHome(), LAUNCH_URL_FILENAME);
++}
++/**
++* Save the authenticated launch URL for a local client that lost the printed one: owner-only,
++* replacing the previous start's file. A failure is reported, never fatal: the URL line still
++* reaches stdout.
++* @param url - this process's authenticated launch URL.
++* @returns the file written, or null when it could not be written.
++*/
++function recordLaunchUrl(url) {
++	const target = launchUrlPath();
++	const temporary = `${target}.${process.pid}.tmp`;
++	try {
++		writeFileSync(temporary, `${url}\n`, { mode: 0o600 });
++		chmodSync(temporary, 0o600);
++		rmSync(target, { force: true });
++		renameSync(temporary, target);
++	} catch (error) {
++		rmSync(temporary, { force: true });
++		const reason = error instanceof Error ? error.message : String(error);
++		console.error(`web-app: could not save the launch URL in ${target}: ${reason}`);
++		return null;
++	}
++	return target;
++}
+@@ -146,0 +188,11 @@
++	/** The launch URL this process recorded, for the shutdown cleanup below. */
++	let recorded = null;
++	ctx.effect(() => () => {
++		if (recorded === null) return;
++		try {
++			const text = readFileSync(recorded.file, "utf8").trim();
++			if (text === recorded.url) rmSync(recorded.file, { force: true });
++		} catch {
++			// The file is already gone or unreadable: nothing is left to remove.
++		}
++	});
+@@ -161,0 +214,2 @@
++			const file = recordLaunchUrl(authenticatedUrl);
++			if (file !== null) recorded = { file, url: authenticatedUrl };

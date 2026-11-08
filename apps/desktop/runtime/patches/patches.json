@@ -36,7 +36,7 @@
   },
   {
     "patch": "client-connection-cookie-lax.patch",
-    "about": "Connection: the browser-session cookie is SameSite=Lax instead of Strict. A launch link opened from a phone camera or QR is a top-level cross-site navigation, and the redirected ./ request withholds a Strict cookie, so authorizeIndex answers the 401 failed-authentication page; Lax sends the cookie on that navigation (#632). HttpOnly, the computed Secure attribute and the 303 are unchanged. Delete it in the DSH release whose browser-session cookie is Lax.",
+    "about": "Connection: the browser-session cookie is SameSite=Lax instead of Strict. A launch link opened from a phone camera or QR is a top-level cross-site navigation, and the redirected ./ request withholds a Strict cookie, so authorizeIndex answers the 401 failed-authentication page; Lax sends the cookie on that navigation (#632). HttpOnly, the computed Secure attribute and the 303 are unchanged. A request without a valid cookie names $DSH_HOME/launch-url in its 401, where dsh web records the launch URL for recovery (#361). Delete it in the DSH release whose browser-session cookie is Lax.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -44,7 +44,7 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "0ebcca7583e082716f79b0b55bc1749d48269cc8db2989b043b321b57abd3684",
-        "after": "d90e87220ffcb6491703da90f882b775c1d085b0ab09e8d045ad1e5021c35d23"
+        "after": "38fa6e39447e4f5b92ad5c8c7f9fff5d3902b3e4034b483d40eb285500a7ef54"
       }
     ]
   },
@@ -59,6 +59,20 @@
         "file": "lib/client.js",
         "before": "338bcbdea1180e56b0a8e86788d1e75b09296cbe7ba042a06cdc91028001cf93",
         "after": "d8878ab1a28c9634dbeb03079bff9a774659db5b9a96f2544a65239b512d596d"
+      }
+    ]
+  },
+  {
+    "patch": "web-launch-token-persistence.patch",
+    "about": "Web: dsh web records its launch URL (token included) in $DSH_HOME/launch-url, mode 0600, replacing the previous start's file and removing it on shutdown, so --no-open with stdout lost is recoverable without a restart. The connection patch that owns its file names it in the 401, and the desktop launcher reads it when dsh's output is unavailable. It is a credential: never log or commit it. Delete it in the DSH release that persists the launch URL itself.",
+    "dsh": "0.2.2-rc.1",
+    "files": [
+      {
+        "package": "@deepseek-ai/dsh-web-app",
+        "version": "0.2.2-rc.1",
+        "file": "lib/index.js",
+        "before": "6662ca712368c56fb8818efa53039ef92ce215a328a76b9cdd5e1bed624a0e84",
+        "after": "3b2b72c6b6c4397bbe935521e3a1de2d9e2f46d0d329c803c122263a02adddca"
       }
     ]
   }
