@@ -356,7 +356,7 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.ok(after.checks.every((c) => c.ok), JSON.stringify(after.checks));
   assert.match(after.checks.find((c) => c.check === "dsh-tui-profile").detail, /integrity ok.*added by this installer/);
   const pane = panePathOf({ env: s.env });
-  assert.equal(pane.config, "~/.profile");
+  assert.ok(pane.config.endsWith(".profile"), pane.config);
   assert.ok(pane.path.split(":").includes(join(s.home, ".local", "bin")), pane.path);
   const off = doctorDshTui({ env: s.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/zsh", config: "~/.zshrc", login: true } });
   const offPath = off.checks.find((c) => c.check === "dsh-tui-path");
@@ -367,6 +367,21 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   const half = doctorDshTui({ env: s.env });
   assert.equal(half.code, 1);
   assert.equal(half.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
+});
+
+test("the pane PATH is the login shell's, read between its markers", (t) => {
+  const s = scene(t);
+  const extra = join(s.root, "extra-bin");
+  const local = join(s.home, ".local", "bin");
+  mkdirSync(extra);
+  mkdirSync(local, { recursive: true });
+  writeFileSync(join(s.home, ".profile"), `export PATH="${local}:${extra}:$PATH"\n`);
+  const pane = panePathOf({ env: { ...s.env, PATH: "/usr/bin:/bin" } });
+  assert.equal(pane.login, true, "the login shell answered");
+  assert.ok(pane.config.endsWith(".profile"), pane.config);
+  assert.doesNotMatch(pane.path, /\n/);
+  assert.ok(pane.path.split(":").includes(extra), pane.path);
+  assert.ok(pane.path.split(":").includes(local), pane.path);
 });
 
 test("uninstall removes the plugin and the shim, and leaves a foreign shim alone", async (t) => {

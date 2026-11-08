@@ -65,6 +65,14 @@ You can then eject the Automagik disk in Finder's sidebar and delete the downloa
 
 > Signing in to Codex, Claude or Kimi uses your personal plan with that company. Check their terms before using a personal plan for work. API keys don't have that limit.
 
+## DSH in Herdr
+
+If you use [Herdr](https://herdr.dev), Automagik can put DSH in its **+** menu as **dsh-TUI**.
+Right-click the title bar (or use the app menu) and choose **Install**. It uses your own DSH,
+leaves DSH Desktop's profile and credentials alone, and asks before adding its user bin folder to
+your shell's PATH. Sign in inside dsh-TUI with `/model` or `/auth`; sessions show in DSH Desktop
+after you quit and reopen it. **Uninstall** in the same menu removes it again.
+
 ## Updates
 
 Automagik updates itself. It checks when it starts and every few hours, and downloads a new version in the background. When it's ready, the top of the window says **Automagik X is ready** with **Restart now** and **Later**. After Later, a small **Restart to update** button stays there, and quitting Automagik installs the update too.

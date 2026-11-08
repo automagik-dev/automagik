@@ -59,6 +59,22 @@ downloads the build for this machine from this repository's releases, checks it 
 - The app updates itself from this repository's releases (`v<version>`, the same ones `omni desktop` downloads; `src/update.js`). A release without desktop files (no update feed) is skipped. It checks 20 seconds after start, every 4 hours, 30 minutes after a failed check, and from **Check for Updates…** (the macOS app menu, or a right click on the title bar). A build follows its own release's channel: stable builds skip prereleases, and prerelease builds take both (`OMNI_DESKTOP_UPDATE_CHANNEL=stable|prerelease` overrides it). A newer build downloads in the background, and its sha512 is checked. The title bar then shows a notice with **Restart now** and **Later** (`frame.js` `updateView`, drawn by `shell.js`), and quitting installs it too. On macOS the update must carry the installed app's own signature, so only signed releases offer one. On Linux the AppImage updates itself when opened as an AppImage. A deb only says a newer release is out, and **Download** opens its release page. An AppImage unpacked by `omni desktop` updates by opening a newer one. Set `OMNI_DESKTOP_UPDATES=off` to turn updates off, or `OMNI_DESKTOP_UPDATE_FEED` to take them from another feed folder (https, or http on loopback). Every check is logged in `logs/update.log`, including "up to date".
 - An update replaces the profile's packages and keeps everything you set: a setting a newer build ships is added to your `cordis.patch.yml` only when your file has no entry with its id, and `pnpm-workspace.yaml` is added when missing.
 
+## DSH in Herdr (dsh-TUI)
+
+The title bar's menu has **Set up DSH in Herdr…** (a right click, or the app menu). It imports
+the shared installer `am/dshTui.mjs` — the same module `automagik-herdr dsh-tui` and the Herdr
+pack use — through a child runner (`src/dsh-tui-run.mjs`), and shows the module's doctor before
+any action. `prepare-runtime` copies the module, its two local imports (`am/layoutSafe.mjs`,
+`am/release.js`) and the runner into `build/dsh-tui`, shipped as a resource outside the app
+archive; a packaged app reads `process.resourcesPath/dsh-tui`, a checkout reads `am/` and
+`src/`. The menu is absent where the shim's shell cannot run (the native Windows build is off).
+
+The dialog installs the exact `@deepseek-harness-tui/dsh-tui` pin into the `dsh-tui` DSH profile,
+writes the `dsh-tui` shim Herdr's built-in entry finds in the user bin folder, and offers the
+login shell's PATH line when that folder is missing. Update is the same idempotent install;
+uninstall is the module's `uninstallDshTui`. It never writes DSH's credentials, its reserved
+`desktop` profile or the app's settings. See [docs/dsh-tui.md](dsh-tui.md).
+
 ## Which plugins it carries
 
 The Bot team and the welcome come from this repository at the same commit (`apps/*-dsh`, at the app's version). `omni.json` pins the Omni release whose channels and canvases the app carries: its version and commit. The build packs each plugin with `npm pack` and refuses one at another version. It also refuses a dsh other than the one the plugins are tested on (`runtime/package.json` against `apps/bots-dsh/dev/harness` here and Omni's `apps/omni-channels-dsh/dev/harness`).
