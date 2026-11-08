@@ -29,7 +29,7 @@ import { pathToFileURL } from "node:url";
 
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { shimPathOf } from "./dshTui.mjs";
+import { executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
 import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, WORKER_OF_LABEL } from "./workers.js";
 
@@ -643,6 +643,8 @@ export async function startProxy(options = {}) {
   const panePath = typeof env.PATH === "string" ? env.PATH : "";
   if (!panePath) throw new Error("the pane PATH is not set; the proxy cannot pin the worker PATH");
   const stableRoot = stableRootOf(env);
+  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env, node: env.AM_HC_NODE || process.execPath });
+  if (unsafe) throw new Error(unsafe);
   const tempRoot = env.TMPDIR || tmpdir();
   const forbidden = [
     { root: caller.project, why: "the writable project" },

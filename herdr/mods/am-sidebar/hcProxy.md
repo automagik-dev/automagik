@@ -144,6 +144,11 @@ The `terminal.run` shape also constrains a process, not the task text: a deliber
 worker start can still choose the task word after `--`. The final fix for that is starting
 workers from the pack side rather than exposing `terminal.run` to the pane; the pack keeps the shape
 because its worker start still uses it. The pack's own guard, helper and runner are allowed inside the app home because the sandbox row
-binds the pack folder read-only (`--pack-root`); any other guard and the resolved `dsh-tui` are
-required to be outside the writable project and app home, and every PATH word must be absolute,
-so a file dropped in the worktree cannot pose as the pack's guard or program.
+binds the stable execution folder read-only (`--pack-root`); any other guard and the resolved
+`dsh-tui` are required to be outside the writable project and app home, and every PATH word must
+be absolute, so a file dropped in the worktree cannot pose as the pack's guard or program. A bot
+that changes its own PATH gets its worker start refused (fail closed): the proxy records the pane
+PATH it was started with outside the sandbox and requires the exact `guardPathWith` of it. The
+installed shim under `~/.local/bin` and the stable root's parent are assumed read-only inside the
+sandbox, as the policy states; a stable root inside the project, the app home, the temp folder or
+the runtime folder is refused by `dsh-tui install` and by the proxy at start.

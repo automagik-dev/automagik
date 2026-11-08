@@ -507,6 +507,36 @@ test("a renamed ancestor of the pack cannot change a worker's stable paths", asy
   assert.ok(fake.calls("terminal.run").length > 0);
 });
 
+test("the proxy refuses a stable execution root inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  for (const [name, dataHome] of [["project", s.project], ["app home", s.app], ["temp", s.paneTmp], ["runtime", s.runtime]]) {
+    await assert.rejects(
+      startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
+        env: { ...s.env, XDG_DATA_HOME: dataHome } }),
+      /the stable execution root .* is inside/,
+      name,
+    );
+  }
+});
+
+test("the proxy refuses a DSH profile, a shim, or a run.sh node inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "node"), 0o755);
+  const cases = [
+    ["profile", { DSH_HOME: s.project }, /the DSH profile .* is inside the project/],
+    ["shim", { HOME: s.project, DSH_HOME: join(s.root, "dsh"), XDG_DATA_HOME: join(s.root, "data") }, /the dsh-tui shim .* is inside the project/],
+    ["node", { PATH: s.project }, /the node that runs the helper .* is inside the project/],
+  ];
+  for (const [name, extra, re] of cases) {
+    await assert.rejects(
+      startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: { ...s.env, ...extra } }),
+      re,
+      name,
+    );
+  }
+});
+
 test("a rename between the check and the forward cannot redirect the target", async (t) => {
   const { fake, proxy } = await sceneWithCore(t);
   const victim = fake.state.terminals.find((row) => row.address === "t105");

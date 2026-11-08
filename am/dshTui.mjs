@@ -31,11 +31,12 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
+import { stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
@@ -154,10 +155,78 @@ export function profileDirOf(dshHome) {
 export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
 export const shimPathOf = (env = process.env) => join(binDirOf(env), SHIM);
 
-/** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). */
+/** The app home a pack install uses, without the trailing slash. */
+const appHomeFor = (env = process.env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
+
+/** Real path when it exists, else the resolved path (a root that will be created soon). */
+const realOrAbs = (path) => { try { return realpathSync(path); } catch { return resolve(path); } };
+/** Whether `child` is `parent` or beneath it, by real/resolved path. */
+const insidePath = (child, parent) => {
+  const at = realOrAbs(child), root = realOrAbs(parent);
+  const rel = relative(root, at);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+/**
+ * Why a stable execution root is unsafe, or null. It must be outside the project, the app home,
+ * the pane temp folder and the runtime folder: a bot that can write it could replace the helper
+ * or runner that the core starts outside the sandbox.
+ */
+export function unsafePathProblem(path, label, { project = process.cwd(), env = process.env, appHome = appHomeFor(env) } = {}) {
+  const roots = [
+    ["the project", project],
+    ["the app home", appHome],
+    ["the temp folder", env.TMPDIR || tmpdir()],
+    ...(env.XDG_RUNTIME_DIR ? [["the runtime folder", env.XDG_RUNTIME_DIR]] : []),
+  ];
+  for (const [why, parent] of roots) {
+    if (parent && insidePath(path, parent)) return `${label} ${path} is inside ${why}; refusing`;
+  }
+  return null;
+}
+/** The stable root's own refusal (the label the rows name). */
+export const stableRootProblem = (root, opts) => unsafePathProblem(root, "the stable execution root", opts);
+/** Every node/bun run.sh could pick: PATH words, the nvm versions, Homebrew and ~/.bun. */
+export function nodeCandidates(env = process.env, path = env.PATH || "") {
+  const out = new Set();
+  for (const dir of String(path).split(delimiter)) {
+    if (!dir) continue;
+    out.add(join(dir, "node"));
+    out.add(join(dir, "bun"));
+  }
+  const home = env.HOME || "";
+  if (home) {
+    const nvm = join(home, ".nvm", "versions", "node");
+    try { for (const version of readdirSync(nvm)) out.add(join(nvm, version, "bin", "node")); } catch { /* none */ }
+    out.add(join(home, ".bun", "bin", "bun"));
+  }
+  out.add("/opt/homebrew/bin/node");
+  out.add("/usr/local/bin/node");
+  return [...out].filter((candidate) => { try { return statSync(candidate).isFile(); } catch { return false; } });
+}
+
+/** Check the stable root, the DSH profile, the installed shim and every node run.sh could run. */
+export function executionPathProblem({ stableRoot, env = process.env, project = process.cwd(), node = process.execPath } = {}) {
+  const paths = [
+    [stableRoot, "the stable execution root"],
+    [sandboxProfileOf(dshHomeOf(env)), "the DSH profile"],
+    [shimPathOf(env), "the dsh-tui shim"],
+  ];
+  for (const [path, label] of paths) {
+    const problem = unsafePathProblem(path, label, { project, env });
+    if (problem) return problem;
+  }
+  for (const candidate of [node, ...nodeCandidates(env)]) {
+    const problem = unsafePathProblem(candidate, "the node that runs the helper", { project, env });
+    if (problem) return problem;
+  }
+  return null;
+}
+
+/** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). *//** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). */
 export const SANDBOX_DIR = "automagik-herdr/dsh-sandbox";
 export const SANDBOX_WRAPPER = "hc-socket-mask.mjs";
-export const sandboxRootOf = (env = process.env) => join(env.HOME || homedir(), ".local", "share", SANDBOX_DIR);
+export const sandboxRootOf = (env = process.env) => stableRootOf(env);
 export const sandboxWrapperOf = (env = process.env) => join(sandboxRootOf(env), SANDBOX_WRAPPER);
 /** The wrapper beside this module, in the pack release (or its am copy). */
 export const packWrapperOf = () => fileURLToPath(new URL("./bin/hc-socket-mask.mjs", import.meta.url));
@@ -242,13 +311,17 @@ export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis
  * names it and its failure signature. Throws before writing a half result; an unchanged copy
  * and an already-current row are no-ops.
  */
-export function installSandboxRow({ env = process.env } = {}) {
+export function installSandboxRow({ env = process.env, project = null } = {}) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
   const source = packWrapperOf();
   const packRoot = packRootOf();
   const stableRoot = sandboxRootOf(env);
   if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot, stableRoot };
+  const cwd = process.cwd();
+  const cwdProject = existsSync(join(cwd, ".herdr", "bots.json")) || existsSync(join(cwd, ".git")) ? cwd : null;
+  const unsafe = executionPathProblem({ stableRoot, project: project ?? cwdProject, env, node: process.execPath });
+  if (unsafe) throw new Error(unsafe);
   let changed = false;
   const copied = copyStable(packRoot, stableRoot);
   changed = copied.length > 0;
@@ -278,7 +351,8 @@ export function sandboxState(env = process.env) {
   const profile = sandboxProfileOf(dshHomeOf(env));
   const stableRoot = sandboxRootOf(env);
   const packRoot = packRootOf();
-  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot);
+  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot)
+    && stableRootProblem(stableRoot, { env, project: process.cwd() }) === null;
   let current = false;
   try {
     current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))

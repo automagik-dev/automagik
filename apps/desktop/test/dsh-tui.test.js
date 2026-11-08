@@ -26,7 +26,7 @@ const SCRATCH = () => mkdtempSync(join(tmpdir(), 'automagik-dsh-tui-desktop-'))
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake dsh is a sh script' : false }
 
 test('the shipped module is the existing installer and every local module it imports', () => {
-  assert.deepEqual([...DSH_TUI_FILES], ['dshTui.mjs', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs'])
+  assert.deepEqual([...DSH_TUI_FILES], ['dshTui.mjs', 'workers.js', 'models.js', 'model.js', 'logins.js', 'retired.js', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs'])
   for (const file of DSH_TUI_FILES) {
     assert.ok(existsSync(join(AM, file)), `${file} is missing from am/`)
   }

@@ -9,8 +9,9 @@ import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { workerArgs } from "../mods/am-sidebar/workers.js";
 import {
-  DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
+  DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, installSandboxRow, lockIntegrity,
   ownershipOf, packRootOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxRootOf, sandboxState, sandboxWrapperOf, scopeReleaseAge, STABLE_FILES,
   shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
@@ -31,8 +32,10 @@ function scene(t, { dsh = true, config = {} } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dsh-tui-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), log = join(root, "dsh.log");
+  const paneTmp = join(root, "pane-tmp");
   mkdirSync(home);
   mkdirSync(bin);
+  mkdirSync(paneTmp);
   writeFileSync(log, "");
   // The desktop profile, its settings and DSH's credentials: sentinels that must never change.
   mkdirSync(join(home, ".dsh", "profiles", "desktop"), { recursive: true });
@@ -140,7 +143,7 @@ exec "${process.execPath}" "${helper}" "$@"
   // A test run may point the scene's login shell at a wrapper (the hostile-login-PATH run);
   // named `sh`, it still maps to ~/.profile. Otherwise the POSIX login shell is used.
   const env = {
-    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath,
+    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath, TMPDIR: paneTmp,
     DSH_LOG: log, DSH_FAKE: cfgPath, AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
   };
   const pane = panePathOf({ env });
@@ -206,6 +209,45 @@ test("install copies the sandbox wrapper byte-equal and installs the managed dsh
   const state = sandboxState(s.env);
   assert.equal(state.current, true);
   assert.equal(state.row.ok, true, state.row.message);
+});
+
+test("install refuses a stable execution root inside a writable tree", (t) => {
+  const s = scene(t);
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, XDG_DATA_HOME: s.root }, project: s.root }),
+    /the stable execution root .* is inside the project/,
+  );
+});
+
+test("install refuses a DSH profile or a node inside a writable tree", (t) => {
+  const s = scene(t);
+  writeFileSync(join(s.root, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.root, "node"), 0o755);
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: `${s.root}-data` }, project: s.root }),
+    /the DSH profile .* is inside the project/,
+  );
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: `${s.root}-home`, DSH_HOME: `${s.root}-dsh`, XDG_DATA_HOME: `${s.root}-data`, HERDR_APP_HOME: `${s.root}-app` }, project: s.root }),
+    /the node that runs the helper .* is inside the project/,
+  );
+});
+
+test("XDG_DATA_HOME names one stable root for install and the pane start", async (t) => {
+  const s = scene(t);
+  const dataHome = join(s.root, "data");
+  const env = { ...s.env, XDG_DATA_HOME: dataHome };
+  const installed = await installDshTui({ env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const root = sandboxRootOf(env);
+  assert.equal(root, join(dataHome, "automagik-herdr", "dsh-sandbox"));
+  assert.ok(existsSync(join(root, "hcPane.mjs")));
+  assert.equal(sandboxState(env).current, true);
+  const args = workerArgs({ botId: "b-devdevdev", branch: "b", cwd: "/p/wt", parent: "t1", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "t", path: "/bin", project: "/p", sandbox: true, stableRoot: root });
+  const tail = args.slice(args.indexOf("--") + 1);
+  assert.ok(tail.includes(join(root, "hcPane.mjs")), "the start names the install's root");
+  assert.ok(tail.includes(join(root, "bin", "run.sh")));
 });
 
 test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {

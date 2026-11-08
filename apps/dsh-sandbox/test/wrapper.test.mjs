@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -51,7 +52,10 @@ after(async () => {
 });
 
 function temp() {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-sandbox-wrapper-'));
+  // A short root: the live proxy socket under automagik-hc-proxy must fit the platform's
+  // sun_path bound (104 on macOS, 107 on Linux), as the hc-pane scenes do.
+  const base = existsSync('/tmp') ? '/tmp' : tmpdir();
+  const root = realpathSync(mkdtempSync(join(base, 'ds-')));
   roots.push(root);
   return root;
 }
