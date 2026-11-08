@@ -455,6 +455,21 @@ class ChatTest {
         assertNull(dropped.approval)
         return Chat.carry(dropped, Chat.State("dsh:session-1", messages = Chat.unknown(dropped), dshWrite = true, resuming = true))
     }
+    private val QUESTION = "dsh:session-1:9#question-q1"
+    private fun dshQuestion(id: String = QUESTION, open: Boolean = true) =
+        """{"id":"$id","kind":"question","source":"session","prompt":"Which database?","options":["Postgres","SQLite"],"open":$open,"answerable":true}"""
+    /** The chat with a question open, then its link dropped: a Bot asked and the screen went off. */
+    private fun awayWithQuestion(): Chat.State {
+        val asked = Chat.reduce(blocked(dshLive()), j("""{"type":"question","row":${dshQuestion()}}"""))
+        assertEquals(QUESTION, asked.question?.id)
+        assertEquals(listOf(QUESTION), asked.cards.map { it.id })
+        val dropped = Chat.reduce(asked, j("""{"type":"gone","reason":"unavailable"}"""))
+        assertNull(dropped.question)
+        return Chat.carry(dropped, Chat.State("dsh:session-1", dshWrite = true, resuming = true))
+    }
+    /** A DSH chat after its link dropped again and the phone opened it once more. */
+    private fun carryAgain(s: Chat.State) = Chat.carry(Chat.reduce(s, j("""{"type":"gone","reason":"unavailable"}""")),
+        Chat.State("dsh:session-1", dshWrite = true, resuming = true))
 
     /** Row 1: disconnect, answer on the desktop, reconnect: one receipt card, naming the card, who answered, what and when. */
     @Test fun aCardAnsweredOnTheComputerWhileAwayComesBackAsOneReceipt() {
@@ -570,6 +585,73 @@ class ChatTest {
         assertEquals("Which database?", r.label)
         assertEquals("Answered on the computer while you were away: Postgres", Chat.receiptText(r))
         assertEquals("Question", Chat.receiptHeading(r, "", ""))
+    }
+
+    /**
+     * #748 High: a question still open on the computer is not in the snapshot (only the first approval is): it follows
+     * as an event, so the reconnect must not receipt it as "Closed while you were away".
+     */
+    @Test fun aQuestionOpenOnReconnectIsNotReceipted() {
+        val back = Chat.reduce(awayWithQuestion(), snapshot())
+        val reAsked = Chat.reduce(back, j("""{"type":"question","row":${dshQuestion()}}"""))
+        assertEquals(QUESTION, reAsked.question?.id)
+        assertEquals(listOf(QUESTION), reAsked.cards.map { it.id })
+        assertTrue("no receipt for the question that was still open", reAsked.receipts.none { it.id == QUESTION })
+        assertTrue(reAsked.receipts.none { Chat.receiptText(it) == Chat.CLOSED_AWAY })
+        assertFalse(QUESTION in reAsked.done)
+    }
+
+    /** #748 High: the question re-sent after the snapshot reopens the card, and no false receipt is left under it. */
+    @Test fun aQuestionResentAfterTheSnapshotKeepsItsCardAndLosesTheReceipt() {
+        val back = Chat.reduce(awayWithQuestion(), snapshot())
+        val once = Chat.reduce(back, j("""{"type":"question","row":${dshQuestion()}}"""))
+        val again = Chat.reduce(once, j("""{"type":"question","row":${dshQuestion()}}"""))
+        assertEquals(QUESTION, again.question?.id)
+        assertEquals(listOf(QUESTION), again.cards.map { it.id })
+        assertTrue(again.receipts.isEmpty())
+        assertFalse(QUESTION in again.done)
+        assertNull(again.approval)
+    }
+
+    /** #748 High: answered on the computer after the reconnect, the reopened question's real settled outcome is shown. */
+    @Test fun aQuestionAnsweredAfterTheReconnectShowsItsRealOutcome() {
+        val reAsked = Chat.reduce(Chat.reduce(awayWithQuestion(), snapshot()), j("""{"type":"question","row":${dshQuestion()}}"""))
+        val answered = Chat.reduce(carryAgain(reAsked), snapshot(settled = "[${settled(QUESTION, outcome = "Postgres")}]"), now = 5)
+        val r = answered.receipts.single()
+        assertEquals(listOf(QUESTION, "question", "Which database?", "Postgres"), listOf(r.id, r.kind, r.label, r.outcome))
+        assertTrue(r.settled)
+        assertEquals("Answered on the computer while you were away: Postgres", Chat.receiptText(r))
+    }
+
+    /** #748 High: with two approvals open the snapshot carries the first; the second follows as an event and stays live. */
+    @Test fun aSecondOpenApprovalStaysLiveAndIsNotReceipted() {
+        val second = "dsh:session-1:8#approval-c2"
+        val both = Chat.reduce(Chat.reduce(blocked(dshLive()), j("""{"type":"approval","row":${dshApproval()}}""")),
+            j("""{"type":"approval","row":${dshApproval(second)}}"""))
+        assertEquals(listOf(CARD, second), both.cards.map { it.id })
+        val back = Chat.reduce(carryAgain(both), snapshot(approval = dshApproval(), settled = "[]"))
+        assertEquals(listOf(CARD), back.cards.map { it.id })
+        assertEquals(CARD, back.approval?.id)
+        val live = Chat.reduce(back, j("""{"type":"approval","row":${dshApproval(second)}}"""))
+        assertEquals(second, live.approval?.id)
+        assertEquals(listOf(CARD, second), live.cards.map { it.id })
+        assertTrue("the second approval is live, never receipted", live.receipts.isEmpty())
+        assertFalse(second in live.done)
+        // The first, the one the snapshot carried, is untouched: still a card, still not done.
+        assertEquals("Bash: npm test", live.cards.first { it.id == CARD }.label)
+        assertFalse(CARD in live.done)
+    }
+
+    /** #748 Medium: a read-only question closed in view (a status, never a close event) leaves no card to receipt. */
+    @Test fun aQuestionClosedByStatusDropsItsCard() {
+        val asked = Chat.reduce(blocked(dshLive(write = false)), j("""{"type":"question","row":${dshQuestion()}}"""))
+        assertEquals(listOf(QUESTION), asked.cards.map { it.id })
+        val closed = Chat.reduce(asked, j("""{"type":"status","status":{"state":"working","kind":"","msg":""}}"""))
+        assertNull(closed.question)
+        assertTrue("the question card goes with the status", closed.cards.isEmpty())
+        val back = Chat.reduce(Chat.carry(closed, Chat.State("dsh:session-1", dshWrite = false)),
+            j("""{"type":"snapshot","rows":[],"screen":[],"status":{"state":"working"},"approval":null,"held":[]}"""))
+        assertTrue(back.receipts.isEmpty())
     }
 
     /** Receipts are a bounded history: the newest 16 stay. */

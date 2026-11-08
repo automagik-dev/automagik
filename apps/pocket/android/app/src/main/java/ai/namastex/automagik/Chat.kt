@@ -175,8 +175,12 @@ object Chat {
         }
         "rows" -> s.copy(rows = merge(s.rows, e.optJSONArray("rows").rows()).takeLast(MAX_ROWS))
         "screen" -> s.copy(screen = e.optJSONArray("rows").rows())
-        "status" -> s.copy(status = Status.parse(e.optJSONObject("status")) ?: s.status,
-            question = s.question.takeIf { e.optJSONObject("status")?.optString("state") == "blocked" })
+        "status" -> {
+            val js = e.optJSONObject("status")
+            val blocked = js?.optString("state") == "blocked"
+            s.copy(status = Status.parse(js) ?: s.status, question = s.question.takeIf { blocked },
+                cards = s.cards.filterNot { !blocked && it.kind == "question" })
+        }
         "source" -> s.copy(screenOnly = e.optString("source") == "none")
         "approval" -> Row.parse(e.optJSONObject("row")).let { r -> card(s.copy(approval = r?.takeIf { it.open }), r) }
         "question" -> Row.parse(e.optJSONObject("row")).let { r -> card(s.copy(question = r), r) }
@@ -217,10 +221,15 @@ object Chat {
         return s.copy(cards = live.map(::cardOf), done = done.takeLast(MAX_DONE), receipts = (s.receipts + fresh).takeLast(MAX_RECEIPTS))
     }
 
-    /** An approval or question event on a DSH chat: an open row is a card the phone has; a closed one is done. */
+    /**
+     * An approval or question event on a DSH chat: an open row is a card the phone has; a closed one is done. An open row
+     * the snapshot did not carry (a question, or a second approval) says the card was not closed while the phone was
+     * away after all: the reconnect's guess, its receipt and the done entry go with it.
+     */
     private fun card(s: State, r: Row?): State = when {
         r == null || !s.dsh -> s
-        r.open -> s.copy(cards = (s.cards.filterNot { it.id == r.id } + cardOf(r)).takeLast(MAX_RECEIPTS))
+        r.open -> s.copy(cards = (s.cards.filterNot { it.id == r.id } + cardOf(r)).takeLast(MAX_RECEIPTS),
+            done = s.done.filterNot { it == r.id }, receipts = s.receipts.filterNot { it.id == r.id })
         else -> s.copy(cards = s.cards.filterNot { it.id == r.id }, done = (s.done.filterNot { it == r.id } + r.id).takeLast(MAX_DONE))
     }
 
