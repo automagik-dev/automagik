@@ -145,7 +145,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
     val teams = rememberTeams(state, vm)
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
-    val gitScreen = selected == null && (state.screen == Nav.PROJECTS || state.screen == Nav.TASKS)
+    val gitScreen = selected == null && state.screen == Nav.CODE
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); vm.dismissMessage() } }
     // Self-update runs in the background and speaks through notifications (see Updater); the screen only opens Android's
@@ -169,13 +169,13 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     }
     LaunchedEffect(Unit) {
         if (CrashLog.announce() && snackbar.showSnackbar("Automagik closed unexpectedly last time", "Report", duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed)
-            vm.navigate("settings")
+            vm.navigate(Nav.SETTINGS)
     }
     BackHandler(selected != null || state.screen != Nav.HOME || state.space != null || state.project != null) { vm.back() }
     val project = state.project?.let { key -> pulse.projects.find { it.key == key } }
     val root = selected == null && state.space == null && state.project == null && state.screen in Nav.TABS
     // Kept here, not in the tabs, so a terminal opened from a tab comes back to the same view of it.
-    var spacesTree by rememberSaveable { mutableStateOf(false) }
+    var codeView by rememberSaveable { mutableStateOf(CodeView.REPOS) }
     var taskFilter by rememberSaveable { mutableStateOf<String?>(null) }
     val keyboard = WindowInsets.isImeVisible
     Scaffold(containerColor = Canvas, snackbarHost = { SnackbarHost(snackbar) },
@@ -192,13 +192,12 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                             selected != null -> (terminal?.title ?: selected.address) to (terminalSpace?.name ?: "Terminal")
                             space != null -> space.name to "Space"
                             project != null -> project.name to project.remote.ifBlank { null }
-                            state.screen == Nav.SETTINGS -> "Settings" to null
-                            state.screen == Nav.MACHINES -> "Machines" to "${pulse.machines} connected"
-                            state.screen == Nav.PROJECTS -> "Projects" to pulse.projects.size.let { if (it == 1) "1 project" else "$it projects" }
-                            state.screen == Nav.TASKS -> "Tasks" to pulse.tasks.size.let { if (it == 1) "1 task" else "$it tasks" }
-                            state.screen == Nav.TEAMS -> "Teams" to teams.sumOf { it.bots.size }.let { n ->
+                            state.screen == Nav.SETTINGS -> "Settings" to "${pulse.machines} connected"
+                            state.screen == Nav.CODE && codeView == CodeView.TASKS -> "Code" to pulse.tasks.size.let { if (it == 1) "1 task" else "$it tasks" }
+                            state.screen == Nav.CODE -> "Code" to pulse.projects.size.let { if (it == 1) "1 project" else "$it projects" }
+                            state.screen == Nav.TEAM -> "Team" to teams.sumOf { it.bots.size }.let { n ->
                                 "${if (n == 1) "1 bot" else "$n bots"} · ${teams.sumOf { it.working }} working" }
-                            else -> "Today" to "${pulse.machines} ${if (pulse.machines == 1) "machine" else "machines"} · ${pulse.spaces} ${if (pulse.spaces == 1) "space" else "spaces"}"
+                            else -> "Home" to "${pulse.machines} ${if (pulse.machines == 1) "machine" else "machines"} · ${pulse.spaces} ${if (pulse.spaces == 1) "space" else "spaces"}"
                         }
                         Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         subtitle?.let { Text(it, fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -207,10 +206,9 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                         IconButton(onClick = { vm.setTerminalFullscreen(true) }) { Icon(Icons.Outlined.Fullscreen, "Full screen terminal", tint = Accent) }
                         IconButton(onClick = vm::backToList) { Icon(Icons.Outlined.Close, "Back to agents", tint = Muted) }
                     }
-                    if (root && state.screen == Nav.TODAY && state.machines.values.any { it.connected } && !state.demo)
+                    if (root && state.screen == Nav.HOME_TAB && state.machines.values.any { it.connected } && !state.demo)
                         IconButton(onClick = { newTerminal = true }) { Icon(Icons.Outlined.Add, "New terminal", tint = Accent) }
-                    if (root && state.screen == Nav.MACHINES) IconButton(onClick = { pairDesktop = true }) { Icon(Icons.Outlined.Add, "Pair a machine", tint = Accent) }
-                    if (root) IconButton(onClick = { vm.navigate(Nav.SETTINGS) }) { Icon(Icons.Outlined.Settings, "Settings", tint = Muted) }
+                    if (root && state.screen == Nav.SETTINGS) IconButton(onClick = { pairDesktop = true }) { Icon(Icons.Outlined.Add, "Pair a machine", tint = Accent) }
                 }
                 (update as? UpdateState.Downloading)?.takeIf { it.manual }?.let { LinearProgressIndicator(progress = { it.progress }, Modifier.fillMaxWidth().height(2.dp), color = Accent, trackColor = Border) }
                     ?: HorizontalDivider(color = Border)
@@ -230,13 +228,12 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 selected != null && Chat.readOnly(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace)
                 space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
-                state.screen == Nav.MACHINES -> MachinesScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onEdit = { editHost = it }, onDisconnect = { vm.disconnect(it) }, onRemove = vm::removeHost, onBotChats = { botChats = it.id })
-                state.screen == Nav.SETTINGS -> SettingsScreen(state, vm)
-                state.screen == Nav.PROJECTS && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
-                state.screen == Nav.PROJECTS -> ProjectsScreen(state, vm, pulse, rows, spacesTree) { spacesTree = it }
-                state.screen == Nav.TASKS -> TasksScreen(vm, pulse, taskFilter) { taskFilter = it }
-                // Teams opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
-                state.screen == Nav.TEAMS && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { vm.selectTerminal(it) }
+                state.screen == Nav.SETTINGS -> SettingsScreen(state, vm, MachineActions(pair = { pairDesktop = true }, repair = ::repair, connect = { vm.connect(it) },
+                    edit = { editHost = it }, disconnect = { vm.disconnect(it) }, remove = vm::removeHost, botChats = { botChats = it.id }))
+                state.screen == Nav.CODE && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
+                state.screen == Nav.CODE -> CodeScreen(state, vm, pulse, rows, codeView, { codeView = it }, taskFilter) { taskFilter = it }
+                // Team opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
+                state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { vm.selectTerminal(it) }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
                 else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
             }
@@ -250,16 +247,16 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     if (newTerminal) NewTerminalDialog(state, onDismiss = { newTerminal = false }) { host, cwd, command -> vm.startTerminal(host, cwd, command); newTerminal = false }
 }
 
-/** The bottom bar: Teams, Today, Projects, Tasks, Machines. Teams carries how many bots need the person, Today how many agents. */
+/** The bottom bar: Home, Team, Code, Settings ([Nav.TABS]); the counts on them are [Nav.badge]. */
 @Composable fun PocketTabs(current: String, needsYou: Int, botsNeedYou: Int, onTab: (String) -> Unit) {
     Column {
         HorizontalDivider(color = Border)
         NavigationBar(containerColor = Chrome, tonalElevation = 0.dp) {
-            listOf(Triple(Nav.TEAMS, "Teams", Icons.Outlined.Groups), Triple(Nav.TODAY, "Today", Icons.Outlined.Home), Triple(Nav.PROJECTS, "Projects", Icons.Outlined.GridView),
-                Triple(Nav.TASKS, "Tasks", Icons.Outlined.Checklist), Triple(Nav.MACHINES, "Machines", Icons.Outlined.Computer)).forEach { (screen, label, icon) ->
+            listOf(Triple(Nav.HOME_TAB, "Home", Icons.Outlined.Home), Triple(Nav.TEAM, "Team", Icons.Outlined.Groups), Triple(Nav.CODE, "Code", Icons.Outlined.Code),
+                Triple(Nav.SETTINGS, "Settings", Icons.Outlined.Settings)).forEach { (screen, label, icon) ->
                 NavigationBarItem(selected = current == screen, onClick = { onTab(screen) }, label = { Text(label, fontSize = 12.sp) },
                     icon = {
-                        val count = when (screen) { Nav.TODAY -> needsYou; Nav.TEAMS -> botsNeedYou; else -> 0 }
+                        val count = Nav.badge(screen, needsYou, botsNeedYou)
                         if (count > 0) BadgedBox(badge = { Badge(containerColor = Blocked, contentColor = OnAccent) { Text(count.toString()) } }) { Icon(icon, null) }
                         else Icon(icon, null)
                     },

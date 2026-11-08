@@ -3,7 +3,7 @@ title: "Teams tab v1: home tab, Room cache, Genie bundled at build time"
 type: decision
 status: Accepted
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-07
 pr: "automagik-dev/automagik#242"
 tags: [decisions, teams, pets, room, bots]
 ---
@@ -12,6 +12,9 @@ tags: [decisions, teams, pets, room, bots]
 Pocket gets a Teams tab: one circle per Herdr space (a project), the project's bots with their pets
 in the pose for their state, a needs-you swipe deck and a small progress strip. Chat, dictation,
 attachments and voice come in a later version.
+
+> Its tab list, needs-you deck and progress strip are replaced by [Four tabs](four-tabs.md)
+> (2026-11-07).
 
 ## Decision
 

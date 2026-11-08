@@ -13,8 +13,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -84,38 +82,22 @@ fun machineStatus(host: HostProfile, machine: MachineState): String = if (host.l
     }
 }
 
-/** [onRepair]: a legacy SSH machine's "Pair with QR", which opens the QR scanner ([LegacySsh]). */
-@Composable fun MachinesScreen(state: PocketState, onPair: () -> Unit, onRepair: (HostProfile) -> Unit, onConnect: (HostProfile) -> Unit, onEdit: (HostProfile) -> Unit, onDisconnect: (String) -> Unit, onRemove: (String) -> Unit,
-                               onBotChats: (HostProfile) -> Unit = {}) {
+/** What Settings does with a machine: [repair] is a legacy SSH machine's "Pair with QR", which opens the QR scanner ([LegacySsh]). */
+class MachineActions(val pair: () -> Unit, val repair: (HostProfile) -> Unit, val connect: (HostProfile) -> Unit, val edit: (HostProfile) -> Unit,
+                     val disconnect: (String) -> Unit, val remove: (String) -> Unit, val botChats: (HostProfile) -> Unit)
+
+/** Settings' first section, what the Machines tab was: the saved machines, then pairing. */
+@Composable fun MachinesSection(state: PocketState, actions: MachineActions) {
     var remove by remember { mutableStateOf<HostProfile?>(null) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("Your work lives here.", fontSize = 26.sp, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(10.dp)); Text("Pair the computer running Herdr desktop: scan the QR code its Pocket Link shows.", fontSize = 13.sp, lineHeight = 21.sp, color = Muted); Spacer(Modifier.height(12.dp)) }
-        items(state.hosts, key = { it.id }) { host ->
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column { SmallLabel("Machines"); Spacer(Modifier.height(10.dp)); Text("Pair the computer running Herdr desktop: scan the QR code its Pocket Link shows.", fontSize = 13.sp, lineHeight = 21.sp, color = Muted) }
+        state.hosts.forEach { host -> key(host.id) {
             val machine = state.machines[host.id] ?: MachineState()
-            if (host.legacySsh) { LegacySshCard(host, state.pairing, onRepair = { onRepair(host) }, onRemove = { remove = host }); return@items }
-            Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Border), color = Surface) {
-                Column(Modifier.padding(18.dp)) {
-                    MachineHeader(host.name, host.address, machine.connected)
-                    Spacer(Modifier.height(18.dp))
-                    Text(machineStatus(host, machine), fontSize = 12.sp, color = Muted)
-                    machine.error?.let { Spacer(Modifier.height(10.dp)); SelectionContainer { Text(it, color = Blocked, fontSize = 12.sp, lineHeight = 18.sp) } }
-                    LinkedMachineRows(state.linkedFor(host), host.name)
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (machine.connected) OutlinedButton(onClick = { onDisconnect(host.id) }) { Text("Disconnect", fontSize = 13.sp) }
-                        if (machine.connected && host.paired) { Spacer(Modifier.width(8.dp)); TextButton(onClick = { onBotChats(host) }) { Text("Bot chats", fontSize = 13.sp) } }
-                        else Button(onClick = { onConnect(host) }, enabled = !machine.connecting) {
-                            if (machine.connecting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text("Connect", fontSize = 13.sp)
-                        }
-                        Spacer(Modifier.weight(1f))
-                        IconButton(onClick = { onEdit(host) }) { Icon(Icons.Outlined.Edit, "Edit ${host.name}", Modifier.size(19.dp), tint = Muted) }
-                        IconButton(onClick = { remove = host }) { Icon(Icons.Outlined.DeleteOutline, "Remove ${host.name}", Modifier.size(19.dp), tint = Muted) }
-                    }
-                }
-            }
-        }
+            if (host.legacySsh) LegacySshCard(host, state.pairing, onRepair = { actions.repair(host) }, onRemove = { remove = host })
+            else MachineCard(host, machine, state.linkedFor(host), actions) { remove = host }
+        } }
         // The preview's sample machine, like a connected one but read-only: no connect, edit or remove, and no network.
-        items(state.previewMachines(), key = { "preview:${it.first}" }) { (_, machine) ->
+        state.previewMachines().forEach { (id, machine) -> key("preview:$id") {
             Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Border), color = Surface) {
                 Column(Modifier.padding(18.dp)) {
                     MachineHeader(PREVIEW_MACHINE, "Sample data · not a real connection", machine.connected)
@@ -123,12 +105,36 @@ fun machineStatus(host: HostProfile, machine: MachineState): String = if (host.l
                     Text(machineStatus(machine), fontSize = 12.sp, color = Muted)
                 }
             }
-        }
-        item { Button(onClick = onPair, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Outlined.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pair with Herdr desktop") } }
+        } }
+        Button(onClick = actions.pair, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Outlined.QrCodeScanner, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pair with Herdr desktop") }
     }
     remove?.let { host -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove ${host.name}?") },
         text = { Text("This removes the saved connection from this phone. Its remote terminals keep running.") },
-        confirmButton = { TextButton(onClick = { onRemove(host.id); remove = null }) { Text("Remove", color = Blocked) } }, dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
+        confirmButton = { TextButton(onClick = { actions.remove(host.id); remove = null }) { Text("Remove", color = Blocked) } }, dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
+}
+
+/** A paired machine: its state, what it reaches, and connect, disconnect, bot chats, edit and remove. */
+@Composable fun MachineCard(host: HostProfile, machine: MachineState, linked: List<LinkedMachine>, actions: MachineActions, onRemove: () -> Unit) {
+    Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Border), color = Surface) {
+        Column(Modifier.padding(18.dp)) {
+            MachineHeader(host.name, host.address, machine.connected)
+            Spacer(Modifier.height(18.dp))
+            Text(machineStatus(host, machine), fontSize = 12.sp, color = Muted)
+            machine.error?.let { Spacer(Modifier.height(10.dp)); SelectionContainer { Text(it, color = Blocked, fontSize = 12.sp, lineHeight = 18.sp) } }
+            LinkedMachineRows(linked, host.name)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (machine.connected) OutlinedButton(onClick = { actions.disconnect(host.id) }) { Text("Disconnect", fontSize = 13.sp) }
+                if (machine.connected && host.paired) { Spacer(Modifier.width(8.dp)); TextButton(onClick = { actions.botChats(host) }) { Text("Bot chats", fontSize = 13.sp) } }
+                else Button(onClick = { actions.connect(host) }, enabled = !machine.connecting) {
+                    if (machine.connecting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text("Connect", fontSize = 13.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { actions.edit(host) }) { Icon(Icons.Outlined.Edit, "Edit ${host.name}", Modifier.size(19.dp), tint = Muted) }
+                IconButton(onClick = onRemove) { Icon(Icons.Outlined.DeleteOutline, "Remove ${host.name}", Modifier.size(19.dp), tint = Muted) }
+            }
+        }
+    }
 }
 
 /** A machine saved over SSH by an older version: greyed, never connected, one way forward ([LegacySsh]). */
@@ -150,8 +156,11 @@ fun machineStatus(host: HostProfile, machine: MachineState): String = if (host.l
     }
 }
 
-@Composable fun SettingsScreen(state: PocketState, vm: PocketViewModel) {
+/** Settings, a tab: the machines and pairing first, then the display, alerts and About. */
+@Composable fun SettingsScreen(state: PocketState, vm: PocketViewModel, machines: MachineActions) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        MachinesSection(state, machines)
+        Spacer(Modifier.height(34.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(26.dp))
         SmallLabel("Terminal display"); Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             FilterChip(selected = !state.nativeDisplay, onClick = { vm.preferNativeDisplay(false) }, label = { Text("Full color") })
