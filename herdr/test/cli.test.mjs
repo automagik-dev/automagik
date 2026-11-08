@@ -5,13 +5,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
-import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -1355,6 +1355,41 @@ test("a failing hc never reads as 'no pane': start, attach and detach refuse; ls
   assert.match(s.cli(["ls"]).out, /panes unknown: hc server status/);
   assert.equal(s.cli(["show", "Genie", "--json"]).json().status, "hc unavailable");
   assert.equal(s.cli(["brief", "Genie"]).code, 0, "the briefing still prints, members unreachable");
+});
+
+test("the CLI's own hc resolution skips guard folders it can vouch for: pack, am copy, stub once", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const meter = { tasks: { "gl-1": { usd: 1.25, work_min: 30, lead_min: 4 } } };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [], next: 100, docs: { "herdr-meter": { value: meter, version: 7 } } }));
+  const am = join(s.root, "am"), amGuard = join(am, "guard"), amRan = join(s.root, "am-guard-ran");
+  mkdirSync(amGuard, { recursive: true });
+  copyFileSync(join(GUARD_DIR, "..", "hcGuard.mjs"), join(am, "hcGuard.mjs"));
+  writeFileSync(join(amGuard, "hc"), `#!/bin/sh\n: > "${amRan}"\nexit 9\n`);
+  chmodSync(join(amGuard, "hc"), 0o755);
+  const bin = join(s.root, "bin");
+  const r = s.cli(["doc", "get", "herdr-meter"], { env: { PATH: `${GUARD_DIR}:${amGuard}:${bin}` } });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out), meter);
+  assert.deepEqual(s.calls(), [["connect"]], "the stub hc was reached exactly once");
+  assert.equal(existsSync(amRan), false, "the am guard copy was skipped, not run");
+});
+
+test("a planted hcGuard.mjs does not hide a folder from the CLI's own hc resolution", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [], next: 100 }));
+  const planted = join(s.root, "planted"), plantedGuard = join(planted, "guard"), ran = join(s.root, "planted-ran");
+  mkdirSync(plantedGuard, { recursive: true });
+  writeFileSync(join(planted, "hcGuard.mjs"), "// planted, not a guard\n");
+  writeFileSync(join(plantedGuard, "hc"), `#!/bin/sh\n: > "${ran}"\nexit 1\n`);
+  chmodSync(join(plantedGuard, "hc"), 0o755);
+  const r = s.cli(["ls", "--json"], { env: { PATH: `${GUARD_DIR}:${plantedGuard}:${join(s.root, "bin")}` } });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(existsSync(ran), true, "the planted hc was reached, not skipped");
+  const bot = r.json().projects[0].bots[0];
+  assert.equal(bot.status, "hc unavailable", "the trusted call used the planted hc, which failed");
+  assert.equal(s.calls().some((c) => c[0] === "server"), false, "the stub never answered the trusted call");
 });
 
 test("an attached pane with a shell in front stays the bot's: shown as no agent in front, never as another's", (t) => {

@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -40,7 +40,7 @@ const team = () => ({
 const STUB = `#!/usr/bin/env node
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
-appendFileSync(process.env.HC_STUB_LOG, JSON.stringify({ argv: args }) + "\\n");
+appendFileSync(process.env.HC_STUB_LOG, JSON.stringify({ argv: args, marker: process.env.AM_HC_GUARD_REENTRY ?? null }) + "\\n");
 const state = JSON.parse(readFileSync(process.env.HC_STUB_STATE, "utf8"));
 if (args[0] === "ls") { process.stdout.write(JSON.stringify({ terminals: state.terminals }) + "\\n"); process.exit(0); }
 if (args[0] === "get") {
@@ -151,6 +151,7 @@ test("every allowed verb reaches the stub unchanged", (t) => {
     const r = guardRun(s, args);
     assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`);
     assert.ok(calls(s).some((argv) => same(argv, args)), `${args.join(" ")} arrived unchanged: ${JSON.stringify(calls(s))}`);
+    assert.equal(readLog(s).every((row) => row.marker === null), true, `${args.join(" ")}: no re-entry marker`);
   }
 });
 
@@ -553,49 +554,131 @@ test("a worker pane cannot start a worker: the ledger has no binding for it", (t
 
 // ---- the PATH word: dsh-tui only ----
 
+/** A folder with a planted hcGuard.mjs and a guard/hc: not a guard after #643. */
+function plantedGuard(root, name) {
+  const mod = join(root, name), guard = join(mod, "guard");
+  mkdirSync(guard, { recursive: true });
+  writeFileSync(join(mod, "hcGuard.mjs"), "// planted, not this guard\n");
+  return guard;
+}
+
+/**
+ * A guard copy (#643): hcGuard.mjs byte-equal to this pack's, and an `hc` entry that logs a
+ * marker and exits 9. If the copy is a guard, it is skipped and the marker never appears.
+ */
+function guardCopy(root, name, { entry = null } = {}) {
+  const mod = join(root, name), guard = join(mod, "guard");
+  mkdirSync(guard, { recursive: true });
+  writeFileSync(join(mod, "hcGuard.mjs"), readFileSync(join(GUARD_DIR, "..", "hcGuard.mjs")));
+  if (entry) writeFileSync(join(guard, "hc"), entry);
+  else copyFileSync(join(GUARD_DIR, "hc"), join(guard, "hc"));
+  chmodSync(join(guard, "hc"), 0o755);
+  return guard;
+}
+
 test("a mixed am+pack guard PATH reaches the real hc once, never a guard as hc", (t) => {
   const s = scene(t);
-  const am = join(s.root, "am"), amGuard = join(am, "guard");
-  mkdirSync(amGuard, { recursive: true });
-  writeFileSync(join(am, "hcGuard.mjs"), "// fake am guard\n");
   const marker = join(s.root, "am-guard-called");
-  writeFileSync(join(amGuard, "hc"), `#!/bin/sh\necho called > "${marker}"\nexit 1\n`);
-  chmodSync(join(amGuard, "hc"), 0o755);
+  const amGuard = guardCopy(s.root, "am", { entry: `#!/bin/sh\n: > "${marker}"\nexit 1\n` });
   const exact = exactRun(s);
   exact[exact.indexOf("--") + 2] = `PATH=${amGuard}:${GUARD_DIR}:/usr/bin:/bin`;
   writeFileSync(s.logPath, "");
   const r = guardRun(s, exact, { PATH: `${amGuard}:${GUARD_DIR}:${s.bin}:${dirname(process.execPath)}` });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(calls(s), [exact], "the real hc got the mixed-PATH worker argv once");
-  assert.equal(existsSync(marker), false, "the am guard was skipped, not run as hc");
+  assert.equal(existsSync(marker), false, "the am guard copy was skipped, not run as hc");
 });
 
-test("a fake guard pair never loops: every guard folder is skipped and the stub runs once", (t) => {
+test("a pair of guard copies never loops: both are skipped and the stub runs once", (t) => {
   const s = scene(t);
-  const fakeGuard = (name) => {
+  const copy = (name) => {
+    const marker = join(s.root, `${name}-ran`);
+    return { marker, guard: guardCopy(s.root, name, { entry: `#!/bin/sh\n: > "${marker}"\nexit 9\n` }) };
+  };
+  const a = copy("copy-a"), b = copy("copy-b");
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["read", "t101"], { PATH: `${a.guard}:${b.guard}:${s.bin}:${dirname(process.execPath)}` });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s), [["read", "t101"]], "the real hc ran once; the guard copies did not");
+  assert.equal(existsSync(a.marker), false, "the first guard copy was skipped");
+  assert.equal(existsSync(b.marker), false, "the second guard copy was skipped");
+});
+
+test("a planted hcGuard.mjs is not a guard: its hc is an ordinary PATH entry, not skipped", (t) => {
+  const s = scene(t);
+  const guard = plantedGuard(s.root, "planted");
+  const marker = join(s.root, "planted-ran");
+  writeFileSync(join(guard, "hc"), `#!/bin/sh\n: > "${marker}"\nexit 7\n`);
+  chmodSync(join(guard, "hc"), 0o755);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["read", "t101"], { PATH: `${GUARD_DIR}:${guard}:${dirname(process.execPath)}` });
+  assert.equal(r.status, 7, r.stderr);
+  assert.equal(existsSync(marker), true, "the planted hc was reached, not skipped");
+  assert.deepEqual(calls(s), [], "the stub never ran: the planted folder was not skipped");
+});
+
+test("a planted guard folder is not the worker shape's guard word", (t) => {
+  const s = scene(t);
+  const planted = plantedGuard(s.root, "planted-word");
+  writeFileSync(join(planted, "hc"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(planted, "hc"), 0o755);
+  const exact = exactRun(s);
+  exact[exact.indexOf("--") + 2] = `PATH=${planted}:/usr/bin`;
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, exact);
+  assertRefused(r);
+  assert.match(r.stderr, /PATH word does not start with a guard/);
+  assert.deepEqual(calls(s), [], "the run never reached hc");
+});
+
+test("a set re-entry marker is refused, never allowed: no guard has to be behind it", (t) => {
+  const s = scene(t);
+  const r = guardRun(s, ["read", "t101"], { AM_HC_GUARD_REENTRY: "1" });
+  assertRefused(r);
+  assert.match(r.stderr, /re-entry/);
+  assert.deepEqual(calls(s), [], "a marked call never reaches the real hc");
+});
+
+test("a guard copy that calls its caller stops at once instead of looping", (t) => {
+  const s = scene(t);
+  const mod = join(s.root, "other-guard"), copyGuard = join(mod, "guard");
+  mkdirSync(copyGuard, { recursive: true });
+  for (const file of ["hcGuard.mjs", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
+    copyFileSync(join(GUARD_DIR, "..", file), join(mod, file));
+  }
+  appendFileSync(join(mod, "hcGuard.mjs"), "\n// not this guard\n");
+  copyFileSync(join(GUARD_DIR, "hc"), join(copyGuard, "hc"));
+  chmodSync(join(copyGuard, "hc"), 0o755);
+  writeFileSync(s.logPath, "");
+  const r = spawnSync(process.execPath, [s.guard, "read", "t101"], {
+    env: envFor(s, { PATH: `${GUARD_DIR}:${copyGuard}:${s.bin}:${dirname(process.execPath)}` }),
+    encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(r.status, 2, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /re-entry/);
+  assert.deepEqual(calls(s), [], "the stub never ran; the pair stopped at once");
+});
+
+test("the guard shim's own failure lines name #628", (t) => {
+  const s = scene(t);
+  const shim = (name, hcGuard = null) => {
     const mod = join(s.root, name);
     mkdirSync(join(mod, "guard"), { recursive: true });
-    writeFileSync(join(mod, "hcGuard.mjs"), "// fake guard\n");
-    // Bounded by a depth file beside the fake entry itself: even a wrong skip ends here.
-    writeFileSync(join(mod, "guard", "hc"), `#!/bin/sh
-depth=\${0%/*}/depth
-n=0
-[ -f "$depth" ] && read n < "$depth"
-n=$((n + 1))
-echo "$n" > "$depth"
-[ "$n" -gt 2 ] && exit 9
-exec hc "$@"
-`);
+    copyFileSync(join(GUARD_DIR, "hc"), join(mod, "guard", "hc"));
     chmodSync(join(mod, "guard", "hc"), 0o755);
-    return join(mod, "guard");
+    if (hcGuard !== null) writeFileSync(join(mod, "hcGuard.mjs"), hcGuard);
+    return join(mod, "guard", "hc");
   };
-  const a = fakeGuard("fake-a"), b = fakeGuard("fake-b");
-  writeFileSync(s.logPath, "");
-  const r = guardRun(s, ["read", "t101"], { PATH: `${a}:${b}:${s.bin}:${dirname(process.execPath)}` });
-  assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(calls(s), [["read", "t101"]], "the real hc ran once; the fake guards did not");
-  assert.equal(existsSync(join(a, "depth")), false, "the bounded fake loop never started");
-  assert.equal(existsSync(join(b, "depth")), false, "the second fake guard never ran either");
+  const missing = spawnSync(process.execPath, [shim("shim-missing"), "read", "t101"], { encoding: "utf8" });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /#624/);
+  assert.match(missing.stderr, /#628/);
+  assert.match(missing.stderr, /#631/);
+  assert.match(missing.stderr, /did not load/);
+  const broken = spawnSync(process.execPath, [shim("shim-broken", "export const nothing = 1;\n"), "read", "t101"], { encoding: "utf8" });
+  assert.equal(broken.status, 1);
+  assert.match(broken.stderr, /#628/);
+  assert.match(broken.stderr, /internal error/);
 });
 
 test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv is unchanged", () => {
