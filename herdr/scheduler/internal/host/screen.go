@@ -42,8 +42,8 @@ func promptLine(screen string) string {
 	return clipPrompt(fallback)
 }
 
-// cleanLine removes escapes and control characters, then trims the result.
-// Tabs become spaces rather than disappearing, so words do not run together.
+// cleanLine removes escapes and control characters, trims the result, and
+// takes off the box edge a dialog's question can sit inside.
 func cleanLine(line string) string {
 	line = ansiEscape.ReplaceAllString(line, "")
 	var b strings.Builder
@@ -56,7 +56,7 @@ func cleanLine(line string) string {
 			b.WriteRune(r)
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return strings.Trim(strings.TrimSpace(b.String()), "│┃║ ")
 }
 
 // keyHint is the footer an agent draws under a dialog ("Esc to cancel", "Press
