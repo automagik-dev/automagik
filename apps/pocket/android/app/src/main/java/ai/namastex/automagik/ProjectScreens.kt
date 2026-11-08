@@ -187,7 +187,7 @@ object CodeView {
         item(key = "spaces") { SectionHeader("Spaces", project.spaces.size) }
         for (row in spaceRows) {
             sidebarRows(listOf(row), state.space, state.selected, onToggle = {}, onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
-            agentCards(state, vm, bySpace[row.hostId to row.space.id].orEmpty(), "s:${row.key}")
+            agentCards(state, vm, pulse, bySpace[row.hostId to row.space.id].orEmpty(), "s:${row.key}")
         }
         // Agents working in this repository from a space that belongs to another project, or from no space.
         val elsewhere = bySpace.filterKeys { it == null || it !in listed }.values.flatten()
