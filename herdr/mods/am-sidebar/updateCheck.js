@@ -212,7 +212,9 @@ export function restoreFrom(text, version, now) {
   if (typeof file.failedVersion !== "string" || file.failedVersion === "") return null;
   const failed = Array.isArray(file.failed) ? file.failed.filter((m) => typeof m === "string" && m !== "") : [];
   const mod = typeof file.mod === "string" && file.mod !== "" ? file.mod : failed[0] ?? null;
-  return { restore: { version, failedVersion: file.failedVersion, mod, failed: failed.length > 0 ? failed : (mod ? [mod] : []), checked: true } };
+  const unavailable = typeof file.unavailable === "string" && file.unavailable !== "" ? file.unavailable : null;
+  return { restore: { version, failedVersion: file.failedVersion, mod,
+    failed: failed.length > 0 ? failed : (mod ? [mod] : []), checked: true, ...(unavailable ? { unavailable } : {}) } };
 }
 
 /**
@@ -279,8 +281,9 @@ export function restoredNotice(restore) {
   const mods = failed.length > 0 ? failed.join(", ") : "a pack mod";
   const bad = restore?.failedVersion ?? restore?.from ?? "The update";
   const back = restore?.version ?? "the previous version";
+  const stopped = typeof restore?.unavailable === "string" && restore.unavailable !== "" ? `; ${restore.unavailable}` : "";
   return { title: `Automagik Herdr restored ${back}`, level: "warning",
-    body: `${bad} failed to load (${mods} failed herdr-app check): the previous version ${back} is back.` };
+    body: `${bad} failed to load (${mods} failed herdr-app check${stopped}): the previous version ${back} is back.` };
 }
 
 /** The one notice when the kept set itself could not be put back (#652): no crash, no retry loop. */

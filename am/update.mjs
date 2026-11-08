@@ -1407,15 +1407,18 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
   const list = toCheck(modsDir, mods);
   if (list.length === 0) return { failed: [], checked: true, unavailable: null };
   const result = checkMods({ modsDir, mods: list, log, herdrApp });
-  if (!result.checked) {
-    return { failed: result.failed, checked: false, unavailable: result.unavailable ?? "the herdr-app check did not run" };
+  const unavailable = result.unavailable ?? null;
+  // A judged failure wins: one mod that does not load is enough to restore, even when a later
+  // check could not run. Only a run with no failed mod and no complete check keeps the update.
+  if (result.failed.length === 0 && !result.checked) {
+    return { failed: [], checked: false, unavailable: unavailable ?? "the herdr-app check did not run" };
   }
   if (result.failed.length === 0) return { ...result, checked: true };
   const set = readSet(modsDir);
   if (!set || set.mods.length === 0) {
     log("could not restore: no previous version kept");
-    try { saveRestore(modsDir, { version, error: "could not restore: no previous version kept", at: Date.now() }); } catch {}
-    return { ...result, checked: true, restoreError: "could not restore: no previous version kept" };
+    try { saveRestore(modsDir, { version, error: "could not restore: no previous version kept", unavailable, at: Date.now() }); } catch {}
+    return { ...result, checked: true, unavailable, restoreError: "could not restore: no previous version kept" };
   }
   // A kept set from before VERSION files (or one whose .pack has none) still names a version.
   const backVersion = typeof set.version === "string" && set.version !== ""
@@ -1424,7 +1427,7 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
   // process answers, and that build says the one notice from it (updater.js `arrive`).
   try {
     saveRestore(modsDir, { version: backVersion, failedVersion: version, mod: result.failed[0],
-      failed: [...result.failed], checked: true, at: Date.now() });
+      failed: [...result.failed], checked: true, unavailable, at: Date.now() });
   } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
   try {
     const back = rollbackLocked({ modsDir, log, binDir, window });
@@ -1432,20 +1435,20 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
     if (restored !== backVersion) {
       try {
         saveRestore(modsDir, { version: restored, failedVersion: version, mod: result.failed[0],
-          failed: [...result.failed], checked: true, at: Date.now() });
+          failed: [...result.failed], checked: true, unavailable, at: Date.now() });
       } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
     }
     log(`restored ${restored}: ${result.failed.join(", ")} did not load`);
-    return { ...result, checked: true, restored: { version: restored, failedVersion: version, mod: result.failed[0],
-      failed: [...result.failed], checked: true } };
+    return { ...result, checked: true, unavailable, restored: { version: restored, failedVersion: version, mod: result.failed[0],
+      failed: [...result.failed], checked: true, ...(unavailable ? { unavailable } : {}) } };
   } catch (error) {
     // A kept set that is gone, or names a folder that is gone, is the same answer to the person:
     // there is no previous version to put back. Anything else keeps its own why.
     const why = /no earlier pack kept|nothing to roll back to|not there: nothing rolled back|kept set lists .* which is not there/.test(error.message)
       ? "no previous version kept" : error.message;
     log(`could not restore: ${why}`);
-    try { saveRestore(modsDir, { version, error: `could not restore: ${why}`, at: Date.now() }); } catch {}
-    return { ...result, checked: true, restoreError: `could not restore: ${why}` };
+    try { saveRestore(modsDir, { version, error: `could not restore: ${why}`, unavailable, at: Date.now() }); } catch {}
+    return { ...result, checked: true, unavailable, restoreError: `could not restore: ${why}` };
   }
 }
 

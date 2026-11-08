@@ -280,6 +280,53 @@ test("checkForUpdate and installUpdate against a fake release", async () => {
   }
 });
 
+test("node update.mjs apply and update both exit 5 after a restore", async () => {
+  const t = tarball("0.2.0");
+  const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+  const table = { ...served("0.2.0", { url, body: t.buf }), [url]: t.buf };
+  const root = mkdtempSync(join(tmpdir(), "pack-cli-"));
+  const pack = join(root, "am-sidebar");
+  try {
+    cpSync(dirname(UPDATE), pack, { recursive: true });
+    // The temp pack trusts the test key, as a test install of this pack would.
+    writeFileSync(join(pack, "pack-keys.json"), JSON.stringify({ keys }));
+    const fetchFile = join(root, "fetch.json");
+    writeFileSync(fetchFile, JSON.stringify(Object.fromEntries(Object.entries(table).map(([u, b]) => [u, Buffer.from(b).toString("base64")]))));
+    const fakeFetch = join(root, "fake-fetch.mjs");
+    writeFileSync(fakeFetch, `import { readFileSync } from "node:fs";
+const table = JSON.parse(readFileSync(process.env.AUTOMAGIK_TEST_FETCH, "utf8"));
+globalThis.fetch = async (url) => {
+  const body = table[String(url)];
+  return body === undefined ? new Response("not found", { status: 404 }) : new Response(Buffer.from(body, "base64"));
+};
+`);
+    const run = (command, h) => {
+      const app = fakeCheckApp(join(h.home, "bad"), ["am-tabs"]);
+      const env = { ...process.env, HOME: h.home, HERDR_APP_HOME: h.home, AUTOMAGIK_TEST_FETCH: fetchFile,
+        PATH: `${dirname(app.bin)}:${process.env.PATH ?? ""}` };
+      delete env.AUTOMAGIK_HERDR_NO_UPDATE;
+      return spawnSync(process.execPath, ["--import", fakeFetch, join(pack, "update.mjs"), command,
+        ...(command === "update" ? ["--json"] : []), "--mods", h.mods], { env, encoding: "utf8" });
+    };
+    const homes = [autoHome(["0.2.0"]), autoHome(["0.2.0"])];
+    try {
+      const applied = run("apply", homes[0]);
+      assert.equal(applied.status, 5, applied.stderr);
+      const applyAnswer = JSON.parse(applied.stdout.trim().split("\n").at(-1));
+      assert.equal(applyAnswer.installed.restored.version, "0.1.0");
+      assert.equal(applyAnswer.installed.restored.failedVersion, "0.2.0");
+      const updated = run("update", homes[1]);
+      assert.equal(updated.status, 5, updated.stderr);
+      const updateAnswer = JSON.parse(updated.stdout.trim().split("\n").at(-1));
+      assert.equal(updateAnswer.installed.restored.version, "0.1.0");
+      assert.equal(updateAnswer.installed.restored.failedVersion, "0.2.0");
+    } finally { for (const h of homes) h.done(); }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(t.src, { recursive: true, force: true });
+  }
+});
+
 test("node update.mjs: one JSON line, no network with AUTOMAGIK_HERDR_NO_UPDATE=1, rollback by CLI", () => {
   const { home, mods } = appHome("0.1.0");
   try {
@@ -1281,6 +1328,84 @@ esac
   chmodSync(bin, 0o755);
   return { bin, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []) };
 }
+
+/** A stand-in herdr-app that fails the first mod and dies by signal on the next: a failed A then dead B. */
+function fakeCheckFailThenKill(dir) {
+  mkdirSync(dir, { recursive: true });
+  const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app-calls");
+  writeFileSync(bin, `#!/bin/sh
+printf '%s\n' "$*" >> "${calls}"
+[ "$1" = check ] || exit 0
+case "$2" in
+  */am-sidebar) printf '%s\n' "am-sidebar: cannot load" >&2; exit 1 ;;
+  *) kill -TERM $$ ;;
+esac
+`);
+  chmodSync(bin, 0o755);
+  return { bin, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []) };
+}
+
+/** A stand-in herdr-app whose check dies by signal: execFileSync reports a non-numeric status. */
+function fakeCheckKilled(dir) {
+  mkdirSync(dir, { recursive: true });
+  const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app-calls");
+  writeFileSync(bin, `#!/bin/sh
+printf '%s\n' "$*" >> "${calls}"
+kill -TERM $$
+`);
+  chmodSync(bin, 0o755);
+  return { bin, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []) };
+}
+
+test("a herdr-app check killed by a signal is could-not-run: update kept, no restore, one unchecked note", async () => {
+  const h = autoHome(["0.2.0"]);
+  const app = fakeCheckKilled(join(h.home, "killed"));
+  try {
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, herdrApp: app.bin });
+    assert.equal(r.installed.version, "0.2.0");
+    assert.equal(r.installed.restored, undefined);
+    assert.equal(r.installed.restoreError, undefined);
+    assert.equal(r.installed.check.checked, false, "no mod was judged");
+    assert.deepEqual(r.installed.check.failed, []);
+    assert.match(r.installed.check.unavailable, /could not run/);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.2.0", "the update was kept");
+    assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.1.0", "the kept set stayed the kept set");
+    assert.equal(readAuto(h.mods).skip, null, "nothing was recorded as rolled back");
+    const note = JSON.parse(readFileSync(join(h.home, "automagik-herdr", CHECK_FILE), "utf8"));
+    assert.deepEqual([note.version, note.from], ["0.2.0", "0.1.0"]);
+    assert.match(note.unavailable, /could not run/);
+    assert.equal(app.calls().length, 1, "it stops at the first check that could not run");
+  } finally { h.done(); }
+});
+
+test("a judged failed mod wins over a later killed check: restore and one notice", async () => {
+  const h = autoHome(["0.2.0"]);
+  const app = fakeCheckFailThenKill(join(h.home, "mixed"));
+  const lines = [];
+  try {
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, herdrApp: app.bin,
+      log: (l) => lines.push(l) });
+    const restore = r.installed.restored;
+    assert.equal(restore.version, "0.1.0");
+    assert.equal(restore.failedVersion, "0.2.0");
+    assert.deepEqual(restore.failed, ["am-sidebar"]);
+    assert.equal(restore.mod, "am-sidebar");
+    assert.equal(restore.checked, true);
+    assert.match(restore.unavailable, /could not run/);
+    assert.equal(r.installed.check.checked, true, "a mod was judged failed");
+    assert.deepEqual(r.installed.check.failed, ["am-sidebar"]);
+    assert.match(r.installed.check.unavailable, /could not run/);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "the kept set is back");
+    assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.2.0");
+    assert.equal(readAuto(h.mods).skip, "0.2.0", "the failed version is held back");
+    assert.ok(lines.some((l) => /check FAILED: am-sidebar/.test(l)));
+    assert.ok(lines.some((l) => /could not run/.test(l)));
+    const note = JSON.parse(readFileSync(join(h.home, "automagik-herdr", RESTORE_FILE), "utf8"));
+    assert.deepEqual(note.failed, ["am-sidebar"]);
+    assert.match(note.unavailable, /could not run/);
+    assert.equal(app.calls().length, 2, "the failed mod and the dead check after it");
+  } finally { h.done(); }
+});
 
 test("a bad pack is restored at once; the bad version is held, and a newer one installs", async () => {
   const h = autoHome(["0.2.0"]);

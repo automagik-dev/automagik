@@ -4588,7 +4588,8 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
   if (r.installed?.restored) {
     const restore = r.installed.restored;
     const mods = (restore.failed?.length ? restore.failed : [restore.mod]).filter(Boolean).join(", ");
-    return `Automagik Herdr ${restore.failedVersion ?? r.installed.version} failed to load (${mods} failed herdr-app check): `
+    const stopped = restore.unavailable ? `; ${restore.unavailable}` : "";
+    return `Automagik Herdr ${restore.failedVersion ?? r.installed.version} failed to load (${mods} failed herdr-app check${stopped}): `
       + `restored ${restore.version}. The bad version is held back; a newer release installs on its own.${note}`;
   }
   if (r.installed?.restoreError) {

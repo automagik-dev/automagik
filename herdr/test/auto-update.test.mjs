@@ -266,6 +266,49 @@ test("herdr-app missing after an install: the update is kept, one notice says it
 });
 
 
+test("a failed mod wins over a later dead check: one restore notice says both", async () => {
+  const h = herdr();
+  const old = h.build();
+  const unavailable = "the herdr-app check could not run (SIGTERM)";
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: ["am-sidebar"], checked: true, unavailable },
+        restored: { version: "0.8.0", failedVersion: "0.8.1", mod: "am-sidebar", failed: ["am-sidebar"],
+          checked: true, unavailable } } });
+    h.swap(old, "0.8.0");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-sidebar failed herdr-app check; the herdr-app check could not run \(SIGTERM\)\): the previous version 0\.8\.0 is back/);
+  assert.equal(h.state().kind, "restored");
+  assert.equal(h.state().announced, "0.8.0");
+});
+
+test("a check killed before any mod is judged: the update is kept, one unchecked notice", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: [], checked: false,
+        unavailable: "the herdr-app check could not run (SIGTERM)" } } });
+    h.swap(old, "0.8.1");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 0, "the old build waits for the reload");
+  h.build().u.start();
+  await h.tick(1);
+  assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr updated to 0.8.1"]);
+  assert.match(h.notes[0].body, /the herdr-app check could not run \(SIGTERM\): the update was kept, but its mods were not checked/);
+  await h.tick(LANDING_MS + 1_000);
+  assert.equal(h.notes.length, 1);
+});
+
 test("a version rolled back is skipped and the notice says it waits for a newer one; a newer one installs", async () => {
   const h = herdr({ auto: { ...MANAGED, skip: "0.8.1" } });
   const b = h.build();
