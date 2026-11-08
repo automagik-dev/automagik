@@ -52,7 +52,8 @@ function scratch(t, { herdr = true, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
-  for (const d of [home, bin, apps, rel]) mkdirSync(d, { recursive: true });
+  const tmp = join(root, "tmp");
+  for (const d of [home, bin, apps, rel, tmp]) mkdirSync(d, { recursive: true });
   if (herdr) appBundle(join(apps, "Herdr.app"), herdr === true ? HERDR_ID : herdr);
   const brewLog = join(root, "brew.log");
   writeFileSync(brewLog, "");
@@ -84,7 +85,7 @@ fi
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${join(ROOT, "test", "fake-hc.mjs")}" "$@"\n`);
   const extraEnv = { HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog };
   const env = {
-    HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HOME: home, TMPDIR: tmp, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
     AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
   };
