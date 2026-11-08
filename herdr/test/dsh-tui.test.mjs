@@ -38,8 +38,10 @@ function scene(t, { dsh = true, config = {} } = {}) {
   writeFileSync(join(home, ".dsh", "profiles", "desktop", "package.json"), "{\"name\":\"dsh-profile-desktop\"}\n");
   writeFileSync(join(home, ".dsh", "profiles", "desktop", "cordis.patch.yml"), "[]\n");
   writeFileSync(join(home, ".dsh", ".credentials.yaml"), "keep: me\n");
-  // The login shell a Herdr pane starts in: its login PATH must reach ~/.local/bin (the shim).
-  writeFileSync(join(home, ".profile"), 'export PATH="$HOME/.local/bin:$PATH"\n');
+  // The login shell a Herdr pane starts in: its login PATH is the scene's, set outright and never
+  // appended to the machine's login PATH, so the fake dsh is the only one a test can reach.
+  const localBin = join(home, ".local", "bin"), scenePath = `${bin}:${localBin}:/usr/bin:/bin`;
+  writeFileSync(join(home, ".profile"), `export PATH="${scenePath}"\n`);
   const cfgPath = join(root, "dsh.json");
   writeFileSync(cfgPath, JSON.stringify(config));
   const helper = join(root, "fake-dsh.cjs");
@@ -134,10 +136,17 @@ printf '%s\\n' "$*" >> "$DSH_LOG"
 exec "${process.execPath}" "${helper}" "$@"
 `);
   }
+  // A test run may point the scene's login shell at a wrapper (the hostile-login-PATH run);
+  // named `sh`, it still maps to ~/.profile. Otherwise the POSIX login shell is used.
   const env = {
-    HOME: home, SHELL: "/bin/sh", PATH: `${bin}:${join(home, ".local", "bin")}:/usr/bin:/bin`,
+    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath,
     DSH_LOG: log, DSH_FAKE: cfgPath, AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
   };
+  const pane = panePathOf({ env });
+  assert.equal(pane.login, true, "the login shell answered");
+  assert.equal(pane.path, env.PATH, "the login shell gives the pane exactly the scene's PATH");
+  assert.equal(pane.config, "~/.profile");
+  if (!dsh) assert.equal(findDsh({ ...env, PATH: pane.path }), null, "no dsh on the scene's pane PATH");
   const calls = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
   const runShim = (args, extra = {}) => spawnSync("sh", [join(home, ".local", "bin", SHIM), ...args], { env: { ...env, ...extra }, encoding: "utf8" });
   const cli = (args, extra = {}) => spawnSync(process.execPath, [CLI, ...args], { cwd: root, env: { ...env, ...extra }, encoding: "utf8" });
@@ -335,6 +344,11 @@ test("a fresh pane with the onboarding record starts clean, and a person's recor
 
 test("doctor states dsh, the dsh-tui profile and the shim honestly, before and after install", async (t) => {
   const missing = scene(t, { dsh: false });
+  const missingPane = panePathOf({ env: missing.env });
+  assert.equal(missingPane.login, true, "the login shell answered");
+  assert.equal(missingPane.path, missing.env.PATH, "the login shell gives the pane exactly the scene's PATH");
+  assert.equal(missingPane.config, "~/.profile");
+  assert.equal(findDsh({ ...missing.env, PATH: missingPane.path }), null, "no dsh on the scene's pane PATH");
   const none = doctorDshTui({ env: missing.env });
   assert.equal(none.code, 2, "no dsh: not applicable");
   assert.equal(none.checks.find((c) => c.check === "dsh").ok, true);
@@ -347,6 +361,10 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.match(noPath.checks.find((c) => c.check === "dsh-tui-path").fix, />> ~\/\.profile$/);
 
   const s = scene(t);
+  const paneBefore = panePathOf({ env: s.env });
+  assert.equal(paneBefore.login, true, "the login shell answered");
+  assert.equal(paneBefore.path, s.env.PATH, "the login shell gives the pane exactly the scene's PATH");
+  assert.equal(paneBefore.config, "~/.profile");
   const before = doctorDshTui({ env: s.env });
   assert.equal(before.code, 2);
   assert.equal(before.checks.find((c) => c.check === "dsh").detail, s.dsh);
@@ -356,7 +374,9 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.ok(after.checks.every((c) => c.ok), JSON.stringify(after.checks));
   assert.match(after.checks.find((c) => c.check === "dsh-tui-profile").detail, /integrity ok.*added by this installer/);
   const pane = panePathOf({ env: s.env });
+  assert.equal(pane.login, true);
   assert.equal(pane.config, "~/.profile");
+  assert.equal(pane.path, s.env.PATH);
   assert.ok(pane.path.split(":").includes(join(s.home, ".local", "bin")), pane.path);
   const off = doctorDshTui({ env: s.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/zsh", config: "~/.zshrc", login: true } });
   const offPath = off.checks.find((c) => c.check === "dsh-tui-path");
@@ -367,6 +387,22 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   const half = doctorDshTui({ env: s.env });
   assert.equal(half.code, 1);
   assert.equal(half.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
+});
+
+test("the pane PATH is the login shell's, read between its markers", (t) => {
+  const s = scene(t);
+  const extra = join(s.root, "extra-bin");
+  const local = join(s.home, ".local", "bin");
+  mkdirSync(extra);
+  mkdirSync(local, { recursive: true });
+  writeFileSync(join(s.home, ".profile"), `export PATH="${local}:${extra}:/usr/bin:/bin"\n`);
+  const pane = panePathOf({ env: { ...s.env, PATH: "/usr/bin:/bin" } });
+  assert.equal(pane.login, true, "the login shell answered");
+  assert.equal(pane.config, "~/.profile");
+  assert.equal(pane.path, `${local}:${extra}:/usr/bin:/bin`);
+  assert.doesNotMatch(pane.path, /\n/);
+  assert.ok(pane.path.split(":").includes(extra), pane.path);
+  assert.ok(pane.path.split(":").includes(local), pane.path);
 });
 
 test("uninstall removes the plugin and the shim, and leaves a foreign shim alone", async (t) => {
@@ -405,6 +441,14 @@ test("uninstall removes a shim released before the profile fix, as ours", (t) =>
 
 test("no dsh: one honest line, nothing written", async (t) => {
   const s = scene(t, { dsh: false });
+  // No scene bin either: the pane PATH has no dsh entry at all, so a real machine dsh cannot leak in.
+  s.env.PATH = "/usr/bin:/bin";
+  writeFileSync(join(s.home, ".profile"), 'export PATH="/usr/bin:/bin"\n');
+  const pane = panePathOf({ env: s.env });
+  assert.equal(pane.login, true, "the login shell answered");
+  assert.equal(pane.config, "~/.profile");
+  assert.equal(pane.path, "/usr/bin:/bin");
+  assert.equal(findDsh({ ...s.env, PATH: pane.path }), null, "no dsh on the scene's pane PATH");
   const r = await installDshTui({ env: s.env });
   assert.equal(r.status, "skipped");
   assert.deepEqual(r.lines, [SKIP]);

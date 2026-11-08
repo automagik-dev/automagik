@@ -24,6 +24,10 @@ extraResources:
     to: profile/node_modules
   - from: build/versions.json
     to: versions.json
+  # The desktop's DSH-in-Herdr setup imports the shared installer (src/dsh-tui.js): am/dshTui.mjs
+  # and its two local modules, copied by prepare-runtime. Never a second copy in the repository.
+  - from: build/dsh-tui
+    to: dsh-tui
 asar: true
 # automagik:// and omni:// links (src/deeplink.js) open this app: automagik:// is Automagik's
 # own (Herdr's Work button, RFC 0013), omni:// stays as its alias, and an Omni's "Open in the

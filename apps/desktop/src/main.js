@@ -33,6 +33,10 @@ import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
+import {
+  DSH_TUI_LABEL, DSH_TUI_LOG, dshTuiModuleDir, dshTuiRunnerOf, dshTuiSupported, ensurePathLine,
+  formatDoctor, pathActionOf, pathDoneView, pathView, resultView, runDshTui, setupView,
+} from './dsh-tui.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Before anything reads it (the single-instance lock does): the window's data is filed under
@@ -190,6 +194,7 @@ function appMenu() {
     { label: PRODUCT, submenu: [
       { role: 'about' },
       { label: 'Check for Updates…', click: () => void checkForUpdates() },
+      ...(dshTuiSupported() ? [{ label: DSH_TUI_LABEL, click: () => void openDshTuiSetup() }] : []),
       { type: 'separator' },
       { role: 'services' },
       { type: 'separator' },
@@ -712,9 +717,111 @@ async function checkForUpdates({ quiet = false } = {}) {
   else if (result === 'error' && !retrying) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
-// The title bar's menu, on a right click; on macOS the app menu has the same entry.
+// The title bar's menu, on a right click; on macOS the app menu has the same entries.
 function barMenu() {
-  return Menu.buildFromTemplate([{ label: 'Check for Updates…', click: () => void checkForUpdates() }])
+  const items = [{ label: 'Check for Updates…', click: () => void checkForUpdates() }]
+  if (dshTuiSupported()) items.push({ label: DSH_TUI_LABEL, click: () => void openDshTuiSetup() })
+  return Menu.buildFromTemplate(items)
+}
+
+// DSH as a Herdr agent (#561): the shared installer (am/dshTui.mjs) runs in a child process;
+// this is the desktop's opt-in dialog, its log, and the PATH line it asks about. The installer's
+// pin, profile, shim, doctor and release-age rules are the module's, never repeated here.
+let dshTuiRunning = false
+const dshTuiPaths = () => ({
+  packaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  appPath: app.getAppPath(),
+})
+const dshTuiModule = () => dshTuiModuleDir(dshTuiPaths())
+const dshTuiLog = (line) => {
+  try {
+    appendFileSync(join(home, 'logs', DSH_TUI_LOG), `${new Date().toISOString()} ${line}\n`)
+  } catch {}
+}
+const askDshTui = async (view) => {
+  const { response } = await dialog.showMessageBox(window ?? undefined, {
+    type: view.type ?? 'info',
+    message: view.message,
+    detail: view.detail,
+    buttons: view.buttons.map(button => button.label),
+    defaultId: view.defaultId ?? 0,
+    cancelId: view.cancelId ?? view.buttons.length - 1,
+    noLink: true,
+  })
+  return view.buttons[response]?.id ?? 'close'
+}
+const runDshTuiAction = async (action) => {
+  const answer = await runDshTui({
+    action, moduleDir: dshTuiModule(), runner: dshTuiRunnerOf(dshTuiPaths()),
+  })
+  const checks = answer.result?.checks ? formatDoctor(answer.result.checks).split('\n') : null
+  const lines = answer.ok
+    ? (answer.result?.lines ?? checks ?? [answer.result?.detail])
+    : [answer.error]
+  for (const line of (lines ?? []).filter(Boolean)) dshTuiLog(`${action}: ${line}`)
+  return answer
+}
+async function withDshTuiProgress(text, work) {
+  window?.setProgressBar(2, { mode: 'indeterminate' })
+  sendState({ status: text })
+  try { return await work() } finally {
+    window?.setProgressBar(-1)
+    sendState({ status: '' })
+  }
+}
+async function openDshTuiSetup() {
+  if (dshTuiRunning) return
+  dshTuiRunning = true
+  try {
+    let answer = await runDshTuiAction('doctor')
+    for (;;) {
+      const choice = await askDshTui(setupView({ answer }))
+      if (choice === 'close') return
+      if (choice === 'uninstall') {
+        const { response } = await dialog.showMessageBox(window ?? undefined, {
+          type: 'question',
+          message: 'Uninstall dsh-TUI?',
+          detail: `Removes dsh-TUI from the ${answer.profile ?? 'dsh-tui'} DSH profile and the `
+            + `shim this installer wrote. DSH sessions, dsh-TUI's own state and the profile stay.`,
+          buttons: ['Uninstall', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+        })
+        if (response !== 0) continue
+      }
+      const result = await withDshTuiProgress(
+        choice === 'uninstall' ? 'Removing dsh-TUI…' : 'Installing dsh-TUI…',
+        () => runDshTuiAction(choice),
+      )
+      await askDshTui(resultView({ action: choice, answer: result }))
+      const installed = result.ok
+        && result.result?.status !== 'skipped' && result.result?.status !== 'failed'
+      if (choice === 'install' && installed) await offerDshTuiPath(result)
+      answer = await runDshTuiAction('doctor')
+    }
+  } finally {
+    dshTuiRunning = false
+  }
+}
+async function offerDshTuiPath(answer) {
+  const action = pathActionOf({ pane: answer.pane, home: homedir() })
+  if (!action || await askDshTui(pathView(action)) !== 'add-path') return
+  try {
+    const written = ensurePathLine({ action })
+    dshTuiLog(written.changed
+      ? `path: added ${action.line} to ${action.config}`
+      : `path: ${action.config} already names the user bin folder`)
+    await askDshTui(pathDoneView(action))
+  } catch (error) {
+    dshTuiLog(`path: could not write ${action.config}: ${error?.message ?? error}`)
+    await askDshTui({
+      type: 'warning',
+      message: 'Could not write the PATH line',
+      detail: `${action.config}: ${error?.message ?? error}`,
+      buttons: [{ id: 'close', label: 'Close' }],
+    })
+  }
 }
 
 // Restart into the downloaded update: dsh is stopped first, as on any quit. macOS then checks

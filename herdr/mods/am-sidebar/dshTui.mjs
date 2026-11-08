@@ -133,8 +133,10 @@ export function panePathOf({ env = process.env, timeout = 5000 } = {}) {
       { env, timeout, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     stdout = r.stdout ?? "";
   } catch { /* no answer */ }
-  const start = stdout.lastIndexOf(marker), end = stdout.lastIndexOf(`:${marker}`);
-  const path = start >= 0 && end > start ? stdout.slice(start + marker.length, end) : "";
+  const start = stdout.indexOf(marker), end = stdout.lastIndexOf(`:${marker}`);
+  // printenv ends the value with a newline; a PATH entry with one never matches a folder.
+  const raw = start >= 0 && end > start ? stdout.slice(start + marker.length, end) : "";
+  const path = raw.replace(/\r?\n$/, "");
   return { shell, config: shellConfigOf(shell), path: path || String(env.PATH ?? ""), login: Boolean(path) };
 }
 
