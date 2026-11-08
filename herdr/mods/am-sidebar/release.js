@@ -317,6 +317,9 @@ export const HELD_FILE = "held-mods.json";
  * kept set because herdr-app check found a mod that does not load, or `{ version, error, at }`
  * when it could not restore. The build that asked for the update usually never hears back (the
  * folders swap and Herdr reloads it), so the restored build reads this at load and says it once.
+ * `prevRemoved`: the restore removed the failed release's folders instead of keeping them (#671),
+ * so no `.prev` is left and a manual rollback has nothing to put back. `warnings`: what the
+ * restore could not remove, and where it stays (the update's answer and notice say it too).
  */
 export const RESTORE_FILE = "restored-mods.json";
 /**

@@ -213,8 +213,10 @@ export function restoreFrom(text, version, now) {
   const failed = Array.isArray(file.failed) ? file.failed.filter((m) => typeof m === "string" && m !== "") : [];
   const mod = typeof file.mod === "string" && file.mod !== "" ? file.mod : failed[0] ?? null;
   const unavailable = typeof file.unavailable === "string" && file.unavailable !== "" ? file.unavailable : null;
+  const warnings = Array.isArray(file.warnings) ? file.warnings.filter((w) => typeof w === "string" && w !== "") : [];
   return { restore: { version, failedVersion: file.failedVersion, mod,
-    failed: failed.length > 0 ? failed : (mod ? [mod] : []), checked: true, ...(unavailable ? { unavailable } : {}) } };
+    failed: failed.length > 0 ? failed : (mod ? [mod] : []), checked: true, ...(file.prevRemoved === true ? { prevRemoved: true } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}), ...(unavailable ? { unavailable } : {}) } };
 }
 
 /**
@@ -273,7 +275,9 @@ export function applyPatch(result, state, now) {
 
 /**
  * The one notice after an update's own `herdr-app check` found a mod that does not load and the
- * kept set went back (#652): the version that failed, the mods, and the version that is back.
+ * kept set went back (#652): the version that failed, the mods, and the version that is back. When
+ * the restore removed the failed pack (#671), it says a manual rollback has nothing to go back to;
+ * when it could not remove a folder, the restore's own warning says where the folder stays.
  */
 export function restoredNotice(restore) {
   const failed = Array.isArray(restore?.failed) && restore.failed.length > 0
@@ -282,8 +286,12 @@ export function restoredNotice(restore) {
   const bad = restore?.failedVersion ?? restore?.from ?? "The update";
   const back = restore?.version ?? "the previous version";
   const stopped = typeof restore?.unavailable === "string" && restore.unavailable !== "" ? `; ${restore.unavailable}` : "";
+  const removed = restore?.prevRemoved === true
+    ? " The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to." : "";
+  const warnings = Array.isArray(restore?.warnings) ? restore.warnings.filter((w) => typeof w === "string" && w !== "") : [];
+  const warned = warnings.length > 0 ? ` Warning: ${warnings.join(" ")}` : "";
   return { title: `Automagik Herdr restored ${back}`, level: "warning",
-    body: `${bad} failed to load (${mods} failed herdr-app check${stopped}): the previous version ${back} is back.` };
+    body: `${bad} failed to load (${mods} failed herdr-app check${stopped}): the previous version ${back} is back.${removed}${warned}` };
 }
 
 /** The one notice when the kept set itself could not be put back (#652): no crash, no retry loop. */

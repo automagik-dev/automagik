@@ -155,7 +155,8 @@ test("a bad pack is restored: one notice names the failed version and mod, the m
     if (args[1] === "check") return h.check();
     const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
       installed: { version: "0.8.1", check: { failed: ["am-tabs"], checked: true },
-        restored: { version: "0.8.0", failedVersion: "0.8.1", mod: "am-tabs", failed: ["am-tabs"], checked: true } } });
+        restored: { version: "0.8.0", failedVersion: "0.8.1", mod: "am-tabs", failed: ["am-tabs"], checked: true,
+          prevRemoved: true, warnings: ["the failed pack could not be removed (EACCES: permission denied, rm '/x/.prev-next-1'): it is in /x/.prev-next-1"] } } });
     h.swap(old, "0.8.0"); // the kept set is back: Herdr reloads the mods into it
     return answer;
   };
@@ -165,6 +166,8 @@ test("a bad pack is restored: one notice names the failed version and mod, the m
   assert.equal(old.reloaded, true, "the restored folders reloaded the mod");
   assert.equal(h.notes.length, 1);
   assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.8\.0 is back/);
+  assert.match(h.notes[0].body, /The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to\./);
+  assert.match(h.notes[0].body, /Warning: the failed pack could not be removed .*\.prev-next-1/);
   assert.equal(h.state().kind, "restored");
   assert.equal(h.state().announced, "0.8.0");
   assert.equal(h.state().autoFailed, null, "a restore is not a failed install with a backoff");
@@ -186,13 +189,16 @@ test("the restored build reads update.mjs's note when the old build never hears 
   old.u.start();
   await h.tick(FIRST_CHECK_MS);
   h.files.set(`${HOME}/automagik-herdr/${RESTORE_FILE}`, JSON.stringify({ version: "0.8.0", failedVersion: "0.8.1",
-    mod: "am-tabs", failed: ["am-tabs"], checked: true, at: h.now }));
+    mod: "am-tabs", failed: ["am-tabs"], checked: true, prevRemoved: true,
+    warnings: ["the failed pack could not be removed (EACCES: permission denied, rm '/x/.prev-next-1'): it is in /x/.prev-next-1"], at: h.now }));
   h.check = () => line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), disabled: false, auto: { ...MANAGED, skip: "0.8.1" } });
   h.swap(old, "0.8.0");
   h.build().u.start();
   await h.tick(1);
   assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr restored 0.8.0"]);
   assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.8\.0 is back/);
+  assert.match(h.notes[0].body, /The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to\./);
+  assert.match(h.notes[0].body, /Warning: the failed pack could not be removed .*\.prev-next-1/);
   // A later build of the restored version says nothing more.
   h.build().u.start();
   await h.tick(1);
