@@ -42,6 +42,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on llm/adapters-updated',
     'on settings/document-updated',
     'on loader/volatile-update',
+    'on acp-dsh/dsh-tools-changed',
     'on session/created',
     'on permission-presets/catalog-changed',
     'on session/event',

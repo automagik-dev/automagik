@@ -16,6 +16,7 @@ const live = (value) => {
 
 function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, failures = {} } = {}) {
   const log = []
+  const emitted = []
   const listeners = new Map()
   const services = {}
   const routes = { now: [] }
@@ -39,7 +40,10 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
     provide: (name, value) => { services[name] = value },
     on: (name, listener) => listeners.set(name, [...(listeners.get(name) ?? []), listener]),
     effect: (setup) => { const cleanup = setup(); listeners.set('stop', [...(listeners.get('stop') ?? []), cleanup]) },
-    emit: name => (listeners.get(name) ?? []).forEach(listener => listener()),
+    emit: (name, ...args) => {
+      emitted.push([name, ...args])
+      for (const listener of listeners.get(name) ?? []) listener(...args)
+    },
   }
   const installs = []
   const store = {
@@ -56,7 +60,10 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
     find: name => clis[name],
     signedIn: async (spec, cli) => { probes.push([spec.key, cli]); return signedIn[spec.key] },
   }
-  return { ctx, deps, log, services, installs, probes, routes, store, bins, busy, errors, failures, clis, registered }
+  return {
+    ctx, deps, log, emitted, services, installs, probes, routes, store, bins, busy, errors,
+    failures, clis, registered,
+  }
 }
 
 const CLAUDE = AGENTS['acp-claude']
@@ -142,6 +149,24 @@ test('flipping a switch offers or withdraws the agent at once, without a restart
   config.claude.set(true)
   h.ctx.emit('loader/volatile-update')
   assert.deepEqual(h.log.at(-1), ['register', ['acp-claude']])
+})
+
+test('a live dshTools flip is announced, so the Bot team can reverse its move at once', () => {
+  const h = harness()
+  const config = { claude: live(false), codex: live(false), dshTools: live(true) }
+  apply(h.ctx, config, h.deps)
+  const announced = () => h.emitted
+    .filter(([name]) => name === 'acp-dsh/dsh-tools-changed')
+    .map(([, payload]) => payload)
+  // No flip, no announcement: a repeated loader event for other fields is not a change.
+  h.ctx.emit('loader/volatile-update')
+  assert.deepEqual(announced(), [])
+  config.dshTools.set(false)
+  h.ctx.emit('loader/volatile-update')
+  assert.deepEqual(announced(), [{ on: false }])
+  config.dshTools.set(true)
+  h.ctx.emit('loader/volatile-update')
+  assert.deepEqual(announced(), [{ on: false }, { on: true }])
 })
 
 test('a failed connector shows its log path relative to the home directory', async () => {

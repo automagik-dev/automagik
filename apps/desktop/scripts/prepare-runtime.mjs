@@ -30,6 +30,7 @@ import { patchRuntime } from './runtime-patches.mjs'
 import { devClientBundles } from './client-bundles.mjs'
 import { batchSafe } from './batch-spawn.mjs'
 import { compareVersions } from '../src/update.js'
+import { DSH_TUI_FILES, DSH_TUI_PACKAGE, dshTuiSourceDir } from '../src/dsh-tui.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -49,6 +50,23 @@ const OMNI = readJson(join(APP, 'omni.json'))
 // The app, and every plugin of this repository, carry Automagik's version.
 const VERSION = readJson(join(REPO, 'package.json')).version
 if (readJson(join(APP, 'package.json')).version !== VERSION) throw new Error(`apps/desktop is ${readJson(join(APP, 'package.json')).version}, not Automagik's ${VERSION}: run scripts/version.ts`)
+// The desktop's dsh-TUI setup imports the shared installer (am/dshTui.mjs) instead of keeping a
+// second copy of the pin, profile, shim and release-age rules; ship it beside the app.
+const dshTuiSource = dshTuiSourceDir({ appPath: APP })
+const dshTuiBuild = join(BUILD, 'dsh-tui')
+rmSync(dshTuiBuild, { recursive: true, force: true })
+mkdirSync(dshTuiBuild, { recursive: true })
+for (const file of DSH_TUI_FILES) {
+  if (!existsSync(join(dshTuiSource, file))) {
+    throw new Error(`the shared dsh-TUI installer lacks ${join(dshTuiSource, file)}`)
+  }
+  cpSync(join(dshTuiSource, file), join(dshTuiBuild, file))
+}
+// The child runner stays outside the app's asar so the packaged binary can run it as Node.
+const dshTuiRunner = join(APP, 'src', 'dsh-tui-run.mjs')
+cpSync(dshTuiRunner, join(dshTuiBuild, 'dsh-tui-run.mjs'))
+writeFileSync(join(dshTuiBuild, 'package.json'), DSH_TUI_PACKAGE)
+say(`copied the shared dsh-TUI installer (${DSH_TUI_FILES.join(', ')}) and its runner`)
 // Omni at the pinned commit: only its plugin folders and the harness they are tested on.
 function omniSource() {
   if (process.env.OMNI_SOURCE) return resolve(process.env.OMNI_SOURCE)

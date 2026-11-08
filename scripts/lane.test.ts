@@ -23,6 +23,18 @@ describe('the plugin lane', () => {
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
+  test('a .gitignore-only change cuts no release', () => {
+    const none = () => false;
+    expect(ships(['.gitignore'], none)).toBe(false);
+  });
+
+  test('a .gitignore change beside a shipped file takes that file\'s lane', () => {
+    const none = () => false;
+    const changed = ['.gitignore', 'herdr/mods/am-sidebar/main.js'];
+    expect(ships(changed, none)).toBe(true);
+    expect(kindOf(changed, none, none, changed)).toBe('herdr');
+  });
+
   test('the Windows helper\'s image and launcher (apps/desktop/wslc/) ship nothing until Windows reads them', () => {
     const none = () => false;
     const wslc = ['apps/desktop/wslc/Dockerfile', 'apps/desktop/wslc/bin/dsh-launch.mjs', 'apps/desktop/wslc/lib/launcher.mjs',

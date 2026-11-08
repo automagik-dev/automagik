@@ -9,3 +9,9 @@ apps/desktop/build/
 apps/desktop/dist/
 # Fixture runs (apps/bots-dsh/dev/advanced-check.mjs writes .tools/advanced-fixture)
 .tools/
+# Herdr runtime state; .herdr/bots.json stays visible
+.herdr/*.bak-*
+.herdr/pane-env*
+.herdr/app-home/
+.herdr/bots.json.lock
+.herdr/bots.json.*.tmp
