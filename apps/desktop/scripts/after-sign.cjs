@@ -31,10 +31,10 @@ function run(command, args, options = {}) {
   }
 }
 
-// notarytool in JSON mode still prints its human progress to stderr; the verdict is the last
-// JSON object on stdout. This is apps/desktop/src/dsh-tui.js's lastJson, copied because that
-// module is ESM and this hook is CommonJS: scan the lines from the end and take the last one
-// that parses as a JSON object.
+// notarytool in JSON mode still prints its human progress to stderr; the verdict is on stdout.
+// It may print that verdict pretty-printed, so try the whole stdout first, then fall back to the
+// last JSON object line. That line scan is apps/desktop/src/dsh-tui.js's lastJson, copied
+// because that module is ESM and this hook is CommonJS.
 function lastJson(text) {
   const lines = String(text ?? '').trim().split(/\r?\n/)
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -43,6 +43,15 @@ function lastJson(text) {
     try { return JSON.parse(line) } catch { /* not the verdict */ }
   }
   return null
+}
+
+/** The verdict on notarytool stdout: the whole document first, then the last JSON object line. */
+function parseVerdict(text) {
+  const stdout = String(text ?? '').trim()
+  if (stdout) {
+    try { return JSON.parse(stdout) } catch { /* not one JSON document: scan its lines */ }
+  }
+  return lastJson(stdout)
 }
 
 /** Print one child stream's lines to the build log; stdout and stderr stay separate. */
@@ -94,7 +103,7 @@ exports.default = async function afterSign(context) {
     // read the verdict from stdout only, so a progress line can never hide an acceptance.
     printOutput('notarytool stdout', submit.stdout)
     printOutput('notarytool stderr', submit.stderr)
-    const verdict = lastJson(submit.stdout)
+    const verdict = parseVerdict(submit.stdout)
     if (submit.status !== 0 || verdict?.status !== 'Accepted') {
       throw new Error(
         `after-sign: the app was not accepted by the notary service (exit ${submit.status}, status: ${verdict?.status ?? 'unparsable'})`,
