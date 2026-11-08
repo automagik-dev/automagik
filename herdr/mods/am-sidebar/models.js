@@ -465,7 +465,13 @@ const BRIEFING = {
   hermes: { env: (t) => ({ HERMES_EPHEMERAL_SYSTEM_PROMPT: t }), ownConfig: true },
   // dsh-tui has no system-prompt flag and no hook (#598): the briefing is its first prompt, the
   // last words of its command after `--` (plainPrompt), on every launch, a resumed one too.
-  "dsh-tui": { prompt: (t) => ["--", plainPrompt(t)], ours: (v) => ourText(String(v).replace(/^Prompt: /, "")) },
+  "dsh-tui": {
+    prompt: (t) => {
+      const name = String(t).match(/^You are (.+), (?:this project's main bot|a team member) \(bot [^)]+\)\.$/m)?.[1];
+      return ["--", plainPrompt(name ? `${name} - ${t}` : t)];
+    },
+    ours: (v) => ourText(String(v).replace(/^Prompt: /, "").replace(/^.* - (?=<herdr-bot>)/, "")),
+  },
 };
 
 /**

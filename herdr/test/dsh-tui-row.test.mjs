@@ -179,7 +179,7 @@ test("start a dsh-tui bot: plain dsh-tui, its briefing after --; no permission, 
   const words = agentWords(s.runs()[0]);
   assert.deepEqual(words.slice(0, 2), ["dsh-tui", "--"]);
   assert.equal(words.length, 3);
-  assert.match(words[2], /^<herdr-bot>\n[^]*You are Genie, this project's main bot/);
+  assert.match(words[2], /^Genie - <herdr-bot>\n[^]*You are Genie, this project's main bot/);
   assert.equal(words.some((w) => /^--(permission|add-dir|approval|model|effort|sandbox)/.test(w)), false, words.join(" "));
 });
 
@@ -236,7 +236,7 @@ test("restart a dsh-tui bot with a known session: dsh-tui --resume <id> -- <brie
   assert.equal(r.code, 0, r.err);
   const words = agentWords(s.runs().at(-1));
   assert.deepEqual(words.slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
-  assert.match(words[4], /^<herdr-bot>\n/);
+  assert.match(words[4], /^Genie - <herdr-bot>\n/);
   assert.equal(words.length, 5, "the brief once, last");
   // A known id resumes by id whatever the turn counter says: the guard is only for the id-less -c.
   const early = withPane(t, { turn: 0, session: SID });
