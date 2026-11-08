@@ -16,12 +16,17 @@ const live = (value) => {
 
 function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, failures = {} } = {}) {
   const log = []
+  const logs = []
   const emitted = []
   const listeners = new Map()
   const services = {}
   const routes = { now: [] }
   const registered = {}
   const ctx = {
+    logger: {
+      warn: message => logs.push(['warn', message]),
+      info: message => logs.push(['info', message]),
+    },
     llm: {
       registerAdapter(providers, adapter) {
         registered.adapter = adapter
@@ -61,7 +66,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
     signedIn: async (spec, cli) => { probes.push([spec.key, cli]); return signedIn[spec.key] },
   }
   return {
-    ctx, deps, log, emitted, services, installs, probes, routes, store, bins, busy, errors,
+    ctx, deps, log, logs, emitted, services, installs, probes, routes, store, bins, busy, errors,
     failures, clis, registered,
   }
 }
@@ -167,6 +172,37 @@ test('a live dshTools flip is announced, so the Bot team can reverse its move at
   config.dshTools.set(true)
   h.ctx.emit('loader/volatile-update')
   assert.deepEqual(announced(), [{ on: false }, { on: true }])
+})
+
+test('a throwing flip listener is logged, and the flip and its reconcile still land', () => {
+  const h = harness({ clis: { claude: '/bin/claude' } })
+  const config = { claude: live(false), codex: live(false), dshTools: live(true) }
+  apply(h.ctx, config, h.deps)
+  const announced = () => h.emitted
+    .filter(([name]) => name === 'acp-dsh/dsh-tools-changed')
+    .map(([, payload]) => payload)
+  h.ctx.on('acp-dsh/dsh-tools-changed', () => {
+    throw new Error('the Bot team could not read its file')
+  })
+  // One loader event both turns the bridge off and turns Claude on: the announcement fails,
+  // but the setting keeps and the reconcile after it still offers the agent.
+  config.dshTools.set(false)
+  config.claude.set(true)
+  assert.doesNotThrow(() => h.ctx.emit('loader/volatile-update'))
+  assert.deepEqual(announced(), [{ on: false }])
+  assert.deepEqual(h.routes.now, ['acp-claude'])
+  const warning = h.logs.find(([level]) => level === 'warn')
+  assert.ok(warning, 'the failed announcement is in the plugin log')
+  assert.equal(warning[1], 'acp-dsh: the dshTools flip was not announced: '
+    + 'the Bot team could not read its file; the next start reverses')
+  // The setting is recorded: the same event again announces nothing, and the other flip does.
+  h.ctx.emit('loader/volatile-update')
+  assert.deepEqual(announced(), [{ on: false }])
+  config.dshTools.set(true)
+  h.ctx.emit('loader/volatile-update')
+  assert.deepEqual(announced(), [{ on: false }, { on: true }])
+  // Both failed announcements are visible: a throwing listener never defers silently.
+  assert.equal(h.logs.filter(([level]) => level === 'warn').length, 2)
 })
 
 test('a failed connector shows its log path relative to the home directory', async () => {

@@ -122,7 +122,9 @@ afresh under the new setting. A flip is also announced on the plugin context as
 `acp-dsh/dsh-tools-changed` with `{ on }`: DSH delivers `loader/volatile-update` only to the
 plugin whose config changed, so another plugin would never see this one. The Bot team watches
 that event, so turning the switch off moves its Claude Bots back at once, and turning it on moves
-them again. The default moves Claude Bots once per team to `acp-claude` (the Bot team's README,
+them again. A listener that throws is logged as a warning; the flip itself and its ended sessions
+still hold, and the Bot team reverses at its next start (the route reads off or gone). The default
+moves Claude Bots once per team to `acp-claude` (the Bot team's README,
 "Claude on ACP"); the bridge probe in `bridge()` still gates the move.
 
 `sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the

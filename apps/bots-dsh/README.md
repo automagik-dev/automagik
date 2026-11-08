@@ -166,10 +166,12 @@ so no Bot level maps to it). With `dshTools` off nothing moves onto
 the route, as on 2026-11-03: a Bot already moved goes back to exactly that model and level, and so
 does one whose route disappears (the plugin, the agent setting or its CLI). The off flip is heard
 live through `acp-dsh/dsh-tools-changed`, not only at the next start, and turning it on again moves
-the team once more. A Bot the person changed after the move keeps their pick, never overwritten by
-the rollback. When the agent offers no level matching the Bot's, the Bot keeps its setting in the
-team and the agent runs on its own; when the Session has a turn behind it, the ACP plugin notes in
-the chat what could not cross. On an ACP route the Bot's team
+the team once more. That live reverse needs the ACP plugin loaded to announce the flip: with the
+plugin absent when the route disappears, the same reverse runs at the next start, where the route
+reads gone, so a move is never stranded. A Bot the person changed after the move keeps their pick,
+never overwritten by the rollback. When the agent offers no level matching the Bot's, the Bot keeps
+its setting in the team and the agent runs on its own; when the Session has a turn behind it, the
+ACP plugin notes in the chat what could not cross. On an ACP route the Bot's team
 tools reach it over the same per-session bridge: `post_to_group`, `message_bot` and the rest are
 offered, and every call asks DSH's approval under the Bot's level before it runs. On **Auto**, the
 bridge gives auto-review the call: an allowed call runs, a denied one is refused with
