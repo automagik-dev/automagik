@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-07
 updated: 2026-11-07
-pr: "automagik-dev/automagik#673"
+pr: "automagik-dev/automagik#674"
 tags: [decisions, teams, bots, chat]
 ---
 # Team: one bubble per project, keyed by registry bot id
