@@ -1,5 +1,5 @@
-// The agents this plugin offers and where they come from. Each runs the person's own CLI, the
-// one they sign in to and that updates itself, through the newest release of its ACP adapter
+// The agents this plugin offers and where they come from. Each runs the person's own CLI
+// or a verified desktop-managed copy, through the newest release of its ACP adapter
 // (installed in the background by install.js, never fetched when a Session starts).
 import { accessSync, constants, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -19,6 +19,7 @@ export const AGENTS = Object.freeze({
     defaultName: 'Claude Code',
     fallback: Object.freeze(['default', 'opus', 'sonnet', 'haiku'].map(id => Object.freeze({ id, name: id === 'default' ? 'Claude Code' : id.charAt(0).toUpperCase() + id.slice(1), reasoning: efforts('low', 'medium', 'high') }))),
     cli: 'claude',
+    cliPackage: '@anthropic-ai/claude-code',
     // Where the person gets the CLI when it is not on this computer.
     installUrl: 'https://code.claude.com/docs/en/setup',
     // `claude auth status --json` answers { loggedIn } (and who: never read past loggedIn).
@@ -48,6 +49,7 @@ export const AGENTS = Object.freeze({
     defaultName: 'Codex',
     fallback: Object.freeze([Object.freeze({ id: 'default', name: 'Codex', reasoning: efforts('low', 'medium', 'high') })]),
     cli: 'codex',
+    cliPackage: '@openai/codex',
     installUrl: 'https://developers.openai.com/codex/cli',
     // `codex login status` exits 0 when signed in, 1 when not.
     signIn: Object.freeze({ args: ['login', 'status'], read: ({ code }) => (code === 0 ? true : code === 1 ? false : undefined) }),
