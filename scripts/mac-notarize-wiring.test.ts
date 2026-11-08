@@ -173,6 +173,26 @@ describe('afterSign notarizes without stapling, then staples the app through the
     }
   });
 
+  test('a pretty-printed multi-line accepted verdict on stdout parses and staples', async () => {
+    // #707: the verdict may arrive pretty-printed. The #705 line scan read this stdout as
+    // "unparsable" (no single line is a JSON object); JSON.parse(stdout.trim()) accepts it.
+    const verdict = [
+      '{',
+      '  "id": "test-id",',
+      '  "status": "Accepted",',
+      '  "message": "Successfully uploaded file"',
+      '}',
+    ].join('\n');
+    const h = hookHarness({ verdict });
+    const { error } = await h.run();
+    expect(error).toBeNull();
+    const calls = h.calls();
+    expect(calls.length).toBe(4);
+    expect(calls[1]?.startsWith('xcrun notarytool submit ')).toBe(true);
+    expect(calls[2]).toBe(`xcrun stapler staple ${h.app}`);
+    expect(calls[3]).toBe(`xcrun stapler validate ${h.app}`);
+  });
+
   test('a rejection (status: Invalid) fails before any staple', async () => {
     const h = hookHarness({ verdict: '{"id":"test-id","status":"Invalid"}' });
     const { error } = await h.run();

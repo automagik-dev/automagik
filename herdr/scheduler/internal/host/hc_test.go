@@ -1,8 +1,10 @@
 package host
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,19 +16,30 @@ import (
 
 // fakeHC scripts herdr-core and git: each Wait pops the next answer.
 type fakeHC struct {
-	cwd      string
-	labels   map[string]string
-	argv     []string
-	worktree [3]string // repo, branch, path
-	waits    []hc.Wait
-	term     hc.Terminal
-	runErr   error
-	delay    time.Duration // per Wait
-	calls    []string      // kill and rm, with their address
-	killErr  error
+	cwd        string
+	labels     map[string]string
+	argv       []string
+	worktree   [3]string // repo, branch, path
+	waits      []hc.Wait
+	term       hc.Terminal
+	screen     string
+	screenErr  error
+	terminals  []string
+	termErr    error
+	termLabels map[string]string
+	runErr     error
+	delay      time.Duration // per Wait
+	onWait     func()        // lets a test advance its clock
+	onKill     func()        // lets a test change the space at the read/act boundary
+	calls      []string      // kill and rm, with their address
+	readCalls  int
+	killErr    error
 }
 
 func (f *fakeHC) Kill(address string) error {
+	if f.onKill != nil {
+		f.onKill()
+	}
 	f.calls = append(f.calls, "kill "+address)
 	return f.killErr
 }
@@ -36,6 +49,16 @@ func (f *fakeHC) Rm(address string) error {
 	return nil
 }
 
+func (f *fakeHC) Read(string) (string, error) {
+	f.readCalls++
+	return f.screen, f.screenErr
+}
+
+func (f *fakeHC) Terminals(labels map[string]string) ([]string, error) {
+	f.termLabels = labels
+	return f.terminals, f.termErr
+}
+
 func (f *fakeHC) Run(cwd string, labels map[string]string, argv []string) (string, error) {
 	f.cwd, f.labels, f.argv = cwd, labels, argv
 	return "t7", f.runErr
@@ -43,6 +66,9 @@ func (f *fakeHC) Run(cwd string, labels map[string]string, argv []string) (strin
 
 func (f *fakeHC) Wait(string, time.Duration) (hc.Wait, error) {
 	time.Sleep(f.delay)
+	if f.onWait != nil {
+		f.onWait()
+	}
 	if len(f.waits) == 0 {
 		return hc.Wait{Reason: "timeout"}, nil
 	}
@@ -240,5 +266,162 @@ func TestHCCloseCountsATerminalAlreadyGoneAsClosed(t *testing.T) {
 	f := &fakeHC{killErr: fmt.Errorf("hc kill: no terminal: %w", hc.ErrNotFound)}
 	if err := newHCTest(f).Close(Session{WorkspaceID: "sp1", PaneID: "t7"}, hcAutomation()); err != nil {
 		t.Fatalf("want nil for a terminal already gone, got %v", err)
+	}
+}
+
+func hcExistingAutomation() config.Automation {
+	a := hcAutomation()
+	a.Workspace, a.WorkspaceID = config.WorkspaceExisting, "sp7"
+	return a
+}
+
+// The app removes a space with its last tab, so a run sharing a space may end
+// its own terminal only while another terminal (another tab) is still there.
+func TestHCCloseExistingEndsOnlyTheRunsTerminalWhenAnotherTabExists(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.termLabels["herdr.space"] != "sp7" {
+		t.Fatalf("looked for terminals labeled %v, want the run's space", f.termLabels)
+	}
+	if got := strings.Join(f.calls, "|"); got != "kill t7|rm t7" {
+		t.Fatalf("calls %q, want only the run's terminal ended", got)
+	}
+}
+
+func TestHCCloseExistingLeavesTheLastTabOpen(t *testing.T) {
+	var logged bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(old)
+	f := &fakeHC{terminals: []string{"t7"}}
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ended the last tab's terminal: %q", f.calls)
+	}
+	if !strings.Contains(logged.String(), "last one in its space") {
+		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+func TestHCCloseExistingWithNoTabIDClosesNothing(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	if err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7"}, hcExistingAutomation()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("closed a tab it could not name: %q", f.calls)
+	}
+}
+
+// The read and the kill cannot be one step: a person who closes the space's
+// other tab in between leaves the run's tab last. The scheduler still asks only
+// for its own terminal; the app is what closes a space whose last tab goes.
+func TestHCCloseExistingRaceAfterTheReadEndsOnlyItsTerminal(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	f.onKill = func() { f.terminals = []string{"t7"} }
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.calls, "|"); got != "kill t7|rm t7" {
+		t.Fatalf("calls %q, want only the run's terminal", got)
+	}
+}
+
+func TestHCCloseExistingListFailureLeavesTheTabOpen(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}, termErr: errors.New("hc is down")}
+	if err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("closed without knowing the space's tabs: %q", f.calls)
+	}
+}
+
+// A dialog is not work: the run must fail at the grace with the line the
+// person would have read, and the blocked agent must not be left waiting.
+func TestHCDoFailsAtOnceOnALongBlockedDialog(t *testing.T) {
+	clock := time.Unix(0, 0)
+	blocked := hc.Wait{Ended: true, Reason: "status", Status: "blocked", Turn: 1}
+	f := &fakeHC{
+		waits:  []hc.Wait{blocked, blocked, blocked, blocked},
+		onWait: func() { clock = clock.Add(time.Minute) },
+		screen: "╭──────────────────────────╮\n" +
+			"│ Bash command             │\n" +
+			"╰──────────────────────────╯\n" +
+			"Do you want to proceed?\n" +
+			"❯ 1. Yes\n" +
+			"  2. No\n" +
+			"Esc to cancel\n",
+	}
+	h := newHCTest(f)
+	h.clock = func() time.Time { return clock }
+	a := hcAutomation()
+	a.BlockedGraceMinutes = 2
+
+	err := h.Do(Session{PaneID: "t7"}, a, 200*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "blocked on a dialog: Do you want to proceed?") {
+		t.Fatalf("want the dialog line reported, got %v", err)
+	}
+	if strings.Contains(err.Error(), "still working") {
+		t.Fatalf("waited for the timeout instead of failing at the grace: %v", err)
+	}
+	if f.readCalls != 1 {
+		t.Errorf("read the screen %d times, want once", f.readCalls)
+	}
+	if got := strings.Join(f.calls, "|"); got != "kill t7" {
+		t.Fatalf("calls %q, want the blocked agent's terminal ended and nothing else", got)
+	}
+}
+
+// A blip under the grace is not a failure: the agent can block while it asks
+// for something it then gets past, and the run still finishes.
+func TestHCDoDoesNotFailABlockedBlipUnderTheGrace(t *testing.T) {
+	clock := time.Unix(0, 0)
+	f := &fakeHC{
+		waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "blocked", Turn: 1},
+			{Ended: true, Reason: "status", Status: "working", Turn: 1},
+			{Ended: true, Reason: "status", Status: "done", Turn: 1},
+		},
+		onWait: func() { clock = clock.Add(time.Minute) },
+	}
+	h := newHCTest(f)
+	h.clock = func() time.Time { return clock }
+	a := hcAutomation()
+	a.BlockedGraceMinutes = 2
+
+	if err := h.Do(Session{PaneID: "t7"}, a, time.Hour); err != nil {
+		t.Fatalf("a blocked blip failed the run: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ended the agent after a blip: %q", f.calls)
+	}
+}
+
+// -1 keeps the old behaviour: wait as long as the timeout allows.
+func TestHCDoWaitsOutBlockedWhenTheGraceIsMinusOne(t *testing.T) {
+	clock := time.Unix(0, 0)
+	blocked := hc.Wait{Ended: true, Reason: "status", Status: "blocked", Turn: 1}
+	f := &fakeHC{
+		waits:  []hc.Wait{blocked, blocked, blocked, {Ended: true, Reason: "status", Status: "done", Turn: 1}},
+		onWait: func() { clock = clock.Add(10 * time.Minute) },
+	}
+	h := newHCTest(f)
+	h.clock = func() time.Time { return clock }
+	a := hcAutomation()
+	a.BlockedGraceMinutes = -1
+
+	if err := h.Do(Session{PaneID: "t7"}, a, time.Hour); err != nil {
+		t.Fatalf("grace -1 failed a blocked run: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ended the agent under grace -1: %q", f.calls)
 	}
 }

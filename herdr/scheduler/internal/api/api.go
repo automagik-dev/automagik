@@ -41,10 +41,13 @@ type Automation struct {
 	AgentArgs      []string         `json:"agent_args,omitempty"`
 	TimeoutMinutes int              `json:"timeout_minutes"`
 	CatchUpMinutes int              `json:"catch_up_minutes"`
-	Disabled       bool             `json:"disabled"`
-	Line           int              `json:"line"`
-	Next           time.Time        `json:"next"`
-	Last           *Run             `json:"last"`
+	// BlockedGraceMinutes is how long an agent may sit on a dialog before the
+	// run fails; the loader fills in the default (2), -1 waits it out.
+	BlockedGraceMinutes int       `json:"blocked_grace_minutes"`
+	Disabled            bool      `json:"disabled"`
+	Line                int       `json:"line"`
+	Next                time.Time `json:"next"`
+	Last                *Run      `json:"last"`
 }
 
 // Invalid is an entry that did not load, and where to fix it.
@@ -87,7 +90,8 @@ func List() (Listing, error) {
 			CloseWorkspace: string(a.CloseWorkspace),
 			Agent:          a.Agent, Model: a.Model, Template: a.Template, Prompt: a.Prompt, Workflow: a.Workflow,
 			MCPConfig: a.MCPConfig, AgentArgs: a.AgentArgs, TimeoutMinutes: a.TimeoutMinutes,
-			CatchUpMinutes: a.CatchUpMinutes, Disabled: a.Disabled, Line: a.Line,
+			CatchUpMinutes: a.CatchUpMinutes, BlockedGraceMinutes: a.BlockedGraceMinutes,
+			Disabled: a.Disabled, Line: a.Line,
 		}
 		if a.Template != "" {
 			entry.Agent = "" // the default filled in at load; a template brings its own

@@ -245,6 +245,15 @@ Each result starts with a `Search backend: …` line that names the path it took
 
 Another plugin can also set the search provider while dsh runs, after the profile patch. When you turn such a plugin off, check this setting again.
 
+**Web fetch**: the app and server profiles leave DSH's local `web-fetch-http` provider on.
+`web_fetch` uses the same address lists as the Bot browser (Settings → Browser → Address
+lists); with both lists empty, localhost, LAN and tailnet URLs are fetched by default. A
+deny entry wins over an allow entry, and a non-empty allow list limits fetches to those
+targets too. The lists are shared with the Bot browser, so changing them cannot turn
+`web_fetch` off; only the profile's `web-fetch-http` row with `disabled: true` does.
+With both lists empty, prompt-injected channel text can still reach localhost services
+(#521); add a deny entry or disable that row.
+
 ## Bot browser
 
 Every Bot has a browser of its own, on by default (`browserPlugin: false` turns it off). It is the Chrome, Edge, Chromium or Brave already on this computer, driven through `playwright-core`: nothing is downloaded. Without one, a Bot that needs a browser says so and asks you to install Chrome.
@@ -257,7 +266,8 @@ Every Bot has a browser of its own, on by default (`browserPlugin: false` turns 
   targets. Settings → Browser → Address lists holds this profile's deny list and allow list.
   A deny entry always wins; when the allow list is not empty, only matching targets open.
   An entry is an IPv4 or IPv6 address, a CIDR range, or a hostname (`example.com` covers
-  its subdomains; `*.example.com` is accepted). Clear both to allow everything.
+  its subdomains; `*.example.com` is accepted). The same lists apply to `web_fetch`.
+  Clear both to allow everything.
 - **Files**: downloads go to the Bot's working folder or the team folder; uploads come only from those.
 - **Handing over**: for a sign-in, a payment or a check, the Bot calls `browser_handoff` and a card in its chat asks you to take over, skip, or say you are done. While you hold the browser, its tools refuse; the window is a normal browser window on your screen.
 - **The window**: on macOS and Windows, and on Linux with a display, the browser opens as a window you can watch. On Linux without a display it runs headless (`browserHeadless`).

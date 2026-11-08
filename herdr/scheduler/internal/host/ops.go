@@ -14,13 +14,18 @@ import (
 type ops interface {
 	WorktreeCreate(repo, branch, label string) (workspaceID, paneID string, err error)
 	WorkspaceCreate(cwd, label string) (workspaceID, paneID string, err error)
-	TabCreate(workspaceID, cwd, label string) (paneID string, err error)
+	TabCreate(workspaceID, cwd, label string) (tabID, paneID string, err error)
+	TabList(workspaceID string) ([]string, error)
+	TabClose(tabID string) error
 
 	AgentStart(name, kind, paneID string, extraArgs []string) error
 	AgentSubmit(target, text string) error
 	AgentSubmitPending(paneID string) error
 	AgentStatus(target string) (string, error)
 	AgentWait(target string, timeout time.Duration) error
+	// AgentStop rechecks status and foreground identity before asking a blocked
+	// agent to stop. False means it is no longer blocked; resume the run.
+	AgentStop(paneID string) (blocked bool, err error)
 
 	WorkspaceClose(workspaceID string) error
 

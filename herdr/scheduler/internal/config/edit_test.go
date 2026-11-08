@@ -78,7 +78,7 @@ func TestPutKeepsTheKeysItWasNotGiven(t *testing.T) {
 
 // close_workspace is one key of the entry, so put's merge rules cover it like the rest: the form
 // can set it, a put that does not send it keeps a hand-written value, and an empty value removes
-// the key. A run that would close a shared workspace is refused by the loader's own validation.
+// the key. With workspace: existing it is valid too, because the host closes only the run's tab.
 func TestPutCarriesCloseWorkspace(t *testing.T) {
 	base := `automations:
   - name: triage
@@ -137,7 +137,7 @@ func TestPutCarriesCloseWorkspace(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses on-success with an existing workspace", func(t *testing.T) {
+	t.Run("accepts on-success with an existing workspace", func(t *testing.T) {
 		shared := `automations:
   - name: triage
     cron: "0 9 * * 1-5"
@@ -153,11 +153,68 @@ func TestPutCarriesCloseWorkspace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(res.Problem, "close_workspace: on-success would close the shared workspace") {
+		if res.Problem != "" {
 			t.Fatalf("problem %q", res.Problem)
 		}
-		if fileText(t) != shared {
-			t.Fatal("a refused put changed the file")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Find("triage"); got == nil || got.CloseWorkspace != CloseOnSuccess || got.Workspace != WorkspaceExisting {
+			t.Fatalf("existing entry not saved: %+v", got)
+		}
+	})
+}
+
+// blocked_grace_minutes follows the same merge rules as the other keys; 0 is
+// the default, so sending it removes the hand-written value.
+func TestPutCarriesBlockedGrace(t *testing.T) {
+	base := `automations:
+  - name: triage
+    cron: "0 9 * * 1-5"
+    repo: /x
+    prompt: p
+`
+	given := []string{"name", "cron", "repo", "prompt", "blocked_grace_minutes"}
+	entry := func(grace int) Automation {
+		return Automation{Name: "triage", Cron: "0 9 * * 1-5", Repo: "/x", Prompt: "p", BlockedGraceMinutes: grace}
+	}
+
+	t.Run("writes a positive value", func(t *testing.T) {
+		withConfig(t, base)
+		if res, err := Put("triage", entry(5), given, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Find("triage").BlockedGraceMinutes; got != 5 {
+			t.Fatalf("blocked_grace_minutes = %d, want 5:\n%s", got, fileText(t))
+		}
+	})
+
+	t.Run("keeps a hand-written value when the key is not given", func(t *testing.T) {
+		withConfig(t, base+"    blocked_grace_minutes: 7\n")
+		if res, err := Put("triage", entry(0), []string{"name", "cron", "repo", "prompt"}, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Find("triage").BlockedGraceMinutes; got != 7 {
+			t.Fatalf("hand-written grace lost: %d\n%s", got, fileText(t))
+		}
+	})
+
+	t.Run("removes the key when given zero", func(t *testing.T) {
+		withConfig(t, base+"    blocked_grace_minutes: 7\n")
+		if res, err := Put("triage", entry(0), given, false); err != nil || res.Problem != "" {
+			t.Fatalf("put: %v %q", err, res.Problem)
+		}
+		if strings.Contains(fileText(t), "blocked_grace_minutes") {
+			t.Fatalf("a zero grace left the key:\n%s", fileText(t))
 		}
 	})
 }

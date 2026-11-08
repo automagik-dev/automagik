@@ -89,12 +89,15 @@ func TestNotificationArgsPassesTheTitleAsAPositionalArgument(t *testing.T) {
 
 func TestTabCreate(t *testing.T) {
 	for _, tc := range []struct {
-		name, response, pane string
-		wantError            bool
+		name, response, tab, pane string
+		wantError                 bool
 	}{
-		{"created", `{"result":{"type":"tab_created","root_pane":{"pane_id":"w7:p2"}}}`, "w7:p2", false},
-		{"missing pane", `{"result":{"type":"tab_created"}}`, "", true},
-		{"invalid response", `not json`, "", true},
+		{"created", `{"result":{"type":"tab_created","tab":{"tab_id":"tb7"},"root_pane":{"pane_id":"w7:p2"}}}`, "tb7", "w7:p2", false},
+		// An older Herdr leaves the tab id out: the run can still open, and
+		// close_workspace then has nothing safe to close.
+		{"missing tab id", `{"result":{"type":"tab_created","root_pane":{"pane_id":"w7:p2"}}}`, "", "w7:p2", false},
+		{"missing pane", `{"result":{"type":"tab_created"}}`, "", "", true},
+		{"invalid response", `not json`, "", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -107,9 +110,9 @@ func TestTabCreate(t *testing.T) {
 			t.Setenv("HERDR_BIN_PATH", bin)
 			t.Setenv("HERDR_TEST_ARGS", argsFile)
 			t.Setenv("HERDR_TEST_RESPONSE", tc.response)
-			pane, err := (Client{}).TabCreate("w7", "/a repo", "auto: daily summary")
-			if (err != nil) != tc.wantError || pane != tc.pane {
-				t.Fatalf("pane=%q err=%v", pane, err)
+			tab, pane, err := (Client{}).TabCreate("w7", "/a repo", "auto: daily summary")
+			if (err != nil) != tc.wantError || tab != tc.tab || pane != tc.pane {
+				t.Fatalf("tab=%q pane=%q err=%v", tab, pane, err)
 			}
 			raw, err := os.ReadFile(argsFile)
 			if err != nil {
@@ -121,6 +124,53 @@ func TestTabCreate(t *testing.T) {
 				t.Fatalf("args=%q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestPaneProcessInfo(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr")
+	argsFile := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HERDR_TEST_ARGS\"\nprintf '%s\\n' '{\"result\":{\"process_info\":{\"shell_pid\":200,\"foreground_process_group_id\":300}}}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", bin)
+	t.Setenv("HERDR_TEST_ARGS", argsFile)
+	info, err := (Client{Session: "auto"}).PaneProcessInfo("w7:p2")
+	if err != nil || info.ShellPID != 200 || info.ForegroundGroup != 300 {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Fields(string(raw)); !reflect.DeepEqual(got, []string{"--session", "auto", "pane", "process-info", "--pane", "w7:p2"}) {
+		t.Fatalf("args=%v", got)
+	}
+}
+
+func TestTabClose(t *testing.T) {
+	args := fakeHerdr(t, `{"result":{}}`)
+	if err := (Client{}).TabClose("tb7"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readArgs(t, args), []string{"tab", "close", "tb7"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args=%q, want %q", got, want)
+	}
+}
+
+func TestTabList(t *testing.T) {
+	args := fakeHerdr(t, `{"result":{"type":"tab_list","tabs":[{"tab_id":"tb1"},{"tab_id":"tb2"}]}}`)
+	tabs, err := (Client{}).TabList("w7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(tabs, "|"), "tb1|tb2"; got != want {
+		t.Fatalf("tabs=%q, want %q", got, want)
+	}
+	if got, want := readArgs(t, args), []string{"tab", "list", "--workspace", "w7"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args=%q, want %q", got, want)
 	}
 }
 
@@ -150,8 +200,8 @@ func readArgs(t *testing.T, argsFile string) []string {
 }
 
 func TestAClientBoundToASessionTargetsItOnEveryCall(t *testing.T) {
-	args := fakeHerdr(t, `{"result":{"root_pane":{"pane_id":"w7:p2"}}}`)
-	if _, err := (Client{Session: "automations"}).TabCreate("w7", "/r", "l"); err != nil {
+	args := fakeHerdr(t, `{"result":{"tab":{"tab_id":"tb1"},"root_pane":{"pane_id":"w7:p2"}}}`)
+	if _, _, err := (Client{Session: "automations"}).TabCreate("w7", "/r", "l"); err != nil {
 		t.Fatal(err)
 	}
 	got := readArgs(t, args)

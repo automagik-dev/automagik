@@ -75,7 +75,7 @@ after you quit and reopen it. **Uninstall** in the same menu removes it again.
 
 ## Updates
 
-Automagik updates itself. It checks when it starts and every few hours, and downloads a new version in the background. When it's ready, the top of the window says **Automagik X is ready** with **Restart now** and **Later**. After Later, a small **Restart to update** button stays there, and quitting Automagik installs the update too.
+Automagik updates itself. It checks when it starts and every 15 minutes, even when no update is available, and downloads a new version in the background. Plugin updates are also checked every 15 minutes. When it's ready, the top of the window says **Automagik X is ready** with **Restart now** and **Later**. After Later, a small **Restart to update** button stays there, and quitting Automagik installs the update too.
 
 To check yourself, use **Automagik → Check for Updates…** on macOS, or right-click the top bar on Linux.
 

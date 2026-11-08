@@ -111,6 +111,52 @@ function fakeUpdater() {
 const quiet = { info() {}, warn() {}, error() {}, debug() {} }
 const noTimers = { setTimeout: () => 0, setInterval: () => 0, clearTimeout() {}, clearInterval() {} }
 
+for (const [platform, mode] of [['linux', 'auto'], ['darwin', 'auto'], ['win32', 'auto'], ['linux', 'notify']]) {
+  test(`automatic checks continue every 15 minutes on ${platform} (${mode}) when no update is available`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+    const updater = fakeUpdater()
+    const states = []
+    let calls = 0
+    let available = false
+    const updates = startUpdates({
+      updater, current: '3.101.0', platform, mode, env: {}, log: quiet,
+      onState: state => states.push(state),
+      releases: async () => {
+        calls++
+        return [release(available ? 'v3.102.0' : 'v3.101.0', [feedFileOf(platform)])]
+      },
+    })
+    t.after(() => updates.stop())
+    const advance = async (ms) => {
+      t.mock.timers.tick(ms)
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    await advance(19_999)
+    assert.equal(calls, 0)
+    await advance(1)
+    assert.equal(calls, 1, 'the initial check still runs after 20 seconds')
+    await advance(15 * 60_000 - 20_000 - 1)
+    assert.equal(calls, 1)
+    await advance(1)
+    assert.equal(calls, 2, 'an up-to-date app still checks at the next quarter hour')
+    assert.deepEqual(updater.feeds, [])
+    available = true
+    await advance(15 * 60_000)
+    assert.equal(calls, 3, 'a later release is found without a restart or manual check')
+    if (mode === 'auto') {
+      assert.equal(updater.autoDownload, true)
+      assert.equal(updater.feeds.at(-1).url, 'https://github.com/automagik-dev/automagik/releases/download/v3.102.0/')
+    } else {
+      assert.equal(states.at(-1).state, 'available')
+      assert.equal(states.at(-1).version, '3.102.0')
+      assert.deepEqual(updater.feeds, [])
+    }
+    updates.stop()
+    await advance(15 * 60_000)
+    assert.equal(calls, 3, 'stopping the watcher cancels future checks')
+  })
+}
+
 test('a check points electron-updater at the chosen release, reports the download, and installs only once it is ready', async () => {
   const updater = fakeUpdater()
   const states = []
@@ -175,7 +221,7 @@ test('on Windows the update comes from the release with latest.yml and is ready 
   assert.deepEqual(updater.installs, [[false, true]])
 })
 
-test('no newer release is logged as up to date; GitHub failing is a warning and a sooner retry', async () => {
+test('no newer release is logged as up to date; GitHub failing is a warning and an additional retry', async () => {
   const updater = fakeUpdater()
   const infos = []
   const warnings = []
@@ -200,7 +246,7 @@ test('no newer release is logged as up to date; GitHub failing is a warning and 
   assert.equal(calls, 3)
 })
 
-test('an electron-updater error is logged and retried sooner', async () => {
+test('an electron-updater error is logged and schedules a retry', async () => {
   const updater = fakeUpdater()
   const later = []
   const warnings = []
