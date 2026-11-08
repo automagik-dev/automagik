@@ -212,7 +212,7 @@ jobs:
             # codes (3 attempts at 10/30/90 s, then one re-staple pass) and fails at once on a
             # real rejection. notarytool and electron-builder stay outside it: this is not a
             # re-notarization.
-            scripts/staple-retry.sh "${dmg}"
+            "${GITHUB_WORKSPACE}/scripts/staple-retry.sh" "${dmg}"
             spctl --assess --type open --context context:primary-signature -vv "${dmg}"
             node scripts/restamp-feed.mjs dist/latest-mac.yml "${dmg}"
             rm -f "${dmg}.blockmap"
