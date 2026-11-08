@@ -13,8 +13,10 @@
 // {terminal, before, limit?}; chat.send {terminal, text, id}; chat.sendHeld / chat.cancelHeld
 // {terminal, id}; chat.answer {terminal, row, choice, text?}; chat.interrupt {terminal}. Every write
 // needs a subscription to that terminal on this connection (the engine refuses others). Rows are never
-// logged. A `dsh:<botId>` terminal is an Automagik Bot's chat (dsh-source.mjs): read only, every
-// write on it is refused.
+// logged. A `dsh:<botId>` terminal is an Automagik Bot's chat (dsh-source.mjs): chat.send,
+// chat.interrupt and chat.answer on it reach the bots-dsh socket only when that socket answered
+// `write: 1`, and the hello answer then says `dshWrite: true`; otherwise they are refused
+// `read-only`, and a phone that sees no `dshWrite` keeps the DSH chat read-only.
 
 /** Frame kinds, as herdr-core's. */
 export const DATA = 0
@@ -171,7 +173,7 @@ export class ChatConnection {
     }
     this.write(Buffer.from(JSON.stringify({
       jsonrpc: '2.0', id: m.id,
-      result: { generation: 1, framed: true, chat: 1, credit: this.window, methods: METHODS,
+      result: { generation: 1, framed: true, chat: 1, credit: this.window, methods: METHODS, ...(this.engine.dshWrite?.() === true ? { dshWrite: true } : {}),
         limits: { subscriptions: MAX_SUBSCRIPTIONS, rowText: ROW_TEXT_MAX, backfillRows: BACKFILL_ROWS, backfillBytes: BACKFILL_BYTES, sendText: SEND_TEXT_MAX } }
     }) + '\n'))
     this.framed = true
