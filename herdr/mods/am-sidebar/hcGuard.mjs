@@ -48,10 +48,18 @@ export const SHARED_ROLES = ["reviewer", "fixer"].filter((role) => RANKS.include
  * send to any bot the project lists. The rank is bots.json's, never the pane's role= label.
  */
 export const SHARED_SEND_RANKS = ["pm", "integrator", "fixer"].filter((role) => RANKS.includes(role));
+/** This module's own file: a guard copy must be byte-equal to it (#643). */
+const SELF_MODULE = fileURLToPath(import.meta.url);
 /** The guard's own folder, beside this module; the pane PATH word must start with it. */
-export const GUARD_DIR = join(dirname(fileURLToPath(import.meta.url)), "guard");
+export const GUARD_DIR = join(dirname(SELF_MODULE), "guard");
 /** The executable this module backs; PATH scans skip its real path. */
 const SELF_ENTRY = join(GUARD_DIR, "hc");
+/**
+ * The environment marker a guard sets on the hc it runs when that hc looks like a guard it
+ * cannot vouch for. A guard that starts with it set stops at once (#643): the marker only
+ * stops re-entry, and a marker with no guard behind it is refused, never allowed.
+ */
+export const REENTRY_ENV = "AM_HC_GUARD_REENTRY";
 
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 const say = (line) => process.stderr.write(`${line}\n`);
@@ -69,6 +77,7 @@ export async function runGuard(argv, env = process.env) {
   try {
     const args = Array.isArray(argv) ? argv.map(String) : [];
     const verb = args[0] ?? "";
+    if (reentry(env)) return refused("a re-entry: the guard already ran for this call");
     if (docOnly(args)) {
       const real = findRealHc(env);
       return real ? passthrough(real, args, env) : failedClosed("the real hc is not on PATH");
@@ -115,6 +124,9 @@ function terminalOf(env) {
   return typeof env.HC_TERMINAL_ID === "string" ? env.HC_TERMINAL_ID.trim() : "";
 }
 
+/** A guard already ran for this call (#643): the marker stops re-entry, never allows. */
+const reentry = (env) => typeof env?.[REENTRY_ENV] === "string" && env[REENTRY_ENV] !== "";
+
 /** `--on <machine>` or `--on=<machine>` anywhere after the command. */
 function onWord(args) {
   for (let i = 1; i < args.length; i += 1) {
@@ -128,8 +140,35 @@ const executable = (path) => {
   try { return statSync(path).isFile() && (accessSync(path, constants.X_OK), true); } catch { return false; }
 };
 const realOrNull = (path) => { try { return realpathSync(path); } catch { return null; } };
-/** A guard folder: its `hc` entry has `../hcGuard.mjs` beside it (the pack's or am's copy). */
-const isGuardFolder = (dir) => typeof dir === "string" && dir !== "" && existsSync(join(dir, "..", "hcGuard.mjs"));
+const SELF_BYTES = (() => { try { return readFileSync(SELF_MODULE); } catch { return null; } })();
+const SELF_GUARD_DIR = realOrNull(GUARD_DIR);
+/**
+ * A guard folder this guard can vouch for (#643): its real path is this guard's own folder, or
+ * the hcGuard.mjs beside its `hc` entry is byte-equal to this module (the installed am copy).
+ * A planted hcGuard.mjs no longer makes a folder a guard.
+ */
+function isGuardFolder(dir) {
+  if (typeof dir !== "string" || dir === "") return false;
+  const real = realOrNull(dir);
+  if (!real) return false;
+  if (SELF_GUARD_DIR && real === SELF_GUARD_DIR) return true;
+  let bytes;
+  try { bytes = readFileSync(join(dir, "..", "hcGuard.mjs")); } catch { return false; }
+  return SELF_BYTES !== null && bytes.equals(SELF_BYTES);
+}
+/** A folder the loose rule would call a guard, which isGuardFolder cannot vouch for (#643). */
+const looksLikeGuardFolder = (dir) => typeof dir === "string" && dir !== ""
+  && existsSync(join(dir, "..", "hcGuard.mjs"));
+/**
+ * The env for `real`: the re-entry marker only when that hc looks like a guard this guard
+ * cannot vouch for. A stray hcGuard.mjs beside an ordinary real hc also sets it, and the
+ * panes that hc starts inherit it; their guards then refuse (a denial that needs write access
+ * there), never allow. It is not a boundary.
+ */
+function spawnEnv(real, env) {
+  const dir = dirname(real);
+  return looksLikeGuardFolder(dir) && !isGuardFolder(dir) ? { ...env, [REENTRY_ENV]: "1" } : env;
+}
 
 /** The real hc: the first executable `hc` on PATH that is not any guard folder's own entry. */
 function findRealHc(env) {
@@ -147,7 +186,7 @@ function findRealHc(env) {
 
 /** Run the real hc with the pane's stdio and return its exit code (a signal is re-raised). */
 function passthrough(real, args, env) {
-  const r = spawnSync(real, args, { env, stdio: "inherit" });
+  const r = spawnSync(real, args, { env: spawnEnv(real, env), stdio: "inherit" });
   if (r.error) return failedClosed(`the real hc at ${real} did not run: ${r.error.message}`);
   if (typeof r.status === "number") return r.status;
   if (r.signal) {
@@ -158,7 +197,7 @@ function passthrough(real, args, env) {
 
 /** `hc <args> --json` through the real hc, parsed; null when it failed or printed no JSON. */
 function hcJson(real, args, env) {
-  const r = spawnSync(real, [...args, "--json"], { env, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
+  const r = spawnSync(real, [...args, "--json"], { env: spawnEnv(real, env), encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] });
   if (r.error || r.status !== 0) return null;
   const text = String(r.stdout ?? "").trim();
   if (!text) return null;
