@@ -171,6 +171,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         /** The live instance, for notification actions that arrive outside the activity. */
         @Volatile var current: PocketViewModel? = null
     }
+    /** The app on screen: Teams sync waits for it ([Background.whileShown]). */
+    private val onScreen = MutableStateFlow(false)
     init {
         current = this
         Notify.channels(application)
@@ -497,8 +499,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         watchText = ""
     }
     private val alertBase = ConcurrentHashMap<String, Pair<CoreClient, List<CoreTerminal>>>()
-    /** The app on screen: Teams sync waits for it ([Background.whileShown]). */
-    private val onScreen = MutableStateFlow(false)
     private val foreground get() = onScreen.value
     fun setForeground(shown: Boolean) {
         onScreen.value = shown
