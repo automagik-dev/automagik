@@ -19,7 +19,7 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
   const log = [];
   const sockets = new Set();
   let connections = 0;
-  const state = { version, terminals, hugeBytes, afterGet: null };
+  const state = { version, terminals, hugeBytes, afterGet: null, waitMs: 0, hang: null };
   const send = (sock, message) => sock.write(`${JSON.stringify(message)}\n`);
   const ok = (sock, id, result) => send(sock, { jsonrpc: "2.0", id, result });
   const fail = (sock, id, kind, message) => send(sock, {
@@ -49,6 +49,7 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
         ok(sock, id, { generation: 1, version: state.version, framed: true, methods: [], features: [] });
         return;
       case "terminal.list":
+        if (state.hang === "terminal.list") return;
         ok(sock, id, { terminals: state.terminals, hidden_finished: 0 });
         return;
       case "terminal.get": {
@@ -66,6 +67,8 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
         return;
       }
       case "terminal.wait": {
+        if (state.hang === "terminal.wait") return;
+        if (state.waitMs > 0) await new Promise((resolve) => setTimeout(resolve, state.waitMs));
         ok(sock, id, {
           terminal: params.terminal ?? null, ended: false, reason: "timeout", status: "working", turn: 1,
           exit_code: null, signal: null, children: [],

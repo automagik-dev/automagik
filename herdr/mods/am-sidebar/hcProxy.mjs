@@ -42,6 +42,14 @@ export const MAX_READ_LINES = 5000;
 export const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 /** A client request line larger than this is refused: the proxy never buffers it. */
 export const MAX_REQUEST_BYTES = 256 * 1024;
+/** A Unix socket path must fit in Linux's 108-byte sun_path, including its NUL. */
+export const MAX_SOCKET_PATH = 107;
+/** The most client connections one pane socket accepts at once. */
+export const MAX_CONNECTIONS = 16;
+/** A connection with no request in flight is closed after this long. */
+export const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+/** A forwarded call other than a wait is answered with an error after this long. */
+export const FORWARD_TIMEOUT_MS = 30 * 1000;
 /** A policy or startup call is short; a long terminal.wait is the client's own connection. */
 const CONTROL_TIMEOUT_MS = 15000;
 /** The identity variables hc's CLI puts in a run's `env`; nothing else belongs in the worker shape. */
@@ -56,6 +64,46 @@ const CALLER_METHODS = new Set([
 const ALLOWED = new Set(["terminal.list", ...CALLER_METHODS]);
 const OWN_WORKER_METHODS = new Set(["terminal.kill", "terminal.rm", "terminal.label"]);
 const TEAM_METHODS = new Set(["terminal.get", "terminal.read", "terminal.wait", "terminal.send"]);
+/** The exact parameters each method may forward; anything else is an unknown parameter. */
+const METHOD_PARAMS = new Map([
+  ["terminal.list", new Set(["all", "labels"])],
+  ["terminal.get", new Set(["terminal", "caller"])],
+  ["terminal.read", new Set(["terminal", "lines", "caller"])],
+  ["terminal.wait", new Set(["terminal", "children", "output", "timeout", "caller"])],
+  ["terminal.send", new Set(["terminal", "text", "wait", "force", "if", "timeout", "caller"])],
+  ["terminal.kill", new Set(["terminal", "caller"])],
+  ["terminal.rm", new Set(["terminal", "caller"])],
+  ["terminal.label", new Set(["terminal", "labels", "caller"])],
+  ["terminal.run", new Set([
+    "argv", "name", "cwd", "env", "labels", "parent", "no_parent", "no_notify", "outlive_parent",
+    "die_with_parent", "rm", "keep", "wait", "timeout", "caller",
+  ])],
+]);
+
+/** The first parameter a method may not forward, or null. */
+function unknownParam(params, method) {
+  const allowed = METHOD_PARAMS.get(method);
+  if (!allowed) return null;
+  for (const key of Object.keys(params)) if (!allowed.has(key)) return key;
+  return null;
+}
+
+/** `promise`, rejected with a clear error after `ms`; disabled for a non-positive timeout. */
+function withTimeout(promise, ms) {
+  if (!(ms > 0)) return promise;
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => {
+      const error = new Error(`did not answer within ${ms} ms`);
+      error.timeout = true;
+      rejectPromise(error);
+    }, ms);
+    timer.unref?.();
+    promise.then(
+      (value) => { clearTimeout(timer); resolvePromise(value); },
+      (error) => { clearTimeout(timer); rejectPromise(error); },
+    );
+  });
+}
 
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
@@ -168,6 +216,7 @@ export function runProblem(params, snapshot) {
   if (p.rm === true) return "rm is not the worker shape";
   if (p.keep === true) return "keep is not the worker shape";
   if (p.wait === true) return "wait is not the worker shape";
+  if (p.die_with_parent !== true) return "die_with_parent is not true";
   if (p.timeout !== undefined && p.timeout !== null) return "timeout is not the worker shape";
   if (p.name !== undefined && p.name !== null && typeof p.name !== "string") return "name is not text";
   if (p.parent !== snapshot.terminal) return "parent is not the caller's pane";
@@ -476,6 +525,8 @@ export async function startProxy(options = {}) {
   if (!/^t[0-9a-z]+$/.test(terminal)) throw new Error("--terminal must be an hc terminal id (t7, t1b)");
   if (!upstream || !isAbsolute(upstream)) throw new Error("--upstream must be an absolute socket path");
   const home = options.appHome ?? appHome(env);
+  const idleTimeoutMs = Number.isFinite(options.idleTimeoutMs) ? options.idleTimeoutMs : IDLE_TIMEOUT_MS;
+  const forwardTimeoutMs = Number.isFinite(options.forwardTimeoutMs) ? options.forwardTimeoutMs : FORWARD_TIMEOUT_MS;
 
   // 1. The core pin: fail closed before any socket exists.
   const status = await upstreamCall(upstream, "server.status", {});
@@ -516,10 +567,20 @@ export async function startProxy(options = {}) {
   log({ ev: "snapshot", caller: caller.bot, project: caller.project, worker: caller.worker, bots: file.bots.length });
 
   // 3. The socket folder: 0700, outside the writable project and the app home.
-  const socketPath = prepareSocket(socketPathFor(env, terminal, caller.project, home));
+  const socketPath = socketPathFor(env, terminal, caller.project, home);
+  const pathBytes = Buffer.byteLength(socketPath);
+  if (pathBytes > MAX_SOCKET_PATH) {
+    throw new Error(`socket path is ${pathBytes} bytes, over the ${MAX_SOCKET_PATH}-byte limit`);
+  }
+  prepareSocket(socketPath);
   const sessions = new Set();
   const server = net.createServer((client) => {
-    const session = new Session({ client, policy, log, onClose: () => sessions.delete(session) });
+    if (sessions.size >= MAX_CONNECTIONS) {
+      client.write(`${JSON.stringify(refusal(null, `too many connections (${MAX_CONNECTIONS} max)`, "limit"))}\n`);
+      client.end();
+      return;
+    }
+    const session = new Session({ client, policy, log, idleTimeoutMs, forwardTimeoutMs, onClose: () => sessions.delete(session) });
     sessions.add(session);
     session.start();
   });
@@ -554,20 +615,28 @@ export async function startProxy(options = {}) {
 
 /** One downstream client: its own upstream, serial requests, caller overwrite and policy. */
 class Session {
-  constructor({ client, policy, log, onClose }) {
+  constructor({ client, policy, log, idleTimeoutMs, forwardTimeoutMs, onClose }) {
     this.client = client;
     this.policy = policy;
     this.log = log;
     this.onClose = onClose;
+    this.idleTimeoutMs = idleTimeoutMs;
+    this.forwardTimeoutMs = forwardTimeoutMs;
+    this.idleTimer = null;
     this.upstream = null;
     this.reader = null;
     this.dead = null;
     this.closed = false;
     this.readerIn = new LineReader(client, MAX_REQUEST_BYTES, (line) => {
+      this.clearIdle();
       this.handle(line)
         .catch((e) => this.log({ ev: "error", message: oneLine(e?.message ?? e) }))
-        .finally(() => this.readerIn.resume());
+        .finally(() => {
+          this.armIdle();
+          this.readerIn.resume();
+        });
     });
+    this.armIdle();
   }
 
   start() {
@@ -575,9 +644,27 @@ class Session {
     this.client.on("error", () => this.close());
   }
 
+  /** Close a connection that has had no request in flight for the idle timeout. */
+  armIdle() {
+    this.clearIdle();
+    if (!(this.idleTimeoutMs > 0)) return;
+    this.idleTimer = setTimeout(() => {
+      this.log({ ev: "idle_close" });
+      this.close();
+    }, this.idleTimeoutMs);
+    this.idleTimer.unref?.();
+  }
+
+  clearIdle() {
+    if (!this.idleTimer) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.clearIdle();
     this.readerIn.stop();
     try { this.client.destroy(); } catch { /* gone */ }
     try { this.upstream?.destroy(); } catch { /* gone */ }
@@ -662,8 +749,12 @@ class Session {
       return;
     }
     const params = isObject(request.params) ? { ...request.params } : {};
+    const unknown = unknownParam(params, method);
+    if (unknown) {
+      reply(`${method}: unknown parameter ${unknown}`);
+      return;
+    }
     if (CALLER_METHODS.has(method)) params.caller = this.policy.terminal;
-    else delete params.caller;
 
     if (method === "terminal.list") {
       await this.forward(request, method, params);
@@ -759,11 +850,17 @@ class Session {
       });
     }
     if (!hasId(request)) return;
+    const waits = method === "terminal.wait" || (method === "terminal.send" && params.wait === true);
     let line;
     try {
-      line = await this.reader.next();
+      const reply = this.reader.next();
+      line = waits ? await reply : await withTimeout(reply, this.forwardTimeoutMs);
     } catch (e) {
-      const why = e?.limit ? `${method}: ${oneLine(e.message)}` : `${method}: upstream unavailable: ${oneLine(e.message)}`;
+      const why = e?.limit
+        ? `${method}: ${oneLine(e.message)}`
+        : e?.timeout
+          ? `${method}: ${oneLine(e.message)}`
+          : `${method}: upstream unavailable: ${oneLine(e.message)}`;
       this.writeError(id, why, e?.limit ? "limit" : "unavailable");
       // The upstream line is desynced (or gone): answer, then close this connection only.
       try { this.upstream?.destroy(); } catch { /* gone */ }

@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HC_PIN, MAX_READ_LINES, MAX_REPLY_BYTES, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "../mods/am-sidebar/workers.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
@@ -47,7 +47,7 @@ const team = () => ({
 
 /** One scene: temp app home + ledger, project + bots.json, a worktree and the runtime folder. */
 function scene() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hc-proxy-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hcp-")));
   const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
   const worktree = join(project, ".claude", "worktrees", "wt");
   const bin = join(root, "bin");
@@ -89,12 +89,12 @@ function scene() {
 }
 
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
-async function sceneWithCore(t, { version = "0.1.14", proxy = true } = {}) {
+async function sceneWithCore(t, { version = "0.1.14", proxy = true, proxyOptions = {} } = {}) {
   const s = scene();
   const fake = await startFakeCore({ socket: join(s.root, "core.sock"), terminals: s.terminals, version });
   const proxies = [];
-  const start = async (terminal = "t100") => {
-    const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env });
+  const start = async (terminal = "t100", extra = {}) => {
+    const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env, ...extra });
     proxies.push(started);
     return started;
   };
@@ -103,7 +103,7 @@ async function sceneWithCore(t, { version = "0.1.14", proxy = true } = {}) {
     try { await fake.close(); } catch { /* gone */ }
     rmSync(s.root, { recursive: true, force: true });
   });
-  const first = proxy ? await start() : null;
+  const first = proxy ? await start("t100", proxyOptions) : null;
   return { s, fake, start, proxy: first };
 }
 
@@ -242,7 +242,6 @@ test("a forged caller is overwritten on every forwarded request", async (t) => {
     ["terminal.get", { terminal: "t101", caller: "t5q" }],
     ["terminal.read", { terminal: "t101", caller: "t5q" }],
     ["terminal.run", runParams(s, { caller: "t5q" })],
-    ["terminal.list", { caller: "t5q" }],
   ];
   for (const [method, params] of calls) {
     const client = await clientFor(proxy.socket);
@@ -257,7 +256,10 @@ test("a forged caller is overwritten on every forwarded request", async (t) => {
   assert.equal(send.caller, "t100");
   assert.notEqual(send.caller, "t5q");
   assert.equal(fake.calls("terminal.run")[0].params.caller, "t100");
-  assert.equal(fake.calls("terminal.list")[0].params.caller, undefined, "list carries no caller");
+  const list = await (await clientFor(proxy.socket)).call("terminal.list", { caller: "t5q" });
+  assert.ok(list.error, "terminal.list refuses a caller parameter it does not own");
+  assert.match(list.error.message, /terminal\.list: unknown parameter caller/);
+  assert.equal(fake.calls("terminal.list").length, 0, "the refused list never reached the core");
 });
 
 test("get/read/wait/send are scoped to the team and its own workers", async (t) => {
@@ -359,6 +361,10 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
     ["a cwd outside the worktrees", { cwd: s.root }],
     ["an extra label", { labels: { [WORKER_OF_LABEL]: ID.dev, bot: ID.dev } }],
     ["another bot's worker.of", { labels: { [WORKER_OF_LABEL]: ID.other } }],
+    ["a shell key", { shell: true }],
+    ["an agent key", { agent: "omp" }],
+    ["die_with_parent false", { die_with_parent: false }],
+    ["no die_with_parent", { die_with_parent: undefined }],
     ["a PATH without a guard", { argv: [ENV, "PATH=/usr/bin:/bin", "dsh-tui", "--", "task"] }],
     ["a guard inside the writable worktree", {
       argv: [ENV, `PATH=${join(s.worktree, "guard")}:/usr/bin:/bin`, "dsh-tui", "--", "task"],
@@ -378,7 +384,9 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
   ];
   for (const [name, extra] of bad) {
     const before = fake.log.length;
-    const call = await (await clientFor(proxy.socket)).call("terminal.run", runParams(s, extra));
+    const badClient = await clientFor(proxy.socket);
+    const call = await badClient.call("terminal.run", runParams(s, extra));
+    badClient.close();
     assert.ok(call.error, `${name} is refused`);
     assert.match(call.error.message, /^hc-proxy: terminal\.run: /);
     assert.equal(fake.log.length, before, `${name} never reached the core`);
@@ -557,6 +565,87 @@ test("one upstream connection per downstream client", async (t) => {
   assert.equal(fake.connections() - before, 2, "a second client gets its own upstream");
   first.close();
   second.close();
+});
+
+test("an unknown parameter is refused on every allowed method", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  fake.clearLog();
+  const cases = [
+    ["terminal.list", { bogus: true }],
+    ["terminal.get", { terminal: "t101", bogus: true }],
+    ["terminal.read", { terminal: "t101", lines: 2, bogus: true }],
+    ["terminal.wait", { terminal: "t101", timeout: 1, bogus: true }],
+    ["terminal.send", { terminal: "t101", text: "hi", bogus: true }],
+    ["terminal.kill", { terminal: "t105", bogus: true }],
+    ["terminal.rm", { terminal: "t105", bogus: true }],
+    ["terminal.label", { terminal: "t105", labels: { "herdr.tab": "tab-1" }, bogus: true }],
+    ["terminal.run", runParams(s, { bogus: true })],
+  ];
+  for (const [method, params] of cases) {
+    const before = fake.log.length;
+    const answer = await (await clientFor(proxy.socket)).call(method, params);
+    assert.ok(answer.error, `${method} refuses an unknown parameter`);
+    assert.match(answer.error.message, new RegExp(`^hc-proxy: ${method.replace(".", "\\.")}: unknown parameter bogus`));
+    assert.equal(fake.log.length, before, `${method} never reached the core`);
+  }
+});
+
+test("an over-limit socket path refuses to start with a named error", async (t) => {
+  const { s, fake } = await sceneWithCore(t, { proxy: false });
+  const long = join(s.root, "x".repeat(120));
+  mkdirSync(long, { recursive: true });
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: fake.socket, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: long } }),
+    new RegExp(`socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`),
+  );
+  assert.equal(existsSync(join(long, "automagik-hc-proxy")), false);
+  const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
+    env: { ...process.env, ...s.env, XDG_RUNTIME_DIR: long },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 1, stderr);
+  assert.match(stderr, new RegExp(`hc-proxy: socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`));
+});
+
+test("the connection cap refuses the extra client with a proxy error", async (t) => {
+  const { proxy } = await sceneWithCore(t);
+  const held = [];
+  for (let i = 0; i < MAX_CONNECTIONS; i += 1) held.push(await clientFor(proxy.socket));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const extra = await clientFor(proxy.socket);
+  const answer = JSON.parse(await extra.next());
+  assert.match(answer.error.message, new RegExp(`^hc-proxy: too many connections \\(${MAX_CONNECTIONS} max\\)`));
+  extra.close();
+  for (const client of held) client.close();
+});
+
+test("an idle connection and a slow partial line are closed by the idle timeout", async (t) => {
+  const { proxy } = await sceneWithCore(t, { proxyOptions: { idleTimeoutMs: 120 } });
+  const idle = await clientFor(proxy.socket);
+  assert.ok(await waitFor(() => idle.closed, 2000), "an idle connection is closed");
+  const slow = await clientFor(proxy.socket);
+  slow.socket.write('{"jsonrpc":"2.0","id":1');
+  assert.ok(await waitFor(() => slow.closed, 2000), "a slow partial line is closed");
+});
+
+test("an in-flight wait keeps the connection alive", async (t) => {
+  const { fake, proxy } = await sceneWithCore(t, { proxyOptions: { idleTimeoutMs: 120 } });
+  fake.state.waitMs = 350;
+  const answer = await (await clientFor(proxy.socket)).call("terminal.wait", { terminal: "t101", timeout: 1 });
+  assert.ok(answer.result, "the wait was allowed to finish");
+  fake.state.waitMs = 0;
+});
+
+test("a forwarded call other than wait times out", async (t) => {
+  const { fake, proxy } = await sceneWithCore(t, { proxyOptions: { forwardTimeoutMs: 120 } });
+  fake.state.hang = "terminal.list";
+  const answer = await (await clientFor(proxy.socket)).call("terminal.list", {});
+  assert.ok(answer.error, "the call is refused");
+  assert.match(answer.error.message, /^hc-proxy: terminal\.list: did not answer within 120 ms/);
+  fake.state.hang = null;
 });
 
 test("the version pin is one constant, 0.1.14", () => {

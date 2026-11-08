@@ -29,7 +29,10 @@ connection per downstream client connection**, so one client's long `terminal.wa
 another's read. `hello` is refused, so the connection never switches to framed mode and
 `terminal.attach` is unreachable. Every reply line is capped at 2 MiB and `terminal.read` is
 capped at 5,000 lines: a 6 MiB read is a clear `hc-proxy:` error, never a buffered line. A
-request line is capped at 256 KiB.
+request line is capped at 256 KiB. A pane socket accepts at most 16 client connections at once;
+a connection with no request in flight is closed after 5 minutes (an in-flight `terminal.wait`,
+or a `send` with `wait`, keeps it alive); a forwarded call other than those is answered with an
+error after 30 seconds.
 
 `params.caller` is always overwritten with the pane's terminal id, fixed at start. A caller the
 client supplies is never forwarded. Every allowed call is resolved first with one short
@@ -84,6 +87,13 @@ socket or to a locally started core. Note for PR B: `hc` auto-starts a core when
 connect. The sandbox must keep that from happening (an environment switch or the wrapper) while
 the real socket is masked, or a missing proxy would create a new core at the bound path. PR A
 does not wire that; it only never falls back.
+
+## Left for PR B
+
+- The proxy trusts any same-uid client (Node cannot check peer credentials); the 0700 folder and
+  0600 socket are the only access control.
+- The roster and the attach ledger are writable before the proxy starts; PR B must start the
+  proxy before the sandbox exists.
 
 ## What a filesystem mask cannot do
 
