@@ -97,12 +97,12 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 
 | Route | Agent | Runs | Adapter (newest release) |
 |---|---|---|---|
-| `acp-claude` | Claude Code | the person's `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
-| `acp-codex` | Codex | the person's `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
+| `acp-claude` | Claude Code | managed or existing `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
+| `acp-codex` | Codex | managed or existing `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
 | `acp-fake` | `dev/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
-An agent is offered only when its CLI is on PATH or where its installer puts it (`~/.local/bin`,
-`/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
+An agent is offered when its managed CLI is ready, or an existing CLI is on PATH or where its
+installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
 live settings: switching one (from the welcome's Connect AI, its Settings page *Claude Code and
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
@@ -140,16 +140,48 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. `state` is `off`, `no-cli`, `installing`, `failed` (with the last install error) or `ready`. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
-| `retry(id)` | Starts the connector's install again, and answers at once. |
+| `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).
 
-The adapters are not pinned (RFC 0003, amended): the CLIs update themselves, and an adapter that
-lags its CLI breaks first. They install in the background at DSH's start and once a day after,
+### Required desktop CLIs
+
+The desktop installs Claude Code and Codex automatically on first startup and after updates,
+including in existing profiles and with either model switch off. Five seconds after every ACP
+start, it resolves the official packages' stable `latest` releases and installs anything missing
+or older. The same check runs after any plugin installation/update and every fifteen minutes,
+even when a previous check found no update. Lifecycle checks bypass the recent-check cache;
+simultaneous triggers queue one fresh check after an active download. App and desktop plugin-lane
+updates restart DSH, so they also perform a fresh check. Standalone DSH keeps using its existing
+tools. No login, API key or onboarding reset is part of installation, and no model preference,
+setting or credential is rewritten.
+
+The desktop's bundled pnpm installs `@anthropic-ai/claude-code` and `@openai/codex` with their
+native platform packages under `$AUTOMAGIK_HOME/acp/clis`. Dependency scripts are disabled,
+registry tarball integrity is checked and the binary must pass `--version` before its staging
+folder is published. Linux glibc/musl, macOS and Windows x64/ARM64 layouts are supported; an
+Apple Silicon Mac running the desktop through Rosetta uses ARM64 binaries.
+
+A current or newer user CLI is reused. An older global installation stays untouched while
+Automagik installs its own newer copy. An existing CLI whose version cannot be determined stays
+untouched while Automagik selects a verified managed release instead of claiming it is current.
+Completed managed versions never downgrade and remain available to sessions already using them.
+Managed Claude's own updater is disabled; Automagik owns this copy's updates. Settings,
+credentials and global command links remain untouched. Local versions are compared before the
+registry request, so an offline restart keeps the newest verified local copy.
+
+A failed download preserves the working version, records a redacted diagnostic in CLI status
+and retries at the next check or through the existing `retry(id)` service. Stopping ACP cancels
+its downloads and removes incomplete staging folders. Official distribution references:
+[Claude Code setup](https://code.claude.com/docs/en/setup),
+[Codex CLI](https://developers.openai.com/codex/cli).
+
+The adapters are not pinned (RFC 0003, amended): an adapter that lags its CLI breaks first.
+They install in the background at DSH's start and once a day after,
 with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else npm, into
 `$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
 place when complete, without install scripts or optional dependencies (the CLIs the adapters

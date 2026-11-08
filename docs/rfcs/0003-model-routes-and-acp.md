@@ -451,6 +451,29 @@ running agent sessions and revokes their bridges at once; the Session keeps its 
 bridged only with an explicit `true`; absent or `false` means no bridge, and its built-ins stay its
 own tool set.
 
+## Amendment: required desktop CLIs (2026-11-08)
+
+Claude Code and Codex are required desktop components. On every activation and after any plugin
+installation/update, the ACP host checks both official stable releases and installs missing or
+older tools, independently of their model switches and onboarding state. App and desktop plugin
+lane updates restart DSH and receive the same startup check. A current or newer user CLI is reused;
+an older global CLI is left untouched and replaced for Automagik's use by a managed copy. Standalone DSH retains its
+existing-CLI behavior. Installation does not authenticate, change models or rewrite user settings.
+
+The desktop's bundled pnpm installs the official native platform packages into
+`$AUTOMAGIK_HOME/acp/clis`, separately from its adapters. Registry integrity, disabled install
+scripts and a successful native `--version` check precede atomic publication. Completed version
+directories are immutable and retained for running sessions. Managed Claude's updater is disabled;
+Automagik checks these copies at startup, plugin updates and every fifteen minutes without
+downgrading them. Lifecycle triggers bypass the recent-check cache; triggers during an active
+download queue one fresh registry check afterward. A user CLI whose version cannot be verified
+stays untouched while Automagik uses a verified managed release instead of treating it as current.
+Failures preserve any working copy, expose redacted diagnostics through CLI status and retry at
+the next check or the existing `retry(id)` service. Shutdown cancels incomplete installations.
+
+This amends D17's desktop CLI ownership only. Adapter installation, authentication, model
+selection, the conversation UI and the existing model-enable switches keep their own contracts.
+
 ## Links
 
 - #130 per-teammate models (runtime patch)
