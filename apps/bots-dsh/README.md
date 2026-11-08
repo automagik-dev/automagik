@@ -249,7 +249,10 @@ Another plugin can also set the search provider while dsh runs, after the profil
 `web_fetch` uses the same address lists as the Bot browser (Settings → Browser → Address
 lists); with both lists empty, localhost, LAN and tailnet URLs are fetched by default. A
 deny entry wins over an allow entry, and a non-empty allow list limits fetches to those
-targets too.
+targets too. The lists are shared with the Bot browser, so changing them cannot turn
+`web_fetch` off; only the profile's `web-fetch-http` row with `disabled: true` does.
+With both lists empty, prompt-injected channel text can still reach localhost services
+(#521); add a deny entry or disable that row.
 
 ## Bot browser
 

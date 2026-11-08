@@ -12,6 +12,10 @@
 # the web_fetch tool with the address lists on Settings -> Browser. Both lists start empty:
 # local, LAN and tailnet targets are reachable by default. A deny entry always wins, and a
 # non-empty allow list limits both web_fetch and the Bot browser to those targets.
+# The Settings lists are shared with the Bot browser, so they cannot turn web fetch
+# off; only this row with disabled: true does. With both lists empty, prompt-injected
+# channel text can still reach localhost services (#521): add a deny entry or disable
+# this row.
 - id: web-fetch-http
   disabled: false
 # Read before write stays on: dsh 0.2.2 ships the policy row disabled, so write would overwrite
