@@ -29,22 +29,50 @@ function charWidth() {
 // log so far, kept as a tail by the host; each new render writes only what was added.
 const LOG_ROWS = 7
 export function InstallLog({ text, label }) {
+  return h(TerminalScreen, { text, label })
+}
+
+// A user-only terminal for CLI sign-in: nothing is sent through a conversation or tool.
+export function LoginTerminal({ text, label, onData, onResize, disabled }) {
+  return h(TerminalScreen, { text, label, onData, onResize, disabled, interactive: true })
+}
+
+function TerminalScreen({ text, label, onData, onResize, disabled = true, interactive = false }) {
   const box = useRef(null)
   const terminal = useRef(null)
   const written = useRef('')
+  const input = useRef(onData)
+  const resize = useRef(onResize)
+  input.current = onData
+  resize.current = onResize
   useEffect(() => {
     let alive = true
     let term
+    let observer
     void (async () => {
       const { Terminal } = await import('@xterm/xterm')
       if (!alive || box.current === null) return
-      term = new Terminal({ rows: LOG_ROWS, cols: columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, lineHeight: 1.15, disableStdin: true, cursorBlink: false, convertEol: true, scrollback: 4000, theme: { ...THEME, cursor: THEME.background } })
+      term = new Terminal({ rows: interactive ? 10 : LOG_ROWS, cols: columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5, lineHeight: 1.15, disableStdin: disabled, cursorBlink: interactive, convertEol: true, scrollback: interactive ? 500 : 4000, theme: { ...THEME, cursor: interactive ? THEME.cursor : THEME.background } })
       term.open(box.current)
       terminal.current = term
       written.current = ''
       write(text)
+      if (interactive) {
+        term.onData(data => input.current?.(data))
+        const fit = () => {
+          const cols = columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13)
+          term.resize(cols, 10)
+          resize.current?.(cols, 10)
+        }
+        if (typeof ResizeObserver === 'function') {
+          observer = new ResizeObserver(fit)
+          observer.observe(box.current)
+        }
+        fit()
+        term.focus()
+      }
     })()
-    return () => { alive = false; term?.dispose(); terminal.current = null }
+    return () => { alive = false; observer?.disconnect(); term?.dispose(); terminal.current = null }
   }, [])
   const write = (next = '') => {
     const term = terminal.current
@@ -58,6 +86,7 @@ export function InstallLog({ text, label }) {
     written.current = next
   }
   useEffect(() => { write(text) }, [text])
+  useEffect(() => { if (terminal.current) terminal.current.options.disableStdin = disabled }, [disabled])
   return h('div', { className: 'oai-term oai-mini-term', role: 'log', 'aria-label': label },
     h('div', { className: 'oai-term-screen', ref: box }))
 }

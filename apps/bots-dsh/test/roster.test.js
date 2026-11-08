@@ -73,6 +73,85 @@ function start(team, { models = [], reasoning = {}, archiveError, config = {}, s
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 
+test('a denied model switch leaves the Bot, its persisted profile and every Session unchanged', async (t) => {
+  const { call, stop, ctx, selected, sent, home } = start(undefined, { models: ['before', 'after'] })
+  t.after(stop)
+  const main = (await call('state', {})).value.mainBotId
+  assert.equal((await call('update-bot', { id: main, model: 'deepseek/before' })).ok, true)
+  await until(() => sent.length > 0)
+  await settle()
+  let configured = false
+  const get = ctx.get
+  ctx.get = name => name === 'settings' ? { describe: () => [{ ns: 'llm-deepseek', value: { apiKeyEnv: 'TEST_KEY' } }] }
+    : name === 'credentials' ? { describe: async () => ({ configured, writable: true }) }
+      : get(name)
+  ctx.llm.listConfigurableProviders = () => [{ provider: 'deepseek', settingsNs: 'llm-deepseek', settingsPath: [] }]
+  const before = readFileSync(join(home, 'state.json'), 'utf8')
+  const selections = selected.length
+  const denied = await call('update-bot', { id: main, name: 'Changed', model: 'deepseek/after', instructions: 'Changed too' })
+  assert.equal(denied.ok, false)
+  assert.equal(denied.error.code, 'bot/model-access')
+  assert.equal(denied.error.access.status, 'missing-key')
+  assert.equal(denied.error.access.ref, 'deepseek/after')
+  assert.equal(readFileSync(join(home, 'state.json'), 'utf8'), before)
+  assert.equal(selected.length, selections)
+  const bot = (await call('state', {})).value.bots.find(bot => bot.id === main)
+  assert.equal(bot.model, 'deepseek/before')
+  assert.equal(bot.appliedModel, 'deepseek/before')
+  assert.notEqual(bot.name, 'Changed')
+  configured = true
+  assert.equal((await call('update-bot', { id: main, model: 'deepseek/after' })).ok, true)
+  assert.equal(selected.at(-1).model, 'after')
+})
+
+test('a native Session model switch preflights access and preserves the profile default', async (t) => {
+  const { call, stop, ctx, selected } = start(undefined, { models: ['before', 'after'] })
+  t.after(stop)
+  let current = { provider: 'deepseek', model: 'before' }
+  let configured = false
+  const get = ctx.get
+  ctx.get = name => name === 'settings' ? { describe: () => [{ ns: 'llm-deepseek', value: { apiKeyEnv: 'TEST_KEY' } }] }
+    : name === 'credentials' ? { describe: async () => ({ configured }) }
+      : name === 'agentDefaultModel' ? { currentSelection: () => current, saveSelection: async value => { current = value } }
+        : get(name)
+  ctx.llm.listConfigurableProviders = () => [{ provider: 'deepseek', settingsNs: 'llm-deepseek', settingsPath: [] }]
+  const select = ctx.sessionController.selectModel
+  ctx.sessionController.selectModel = async (value) => { await select(value); current = { provider: value.provider, model: value.model }; return { selected: current } }
+  const payload = { sessionId: 'native-session', ref: 'deepseek/after' }
+  assert.equal((await call('model-access', { ref: payload.ref })).value.status, 'missing-key')
+  assert.equal((await call('select-session-model', payload)).error.code, 'bot/model-access')
+  assert.deepEqual(selected, [])
+  configured = true
+  assert.equal((await call('select-session-model', payload)).ok, true)
+  assert.deepEqual(selected, [{ sessionId: 'native-session', provider: 'deepseek', model: 'after' }])
+  assert.deepEqual(current, { provider: 'deepseek', model: 'before' })
+})
+
+test('a signed-out CLI cannot replace a Bot model or resolve its Session while validating other fields', async (t) => {
+  const { call, stop, ctx, home, selected, sent } = start(undefined, { models: ['before'] })
+  t.after(stop)
+  const main = (await call('state', {})).value.mainBotId
+  assert.equal((await call('update-bot', { id: main, model: 'deepseek/before' })).ok, true)
+  await until(() => sent.length > 0)
+  await settle()
+  const get = ctx.get
+  ctx.get = name => name === 'acpAgents' ? { inspect: async () => ({ on: true, cli: { found: true }, connector: { state: 'ready' }, signedIn: false }) } : get(name)
+  ctx.llm.listProviders = () => [{ id: 'deepseek' }, { id: 'acp-codex' }]
+  ctx.llm.listModels = async provider => [{ id: provider === 'deepseek' ? 'before' : 'default' }]
+  let resolved = 0
+  const resolve = ctx.sessionController.resolveAgent
+  ctx.sessionController.resolveAgent = async (...args) => { resolved++; return resolve(...args) }
+  const before = readFileSync(join(home, 'state.json'), 'utf8')
+  const selections = selected.length
+  const denied = await call('update-bot', { id: main, model: 'acp-codex/default', denyTools: ['run_command'] })
+  assert.equal(denied.error.code, 'bot/model-access')
+  assert.equal(denied.error.access.status, 'sign-in-required')
+  assert.equal(denied.error.access.recovery.agent, 'acp-codex')
+  assert.equal(resolved, 0)
+  assert.equal(selected.length, selections)
+  assert.equal(readFileSync(join(home, 'state.json'), 'utf8'), before)
+})
+
 test('the first Main Bot waits for the user to pick a model, then greets', async (t) => {
   const { call, stop, sent, selected } = start(undefined, { models: ['deepseek-v4-flash', 'deepseek-v4-pro'] })
   t.after(stop)
@@ -800,7 +879,7 @@ test('update_bot checks a level against the model it names, and a failure change
   assert.match(await tool({ effort: 'low' }), /^Could not update the Bot: Thinking level low is not available/)
   assert.equal((await current()).effort, 'medium')
   // A model that is not served fails before anything changes too.
-  assert.match(await tool({ name: 'Renamed', model: 'deepseek/nothing' }), /^Could not update the Bot: Model deepseek\/nothing is not available/)
+  assert.match(await tool({ name: 'Renamed', model: 'deepseek/nothing' }), /^Could not update the Bot: This model is not available/)
   assert.equal((await current()).name, 'Writer')
 })
 

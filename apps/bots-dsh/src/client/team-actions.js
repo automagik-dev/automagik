@@ -97,6 +97,9 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     // Do not remap the expected Session: the backend must reject a stale snapshot.
     checkpointBot: (botId, sessionId) => after(call('checkpoint-bot', { botId, sessionId })),
     refreshModels: () => after(call('models')).catch(() => {}),
+    modelAccess: ref => call('model-access', { ref }),
+    modelProviders: () => call('providers'),
+    setProviderKey: (provider, value) => call('provider-key', { provider, value }),
     efforts: ref => call('efforts', { ref }),
     folders: () => call('folders'),
     folderPick: () => call('folder-pick'),

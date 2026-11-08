@@ -97,12 +97,12 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 
 | Route | Agent | Runs | Adapter (newest release) |
 |---|---|---|---|
-| `acp-claude` | Claude Code | the person's `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
-| `acp-codex` | Codex | the person's `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
+| `acp-claude` | Claude Code | managed or existing `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
+| `acp-codex` | Codex | managed or existing `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
 | `acp-fake` | `dev/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
-An agent is offered only when its CLI is on PATH or where its installer puts it (`~/.local/bin`,
-`/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
+An agent is offered when its managed CLI is ready, or its existing CLI is on PATH or where its
+installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
 live settings: switching one (from the welcome's Connect AI, its Settings page *Claude Code and
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
@@ -140,13 +140,46 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. `state` is `off`, `no-cli`, `installing`, `failed` (with the last install error) or `ready`. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
-| `retry(id)` | Starts the connector's install again, and answers at once. |
+| `inspect(id)` | Refreshes just this agent's CLI discovery and sign-in, without starting an installation. Returns its status for model-switch validation. |
+| `cliPath(id)`, `cliEnv(id)` | Host-only executable path and managed runtime environment, so in-chat login uses the same CLI as its adapter. Paths are never included in client status. |
+| `loginCommand(id)` | Host-only `{ argv, env }` with fixed login arguments and the selected CLI's PATH. Windows batch CLIs use a host Node runner which quotes `cmd.exe` once, after the terminal's argument transport; native CLIs execute directly. Missing CLI returns `undefined`. |
+| `retry(id)` | Retries this agent's required CLI and connector installation, and answers at once. Does not turn its model switch on. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).
+
+### Required desktop CLIs
+
+At every activation, including after an app or plugin update in an existing profile, the desktop
+ensures **both Claude Code and Codex** are installed, even when their model switches are off.
+A missing CLI is installed automatically without reopening onboarding or resetting existing
+settings. Installation needs no login or API key. After five seconds, it resolves
+the official packages' current npm `latest` tags (`@anthropic-ai/claude-code`, `@openai/codex`),
+rejecting prerelease versions. It uses the desktop's bundled pnpm and the official native platform
+packages, with dependency scripts disabled. This follows the distribution documented by
+[Claude Code](https://code.claude.com/docs/en/setup#install-with-npm) and
+[Codex CLI](https://learn.chatgpt.com/docs/codex/cli), while keeping binaries local to Automagik.
+
+Each verified executable lives in a unique directory under `$AUTOMAGIK_HOME/acp/clis` (default
+`~/.automagik/acp/clis`). A successful `--version` check precedes publication. An existing user CLI
+at least as new as the current release is reused; older global installations are left untouched
+and get a separate managed replacement. A managed release never downgrades. User homes,
+credentials, project settings and global command links are preserved. Login from the conversation
+uses this same executable and home. Managed Claude runs with `DISABLE_UPDATES=1`; Automagik owns
+updates to that copy, not a global installer. Old managed versions stay for sessions still using
+them; discovery always selects the highest completed version, including across desktop processes.
+Native binaries cover Linux glibc/musl, macOS and Windows on x64/ARM64; Rosetta uses ARM64.
+
+Checks run every fifteen minutes, including when no update is available; they also run at each
+desktop start. A download or missing package-manager failure is visible in CLI status with a
+redacted diagnostic and a Retry action. An offline failure preserves any working copy and retries
+on the next check or manual retry. Package downloads inherit the desktop process's proxy settings;
+metadata lookup uses Node's fetch/proxy support. Unsupported platforms fail with an explicit
+message. CLI installation is a desktop responsibility (`AUTOMAGIK_APP_BROWSER`/`AUTOMAGIK_PNPM`);
+a standalone DSH continues to use its existing tools.
 
 The adapters are not pinned (RFC 0003, amended): the CLIs update themselves, and an adapter that
 lags its CLI breaks first. They install in the background at DSH's start and once a day after,

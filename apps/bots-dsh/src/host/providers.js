@@ -8,6 +8,17 @@ const ROUTE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 // The wire protocols DSH's pi-ai adapter serves on a route it ships nothing about.
 export const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages']
 const MAX_MODELS = 500
+// pi-ai's nativeAuth directory names both credentials and accompanying settings.
+// These providers require a complete alternative, not just any advertised field
+// (Anthropic workspace ids and Cloudflare account ids alone authenticate nothing).
+const NATIVE_AUTH_REQUIREMENTS = {
+  anthropic: [
+    ['ANTHROPIC_AUTH_TOKEN'], ['ANTHROPIC_OAUTH_TOKEN'], ['ANTHROPIC_API_KEY'],
+    ['ANTHROPIC_FEDERATION_RULE_ID', 'ANTHROPIC_ORGANIZATION_ID', 'ANTHROPIC_IDENTITY_TOKEN_FILE'],
+  ],
+  'cloudflare-workers-ai': [['CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID']],
+  'cloudflare-ai-gateway': [['CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_GATEWAY_ID']],
+}
 
 // The reference DSH's own Models page derives for a route's key, so a provider added
 // here and one added there read the same key.
@@ -89,6 +100,43 @@ export function install(rt) {
       if (info?.configured === false) missing.add(id)
     }))
     return missing
+  }
+
+  // Presence only, never a request to the model or a read of a credential value.
+  // An explicit key wins over a native sign-in, just as it does in DSH's adapter.
+  async function providerAccess(provider) {
+    const found = seams()
+    if (found === undefined) return { ready: true, status: 'ready' }
+    const entry = entryOf(provider)
+    if (entry === undefined) return { ready: true, status: 'ready' }
+    const profile = profileOf(entry, sections(found.settings))
+    const ref = refOf(profile)
+    const recovery = kind => ({ kind, provider })
+    if (ref !== undefined) {
+      const info = await found.credentials.describe(ref)
+      if (info?.configured === true) return { ready: true, status: 'ready' }
+      if (info?.configured !== false) return { ready: false, status: 'unknown', message: 'The API key could not be checked. Try again before changing models.', recovery: recovery('api-key') }
+      return { ready: false, status: 'missing-key', message: 'Save an API key for this provider before changing models.', recovery: recovery('api-key') }
+    }
+    // A plugin without authentication metadata owns its own access rules. Cloud
+    // SDK credential chains can also succeed without an environment variable (AWS
+    // roles, Google ADC); absence here cannot prove those accounts are signed out.
+    const auth = entry.nativeAuth
+    if (entry.settingsNs !== PI_AI || auth === undefined || ['amazon-bedrock', 'google-vertex'].includes(provider)) return { ready: true, status: 'ready' }
+    const env = Array.isArray(auth.env) ? auth.env.filter(name => typeof name === 'string') : []
+    // pi-ai resolves native references through DSH's credential service too.
+    // describe includes stored keys and the immutable launch environment (process,
+    // project and user layers); process.env alone misses valid saved credentials.
+    const nativeKeys = await Promise.all(env.map(name => found.credentials.describe(name)))
+    const configured = new Set(env.filter((_, index) => nativeKeys[index]?.configured === true))
+    const requirements = Object.hasOwn(NATIVE_AUTH_REQUIREMENTS, provider) ? NATIVE_AUTH_REQUIREMENTS[provider] : undefined
+    const nativeReady = requirements === undefined ? configured.size > 0 : requirements.some(names => names.every(name => configured.has(name)))
+    if (nativeReady) return { ready: true, status: 'ready' }
+    const record = await found.credentials.describeRecord?.(`${PI_AI}/${provider}`)
+    if (record?.configured === true) return { ready: true, status: 'ready' }
+    if (auth.oauth === true) return { ready: false, status: 'sign-in-required', message: 'Sign in to this provider before changing models.', recovery: recovery('sign-in') }
+    if (env.length > 0) return { ready: false, status: 'missing-key', message: 'Save an API key for this provider before changing models.', recovery: recovery('api-key') }
+    return { ready: true, status: 'ready' }
   }
 
   // The providers set up in DSH, with their models and key state, and the ones DSH
@@ -222,5 +270,5 @@ export function install(rt) {
     return providersView()
   }
 
-  Object.assign(rt, { keyRefs, missingKeys, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider })
+  Object.assign(rt, { keyRefs, missingKeys, providerAccess, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider })
 }

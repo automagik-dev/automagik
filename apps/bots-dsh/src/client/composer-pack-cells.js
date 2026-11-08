@@ -8,7 +8,7 @@ import { cellChoice, packFor, targetOf } from './composer-packs.js'
 // since it moves the Session without the Bot knowing. `env` carries the registrants of
 // the composer's cells, for packs that depend on another plugin being there.
 export function packModelCell(env) {
-  return function PackModelCell({ sessionId, useRoster, actions }) {
+  return function PackModelCell({ sessionId, useRoster, actions, locked = false }) {
     const roster = useRoster(value => value)
     const packs = useEntries(composerPacks)
     const target = targetOf(roster, sessionId)
@@ -18,7 +18,7 @@ export function packModelCell(env) {
       .then(() => true)
       .catch((failure) => { actions?.reportError?.(failure, 'composer-model'); return false })
     return h('span', { className: 'bt-composer-model', 'data-pack': pack.id },
-      h(ModelMenu, { bot: target.bot, roster, actions, run }))
+      h(ModelMenu, { bot: target.bot, roster, actions, run, disabled: locked }))
   }
 }
 

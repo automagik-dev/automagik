@@ -250,6 +250,28 @@ test('installing: the connector is said to be on its way, with no retry', () => 
   assert.equal(findAll(tree, node => /oai-waiting/.test(node.props?.className ?? '')).length, 1)
 })
 
+test('required CLI install progress is visible before the CLI exists, and failed installs offer retry', () => {
+  const installing = rowOf(agent('acp-codex', { cli: { found: false, state: 'installing', managed: true }, connector: { state: 'no-cli' } }))
+  assert.match(textOf(installing), /Installing the latest stable Codex CLI automatically/)
+  assert.doesNotMatch(textOf(installing), /Install it, sign in/)
+  assert.deepEqual(buttons(installing, 'Retry'), [])
+  const acp = acpOf([])
+  const failed = rowOf(agent('acp-claude', { cli: { found: false, state: 'failed', managed: true, error: 'network unavailable' }, connector: { state: 'no-cli' } }), acp)
+  assert.match(textOf(failed), /The CLI did not install: network unavailable/)
+  buttons(failed, 'Retry')[0].props.onClick()
+  assert.deepEqual(acp.acted, [['retry', 'acp-claude']])
+})
+
+test('the required CLI install status is polled while its executable is not available yet', async () => {
+  const current = view([agent('acp-codex', { cli: { found: false, state: 'installing', managed: true }, connector: { state: 'no-cli' } })])
+  const request = async () => current
+  const running = runHook(() => ui.useAcp(request))
+  await running.settle()
+  assert.equal(running.intervals.size, 1)
+  running.done()
+  assert.equal(running.intervals.size, 0)
+})
+
 test('the client redactor alone removes every shared shape', () => {
   const user = ['deploy', 'bot'].join('')
   const pass = ['secret', 'pass'].join('')

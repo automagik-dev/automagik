@@ -451,6 +451,36 @@ running agent sessions and revokes their bridges at once; the Session keeps its 
 bridged only with an explicit `true`; absent or `false` means no bridge, and its built-ins stay its
 own tool set.
 
+## Amendment: required desktop CLIs (2026-11-08)
+
+Claude Code and Codex are required desktop components for new and existing installations.
+On every activation, including after an app or plugin update, the ACP host ensures both are
+installed from their official npm distributions at the current non-prerelease `latest` version,
+independently of their model switches. A missing CLI is installed without reopening onboarding
+or resetting the established profile. Login remains a
+separate user action. A current or newer user CLI is reused; older global installations, user
+settings and credentials are never overwritten. Standalone DSH retains its existing-CLI behavior.
+
+The desktop owns its copies in `$AUTOMAGIK_HOME/acp/clis`, separate from the adapter store. Its
+bundled pnpm verifies registry tarball integrity and installs the official platform package with
+scripts disabled; the host runs the native executable directly and verifies `--version` before
+publishing it. Linux glibc/musl, macOS and Windows x64/ARM64 are supported. Version directories are
+immutable and retained for sessions using them. Managed Claude's own updater is disabled, and
+Automagik checks these copies every fifteen minutes and at startup without downgrading. This
+amends D17's desktop CLI ownership; adapters still exclude their own bundled CLIs and retain
+their separate store and update policy.
+
+Failures leave any working version available, expose redacted diagnostics and a Retry action,
+and retry on the next scheduled check or desktop start. The host's `acpAgents.inspect(id)` checks
+fresh authentication without downloading anything; `loginCommand(id)` lets login from the
+conversation use the same executable and settings home as the adapter, with safe Windows batch
+launching. `cliPath(id)` and `cliEnv(id)` remain host-only helpers. Neither executable
+paths nor credentials enter client status. Model selection requires the CLI, its connector and
+its authentication to be ready; installing a required tool does not authenticate or enable it.
+
+Distribution references: [Claude Code setup](https://code.claude.com/docs/en/setup#install-with-npm),
+[Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
+
 ## Links
 
 - #130 per-teammate models (runtime patch)

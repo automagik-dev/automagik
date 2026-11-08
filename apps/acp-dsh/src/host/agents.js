@@ -4,7 +4,8 @@
 import { accessSync, constants, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { execFile } from 'node:child_process'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, win32 } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { batchSafe } from './batch-spawn.js'
 
 // Efforts as DSH lists them, from least to most.
@@ -19,6 +20,8 @@ export const AGENTS = Object.freeze({
     defaultName: 'Claude Code',
     fallback: Object.freeze(['default', 'opus', 'sonnet', 'haiku'].map(id => Object.freeze({ id, name: id === 'default' ? 'Claude Code' : id.charAt(0).toUpperCase() + id.slice(1), reasoning: efforts('low', 'medium', 'high') }))),
     cli: 'claude',
+    cliPackage: '@anthropic-ai/claude-code',
+    loginArgs: Object.freeze(['auth', 'login']),
     // Where the person gets the CLI when it is not on this computer.
     installUrl: 'https://code.claude.com/docs/en/setup',
     // `claude auth status --json` answers { loggedIn } (and who: never read past loggedIn).
@@ -48,6 +51,8 @@ export const AGENTS = Object.freeze({
     defaultName: 'Codex',
     fallback: Object.freeze([Object.freeze({ id: 'default', name: 'Codex', reasoning: efforts('low', 'medium', 'high') })]),
     cli: 'codex',
+    cliPackage: '@openai/codex',
+    loginArgs: Object.freeze(['login']),
     installUrl: 'https://developers.openai.com/codex/cli',
     // `codex login status` exits 0 when signed in, 1 when not.
     signIn: Object.freeze({ args: ['login', 'status'], read: ({ code }) => (code === 0 ? true : code === 1 ? false : undefined) }),
@@ -106,6 +111,23 @@ export function findCommand(name, { env = process.env, home = homedir() } = {}) 
 }
 
 export const SIGN_IN_TIMEOUT_MS = 8000
+
+/** The exact selected CLI and fixed login arguments, suitable for a host-owned terminal. */
+export function loginCommandOf(spec, cli, { env = process.env, platform = process.platform, overrides = {} } = {}) {
+  if (!cli) return undefined
+  const directory = platform === 'win32' ? win32.dirname(cli) : dirname(cli)
+  const path = platform === 'win32' ? env.Path ?? env.PATH : env.PATH
+  const terminalEnv = { ...overrides, PATH: [directory, path].filter(Boolean).join(platform === 'win32' ? ';' : delimiter) }
+  if (platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(cli)) return { argv: [cli, ...spec.loginArgs], env: terminalEnv }
+  // Validate before opening the terminal. The runner performs this same conversion when
+  // spawning: Node's shell:true sets WindowsVerbatimArguments for cmd.exe. Sending that
+  // cmd string directly through node-pty would escape its quotes a second time.
+  batchSafe(cli, spec.loginArgs, {}, platform)
+  return {
+    argv: [process.execPath, fileURLToPath(new URL('./login-runner.js', import.meta.url)), spec.key, cli],
+    env: { ...terminalEnv, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+  }
+}
 
 /**
  * Whether the person is signed in to `spec`'s CLI, as the CLI itself says: true, false, or

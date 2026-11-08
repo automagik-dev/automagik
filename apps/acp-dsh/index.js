@@ -17,9 +17,10 @@ import { dirname, join, sep } from 'node:path'
 import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { AcpAdapter, aside, BRIDGE_PATH, SIDE_MODEL } from './src/host/adapter.js'
-import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
+import { AGENTS, findCommand, loginCommandOf, signedInOf } from './src/host/agents.js'
 import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
+import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
 import { redactorFor } from './src/host/redact.js'
@@ -87,10 +88,10 @@ export function nodeCommand() {
  * @param {any} ctx
  * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
  *   [config]
- * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
+ * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined } = {}) {
   const agents = new Map()
   const log = message => info(ctx, message)
   if (config.fakeAgent) {
@@ -137,9 +138,17 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     }
   }
   const clis = new Map()
+  const cliDetails = new Map()
   const signIns = new Map()
   let registration
   let disposed = false
+  const cliEnvironment = id => {
+    if (!cliDetails.get(id)?.managed) return {}
+    if (AGENTS[id]?.key === 'claude') return { DISABLE_UPDATES: '1' }
+    // Codex ownership flags trigger global package-manager upgrade commands. Its native
+    // package finds its resources from its own path; Automagik owns updates to this copy.
+    return { CODEX_MANAGED_BY_NPM: undefined, CODEX_MANAGED_BY_PNPM: undefined, CODEX_MANAGED_BY_BUN: undefined, CODEX_MANAGED_BY_VITE_PLUS: undefined, CODEX_MANAGED_PACKAGE_ROOT: undefined }
+  }
 
   const enabled = spec => flagOf(config[spec.key]) !== false
   // The routes DSH serves follow `agents`; each change is published as llm/adapters-updated.
@@ -186,7 +195,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         const bin = store.binOf(spec.adapter, spec.bin)
         return bin === undefined ? undefined : `${bin.path} ${cliStamp(cli)}`
       },
-      spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...spec.env(cli) } }),
+      spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...cliEnvironment(id), ...spec.env(cli) } }),
     }),
     installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
     spawn: () => {
@@ -199,7 +208,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
       }
       const node = nodeCommand()
-      return { command: node.command, args: [bin.path], env: { ...node.env, ...spec.env(cli) } }
+      return { command: node.command, args: [bin.path], env: { ...node.env, ...cliEnvironment(id), ...spec.env(cli) } }
     },
   })
 
@@ -209,7 +218,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     let changed = false
     const added = []
     for (const [id, spec] of Object.entries(AGENTS)) {
-      const cli = find(spec.cli)
+      const external = find(spec.cli)
+      const detail = cliStore?.find(spec, external) ?? (external ? { path: external, managed: false } : undefined)
+      const cli = detail?.path
+      cliDetails.set(id, detail)
+      if (clis.get(id) !== cli) signIns.delete(id)
       clis.set(id, cli)
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
@@ -232,9 +245,23 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const probe = async (id) => {
     const spec = AGENTS[id]
     const cli = clis.get(id)
-    signIns.set(id, cli === undefined ? undefined : await signedIn(spec, cli).catch(() => undefined))
+    const authenticated = cli === undefined ? undefined : await signedIn(spec, cli, { env: { ...process.env, ...cliEnvironment(id) } }).catch(() => undefined)
+    if (clis.get(id) === cli) signIns.set(id, authenticated)
   }
   const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
+
+  // Both CLIs are required desktop components, even if their model switch is off. They
+  // install on first initialization without prompting for a key or starting a login.
+  const ensureCli = (spec, { force = false } = {}) => {
+    if (!cliStore || disposed) return Promise.resolve()
+    return cliStore.ensure(spec, find(spec.cli), { force }).then(async () => {
+      if (disposed) return
+      reconcile()
+      await probe(idOf(spec))
+    }, () => {
+      if (!disposed) warn(ctx, `${spec.defaultName} not installed: ${cliStore.lastError?.(spec.cliPackage) ?? 'the install failed'}`)
+    })
+  }
 
   // A path under the person's home is shown relative to it, as the Bot team's report row does.
   const shownPath = (path) => {
@@ -252,6 +279,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = store.busy?.(spec.adapter) === true
     const failure = store.lastFailure?.(spec.adapter)
+    const cliFailure = cliStore?.lastFailure(spec.cliPackage)
+    const cliBusy = cliStore?.busy(spec.cliPackage) === true
+    const detail = cliDetails.get(id)
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
         : bin !== undefined ? 'ready'
@@ -268,7 +298,20 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       key: spec.key,
       name: spec.defaultName,
       on,
-      cli: { found: cli !== undefined, installUrl: spec.installUrl },
+      cli: {
+        found: cli !== undefined, installUrl: spec.installUrl,
+        // A desktop queues mandatory setup at mount. Report that queue immediately so an
+        // account card opened in the first five seconds keeps polling until setup finishes.
+        state: cli ? 'ready' : cliBusy || (cliStore && !cliFailure) ? 'installing' : cliFailure ? 'failed' : 'missing',
+        managed: detail?.managed === true,
+        ...(detail?.version ? { version: detail.version } : {}),
+        ...(cliBusy && cli ? { updating: true } : {}),
+        ...(cliFailure ? {
+          error: cliFailure.message,
+          ...(cliFailure.diagnostic ? { diagnostic: cliFailure.diagnostic } : {}),
+          ...(cliFailure.logPath ? { logPath: shownPath(cliFailure.logPath) } : {}),
+        } : {}),
+      },
       connector: {
         state: connector,
         ...(bin ? { version: bin.version } : {}),
@@ -398,6 +441,21 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const service = {
     settingsEntry: name,
     status,
+    /** Fresh auth for one model switch, without downloading or mutating anything. */
+    async inspect(id) {
+      if (!AGENTS[id]) throw new Error(`no ACP agent ${String(id).slice(0, 40)}`)
+      reconcile({ kick: false })
+      await probe(id)
+      return statusOf(id)
+    },
+    // Host only: terminal login must run precisely the command the adapter uses. Absolute
+    // paths and process environments are deliberately absent from the browser status.
+    cliPath(id) { return clis.get(id) },
+    cliEnv(id) { return cliEnvironment(id) },
+    loginCommand(id) {
+      if (!AGENTS[id]) throw new Error(`no ACP agent ${String(id).slice(0, 40)}`)
+      return loginCommandOf(AGENTS[id], clis.get(id), { overrides: cliEnvironment(id) })
+    },
     /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
@@ -418,6 +476,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       const spec = AGENTS[id]
       if (spec === undefined) throw new Error(`no ACP agent ${String(id).slice(0, 40)}`)
       reconcile({ kick: false })
+      void ensureCli(spec, { force: true })
       if (agents.has(id)) void install(spec)
       return status()
     },
@@ -450,17 +509,22 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const refresh = () => {
     for (const [id, spec] of Object.entries(AGENTS)) if (agents.has(id)) void install(spec)
   }
-  const first = setTimeout(refresh, FIRST_CHECK_MS)
+  const required = () => { for (const spec of Object.values(AGENTS)) void ensureCli(spec) }
+  const first = setTimeout(() => { required(); refresh() }, FIRST_CHECK_MS)
+  const cliChecks = cliStore ? setInterval(required, CLI_CHECK_EVERY_MS) : undefined
   const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
   first.unref?.()
   daily.unref?.()
+  cliChecks?.unref?.()
   // Cordis 4 has no 'dispose' event: an effect's cleanup is what runs when the plugin stops.
   ctx.effect?.(() => () => {
     disposed = true
     clearTimeout(first)
     clearInterval(daily)
+    clearInterval(cliChecks)
     // A running adapter install would otherwise outlive DSH and keep writing into its home.
     store.dispose?.()
+    cliStore?.dispose?.()
     adapter.dispose()
     backchannel.dispose()
   })

@@ -11,6 +11,7 @@ import { handoffReply, questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
 import { validateViewAnswer } from '../shared/views.js'
 import { normalizeAddressList } from './browser/address-policy.js'
+import { splitRef } from './text.js'
 import { COLORS, EXTRA_COLORS, IMAGE_ROUTE, PET_CODEX_ROUTE, PET_ROUTE, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
@@ -57,7 +58,7 @@ export function install(rt) {
   rt.allowPlace = () => uiAllowPlace ?? DEFAULT_ALLOW_PLACE
 
   const ok = value => ({ ok: true, value })
-  const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
+  const fail = (message, code = 'bot/error', access) => ({ ok: false, error: { code, message, details: {}, ...(access ? { access } : {}) } })
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision. So do the permission presets DSH offers and
   // the Bots and groups whose Auto runs as workspace-write (permissions.js).
@@ -159,7 +160,7 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'model-access', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -258,6 +259,14 @@ export function install(rt) {
           return ok({ modelsKey: modelsKey() })
         case 'efforts':
           return ok(await rt.reasoningOf(String(body.ref ?? '')) ?? { efforts: [] })
+        case 'model-access':
+          return ok(await rt.modelAccess(body.ref))
+        case 'select-session-model': {
+          if (typeof body.sessionId !== 'string' || body.sessionId.trim() === '') throw invalid('Choose a conversation before changing models')
+          const ref = await rt.resolveModel(body.ref, { remember: false, checkAccess: true })
+          const reasoningEffort = body.reasoningEffort === undefined ? undefined : await rt.resolveEffort(ref, body.reasoningEffort)
+          return ok(await rt.selectSessionModel(body.sessionId, { ...splitRef(ref), ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }))
+        }
         // A Turn's exact thinking time, from the timed stream in its events; `ms`
         // omitted when the stream carries no reasoning records.
         case 'thinking': {
@@ -711,7 +720,7 @@ export function install(rt) {
       // or `memory/` code (memory writes `memory/*`). Any other error may be a
       // provider's, carrying its request or endpoint text, or a file system's, carrying
       // a path: neither the log nor the reply says its message, only its kind.
-      if (code !== 'bot/internal' && exposition(error) !== undefined) return fail(error.message, code)
+      if (code !== 'bot/internal' && exposition(error) !== undefined) return fail(error.message, code, code === 'bot/model-access' ? error.access : undefined)
       const kind = errorKind(error)
       rt.noteFailure({ source: 'api', text: `${endpoint}: ${kind}`, code: kind, stack: error?.stack })
       return fail(`Something went wrong (${kind}).`, code)

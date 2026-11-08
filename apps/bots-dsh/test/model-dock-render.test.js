@@ -100,7 +100,9 @@ test('a Bot with no model renders its dock in React: the offered model, Start an
   await tick()
   const rows = [...document.body.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
   assert.deepEqual(rows.filter(row => row.getAttribute('aria-checked') === 'true').map(row => row.title), ['deepseek-official/deepseek-flash'])
-  flushSync(() => rows.find(row => row.title === 'local/flash').click())
+  const company = document.querySelector('.bt-model-field select')
+  flushSync(() => { company.value = 'Ollama'; company.dispatchEvent(new document.defaultView.Event('change', { bubbles: true })) })
+  flushSync(() => document.querySelector('[title="local/flash"]').click())
   await tick()
   // Start picks the offered model for the Bot.
   const start = [...dock.querySelectorAll('button')].find(button => button.textContent === 'Start')

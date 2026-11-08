@@ -323,7 +323,17 @@ test('a level the agent cannot express stays on the Bot, and no level is sent', 
 
 test('picking another route by hand carries the Bot\'s level both ways', async (t) => {
   const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const inspected = []
   const host = await start(seed(), {
+    acp: {
+      ...readyAcp(),
+      // Unlike the migration's cached status, a manual pick checks the selected
+      // CLI freshly. This fixture offers a ready, signed-in Codex as well.
+      inspect: async (id) => {
+        inspected.push(id)
+        return { id, on: true, cli: { found: true }, connector: { state: 'ready' }, signedIn: true }
+      },
+    },
     providers: ['anthropic', 'deepseek', 'acp-claude', 'acp-codex'],
     extraModels: { 'acp-codex': [{ id: 'default' }] },
     resolveModelInfo: async provider => (['anthropic', 'acp-claude', 'acp-codex'].includes(provider)
@@ -360,6 +370,7 @@ test('picking another route by hand carries the Bot\'s level both ways', async (
     label: 'the Bot moved to Codex by hand',
   })
   assert.equal(request('acp-codex').reasoningEffort, 'high')
+  assert.deepEqual(inspected, ['acp-codex'])
 })
 
 test('a Bot the person changed since the move stays as they set it', async (t) => {

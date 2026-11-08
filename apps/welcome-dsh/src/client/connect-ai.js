@@ -98,7 +98,7 @@ function KeyForm({ row, provider, onSaved }) {
 // A sign-in running in DSH: its latest notice (a page to open, a code to type), its open
 // question, and how it ended. Polled, so a reload finds it again. The route is written by the
 // host only once the sign-in succeeds.
-function SignIn({ row, provider, onSaved, onCancel }) {
+function SignIn({ row, provider, onSaved, onCancel, cancelOnUnmount = false }) {
   const [attempt, setAttempt] = useState(null)
   const [problem, setProblem] = useState(null)
   const [answer, setAnswer] = useState('')
@@ -109,7 +109,10 @@ function SignIn({ row, provider, onSaved, onCancel }) {
     const poll = async (first) => {
       try {
         const next = await call(first ? 'signin-start' : 'signin-status', { provider })
-        if (!live) return
+        if (!live) {
+          if (cancelOnUnmount) void call('signin-cancel', { provider }).catch(() => {})
+          return
+        }
         setAttempt(next)
         if (next.status === 'authorized') return onSaved()
         if (next.status === 'running') timer = setTimeout(() => poll(false), 1000)
@@ -118,9 +121,15 @@ function SignIn({ row, provider, onSaved, onCancel }) {
       }
     }
     poll(true)
-    return () => {
+    const leave = () => {
       live = false
       clearTimeout(timer)
+      if (cancelOnUnmount) void call('signin-cancel', { provider }).catch(() => {})
+    }
+    if (cancelOnUnmount) globalThis.addEventListener?.('pagehide', leave)
+    return () => {
+      leave()
+      if (cancelOnUnmount) globalThis.removeEventListener?.('pagehide', leave)
     }
   }, [provider])
   const reply = async (value) => {
@@ -193,20 +202,20 @@ function CliproxyForm({ onSaved }) {
 
 // A provider that takes both a sign-in and a key (Claude: a Pro or Max plan or an Anthropic API
 // key; Grok): the person picks one before anything starts.
-function SignInOrKey({ row, provider, onSaved, onClose }) {
+function SignInOrKey({ row, provider, onSaved, onClose, cancelOnUnmount }) {
   const [way, setWay] = useState(null)
-  if (way === 'signin') return h(SignIn, { row, provider, onSaved, onCancel: onClose })
+  if (way === 'signin') return h(SignIn, { row, provider, onSaved, onCancel: onClose, cancelOnUnmount })
   if (way === 'key') return h(KeyForm, { row, provider, onSaved })
   return h('div', { className: 'oai-choices', role: 'group', 'aria-label': t('How to connect {name}', { name: row.name }) },
     h('button', { type: 'button', onClick: () => setWay('signin') }, h('strong', null, t('Sign in to {name}', { name: row.name })), h('span', null, t('With your plan, in the browser'))),
     h('button', { type: 'button', onClick: () => setWay('key') }, h('strong', null, t('Use an API key')), h('span', null, t('Billed per use'))))
 }
 
-function Setup({ row, onSaved, onClose }) {
+export function Setup({ row, onSaved, onClose, cancelOnUnmount = false }) {
   if (row.kind === 'key') return h(KeyForm, { row, provider: providerOf(row), onSaved })
   if (row.kind === 'signin') {
-    if (row.signIn && row.keyUrl) return h(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose })
-    if (row.signIn) return h(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose })
+    if (row.signIn && row.keyUrl) return h(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose, cancelOnUnmount })
+    if (row.signIn) return h(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose, cancelOnUnmount })
     if (row.keyUrl) return h(KeyForm, { row, provider: providerOf(row), onSaved })
     return h('p', null, t('This DSH offers no {name} sign-in.', { name: row.name }))
   }
@@ -217,7 +226,7 @@ function Setup({ row, onSaved, onClose }) {
 }
 
 export const PROVIDER_OF = { claude: 'anthropic', chatgpt: 'openai-codex', kimi: 'kimi-coding', copilot: 'github-copilot', grok: 'xai', openai: 'openai', openrouter: 'openrouter', zai: 'zai', moonshot: 'moonshotai', opencode: 'opencode', deepseek: 'deepseek' }
-const providerOf = row => PROVIDER_OF[row.id] ?? row.id
+export const providerOf = row => PROVIDER_OF[row.id] ?? row.id
 
 // "Also connected through …": the other ways this row's AI is connected, which Omni does not use.
 function Duplicates({ row, onDedupe }) {

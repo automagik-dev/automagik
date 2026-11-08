@@ -19,12 +19,15 @@ async function callRoute(route, endpoint, payload) {
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ endpoint, payload: payload ?? null }),
+      // Closing a window must still cancel its private sign-in. These tiny cancellation
+      // requests contain only an opaque terminal id or provider id, never a credential.
+      ...(['acp-login-close', 'signin-cancel'].includes(endpoint) ? { keepalive: true } : {}),
     })
   } catch {
     throw Object.assign(new Error(t('Could not reach DSH. Check that it is still running.')), { code: 'NETWORK' })
   }
   if (!response.ok) throw Object.assign(new Error(t('DSH answered HTTP {status}', { status: response.status })), { code: `HTTP_${response.status}` })
   const result = await response.json()
-  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? t('Request failed')), { code: result.error?.code ?? 'omni-ai/error' })
+  if (!result.ok) throw Object.assign(new Error(t(result.error?.message ?? 'Request failed')), { code: result.error?.code ?? 'omni-ai/error' })
   return result.value
 }

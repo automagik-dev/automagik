@@ -7,8 +7,12 @@ import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
+import { chooseAccessibleModel, modelCompanies } from './model-companies.js'
 
 const MENU_EXIT_MS = 120
+// DSH stores only its declared registration options. Extension metadata travels
+// on the component, which the slot registry preserves unchanged.
+const accountDescriptor = entry => entry.component?.accounts ?? entry.options ?? {}
 
 // -------------------------------------------------------------------------
 // A Bot's model: the picker in its details panel and settings, and the message its
@@ -108,12 +112,12 @@ function EffortRows({ reasoning, current, onPick }) {
 // out of the menu, unless the Bot is on it.
 export const offeredModels = (models, current) => (models ?? []).filter(model => model.superseded !== true || model.ref === current)
 
-function ModelRows({ roster, current, onPick }) {
+function ModelRows({ roster, current, onPick, disabled = false }) {
   return groupModels(offeredModels(roster.models, current)).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
     h('div', { className: 'bt-model-group', role: 'presentation' }, provider),
     list.map(model => h('button', {
       key: model.ref, type: 'button', role: 'menuitemradio', 'aria-checked': model.ref === current, title: model.ref,
-      onClick: () => onPick(model.ref),
+      onClick: () => onPick(model.ref), disabled,
     },
     h('span', { className: 'bt-menu-label' }, model.name),
     model.ref === roster.defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
@@ -124,7 +128,7 @@ export const Caret = () => h('svg', { className: 'bt-model-caret', width: 12, he
 
 // A menu that opens under its trigger, or above when the window has no room below. A
 // click outside, Escape, or a scroll outside it closes it.
-export function useAnchoredMenu() {
+export function useAnchoredMenu(minWidth = 240) {
   const [anchor, setAnchor] = useState(null)
   const [place, setPlace] = useState(null)
   const [shownPlace, leaving] = useLinger(place, MENU_EXIT_MS)
@@ -155,13 +159,13 @@ export function useAnchoredMenu() {
   useLayoutEffect(() => {
     if (anchor === null || !button.current) return
     const rect = button.current.getBoundingClientRect()
-    const width = Math.max(240, rect.width)
+    const width = Math.min(Math.max(minWidth, rect.width), window.innerWidth - 16)
     const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
     const below = viewBottom() - rect.bottom
     setPlace(below >= 260 || below >= rect.top
       ? { left, width, top: rect.bottom + 4, maxHeight: below - 16, '--bt-origin': 'top right' }
       : { left, width, bottom: viewBottom() - rect.top + 4, maxHeight: rect.top - 16, '--bt-origin': 'bottom right' })
-  }, [anchor, tick])
+  }, [anchor, tick, minWidth])
   return { isOpen: place !== null, shownPlace, leaving, button, menu, open, close }
 }
 
@@ -174,8 +178,60 @@ export function ModelMenu(props) {
   return h(props.roster?.hostModels?.[props.bot?.id] === undefined ? DshModelMenu : HostModelMenu, props)
 }
 
-function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, onPick, onPickEffort }) {
-  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
+// Configured/custom providers without a Welcome account use the exact credential
+// reference advertised by DSH. This form never passes through the chat composer.
+function ProviderKeySetup({ provider, actions, onConnected, onClose }) {
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
+  const save = async event => {
+    event?.preventDefault()
+    if (busy || !value.trim()) return
+    setBusy(true)
+    setProblem('')
+    try {
+      await actions.setProviderKey(provider, value)
+      setValue('')
+      await onConnected()
+    } catch {
+      setProblem(t('Could not save the key. Try again.'))
+    } finally { setBusy(false) }
+  }
+  return h('form', { className: 'bt-model-key-form', onSubmit: save },
+    h(MaskedInput, { value, onChange: setValue, onEnter: () => save(), label: t('API key'), autoFocus: true }),
+    h('p', null, t('The key is saved securely and is not sent as a chat message.')),
+    problem ? h('p', { role: 'alert', className: 'bt-model-error' }, problem) : null,
+    h('button', { type: 'submit', disabled: busy || !value.trim() }, busy ? t('Saving…') : t('Save key')),
+    h('button', { type: 'button', disabled: busy, onClick: onClose }, t('Back to models')))
+}
+
+function DshModelMenu({ bot, roster, actions, wide = false, link = false, onPick, onPickEffort, disabled = false }) {
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu(360)
+  const [accounts, setAccounts] = useState([])
+  const [company, setCompany] = useState('')
+  const [provider, setProvider] = useState('')
+  const [setup, setSetup] = useState('')
+  const [problem, setProblem] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [revision, setRevision] = useState(0)
+  const changing = useRef(false)
+  const live = useRef(true)
+  useLayoutEffect(() => { if (isOpen) menu.current?.querySelector('select')?.focus() }, [isOpen])
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
+  useEffect(() => actions?.subscribeModelAccounts?.(() => setRevision(value => value + 1)), [actions])
+  useEffect(() => {
+    if (!isOpen) return undefined
+    let mounted = true
+    const entries = actions?.modelAccountEntries?.() ?? []
+    const sources = [Promise.resolve().then(() => actions?.modelProviders?.()).then(value => [
+      ...(value?.providers ?? []).map(row => ({ ...row, provider: row.id })),
+      ...(value?.addable ?? []).map(row => ({ ...row, provider: row.id })),
+    ]), ...entries.map(entry => Promise.resolve().then(() => accountDescriptor(entry).providers?.() ?? []))]
+    void Promise.allSettled(sources).then(results => {
+      if (mounted) setAccounts(results.flatMap(result => result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : []))
+    })
+    return () => { mounted = false }
+  }, [isOpen, actions, revision])
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel
   const served = servedOf(roster, current)
@@ -190,27 +246,59 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, o
     if (isOpen) { close(); return }
     // DSH settings can change the list at any time, so opening asks again.
     void actions?.refreshModels?.()
+    setProblem('')
+    setSetup('')
+    setCompany('')
+    setProvider('')
     open()
   }
-  const pick = (ref) => {
-    close()
-    if (onPick) onPick(ref)
-    else if (ref !== current || !bot.model) void run(actions.updateBot(bot.id, { model: ref }))
+  const change = async (select) => {
+    if (changing.current || disabled) return
+    changing.current = true
+    setBusy(true)
+    setProblem('')
+    try {
+      await select()
+      if (live.current) close()
+    } catch (error) {
+      if (live.current) setProblem(`${hostText(error?.message ?? 'Could not change the model.')}${error?.code === 'bot/model-access' ? ` ${t('Your previous model is unchanged.')}` : ''}`)
+    } finally {
+      changing.current = false
+      if (live.current) setBusy(false)
+    }
   }
-  const pickEffort = (effort) => {
-    close()
-    if (onPickEffort) onPickEffort(effort)
-    else if (effort !== bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
+  const pick = ref => {
+    if (ref === current && bot.model) { close(); return }
+    return change(() => chooseAccessibleModel({ ref, actions,
+      select: value => onPick ? onPick(value) : actions.updateBot(bot.id, { model: value }),
+    }))
   }
+  const pickEffort = effort => change(() => onPickEffort ? onPickEffort(effort)
+    : effort !== bot.effort ? actions.updateBot(bot.id, { effort: effort ?? null }) : undefined)
   const models = roster.models ?? []
+  const companies = modelCompanies(offeredModels(models, current), accounts)
+  const currentProvider = current?.split('/')[0]
+  const activeCompany = companies.find(row => row.name === company)
+    ?? companies.find(row => row.providers.some(item => item.provider === currentProvider)) ?? companies[0]
+  const activeProvider = activeCompany?.providers.find(row => row.provider === provider)
+    ?? activeCompany?.providers.find(row => row.provider === currentProvider) ?? activeCompany?.providers[0]
+  const accountEntry = (actions?.modelAccountEntries?.() ?? []).find(entry => accountDescriptor(entry).matches?.(setup || activeProvider?.provider))
+  const keySetup = activeProvider?.key?.writable === true && typeof actions?.setProviderKey === 'function'
+  const connected = async () => {
+    await actions?.refreshModels?.()
+    if (!live.current) return
+    setRevision(value => value + 1)
+    setSetup('')
+    setProblem('')
+  }
   const manage = manageModels(actions)
   return h(Fragment, null,
     link ? h('button', {
-      ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'dialog', 'aria-expanded': isOpen, disabled,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
     }, t('change')) : h('button', {
       ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined,
-      'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
+      'aria-haspopup': 'dialog', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }), disabled,
       'data-missing': shown !== undefined && !shown.served && models.length > 0 ? '' : undefined, onClick: toggle,
     },
     h('span', { className: 'bt-model-copy' },
@@ -219,10 +307,20 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, o
         ? (effortLabel === undefined ? shown.provider : `${shown.provider} · ${effortLabel}`)
         : t('{provider} · not available', { provider: shown.provider })) : null),
     h(Caret)),
-    shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined },
-      models.length > 0 ? h(ModelRows, { roster, current, onPick: pick })
-        : h('div', { className: 'bt-model-none' }, t('No models are set up in DeepSeek Harness yet.')),
-      effortRows(reasoning).length > 0 ? h(EffortRows, { reasoning, current: picked, onPick: pickEffort }) : null,
+    shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu bt-model-account-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'dialog', 'aria-label': t('Model for {name}', { name: bot.name }), 'aria-busy': busy, style: shownPlace, 'data-leaving': leaving || undefined },
+      h('label', { className: 'bt-model-field' }, t('Company'), h('select', { 'aria-label': t('Company'), value: activeCompany?.name ?? '', disabled: busy, onChange: event => { setCompany(event.target.value); setProvider(''); setSetup(''); setProblem('') } },
+        companies.map(row => h('option', { key: row.name, value: row.name }, row.name)))),
+      activeCompany?.providers.length > 1 ? h('label', { className: 'bt-model-field' }, t('Connection'), h('select', { 'aria-label': t('Connection'), value: activeProvider?.provider ?? '', disabled: busy, onChange: event => { setProvider(event.target.value); setSetup(''); setProblem('') } },
+        activeCompany.providers.map(row => h('option', { key: row.provider, value: row.provider },
+          activeCompany.providers.filter(other => other.name === row.name).length > 1 ? `${row.name ?? row.provider} (${row.provider})` : row.name ?? row.provider)))) : null,
+      problem ? h('div', { className: 'bt-model-error', role: 'alert' }, problem) : null,
+      busy ? h('div', { className: 'bt-model-none', role: 'status' }, t('Checking access…')) : null,
+      setup && (accountEntry || keySetup) ? h('div', { className: 'bt-model-account-setup' }, h(accountEntry?.component ?? ProviderKeySetup, { provider: setup, actions, onConnected: connected, onClose: () => setSetup('') }))
+        : h(Fragment, null,
+          (accountEntry || keySetup) && activeProvider ? h('button', { type: 'button', disabled: busy, onClick: () => setSetup(activeProvider.provider) }, h(KeyIcon), accountEntry ? t('Save key or sign in') : t('Save key')) : null,
+          activeProvider?.models.length > 0 ? h('div', { role: 'menu', 'aria-label': t('Models') }, h(ModelRows, { roster: { ...roster, models: activeProvider.models }, current, onPick: pick, disabled: busy || disabled }))
+            : h('div', { className: 'bt-model-none' }, t('Connect this account to load its models.')),
+          activeProvider?.provider === currentProvider && effortRows(reasoning).length > 0 ? h('div', { role: 'menu', 'aria-label': t('Thinking level') }, h(EffortRows, { reasoning, current: picked, onPick: pickEffort })) : null),
       manage ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
       manage ? h('button', { type: 'button', role: 'menuitem', onClick: () => { close(); manage() } }, h(SlidersIcon), h('span', { className: 'bt-menu-label' }, t('Models and providers…'))) : null), document.body) : null)
 }
@@ -429,6 +527,16 @@ export const MODEL_CSS = `
 .bt-model-caret{flex:none;color:var(--bt-ink-3);transition:${spring(SPRING_SHAPE, 'transform')}}
 .bt-model-trigger[aria-expanded=true] .bt-model-caret{transform:rotate(180deg)}
 .bt-model-menu{overflow-y:auto;scrollbar-width:thin}
+.bt-model-account-menu{padding:10px;box-sizing:border-box}
+.bt-model-field{display:flex;flex-direction:column;gap:5px;padding:3px 2px 9px;font-size:12px;color:var(--bt-ink-2)}
+.bt-model-field select{width:100%;min-height:34px;padding:5px 8px;border:1px solid var(--bt-line);border-radius:8px;background:var(--bt-surface);color:var(--bt-ink);font:inherit}
+.bt-model-error{padding:8px;margin:4px 0;border-radius:8px;background:var(--bt-hover);color:var(--bt-danger);font-size:12px;line-height:1.5;white-space:normal}
+.bt-model-account-setup{padding:6px 2px;white-space:normal}
+.bt-model-key-form{display:grid;gap:8px;font-size:12px}
+.bt-model-key-form input{box-sizing:border-box;width:100%;min-height:36px}
+.bt-model-key-form p{margin:0;color:var(--bt-ink-2)}
+.bt-model-account-menu button:disabled{opacity:.55;cursor:wait}
+.bt-model-account-menu :focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
 .bt-model-group{flex:none;padding:8px 8px 2px;font-size:11px;line-height:14px;font-weight:500;color:var(--bt-ink-3);text-transform:none}
 .bt-model-group:first-child{padding-top:2px}
 .bt-model-tick{flex:none;width:16px;height:16px;display:inline-flex;color:var(--bt-ink-2)}

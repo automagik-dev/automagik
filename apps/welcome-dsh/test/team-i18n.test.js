@@ -137,13 +137,16 @@ test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () =
 // The team step, the Claude Code and Codex rows and the rest of the welcome share the namespace
 // (welcome-flow-i18n.test.js renders the rest).
 const read = file => readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')
-const FLOW = ['connect-ai.js', 'subscriptions.js', 'companion.js', 'companion-art.js', 'stage.js', 'api.js']
+const FLOW = ['connect-ai.js', 'model-accounts.js', 'subscriptions.js', 'companion.js', 'companion-art.js', 'stage.js', 'api.js']
 const source = ['team.js', 'acp-agents.js', ...FLOW].map(read).join('\n')
 const keysOf = text => [...text.matchAll(/\bt\(\s*(['"`])((?:\\.|(?!\1).)*)\1/g)].map(match => match[2].replace(/\\(['"`\\])/g, '$1'))
 const placeholders = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort().join(',')
 
 test('every string the team step looks up has its pt-BR text, with the same placeholders', () => {
   const keys = new Set(keysOf(source))
+  // api.js translates the private login bridge's fixed refusal messages too.
+  const login = readFileSync(new URL('../src/host/acp-login.js', import.meta.url), 'utf8')
+  for (const key of keysOf(login.replace(/\brefused\(/g, 't('))) keys.add(key)
   assert.ok(keys.size > 100, `only ${keys.size} t() keys found`)
   const missing = [...keys].filter(key => !Object.hasOwn(team.PT_BR, key))
   assert.deepEqual(missing, [])
@@ -212,7 +215,10 @@ test('the pt-BR dictionary holds no key the team step no longer uses', () => {
   // The rest of the welcome looks some keys up from data: the rail's labels, the companion's
   // ideas, the subscription tiles, and what src/host/ais.js says about each AI.
   const quoted = text => [...text.matchAll(/'((?:\\'|[^'\n])*)'/g)].map(match => match[1].replace(/\\'/g, "'"))
-  for (const text of [...FLOW.map(read), readFileSync(new URL('../src/host/ais.js', import.meta.url), 'utf8')]) for (const literal of quoted(text)) used.add(literal)
+  // Private login errors are known host messages translated by api.js before the card sees
+  // them; they belong in the same dictionary as the form's own copy.
+  const hostCopy = ['ais.js', 'acp-login.js'].map(file => readFileSync(new URL(`../src/host/${file}`, import.meta.url), 'utf8'))
+  for (const text of [...FLOW.map(read), ...hostCopy]) for (const literal of quoted(text)) used.add(literal)
   assert.deepEqual(Object.keys(team.PT_BR).filter(key => !used.has(key)), [])
 })
 

@@ -17,12 +17,14 @@ export const SETTINGS_SECTION = 'acp-agents'
 
 // The chip beside the name: the one word that says where the agent stands.
 export function badgeOf(agent) {
+  if (agent.cli.state === 'installing' || agent.cli.updating) return t('Setting up')
+  if (agent.cli.state === 'failed') return t('Needs a retry')
   if (!agent.cli.found) return t('Not installed')
   if (!agent.on) return t('Off')
   const state = agent.connector.state
   if (state === 'installing') return t('Setting up')
   if (state === 'failed') return t('Needs a retry')
-  if (state === 'ready') return agent.restartNeeded ? t('Restart needed') : t('Ready')
+  if (state === 'ready') return agent.restartNeeded ? t('Restart needed') : agent.signedIn === false ? t('Sign-in needed') : t('Ready')
   return null
 }
 
@@ -36,17 +38,25 @@ export { redactText }
  * where to find the model. Each line: { tone: ok|wait|bad|muted, text, link?, action? }, an
  * action being 'check' (look again) or 'retry' (the connector's install).
  */
-export function agentLines(agent) {
+export function agentLines(agent, { inlineLogin = false } = {}) {
   const name = agent.name
   const cli = CLI_OF[agent.id] ?? agent.key
   const lines = []
+  if (agent.cli.state === 'installing' || agent.cli.updating) {
+    lines.push({ tone: 'wait', text: t('Installing the latest stable {name} CLI automatically.', { name }) })
+    if (!agent.cli.found) return lines
+  }
+  if (agent.cli.state === 'failed') {
+    lines.push({ tone: 'bad', text: agent.cli.error ? t('The CLI did not install: {error}', { error: redactText(agent.cli.error) }) : t('The CLI did not install.'), action: 'retry', ...(agent.cli.diagnostic ? { details: { diagnostic: redactText(agent.cli.diagnostic), ...(agent.cli.logPath ? { logPath: agent.cli.logPath } : {}) } } : {}) })
+    if (!agent.cli.found) return lines
+  }
   if (!agent.cli.found) {
     lines.push({ tone: 'muted', text: t('The {cli} CLI is not on this computer. Install it, sign in, then check again.', { cli }), ...(agent.cli.installUrl ? { link: { href: agent.cli.installUrl, text: t('Install {name}', { name }) } } : {}), action: 'check' })
     return lines
   }
   lines.push({ tone: 'ok', text: t('Found the {cli} CLI on this computer.', { cli }) })
   if (agent.signedIn === true) lines.push({ tone: 'ok', text: t('Signed in to {name}.', { name }) })
-  if (agent.signedIn === false) lines.push({ tone: 'bad', text: t('Not signed in. Run {command} in a terminal, then check again.', { command: SIGN_IN_OF[agent.id] ?? cli }), action: 'check' })
+  if (agent.signedIn === false) lines.push({ tone: 'bad', text: inlineLogin ? t('Sign in below to use {name}.', { name }) : t('Not signed in. Run {command} in a terminal, then check again.', { command: SIGN_IN_OF[agent.id] ?? cli }), action: 'check' })
   if (!agent.on) {
     lines.push({ tone: 'muted', text: t('Off. Turn it on to use {name} as a model in DSH.', { name }) })
     return lines
@@ -66,7 +76,7 @@ export function agentLines(agent) {
   }
   if (state === 'ready') {
     lines.push({ tone: 'ok', text: version ? t('Connector ready (version {version}).', { version }) : t('Connector ready.') })
-    lines.push(agent.restartNeeded
+    if (agent.restartNeeded || agent.signedIn !== false) lines.push(agent.restartNeeded
       ? { tone: 'bad', text: t('Restart DSH to see {name} in the model picker.', { name }) }
       : { tone: 'ok', text: t('Ready: pick {name} in the model picker.', { name }), ready: true })
   }
@@ -81,7 +91,7 @@ export function useAcp(request = call) {
   const [problems, setProblems] = useState({})
   const [wanted, setWanted] = useState({})
   const live = useRef(true)
-  useEffect(() => () => { live.current = false }, [])
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
 
   const show = useCallback((next) => {
     if (!live.current) return
@@ -98,7 +108,7 @@ export function useAcp(request = call) {
   }, [request, show])
   useEffect(() => { void load(true) }, [load])
 
-  const settling = view?.agents?.some(agent => (agent.on && agent.cli.found && agent.connector.state === 'installing') || (wanted[agent.id] !== undefined && wanted[agent.id] !== agent.on)) === true
+  const settling = view?.agents?.some(agent => agent.cli.state === 'installing' || agent.cli.updating || (agent.on && agent.cli.found && agent.connector.state === 'installing') || (wanted[agent.id] !== undefined && wanted[agent.id] !== agent.on)) === true
   useEffect(() => {
     if (!settling) return undefined
     const timer = setInterval(() => { void load(false) }, POLL_MS)
@@ -151,11 +161,11 @@ function Line({ line, agent, acp, busy }) {
       line.details.logPath ? h('p', { className: 'oai-acp-log' }, t('Log: {path}', { path: line.details.logPath })) : null) : null)
 }
 
-export function AcpAgentRow({ agent, acp }) {
+export function AcpAgentRow({ agent, acp, inlineLogin = false }) {
   const on = acp.isOn(agent)
   const busy = acp.busy !== null
   const badge = badgeOf({ ...agent, on })
-  const lines = agentLines(agent)
+  const lines = agentLines(agent, { inlineLogin })
   return h('div', { className: `oai-ai oai-acp${on ? ' oai-ai-on' : ''}`, 'data-acp': agent.id, 'data-state': agent.cli.found ? (agent.on ? agent.connector.state : 'off') : 'no-cli' },
     h('div', { className: 'oai-ai-row' },
       h('div', { className: 'oai-logo', 'aria-hidden': true }, LOGO_OF[agent.id] ?? agent.name.slice(0, 1)),

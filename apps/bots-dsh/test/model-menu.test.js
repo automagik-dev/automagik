@@ -94,7 +94,7 @@ test('the model line names the model and its provider, and "change" opens the mo
   const closed = drawMenu(menu.props)
   const [trigger] = nodes(closed, node => node.type === 'button')
   assert.equal(trigger.children[0], 'change')
-  assert.equal(trigger.props['aria-haspopup'], 'menu')
+  assert.equal(trigger.props['aria-haspopup'], 'dialog')
   // Open, the menu lists the models and leads to the providers.
   menuOpen = true
   try {

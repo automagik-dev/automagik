@@ -52,7 +52,17 @@ export function agentView(agent) {
     key: agent.key,
     name: agent.name,
     on: agent.on === true,
-    cli: { found: agent.cli?.found === true, ...(typeof agent.cli?.installUrl === 'string' && agent.cli.installUrl.startsWith('https://') ? { installUrl: agent.cli.installUrl } : {}) },
+    cli: {
+      found: agent.cli?.found === true,
+      ...(typeof agent.cli?.installUrl === 'string' && agent.cli.installUrl.startsWith('https://') ? { installUrl: agent.cli.installUrl } : {}),
+      ...(['installing', 'failed', 'ready'].includes(agent.cli?.state) ? { state: agent.cli.state } : {}),
+      ...(typeof agent.cli?.managed === 'boolean' ? { managed: agent.cli.managed } : {}),
+      ...(typeof agent.cli?.updating === 'boolean' ? { updating: agent.cli.updating } : {}),
+      ...(typeof agent.cli?.version === 'string' ? { version: agent.cli.version } : {}),
+      ...(typeof agent.cli?.error === 'string' ? { error: shownText(redactText(agent.cli.error)).slice(0, 300) } : {}),
+      ...(typeof agent.cli?.diagnostic === 'string' ? { diagnostic: shownText(redactText(agent.cli.diagnostic)).slice(0, 4000) } : {}),
+      ...(typeof agent.cli?.logPath === 'string' ? { logPath: shownPath(agent.cli.logPath) } : {}),
+    },
     connector: {
       state: ['off', 'no-cli', 'installing', 'failed', 'ready'].includes(agent.connector?.state) ? agent.connector.state : 'installing',
       ...(typeof agent.connector?.version === 'string' ? { version: agent.connector.version } : {}),

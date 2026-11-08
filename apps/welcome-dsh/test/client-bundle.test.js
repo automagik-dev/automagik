@@ -45,7 +45,7 @@ test('client.js registers its three onboarding steps on settings.onboarding, in 
       register: (options, component) => { registered.push({ ...options, component: typeof component }); return () => {} },
     },
   })
-  assert.deepEqual(effects, ['omni-ai: stage styles', 'omni-ai: team step copy', "omni-ai: the table over DSH's first frame", 'omni-ai: omni-companion on the rail', 'omni-ai: omni-team on the rail', 'omni-ai: omni-connect-ai on the rail', 'omni-ai: Claude Code and Codex in Settings'])
+  assert.deepEqual(effects, ['omni-ai: stage styles', 'omni-ai: team step copy', "omni-ai: the table over DSH's first frame", 'omni-ai: omni-companion on the rail', 'omni-ai: omni-team on the rail', 'omni-ai: omni-connect-ai on the rail', 'omni-ai: Claude Code and Codex in Settings', 'omni-ai: accounts in the conversation'])
   // The team step's copy goes to DSH's locale service as welcome.team.
   runs.get('omni-ai: team step copy')()
   assert.deepEqual(registers, [['welcome.team', ['en', 'pt', 'pt-BR']]])

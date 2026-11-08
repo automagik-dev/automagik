@@ -5,6 +5,7 @@ import { setCanvasRenderer } from './canvas-slot.js'
 import { badges, botChildren, botSettings, chatSuggestions, composerPacks, headerButtons, mountShellInstallers, nav, onShell, registerComposerPack, toolCards } from './extend.js'
 import { BUILTIN_PACKS, packCellSync, stepsAside } from './composer-packs.js'
 import { COMPOSER_PACK_CSS, packModelCell } from './composer-pack-cells.js'
+import { conversationModelSeat, installConversationModelSeat, NATIVE_MODEL_CSS } from './native-model-seat.js'
 import { agentRowSessions, TASK_CSS } from './task-card.js'
 import { LIVE_CSS, LiveTab } from './live-rail.js'
 import { advancedBot, installLiveTab, installSimpleControls, sidebarActions } from './native-sidebar.js'
@@ -708,6 +709,8 @@ export function apply(ctx) {
   const browserTabs = browsers?.tabs ?? createSource({})
   const browserHolds = browsers?.holds ?? hostHolds
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, panel: ctx.layout.panelInfo } })
+  actions.modelAccountEntries = () => ctx.slots.entries('conversation.model.accounts')
+  actions.subscribeModelAccounts = listener => ctx.slots.subscribe('conversation.model.accounts', listener)
   ctx.effect(() => noticeApprovals({
     work,
     roster,
@@ -892,7 +895,7 @@ export function apply(ctx) {
     () => installCompiledStyles(SHELL_CSS, 'shell'),
     () => installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
     () => installCompiledStyles(SECRET_CSS, 'secrets'),
-    () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
+    () => installCompiledStyles(FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
@@ -977,6 +980,18 @@ export function apply(ctx) {
   const packEnv = { registrants: key => ctx.slots.entries(key).map(entry => entry.registrant) }
   const shownSessionId = () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
   const PackModelCell = packModelCell(packEnv)
+  // Shared across Bot/native surfaces. Bot models still save to their Bot; ordinary
+  // Sessions (plugin channel threads included) use the guarded Session endpoint.
+  ctx.effect(() => installCompiledStyles(NATIVE_MODEL_CSS + MODEL_CSS + COMPOSER_PACK_CSS, 'conversation-models'), 'ds-bot: conversation model styles')
+  ctx.inject(['modelDirectories'], (scope) => {
+    const ConversationModelSeat = conversationModelSeat({
+      PackModelCell,
+      directoryFor: sessionId => scope.modelDirectories.directoryFor(sessionId),
+      addressed: sessionId => sessionId !== undefined && ctx.sessions.subagentAddress(sessionId) !== undefined,
+      select: payload => call('select-session-model', payload),
+    })
+    installConversationModelSeat({ slots: scope.slots, face, Component: ConversationModelSeat, priority: BOT_PRIORITY })
+  })
   const installPackCell = (key, cell) => {
     const sync = packCellSync({
       register: () => shadow(key, { priority: BOT_PRIORITY }, Nothing),
@@ -999,7 +1014,6 @@ export function apply(ctx) {
     // composer card is two-row from its first paint, before DSH mounts its input slots (#322).
     () => markConversation(),
     () => installUserTimes(),
-    () => installCompiledStyles(COMPOSER_PACK_CSS, 'composer-packs'),
     () => installCompiledStyles(CONVERSATION_CSS, 'conversation'),
     () => installMentions(),
     () => installAtMenu(),
@@ -1029,9 +1043,6 @@ export function apply(ctx) {
     ...(canDrawUserMessages() ? ['user', 'steering'].map(key => () => shadow('conversation.chat.node', { key, priority: BOT_PRIORITY, locale: 'chat', inject: face }, UserMessageCell)) : []),
     () => installPackCell('conversation.input.permission', 'permission'),
     () => simpleOnly(() => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing)),
-    // The composer carries no run statistics, and DSH's model picker stays out: a Bot's
-    // model lives on the Bot. A pack that offers it draws Omni's own model menu here.
-    () => shadow('conversation.input.model', { priority: BOT_PRIORITY, inject: face }, PackModelCell),
     () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'activity', order: 0, priority: BOT_PRIORITY }, Nothing)),
     () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: BOT_PRIORITY }, Nothing)),
     () => shadow('conversation.composer.dock', { id: 'btw', order: 2, priority: BOT_PRIORITY, inject: face }, BtwDock),

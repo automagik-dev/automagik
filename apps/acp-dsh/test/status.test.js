@@ -2,11 +2,13 @@
 // flipped in the settings, a CLI installed after DSH started, and a connector that lands all
 // reach the model picker without a restart. No CLI runs and nothing is downloaded here.
 import assert from 'node:assert/strict'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { apply, Config, dshToolsOn, flagOf, SERVICE } from '../index.js'
 import { AGENTS, signedInOf } from '../src/host/agents.js'
+import { CliStore, cliLayout } from '../src/host/clis.js'
 
 // A live setting, as the running fiber holds it: a reference DSH's settings service rewrites.
 const live = (value) => {
@@ -14,7 +16,7 @@ const live = (value) => {
   return { get: () => current, set: (next) => { current = next } }
 }
 
-function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, failures = {} } = {}) {
+function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, failures = {}, cliStore } = {}) {
   const log = []
   const logs = []
   const emitted = []
@@ -62,6 +64,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
   const probes = []
   const deps = {
     store,
+    cliStore,
     find: name => clis[name],
     signedIn: async (spec, cli) => { probes.push([spec.key, cli]); return signedIn[spec.key] },
   }
@@ -74,6 +77,133 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
 const CLAUDE = AGENTS['acp-claude']
 const CODEX = AGENTS['acp-codex']
 const byId = (status, id) => status.agents.find(agent => agent.id === id)
+
+test('desktop startup installs both required CLIs even with their models off and publishes progress', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const installed = new Map()
+  const pending = new Map()
+  const calls = []
+  const cliStore = {
+    find: spec => installed.get(spec.key),
+    busy: pkg => pending.has(pkg),
+    lastFailure: () => undefined,
+    ensure(spec) {
+      calls.push(spec.key)
+      return new Promise(resolve => pending.set(spec.cliPackage, () => {
+        installed.set(spec.key, { path: `/managed/${spec.cli}`, managed: true, version: '2.0.0' })
+        pending.delete(spec.cliPackage)
+        resolve()
+      }))
+    },
+  }
+  const h = harness({ cliStore })
+  apply(h.ctx, { claude: false, codex: false }, h.deps)
+  t.after(() => h.ctx.emit('stop'))
+  assert.deepEqual(calls, [])
+  assert.deepEqual((await h.services[SERVICE].status()).agents.map(a => a.cli.state), ['installing', 'installing'])
+  t.mock.timers.tick(5000)
+  assert.deepEqual(calls, ['claude', 'codex'])
+  assert.deepEqual((await h.services[SERVICE].status()).agents.map(a => a.cli.state), ['installing', 'installing'])
+  pending.get(CLAUDE.cliPackage)()
+  pending.get(CODEX.cliPackage)()
+  await Promise.resolve()
+  const status = await h.services[SERVICE].status()
+  assert.deepEqual(status.agents.map(a => [a.cli.state, a.cli.managed, a.on]), [['ready', true, false], ['ready', true, false]])
+  assert.equal(h.services[SERVICE].cliPath('acp-claude'), '/managed/claude')
+  assert.deepEqual(h.services[SERVICE].cliEnv('acp-claude'), { DISABLE_UPDATES: '1' })
+  assert.equal(h.services[SERVICE].cliEnv('acp-codex').CODEX_MANAGED_BY_PNPM, undefined)
+  assert.equal(Object.hasOwn(h.services[SERVICE].cliEnv('acp-codex'), 'CODEX_MANAGED_BY_PNPM'), true)
+  assert.deepEqual(h.services[SERVICE].loginCommand('acp-claude').argv, ['/managed/claude', 'auth', 'login'])
+  assert.equal(JSON.stringify(status).includes('/managed/'), false)
+  assert.deepEqual(h.installs, [])
+  t.mock.timers.tick(15 * 60 * 1000)
+  assert.deepEqual(calls, ['claude', 'codex', 'claude', 'codex'])
+})
+
+test('activation after an update installs a missing CLI in an existing profile, with both model switches off', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const home = mkdtempSync(join(tmpdir(), 'automagik-updated-cli-profile-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const write = (path, content) => {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, content, { mode: 0o755 })
+    chmodSync(path, 0o755)
+    return path
+  }
+  // This is an established installation: a completed profile, existing adapters, a newer
+  // personal Claude CLI and saved settings. Updating must not require first-run onboarding.
+  const config = { claude: false, codex: false }
+  const profile = write(join(home, 'profile', 'patch.yml'), 'acp-dsh:\n  claude: false\n  codex: false\nwelcome:\n  completed: true\n')
+  const settings = write(join(home, 'user', '.claude', 'settings.json'), '{"theme":"dark"}\n')
+  const claude = write(join(home, 'user', 'bin', 'claude'), '3.0.0')
+  const bins = {
+    [CLAUDE.adapter]: { path: write(join(home, 'adapters', 'claude', 'index.js'), '// existing Claude adapter'), version: '3.0.0' },
+    [CODEX.adapter]: { path: write(join(home, 'adapters', 'codex', 'index.js'), '// existing Codex adapter'), version: '3.0.0' },
+  }
+  const preserved = [profile, settings, claude, ...Object.values(bins).map(bin => bin.path)].map(path => [path, readFileSync(path, 'utf8')])
+  const checked = []
+  const installed = []
+  const jobs = []
+  const platform = { platform: 'linux', arch: 'x64', musl: false }
+  const cliStore = new CliStore({
+    home: join(home, 'managed-clis'), platform,
+    latest: async pkg => { checked.push(pkg); return '2.0.0' },
+    versionOf: async path => readFileSync(path, 'utf8'),
+    install: async (dir, spec, version) => {
+      installed.push(spec.key)
+      write(join(dir, cliLayout(spec, version, platform).bins[0]), version)
+    },
+  })
+  const ensure = cliStore.ensure.bind(cliStore)
+  cliStore.ensure = (...args) => { const job = ensure(...args); jobs.push(job); return job }
+  const h = harness({ cliStore, clis: { claude }, bins, signedIn: { claude: true, codex: false } })
+  apply(h.ctx, config, h.deps)
+  t.after(() => h.ctx.emit('stop'))
+  assert.equal(byId(await h.services[SERVICE].status(), 'acp-codex').cli.state, 'installing')
+  t.mock.timers.tick(5000)
+  await Promise.all(jobs)
+  const status = await h.services[SERVICE].status()
+  assert.deepEqual(checked.sort(), [CLAUDE.cliPackage, CODEX.cliPackage].sort())
+  assert.deepEqual(installed, ['codex'])
+  assert.equal(h.services[SERVICE].cliPath('acp-claude'), claude)
+  assert.deepEqual(status.agents.map(agent => [agent.cli.state, agent.cli.managed, agent.on]), [['ready', false, false], ['ready', true, false]])
+  assert.deepEqual(config, { claude: false, codex: false })
+  assert.deepEqual(h.installs, [])
+  for (const [path, content] of preserved) assert.equal(readFileSync(path, 'utf8'), content)
+})
+
+test('failed CLI installation has an actionable diagnostic and retry installs without enabling the model', async t => {
+  let busy = false
+  const calls = []
+  const cliStore = {
+    find: () => undefined,
+    busy: () => busy,
+    lastFailure: () => ({ message: 'Network is offline', diagnostic: 'Retry when connected', logPath: '/tmp/fake-install.log' }),
+    ensure(spec, external, options) { calls.push([spec.key, options.force]); busy = true; return new Promise(() => {}) },
+  }
+  const h = harness({ cliStore })
+  apply(h.ctx, { claude: false, codex: false }, h.deps)
+  t.after(() => h.ctx.emit('stop'))
+  const before = byId(await h.services[SERVICE].status(), 'acp-claude')
+  assert.equal(before.cli.state, 'failed')
+  assert.equal(before.cli.error, 'Network is offline')
+  const retried = byId(await h.services[SERVICE].retry('acp-claude'), 'acp-claude')
+  assert.equal(retried.cli.state, 'installing')
+  assert.equal(retried.on, false)
+  assert.deepEqual(calls, [['claude', true]])
+})
+
+test('one-agent inspection checks fresh sign-in without starting installation or probing the other CLI', async t => {
+  const h = harness({ clis: { claude: '/bin/claude', codex: '/bin/codex' }, signedIn: { claude: false, codex: true } })
+  apply(h.ctx, {}, h.deps)
+  t.after(() => h.ctx.emit('stop'))
+  const status = await h.services[SERVICE].inspect('acp-claude')
+  assert.equal(status.signedIn, false)
+  assert.deepEqual(h.probes, [['claude', '/bin/claude']])
+  assert.deepEqual(h.installs, [])
+  await assert.rejects(h.services[SERVICE].inspect('unknown'), /no ACP agent/)
+  assert.throws(() => h.services[SERVICE].loginCommand('unknown'), /no ACP agent/)
+})
 
 test('the switches are live settings under their old keys, read through a reference', () => {
   const parsed = new Config({})

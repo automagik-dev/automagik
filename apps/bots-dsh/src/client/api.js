@@ -3,7 +3,7 @@ import { markNoted, noteClientError } from './diagnostics.js'
 
 const ROUTE = 'api/omni-ui'
 // Refusals carry a message meant for the user, who sees it where they acted.
-const REFUSALS = new Set(['bot/refused', 'bot/invalid', 'bot/read-only', 'bot/not-found', 'bot/browser-off'])
+const REFUSALS = new Set(['bot/refused', 'bot/invalid', 'bot/read-only', 'bot/not-found', 'bot/browser-off', 'bot/model-access'])
 
 export const call = async (endpoint, payload, signal) => {
   let response
@@ -32,6 +32,7 @@ export const call = async (endpoint, payload, signal) => {
     const code = result.error?.code ?? 'bot/error'
     const message = hostText(result.error?.message ?? 'Request failed')
     const error = Object.assign(new Error(code === 'bot/internal' ? `${message} ${t('Settings → Feedback has the details.')}` : message), { code })
+    if (code === 'bot/model-access' && result.error?.access) error.access = result.error.access
     if (!REFUSALS.has(code)) {
       noteClientError(endpoint, Object.assign(new Error(result.error?.message ?? 'Request failed'), { code }))
       markNoted(error)

@@ -132,8 +132,8 @@ after what was found, and DSH's Settings (and the Bot team's) have a **Claude Co
 page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
 says the ACP agents plugin is not running. Each row says:
 
-- whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
-  **Check again** when it is not;
+- whether the agent's CLI (`claude`, `codex`) is ready, installing automatically, or needs
+  **Retry** after a failed install; older acp-dsh releases retain their install link;
 - whether the CLI is signed in, as the CLI itself says (`claude auth status`, `codex login
   status`; only yes or no is read), and the command to sign in when it is not;
 - the connector acp-dsh installs in the background: installing, failed with its last error and
@@ -144,6 +144,22 @@ says the ACP agents plugin is not running. Each row says:
 The switch is acp-dsh's own `claude` or `codex` setting, written through DSH's settings service.
 These rows are not counted as an AI on: the companions' model comes from the rows above. Their
 copy is in the `welcome.team` namespace, in English and pt-BR.
+
+### Accounts in a conversation
+
+The conversation's company and model picker opens the same key and sign-in forms through
+the `conversation.model.accounts` slot. Its component exposes an `accounts` descriptor with
+`providers()` metadata (`provider`, `name`, `company`, `kind`, `ready`) and `matches(provider)`;
+the component receives `{ provider, onConnected, onClose }`. It loads independently of the Bot client bundle.
+Opening the card only reads account state; signing in requires an explicit click. Keys go
+to DSH's credential store, and an authorized account enables its provider route. Completion
+refreshes the model catalog without changing the selected model or finishing onboarding.
+
+Claude Code and Codex sign in through a private interactive terminal in that card, using
+the managed CLI and its own login command. Input and output stay outside conversation
+history and model tools. Cancellation, leaving the card, closing the window, and plugin
+disposal close the attempt; the host expires abandoned attempts after ten minutes. The
+host retains only a bounded output tail in memory and writes no login log.
 
 ### Subscription sign-ins and vendor terms
 
@@ -220,7 +236,11 @@ The shape was read from DSH 0.2.1-rc.2:
 | `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
 | `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
 | `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting in the entry its service names (`settingsEntry`, else `acp-dsh`) at the revision `describe()` gave. |
-| `acp-retry` | `{ id }` | Starts a failed connector install again. |
+| `acp-retry` | `{ id }` | Retries the required CLI and connector installation. |
+| `acp-login-start` | `{ id, cols?, rows? }` | Starts only the selected CLI's allowlisted login command, returning an opaque `terminal` token and private output snapshot. |
+| `acp-login-read` | `{ terminal, from? }` | Reads a bounded output tail, its `nextOffset`, `lossy` flag, and running/exited/failed state. |
+| `acp-login-write`, `acp-login-resize` | `{ terminal, data }`, `{ terminal, cols, rows }` | User input and dimensions for this private terminal. |
+| `acp-login-close` | `{ terminal }` | Terminates the attempt and discards its retained output. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |
 
 The host declares `inject: ['settings', 'credentials', 'connection']`; `connection` serves

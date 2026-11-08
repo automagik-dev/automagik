@@ -51,7 +51,7 @@ export function targetOf(roster, sessionId) {
   if (host !== undefined) return { provider: undefined, bot, host }
   const ref = bot.model ?? bot.appliedModel
   const provider = providerOfRef(ref)
-  if (provider === undefined) return undefined
+  if (provider === undefined) return { bot }
   const served = (roster.models ?? []).find(model => model.ref === ref)
   return { provider, model: ref.slice(provider.length + 1), ref, bot, reasoning: served?.reasoning }
 }
@@ -107,7 +107,14 @@ export const AGENT_MODEL_PACK = Object.freeze({
   cells: Object.freeze({ model: 'model' }),
 })
 
-export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK]
+// Every personal Bot can pick a company/model, including a new Bot with none yet.
+// Rooms still have no target: there is no single model to change for all members.
+export const BOT_MODEL_PACK = Object.freeze({
+  id: 'bot-model', order: 1000, match: (_provider, target) => target?.bot !== undefined,
+  cells: Object.freeze({ model: 'model' }),
+})
+
+export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK, BOT_MODEL_PACK]
 
 // Whether Omni steps aside from a cell of the Session in the main view: its pack says
 // 'host', and the control the pack steps aside for is registered there.

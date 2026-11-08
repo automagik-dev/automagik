@@ -44,7 +44,7 @@ export function hostGroups(entries) {
   return [...groups]
 }
 
-export function HostModelMenu({ bot, roster, actions, run, wide = false, link = false }) {
+export function HostModelMenu({ bot, roster, actions, run, wide = false, link = false, disabled = false }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const [confirming, setConfirming] = useState(null)
   const host = roster.hostModels?.[bot.id] ?? { entries: [] }
@@ -54,6 +54,7 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
   const level = levels.find(entry => entry.id === host.level)
   const status = statusText(host)
   const toggle = () => {
+    if (disabled) return
     if (isOpen) { close(); return }
     setConfirming(null)
     // The plugin's engine can change its list at any time, so opening asks again.
@@ -63,6 +64,7 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
   // An entry marked `confirm` asks once more: the first press shows "Confirm" on its row,
   // the second sends the pick with the person's ack.
   const pick = (entry) => {
+    if (disabled) return
     if (entry.current) { close(); return }
     const ack = entry.confirm === true && confirming === entry.id
     if (entry.confirm && !ack) { setConfirming(entry.id); return }
@@ -70,16 +72,17 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
     void run(actions.updateBot(bot.id, { model: entry.id, ...(ack ? { ack: true } : {}) }))
   }
   const pickLevel = (id) => {
+    if (disabled) return
     close()
     if (id !== host.level) void run(actions.updateBot(bot.id, { effort: id }))
   }
   const second = status ?? [current?.group, level ? t(level.name) : undefined].filter(Boolean).join(' · ')
   return h(Fragment, null,
     link ? h('button', {
-      ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen, disabled,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
     }, t('change')) : h('button', {
-      ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined, 'data-host': '',
+      ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined, 'data-host': '', disabled,
       'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: current?.label ?? t('none') }),
       onClick: toggle,
     },
@@ -97,7 +100,7 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
           const detail = privacyText(entry.privacy)
           return h('button', {
             key: entry.id, type: 'button', role: 'menuitemradio', 'aria-checked': entry.current === true, title: entry.id,
-            onClick: () => pick(entry),
+            onClick: () => pick(entry), disabled,
           },
           h('span', { className: 'bt-host-model-copy' },
             h('span', { className: 'bt-menu-label' }, entry.label),
@@ -111,7 +114,7 @@ export function HostModelMenu({ bot, roster, actions, run, wide = false, link = 
         h('div', { className: 'bt-model-group', role: 'presentation' }, t('Thinking level')),
         levels.map(entry => h('button', {
           key: entry.id, type: 'button', role: 'menuitemradio', 'aria-checked': entry.id === host.level,
-          onClick: () => pickLevel(entry.id),
+          onClick: () => pickLevel(entry.id), disabled,
         },
         h('span', { className: 'bt-menu-label' }, t(entry.name)),
         h('span', { className: 'bt-model-tick', 'aria-hidden': true }, entry.id === host.level ? h(CheckIcon) : null)))) : null), document.body) : null)

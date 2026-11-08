@@ -37,7 +37,7 @@ runInNewContext(outputFiles[0].text, {
   },
 })
 const {
-  BUILTIN_PACKS, DEFAULT_PACK, THINKING_PACK, ModelMenu,
+  BUILTIN_PACKS, DEFAULT_PACK, BOT_MODEL_PACK, THINKING_PACK, ModelMenu,
   cellChoice, composerPacks, packCellSync, packFor, packModelCell, registerComposerPack, stepsAside, targetOf,
 } = module.exports
 
@@ -66,10 +66,10 @@ const packs = [...BUILTIN_PACKS, AGENT_PACK].sort((a, b) => (a.order ?? 0) - (b.
 // The surface registers Omni's own packs (index.js), the plugin its own; the cells read the registry.
 for (const pack of [...BUILTIN_PACKS, AGENT_PACK]) registerComposerPack(pack)
 
-test('Omni brings the plugin-menu and thinking packs only; a Claude Code ref gets no pack of its own', () => {
-  assert.deepEqual(Array.from(BUILTIN_PACKS, pack => pack.id), ['host-model', 'thinking', 'agent-model'])
+test('every personal Bot has a model picker, including legacy Claude Code routes', () => {
+  assert.deepEqual(Array.from(BUILTIN_PACKS, pack => pack.id), ['host-model', 'thinking', 'agent-model', 'bot-model'])
   const old = rosterWith(deepseekBot({ model: 'claude-code/claude-opus-5-5' }))
-  assert.equal(packFor(targetOf(old, 'session-1'), { packs: BUILTIN_PACKS, env: PLUGIN }), DEFAULT_PACK)
+  assert.equal(packFor(targetOf(old, 'session-1'), { packs: BUILTIN_PACKS, env: PLUGIN }), BOT_MODEL_PACK)
   const levels = rosterWith(deepseekBot({ model: 'claude-code/opus' }), [{ ref: 'claude-code/opus', reasoning: EFFORTS }])
   assert.equal(packFor(targetOf(levels, 'session-1'), { packs: BUILTIN_PACKS, env: PLUGIN }).id, 'thinking')
 })
@@ -98,7 +98,7 @@ test('a Bot on an agent over ACP gets Omni\'s model menu in the composer, and no
     assert.equal(cellChoice(pack, 'permission', target), 'hidden')
   }
   // Not an ACP route: acp is a prefix of the provider id, not of any word.
-  assert.equal(packFor(targetOf(rosterWith(deepseekBot({ model: 'acpx/default' })), 'session-1'), { packs: BUILTIN_PACKS, env: NONE }), DEFAULT_PACK)
+  assert.equal(packFor(targetOf(rosterWith(deepseekBot({ model: 'acpx/default' })), 'session-1'), { packs: BUILTIN_PACKS, env: NONE }), BOT_MODEL_PACK)
   // A group Session has no single AI: still Omni's own composer.
   assert.equal(packFor(undefined, { packs: BUILTIN_PACKS, env: NONE }), DEFAULT_PACK)
 })
@@ -120,9 +120,9 @@ test('an ACP model with the agent\'s efforts gets the model menu with its levels
 test('pack selection: thinking levels, then Omni\'s own composer; a broken pack never wins', () => {
   const thinking = rosterWith(deepseekBot(), [{ ref: 'deepseek-official/deepseek-v4', reasoning: EFFORTS }])
   assert.equal(packFor(targetOf(thinking, 'session-1'), { packs, env: NONE }).id, 'thinking')
-  assert.equal(packFor(targetOf(rosterWith(deepseekBot()), 'session-1'), { packs, env: NONE }), DEFAULT_PACK)
+  assert.equal(packFor(targetOf(rosterWith(deepseekBot()), 'session-1'), { packs, env: NONE }), BOT_MODEL_PACK)
   assert.equal(packFor(undefined, { packs, env: PLUGIN }), DEFAULT_PACK)
-  assert.equal(packFor(targetOf(rosterWith(deepseekBot({ model: undefined })), 'session-1'), { packs, env: PLUGIN }), DEFAULT_PACK)
+  assert.equal(packFor(targetOf(rosterWith(deepseekBot({ model: undefined })), 'session-1'), { packs, env: PLUGIN }), BOT_MODEL_PACK)
   const broken = { id: 'broken', order: -999, match: () => { throw new Error('boom') }, cells: { permission: 'host' } }
   assert.equal(packFor(targetOf(rosterWith(agentBot()), 'session-1'), { packs: [broken, ...packs], env: PLUGIN }).id, 'agent')
   const unavailable = { id: 'unavailable', order: -999, match: () => true, available: () => { throw new Error('boom') } }
@@ -137,7 +137,7 @@ test('a registered pack joins the selection in order and leaves with its dispose
   assert.equal(packFor(target, { env: NONE }).id, 'codex')
   off()
   assert.equal(composerPacks.entries().length, before)
-  assert.equal(packFor(target, { env: NONE }), DEFAULT_PACK)
+  assert.equal(packFor(target, { env: NONE }), BOT_MODEL_PACK)
 })
 
 test('a plugin\'s pack un-blanks its permission and model cells, and only those', () => {
@@ -171,11 +171,12 @@ test('without the plugin, or without its permission control, nothing steps aside
   assert.equal(drawn.children[0].type, ModelMenu)
 })
 
-test('Omni\'s own composer is today\'s: every pack cell hidden, the permission shadow kept', () => {
+test('personal Bot models remain selectable without thinking levels; room cells stay hidden', () => {
   assert.deepEqual({ ...DEFAULT_PACK.cells }, { permission: 'hidden', model: 'hidden' })
   const roster = rosterWith(deepseekBot())
   assert.equal(stepsAside({ roster, sessionId: 'session-1', cell: 'permission', key: 'conversation.input.permission', env: PLUGIN, packs }), false)
-  assert.equal(packModelCell(PLUGIN)({ sessionId: 'session-1', useRoster: pick => pick(roster), actions: {} }), null)
+  assert.equal(packModelCell(PLUGIN)({ sessionId: 'session-1', useRoster: pick => pick(roster), actions: {} }).children[0].type, ModelMenu)
+  assert.equal(packModelCell(PLUGIN)({ sessionId: 'group-1', useRoster: pick => pick(roster), actions: {} }), null)
   let registered = 0
   const sync = packCellSync({ register: () => { registered += 1; return () => { registered -= 1 } }, wantHost: () => false })
   sync.sync()
@@ -196,7 +197,7 @@ test('swapping the Bot\'s model swaps the composer live', () => {
   const draw = () => cell({ sessionId: 'session-1', useRoster: pick => pick(roster), actions: {} })
   sync.sync()
   assert.equal(registered, 1)
-  assert.equal(draw(), null)
+  assert.equal(draw().props['data-pack'], 'bot-model')
   roster = rosterWith(agentBot())
   sync.sync()
   assert.equal(registered, 0, 'Omni stepped aside for the agent\'s permission modes')

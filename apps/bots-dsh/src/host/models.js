@@ -42,7 +42,7 @@ export function install(rt) {
   // A provider's model list can change in DSH settings without any event, so a picker
   // that is about to be used asks for a `fresh` one. Entries for models a Bot uses
   // also carry their `reasoning`, so the picker can offer thinking levels.
-  async function catalog({ fresh = false } = {}) {
+  async function catalog({ fresh = false, remember = true } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
     const listed = []
     let directory = []
@@ -73,7 +73,7 @@ export function install(rt) {
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
     for (const entry of entries) if (missing.has(entry.provider)) entry.needsKey = true
-    noteConnected(entries)
+    if (remember) noteConnected(entries)
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
       const reasoning = await reasoningOf(entry.ref)
       if (reasoning !== undefined) entry.reasoning = reasoning
@@ -134,18 +134,67 @@ export function install(rt) {
   const answersAsideRef = ref => typeof ref === 'string' && ref.includes('/') && routeOf(ref.split('/')[0]).connectedBy !== 'acp'
 
   // A full `provider/model` ref, or a model id or name that only one provider serves.
-  async function resolveModel(text) {
-    const entries = await catalog({ fresh: true })
+  async function resolveModel(text, { remember = true, checkAccess = false } = {}) {
     const wanted = String(text ?? '').trim()
+    if (checkAccess && splitRef(wanted) !== undefined) {
+      await assertModelAccess(wanted)
+      return wanted
+    }
+    const entries = await catalog({ fresh: true, remember })
     const exact = entries.find(entry => entry.ref === wanted)
     if (exact) return exact.ref
     const key = normalize(wanted)
     const named = entries.filter(entry => normalize(entry.id) === key || normalize(entry.name) === key)
-    if (named.length === 1) return named[0].ref
+    if (named.length === 1) {
+      if (checkAccess) await assertModelAccess(named[0].ref)
+      return named[0].ref
+    }
     const known = entries.map(entry => entry.ref).join(', ') || 'none'
     throw refusal(named.length > 1
       ? `Model ${wanted} is served by more than one provider; use one of ${named.map(entry => entry.ref).join(', ')}`
       : `Model ${wanted} is not available. Available models: ${known}`)
+  }
+
+  // Check the exact proposed route before touching a Bot or selecting any Session.
+  // The response is a small public contract: no adapter diagnostics, account data,
+  // credential references or values cross into the conversation window.
+  async function modelAccess(text) {
+    const ref = typeof text === 'string' ? text.trim() : ''
+    const route = splitRef(ref)
+    const provider = route?.provider ?? ''
+    const result = (status, message, kind, agent) => ({
+      ref, provider, ready: status === 'ready', status,
+      ...(message ? { message } : {}),
+      ...(kind ? { recovery: { kind, provider, ...(agent ? { agent } : {}) } } : {}),
+    })
+    if (route === undefined) return result('unavailable', 'Choose an available model.', 'settings')
+    try {
+      if (provider.startsWith('acp-')) {
+        const agents = ctx.get?.('acpAgents')
+        const agent = typeof agents?.inspect === 'function' ? await agents.inspect(provider)
+          : (await agents?.refresh?.())?.agents?.find(entry => entry.id === provider)
+        if (agent === undefined) return result('unavailable', 'This coding agent is not available. Check its setup before changing models.', 'settings', provider)
+        if (!agent.on) return result('unavailable', 'Enable this coding agent before changing models.', 'settings', provider)
+        if (!agent.cli?.found) return result('not-installed', 'Install this coding agent before changing models.', 'install', provider)
+        if (agent.connector?.state !== 'ready') return result('unavailable', 'This coding agent is still being prepared or needs its installation retried.', 'install', provider)
+        if (agent.signedIn === false) return result('sign-in-required', 'Sign in to this coding agent before changing models.', 'sign-in', provider)
+        if (agent.signedIn !== true) return result('unknown', 'Sign-in could not be confirmed. Check this coding agent and try again.', 'sign-in', provider)
+      } else {
+        const access = await rt.providerAccess?.(provider)
+        if (access?.ready === false) return { ref, provider, ...access }
+      }
+      const entries = await catalog({ fresh: true, remember: false })
+      if (!entries.some(entry => entry.ref === ref)) return result('unavailable', 'This model is not available. Refresh the model list and choose another.', 'settings')
+      return result('ready')
+    } catch {
+      return result('unknown', 'Model access could not be checked. Try again before changing models.', 'settings')
+    }
+  }
+
+  async function assertModelAccess(ref) {
+    const access = await modelAccess(ref)
+    if (!access.ready) throw Object.assign(refusal(access.message, { code: 'bot/model-access' }), { access })
+    return access
   }
 
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
@@ -275,7 +324,7 @@ export function install(rt) {
 
   Object.assign(rt, {
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
-    defaultRef, defaultModel, defaultEffort, resolveModel, desiredModel, reasoningOf, resolveEffort, desiredEffort,
+    defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },

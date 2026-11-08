@@ -357,6 +357,11 @@ export function install(rt) {
       if (Object.keys(rest).every(key => key === 'id')) return bot
       patch = rest
     }
+    // Access comes before even resolving a Session to inspect its tool surface.
+    // A missing key or signed-out CLI must leave the previous route and chat alone.
+    const modelRef = patch.model === undefined ? undefined
+      : patch.model === null || patch.model === '' ? null
+      : await rt.resolveModel(patch.model, { remember: false, checkAccess: true })
     const policyPatch = contextPatch(patch)
     const policyOnly = Object.keys(patch).every(key => key === 'id' || Object.hasOwn(policyPatch, key))
     if (patch.browserGrants !== undefined && actorId !== undefined) {
@@ -382,9 +387,6 @@ export function install(rt) {
     if (moving && workDir !== bot.workDir && bot.sessionPinned === true) {
       throw refusal(`${bot.name} works in the folder its host gave its conversation, so its folder cannot change here`)
     }
-    const modelRef = patch.model === undefined ? undefined
-      : patch.model === null || patch.model === '' ? null
-      : await rt.resolveModel(patch.model)
     // A new level resolves against the model the Bot will run on: the new one, the
     // model it keeps, or — the model cleared — the one it last ran on.
     const effortRef = modelRef === undefined ? bot.model ?? bot.appliedModel : modelRef ?? bot.appliedModel

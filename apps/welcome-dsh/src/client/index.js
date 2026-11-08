@@ -10,6 +10,7 @@ import { CLAY_ART_CSS } from './vendor/clay-art.js'
 import { installVeil } from './veil.js'
 import { installLocale } from './i18n.js'
 import { ACP_CSS, installAcpSection } from './acp-agents.js'
+import { MODEL_ACCOUNTS_CSS, installModelAccounts } from './model-accounts.js'
 
 // Automagik's onboarding on DSH's settings.onboarding slot. The shell mounts one step at a
 // time, in order; these come ahead of DSH's own welcome-notice (-100) and deepseek-official
@@ -29,7 +30,7 @@ export const inject = ['slots', 'locale']
 function installStyles() {
   const style = document.createElement('style')
   style.dataset.omniAi = ''
-  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS + ACP_CSS
+  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS + ACP_CSS + MODEL_ACCOUNTS_CSS
   document.head.append(style)
   return () => style.remove()
 }
@@ -46,4 +47,5 @@ export function apply(ctx) {
     ctx.slots.inject('settings.onboarding', () => ctx.slots.register({ name: 'settings.onboarding', id: step.id, order: step.order }, step.component))
   }
   ctx.effect(() => installAcpSection(ctx), 'omni-ai: Claude Code and Codex in Settings')
+  ctx.effect(() => installModelAccounts(ctx), 'omni-ai: accounts in the conversation')
 }

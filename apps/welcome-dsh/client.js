@@ -477,21 +477,21 @@ function sl(s15, t2, e, i, r, n) {
   for (let l = 0; l < s15.length - 1; l++) {
     let a = l, u = s15.get(++a);
     if (!u.isWrapped) continue;
-    let h9 = [s15.get(l)];
-    for (; a < s15.length && u.isWrapped; ) h9.push(u), u = s15.get(++a);
+    let h10 = [s15.get(l)];
+    for (; a < s15.length && u.isWrapped; ) h10.push(u), u = s15.get(++a);
     if (!n && i >= l && i < a) {
-      l += h9.length - 1;
+      l += h10.length - 1;
       continue;
     }
-    let c = 0, d = ri(h9, c, t2), _ = 1, p = 0;
-    for (; _ < h9.length; ) {
-      let f = ri(h9, _, t2), A = f - p, R = e - d, O = Math.min(A, R);
-      h9[c].copyCellsFrom(h9[_], p, d, O, false), d += O, d === e && (c++, d = 0), p += O, p === f && (_++, p = 0), d === 0 && c !== 0 && h9[c - 1].getWidth(e - 1) === 2 && (h9[c].copyCellsFrom(h9[c - 1], e - 1, d++, 1, false), h9[c - 1].setCell(e - 1, r));
+    let c = 0, d = ri(h10, c, t2), _ = 1, p = 0;
+    for (; _ < h10.length; ) {
+      let f = ri(h10, _, t2), A = f - p, R = e - d, O = Math.min(A, R);
+      h10[c].copyCellsFrom(h10[_], p, d, O, false), d += O, d === e && (c++, d = 0), p += O, p === f && (_++, p = 0), d === 0 && c !== 0 && h10[c - 1].getWidth(e - 1) === 2 && (h10[c].copyCellsFrom(h10[c - 1], e - 1, d++, 1, false), h10[c - 1].setCell(e - 1, r));
     }
-    h9[c].replaceCells(d, e, r);
+    h10[c].replaceCells(d, e, r);
     let m = 0;
-    for (let f = h9.length - 1; f > 0 && (f > c || h9[f].getTrimmedLength() === 0); f--) m++;
-    m > 0 && (o.push(l + h9.length - m), o.push(m)), l += h9.length - 1;
+    for (let f = h10.length - 1; f > 0 && (f > c || h10[f].getTrimmedLength() === 0); f--) m++;
+    m > 0 && (o.push(l + h10.length - m), o.push(m)), l += h10.length - 1;
   }
   return o;
 }
@@ -521,8 +521,8 @@ function al(s15, t2, e) {
     n > a && (n -= a, o++);
     let u = s15[o].getWidth(n - 1) === 2;
     u && n--;
-    let h9 = u ? e - 1 : e;
-    i.push(h9), l += h9;
+    let h10 = u ? e - 1 : e;
+    i.push(h10), l += h10;
   }
   return i;
 }
@@ -811,23 +811,23 @@ var init_xterm = __esm({
       decode(t2, e) {
         let i = t2.length;
         if (!i) return 0;
-        let r = 0, n, o, l, a, u = 0, h9 = 0;
+        let r = 0, n, o, l, a, u = 0, h10 = 0;
         if (this.interim[0]) {
           let _ = false, p = this.interim[0];
           p &= (p & 224) === 192 ? 31 : (p & 240) === 224 ? 15 : 7;
           let m = 0, f;
           for (; (f = this.interim[++m] & 63) && m < 4; ) p <<= 6, p |= f;
           let A = (this.interim[0] & 224) === 192 ? 2 : (this.interim[0] & 240) === 224 ? 3 : 4, R = A - m;
-          for (; h9 < R; ) {
-            if (h9 >= i) return 0;
-            if (f = t2[h9++], (f & 192) !== 128) {
-              h9--, _ = true;
+          for (; h10 < R; ) {
+            if (h10 >= i) return 0;
+            if (f = t2[h10++], (f & 192) !== 128) {
+              h10--, _ = true;
               break;
             } else this.interim[m++] = f, p <<= 6, p |= f & 63;
           }
-          _ || (A === 2 ? p < 128 ? h9-- : e[r++] = p : A === 3 ? p < 2048 || p >= 55296 && p <= 57343 || p === 65279 || (e[r++] = p) : p < 65536 || p > 1114111 || (e[r++] = p)), this.interim.fill(0);
+          _ || (A === 2 ? p < 128 ? h10-- : e[r++] = p : A === 3 ? p < 2048 || p >= 55296 && p <= 57343 || p === 65279 || (e[r++] = p) : p < 65536 || p > 1114111 || (e[r++] = p)), this.interim.fill(0);
         }
-        let c = i - 4, d = h9;
+        let c = i - 4, d = h10;
         for (; d < i; ) {
           for (; d < c && !((n = t2[d]) & 128) && !((o = t2[d + 1]) & 128) && !((l = t2[d + 2]) & 128) && !((a = t2[d + 3]) & 128); ) e[r++] = n, e[r++] = o, e[r++] = l, e[r++] = a, d += 4;
           if (n = t2[d++], n < 128) e[r++] = n;
@@ -1112,17 +1112,17 @@ var init_xterm = __esm({
           e(void 0);
           return;
         }
-        let r = [], n = this._optionsService.rawOptions.linkHandler, o = new q(), l = i.getTrimmedLength(), a = -1, u = -1, h9 = false;
+        let r = [], n = this._optionsService.rawOptions.linkHandler, o = new q(), l = i.getTrimmedLength(), a = -1, u = -1, h10 = false;
         for (let c = 0; c < l; c++) if (!(u === -1 && !i.hasContent(c))) {
           if (i.loadCell(c, o), o.hasExtendedAttrs() && o.extended.urlId) if (u === -1) {
             u = c, a = o.extended.urlId;
             continue;
-          } else h9 = o.extended.urlId !== a;
-          else u !== -1 && (h9 = true);
-          if (h9 || u !== -1 && c === l - 1) {
+          } else h10 = o.extended.urlId !== a;
+          else u !== -1 && (h10 = true);
+          if (h10 || u !== -1 && c === l - 1) {
             let d = this._oscLinkService.getLinkData(a)?.uri;
             if (d) {
-              let _ = { start: { x: u + 1, y: t2 }, end: { x: c + (!h9 && c === l - 1 ? 1 : 0), y: t2 } }, p = false;
+              let _ = { start: { x: u + 1, y: t2 }, end: { x: c + (!h10 && c === l - 1 ? 1 : 0), y: t2 } }, p = false;
               if (!n?.allowNonHttpProtocols) try {
                 let m = new URL(d);
                 ["http:", "https:"].includes(m.protocol) || (p = true);
@@ -1131,7 +1131,7 @@ var init_xterm = __esm({
               }
               p || r.push({ text: d, range: _, activate: (m, f) => n ? n.activate(m, f, _) : Ol(m, f), hover: (m, f) => n?.hover?.(m, f, _), leave: (m, f) => n?.leave?.(m, f, _) });
             }
-            h9 = false, o.hasExtendedAttrs() && o.extended.urlId ? (u = c, a = o.extended.urlId) : (u = -1, a = -1);
+            h10 = false, o.hasExtendedAttrs() && o.extended.urlId ? (u = c, a = o.extended.urlId) : (u = -1, a = -1);
           }
         }
         e(r);
@@ -1374,10 +1374,10 @@ var init_xterm = __esm({
         return false;
       }
       O.some = u;
-      function h9(I, k) {
+      function h10(I, k) {
         for (let P of I) if (k(P)) return P;
       }
-      O.find = h9;
+      O.find = h10;
       function* c(I, k) {
         for (let P of I) k(P) && (yield P);
       }
@@ -1465,29 +1465,29 @@ var init_xterm = __esm({
         else {
           let a = /* @__PURE__ */ new Map(), u = [...this.livingDisposables.values()].filter((c) => c.source !== null && !this.getRootParent(c, a).isSingleton);
           if (u.length === 0) return;
-          let h9 = new Set(u.map((c) => c.value));
-          if (i = u.filter((c) => !(c.parent && h9.has(c.parent))), i.length === 0) throw new Error("There are cyclic diposable chains!");
+          let h10 = new Set(u.map((c) => c.value));
+          if (i = u.filter((c) => !(c.parent && h10.has(c.parent))), i.length === 0) throw new Error("There are cyclic diposable chains!");
         }
         if (!i) return;
         function r(a) {
           function u(c, d) {
             for (; c.length > 0 && d.some((_) => typeof _ == "string" ? _ === c[0] : c[0].match(_)); ) c.shift();
           }
-          let h9 = a.source.split(`
+          let h10 = a.source.split(`
 `).map((c) => c.trim().replace("at ", "")).filter((c) => c !== "");
-          return u(h9, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), h9.reverse();
+          return u(h10, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), h10.reverse();
         }
         let n = new ur();
         for (let a of i) {
           let u = r(a);
-          for (let h9 = 0; h9 <= u.length; h9++) n.add(u.slice(0, h9).join(`
+          for (let h10 = 0; h10 <= u.length; h10++) n.add(u.slice(0, h10).join(`
 `), a);
         }
         i.sort(no((a) => a.idx, so));
         let o = "", l = 0;
         for (let a of i.slice(0, t2)) {
           l++;
-          let u = r(a), h9 = [];
+          let u = r(a), h10 = [];
           for (let c = 0; c < u.length; c++) {
             let d = u[c];
             d = `(shared with ${n.get(u.slice(0, c + 1).join(`
@@ -1495,14 +1495,14 @@ var init_xterm = __esm({
             let p = n.get(u.slice(0, c).join(`
 `)), m = co([...p].map((f) => r(f)[c]), (f) => f);
             delete m[u[c]];
-            for (let [f, A] of Object.entries(m)) h9.unshift(`    - stacktraces of ${A.length} other leaks continue with ${f}`);
-            h9.unshift(d);
+            for (let [f, A] of Object.entries(m)) h10.unshift(`    - stacktraces of ${A.length} other leaks continue with ${f}`);
+            h10.unshift(d);
           }
           o += `
 
 
 ==================== Leaking disposable ${l}/${i.length}: ${a.value.constructor.name} ====================
-${h9.join(`
+${h10.join(`
 `)}
 ============================================================
 
@@ -1731,17 +1731,17 @@ ${h9.join(`
       }
       Qe.once = i;
       function r(y, T, g) {
-        return h9((w, E = null, x) => y((N) => w.call(E, T(N)), null, x), g);
+        return h10((w, E = null, x) => y((N) => w.call(E, T(N)), null, x), g);
       }
       Qe.map = r;
       function n(y, T, g) {
-        return h9((w, E = null, x) => y((N) => {
+        return h10((w, E = null, x) => y((N) => {
           T(N), w.call(E, N);
         }, null, x), g);
       }
       Qe.forEach = n;
       function o(y, T, g) {
-        return h9((w, E = null, x) => y((N) => T(N) && w.call(E, N), null, x), g);
+        return h10((w, E = null, x) => y((N) => T(N) && w.call(E, N), null, x), g);
       }
       Qe.filter = o;
       function l(y) {
@@ -1760,7 +1760,7 @@ ${h9.join(`
         return r(y, (x) => (E = T(E, x), E), w);
       }
       Qe.reduce = u;
-      function h9(y, T) {
+      function h10(y, T) {
         let g, w = { onWillAddFirstListener() {
           g = y(E.fire, E);
         }, onDidRemoveLastListener() {
@@ -2065,8 +2065,8 @@ ${h9.join(`
           if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
             let a = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
             console.warn(a);
-            let u = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], h9 = new Yn(`${a}. HINT: Stack shows most frequent listener (${u[1]}-times)`, u[0]);
-            return (this._options?.onListenerError || Lt)(h9), D.None;
+            let u = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], h10 = new Yn(`${a}. HINT: Stack shows most frequent listener (${u[1]}-times)`, u[0]);
+            return (this._options?.onListenerError || Lt)(h10), D.None;
           }
           if (this._disposed) return D.None;
           e && (t2 = t2.bind(e));
@@ -2686,8 +2686,8 @@ ${h9.join(`
         let t2 = Cr2._bigBlock32, e = this._buffDV;
         for (let c = 0; c < 64; c += 4) t2.setUint32(c, e.getUint32(c, false), false);
         for (let c = 64; c < 320; c += 4) t2.setUint32(c, rs(t2.getUint32(c - 12, false) ^ t2.getUint32(c - 32, false) ^ t2.getUint32(c - 56, false) ^ t2.getUint32(c - 64, false), 1), false);
-        let i = this._h0, r = this._h1, n = this._h2, o = this._h3, l = this._h4, a, u, h9;
-        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h9 = rs(i, 5) + a + l + u + t2.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h9;
+        let i = this._h0, r = this._h1, n = this._h2, o = this._h3, l = this._h4, a, u, h10;
+        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h10 = rs(i, 5) + a + l + u + t2.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h10;
         this._h0 = this._h0 + i & 4294967295, this._h1 = this._h1 + r & 4294967295, this._h2 = this._h2 + n & 4294967295, this._h3 = this._h3 + o & 4294967295, this._h4 = this._h4 + l & 4294967295;
       }
     };
@@ -2772,13 +2772,13 @@ ${h9.join(`
         i.set(n, false);
       };
       mt = (n, o, l = 0) => {
-        let a = Oo(n), u = new Di(o, l), h9 = s15.get(a);
-        return h9 || (h9 = [], s15.set(a, h9)), h9.push(u), e.get(a) || (e.set(a, true), n.requestAnimationFrame(() => r(a))), u;
+        let a = Oo(n), u = new Di(o, l), h10 = s15.get(a);
+        return h10 || (h10 = [], s15.set(a, h10)), h10.push(u), e.get(a) || (e.set(a, true), n.requestAnimationFrame(() => r(a))), u;
       }, wa = (n, o, l) => {
         let a = Oo(n);
         if (i.get(a)) {
-          let u = new Di(o, l), h9 = t2.get(a);
-          return h9 || (h9 = [], t2.set(a, h9)), h9.push(u), u;
+          let u = new Di(o, l), h10 = t2.get(a);
+          return h10 || (h10 = [], t2.set(a, h10)), h10.push(u), u;
         } else return mt(n, o, l);
       };
     })();
@@ -3065,11 +3065,11 @@ ${h9.join(`
             console.warn("move of an UNKNOWN touch", a);
             continue;
           }
-          let u = this.activeTouches[a.identifier], h9 = Date.now() - u.initialTimeStamp;
-          if (h9 < Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
+          let u = this.activeTouches[a.identifier], h10 = Date.now() - u.initialTimeStamp;
+          if (h10 < Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
             let c = this.newGestureEvent(He.Tap, u.initialTarget);
             c.pageX = Se(u.rollingPageX), c.pageY = Se(u.rollingPageY), this.dispatchEvent(c);
-          } else if (h9 >= Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
+          } else if (h10 >= Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
             let c = this.newGestureEvent(He.Contextmenu, u.initialTarget);
             c.pageX = Se(u.rollingPageX), c.pageY = Se(u.rollingPageY), this.dispatchEvent(c);
           } else if (n === 1) {
@@ -3101,12 +3101,12 @@ ${h9.join(`
           for (let [r, n] of i) n.dispatchEvent(e), this.dispatched = true;
         }
       }
-      inertia(e, i, r, n, o, l, a, u, h9) {
+      inertia(e, i, r, n, o, l, a, u, h10) {
         this.handle = mt(e, () => {
           let c = Date.now(), d = c - r, _ = 0, p = 0, m = true;
           n += Q2.SCROLL_FRICTION * d, a += Q2.SCROLL_FRICTION * d, n > 0 && (m = false, _ = o * n * d), a > 0 && (m = false, p = u * a * d);
           let f = this.newGestureEvent(He.Change);
-          f.translationX = _, f.translationY = p, i.forEach((A) => A.dispatchEvent(f)), m || this.inertia(e, i, c, n, o, l + _, a, u, h9 + p);
+          f.translationX = _, f.translationY = p, i.forEach((A) => A.dispatchEvent(f)), m || this.inertia(e, i, c, n, o, l + _, a, u, h10 + p);
         });
       }
       onTouchMove(e) {
@@ -3452,8 +3452,8 @@ ${h9.join(`
       static _computeValues(t2, e, i, r, n) {
         let o = Math.max(0, i - t2), l = Math.max(0, o - 2 * e), a = r > 0 && r > i;
         if (!a) return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(l), computedSliderRatio: 0, computedSliderPosition: 0 };
-        let u = Math.round(Math.max(20, Math.floor(i * l / r))), h9 = (l - u) / (r - i), c = n * h9;
-        return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(u), computedSliderRatio: h9, computedSliderPosition: Math.round(c) };
+        let u = Math.round(Math.max(20, Math.floor(i * l / r))), h10 = (l - u) / (r - i), c = n * h10;
+        return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(u), computedSliderRatio: h10, computedSliderPosition: Math.round(c) };
       }
       _refreshComputedValues() {
         let t2 = s11._computeValues(this._oppositeScrollbarSize, this._arrowSize, this._visibleSize, this._scrollSize, this._scrollPosition);
@@ -3596,8 +3596,8 @@ ${h9.join(`
         if (Math.abs(t2.deltaX) > 0 && Math.abs(t2.deltaY) > 0) return 1;
         let i = 0.5;
         if ((!this._isAlmostInt(t2.deltaX) || !this._isAlmostInt(t2.deltaY)) && (i += 0.25), e) {
-          let r = Math.abs(t2.deltaX), n = Math.abs(t2.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h9 = Math.max(r, o), c = Math.max(n, l);
-          h9 % a === 0 && c % u === 0 && (i -= 0.5);
+          let r = Math.abs(t2.deltaX), n = Math.abs(t2.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h10 = Math.max(r, o), c = Math.max(n, l);
+          h10 % a === 0 && c % u === 0 && (i -= 0.5);
         }
         return Math.min(Math.max(i, 0), 1);
       }
@@ -3670,16 +3670,16 @@ ${h9.join(`
           this._options.scrollPredominantAxis && (this._options.scrollYToX && l + o === 0 ? l = o = 0 : Math.abs(o) >= Math.abs(l) ? l = 0 : o = 0), this._options.flipAxes && ([o, l] = [l, o]);
           let a = !Te && e.browserEvent && e.browserEvent.shiftKey;
           (this._options.scrollYToX || a) && !l && (l = o, o = 0), e.browserEvent && e.browserEvent.altKey && (l = l * this._options.fastScrollSensitivity, o = o * this._options.fastScrollSensitivity);
-          let u = this._scrollable.getFutureScrollPosition(), h9 = {};
+          let u = this._scrollable.getFutureScrollPosition(), h10 = {};
           if (o) {
             let c = Ko * o, d = u.scrollTop - (c < 0 ? Math.floor(c) : Math.ceil(c));
-            this._verticalScrollbar.writeScrollPosition(h9, d);
+            this._verticalScrollbar.writeScrollPosition(h10, d);
           }
           if (l) {
             let c = Ko * l, d = u.scrollLeft - (c < 0 ? Math.floor(c) : Math.ceil(c));
-            this._horizontalScrollbar.writeScrollPosition(h9, d);
+            this._horizontalScrollbar.writeScrollPosition(h10, d);
           }
-          h9 = this._scrollable.validateScrollPosition(h9), (u.scrollLeft !== h9.scrollLeft || u.scrollTop !== h9.scrollTop) && (zo && this._options.mouseWheelSmoothScroll && i.isPhysicalMouseWheel() ? this._scrollable.setScrollPositionSmooth(h9) : this._scrollable.setScrollPositionNow(h9), r = true);
+          h10 = this._scrollable.validateScrollPosition(h10), (u.scrollLeft !== h10.scrollLeft || u.scrollTop !== h10.scrollTop) && (zo && this._options.mouseWheelSmoothScroll && i.isPhysicalMouseWheel() ? this._scrollable.setScrollPositionSmooth(h10) : this._scrollable.setScrollPositionNow(h10), r = true);
         }
         let n = r;
         !n && this._options.alwaysConsumeMouseWheel && (n = true), !n && this._options.consumeMouseWheelIfScrollbarIsNeeded && (this._verticalScrollbar.isNeeded() || this._horizontalScrollbar.isNeeded()) && (n = true), n && (e.preventDefault(), e.stopPropagation());
@@ -3741,10 +3741,10 @@ ${h9.join(`
         this._isSyncing = false;
         this._isHandlingScroll = false;
         this._suppressOnScrollHandler = false;
-        let h9 = this._register(new Ri({ forceIntegerValues: false, smoothScrollDuration: this._optionsService.rawOptions.smoothScrollDuration, scheduleAtNextAnimationFrame: (c) => mt(n.window, c) }));
+        let h10 = this._register(new Ri({ forceIntegerValues: false, smoothScrollDuration: this._optionsService.rawOptions.smoothScrollDuration, scheduleAtNextAnimationFrame: (c) => mt(n.window, c) }));
         this._register(this._optionsService.onSpecificOptionChange("smoothScrollDuration", () => {
-          h9.setSmoothScrollDuration(this._optionsService.rawOptions.smoothScrollDuration);
-        })), this._scrollableElement = this._register(new Kr(i, { vertical: 1, horizontal: 2, useShadows: false, mouseWheelSmoothScroll: true, ...this._getChangeOptions() }, h9)), this._register(this._optionsService.onMultipleOptionChange(["scrollSensitivity", "fastScrollSensitivity", "overviewRuler"], () => this._scrollableElement.updateOptions(this._getChangeOptions()))), this._register(o.onProtocolChange((c) => {
+          h10.setSmoothScrollDuration(this._optionsService.rawOptions.smoothScrollDuration);
+        })), this._scrollableElement = this._register(new Kr(i, { vertical: 1, horizontal: 2, useShadows: false, mouseWheelSmoothScroll: true, ...this._getChangeOptions() }, h10)), this._register(this._optionsService.onMultipleOptionChange(["scrollSensitivity", "fastScrollSensitivity", "overviewRuler"], () => this._scrollableElement.updateOptions(this._getChangeOptions()))), this._register(o.onProtocolChange((c) => {
           this._scrollableElement.updateOptions({ handleMouseWheel: !(c & 16) });
         })), this._scrollableElement.setScrollDimensions({ height: 0, scrollHeight: 0 }), this._register($.runAndSubscribe(l.onChangeColors, () => {
           this._scrollableElement.getDomNode().style.backgroundColor = l.colors.background.css;
@@ -3896,8 +3896,8 @@ ${h9.join(`
         this._shouldUpdateAnchor = true;
         this._lastKnownBufferLength = 0;
         this._canvas = this._coreBrowserService.mainDocument.createElement("canvas"), this._canvas.classList.add("xterm-decoration-overview-ruler"), this._refreshCanvasDimensions(), this._viewportElement.parentElement?.insertBefore(this._canvas, this._viewportElement), this._register(C(() => this._canvas?.remove()));
-        let h9 = this._canvas.getContext("2d");
-        if (h9) this._ctx = h9;
+        let h10 = this._canvas.getContext("2d");
+        if (h10) this._ctx = h10;
         else throw new Error("Ctx cannot be null");
         this._register(this._decorationService.onDecorationRegistered(() => this._queueRefresh(void 0, true))), this._register(this._decorationService.onDecorationRemoved(() => this._queueRefresh(void 0, true))), this._register(this._renderService.onRenderedViewportChange(() => this._queueRefresh())), this._register(this._bufferService.buffers.onBufferActivate(() => {
           this._canvas.style.display = this._bufferService.buffer === this._bufferService.buffers.alt ? "none" : "block";
@@ -4038,8 +4038,8 @@ ${h9.join(`
     ((l) => {
       function s15(a, u) {
         if (J = (u.rgba & 255) / 255, J === 1) return { css: u.css, rgba: u.rgba };
-        let h9 = u.rgba >> 24 & 255, c = u.rgba >> 16 & 255, d = u.rgba >> 8 & 255, _ = a.rgba >> 24 & 255, p = a.rgba >> 16 & 255, m = a.rgba >> 8 & 255;
-        ue = _ + Math.round((h9 - _) * J), he = p + Math.round((c - p) * J), de = m + Math.round((d - m) * J);
+        let h10 = u.rgba >> 24 & 255, c = u.rgba >> 16 & 255, d = u.rgba >> 8 & 255, _ = a.rgba >> 24 & 255, p = a.rgba >> 16 & 255, m = a.rgba >> 8 & 255;
+        ue = _ + Math.round((h10 - _) * J), he = p + Math.round((c - p) * J), de = m + Math.round((d - m) * J);
         let f = j.toCss(ue, he, de), A = j.toRgba(ue, he, de);
         return { css: f, rgba: A };
       }
@@ -4048,8 +4048,8 @@ ${h9.join(`
         return (a.rgba & 255) === 255;
       }
       l.isOpaque = t2;
-      function e(a, u, h9) {
-        let c = $r.ensureContrastRatio(a.rgba, u.rgba, h9);
+      function e(a, u, h10) {
+        let c = $r.ensureContrastRatio(a.rgba, u.rgba, h10);
         if (c) return j.toColor(c >> 24 & 255, c >> 16 & 255, c >> 8 & 255);
       }
       l.ensureContrastRatio = e;
@@ -4106,22 +4106,22 @@ ${h9.join(`
       }
       e.relativeLuminance = s15;
       function t2(i, r, n) {
-        let o = i / 255, l = r / 255, a = n / 255, u = o <= 0.03928 ? o / 12.92 : Math.pow((o + 0.055) / 1.055, 2.4), h9 = l <= 0.03928 ? l / 12.92 : Math.pow((l + 0.055) / 1.055, 2.4), c = a <= 0.03928 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
-        return u * 0.2126 + h9 * 0.7152 + c * 0.0722;
+        let o = i / 255, l = r / 255, a = n / 255, u = o <= 0.03928 ? o / 12.92 : Math.pow((o + 0.055) / 1.055, 2.4), h10 = l <= 0.03928 ? l / 12.92 : Math.pow((l + 0.055) / 1.055, 2.4), c = a <= 0.03928 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
+        return u * 0.2126 + h10 * 0.7152 + c * 0.0722;
       }
       e.relativeLuminance2 = t2;
     })(ve ||= {});
     ((n) => {
       function s15(o, l) {
         if (J = (l & 255) / 255, J === 1) return l;
-        let a = l >> 24 & 255, u = l >> 16 & 255, h9 = l >> 8 & 255, c = o >> 24 & 255, d = o >> 16 & 255, _ = o >> 8 & 255;
-        return ue = c + Math.round((a - c) * J), he = d + Math.round((u - d) * J), de = _ + Math.round((h9 - _) * J), j.toRgba(ue, he, de);
+        let a = l >> 24 & 255, u = l >> 16 & 255, h10 = l >> 8 & 255, c = o >> 24 & 255, d = o >> 16 & 255, _ = o >> 8 & 255;
+        return ue = c + Math.round((a - c) * J), he = d + Math.round((u - d) * J), de = _ + Math.round((h10 - _) * J), j.toRgba(ue, he, de);
       }
       n.blend = s15;
       function t2(o, l, a) {
-        let u = ve.relativeLuminance(o >> 8), h9 = ve.relativeLuminance(l >> 8);
-        if (Xe(u, h9) < a) {
-          if (h9 < u) {
+        let u = ve.relativeLuminance(o >> 8), h10 = ve.relativeLuminance(l >> 8);
+        if (Xe(u, h10) < a) {
+          if (h10 < u) {
             let p = e(o, l, a), m = Xe(u, ve.relativeLuminance(p >> 8));
             if (m < a) {
               let f = i(o, l, a), A = Xe(u, ve.relativeLuminance(f >> 8));
@@ -4139,14 +4139,14 @@ ${h9.join(`
       }
       n.ensureContrastRatio = t2;
       function e(o, l, a) {
-        let u = o >> 24 & 255, h9 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
-        for (; m < a && (d > 0 || _ > 0 || p > 0); ) d -= Math.max(0, Math.ceil(d * 0.1)), _ -= Math.max(0, Math.ceil(_ * 0.1)), p -= Math.max(0, Math.ceil(p * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
+        let u = o >> 24 & 255, h10 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
+        for (; m < a && (d > 0 || _ > 0 || p > 0); ) d -= Math.max(0, Math.ceil(d * 0.1)), _ -= Math.max(0, Math.ceil(_ * 0.1)), p -= Math.max(0, Math.ceil(p * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
         return (d << 24 | _ << 16 | p << 8 | 255) >>> 0;
       }
       n.reduceLuminance = e;
       function i(o, l, a) {
-        let u = o >> 24 & 255, h9 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
-        for (; m < a && (d < 255 || _ < 255 || p < 255); ) d = Math.min(255, d + Math.ceil((255 - d) * 0.1)), _ = Math.min(255, _ + Math.ceil((255 - _) * 0.1)), p = Math.min(255, p + Math.ceil((255 - p) * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
+        let u = o >> 24 & 255, h10 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
+        for (; m < a && (d < 255 || _ < 255 || p < 255); ) d = Math.min(255, d + Math.ceil((255 - d) * 0.1)), _ = Math.min(255, _ + Math.ceil((255 - _) * 0.1)), p = Math.min(255, p + Math.ceil((255 - p) * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
         return (d << 24 | _ << 16 | p << 8 | 255) >>> 0;
       }
       n.increaseLuminance = i;
@@ -4200,19 +4200,19 @@ ${h9.join(`
         let e = this._bufferService.buffer.lines.get(t2);
         if (!e || e.length === 0) return [];
         let i = [], r = e.translateToString(true), n = 0, o = 0, l = 0, a = e.getFg(0), u = e.getBg(0);
-        for (let h9 = 0; h9 < e.getTrimmedLength(); h9++) if (e.loadCell(h9, this._workCell), this._workCell.getWidth() !== 0) {
+        for (let h10 = 0; h10 < e.getTrimmedLength(); h10++) if (e.loadCell(h10, this._workCell), this._workCell.getWidth() !== 0) {
           if (this._workCell.fg !== a || this._workCell.bg !== u) {
-            if (h9 - n > 1) {
+            if (h10 - n > 1) {
               let c = this._getJoinedRanges(r, l, o, e, n);
               for (let d = 0; d < c.length; d++) i.push(c[d]);
             }
-            n = h9, l = o, a = this._workCell.fg, u = this._workCell.bg;
+            n = h10, l = o, a = this._workCell.fg, u = this._workCell.bg;
           }
           o += this._workCell.getChars().length || we.length;
         }
         if (this._bufferService.cols - n > 1) {
-          let h9 = this._getJoinedRanges(r, l, o, e, n);
-          for (let c = 0; c < h9.length; c++) i.push(h9[c]);
+          let h10 = this._getJoinedRanges(r, l, o, e, n);
+          for (let c = 0; c < h10.length; c++) i.push(h10[c]);
         }
         return i;
       }
@@ -4225,7 +4225,7 @@ ${h9.join(`
         }
         for (let a = 1; a < this._characterJoiners.length; a++) try {
           let u = this._characterJoiners[a].handler(o);
-          for (let h9 = 0; h9 < u.length; h9++) ct._mergeRanges(l, u[h9]);
+          for (let h10 = 0; h10 < u.length; h10++) ct._mergeRanges(l, u[h10]);
         } catch (u) {
           console.error(u);
         }
@@ -4235,13 +4235,13 @@ ${h9.join(`
         let r = 0, n = false, o = 0, l = t2[r];
         if (l) {
           for (let a = i; a < this._bufferService.cols; a++) {
-            let u = e.getWidth(a), h9 = e.getString(a).length || we.length;
+            let u = e.getWidth(a), h10 = e.getString(a).length || we.length;
             if (u !== 0) {
               if (!n && l[0] <= o && (l[0] = a, n = true), l[1] <= o) {
                 if (l[1] = a, l = t2[++r], !l) break;
                 l[0] <= o ? (l[0] = a, n = true) : n = false;
               }
-              o += h9;
+              o += h10;
             }
           }
           l && (l[1] = this._bufferService.cols);
@@ -4282,10 +4282,10 @@ ${h9.join(`
       handleSelectionChanged(t2, e, i) {
         this._selectionStart = t2, this._selectionEnd = e, this._columnSelectMode = i;
       }
-      createRow(t2, e, i, r, n, o, l, a, u, h9, c) {
+      createRow(t2, e, i, r, n, o, l, a, u, h10, c) {
         let d = [], _ = this._characterJoinerService.getJoinedCharacters(e), p = this._themeService.colors, m = t2.getNoBgTrimmedLength();
         i && m < o + 1 && (m = o + 1);
-        let f, A = 0, R = "", O = 0, I = 0, k = 0, P = 0, oe = false, Me = 0, Pe = false, Ke = 0, di = 0, V = [], Qe = h9 !== -1 && c !== -1;
+        let f, A = 0, R = "", O = 0, I = 0, k = 0, P = 0, oe = false, Me = 0, Pe = false, Ke = 0, di = 0, V = [], Qe = h10 !== -1 && c !== -1;
         for (let y = 0; y < m; y++) {
           t2.loadCell(y, this._workCell);
           let T = this._workCell.getWidth();
@@ -4296,7 +4296,7 @@ ${h9.join(`
             for (O = W[0] + 1; O < W[1]; O++) w &&= An === this._isCellInSelection(O, e);
             w &&= !i || o < W[0] || o >= W[1], w ? (g = true, x = new Vr(this._workCell, t2.translateToString(true, W[0], W[1]), W[1] - W[0]), E = W[1] - 1, T = x.getWidth()) : di = W[1];
           }
-          let N = this._isCellInSelection(y, e), Z = i && y === o, te = Qe && y >= h9 && y <= c, Oe = false;
+          let N = this._isCellInSelection(y, e), Z = i && y === o, te = Qe && y >= h10 && y <= c, Oe = false;
           this._decorationService.forEachDecorationAtCell(y, e, void 0, (W) => {
             Oe = true;
           });
@@ -4465,7 +4465,7 @@ ${h9.join(`
       }
     };
     _s = "xterm-dom-renderer-owner-", Le = "xterm-rows", jr = "xterm-fg-", jo = "xterm-bg-", ki = "xterm-focus", Xr = "xterm-selection", Na = 1, Yt = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9, c, d, _, p, m) {
+      constructor(e, i, r, n, o, l, a, u, h10, c, d, _, p, m) {
         super();
         this._terminal = e;
         this._document = i;
@@ -4474,7 +4474,7 @@ ${h9.join(`
         this._viewportElement = o;
         this._helperContainer = l;
         this._linkifier2 = a;
-        this._charSizeService = h9;
+        this._charSizeService = h10;
         this._optionsService = c;
         this._bufferService = d;
         this._coreService = _;
@@ -4535,11 +4535,11 @@ ${h9.join(`
         if (this._selectionContainer.replaceChildren(), this._rowFactory.handleSelectionChanged(e, i, r), this.renderRows(0, this._bufferService.rows - 1), !e || !i || (this._selectionRenderModel.update(this._terminal, e, i, r), !this._selectionRenderModel.hasSelection)) return;
         let n = this._selectionRenderModel.viewportStartRow, o = this._selectionRenderModel.viewportEndRow, l = this._selectionRenderModel.viewportCappedStartRow, a = this._selectionRenderModel.viewportCappedEndRow, u = this._document.createDocumentFragment();
         if (r) {
-          let h9 = e[0] > i[0];
-          u.appendChild(this._createSelectionElement(l, h9 ? i[0] : e[0], h9 ? e[0] : i[0], a - l + 1));
+          let h10 = e[0] > i[0];
+          u.appendChild(this._createSelectionElement(l, h10 ? i[0] : e[0], h10 ? e[0] : i[0], a - l + 1));
         } else {
-          let h9 = n === l ? e[0] : 0, c = l === o ? i[0] : this._bufferService.cols;
-          u.appendChild(this._createSelectionElement(l, h9, c));
+          let h10 = n === l ? e[0] : 0, c = l === o ? i[0] : this._bufferService.cols;
+          u.appendChild(this._createSelectionElement(l, h10, c));
           let d = a - l - 1;
           if (u.appendChild(this._createSelectionElement(l + 1, 0, this._bufferService.cols, d)), l !== a) {
             let _ = o === a ? i[0] : this._bufferService.cols;
@@ -4562,8 +4562,8 @@ ${h9.join(`
       }
       renderRows(e, i) {
         let r = this._bufferService.buffer, n = r.ybase + r.y, o = Math.min(r.x, this._bufferService.cols - 1), l = this._coreService.decPrivateModes.cursorBlink ?? this._optionsService.rawOptions.cursorBlink, a = this._coreService.decPrivateModes.cursorStyle ?? this._optionsService.rawOptions.cursorStyle, u = this._optionsService.rawOptions.cursorInactiveStyle;
-        for (let h9 = e; h9 <= i; h9++) {
-          let c = h9 + r.ydisp, d = this._rowElements[h9], _ = r.lines.get(c);
+        for (let h10 = e; h10 <= i; h10++) {
+          let c = h10 + r.ydisp, d = this._rowElements[h10], _ = r.lines.get(c);
           if (!d || !_) break;
           d.replaceChildren(...this._rowFactory.createRow(_, c, c === n, a, u, o, l, this.dimensions.css.cell.width, this._widthCache, -1, -1));
         }
@@ -4581,11 +4581,11 @@ ${h9.join(`
         r < 0 && (e = 0), n < 0 && (i = 0);
         let a = this._bufferService.rows - 1;
         r = Math.max(Math.min(r, a), 0), n = Math.max(Math.min(n, a), 0), o = Math.min(o, this._bufferService.cols);
-        let u = this._bufferService.buffer, h9 = u.ybase + u.y, c = Math.min(u.x, o - 1), d = this._optionsService.rawOptions.cursorBlink, _ = this._optionsService.rawOptions.cursorStyle, p = this._optionsService.rawOptions.cursorInactiveStyle;
+        let u = this._bufferService.buffer, h10 = u.ybase + u.y, c = Math.min(u.x, o - 1), d = this._optionsService.rawOptions.cursorBlink, _ = this._optionsService.rawOptions.cursorStyle, p = this._optionsService.rawOptions.cursorInactiveStyle;
         for (let m = r; m <= n; ++m) {
           let f = m + u.ydisp, A = this._rowElements[m], R = u.lines.get(f);
           if (!A || !R) break;
-          A.replaceChildren(...this._rowFactory.createRow(R, f, f === h9, _, p, c, d, this.dimensions.css.cell.width, this._widthCache, l ? m === r ? e : 0 : -1, l ? (m === n ? i : o) - 1 : -1));
+          A.replaceChildren(...this._rowFactory.createRow(R, f, f === h10, _, p, c, d, this.dimensions.css.cell.width, this._widthCache, l ? m === r ? e : 0 : -1, l ? (m === n ? i : o) - 1 : -1));
         }
       }
     };
@@ -4818,7 +4818,7 @@ ${h9.join(`
       }
     };
     Qt = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9) {
+      constructor(e, i, r, n, o, l, a, u, h10) {
         super();
         this._rowCount = e;
         this._optionsService = r;
@@ -4845,7 +4845,7 @@ ${h9.join(`
         this.onRefreshRequest = this._onRefreshRequest.event;
         this._renderDebouncer = new en((c, d) => this._renderRows(c, d), this._coreBrowserService), this._register(this._renderDebouncer), this._syncOutputHandler = new xs(this._coreBrowserService, this._coreService, () => this._fullRefresh()), this._register(C(() => this._syncOutputHandler.dispose())), this._register(this._coreBrowserService.onDprChange(() => this.handleDevicePixelRatioChange())), this._register(a.onResize(() => this._fullRefresh())), this._register(a.buffers.onBufferActivate(() => this._renderer.value?.clear())), this._register(this._optionsService.onOptionChange(() => this._handleOptionsChanged())), this._register(this._charSizeService.onCharSizeChange(() => this.handleCharSizeChanged())), this._register(l.onDecorationRegistered(() => this._fullRefresh())), this._register(l.onDecorationRemoved(() => this._fullRefresh())), this._register(this._optionsService.onMultipleOptionChange(["customGlyphs", "drawBoldTextInBrightColors", "letterSpacing", "lineHeight", "fontFamily", "fontSize", "fontWeight", "fontWeightBold", "minimumContrastRatio", "rescaleOverlappingGlyphs"], () => {
           this.clear(), this.handleResize(a.cols, a.rows), this._fullRefresh();
-        })), this._register(this._optionsService.onMultipleOptionChange(["cursorBlink", "cursorStyle"], () => this.refreshRows(a.buffer.y, a.buffer.y, true))), this._register(h9.onChangeColors(() => this._fullRefresh())), this._registerIntersectionObserver(this._coreBrowserService.window, i), this._register(this._coreBrowserService.onWindowChange((c) => this._registerIntersectionObserver(c, i)));
+        })), this._register(this._optionsService.onMultipleOptionChange(["cursorBlink", "cursorStyle"], () => this.refreshRows(a.buffer.y, a.buffer.y, true))), this._register(h10.onChangeColors(() => this._fullRefresh())), this._registerIntersectionObserver(this._coreBrowserService.window, i), this._register(this._coreBrowserService.onWindowChange((c) => this._registerIntersectionObserver(c, i)));
       }
       get dimensions() {
         return this._renderer.value.dimensions;
@@ -4989,7 +4989,7 @@ ${h9.join(`
     };
     Ds = 50, Ya = 15, ja = 50, Xa = 500, Za = " ", Ja = new RegExp(Za, "g");
     ei = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9) {
+      constructor(e, i, r, n, o, l, a, u, h10) {
         super();
         this._element = e;
         this._screenElement = i;
@@ -4999,7 +4999,7 @@ ${h9.join(`
         this._mouseService = l;
         this._optionsService = a;
         this._renderService = u;
-        this._coreBrowserService = h9;
+        this._coreBrowserService = h10;
         this._dragScrollAmount = 0;
         this._enabled = true;
         this._workCell = new q();
@@ -5050,15 +5050,15 @@ ${h9.join(`
           if (e[0] === i[0]) return "";
           let l = e[0] < i[0] ? e[0] : i[0], a = e[0] < i[0] ? i[0] : e[0];
           for (let u = e[1]; u <= i[1]; u++) {
-            let h9 = r.translateBufferLineToString(u, true, l, a);
-            n.push(h9);
+            let h10 = r.translateBufferLineToString(u, true, l, a);
+            n.push(h10);
           }
         } else {
           let l = e[1] === i[1] ? i[0] : void 0;
           n.push(r.translateBufferLineToString(e[1], true, e[0], l));
           for (let a = e[1] + 1; a <= i[1] - 1; a++) {
-            let u = r.lines.get(a), h9 = r.translateBufferLineToString(a, true);
-            u?.isWrapped ? n[n.length - 1] += h9 : n.push(h9);
+            let u = r.lines.get(a), h10 = r.translateBufferLineToString(a, true);
+            u?.isWrapped ? n[n.length - 1] += h10 : n.push(h10);
           }
           if (e[1] !== i[1]) {
             let a = r.lines.get(i[1]), u = r.translateBufferLineToString(i[1], true, 0, i[0]);
@@ -5215,28 +5215,28 @@ ${h9.join(`
         if (e[0] >= this._bufferService.cols) return;
         let o = this._bufferService.buffer, l = o.lines.get(e[1]);
         if (!l) return;
-        let a = o.translateBufferLineToString(e[1], false), u = this._convertViewportColToCharacterIndex(l, e[0]), h9 = u, c = e[0] - u, d = 0, _ = 0, p = 0, m = 0;
+        let a = o.translateBufferLineToString(e[1], false), u = this._convertViewportColToCharacterIndex(l, e[0]), h10 = u, c = e[0] - u, d = 0, _ = 0, p = 0, m = 0;
         if (a.charAt(u) === " ") {
           for (; u > 0 && a.charAt(u - 1) === " "; ) u--;
-          for (; h9 < a.length && a.charAt(h9 + 1) === " "; ) h9++;
+          for (; h10 < a.length && a.charAt(h10 + 1) === " "; ) h10++;
         } else {
           let R = e[0], O = e[0];
           l.getWidth(R) === 0 && (d++, R--), l.getWidth(O) === 2 && (_++, O++);
           let I = l.getString(O).length;
-          for (I > 1 && (m += I - 1, h9 += I - 1); R > 0 && u > 0 && !this._isCharWordSeparator(l.loadCell(R - 1, this._workCell)); ) {
+          for (I > 1 && (m += I - 1, h10 += I - 1); R > 0 && u > 0 && !this._isCharWordSeparator(l.loadCell(R - 1, this._workCell)); ) {
             l.loadCell(R - 1, this._workCell);
             let k = this._workCell.getChars().length;
             this._workCell.getWidth() === 0 ? (d++, R--) : k > 1 && (p += k - 1, u -= k - 1), u--, R--;
           }
-          for (; O < l.length && h9 + 1 < a.length && !this._isCharWordSeparator(l.loadCell(O + 1, this._workCell)); ) {
+          for (; O < l.length && h10 + 1 < a.length && !this._isCharWordSeparator(l.loadCell(O + 1, this._workCell)); ) {
             l.loadCell(O + 1, this._workCell);
             let k = this._workCell.getChars().length;
-            this._workCell.getWidth() === 2 ? (_++, O++) : k > 1 && (m += k - 1, h9 += k - 1), h9++, O++;
+            this._workCell.getWidth() === 2 ? (_++, O++) : k > 1 && (m += k - 1, h10 += k - 1), h10++, O++;
           }
         }
-        h9++;
-        let f = u + c - d + p, A = Math.min(this._bufferService.cols, h9 - u + d + _ - p - m);
-        if (!(!i && a.slice(u, h9).trim() === "")) {
+        h10++;
+        let f = u + c - d + p, A = Math.min(this._bufferService.cols, h10 - u + d + _ - p - m);
+        if (!(!i && a.slice(u, h10).trim() === "")) {
           if (r && f === 0 && l.getCodePoint(0) !== 32) {
             let R = o.lines.get(e[1] - 1);
             if (R && l.isWrapped && R.getCodePoint(this._bufferService.cols - 1) !== 32) {
@@ -5847,7 +5847,7 @@ ${h9.join(`
             let I = this.ybase + this.y;
             if (I >= l && I < l + u.length) continue;
           }
-          let h9 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t2), d = c.length - u.length, _;
+          let h10 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t2), d = c.length - u.length, _;
           this.ybase === 0 && this.y !== this.lines.length - 1 ? _ = Math.max(0, this.y - this.lines.maxLength + d) : _ = Math.max(0, this.lines.length - this.lines.maxLength + d);
           let p = [];
           for (let I = 0; I < d; I++) {
@@ -5857,7 +5857,7 @@ ${h9.join(`
           p.length > 0 && (n.push({ start: l + u.length + o, newLines: p }), o += p.length), u.push(...p);
           let m = c.length - 1, f = c[m];
           f === 0 && (m--, f = c[m]);
-          let A = u.length - d - 1, R = h9;
+          let A = u.length - d - 1, R = h10;
           for (; A >= 0; ) {
             let I = Math.min(R, f);
             if (u[m] === void 0) break;
@@ -5875,13 +5875,13 @@ ${h9.join(`
         if (n.length > 0) {
           let l = [], a = [];
           for (let f = 0; f < this.lines.length; f++) a.push(this.lines.get(f));
-          let u = this.lines.length, h9 = u - 1, c = 0, d = n[c];
+          let u = this.lines.length, h10 = u - 1, c = 0, d = n[c];
           this.lines.length = Math.min(this.lines.maxLength, this.lines.length + o);
           let _ = 0;
-          for (let f = Math.min(this.lines.maxLength - 1, u + o - 1); f >= 0; f--) if (d && d.start > h9 + _) {
+          for (let f = Math.min(this.lines.maxLength - 1, u + o - 1); f >= 0; f--) if (d && d.start > h10 + _) {
             for (let A = d.newLines.length - 1; A >= 0; A--) this.lines.set(f--, d.newLines[A]);
-            f++, l.push({ index: h9 + 1, amount: d.newLines.length }), _ += d.newLines.length, d = n[++c];
-          } else this.lines.set(f, a[h9--]);
+            f++, l.push({ index: h10 + 1, amount: d.newLines.length }), _ += d.newLines.length, d = n[++c];
+          } else this.lines.set(f, a[h10--]);
           let p = 0;
           for (let f = l.length - 1; f >= 0; f--) l[f].index += p, this.lines.onInsertEmitter.fire(l[f]), p += l[f].amount;
           let m = Math.max(0, u + o - this.lines.maxLength);
@@ -6671,17 +6671,17 @@ ${h9.join(`
         if (this._parseStack.state) if (this._parseStack.state === 2) this._parseStack.state = 0, l = this._parseStack.chunkPos + 1;
         else {
           if (r === void 0 || this._parseStack.state === 1) throw this._parseStack.state = 1, new Error("improper continuation due to previous async handler, giving up parsing");
-          let u = this._parseStack.handlers, h9 = this._parseStack.handlerPos - 1;
+          let u = this._parseStack.handlers, h10 = this._parseStack.handlerPos - 1;
           switch (this._parseStack.state) {
             case 3:
-              if (r === false && h9 > -1) {
-                for (; h9 >= 0 && (a = u[h9](this._params), a !== true); h9--) if (a instanceof Promise) return this._parseStack.handlerPos = h9, a;
+              if (r === false && h10 > -1) {
+                for (; h10 >= 0 && (a = u[h10](this._params), a !== true); h10--) if (a instanceof Promise) return this._parseStack.handlerPos = h10, a;
               }
               this._parseStack.handlers = [];
               break;
             case 4:
-              if (r === false && h9 > -1) {
-                for (; h9 >= 0 && (a = u[h9](), a !== true); h9--) if (a instanceof Promise) return this._parseStack.handlerPos = h9, a;
+              if (r === false && h10 > -1) {
+                for (; h10 >= 0 && (a = u[h10](), a !== true); h10--) if (a instanceof Promise) return this._parseStack.handlerPos = h10, a;
               }
               this._parseStack.handlers = [];
               break;
@@ -6791,7 +6791,7 @@ ${h9.join(`
     dc = /^([\da-f])\/([\da-f])\/([\da-f])$|^([\da-f]{2})\/([\da-f]{2})\/([\da-f]{2})$|^([\da-f]{3})\/([\da-f]{3})\/([\da-f]{3})$|^([\da-f]{4})\/([\da-f]{4})\/([\da-f]{4})$/, fc = /^[\da-f]+$/;
     mc = { "(": 0, ")": 1, "*": 2, "+": 3, "-": 1, ".": 2 }, ut = 131072, _l = 10;
     vl = 5e3, gl = 0, vn = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9 = new bn()) {
+      constructor(e, i, r, n, o, l, a, u, h10 = new bn()) {
         super();
         this._bufferService = e;
         this._charsetService = i;
@@ -6801,7 +6801,7 @@ ${h9.join(`
         this._oscLinkService = l;
         this._coreMouseService = a;
         this._unicodeService = u;
-        this._parser = h9;
+        this._parser = h10;
         this._parseBuffer = new Uint32Array(4096);
         this._stringDecoder = new er();
         this._utf8Decoder = new tr();
@@ -6883,11 +6883,11 @@ ${h9.join(`
           if (r = this._parser.parse(this._parseBuffer, c)) return this._preserveStack(n, o, c, 0), this._logSlowResolvingAsync(r), r;
         }
         (this._activeBuffer.x !== n || this._activeBuffer.y !== o) && this._onCursorMove.fire();
-        let u = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), h9 = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
-        h9 < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(h9, this._bufferService.rows - 1), end: Math.min(u, this._bufferService.rows - 1) });
+        let u = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), h10 = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
+        h10 < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(h10, this._bufferService.rows - 1), end: Math.min(u, this._bufferService.rows - 1) });
       }
       print(e, i, r) {
-        let n, o, l = this._charsetService.charset, a = this._optionsService.rawOptions.screenReaderMode, u = this._bufferService.cols, h9 = this._coreService.decPrivateModes.wraparound, c = this._coreService.modes.insertMode, d = this._curAttrData, _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        let n, o, l = this._charsetService.charset, a = this._optionsService.rawOptions.screenReaderMode, u = this._bufferService.cols, h10 = this._coreService.decPrivateModes.wraparound, c = this._coreService.modes.insertMode, d = this._curAttrData, _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
         this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._activeBuffer.x && r - i > 0 && _.getWidth(this._activeBuffer.x - 1) === 2 && _.setCellFromCodepoint(this._activeBuffer.x - 1, 0, 1, d);
         let p = this._parser.precedingJoinState;
         for (let m = i; m < r; ++m) {
@@ -6899,7 +6899,7 @@ ${h9.join(`
           o = Ae.extractWidth(f);
           let A = Ae.extractShouldJoin(f), R = A ? Ae.extractWidth(p) : 0;
           if (p = f, a && this._onA11yChar.fire(Ce(n)), this._getCurrentLinkId() && this._oscLinkService.addLineToLink(this._getCurrentLinkId(), this._activeBuffer.ybase + this._activeBuffer.y), this._activeBuffer.x + o - R > u) {
-            if (h9) {
+            if (h10) {
               let O = _, I = this._activeBuffer.x - R;
               for (this._activeBuffer.x = R, this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData(), true)) : (this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = true), _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y), R > 0 && _ instanceof Ze && _.copyCellsFrom(O, I, 0, R, false); I < u; ) O.setCellFromCodepoint(I++, 0, 1, d);
             } else if (this._activeBuffer.x = u - 1, o === 2) continue;
@@ -7156,13 +7156,13 @@ ${h9.join(`
       repeatPrecedingCharacter(e) {
         let i = this._parser.precedingJoinState;
         if (!i) return true;
-        let r = e.params[0] || 1, n = Ae.extractWidth(i), o = this._activeBuffer.x - n, a = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(o), u = new Uint32Array(a.length * r), h9 = 0;
+        let r = e.params[0] || 1, n = Ae.extractWidth(i), o = this._activeBuffer.x - n, a = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(o), u = new Uint32Array(a.length * r), h10 = 0;
         for (let d = 0; d < a.length; ) {
           let _ = a.codePointAt(d) || 0;
-          u[h9++] = _, d += _ > 65535 ? 2 : 1;
+          u[h10++] = _, d += _ > 65535 ? 2 : 1;
         }
-        let c = h9;
-        for (let d = 1; d < r; ++d) u.copyWithin(c, 0, h9), c += h9;
+        let c = h10;
+        for (let d = 1; d < r; ++d) u.copyWithin(c, 0, h10), c += h10;
         return this.print(u, 0, c), true;
       }
       sendDeviceAttributesPrimary(e) {
@@ -7337,8 +7337,8 @@ ${h9.join(`
       requestMode(e, i) {
         let r;
         ((P) => (P[P.NOT_RECOGNIZED = 0] = "NOT_RECOGNIZED", P[P.SET = 1] = "SET", P[P.RESET = 2] = "RESET", P[P.PERMANENTLY_SET = 3] = "PERMANENTLY_SET", P[P.PERMANENTLY_RESET = 4] = "PERMANENTLY_RESET"))(r ||= {});
-        let n = this._coreService.decPrivateModes, { activeProtocol: o, activeEncoding: l } = this._coreMouseService, a = this._coreService, { buffers: u, cols: h9 } = this._bufferService, { active: c, alt: d } = u, _ = this._optionsService.rawOptions, p = (A, R) => (a.triggerDataEvent(`${b.ESC}[${i ? "" : "?"}${A};${R}$y`), true), m = (A) => A ? 1 : 2, f = e.params[0];
-        return i ? f === 2 ? p(f, 4) : f === 4 ? p(f, m(a.modes.insertMode)) : f === 12 ? p(f, 3) : f === 20 ? p(f, m(_.convertEol)) : p(f, 0) : f === 1 ? p(f, m(n.applicationCursorKeys)) : f === 3 ? p(f, _.windowOptions.setWinLines ? h9 === 80 ? 2 : h9 === 132 ? 1 : 0 : 0) : f === 6 ? p(f, m(n.origin)) : f === 7 ? p(f, m(n.wraparound)) : f === 8 ? p(f, 3) : f === 9 ? p(f, m(o === "X10")) : f === 12 ? p(f, m(_.cursorBlink)) : f === 25 ? p(f, m(!a.isCursorHidden)) : f === 45 ? p(f, m(n.reverseWraparound)) : f === 66 ? p(f, m(n.applicationKeypad)) : f === 67 ? p(f, 4) : f === 1e3 ? p(f, m(o === "VT200")) : f === 1002 ? p(f, m(o === "DRAG")) : f === 1003 ? p(f, m(o === "ANY")) : f === 1004 ? p(f, m(n.sendFocus)) : f === 1005 ? p(f, 4) : f === 1006 ? p(f, m(l === "SGR")) : f === 1015 ? p(f, 4) : f === 1016 ? p(f, m(l === "SGR_PIXELS")) : f === 1048 ? p(f, 1) : f === 47 || f === 1047 || f === 1049 ? p(f, m(c === d)) : f === 2004 ? p(f, m(n.bracketedPasteMode)) : f === 2026 ? p(f, m(n.synchronizedOutput)) : p(f, 0);
+        let n = this._coreService.decPrivateModes, { activeProtocol: o, activeEncoding: l } = this._coreMouseService, a = this._coreService, { buffers: u, cols: h10 } = this._bufferService, { active: c, alt: d } = u, _ = this._optionsService.rawOptions, p = (A, R) => (a.triggerDataEvent(`${b.ESC}[${i ? "" : "?"}${A};${R}$y`), true), m = (A) => A ? 1 : 2, f = e.params[0];
+        return i ? f === 2 ? p(f, 4) : f === 4 ? p(f, m(a.modes.insertMode)) : f === 12 ? p(f, 3) : f === 20 ? p(f, m(_.convertEol)) : p(f, 0) : f === 1 ? p(f, m(n.applicationCursorKeys)) : f === 3 ? p(f, _.windowOptions.setWinLines ? h10 === 80 ? 2 : h10 === 132 ? 1 : 0 : 0) : f === 6 ? p(f, m(n.origin)) : f === 7 ? p(f, m(n.wraparound)) : f === 8 ? p(f, 3) : f === 9 ? p(f, m(o === "X10")) : f === 12 ? p(f, m(_.cursorBlink)) : f === 25 ? p(f, m(!a.isCursorHidden)) : f === 45 ? p(f, m(n.reverseWraparound)) : f === 66 ? p(f, m(n.applicationKeypad)) : f === 67 ? p(f, 4) : f === 1e3 ? p(f, m(o === "VT200")) : f === 1002 ? p(f, m(o === "DRAG")) : f === 1003 ? p(f, m(o === "ANY")) : f === 1004 ? p(f, m(n.sendFocus)) : f === 1005 ? p(f, 4) : f === 1006 ? p(f, m(l === "SGR")) : f === 1015 ? p(f, 4) : f === 1016 ? p(f, m(l === "SGR_PIXELS")) : f === 1048 ? p(f, 1) : f === 47 || f === 1047 || f === 1049 ? p(f, m(c === d)) : f === 2004 ? p(f, m(n.bracketedPasteMode)) : f === 2026 ? p(f, m(n.synchronizedOutput)) : p(f, 0);
       }
       _updateAttrColor(e, i, r, n, o) {
         return i === 2 ? (e |= 50331648, e &= -16777216, e |= De.fromColorRGB([r, n, o])) : i === 5 && (e &= -50331904, e |= 33554432 | r & 255), e;
@@ -8008,8 +8008,8 @@ ${h9.join(`
       _renderRows(e, i) {
         let r = this._terminal.buffer, n = r.lines.length.toString();
         for (let o = e; o <= i; o++) {
-          let l = r.lines.get(r.ydisp + o), a = [], u = l?.translateToString(true, void 0, void 0, a) || "", h9 = (r.ydisp + o + 1).toString(), c = this._rowElements[o];
-          c && (u.length === 0 ? (c.textContent = " ", this._rowColumns.set(c, [0, 1])) : (c.textContent = u, this._rowColumns.set(c, a)), c.setAttribute("aria-posinset", h9), c.setAttribute("aria-setsize", n), this._alignRowWidth(c));
+          let l = r.lines.get(r.ydisp + o), a = [], u = l?.translateToString(true, void 0, void 0, a) || "", h10 = (r.ydisp + o + 1).toString(), c = this._rowElements[o];
+          c && (u.length === 0 ? (c.textContent = " ", this._rowColumns.set(c, [0, 1])) : (c.textContent = u, this._rowColumns.set(c, a)), c.setAttribute("aria-posinset", h10), c.setAttribute("aria-setsize", n), this._alignRowWidth(c));
         }
         this._announceCharacters();
       }
@@ -8021,11 +8021,11 @@ ${h9.join(`
         if (o === l || e.relatedTarget !== n) return;
         let a, u;
         if (i === 0 ? (a = r, u = this._rowElements.pop(), this._rowContainer.removeChild(u)) : (a = this._rowElements.shift(), u = r, this._rowContainer.removeChild(a)), a.removeEventListener("focus", this._topBoundaryFocusListener), u.removeEventListener("focus", this._bottomBoundaryFocusListener), i === 0) {
-          let h9 = this._createAccessibilityTreeNode();
-          this._rowElements.unshift(h9), this._rowContainer.insertAdjacentElement("afterbegin", h9);
+          let h10 = this._createAccessibilityTreeNode();
+          this._rowElements.unshift(h10), this._rowContainer.insertAdjacentElement("afterbegin", h10);
         } else {
-          let h9 = this._createAccessibilityTreeNode();
-          this._rowElements.push(h9), this._rowContainer.appendChild(h9);
+          let h10 = this._createAccessibilityTreeNode();
+          this._rowElements.push(h10), this._rowContainer.appendChild(h10);
         }
         this._rowElements[0].addEventListener("focus", this._topBoundaryFocusListener), this._rowElements[this._rowElements.length - 1].addEventListener("focus", this._bottomBoundaryFocusListener), this._terminal.scrollLines(i === 0 ? -1 : 1), this._rowElements[i === 0 ? 1 : this._rowElements.length - 2].focus(), e.preventDefault(), e.stopImmediatePropagation();
       }
@@ -8045,12 +8045,12 @@ ${h9.join(`
         if ((i.node.compareDocumentPosition(r.node) & Node.DOCUMENT_POSITION_PRECEDING || i.node === r.node && i.offset > r.offset) && ([i, r] = [r, i]), i.node.compareDocumentPosition(this._rowElements[0]) & (Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING) && (i = { node: this._rowElements[0].childNodes[0], offset: 0 }), !this._rowContainer.contains(i.node)) return;
         let n = this._rowElements.slice(-1)[0];
         if (r.node.compareDocumentPosition(n) & (Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_PRECEDING) && (r = { node: n, offset: n.textContent?.length ?? 0 }), !this._rowContainer.contains(r.node)) return;
-        let o = ({ node: u, offset: h9 }) => {
+        let o = ({ node: u, offset: h10 }) => {
           let c = u instanceof Text ? u.parentNode : u, d = parseInt(c?.getAttribute("aria-posinset"), 10) - 1;
           if (isNaN(d)) return console.warn("row is invalid. Race condition?"), null;
           let _ = this._rowColumns.get(c);
           if (!_) return console.warn("columns is null. Race condition?"), null;
-          let p = h9 < _.length ? _[h9] : _.slice(-1)[0] + 1;
+          let p = h10 < _.length ? _[h10] : _.slice(-1)[0] + 1;
           return p >= this._terminal.cols && (++d, p = 0), { row: d, column: p };
         }, l = o(i), a = o(r);
         if (!(!l || !a)) {
@@ -8151,8 +8151,8 @@ ${h9.join(`
         for (let n = 0; n < i.size; n++) {
           let o = i.get(n);
           if (o) for (let l = 0; l < o.length; l++) {
-            let a = o[l], u = a.link.range.start.y < e ? 0 : a.link.range.start.x, h9 = a.link.range.end.y > e ? this._bufferService.cols : a.link.range.end.x;
-            for (let c = u; c <= h9; c++) {
+            let a = o[l], u = a.link.range.start.y < e ? 0 : a.link.range.start.x, h10 = a.link.range.end.y > e ? this._bufferService.cols : a.link.range.end.x;
+            for (let c = u; c <= h10; c++) {
               if (r.has(c)) {
                 o.splice(l--, 1);
                 break;
@@ -8393,27 +8393,27 @@ ${h9.join(`
         function r(l) {
           let a = e._mouseService.getMouseReportCoords(l, e.screenElement);
           if (!a) return false;
-          let u, h9;
+          let u, h10;
           switch (l.overrideType || l.type) {
             case "mousemove":
-              h9 = 32, l.buttons === void 0 ? (u = 3, l.button !== void 0 && (u = l.button < 3 ? l.button : 3)) : u = l.buttons & 1 ? 0 : l.buttons & 4 ? 1 : l.buttons & 2 ? 2 : 3;
+              h10 = 32, l.buttons === void 0 ? (u = 3, l.button !== void 0 && (u = l.button < 3 ? l.button : 3)) : u = l.buttons & 1 ? 0 : l.buttons & 4 ? 1 : l.buttons & 2 ? 2 : 3;
               break;
             case "mouseup":
-              h9 = 0, u = l.button < 3 ? l.button : 3;
+              h10 = 0, u = l.button < 3 ? l.button : 3;
               break;
             case "mousedown":
-              h9 = 1, u = l.button < 3 ? l.button : 3;
+              h10 = 1, u = l.button < 3 ? l.button : 3;
               break;
             case "wheel":
               if (e._customWheelEventHandler && e._customWheelEventHandler(l) === false) return false;
               let c = l.deltaY;
               if (c === 0 || e.coreMouseService.consumeWheelEvent(l, e._renderService?.dimensions?.device?.cell?.height, e._coreBrowserService?.dpr) === 0) return false;
-              h9 = c < 0 ? 0 : 1, u = 4;
+              h10 = c < 0 ? 0 : 1, u = 4;
               break;
             default:
               return false;
           }
-          return h9 === void 0 || u === void 0 || u > 4 ? false : e.coreMouseService.triggerMouseEvent({ col: a.col, row: a.row, x: a.x, y: a.y, button: u, action: h9, ctrl: l.ctrlKey, alt: l.altKey, shift: l.shiftKey });
+          return h10 === void 0 || u === void 0 || u > 4 ? false : e.coreMouseService.triggerMouseEvent({ col: a.col, row: a.row, x: a.x, y: a.y, button: u, action: h10, ctrl: l.ctrlKey, alt: l.altKey, shift: l.shiftKey });
         }
         let n = { mouseup: null, wheel: null, mousedrag: null, mousemove: null }, o = { mouseup: (l) => (r(l), l.buttons || (this._document.removeEventListener("mouseup", n.mouseup), n.mousedrag && this._document.removeEventListener("mousemove", n.mousedrag)), this.cancel(l)), wheel: (l) => (r(l), this.cancel(l, true)), mousedrag: (l) => {
           l.buttons && r(l);
@@ -8430,8 +8430,8 @@ ${h9.join(`
             if (!this.buffer.hasScrollback) {
               if (l.deltaY === 0) return false;
               if (e.coreMouseService.consumeWheelEvent(l, e._renderService?.dimensions?.device?.cell?.height, e._coreBrowserService?.dpr) === 0) return this.cancel(l, true);
-              let h9 = b.ESC + (this.coreService.decPrivateModes.applicationCursorKeys ? "O" : "[") + (l.deltaY < 0 ? "A" : "B");
-              return this.coreService.triggerDataEvent(h9, true), this.cancel(l, true);
+              let h10 = b.ESC + (this.coreService.decPrivateModes.applicationCursorKeys ? "O" : "[") + (l.deltaY < 0 ? "A" : "B");
+              return this.coreService.triggerDataEvent(h10, true), this.cancel(l, true);
             }
           }
         }, { passive: false }));
@@ -8965,6 +8965,36 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "welcome.team";
 var PT_BR = {
+  // Provider accounts opened directly from a conversation.
+  "Connect here, then choose a model. Your current model stays selected.": "Conecte por aqui e depois escolha um modelo. O modelo atual continua selecionado.",
+  "This provider is not available in this DSH.": "Este provedor não está disponível neste DSH.",
+  "Connected. Choose a model to use it.": "Conectado. Escolha um modelo para usar esta conta.",
+  "This account is connected and turned off.": "Esta conta está conectada e desligada.",
+  "Sign in or connect an account": "Fazer login ou conectar uma conta",
+  "Keys and sign-in details are kept out of the conversation.": "As chaves e os dados de login não entram na conversa.",
+  "Back to models": "Voltar aos modelos",
+  "Done": "Concluir",
+  "The sign-in did not finish. Try again.": "O login não foi concluído. Tente novamente.",
+  "Finish signing in below or on the page opened by your CLI.": "Conclua o login abaixo ou na página aberta pela sua CLI.",
+  "Private sign-in terminal": "Terminal privado de login",
+  "Installing the latest stable {name} CLI automatically.": "Instalando automaticamente a versão estável mais recente da CLI {name}.",
+  "The CLI did not install: {error}": "A CLI não foi instalada: {error}",
+  "The CLI did not install.": "A CLI não foi instalada.",
+  "Sign-in needed": "Login necessário",
+  "Sign in below to use {name}.": "Faça login abaixo para usar {name}.",
+  "Say which coding agent or sign-in terminal.": "Informe o agente de código ou o terminal de login.",
+  "The sign-in terminal could not close. Try closing it again.": "Não foi possível fechar o terminal de login. Tente fechá-lo novamente.",
+  "This sign-in terminal has closed. Start signing in again.": "Este terminal de login foi fechado. Inicie o login novamente.",
+  "The sign-in service has stopped.": "O serviço de login foi encerrado.",
+  "This DSH cannot open a coding-agent sign-in terminal. Update the coding agents plugin.": "Este DSH não consegue abrir o terminal de login. Atualize o plugin de agentes de código.",
+  "The coding agent is still installing. Try signing in when it is ready.": "O agente de código ainda está sendo instalado. Faça login quando estiver pronto.",
+  "The coding agent could not prepare its sign-in command. Update the coding agents plugin.": "O agente de código não conseguiu preparar o comando de login. Atualize o plugin de agentes de código.",
+  "Update the coding agents plugin to sign in with this Windows CLI.": "Atualize o plugin de agentes de código para fazer login com esta CLI do Windows.",
+  "The sign-in was cancelled.": "O login foi cancelado.",
+  "The sign-in terminal could not start. Check that the coding agent is installed and try again.": "Não foi possível iniciar o terminal de login. Verifique se o agente de código está instalado e tente novamente.",
+  "The sign-in terminal is no longer accepting input.": "O terminal de login não está mais aceitando entrada.",
+  "The sign-in terminal did not accept this input. Check its status and try again.": "O terminal de login não aceitou esta entrada. Verifique o estado do terminal e tente novamente.",
+  "The sign-in terminal could not resize. Check its status and try again.": "Não foi possível redimensionar o terminal de login. Verifique o estado do terminal e tente novamente.",
   // Installs and their errors
   "The install was cancelled.": "A instalação foi cancelada.",
   "Omni's installer stopped (exit code {code}). What it printed is above.": "O instalador do Omni parou (código de saída {code}). A saída está acima.",
@@ -9350,14 +9380,17 @@ async function callRoute(route, endpoint, payload) {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ endpoint, payload: payload ?? null })
+      body: JSON.stringify({ endpoint, payload: payload ?? null }),
+      // Closing a window must still cancel its private sign-in. These tiny cancellation
+      // requests contain only an opaque terminal id or provider id, never a credential.
+      ...["acp-login-close", "signin-cancel"].includes(endpoint) ? { keepalive: true } : {}
     });
   } catch {
     throw Object.assign(new Error(t("Could not reach DSH. Check that it is still running.")), { code: "NETWORK" });
   }
   if (!response.ok) throw Object.assign(new Error(t("DSH answered HTTP {status}", { status: response.status })), { code: `HTTP_${response.status}` });
   const result = await response.json();
-  if (!result.ok) throw Object.assign(new Error(result.error?.message ?? t("Request failed")), { code: result.error?.code ?? "omni-ai/error" });
+  if (!result.ok) throw Object.assign(new Error(t(result.error?.message ?? "Request failed")), { code: result.error?.code ?? "omni-ai/error" });
   return result.value;
 }
 
@@ -9477,10 +9510,10 @@ function bodyOf(def, paint, flat = false) {
   }
 }
 var PUPIL = "#0a0f1f";
-var pupilMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h9 / 2}" width="${w}" height="${h9}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h9 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h9 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
-var blushMarkup = ([cx, cy, w, h9, tilt]) => `<ellipse cx="${cx}" cy="${cy + h9 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
-var eyeMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h9 / 2}" width="${w}" height="${h9}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h9 * 0.14}Q0 ${-h9 * 0.42} ${w * 0.62} ${h9 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var pupilMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h10 / 2}" width="${w}" height="${h10}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h10 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h10 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
+var blushMarkup = ([cx, cy, w, h10, tilt]) => `<ellipse cx="${cx}" cy="${cy + h10 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
+var eyeMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h10 / 2}" width="${w}" height="${h10}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h10 * 0.14}Q0 ${-h10 * 0.42} ${w * 0.62} ${h10 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -10392,23 +10425,49 @@ function charWidth() {
 }
 var LOG_ROWS = 7;
 function InstallLog({ text, label }) {
+  return (0, import_react4.createElement)(TerminalScreen, { text, label });
+}
+function LoginTerminal({ text, label, onData, onResize, disabled }) {
+  return (0, import_react4.createElement)(TerminalScreen, { text, label, onData, onResize, disabled, interactive: true });
+}
+function TerminalScreen({ text, label, onData, onResize, disabled = true, interactive = false }) {
   const box = (0, import_react4.useRef)(null);
   const terminal = (0, import_react4.useRef)(null);
   const written = (0, import_react4.useRef)("");
+  const input = (0, import_react4.useRef)(onData);
+  const resize = (0, import_react4.useRef)(onResize);
+  input.current = onData;
+  resize.current = onResize;
   (0, import_react4.useEffect)(() => {
     let alive = true;
     let term;
+    let observer;
     void (async () => {
       const { Terminal } = await Promise.resolve().then(() => (init_xterm(), xterm_exports));
       if (!alive || box.current === null) return;
-      term = new Terminal({ rows: LOG_ROWS, cols: columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13), fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11.5, lineHeight: 1.15, disableStdin: true, cursorBlink: false, convertEol: true, scrollback: 4e3, theme: { ...THEME, cursor: THEME.background } });
+      term = new Terminal({ rows: interactive ? 10 : LOG_ROWS, cols: columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13), fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11.5, lineHeight: 1.15, disableStdin: disabled, cursorBlink: interactive, convertEol: true, scrollback: interactive ? 500 : 4e3, theme: { ...THEME, cursor: interactive ? THEME.cursor : THEME.background } });
       term.open(box.current);
       terminal.current = term;
       written.current = "";
       write(text);
+      if (interactive) {
+        term.onData((data) => input.current?.(data));
+        const fit = () => {
+          const cols = columnsFor(box.current.clientWidth, charWidth() * 11.5 / 13);
+          term.resize(cols, 10);
+          resize.current?.(cols, 10);
+        };
+        if (typeof ResizeObserver === "function") {
+          observer = new ResizeObserver(fit);
+          observer.observe(box.current);
+        }
+        fit();
+        term.focus();
+      }
     })();
     return () => {
       alive = false;
+      observer?.disconnect();
       term?.dispose();
       terminal.current = null;
     };
@@ -10426,6 +10485,9 @@ function InstallLog({ text, label }) {
   (0, import_react4.useEffect)(() => {
     write(text);
   }, [text]);
+  (0, import_react4.useEffect)(() => {
+    if (terminal.current) terminal.current.options.disableStdin = disabled;
+  }, [disabled]);
   return (0, import_react4.createElement)(
     "div",
     { className: "oai-term oai-mini-term", role: "log", "aria-label": label },
@@ -11774,25 +11836,35 @@ var SIGN_IN_OF = { "acp-claude": "claude auth login", "acp-codex": "codex login"
 var POLL_MS2 = 2e3;
 var SETTINGS_SECTION = "acp-agents";
 function badgeOf(agent) {
+  if (agent.cli.state === "installing" || agent.cli.updating) return t("Setting up");
+  if (agent.cli.state === "failed") return t("Needs a retry");
   if (!agent.cli.found) return t("Not installed");
   if (!agent.on) return t("Off");
   const state = agent.connector.state;
   if (state === "installing") return t("Setting up");
   if (state === "failed") return t("Needs a retry");
-  if (state === "ready") return agent.restartNeeded ? t("Restart needed") : t("Ready");
+  if (state === "ready") return agent.restartNeeded ? t("Restart needed") : agent.signedIn === false ? t("Sign-in needed") : t("Ready");
   return null;
 }
-function agentLines(agent) {
+function agentLines(agent, { inlineLogin = false } = {}) {
   const name = agent.name;
   const cli = CLI_OF[agent.id] ?? agent.key;
   const lines = [];
+  if (agent.cli.state === "installing" || agent.cli.updating) {
+    lines.push({ tone: "wait", text: t("Installing the latest stable {name} CLI automatically.", { name }) });
+    if (!agent.cli.found) return lines;
+  }
+  if (agent.cli.state === "failed") {
+    lines.push({ tone: "bad", text: agent.cli.error ? t("The CLI did not install: {error}", { error: redactText(agent.cli.error) }) : t("The CLI did not install."), action: "retry", ...agent.cli.diagnostic ? { details: { diagnostic: redactText(agent.cli.diagnostic), ...agent.cli.logPath ? { logPath: agent.cli.logPath } : {} } } : {} });
+    if (!agent.cli.found) return lines;
+  }
   if (!agent.cli.found) {
     lines.push({ tone: "muted", text: t("The {cli} CLI is not on this computer. Install it, sign in, then check again.", { cli }), ...agent.cli.installUrl ? { link: { href: agent.cli.installUrl, text: t("Install {name}", { name }) } } : {}, action: "check" });
     return lines;
   }
   lines.push({ tone: "ok", text: t("Found the {cli} CLI on this computer.", { cli }) });
   if (agent.signedIn === true) lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
-  if (agent.signedIn === false) lines.push({ tone: "bad", text: t("Not signed in. Run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
+  if (agent.signedIn === false) lines.push({ tone: "bad", text: inlineLogin ? t("Sign in below to use {name}.", { name }) : t("Not signed in. Run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
   if (!agent.on) {
     lines.push({ tone: "muted", text: t("Off. Turn it on to use {name} as a model in DSH.", { name }) });
     return lines;
@@ -11812,7 +11884,7 @@ function agentLines(agent) {
   }
   if (state === "ready") {
     lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
-    lines.push(agent.restartNeeded ? { tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) } : { tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
+    if (agent.restartNeeded || agent.signedIn !== false) lines.push(agent.restartNeeded ? { tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) } : { tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
   }
   return lines;
 }
@@ -11822,8 +11894,11 @@ function useAcp(request2 = call) {
   const [problems, setProblems] = (0, import_react7.useState)({});
   const [wanted, setWanted] = (0, import_react7.useState)({});
   const live = (0, import_react7.useRef)(true);
-  (0, import_react7.useEffect)(() => () => {
-    live.current = false;
+  (0, import_react7.useEffect)(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
   }, []);
   const show = (0, import_react7.useCallback)((next) => {
     if (!live.current) return;
@@ -11840,7 +11915,7 @@ function useAcp(request2 = call) {
   (0, import_react7.useEffect)(() => {
     void load(true);
   }, [load]);
-  const settling = view?.agents?.some((agent) => agent.on && agent.cli.found && agent.connector.state === "installing" || wanted[agent.id] !== void 0 && wanted[agent.id] !== agent.on) === true;
+  const settling = view?.agents?.some((agent) => agent.cli.state === "installing" || agent.cli.updating || agent.on && agent.cli.found && agent.connector.state === "installing" || wanted[agent.id] !== void 0 && wanted[agent.id] !== agent.on) === true;
   (0, import_react7.useEffect)(() => {
     if (!settling) return void 0;
     const timer = setInterval(() => {
@@ -11899,11 +11974,11 @@ function Line({ line, agent, acp, busy }) {
     ) : null
   );
 }
-function AcpAgentRow({ agent, acp }) {
+function AcpAgentRow({ agent, acp, inlineLogin = false }) {
   const on2 = acp.isOn(agent);
   const busy = acp.busy !== null;
   const badge = badgeOf({ ...agent, on: on2 });
-  const lines = agentLines(agent);
+  const lines = agentLines(agent, { inlineLogin });
   return (0, import_react7.createElement)(
     "div",
     { className: `oai-ai oai-acp${on2 ? " oai-ai-on" : ""}`, "data-acp": agent.id, "data-state": agent.cli.found ? agent.on ? agent.connector.state : "off" : "no-cli" },
@@ -12064,7 +12139,7 @@ function KeyForm({ row, provider, onSaved }) {
     problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
-function SignIn({ row, provider, onSaved, onCancel }) {
+function SignIn({ row, provider, onSaved, onCancel, cancelOnUnmount = false }) {
   const [attempt, setAttempt] = (0, import_react8.useState)(null);
   const [problem, setProblem] = (0, import_react8.useState)(null);
   const [answer, setAnswer] = (0, import_react8.useState)("");
@@ -12075,7 +12150,11 @@ function SignIn({ row, provider, onSaved, onCancel }) {
     const poll = async (first) => {
       try {
         const next = await call(first ? "signin-start" : "signin-status", { provider });
-        if (!live) return;
+        if (!live) {
+          if (cancelOnUnmount) void call("signin-cancel", { provider }).catch(() => {
+          });
+          return;
+        }
         setAttempt(next);
         if (next.status === "authorized") return onSaved();
         if (next.status === "running") timer = setTimeout(() => poll(false), 1e3);
@@ -12084,9 +12163,16 @@ function SignIn({ row, provider, onSaved, onCancel }) {
       }
     };
     poll(true);
-    return () => {
+    const leave = () => {
       live = false;
       clearTimeout(timer);
+      if (cancelOnUnmount) void call("signin-cancel", { provider }).catch(() => {
+      });
+    };
+    if (cancelOnUnmount) globalThis.addEventListener?.("pagehide", leave);
+    return () => {
+      leave();
+      if (cancelOnUnmount) globalThis.removeEventListener?.("pagehide", leave);
     };
   }, [provider]);
   const reply = async (value) => {
@@ -12177,9 +12263,9 @@ function CliproxyForm({ onSaved }) {
     problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
-function SignInOrKey({ row, provider, onSaved, onClose }) {
+function SignInOrKey({ row, provider, onSaved, onClose, cancelOnUnmount }) {
   const [way, setWay] = (0, import_react8.useState)(null);
-  if (way === "signin") return (0, import_react8.createElement)(SignIn, { row, provider, onSaved, onCancel: onClose });
+  if (way === "signin") return (0, import_react8.createElement)(SignIn, { row, provider, onSaved, onCancel: onClose, cancelOnUnmount });
   if (way === "key") return (0, import_react8.createElement)(KeyForm, { row, provider, onSaved });
   return (0, import_react8.createElement)(
     "div",
@@ -12188,11 +12274,11 @@ function SignInOrKey({ row, provider, onSaved, onClose }) {
     (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use")))
   );
 }
-function Setup({ row, onSaved, onClose }) {
+function Setup({ row, onSaved, onClose, cancelOnUnmount = false }) {
   if (row.kind === "key") return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
   if (row.kind === "signin") {
-    if (row.signIn && row.keyUrl) return (0, import_react8.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
-    if (row.signIn) return (0, import_react8.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose });
+    if (row.signIn && row.keyUrl) return (0, import_react8.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose, cancelOnUnmount });
+    if (row.signIn) return (0, import_react8.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose, cancelOnUnmount });
     if (row.keyUrl) return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
     return (0, import_react8.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
   }
@@ -12403,6 +12489,209 @@ function installVeil({ doc = globalThis.document, scope = globalThis, request: r
   };
 }
 
+// src/client/model-accounts.js
+var import_react9 = require("react");
+var ACCOUNT_SLOT = "conversation.model.accounts";
+var COMPANY_OF = { anthropic: "Anthropic", "acp-claude": "Anthropic", openai: "OpenAI", "openai-codex": "OpenAI", "acp-codex": "OpenAI", deepseek: "DeepSeek", "kimi-coding": "Moonshot", moonshotai: "Moonshot", "github-copilot": "GitHub", xai: "xAI" };
+var CLI_IDS = ["acp-claude", "acp-codex"];
+var accountRows = (reply) => [...reply?.rows ?? [], ...subscriptionRows(reply?.subscriptions)];
+var rowProvider = (row) => row.kind === "subscription" ? row.tile.provider : providerOf(row);
+function providerAccounts(ais, acp) {
+  return [
+    ...accountRows(ais).map((row) => ({ provider: rowProvider(row), name: row.name, company: COMPANY_OF[rowProvider(row)] ?? row.name, ready: row.ready === true && row.on === true, kind: row.kind })),
+    ...(acp?.available ? acp.agents ?? [] : []).map((agent) => ({ provider: agent.id, name: agent.id === "acp-claude" ? "Claude Code" : "Codex", company: COMPANY_OF[agent.id] ?? agent.name, kind: "cli", ready: agent.on === true && agent.signedIn === true && agent.connector.state === "ready" && !agent.restartNeeded }))
+  ];
+}
+async function listProviderAccounts(request2 = call) {
+  const [ais, acp] = await Promise.all([request2("ais"), request2("acp", { refresh: true }).catch(() => null)]);
+  return providerAccounts(ais, acp);
+}
+function installModelAccounts(ctx) {
+  return ctx.slots.inject(ACCOUNT_SLOT, () => ctx.slots.register({
+    name: ACCOUNT_SLOT,
+    id: "automagik-welcome",
+    order: 0
+  }, ProviderAccountSetup)) ?? (() => {
+  });
+}
+function ProviderAccountSetup({ provider, onConnected, onClose }) {
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "oai-account oai-card", "data-provider": provider },
+    (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Connect here, then choose a model. Your current model stays selected.")),
+    CLI_IDS.includes(provider) ? (0, import_react9.createElement)(CliAccount, { key: provider, provider, onConnected, onClose }) : (0, import_react9.createElement)(ApiAccount, { key: provider, provider, onConnected, onClose })
+  );
+}
+ProviderAccountSetup.accounts = Object.freeze({
+  providers: listProviderAccounts,
+  matches: (provider) => CLI_IDS.includes(provider) || Object.values(PROVIDER_OF).includes(provider) || ["cliproxy", "ollama", "antigravity", "glm", "cursor", "kiro", "qwen", "ernie", "spark", "jetbrains", "perplexity", "replit", "cody"].includes(provider)
+});
+function ApiAccount({ provider, onConnected, onClose, request: request2 = call }) {
+  const [row, setRow] = (0, import_react9.useState)(null);
+  const [problem, setProblem] = (0, import_react9.useState)(null);
+  const [editing, setEditing] = (0, import_react9.useState)(false);
+  const [busy, setBusy] = (0, import_react9.useState)(false);
+  const load = (0, import_react9.useCallback)(async () => {
+    const reply = await request2("ais");
+    return accountRows(reply).find((item) => rowProvider(item) === provider);
+  }, [provider, request2]);
+  (0, import_react9.useEffect)(() => {
+    let live = true;
+    void load().then((next) => {
+      if (!live) return;
+      if (next) setRow(next);
+      else setProblem(t("This provider is not available in this DSH."));
+    }).catch((error) => {
+      if (live) setProblem(error.message);
+    });
+    return () => {
+      live = false;
+    };
+  }, [load]);
+  const saved = async () => {
+    setEditing(false);
+    setBusy(true);
+    try {
+      setRow(await load());
+      await onConnected?.();
+    } catch (error) {
+      setProblem(error.message);
+    }
+    setBusy(false);
+  };
+  const enable = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await request2(row.kind === "subscription" ? "ai-subscription" : "ai-switch", row.kind === "subscription" ? { provider: row.tile.provider, on: true } : { id: row.id, on: true });
+      await saved();
+    } catch (error) {
+      setProblem(error.message);
+      setBusy(false);
+    }
+  };
+  const showForm = row && (editing || !row.ready && row.kind !== "signin" && row.kind !== "subscription");
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "oai-account-body" },
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    !row && !problem ? (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Looking at what this computer has…")) : null,
+    row ? (0, import_react9.createElement)("strong", null, row.name) : null,
+    showForm ? (0, import_react9.createElement)(Setup, { row, onSaved: saved, onClose: () => setEditing(false), cancelOnUnmount: true }) : null,
+    row && !showForm ? (0, import_react9.createElement)(
+      "div",
+      { className: "oai-account-actions" },
+      row.ready ? (0, import_react9.createElement)("p", { className: "oai-muted", role: "status" }, row.on ? t("Connected. Choose a model to use it.") : t("This account is connected and turned off.")) : null,
+      row.ready && !row.on ? (0, import_react9.createElement)("button", { type: "button", className: "oai-primary", disabled: busy, onClick: enable }, t("Turn on")) : null,
+      (0, import_react9.createElement)("button", { type: "button", className: "oai-ghost", disabled: busy, onClick: () => setEditing(true) }, row.kind === "key" || row.kind === "signin" && !row.signIn ? t("Use an API key") : t("Sign in or connect an account"))
+    ) : null,
+    (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Keys and sign-in details are kept out of the conversation.")),
+    (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Back to models"))
+  );
+}
+function CliAccount({ provider, onConnected, onClose }) {
+  const acp = useAcp();
+  const [login, setLogin] = (0, import_react9.useState)(false);
+  const agent = acp.view?.agents?.find((row) => row.id === provider);
+  const connected = async () => {
+    await acp.check(agent);
+    await onConnected?.();
+  };
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "oai-account-body" },
+    agent ? (0, import_react9.createElement)(AcpAgentRow, { agent, inlineLogin: true, acp: { ...acp, check: async (row) => {
+      await acp.check(row);
+      await onConnected?.();
+    } } }) : (0, import_react9.createElement)("p", { className: "oai-muted" }, acp.view === null ? t("Looking at what this computer has…") : t("The ACP agents plugin is not running in this DSH.")),
+    login ? (0, import_react9.createElement)(CliLogin, { provider, onConnected: connected, onClose: () => setLogin(false) }) : agent?.cli.found ? (0, import_react9.createElement)("button", { type: "button", className: "oai-primary", onClick: () => setLogin(true) }, t("Sign in to {name}", { name: agent.name })) : null,
+    (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Back to models"))
+  );
+}
+function CliLogin({ provider, onConnected, onClose, request: request2 = call }) {
+  const [attempt, setAttempt] = (0, import_react9.useState)(null);
+  const [problem, setProblem] = (0, import_react9.useState)(null);
+  const [complete, setComplete] = (0, import_react9.useState)(false);
+  const live = (0, import_react9.useRef)(false);
+  const terminal = (0, import_react9.useRef)(null);
+  const connected = (0, import_react9.useRef)(onConnected);
+  connected.current = onConnected;
+  (0, import_react9.useEffect)(() => {
+    live.current = true;
+    let timer;
+    const close = () => {
+      const id = terminal.current;
+      terminal.current = null;
+      if (id) void request2("acp-login-close", { terminal: id }).catch(() => {
+      });
+    };
+    const show = async (next) => {
+      if (!live.current) {
+        if (next.terminal) void request2("acp-login-close", { terminal: next.terminal }).catch(() => {
+        });
+        return;
+      }
+      terminal.current = next.terminal;
+      setAttempt(next);
+      if (next.status === "running") timer = setTimeout(poll, 700);
+      else {
+        close();
+        const status = await request2("acp", { refresh: true });
+        if (!live.current) return;
+        if (status.agents?.find((row) => row.id === provider)?.signedIn === true) {
+          setComplete(true);
+          await connected.current?.();
+        } else setProblem(t("The sign-in did not finish. Try again."));
+      }
+    };
+    const fail = (error) => {
+      if (live.current) setProblem(error.message);
+    };
+    const poll = () => void request2("acp-login-read", { terminal: terminal.current }).then(show).catch(fail);
+    void request2("acp-login-start", { id: provider, cols: 72, rows: 10 }).then(show).catch(fail);
+    const leave = () => {
+      live.current = false;
+      clearTimeout(timer);
+      close();
+    };
+    globalThis.addEventListener?.("pagehide", leave);
+    return () => {
+      leave();
+      globalThis.removeEventListener?.("pagehide", leave);
+    };
+  }, [provider, request2]);
+  const write = async (data) => {
+    if (!terminal.current || attempt?.status !== "running") return;
+    try {
+      await request2("acp-login-write", { terminal: terminal.current, data });
+    } catch (error) {
+      if (live.current) setProblem(error.message);
+    }
+  };
+  const resize = (cols, rows) => {
+    if (terminal.current && attempt?.status === "running") void request2("acp-login-resize", { terminal: terminal.current, cols, rows }).catch(() => {
+    });
+  };
+  return (0, import_react9.createElement)(
+    "div",
+    { className: "oai-account-login" },
+    (0, import_react9.createElement)("p", { className: "oai-muted", role: "status" }, complete ? t("Connected. Choose a model to use it.") : t("Finish signing in below or on the page opened by your CLI.")),
+    attempt ? (0, import_react9.createElement)(LoginTerminal, { text: attempt.text, label: t("Private sign-in terminal"), onData: write, onResize: resize, disabled: attempt.status !== "running" || Boolean(problem) }) : null,
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, complete ? t("Done") : t("Cancel"))
+  );
+}
+var MODEL_ACCOUNTS_CSS = `
+.oai-account.oai-card{width:100%;min-width:0;max-width:none;margin:0;padding:16px;box-shadow:none;border-radius:12px;font-size:13px}
+.oai-account-body,.oai-account-actions,.oai-account-login{display:grid;gap:12px;min-width:0}
+.oai-account-body{margin-top:14px}
+.oai-account .oai-acp-lines{padding-left:14px}
+.oai-account .oai-field{flex-wrap:wrap}
+.oai-account .oai-field input{min-width:0;flex:1 1 180px}
+.oai-account .oai-account-actions button{margin:0}
+.oai-account .oai-term{min-width:0;max-width:100%}
+`;
+
 // src/client/index.js
 var STEPS = [
   { id: "omni-companion", order: -300, component: CompanionStep },
@@ -12413,7 +12702,7 @@ var inject = ["slots", "locale"];
 function installStyles() {
   const style = document.createElement("style");
   style.dataset.omniAi = "";
-  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS + ACP_CSS;
+  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS + ACP_CSS + MODEL_ACCOUNTS_CSS;
   document.head.append(style);
   return () => style.remove();
 }
@@ -12426,6 +12715,7 @@ function apply(ctx) {
     ctx.slots.inject("settings.onboarding", () => ctx.slots.register({ name: "settings.onboarding", id: step.id, order: step.order }, step.component));
   }
   ctx.effect(() => installAcpSection(ctx), "omni-ai: Claude Code and Codex in Settings");
+  ctx.effect(() => installModelAccounts(ctx), "omni-ai: accounts in the conversation");
 }
 /*! Bundled license information:
 

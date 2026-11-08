@@ -4,6 +4,7 @@ import { createProviderActions, saveRoute, unsetRoute } from './providers.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
 import { createAcpActions } from './acp.js'
+import { createAcpLoginActions } from './acp-login.js'
 import { hostOf } from './host.js'
 import { preloadOf } from './preload.js'
 import { UNFOLD_BOT } from './companion.js'
@@ -34,6 +35,9 @@ import { UNFOLD_BOT } from './companion.js'
 //   acp, acp-switch, acp-retry
 //                      Claude Code and Codex through @automagik/acp-dsh: its acpAgents
 //                      service's status, and its claude/codex settings (src/host/acp.js)
+//   acp-login-start/read/write/resize/close
+//                      a private, user-operated terminal for a CLI's own sign-in, never a
+//                      model tool or conversation message (src/host/acp-login.js)
 //
 // The key never enters settings, a reply or a log line: the route names it by the
 // env-shaped reference OMNI_AI_CLIPROXY_API_KEY, which DSH resolves per request.
@@ -218,6 +222,8 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
 }
 
 export function install(ctx, deps = {}) {
+  const login = createAcpLoginActions(ctx, { env: deps.env ?? process.env, ...deps.acpLogin })
+  ctx.effect(() => () => login.dispose(), 'omni-ai: private coding-agent sign-ins')
   const ai = createAiActions(ctx, { fetch: deps.fetch, saveRoute: (provider, patch) => saveRoute(ctx, provider, patch), unsetRoute: provider => unsetRoute(ctx, provider) })
   const { anyOn, ...aiEndpoints } = ai
   const { team, omniProjectOf, assignModels, joinOmni, ...companion } = createCompanionActions(ctx, { env: deps.env ?? process.env, ...deps.companion })
@@ -236,7 +242,7 @@ export function install(ctx, deps = {}) {
       }), 'omni-ai: Add Omni')
     })
   }
-  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...createAcpActions(ctx), ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}), ...(deps.release ? { release: deps.release } : {}), ...(deps.offersUnfold !== undefined ? { offersUnfold: deps.offersUnfold } : {}) }) }
+  const actions = { ...createActions(ctx, { ...deps, anyOn }), ...createProviderActions(ctx), ...aiEndpoints, ...createAcpActions(ctx), ...login.actions, ...companion, ...createBotTypeActions(ctx, { team, omniProjectOf, env: deps.env ?? process.env, ...(deps.checkGit ? { checkGit: deps.checkGit } : {}), ...(deps.genieSkills ? { genieSkills: deps.genieSkills } : {}), ...(deps.genieCli ? { genieCli: deps.genieCli } : {}), ...(deps.release ? { release: deps.release } : {}), ...(deps.offersUnfold !== undefined ? { offersUnfold: deps.offersUnfold } : {}) }) }
   // Connect AI finished with an AI on: the companion, the Omni Bot and the Genie Bot get their model, and
   // their held greetings go out. The step waits for that a little (ASSIGN_HOLD_MS), so the
   // chat opens on the greeting rather than on the model card; a provider that registers
