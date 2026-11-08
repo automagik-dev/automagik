@@ -4,7 +4,7 @@
 // tree; `automagik-herdr proxy approve --project <dir>` is its only writer.
 //
 // Layout: <data root>/approved/<key>.json, where the data root is
-// $XDG_DATA_HOME/automagik-herdr (default ~/.local/share/automagik-herdr) and the key is the
+// $XDG_DATA_HOME/automagik-herdr under the XDG data home. The key is the
 // first 32 hex characters of sha256 over the project's canonical realpath. A record is
 // { v, project, roster, sha256, approvedAt, approvedBy }: `roster` is the exact bytes of the
 // approved .herdr/bots.json and `sha256` their digest. Mode 0600, folder 0700.

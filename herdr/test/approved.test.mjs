@@ -159,8 +159,11 @@ test("G1: a corrupt, foreign or 0644 record is refused; approve replaces a corru
 
 test("G1 (d): proxy approve refuses writable data roots and writes nothing", (t) => {
   const s = scene(t);
-  for (const [name, parent] of [["project", s.project], ["app home", s.app],
-    ["temp folder", s.paneTmp], ["runtime folder", s.runtime], ["literal temp folder", tmpdir()]]) {
+  const literalTmp = join(realpathSync("/tmp"), `am-approve-literal-${process.pid}-${Date.now()}`);
+  for (const [name, parent] of [
+    ["project", s.project], ["app home", s.app], ["temp folder", s.paneTmp],
+    ["runtime folder", s.runtime], ["literal temp folder", literalTmp],
+  ]) {
     const data = join(parent, `c1-refused-${process.pid}`);
     const r = spawnSync(process.execPath, [CLI, "proxy", "approve", "--project", s.project], {
       cwd: s.project, env: { ...s.env, XDG_DATA_HOME: data }, encoding: "utf8",
