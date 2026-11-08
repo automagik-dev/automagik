@@ -7,7 +7,9 @@
 //
 // A moved Bot keeps the model and thinking level it had in `acpMoved`. With `dshTools` off, or
 // the route gone, it moves back to exactly that. A Bot the person changed since keeps their
-// pick: the record is dropped, never applied over it.
+// pick: the record is dropped, never applied over it. The off flip is heard live through
+// acp-dsh's `acp-dsh/dsh-tools-changed`: DSH's `loader/volatile-update` reaches only the plugin
+// whose config changed, so the team cannot watch acp-dsh's setting there.
 //
 // `acpAgents.bridge()` runs a live probe on this machine: a fresh per-session credential, the
 // bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
@@ -246,8 +248,9 @@ export function install(rt) {
         target,
       }
       bot.model = target
-      delete bot.appliedModel
-      delete bot.appliedEffort
+      // The applied record is the target's once the re-apply below writes it: it is not
+      // dropped here, so the Bot's level is never lost between the move and the target
+      // answering. `applyModel` maps it to the agent's own `thought_level`.
       moved.push(bot)
       changed = true
     }
@@ -305,9 +308,15 @@ export function install(rt) {
   }
 
   // At start, and again when the ACP route or its settings change: an adapter installed
-  // later, or dshTools turned on, still moves a team that has not moved.
+  // later, or dshTools turned on or off live, still moves or reverses the team. The last
+  // event is acp-dsh's own, because DSH keeps `loader/volatile-update` inside the plugin
+  // whose config changed.
   void rt.load().then(migrate)
-  for (const event of ['llm/adapters-updated', 'settings/document-updated', 'loader/volatile-update']) {
-    ctx.on?.(event, () => { void migrate() })
-  }
+  const events = [
+    'llm/adapters-updated',
+    'settings/document-updated',
+    'loader/volatile-update',
+    'acp-dsh/dsh-tools-changed',
+  ]
+  for (const event of events) ctx.on?.(event, () => { void migrate() })
 }

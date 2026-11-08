@@ -57,7 +57,7 @@ const readyAcp = (models = ['default', 'opus', 'sonnet', 'haiku']) => ({
 
 async function start(team, {
   acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'],
-  acpModels = undefined, services = {}, resolveModelInfo = undefined,
+  acpModels = undefined, extraModels = {}, services = {}, resolveModelInfo = undefined,
 } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-acp-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
@@ -68,6 +68,7 @@ async function start(team, {
     anthropic: [{ id: 'claude-opus-5-5' }, { id: 'claude-sonnet-4-5' }],
     deepseek: [{ id: 'deepseek-v4-flash' }],
     'acp-claude': (acpModels ?? acp.models ?? []).map(id => ({ id })),
+    ...extraModels,
   }
   Object.assign(ctx, {
     llm: {
@@ -205,6 +206,111 @@ test('turning dshTools off restores a moved Bot\'s model and thinking level', as
   assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
   assert.equal(state.bots.w2.effort, undefined)
   assert.equal(state.bots.w2.acpMoved, undefined)
+})
+
+test('a live dshTools flip moves the Bots back, and on again forward', async (t) => {
+  let on = true
+  const acp = { ...readyAcp(), bridge: () => ({ on, probesPass: true }) }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  // DSH delivers loader/volatile-update only to the plugin whose config changed, so the Bot
+  // team can never see acp-dsh's flip there. acp-dsh announces it on the plugin context; the
+  // team reverses on that event, live, with no restart.
+  on = false
+  host.ctx.emit('acp-dsh/dsh-tools-changed', { on: false })
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the live flip moved the Bot back', ms: 1500,
+  })
+  let state = host.saved()
+  assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+  // The other direction: on again, the team moves once more, as at the next start.
+  on = true
+  host.ctx.emit('acp-dsh/dsh-tools-changed', { on: true })
+  await until(() => host.saved().bots.m1.model === 'acp-claude/opus', {
+    label: 'the live flip moved the Bot on again', ms: 1500,
+  })
+  state = host.saved()
+  assert.equal(state.claudeAcpMoved, true)
+  assert.deepEqual(state.bots.m1.acpMoved, {
+    from: { model: 'anthropic/claude-opus-5-5', effort: 'high' },
+    target: 'acp-claude/opus',
+  })
+})
+
+test('a level the agent cannot express stays on the Bot, and no level is sent', async (t) => {
+  const base = seed()
+  const host = await start(seed({
+    m1: { ...base.bots.m1, effort: 'minimal', appliedEffort: 'minimal' },
+  }), {
+    resolveModelInfo: async provider => (provider === 'acp-claude'
+      ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }
+      : {}),
+  })
+  t.after(host.stop)
+  await host.moved()
+  // The save that moves the Bot comes before the Session selection: wait for the apply, or a
+  // loaded runner may read the seed's appliedEffort from before it.
+  await until(() => host.saved().bots.m1.appliedModel === 'acp-claude/opus', {
+    label: 'the target model was applied',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'acp-claude/opus')
+  // The Bot keeps the level it asked for; the agent runs on its own, and the record keeps
+  // the level the reverse reads.
+  assert.equal(state.bots.m1.effort, 'minimal')
+  assert.equal(state.bots.m1.appliedEffort, undefined)
+  assert.deepEqual(state.bots.m1.acpMoved.from, {
+    model: 'anthropic/claude-opus-5-5', effort: 'minimal',
+  })
+  const applied = host.selected.find(request =>
+    request.sessionId === 'm1' && request.provider === 'acp-claude')
+  assert.equal(applied.reasoningEffort, undefined)
+})
+
+test('picking another route by hand carries the Bot\'s level both ways', async (t) => {
+  const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const host = await start(seed(), {
+    providers: ['anthropic', 'deepseek', 'acp-claude', 'acp-codex'],
+    extraModels: { 'acp-codex': [{ id: 'default' }] },
+    resolveModelInfo: async provider => (['anthropic', 'acp-claude', 'acp-codex'].includes(provider)
+      ? { reasoning: levels }
+      : {}),
+  })
+  t.after(host.stop)
+  await host.moved()
+  await until(() => host.saved().bots.m1.appliedModel === 'acp-claude/opus', {
+    label: 'the target model was applied on the move',
+  })
+  const request = provider => host.selected.filter(entry =>
+    entry.sessionId === 'm1' && entry.provider === provider).at(-1)
+  // The move kept the level on the way in.
+  assert.equal(request('acp-claude').reasoningEffort, 'high')
+  // The person moves the Bot back to its old route: the level crosses with the model.
+  assert.equal((await host.call('update-bot', {
+    id: 'm1', model: 'anthropic/claude-opus-5-5',
+  })).ok, true)
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the Bot moved back by hand',
+  })
+  assert.equal(request('anthropic').reasoningEffort, 'high')
+  // The move record is dropped on the next pass: the person's model stays theirs, never
+  // pulled back onto the agent by the one-time move.
+  host.ctx.emit('llm/adapters-updated')
+  await until(() => host.saved().bots.m1.acpMoved === undefined, {
+    label: 'the stale move record was dropped',
+  })
+  assert.equal(host.saved().bots.m1.model, 'anthropic/claude-opus-5-5')
+  // Onto Codex, where it offers the same level: the level crosses there too.
+  assert.equal((await host.call('update-bot', { id: 'm1', model: 'acp-codex/default' })).ok, true)
+  await until(() => host.saved().bots.m1.appliedModel === 'acp-codex/default', {
+    label: 'the Bot moved to Codex by hand',
+  })
+  assert.equal(request('acp-codex').reasoningEffort, 'high')
 })
 
 test('a Bot the person changed since the move stays as they set it', async (t) => {

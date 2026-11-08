@@ -215,6 +215,34 @@ test('a target level that only shares the name is carried as its own id', async 
   assert.equal(bot.appliedEffort, 'max')
 })
 
+// The ACP agents' own `thought_level` options: Claude Code offers low, medium, high, xhigh
+// and max (per model); Codex offers minimal, low, medium, high and xhigh (per model). The ids
+// match pi-ai's, so the move keeps the level by id; off/minimal/max where the target does not
+// list it stay on the Bot and the target runs on its own.
+test('an agent effort maps by its own id; a level it does not list stays on the Bot', async () => {
+  const levels = ids => ({ reasoning: { efforts: ids.map(id => ({ id, name: id })) } })
+  const { rt } = bench({
+    providers: { 'acp-claude': ['opus'], 'acp-codex': ['default'] },
+    reasoning: {
+      'acp-claude/opus': levels(['low', 'medium', 'high', 'xhigh', 'max']),
+      'acp-codex/default': levels(['minimal', 'low', 'medium', 'high', 'xhigh']),
+    },
+  })
+  const desired = (ref, effort) => rt.desiredEffort({ effort }, ref)
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    assert.equal(await desired('acp-claude/opus', effort), effort)
+  }
+  for (const effort of ['off', 'minimal']) {
+    assert.equal(await desired('acp-claude/opus', effort), undefined)
+  }
+  for (const effort of ['minimal', 'low', 'medium', 'high', 'xhigh']) {
+    assert.equal(await desired('acp-codex/default', effort), effort)
+  }
+  for (const effort of ['off', 'max']) {
+    assert.equal(await desired('acp-codex/default', effort), undefined)
+  }
+})
+
 test('resolveEffort takes an id or a name, and refuses what the model has not', async () => {
   const { rt } = bench({ reasoning: {
     'deepseek/v4-flash': { reasoning: { efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }] } },
