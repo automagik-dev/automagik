@@ -61,8 +61,8 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   reasoning effort the Session ran on crosses with it, both ways, when the target model offers
   that level (matched by id, else by name), replacing the target default DSH records on a model
   change; an effort DSH itself defaulted is not carried. The agents' levels are their own
-  `thought_level` ids: Claude Code lists low, medium, high, xhigh and max, and Codex lists
-  minimal, low, medium, high and xhigh, per model. A target with no reasoning levels, without
+  `thought_level` ids: Claude Code lists low, medium, high, xhigh and max, and Codex lists low,
+  medium, high, xhigh, max and ultra, per model. A target with no reasoning levels, without
   that one, or whose levels cannot be read writes a notice row saying so and runs on its own.
   A switch back before the agent has answered drops the agent's chosen level; the native
   target's own default applies.

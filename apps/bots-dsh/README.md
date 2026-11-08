@@ -161,7 +161,8 @@ nothing, and after signing in the Bots move on the next pass (a settings or adap
 next DSH start, with no separate action. The move records the model and thinking level the Bot had
 and carries that level onto the agent's own effort setting where the agent offers it, by the same
 id or a unique display name: Claude Code's levels are low, medium, high, xhigh and max, and
-Codex's are minimal, low, medium, high and xhigh, per model. With `dshTools` off nothing moves onto
+Codex's are low, medium, high, xhigh, max and ultra, per model (ultra has no pi-ai counterpart,
+so no Bot level maps to it). With `dshTools` off nothing moves onto
 the route, as on 2026-11-03: a Bot already moved goes back to exactly that model and level, and so
 does one whose route disappears (the plugin, the agent setting or its CLI). The off flip is heard
 live through `acp-dsh/dsh-tools-changed`, not only at the next start, and turning it on again moves

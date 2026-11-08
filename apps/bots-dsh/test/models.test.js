@@ -215,17 +215,17 @@ test('a target level that only shares the name is carried as its own id', async 
   assert.equal(bot.appliedEffort, 'max')
 })
 
-// The ACP agents' own `thought_level` options: Claude Code offers low, medium, high, xhigh
-// and max (per model); Codex offers minimal, low, medium, high and xhigh (per model). The ids
-// match pi-ai's, so the move keeps the level by id; off/minimal/max where the target does not
-// list it stay on the Bot and the target runs on its own.
+// The ACP agents' own `thought_level` options, as their live catalogs report them: Claude Code
+// offers low, medium, high, xhigh and max, and Codex offers low, medium, high, xhigh, max and
+// ultra (all per model; ultra has no pi-ai counterpart). The ids match pi-ai's, so the move
+// keeps the level by id; off/minimal stay on the Bot and the target runs on its own.
 test('an agent effort maps by its own id; a level it does not list stays on the Bot', async () => {
   const levels = ids => ({ reasoning: { efforts: ids.map(id => ({ id, name: id })) } })
   const { rt } = bench({
     providers: { 'acp-claude': ['opus'], 'acp-codex': ['default'] },
     reasoning: {
       'acp-claude/opus': levels(['low', 'medium', 'high', 'xhigh', 'max']),
-      'acp-codex/default': levels(['minimal', 'low', 'medium', 'high', 'xhigh']),
+      'acp-codex/default': levels(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
     },
   })
   const desired = (ref, effort) => rt.desiredEffort({ effort }, ref)
@@ -235,10 +235,10 @@ test('an agent effort maps by its own id; a level it does not list stays on the 
   for (const effort of ['off', 'minimal']) {
     assert.equal(await desired('acp-claude/opus', effort), undefined)
   }
-  for (const effort of ['minimal', 'low', 'medium', 'high', 'xhigh']) {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
     assert.equal(await desired('acp-codex/default', effort), effort)
   }
-  for (const effort of ['off', 'max']) {
+  for (const effort of ['off', 'minimal']) {
     assert.equal(await desired('acp-codex/default', effort), undefined)
   }
 })
