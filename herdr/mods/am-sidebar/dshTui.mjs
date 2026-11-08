@@ -172,14 +172,33 @@ const insidePath = (child, parent) => {
  * the pane temp folder and the runtime folder: a bot that can write it could replace the helper
  * or runner that the core starts outside the sandbox.
  */
-export function unsafePathProblem(path, label, { project = process.cwd(), env = process.env, appHome = appHomeFor(env) } = {}) {
-  const roots = [
+export function defaultForbiddenRoots(env = process.env, project = process.cwd(), appHome = appHomeFor(env)) {
+  return [
     ["the project", project],
     ["the app home", appHome],
     ["the temp folder", env.TMPDIR || tmpdir()],
     ["the literal temp folder", "/tmp"],
     ...(env.XDG_RUNTIME_DIR ? [["the runtime folder", env.XDG_RUNTIME_DIR]] : []),
   ];
+}
+
+/** Tests run under tmpdir; only an explicit AM_HC_TEST env may replace the root list. */
+function forbiddenRootsFor({ env = process.env, project = process.cwd(), appHome = appHomeFor(env) } = {}) {
+  if (env.AM_HC_TEST === "1" && env.AM_HC_TEST_FORBIDDEN_ROOTS) {
+    try {
+      const roots = JSON.parse(env.AM_HC_TEST_FORBIDDEN_ROOTS);
+      if (Array.isArray(roots) && roots.every((r) => Array.isArray(r) && r.length === 2)) {
+        // Tests replace only the temp roots (they add a scene root); project, app home and
+        // runtime stay checked, and literal /tmp is dropped only for the test scene.
+        return [...defaultForbiddenRoots(env, project, appHome).filter(([why]) => why !== "the literal temp folder"), ...roots];
+      }
+    } catch { /* fall through to the production list */ }
+  }
+  return defaultForbiddenRoots(env, project, appHome);
+}
+
+export function unsafePathProblem(path, label, { project = process.cwd(), env = process.env, appHome = appHomeFor(env), forbiddenRoots = undefined } = {}) {
+  const roots = forbiddenRoots ?? forbiddenRootsFor({ env, project, appHome });
   for (const [why, parent] of roots) {
     if (parent && insidePath(path, parent)) return `${label} ${path} is inside ${why}; refusing`;
   }
@@ -207,19 +226,19 @@ export function nodeCandidates(env = process.env, path = env.PATH || "") {
 }
 
 /** Check the stable root, the DSH profile, the installed shim and every node run.sh could run. */
-export function executionPathProblem({ stableRoot, env = process.env, project = process.cwd(), node = process.execPath, bakedNode = undefined } = {}) {
+export function executionPathProblem({ stableRoot, env = process.env, project = process.cwd(), node = process.execPath, bakedNode = undefined, forbiddenRoots = undefined } = {}) {
   const paths = [
     [stableRoot, "the stable execution root"],
     [sandboxProfileOf(dshHomeOf(env)), "the DSH profile"],
     [shimPathOf(env), "the dsh-tui shim"],
   ];
   for (const [path, label] of paths) {
-    const problem = unsafePathProblem(path, label, { project, env });
+    const problem = unsafePathProblem(path, label, { project, env, forbiddenRoots });
     if (problem) return problem;
   }
   const dsh = findDsh(env);
   if (dsh) {
-    const problem = unsafePathProblem(dsh, "the dsh the shim executes", { project, env });
+    const problem = unsafePathProblem(dsh, "the dsh the shim executes", { project, env, forbiddenRoots });
     if (problem) return problem;
   }
   const baked = bakedNode === undefined ? bakedNodeOf(stableRoot) : bakedNode;
@@ -236,16 +255,16 @@ export function executionPathProblem({ stableRoot, env = process.env, project = 
     }
   }
   for (const candidate of [baked, node, ...nodeCandidates(env)]) {
-    const problem = unsafePathProblem(candidate, "the node that runs the helper", { project, env });
+    const problem = unsafePathProblem(candidate, "the node that runs the helper", { project, env, forbiddenRoots });
     if (problem) return problem;
   }
   if (env.NVM_DIR) {
-    const problem = unsafePathProblem(env.NVM_DIR, "NVM_DIR", { project, env });
+    const problem = unsafePathProblem(env.NVM_DIR, "NVM_DIR", { project, env, forbiddenRoots });
     if (problem) return problem;
   }
   for (const dir of String(env.AUTOMAGIK_HERDR_RUNTIME_DIRS || "").split(":")) {
     if (!dir) continue;
-    const problem = unsafePathProblem(dir, "AUTOMAGIK_HERDR_RUNTIME_DIRS", { project, env });
+    const problem = unsafePathProblem(dir, "AUTOMAGIK_HERDR_RUNTIME_DIRS", { project, env, forbiddenRoots });
     if (problem) return problem;
   }
   return null;
@@ -373,7 +392,7 @@ export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis
  * names it and its failure signature. Throws before writing a half result; an unchanged copy
  * and an already-current row are no-ops.
  */
-export function installSandboxRow({ env = process.env, project = null } = {}) {
+export function installSandboxRow({ env = process.env, project = null, forbiddenRoots = undefined } = {}) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
   const source = packWrapperOf();
@@ -382,7 +401,7 @@ export function installSandboxRow({ env = process.env, project = null } = {}) {
   if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot, stableRoot };
   const cwd = process.cwd();
   const cwdProject = existsSync(join(cwd, ".herdr", "bots.json")) || existsSync(join(cwd, ".git")) ? cwd : null;
-  const unsafe = executionPathProblem({ stableRoot, project: project ?? cwdProject, env, node: process.execPath, bakedNode: process.execPath });
+  const unsafe = executionPathProblem({ stableRoot, project: project ?? cwdProject, env, node: process.execPath, bakedNode: process.execPath, forbiddenRoots });
   if (unsafe) throw new Error(unsafe);
   let changed = false;
   const copied = copyStable(packRoot, stableRoot, process.execPath);

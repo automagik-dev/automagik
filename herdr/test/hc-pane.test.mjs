@@ -41,12 +41,15 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   t.after(async () => {
     try { await fake.close(); } catch { /* gone */ }
     rmSync(root, { recursive: true, force: true });
-    rmSync(ext, { recursive: true, force: true });
   });
+  const testRoots = JSON.stringify([
+    ["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime],
+  ]);
   const env = { ...process.env, XDG_RUNTIME_DIR: runtime, HOME: home, DSH_HOME: join(home, ".dsh"), HERDR_APP_HOME: app,
-    TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket };
+    TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket,
+    AM_HC_TEST: "1", AM_HC_TEST_FORBIDDEN_ROOTS: testRoots };
   if (sandboxRow) installSandboxRow({ env });
-  return { root, ext, app, project, home, runtime, socket, fake, env };
+  return { root, app, project, home, runtime, socket, fake, env };
 }
 
 /** Run the helper with a child Node script that records the environment it was given. */

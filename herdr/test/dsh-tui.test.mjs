@@ -150,7 +150,11 @@ exec "${process.execPath}" "${helper}" "$@"
   // named `sh`, it still maps to ~/.profile. Otherwise the POSIX login shell is used.
   const env = {
     HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath, TMPDIR: paneTmp,
-    DSH_LOG: log, DSH_FAKE: cfgPath, AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
+    DSH_LOG: log, DSH_FAKE: cfgPath,
+    AM_HC_TEST: "1",
+    AM_HC_TEST_FORBIDDEN_ROOTS: JSON.stringify([
+      ["the app home", join(home, ".config", "herdr-app")], ["the temp folder", paneTmp],
+    ]), AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
   };
   const pane = panePathOf({ env });
   assert.equal(pane.login, true, "the login shell answered");

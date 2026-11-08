@@ -104,9 +104,12 @@ function scene() {
     rec("t120", { bot: ID.other }, { name: "other-bot" }),
     rec("t121", { [WORKER_OF_LABEL]: ID.cap }, { name: "cap-worker", parent: "t101", cwd: worktree }),
   ];
+  const testRoots = JSON.stringify([
+    ["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime],
+  ]);
   const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app, TMPDIR: paneTmp,
-    PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
-  return { root, ext, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env };
+    PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin`, AM_HC_TEST: "1", AM_HC_TEST_FORBIDDEN_ROOTS: testRoots };
+  return { root, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env };
 }
 
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
@@ -123,7 +126,6 @@ async function sceneWithCore(t, { version = "0.1.14", proxy = true, proxyOptions
     for (const started of proxies) { try { await started.close(); } catch { /* gone */ } }
     try { await fake.close(); } catch { /* gone */ }
     rmSync(s.root, { recursive: true, force: true });
-    rmSync(s.ext, { recursive: true, force: true });
   });
   const first = proxy ? await start("t100", proxyOptions) : null;
   return { s, fake, start, proxy: first };
@@ -534,7 +536,7 @@ test("the proxy refuses a DSH profile, a shim, or a run.sh node inside a writabl
   chmodSync(join(s.project, "node"), 0o755);
   const cases = [
     ["profile", { DSH_HOME: s.project }, /the DSH profile .* is inside the project/],
-    ["shim", { HOME: s.project, DSH_HOME: join(s.ext, "dsh"), XDG_DATA_HOME: join(s.ext, "data") }, /the dsh-tui shim .* is inside the project/],
+    ["shim", { HOME: s.project, DSH_HOME: join(s.root, "dsh"), XDG_DATA_HOME: join(s.root, "data") }, /the dsh-tui shim .* is inside the project/],
     ["node", { PATH: s.project }, /the node that runs the helper .* is inside the project/],
   ];
   for (const [name, extra, re] of cases) {
@@ -577,9 +579,11 @@ test("the dsh a shim executes is checked by real path, and literal /tmp is refus
     /the dsh the shim executes .* is inside the project/,
   );
   rmSync(join(s.bin, "dsh"));
+  const literal = { ...s.env, XDG_DATA_HOME: join(s.root, "data") };
+  delete literal.AM_HC_TEST;
+  delete literal.AM_HC_TEST_FORBIDDEN_ROOTS;
   await assert.rejects(
-    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
-      env: { ...s.env, XDG_DATA_HOME: join(s.root, "data") } }),
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: literal }),
     /the stable execution root .* is inside the literal temp folder/,
   );
 });
@@ -598,6 +602,17 @@ test("the stable runner must match its baked node, and the baked node must still
   await assert.rejects(
     startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
     /the baked node .* is gone; run automagik-herdr dsh-tui install again/,
+  );
+});
+
+test("the production default still refuses a stable root under literal /tmp", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  const env = { ...s.env, XDG_DATA_HOME: join(s.root, "data") };
+  delete env.AM_HC_TEST;
+  delete env.AM_HC_TEST_FORBIDDEN_ROOTS;
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env }),
+    /the stable execution root .* is inside the literal temp folder/,
   );
 });
 
