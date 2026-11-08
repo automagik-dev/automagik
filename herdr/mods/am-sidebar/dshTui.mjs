@@ -820,7 +820,7 @@ export function uninstallDshTui(options = {}) {
  * the pinned one. Read-only. `{ code, checks }`: 0 healthy or installed, 1 broken, 2 not
  * installed or no dsh (not applicable).
  */
-export function doctorDshTui({ env = process.env, panePath } = {}) {
+export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = undefined } = {}) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ check, ok, detail, fix: ok ? null : fix });
   const shell = loginShellOf(env);
@@ -872,7 +872,7 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   const guide = read(join(env.HOME || homedir(), TUI_DATA_DIR, ONBOARDING_FILE));
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
-  const sandbox = sandboxState(env);
+  const sandbox = sandboxState(env, { forbiddenRoots });
   const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
   add("dsh-sandbox", sandboxOk || !installed,
     !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"

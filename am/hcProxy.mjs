@@ -996,7 +996,7 @@ function parseArgs(argv) {
 }
 
 /** Run the proxy until a signal; used when this file is the executable. */
-async function main(argv = process.argv.slice(2), env = process.env) {
+export async function main(argv = process.argv.slice(2), env = process.env, options = {}) {
   const args = parseArgs(argv);
   if (args.help) {
     process.stdout.write(`${USAGE}\n`);
@@ -1010,6 +1010,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     appHome: typeof args["app-home"] === "string" ? args["app-home"] : undefined,
     env,
     log: (event) => process.stderr.write(`hc-proxy ${JSON.stringify(event)}\n`),
+    forbiddenRoots: options.forbiddenRoots,
   });
   const stop = () => {
     proxy.close().then(() => process.exit(0), () => process.exit(1));

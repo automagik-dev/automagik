@@ -4766,7 +4766,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   if (!["install", "update", "uninstall", "doctor"].includes(verb)) throw new CliError(`dsh-tui needs install, update, uninstall or doctor${verb ? `, not "${verb}"` : ""}.`, 2);
   const env = io.env ?? process.env;
   if (verb === "doctor") {
-    const r = doctorDshTui({ env });
+    const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
     exitAfter.code = r.code;
     return opts.json ? r : r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
   }
@@ -4774,8 +4774,8 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   const published = Object.hasOwn(env, "AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED")
     ? (env.AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED || null) : undefined;
   const r = verb === "uninstall"
-    ? uninstallDshTui({ env, exec: io.exec })
-    : await installDshTui({ env, exec: io.exec, ...(published === undefined ? {} : { publishedAt: published }) });
+    ? uninstallDshTui({ env, exec: io.exec, forbiddenRoots: io.forbiddenRoots })
+    : await installDshTui({ env, exec: io.exec, forbiddenRoots: io.forbiddenRoots, ...(published === undefined ? {} : { publishedAt: published }) });
   exitAfter.code = r.status === "failed" ? 1 : 0;
   const lines = r.lines?.length ? r.lines : [r.detail];
   return opts.json ? r : lines.join("\n");

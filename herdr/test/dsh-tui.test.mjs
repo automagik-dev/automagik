@@ -274,13 +274,9 @@ test("sandboxState sees a stable runner whose exec line differs from its comment
 
 test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {
   const s = scene(t);
-  if (/^\/(private\/)?tmp(\/|$)/.test(sandboxRootOf(s.env))) {
-    t.skip("the stable execution root is inside the literal temp folder; refusing");
-    return;
-  }
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   appendFileSync(sandboxWrapperOf(s.env), "\n// drift\n");
-  const report = doctorDshTui({ env: s.env });
+  const report = doctorDshTui({ env: s.env, forbiddenRoots: rootsOf(s) });
   const check = report.checks.find((c) => c.check === "dsh-sandbox");
   assert.equal(check.ok, false);
   assert.match(check.detail, /differs from the pack's/);
@@ -587,21 +583,15 @@ test("the release-age exception is exact, leaves other packages alone, and is pr
 
 test("the CLI command installs, reports doctor JSON and uninstalls", async (t) => {
   const s = scene(t);
-  if (/^\/(private\/)?tmp(\/|$)/.test(sandboxRootOf(s.env))) {
-    t.skip("the stable execution root is inside the literal temp folder; refusing");
-    return;
-  }
-  const installed = s.cli(["dsh-tui", "install", "--json"]);
-  assert.equal(installed.status, 0, installed.stderr);
-  assert.equal(JSON.parse(installed.stdout).status, "installed");
-  const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
-  assert.equal(doctor.status, 0, doctor.stderr);
-  const report = JSON.parse(doctor.stdout);
+  const { cmdDshTui } = await import(CLI);
+  const io = { env: s.env, forbiddenRoots: rootsOf(s) };
+  const installed = await cmdDshTui({ json: true }, ["install"], io);
+  assert.equal(installed.status, "installed", installed.detail);
+  const report = await cmdDshTui({ json: true }, ["doctor"], io);
   assert.equal(report.code, 0);
   assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", "dsh-sandbox"]);
-  const removed = s.cli(["dsh-tui", "uninstall", "--json"]);
-  assert.equal(removed.status, 0, removed.stderr);
-  assert.equal(JSON.parse(removed.stdout).status, "removed");
+  const removed = await cmdDshTui({ json: true }, ["uninstall"], io);
+  assert.equal(removed.status, "removed");
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
 });
 
