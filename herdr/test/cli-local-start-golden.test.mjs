@@ -5,7 +5,9 @@
 // project's settings.local.json, scratch paths written as <root>. The project holds a
 // .herdr/pane-env, which a local start never reads (it is for a linked machine's panes). The
 // fixture is recorded from origin/dev in a fresh copy (AUTOMAGIK_GOLDEN_RECORD=1; the commit is
-// named in the PR); every later run compares.
+// named in the PR); every later run compares. #650 adds the CLI's own HERDR_APP_HOME beside
+// PATH when the CLI has it set (this scene does), and only that word: with it unset, the bytes
+// stay as they were (cli-local-app-home.test.mjs holds the fixture recorded before the fix).
 // Fake hc and a scratch home only: the real hc and window are never touched.
 import { test } from "node:test";
 import assert from "node:assert/strict";
