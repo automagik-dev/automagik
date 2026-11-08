@@ -27,6 +27,12 @@ export const BRIDGE_PATH = fileURLToPath(new URL('./bridge.js', import.meta.url)
 // the command in an update right after): the card waits this long for it.
 const DETAIL_WAIT_MS = 1500
 
+// The exact disposer of the mirror-tool registration a Session agent carries. It lives on the
+// agent, never in this module: a plugin reload replaces the module and the adapter while the
+// agent and its scoped tools live on, so the next adapter must find and replace the registration
+// the previous one made. A Symbol.for key is the same key in the reloaded module.
+const MIRROR_REGISTRATION = Symbol.for('@automagik/acp-dsh/mirror-registration')
+
 const detailed = tool => (tool.rawInput !== undefined && tool.rawInput !== null && Object.keys(tool.rawInput).length > 0) || tool.permission !== undefined || tool.status !== 'pending'
 function settle(tool, ms) {
   if (detailed(tool)) return Promise.resolve()
@@ -292,7 +298,6 @@ export class AcpAdapter extends LlmAdapter {
     this.backchannel = backchannel
     this.redact = redactor ?? (text => text)
     this.live = new Map()
-    this.scoped = new WeakSet()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
     // A new chat's first model step lists its tools after `agent/created`: register the mirror
     // tool there in every agent's own scope, with the step condition that admits it only on
@@ -300,21 +305,42 @@ export class AcpAdapter extends LlmAdapter {
     // ACP one before its first prompt, so a create-time check would miss that first step. The
     // stream's `scope()` stays as the fallback for an agent this event missed.
     this.ctx.on?.('agent/created', ({ agent } = {}) => this.registerMirror(agent))
+    // A plugin reload replaces this adapter while live chats keep their agents. DSH resolves a
+    // step's tools before the adapter streams it, so replacing a registration during a running
+    // turn would close that step's admission of the mirror tool and its call would fail as
+    // UNKNOWN_TOOL. Take over the agents that are idle now, before their next step resolves;
+    // for an agent still running, replace on the status edge to idle, after its current step.
+    this.ctx.on?.('agent/status', ({ agent, status } = {}) => { if (status === 'idle') this.registerMirror(agent) })
+    for (const agent of this.ctx.agents?.list?.() ?? []) this.registerMirror(agent)
   }
 
   /**
-   * Put the mirror tool in the Session agent's own scope, once, with the condition DSH
-   * evaluates when it resolves a step's tools: admitted only while the step's provider is one
-   * of this adapter's routes. No model selection means no admission, never a throw. A missing
-   * agent is a no-op; `scope()` decides what that means for a turn.
+   * Put the mirror tool in the Session agent's own scope, once per adapter, with the condition
+   * DSH evaluates when it resolves a step's tools: admitted only while the step's provider is
+   * one of this adapter's routes. No model selection means no admission, never a throw. An
+   * agent registered by an earlier adapter instance is taken over: its exact disposer is called
+   * once and this adapter's registration replaces it. While the agent is running, DSH has
+   * already resolved the current step's tools, so a replacement now would fail that step's
+   * mirror call as UNKNOWN_TOOL: keep the old registration for this turn and replace it on the
+   * next idle edge. A missing agent is a no-op; `scope()` decides what that means for a turn.
    * @param {any} agent
    */
   registerMirror(agent) {
-    if (agent === undefined || this.scoped.has(agent)) return
-    agent.ctx.tools.register(this.tool, {
+    if (agent === undefined) return
+    const current = agent[MIRROR_REGISTRATION]
+    if (current?.adapter === this) return
+    if (current !== undefined && agent.status === 'running') return
+    if (current !== undefined) {
+      try { current.dispose() } catch {}
+    }
+    const dispose = agent.ctx.tools.register(this.tool, {
       when: ({ modelSelection }) => this.agents.has(modelSelection?.provider),
     })
-    this.scoped.add(agent)
+    Object.defineProperty(agent, MIRROR_REGISTRATION, {
+      value: { adapter: this, dispose },
+      configurable: true,
+      writable: true,
+    })
   }
 
   /**
@@ -492,8 +518,9 @@ export class AcpAdapter extends LlmAdapter {
   }
 
   // The mirror tool lives in the agent's own scope: no other Session's model sees it. The
-  // agent/created listener registers it before the first step; this fallback covers an agent
-  // that event missed and fails clearly when the Session has no live agent at all.
+  // agent/created listener (and a reloaded adapter's construction) registers it before the
+  // first step; this fallback covers an agent those missed and fails clearly when the Session
+  // has no live agent at all.
   scope(sessionId) {
     const agent = this.ctx.agents?.get?.(sessionId)
     if (agent === undefined) {
