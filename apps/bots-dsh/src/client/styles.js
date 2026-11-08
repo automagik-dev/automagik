@@ -564,6 +564,8 @@ button.bt-set-row:hover{background:var(--bt-hover)}
 .bt-browser-form>.bt-set-row>.bt-set-control{flex:1;min-width:0}
 .bt-browser-form>.bt-set-row+.bt-set-row{border-top:.5px solid var(--bt-line)}
 .bt-browser-site{max-width:320px}
+.bt-browser-list{width:100%;min-height:82px;max-height:180px;resize:vertical;box-sizing:border-box;
+font:12px/17px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto}
 .bt-browser-form-foot{display:flex;justify-content:flex-end;padding:10px 12px;border-top:.5px solid var(--bt-line)}
 @media(max-width:700px){.bt-browser-grant{flex-wrap:wrap}.bt-browser-grant-who{flex:1}.bt-browser-grant-meta{order:3;flex:1 0 100%}}
 .bt-set-paste{flex-direction:column;align-items:stretch;gap:8px}

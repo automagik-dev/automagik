@@ -50,6 +50,7 @@
     "dev:client": "node scripts/watch-client.mjs"
   },
   "dependencies": {
+    "ipaddr.js": "2.5.0",
     "playwright-core": "1.61.1"
   },
   "peerDependencies": {

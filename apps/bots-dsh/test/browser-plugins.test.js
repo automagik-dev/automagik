@@ -797,3 +797,24 @@ test('browser grants are user-only, normalized, deduplicated, expiring, and clea
   assert.equal(cleared.ok, true)
   assert.equal(Object.hasOwn(cleared.value, 'browserGrants'), false)
 })
+
+test('set-prefs stores and validates the browser address lists', async t => {
+  const { call, stop } = start({})
+  t.after(stop)
+  const saved = await call('set-prefs', {
+    browserAllow: ['127.0.0.1', '10.0.0.0/8', '127.0.0.1'],
+    browserDeny: ['*.internal.example'],
+  })
+  assert.equal(saved.ok, true)
+  assert.deepEqual(saved.value.browserAllow, ['127.0.0.1', '10.0.0.0/8'])
+  assert.deepEqual(saved.value.browserDeny, ['*.internal.example'])
+
+  const bad = await call('set-prefs', { browserDeny: ['not a host!'] })
+  assert.equal(bad.ok, false)
+  assert.match(bad.error.message, /not an IPv4\/IPv6 address, CIDR range or hostname/u)
+
+  const cleared = await call('set-prefs', { browserAllow: null, browserDeny: null })
+  assert.equal(cleared.ok, true)
+  assert.equal(Object.hasOwn(cleared.value, 'browserAllow'), false)
+  assert.equal(Object.hasOwn(cleared.value, 'browserDeny'), false)
+})
