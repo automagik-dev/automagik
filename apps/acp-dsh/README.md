@@ -60,9 +60,11 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   native provider — and each crossing writes a provider-boundary row the chat shows. The
   reasoning effort the Session ran on crosses with it, both ways, when the target model offers
   that level (matched by id, else by name), replacing the target default DSH records on a model
-  change; an effort DSH itself defaulted is not carried. A target with no reasoning levels,
-  without that one, or whose levels cannot be read writes a notice row saying so and runs on its
-  own. A switch back before the agent has answered drops the agent's chosen level; the native
+  change; an effort DSH itself defaulted is not carried. The agents' levels are their own
+  `thought_level` ids: Claude Code lists low, medium, high, xhigh and max, and Codex lists
+  minimal, low, medium, high and xhigh, per model. A target with no reasoning levels, without
+  that one, or whose levels cannot be read writes a notice row saying so and runs on its own.
+  A switch back before the agent has answered drops the agent's chosen level; the native
   target's own default applies.
 - **Only the chat reaches the agent.** DSH's side requests on an ACP route never become
   prompts. At the `llm/stream` waterfall a Session title (`purpose: session-title`) goes to a
@@ -116,9 +118,12 @@ stays writable through
 DSH's settings service or the profile patch, but it is hidden from settings forms (`.hidden()`):
 it is a rollback lever, not a preference. Flipping it either way ends the running agent sessions
 and revokes their bridges at once; the DSH Session keeps its transcript and the next turn starts
-afresh under the new setting. The default moves Claude Bots once per team to
-`acp-claude` (the Bot team's README, "Claude on ACP"); the bridge probe in `bridge()` still gates
-the move.
+afresh under the new setting. A flip is also announced on the plugin context as
+`acp-dsh/dsh-tools-changed` with `{ on }`: DSH delivers `loader/volatile-update` only to the
+plugin whose config changed, so another plugin would never see this one. The Bot team watches
+that event, so turning the switch off moves its Claude Bots back at once, and turning it on moves
+them again. The default moves Claude Bots once per team to `acp-claude` (the Bot team's README,
+"Claude on ACP"); the bridge probe in `bridge()` still gates the move.
 
 `sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the
 model a side request tries after DSH's default model. An explicit value the person chose is tried
