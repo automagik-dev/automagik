@@ -1396,7 +1396,8 @@ test("a judged failed mod wins over a later killed check: restore and one notice
     assert.deepEqual(r.installed.check.failed, ["am-sidebar"]);
     assert.match(r.installed.check.unavailable, /could not run/);
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "the kept set is back");
-    assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.2.0");
+    assert.equal(existsSync(prevSetOf(h.mods)), false, "the failed release is not kept for a rollback");
+    assert.equal(restore.prevRemoved, true);
     assert.equal(readAuto(h.mods).skip, "0.2.0", "the failed version is held back");
     assert.ok(lines.some((l) => /check FAILED: am-sidebar/.test(l)));
     assert.ok(lines.some((l) => /could not run/.test(l)));
@@ -1416,14 +1417,19 @@ test("a bad pack is restored at once; the bad version is held, and a newer one i
     const bad = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, herdrApp: app.bin,
       log: (l) => lines.push(l) });
     assert.equal(bad.installed.version, "0.2.0", "the answer names the release that failed");
-    assert.deepEqual(bad.installed.restored, { version: "0.1.0", failedVersion: "0.2.0", mod: "am-tabs", failed: ["am-tabs"], checked: true });
+    // #671: the failed release is removed, never kept as the next rollback target.
+    assert.equal(existsSync(prevSetOf(h.mods)), false, "the bad pack is not what a rollback would put back");
+    assert.deepEqual(bad.installed.restored, { version: "0.1.0", failedVersion: "0.2.0", mod: "am-tabs", failed: ["am-tabs"], checked: true,
+      prevRemoved: true });
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "the .prev set is back");
     assert.equal(readMarker(h.mods).version, "0.1.0");
-    assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.2.0", "the bad pack is what a rollback would put back");
+    assert.throws(() => rollback({ modsDir: h.mods }),
+      (e) => /^no earlier pack kept: 0\.2\.0 was removed after it failed to load, so 0\.1\.0 is the installed pack$/.test(e.message));
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "the refused rollback changed nothing");
     assert.equal(readAuto(h.mods).skip, "0.2.0", "the bad version is recorded as rolled back");
     const note = JSON.parse(readFileSync(join(h.home, "automagik-herdr", RESTORE_FILE), "utf8"));
-    assert.deepEqual([note.version, note.failedVersion, note.mod, note.failed, note.checked], ["0.1.0", "0.2.0", "am-tabs", ["am-tabs"], true],
-      "the restored build can say it once");
+    assert.deepEqual([note.version, note.failedVersion, note.mod, note.failed, note.checked, note.prevRemoved],
+      ["0.1.0", "0.2.0", "am-tabs", ["am-tabs"], true, true], "the restored build can say it once, and why there is no rollback");
     assert.deepEqual(app.calls().map((c) => c.split(" ")[0]), ["check", "check"], "herdr-app check ran; nothing restarted Herdr");
     assert.ok(lines.some((l) => /check FAILED: am-tabs/.test(l)));
     // The same release is held; a newer one is taken.
@@ -1437,7 +1443,37 @@ test("a bad pack is restored at once; the bad version is held, and a newer one i
     assert.equal(newer.installed.version, "0.3.0");
     assert.equal(newer.installed.restored, undefined);
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.3.0");
+    // A normal update after a restore keeps its rollback target, as before.
+    assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.1.0");
+    assert.equal(rollback({ modsDir: h.mods }).version, "0.1.0", "a manual rollback goes back to the good pack");
   } finally { h.done(); }
+});
+
+test("#671: the CLI's restore line names the failed version and the previous one back; its rollback refuses the bad pack", async () => {
+  const h = autoHome(["0.2.0"]);
+  const bad = fakeCheckApp(join(h.home, "bad"), ["am-tabs"]);
+  const good = fakeCheckApp(join(h.home, "good"));
+  const path = process.env.PATH;
+  try {
+    process.env.PATH = `${dirname(bad.bin)}:${path}`;
+    const line = await cmdUpdate({}, [], { modsDir: h.mods, env: {}, keys, fetch: fakeFetch(h.table) });
+    assert.match(line, /^Automagik Herdr 0\.2\.0 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.1\.0 is back\./);
+    assert.match(line, /The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to\./);
+    assert.match(line, /The bad version is held back; a newer release installs on its own\./);
+    await assert.rejects(cmdUpdate({ rollback: true }, [], { modsDir: h.mods, env: {} }),
+      (e) => /^Nothing rolled back: no earlier pack kept: 0\.2\.0 was removed after it failed to load, so 0\.1\.0 is the installed pack$/.test(e.message));
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "the bad version was not reinstalled");
+    // A normal update after the restore keeps its rollback target: a manual rollback goes back.
+    h.serve("0.3.0");
+    process.env.PATH = `${dirname(good.bin)}:${path}`;
+    assert.match(await cmdUpdate({}, [], { modsDir: h.mods, env: {}, keys, fetch: fakeFetch(h.table) }),
+      /^Updated Automagik Herdr 0\.1\.0 → 0\.3\.0\./);
+    assert.match(await cmdUpdate({ rollback: true }, [], { modsDir: h.mods, env: {} }), /^Rolled back to Automagik Herdr 0\.1\.0 /);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0");
+  } finally {
+    process.env.PATH = path;
+    h.done();
+  }
 });
 
 test("a pack whose mods all load updates with no restore and no failure", async () => {

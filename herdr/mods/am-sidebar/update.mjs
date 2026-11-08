@@ -13,7 +13,9 @@
 //                                     apply --expect <v>: only if the latest is still <v>, else `refused`).
 //       After the swap it runs `herdr-app check` on every pack mod. When one fails to load it
 //       restores the kept set at once (the same rollback, still under the install lock) and
-//       records the bad version as rolled back, so auto-update waits for a newer release. Exit 5:
+//       records the bad version as rolled back, so auto-update waits for a newer release. The
+//       failed release's folders are removed, never kept, so a manual rollback refuses instead of
+//       reinstalling them (#671). Exit 5:
 //       installed, then restored; JSON `installed.restored` names the failed and the restored
 //       version and the mods that failed. A missing or unrunnable herdr-app keeps the update
 //       (`installed.check.checked` false, `unavailable` says why); `installed.restoreError` says
@@ -34,7 +36,8 @@
 // folder, so running it from a checkout never replaces the checkout. Everything else lives in
 // <app home>/automagik-herdr/, outside mods/ (a folder left inside mods/ is loaded as a mod):
 //   installed-by-install.sh   the ownership record (release.js parseMarker)
-//   .prev/                    the set the last install, update or rollback replaced (.prev/.pack lists it)
+//   .prev/                    the set the last install, update or rollback replaced (.prev/.pack lists it);
+//                             a restore removes the failed release's set, so it names no earlier pack
 //   backup/<mod>-<date>/      a folder the person owned, moved aside on --adopt; never replaced
 //   backup/layouts-<date>/    the rename migration's backups and journal (migrateHome.mjs)
 //
@@ -262,6 +265,19 @@ export const readMarker = (modsDir) => { try { return parseMarker(readFileSync(m
 const readSet = (modsDir) => { try { return parseMarker(readFileSync(join(prevSetOf(modsDir), ".pack"), "utf8")); } catch { return null; } };
 
 /**
+ * The restore note (release.js RESTORE_FILE) when the last restore removed the failed release's
+ * pack (#671): `{ version, failedVersion }` for the installed pack, else null. A manual rollback
+ * then says why there is nothing to go back to, naming the release that did not load.
+ */
+function removedByRestore(modsDir) {
+  let note = null;
+  try { note = JSON.parse(readFileSync(join(stateDirOf(modsDir), RESTORE_FILE), "utf8")); } catch { return null; }
+  if (note?.prevRemoved !== true || typeof note.failedVersion !== "string" || typeof note.version !== "string") return null;
+  const installed = readMarker(modsDir)?.version ?? readVersion(join(modsDir, PACK_NAME));
+  return installed === note.version ? { version: note.version, failedVersion: note.failedVersion } : null;
+}
+
+/**
  * The installed pack's version: the ownership record's, else the VERSION in the sidebar folder
  * (PACK_NAME, else its name before the rename, OLD_PACK_NAME, as a hand-installed v0.2 has it).
  */
@@ -464,6 +480,21 @@ function keepSet(modsDir, next, moved, record, old, rename, warnings, off = []) 
   if (!old) return;
   try { removePath(old, { recursive: true, force: true }); } catch (error) { // a dangling .prev link too (#566)
     warnings.push(`the older kept set could not be removed (${error.message}): it is in ${old}`);
+  }
+}
+
+/**
+ * A restore's rollback does not keep what it rolled away from (#671): the release that failed to
+ * load (`next`) and the emptied older set (`old`, or `.prev` itself when setting it aside failed)
+ * are removed, so `.prev` names no earlier pack and a manual rollback has nothing to reinstall.
+ * A failure is a warning naming where the folders stay; the restore itself stands.
+ */
+function dropSet(modsDir, next, old, warnings) {
+  for (const [what, path] of [["the failed pack", next], ["the earlier kept set", old], ["the kept set", prevSetOf(modsDir)]]) {
+    if (!path || !exists(path)) continue;
+    try { removePath(path, { recursive: true, force: true }); } catch (error) {
+      warnings.push(`${what} could not be removed (${error.message}): it is in ${path}`);
+    }
   }
 }
 
@@ -858,10 +889,15 @@ export function rollback(opts = {}) {
   try { return rollbackLocked({ ...opts, modsDir }); } finally { free(); }
 }
 
-function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir = null, window = false }) {
+function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir = null, window = false, restore = false }) {
   const set = readSet(modsDir);
   const prev = prevSetOf(modsDir);
-  if (!set || set.mods.length === 0) throw new Error(`no earlier pack kept at ${prev}: nothing to roll back to`);
+  if (!set || set.mods.length === 0) {
+    const removed = removedByRestore(modsDir);
+    throw new Error(removed
+      ? `no earlier pack kept: ${removed.failedVersion} was removed after it failed to load, so ${removed.version} is the installed pack`
+      : `no earlier pack kept at ${prev}: nothing to roll back to`);
+  }
   const record = readMarker(modsDir) ?? { version: UNRELEASED, mods: [], layout: null, before: "none", adopted: [] };
   const owned = new Set(record.mods);
   // The layout the kept set's pack placed, read before the set moves (null: kept before v0.9).
@@ -996,10 +1032,16 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   try { writeMarker(modsDir, { ...record, version: set.version ?? UNRELEASED, mods: set.mods, adopted, installed: new Date().toISOString(), sequence: set.sequence ?? null }); } catch (error) { warnings.push(`the ownership record could not be written (${error.message})`); }
   let old = null;
   try { old = setAside(modsDir); } catch (error) { warnings.push(`the old kept set stays in ${prev} (${error.message})`); }
-  // The rolled-out pack's layout goes with its folders, so a second rollback brings it back.
-  if (out.length && exists(next)) keepLayout(modsDir, next, warnings);
-  if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings, outOff);
-  else warnings.push(`the folders rolled out are in ${next}`);
+  if (restore) {
+    // The set rolled out is the release that just failed to load (#671): it is removed, never kept
+    // as the next rollback target, so a manual rollback refuses instead of putting it back.
+    dropSet(modsDir, next, old, warnings);
+  } else {
+    // The rolled-out pack's layout goes with its folders, so a second rollback brings it back.
+    if (out.length && exists(next)) keepLayout(modsDir, next, warnings);
+    if (old || !exists(prev)) keepSet(modsDir, next, out, record, old, rename, warnings, outOff);
+    else warnings.push(`the folders rolled out are in ${next}`);
+  }
   let layout = null;
   try { layout = restoreLayout({ modsDir, body: keptLayout, log }); } catch (error) { warnings.push(`the automagik layout was not put back (${error.message})`); }
   // The migration's edits whose mod left mods/ in this rollback are reverted from the journals
@@ -1430,17 +1472,18 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
       failed: [...result.failed], checked: true, unavailable, at: Date.now() });
   } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
   try {
-    const back = rollbackLocked({ modsDir, log, binDir, window });
+    const back = rollbackLocked({ modsDir, log, binDir, window, restore: true });
     const restored = typeof back.version === "string" && back.version !== "" ? back.version : backVersion;
-    if (restored !== backVersion) {
-      try {
-        saveRestore(modsDir, { version: restored, failedVersion: version, mod: result.failed[0],
-          failed: [...result.failed], checked: true, unavailable, at: Date.now() });
-      } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
-    }
+    // The restore removed the failed release's folders instead of keeping them (#671): the note
+    // says so, so a manual rollback refuses in those words rather than reinstalling them.
+    const prevRemoved = !readSet(modsDir);
+    try {
+      saveRestore(modsDir, { version: restored, failedVersion: version, mod: result.failed[0],
+        failed: [...result.failed], checked: true, unavailable, ...(prevRemoved ? { prevRemoved: true } : {}), at: Date.now() });
+    } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
     log(`restored ${restored}: ${result.failed.join(", ")} did not load`);
     return { ...result, checked: true, unavailable, restored: { version: restored, failedVersion: version, mod: result.failed[0],
-      failed: [...result.failed], checked: true, ...(unavailable ? { unavailable } : {}) } };
+      failed: [...result.failed], checked: true, ...(prevRemoved ? { prevRemoved: true } : {}), ...(unavailable ? { unavailable } : {}) } };
   } catch (error) {
     // A kept set that is gone, or names a folder that is gone, is the same answer to the person:
     // there is no previous version to put back. Anything else keeps its own why.
