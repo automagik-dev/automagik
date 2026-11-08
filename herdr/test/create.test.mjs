@@ -4,13 +4,14 @@
 import { registerHooks } from "node:module";
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./form-herdr-stub.mjs"), "fs/promises": here("./fs-stub.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
+const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const fromPack = (context) => context.parentURL?.includes("/mods/am-sidebar/");
 registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
@@ -649,6 +650,7 @@ test("a worktree space whose main checkout's bots.json is deleted: the form says
   g("add", ".");
   g("commit", "-q", "-m", "bots");
   g("worktree", "add", "-q", "-b", "wt", wt);
+  g("config", "rebase.autoStash", "false");
   rmSync(mainPath);
   assert.equal(g("status", "--porcelain"), " D .herdr/bots.json\n");
   state.spaces = [{ id: "s2", name: "wt", folder: wt }];
@@ -660,7 +662,107 @@ test("a worktree space whose main checkout's bots.json is deleted: the form says
   assert.match(where, /^Saves in .*repo-wt\/\.herdr\/bots\.json, this worktree's file\. The sidebar reads .*repo\/\.herdr\/bots\.json, so this shows there once the worktree's change is merged and pulled\./);
   assert.match(where, /repo\/\.herdr\/bots\.json is deleted: /);
   assert.match(where, /brings it back with this worktree's version/);
-  assert.doesNotMatch(where, /modified|has local changes|isn't committed|stops on it/);
+  assert.doesNotMatch(where, /modified|has local changes|isn't committed|stops on it|autoStash/);
+});
+
+// #665: with rebase.autoStash=true git stashes the unstaged deletion and lets the rebase pull
+// through; the stash apply then conflicts (UD), so the form says that instead of "refuses".
+test("a worktree space with rebase.autoStash on: the form says the deleted bots.json is stashed", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  g("config", "pull.rebase", "true");
+  g("config", "rebase.autoStash", "true");
+  rmSync(mainPath);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  const where = textOf(nodes.get("bot-where"));
+  assert.match(where, /repo\/\.herdr\/bots\.json is deleted: /);
+  assert.match(where, /pull\.rebase=true with rebase\.autoStash=true stashes the deletion and lets the pull through/);
+  assert.match(where, /then the stash apply conflicts \(UD\)/);
+  assert.doesNotMatch(where, /refuses the pull until/);
+});
+
+// #665: a staged deletion ("1 D.") is not "modified": committing it turns the pull into
+// modify/delete. The form says to restore and commit the file, or unstage the deletion.
+test("a worktree space whose main checkout staged its bots.json deletion: the form says restore or unstage", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  const mainPath = join(repo, ".herdr/bots.json");
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  g("init", "-q");
+  g("add", ".");
+  g("commit", "-q", "-m", "bots");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  g("rm", "-q", ".herdr/bots.json");
+  assert.match(g("status", "--porcelain=v2"), /^1 D\. /m);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const f = await open({ form: "create", project: undefined });
+  f.draw();
+  const where = textOf(nodes.get("bot-where"));
+  assert.match(where, /repo\/\.herdr\/bots\.json has a staged deletion: restore and commit the file, or unstage the deletion, before pulling/);
+  assert.match(where, /committing the deletion ends the pull in a modify\/delete conflict/);
+  assert.doesNotMatch(where, /has local changes|isn't committed|is deleted:/);
+});
+
+// #665: the CLI's worktreeNote and the form's word the untracked and modified cases the same;
+// only the clause before the warning (and the file each shows) may differ.
+test("the CLI and the form word the pull warning for an uncommitted or changed bots.json the same", async (t) => {
+  const repo = join(root, "repo");
+  const wt = join(root, "repo-wt");
+  const home = join(root, "home");
+  mkdirSync(repo);
+  mkdirSync(home);
+  const g = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, encoding: "utf8" });
+  g("init", "-q");
+  g("commit", "-q", "--allow-empty", "-m", "init");
+  g("worktree", "add", "-q", "-b", "wt", wt);
+  mkdirSync(join(repo, ".herdr"));
+  const mainPath = join(repo, ".herdr/bots.json");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
+  state.spaces = [{ id: "s2", name: "wt", folder: wt }];
+  state.focused = { space: "s2" };
+  const cli = (name) => spawnSync(process.execPath, [CLI, "create", "--name", name, "--agent", "claude", "--lead", MAIN.id], {
+    cwd: wt, encoding: "utf8", env: { ...process.env, HOME: home, HERDR_APP_HOME: join(home, "app"), GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  // The warning is the sentence after the last mention of the main checkout's file.
+  const warningOf = (text) => {
+    const at = text.lastIndexOf(`${repo}/.herdr/bots.json`);
+    assert.notEqual(at, -1, text);
+    return text.slice(at).trim();
+  };
+  const formWarning = async () => {
+    const f = await open({ form: "create", project: undefined });
+    f.draw();
+    return warningOf(textOf(nodes.get("bot-where")));
+  };
+  // Untracked: the main checkout's file was never committed.
+  const untracked = await formWarning();
+  assert.match(untracked, /isn't committed: commit or remove it before pulling, or the pull stops on it\.$/);
+  const first = cli("Scout");
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(untracked, warningOf(first.stderr));
+  // Modified: commit it in the main checkout, then change it there.
+  g("add", ".herdr/bots.json");
+  g("commit", "-q", "-m", "bots");
+  writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
+  const modified = await formWarning();
+  assert.match(modified, /has local changes: commit or discard them before pulling, or the pull stops on it\.$/);
+  const second = cli("Ranger");
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(modified, warningOf(second.stderr));
 });
 
 // #626: Herdr's exec may return stdout trimmed, turning v1's unstaged " D" into "D "; the

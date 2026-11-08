@@ -380,24 +380,31 @@ async function saveProject(project, raw, { list = true } = {}) {
  * when the main checkout's file was never committed or has local changes, that its pull would
  * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one);
  * when it is deleted in the working tree, that a merge pull restores it with the worktree's
- * version and a rebase pull refuses until it is committed or discarded; when the deletion is
- * committed after the worktree branched, that the pull ends in a modify/delete conflict.
+ * version and a rebase pull refuses until it is committed or discarded, unless
+ * rebase.autoStash=true stashes the deletion and the stash apply then conflicts (UD); when the
+ * deletion is staged, that committing it turns the pull into a modify/delete conflict; when the
+ * deletion is committed after the worktree branched, that the pull ends in that conflict too.
+ * The wording matches the form's (create.js worktreeNote): only the file each shows may differ.
  */
 const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
-  + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "")
-  + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "")
+  + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or the pull stops on it.` : "")
+  + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or the pull stops on it.` : "")
   + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.` : "")
+  + (changes === "deleted-autostash" ? ` ${under(key, BOTS_PATH)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true with rebase.autoStash=true stashes the deletion and lets the pull through, then the stash apply conflicts (UD).` : "")
+  + (changes === "staged-deletion" ? ` ${under(key, BOTS_PATH)} has a staged deletion: restore and commit the file, or unstage the deletion, before pulling; committing the deletion ends the pull in a modify/delete conflict.` : "")
   + (changes === "committed-deletion" ? ` ${under(key, BOTS_PATH)} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.` : "");
 /**
  * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
  * "modified" when it is committed but has local changes, "deleted" when it is committed and
- * deleted in the working tree without that deletion being staged, "committed-deletion" when
- * HEAD has no file, `dir` (the worktree an edit came from) does, and the merge base of HEAD and
- * that worktree had it; null when it is clean or git can't say. A pull that brings a worktree's
- * committed file stops on the first two (#234, #332); an unstaged deletion is restored by a
- * merge pull and refused by a rebase pull instead (#626); a deletion committed after the
- * worktree branched ends in modify/delete too, one before it only adds.
+ * deleted in the working tree without that deletion being staged, "deleted-autostash" when that
+ * deletion would be stashed for a rebase pull instead (rebase.autoStash=true), "staged-deletion"
+ * when the deletion is staged, "committed-deletion" when HEAD has no file, `dir` (the worktree an
+ * edit came from) does, and the merge base of HEAD and that worktree had it; null when it is
+ * clean or git can't say. A pull that brings a worktree's committed file stops on the first two
+ * (#234, #332); an unstaged deletion is restored by a merge pull and refused by a rebase pull
+ * instead (#626); a deletion committed after the worktree branched ends in modify/delete too,
+ * one before it only adds.
  */
 async function changesIn(key, dir = null) {
   // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
@@ -406,8 +413,17 @@ async function changesIn(key, dir = null) {
   if (!out.trim()) return await committedDeletion(key, dir);
   const line = out.split("\n").find((l) => l);
   if (line.startsWith("? ")) return "untracked";
-  if (line.startsWith("1 ") && line.split(" ")[1] === ".D") return "deleted";
+  if (line.startsWith("1 ")) {
+    const state = line.split(" ")[1];
+    // A staged deletion is not "modified": committing it turns the pull into modify/delete (#665).
+    if (state === "D.") return "staged-deletion";
+    if (state === ".D") return (await autoStashOn(key)) ? "deleted-autostash" : "deleted";
+  }
   return "modified";
+}
+/** Whether `key` stashes an unstaged deletion for a rebase pull instead of refusing it (#665). */
+async function autoStashOn(key) {
+  return (await git(["config", "--bool", "--get", "rebase.autoStash"], key))?.trim() === "true";
 }
 /**
  * #626: a committed deletion leaves `git status` empty, yet a pull that brings the worktree's
