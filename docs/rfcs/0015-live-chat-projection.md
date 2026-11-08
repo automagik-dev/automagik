@@ -595,7 +595,8 @@ so `dsh-source.mjs` forwards them unchanged.
 - **Who wins: the first answer.** DSH settles each request once; the first answer to arrive,
   from the computer or the phone, is the one applied. bots-dsh never answers on its own: no
   default, no timeout answer. A waterfall it does not carry to a phone it passes on at once, so
-  it never holds up the computer.
+  it never holds up the computer. One it carries and has not answered never delays another
+  client's answer either: the computer's answer applies at once, as it does today.
 - **The other side closes with a receipt.** When the computer answers first, the phone's card
   closes (the `open: false` row `pocket-chat.js:291` already emits) and shows a receipt:
   "Answered on the computer: Allow, 14:02". When the phone answers first, DSH withdraws the
@@ -721,10 +722,11 @@ finds out what the other accepts, and fails closed to read-only.
 
 1. **The exact approval call, DSH 0.2.2.** Can a plugin be an in-process `$events` client, and
    does DSH settle a request once when two clients answer it (one result applied, the other
-   client sent `cancel`)? The host has that rule for plugin activations (`claimRequest`, "first
-   answer wins", `dsh-cordis-host-runner` registry types); this amendment needs it for tool
-   approvals and questions. The types read here are the harness's `0.2.1-rc.3`. If either
-   answer is no, Group 4 stops and this section comes back for review; the race rule does not
+   client sent `cancel`)? And when one client answers while another still holds the request
+   unanswered, does the answer apply at once? The host has the first-answer rule for plugin
+   activations (`claimRequest`, "first answer wins", `dsh-cordis-host-runner` registry types);
+   this amendment needs it for tool approvals and questions. The types read here are the
+   harness's `0.2.1-rc.3`. If any answer is no, Group 4 stops and this section comes back for review; the race rule does not
    change.
 2. **Does DSH accept a `requestId` that starts `pocket-`**, and can bots-dsh find one in the
    Session log for the Retry dedupe? If not, bots-dsh keeps the phone's ids in memory per
