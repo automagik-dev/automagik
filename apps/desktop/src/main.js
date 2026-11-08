@@ -32,7 +32,7 @@ import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
-import { compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
+import { CHECK_EVERY_MS, compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 import {
   DSH_TUI_LABEL, DSH_TUI_LOG, dshTuiModuleDir, dshTuiRunnerOf, dshTuiSupported, ensurePathLine,
   formatDoctor, pathActionOf, pathDoneView, pathView, resultView, runDshTui, setupView,
@@ -84,7 +84,6 @@ let checkFailed = false
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
 const RESTART_NOTE = () => join(home, 'logs', 'restart.json')
-const LANE_EVERY_MS = 15 * 60_000
 const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
@@ -589,10 +588,10 @@ function watchUpdates() {
       publishUpdate()
     },
   })
-  // The lanes are looked at a minute after the start and then every quarter hour: a lane is
-  // two small files, and a patch should show up soon after it is out.
+  // The lanes are looked at a minute after the start, then every quarter hour like the app:
+  // a lane is two small files, and a patch should show up soon after it is out.
   setTimeout(() => void lookAtLanes(), 60_000).unref?.()
-  setInterval(() => void lookAtLanes(), LANE_EVERY_MS).unref?.()
+  setInterval(() => void lookAtLanes(), CHECK_EVERY_MS).unref?.()
   // Plugins the lane staged go in by themselves once no agent is at work (auto-apply.js), with
   // DSH restarted alone; switched off, they wait for a Restart, a quit or the next start.
   setInterval(() => {
