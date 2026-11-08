@@ -120,6 +120,8 @@ read-only once, so every stable file and every approved record is reachable but 
 inside a sandbox. `automagik-herdr proxy approve --project <dir>` is the only writer: it reads
 the working roster, prints the diff against the previous record (bots added/removed,
 rank/lead/kind changes), then writes the new record. `dsh-tui install` never approves.
+Only `proxy approve` and a proxied start check the approved data root. Plain `dsh-tui`
+install/check keeps its stable execution root checks without validating approval storage.
 
 A working-tree roster that differs from the record **warns once and still starts**, naming
 `automagik-herdr proxy approve`; the approved roster stays in force. A missing record **refuses**

@@ -648,13 +648,13 @@ export async function startProxy(options = {}) {
   const unsafe = executionPathProblem({ stableRoot, project: caller.project, env,
     node: process.execPath, forbiddenRoots: options.forbiddenRoots });
   if (unsafe) throw new Error(unsafe);
-  const dataWhy = approvedDataRootProblem({ env, project: caller.project, appHome: home,
-    forbiddenRoots: options.forbiddenRoots });
-  if (dataWhy) throw new Error(dataWhy);
   const botsPath = join(caller.project, ".herdr", "bots.json");
   let file;
   let rosterPath;
   if (explicit) {
+    const dataWhy = approvedDataRootProblem({ env, project: caller.project, appHome: home,
+      forbiddenRoots: options.forbiddenRoots });
+    if (dataWhy) throw new Error(dataWhy);
     let approved;
     try {
       approved = readApprovedRecord({ project: caller.project, env });

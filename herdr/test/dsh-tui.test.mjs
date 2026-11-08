@@ -727,7 +727,7 @@ test("shimIsOurs accepts only the marker and a known exec line", () => {
 
 // ---- #631 PR C1: approvals survive an install; the dangling last-component symlink ----
 
-test("G1 (d): install/check refuse a data root inside every writable tree", (t) => {
+test("G1 (d): the approval data-root check refuses every writable tree", (t) => {
   const s = scene(t);
   const project = join(s.root, "project"), app = join(s.root, "app");
   const temp = join(s.root, "pane-tmp"), runtime = join(s.root, "runtime");
@@ -740,7 +740,6 @@ test("G1 (d): install/check refuse a data root inside every writable tree", (t) 
     assert.throws(() => installSandboxRow({ env, project, forbiddenRoots }), /is inside/, name);
     const checked = sandboxState(env, { forbiddenRoots });
     assert.equal(checked.capable, false, name);
-    assert.match(checked.dataRootProblem, /is inside/, name);
   }
 });
 
@@ -752,8 +751,6 @@ test("G1 (d): the stable root and approved folder must stay beneath the data par
     const link = join(parent, name);
     symlinkSync(s.root, link);
     assert.match(approvedDataRootProblem({ env: s.env, forbiddenRoots: rootsOf(s) }),
-      /not beneath/);
-    assert.throws(() => installSandboxRow({ env: s.env, forbiddenRoots: rootsOf(s) }),
       /not beneath/);
     rmSync(link);
   }

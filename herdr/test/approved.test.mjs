@@ -13,6 +13,7 @@ import { approveProject, approvedRootOf, projectKey, readApprovedRecord, recordF
   sha256Of } from "../mods/am-sidebar/approved.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const HARNESS = new URL("./cli-approve-harness.mjs", import.meta.url).pathname;
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc",
   jun: "b-dddddddddd", rev: "b-eeeeeeeeee" };
 const bot = (id, kind, extra = {}) => ({
@@ -34,9 +35,7 @@ const team = () => ({
 
 /** A temp project, data home, app home and pane temp folder. */
 function scene(t) {
-  // Approve refuses literal /tmp too. Use a disposable home in the checkout, outside the
-  // scratch project, and always remove it; no installed profile or live home is involved.
-  const root = realpathSync(mkdtempSync(join(process.cwd(), ".ah-approved-home-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-approved-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj"), data = join(root, "data"), home = join(root, "home");
   const app = join(root, "app"), paneTmp = join(root, "pane-tmp"), runtime = join(root, "run");
@@ -50,7 +49,8 @@ function scene(t) {
     USER: "tester", XDG_RUNTIME_DIR: runtime, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   const cli = (args) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
+    const r = spawnSync(process.execPath, [HARNESS, ...args],
+      { cwd: root, env, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr };
   };
   return { root, project, data, home, app, paneTmp, runtime, bots, env, cli };

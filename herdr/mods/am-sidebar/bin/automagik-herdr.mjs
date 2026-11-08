@@ -4865,7 +4865,7 @@ export async function meterAfterUpdate(io) {
  * approval, then writes the record 0600 under the data root, outside the project. `--project`
  * is mandatory: the record is keyed by the project's canonical main-checkout realpath.
  */
-export async function cmdProxy(opts, [verb, ...rest]) {
+export async function cmdProxy(opts, [verb, ...rest], { forbiddenRoots } = {}) {
   if (verb !== "approve") {
     const extra = verb ? `, not "${verb}"` : "";
     throw new CliError(`proxy needs approve${extra}: proxy approve --project <dir>.`, 2);
@@ -4877,7 +4877,8 @@ export async function cmdProxy(opts, [verb, ...rest]) {
   if (opts.project === undefined)
     throw new CliError("proxy approve needs --project <dir>: the project to approve.", 2);
   const project = await namedKeyOf(opts.project);
-  const unsafe = approvedDataRootProblem({ env: process.env, project, appHome: appHome() });
+  const unsafe = approvedDataRootProblem({ env: process.env, project, appHome: appHome(),
+    forbiddenRoots });
   if (unsafe) throw new CliError(unsafe);
   const countOf = (record) => JSON.parse(record.roster).bots.length;
   let result;
@@ -4946,7 +4947,7 @@ const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, r
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), io = {}) {
   let parsed;
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
@@ -4973,7 +4974,7 @@ export async function main(argv = process.argv.slice(2)) {
       throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
     }
     exitAfter.code = 0;
-    const out = await run(opts, rest);
+    const out = command === "proxy" ? await run(opts, rest, io) : await run(opts, rest);
     if (out === PRINTED) return exitAfter.code;
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     else if (out) process.stdout.write(`${out}\n`);

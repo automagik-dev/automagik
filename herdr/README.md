@@ -890,12 +890,13 @@ seat and worker keep their argv byte for byte. C1 adds the approved roster and n
 C2 turns it on for the PM.
 
 When it is on, a pack-started dsh-tui pane runs through one helper,
-`mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process **before
-DSH starts**, then runs the agent as its child. The proxy reads the project's approved
+`mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process
+**before DSH starts**, then runs the agent as its child. The proxy reads the project's approved
 roster before the pane can create a sandbox, and it ends when the pane ends. The record
-lives outside the project, is written 0600 by `automagik-herdr proxy approve --project
-<dir>` (which prints the diff first), and is the only roster the proxy reads. **A roster
-change needs a pane restart** after `automagik-herdr proxy approve`, so the new pane's
+lives outside the project, is written 0600 by
+`automagik-herdr proxy approve --project <dir>` (which prints the diff first), and is the only
+roster the proxy reads. **A roster change needs a pane restart** after
+`automagik-herdr proxy approve`, so the new pane's
 proxy reads the newly approved record. A working-tree edit that differs warns once, naming
 the command, and still starts on the approved roster; a missing record refuses a proxied
 pane. A worker's record is keyed by the main checkout the pack resolved (its lead seat's
@@ -907,6 +908,9 @@ the stable runner bakes one absolute node. Its own README, `mods/am-sidebar/hcPr
 has the policy, the start checks and the run command. A pack update that changes the
 wrapper needs `automagik-herdr dsh-tui install` again; an opted-in pane refuses to start
 while the profile's sandbox row is stale.
+
+Approval-root checks apply only to `proxy approve` and proxied starts. Plain `dsh-tui`
+install/check keeps the stable execution root checks without validating approval storage.
 
 Residual, in the command's own help too: a sandboxed bot can ask an in-team unsandboxed pane to
 run `proxy approve`. The printed diff is the check, and approving is the person's act.

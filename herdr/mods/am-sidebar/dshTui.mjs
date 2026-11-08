@@ -443,8 +443,6 @@ export function installSandboxRow({ env = process.env, project = null, forbidden
   const unsafe = executionPathProblem({ stableRoot, project: where, env, node: process.execPath,
     bakedNode: process.execPath, forbiddenRoots });
   if (unsafe) throw new Error(unsafe);
-  const unsafeData = approvedDataRootProblem({ env, project: where, forbiddenRoots });
-  if (unsafeData) throw new Error(unsafeData);
   let changed = false;
   const copied = copyStable(packRoot, stableRoot, process.execPath);
   changed = copied.length > 0;
@@ -474,15 +472,8 @@ export function sandboxState(env = process.env, { forbiddenRoots = undefined } =
   const profile = sandboxProfileOf(dshHomeOf(env));
   const stableRoot = sandboxRootOf(env);
   const packRoot = packRootOf();
-  const unsafe = executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots });
-  let dataRootProblem;
-  try {
-    dataRootProblem = approvedDataRootProblem({ env, project: process.cwd(), forbiddenRoots });
-  } catch (e) {
-    dataRootProblem = `the approved data root cannot be checked: ${e?.message ?? e}`;
-  }
-  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot) && unsafe === null
-    && dataRootProblem === null;
+  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot)
+    && executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots }) === null;
   let current = false;
   try {
     current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))
@@ -490,7 +481,7 @@ export function sandboxState(env = process.env, { forbiddenRoots = undefined } =
   } catch { current = false; }
   let row;
   try { row = checkRow({ profile, wrapper, packRoot: capable ? stableRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
-  return { wrapper, profile, packRoot, stableRoot, capable, current, row, unsafe, dataRootProblem };
+  return { wrapper, profile, packRoot, stableRoot, capable, current, row };
 }
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
@@ -938,13 +929,9 @@ export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = und
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
   const sandbox = sandboxState(env, { forbiddenRoots });
-  // A data root in a writable tree is a failed check, even when the stable copy is absent.
-  const sandboxProblem = sandbox.dataRootProblem;
-  const sandboxOk = sandboxProblem === null
-    && (!sandbox.capable || (sandbox.current && sandbox.row.ok));
+  const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
   add("dsh-sandbox", sandboxOk || !installed,
-    sandboxProblem ? sandboxProblem
-      : !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
+    !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"
         : !installed ? "not installed: the dsh-tui profile is not set up"
           : sandbox.current && sandbox.row.ok
             ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper} and its data folder`
