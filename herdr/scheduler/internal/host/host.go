@@ -133,7 +133,8 @@ func (h *live) Do(s Session, a config.Automation, timeout time.Duration) error {
 // Close closes a done run's workspace in the session it was opened in, unless
 // its agent waits on a person: herdr's agent wait counts blocked as settled.
 // In existing mode it closes only the tab this run opened, never the shared
-// workspace, and closes nothing when it cannot tell which tab that was.
+// workspace, and closes nothing when it cannot tell that the tab is still there
+// and not the space's last one.
 func (h *live) Close(s Session, a config.Automation) error {
 	ops := h.ops
 	if s.HerdrSession != "" {
@@ -147,6 +148,28 @@ func (h *live) Close(s Session, a config.Automation) error {
 	if a.Workspace == config.WorkspaceExisting {
 		if s.TabID == "" {
 			log.Printf("%s: done, but its tab stays open: the run has no tab id", a.Name)
+			return nil
+		}
+		// Closing the space's last tab closes the space with it, and a tab can
+		// disappear while the run works: only a known, non-last tab is safe.
+		tabs, err := ops.TabList(s.WorkspaceID)
+		if err != nil {
+			log.Printf("%s: done, but its tab stays open: cannot read the space's tabs (%v)", a.Name, err)
+			return nil
+		}
+		listed := false
+		for _, tab := range tabs {
+			if tab == s.TabID {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			log.Printf("%s: done, but its tab stays open: it is not in the space's tab list", a.Name)
+			return nil
+		}
+		if len(tabs) == 1 {
+			log.Printf("%s: done, but its tab stays open: it is the last one in its space, and closing it would close the workspace", a.Name)
 			return nil
 		}
 		return ops.TabClose(s.TabID)

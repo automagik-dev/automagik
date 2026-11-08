@@ -199,6 +199,23 @@ func (c Client) TabClose(tabID string) error {
 	return c.run(nil, "tab", "close", tabID)
 }
 
+// TabList names every tab in a workspace, in the space's order.
+func (c Client) TabList(workspaceID string) ([]string, error) {
+	var res struct {
+		Tabs []struct {
+			TabID string `json:"tab_id"`
+		} `json:"tabs"`
+	}
+	if err := c.run(&res, "tab", "list", "--workspace", workspaceID); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(res.Tabs))
+	for _, tab := range res.Tabs {
+		out = append(out, tab.TabID)
+	}
+	return out, nil
+}
+
 // Worktree is one checkout backing a workspace. OpenWorkspaceID is empty once
 // the workspace has been closed, which is the only durable signal Herdr keeps
 // about whether anyone came back to look at a run.

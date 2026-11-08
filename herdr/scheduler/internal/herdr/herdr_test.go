@@ -137,6 +137,20 @@ func TestTabClose(t *testing.T) {
 	}
 }
 
+func TestTabList(t *testing.T) {
+	args := fakeHerdr(t, `{"result":{"type":"tab_list","tabs":[{"tab_id":"tb1"},{"tab_id":"tb2"}]}}`)
+	tabs, err := (Client{}).TabList("w7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(tabs, "|"), "tb1|tb2"; got != want {
+		t.Fatalf("tabs=%q, want %q", got, want)
+	}
+	if got, want := readArgs(t, args), []string{"tab", "list", "--workspace", "w7"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("args=%q, want %q", got, want)
+	}
+}
+
 // fakeHerdr installs a herdr that records its argv and prints response.
 func fakeHerdr(t *testing.T, response string) (argsFile string) {
 	t.Helper()

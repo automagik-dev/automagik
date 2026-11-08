@@ -21,8 +21,10 @@ workspace:
   and its uncommitted files stay (measured 2026-11-04), so `cleanup` keeps its
   job.
 - TUI, `workspace: existing`: `herdr tab close <tab_id>`, aimed at the tab this
-  run created. The shared workspace and every other tab stay open; a run that
-  never learned its tab id closes nothing and says why in the log.
+  run created. The shared workspace and every other tab stay open. The space's
+  tabs are read first; a run whose tab is the space's last one, whose tab is no
+  longer listed, or whose tab list cannot be read closes nothing and says why in
+  the log. Closing the last tab would close the space with it.
 - hc, `workspace: worktree | root`: `hc kill` then `hc rm` on the run's
   terminal. The app removes the space itself once its terminal is killed
   (measured 2026-11-04).

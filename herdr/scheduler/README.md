@@ -368,7 +368,7 @@ nothing to say about them — there is no worktree and no branch, so the only tr
 run leaves is its line in `history.jsonl`. Set `close_workspace: on-success` to have
 a successful run close its own tab; the shared workspace and every other tab stay.
 The run's tab stays open when it is the space's last one, since closing it would
-close the workspace.
+close the workspace, and when the space's tabs cannot be read or no longer list it.
 
 **What happens to the worktrees?** They accumulate on purpose: a run whose workspace
 is still open is a run nobody has looked at, which makes the Herdr sidebar the inbox.
