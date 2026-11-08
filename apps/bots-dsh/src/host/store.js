@@ -72,6 +72,21 @@ export function install(rt) {
     return `The Bot team in ${home} is open in another dsh (Web or Desktop, ${where}). This window shows the team but cannot change it; close the other one and reload.`
   }
 
+  // A file this host cannot read is copied aside byte for byte before anything can rewrite
+  // it, so the person keeps the original bytes; a failed copy keeps the team read-only.
+  const setAside = async error => {
+    const backup = `${statePath}.broken-${Date.now()}`
+    try {
+      await copyFile(statePath, backup)
+      stuck = undefined
+      warn('ds-bot: unreadable state %s: %s; backed up as %s', statePath, error, backup)
+    } catch (copyError) {
+      stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
+      warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
+    }
+    return undefined
+  }
+
   const readFileState = async () => {
     let contents
     try {
@@ -91,16 +106,13 @@ export function install(rt) {
     try {
       parsed = JSON.parse(contents)
     } catch (error) {
-      const backup = `${statePath}.broken-${Date.now()}`
-      try {
-        await copyFile(statePath, backup)
-        stuck = undefined
-        warn('ds-bot: unreadable state %s: %s; backed up as %s', statePath, error, backup)
-      } catch (copyError) {
-        stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
-        warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
-      }
-      return undefined
+      return setAside(error)
+    }
+    // A top level that is not a plain object is corrupt, not the format before the stamp:
+    // it is set aside byte for byte and refused like an unparsable file, never migrated.
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      const what = Array.isArray(parsed) ? 'a list' : JSON.stringify(parsed)
+      return setAside(new Error(`the saved team is ${what}, not an object`))
     }
     // The file's own version decides: only a missing stamp is the format before this field,
     // and only an exact integer in the list is compatible. Any other value or type is refused
