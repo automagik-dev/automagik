@@ -1,0 +1,70 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "too_large",
+  "error": {
+    "code": "too_large",
+    "message": "the answer would take 462480 bytes; the most one answer takes is 458752",
+    "limit_bytes": 458752,
+    "needed_bytes": 462480,
+    "rows_fit": 494
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": {
+    "id": "machine-a1b2c3",
+    "scope": "local"
+  },
+  "store": {
+    "schema_version": 2,
+    "location": "current"
+  },
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "unattributed": null,
+  "pricing": null,
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 500,
+    "branches": [
+      "feat/gn-2000-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2001-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2002-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2003-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2004-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2005-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2006-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2007-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2008-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2009-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2010-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2011-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2012-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2013-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2014-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2015-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2016-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2017-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2018-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2019-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2020-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2021-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2022-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2023-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2024-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2025-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2026-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2027-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2028-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2029-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge",
+      "feat/gn-2030-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widget-pipeline-stage-widge"
+    ],
+    "branches_complete": false,
+    "request_sha256": "c970d5fff83e04e2041f8d8807ae6a1ee9408e0033ba53db3e4e813b422be778"
+  },
+  "rows": []
+}

@@ -57,6 +57,10 @@
       "stale": false
     }
   ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
   "pricing": {
     "table": {
       "origin": "bundled",
@@ -70,12 +74,14 @@
   },
   "query": {
     "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 2,
     "branches": [
       "feat/gn-12-cache",
       "fix/gn-14-retry"
     ],
-    "window": "d30",
-    "page": null
+    "branches_complete": true,
+    "request_sha256": "c6f1d5896c800c713ada4846dd6f96bceffb5c026b9e868a2a6449b3d1bbdf64"
   },
   "rows": [
     {
@@ -107,7 +113,8 @@
       "attribution": {
         "precision": "branch_window",
         "exclusive": false,
-        "shared": false
+        "shared": false,
+        "coverage": "complete"
       },
       "activity": {
         "first_hour": "2026-11-02T09:00:00Z",
@@ -137,10 +144,10 @@
       "cost": {
         "state": "priced",
         "usd": 1.0975,
-        "usd_reported": 0.41,
-        "usd_estimated": 0.6875,
-        "tokens_priced": 350000,
-        "tokens_reported": 125000,
+        "usd_reported": 0,
+        "usd_estimated": 1.0975,
+        "tokens_priced": 475000,
+        "tokens_reported": 0,
         "tokens_unpriced": 0,
         "unpriced_models": []
       },
@@ -148,7 +155,8 @@
       "attribution": {
         "precision": "branch_window",
         "exclusive": false,
-        "shared": false
+        "shared": false,
+        "coverage": "complete"
       },
       "activity": {
         "first_hour": "2026-11-06T13:00:00Z",
@@ -156,14 +164,10 @@
         "hours": 6,
         "harnesses": [
           "claude",
-          "omp"
+          "codex"
         ]
       },
       "incomplete_sources": []
     }
-  ],
-  "page": {
-    "next": null,
-    "returned": 2
-  }
+  ]
 }

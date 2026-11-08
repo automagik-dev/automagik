@@ -16,8 +16,8 @@ before any meter code, the query's v1 contract, the per-call evidence the meter 
 anything can be called task cost, who owns each of genie's metering calculations once they move
 to Rust, how old and new versions of both sides meet, and the hardware ceilings each step must
 stay under. The query's JSON Schema and example responses land with it in
-`meter/schema/query/v1/`, so the crate and genie test against the same files. It answers RFC
-0017's question 7.
+`meter/schema/query/v1/`, so the crate and genie test against the same files. RFC 0017 leaves
+its question 7 open, to be answered here; this RFC proposes that answer.
 
 ## Motivation
 
@@ -40,6 +40,9 @@ What the design found, and what this RFC answers:
   table), with no session key. No per-session or per-call task split, and no long-prompt tier
   price, can be recovered from it later. This is why the evidence contract (below) comes before
   any storage change.
+- **Some usage has no branch.** OMP logs none (`omp.rs`), so its usage reaches the store with
+  the repo known (from the session's working folder) and the branch null. While a repo has such
+  usage, a branch with no rows of its own is not proof of zero.
 - **Branch totals are not task cost.** The doc's `tasks[]` rows are rolling d1, d7 and d30
   windows per repo and branch: never lifetime spend, and two cards on one branch share one total.
   `hours` counts distinct hours with usage, not elapsed time.
@@ -54,9 +57,11 @@ What the design found, and what this RFC answers:
 
 From the owner (2026-11-08): the meter is built in Rust in this repository; all of genie's
 metering moves into it; genie-rs consumes it; nothing burns hardware; task linking is part of the
-plan. The capability is `meter.usage@1` (RFC 0017).
+plan. From the owner's answers in RFC 0017: the capability is `meter.usage@1`, and the doc keeps
+`schema_version` 2.
 
-From genie's meter design (rev 2) and its council record:
+From genie's meter design (rev 2) and its council record; the owner confirms them when
+scheduling this RFC:
 
 - The boundary is one meter-owned, versioned, read-only, fork-and-exit query, batched per
   project, with an envelope rather than bare rows (below).
@@ -68,8 +73,9 @@ From genie's meter design (rev 2) and its council record:
 - genie keeps the opt-in capture switch and its ledger until M5 names their Rust owner.
 - A contract change is a pull request here that genie reviews.
 
-From RFC 0017: the crate is `meter/usagemeter/`, the doc's keeper is `meter/schema/`, and cargo
-runs only on the build host, one build at a time, with `CARGO_BUILD_JOBS` capped.
+From RFC 0017 (#751, not merged yet): the crate is `meter/usagemeter/`, the doc's keeper is
+`meter/schema/`, and cargo runs only on the build host, one build at a time, with
+`CARGO_BUILD_JOBS` capped.
 
 Proposed here: everything else. Numbers marked "proposed" are starting points the owner may
 change.
@@ -80,12 +86,12 @@ change.
 
 ```
 usagemeter query --repo <host/owner/repo> --branch <b> [--branch <b> ...] --json
-                 [--window d1|d7|d30] [--contract 1] [--page <token>] [--stale-after <s>]
+                 [--window d1|d7|d30] [--contract 1] [--stale-after <s>]
 ```
 
 - **One call per project.** One `--repo`, every branch the project's cards need, at most 500 per
-  call (proposed). More than 500 is a usage error, never a silent cut. `--window` defaults to
-  `d30`. `--json` is required: v1 has no text output.
+  call and within the byte budget below (proposed). More is a usage error, never a silent cut.
+  `--window` defaults to `d30`. `--json` is required: v1 has no text output. v1 does not page.
 - **Fork and exit.** The process reads, prints one JSON document on stdout and exits. No daemon,
   no listener, no background child.
 - **Branches match exactly**, case-sensitive, against the branch the meter recorded from the log
@@ -118,10 +124,12 @@ never has to tell a v1 refusal from an old meter's error by stderr text. The sch
 | `ingestion` | `watermark` (when the last successful sync finished), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`), `stale` and the `stale_after_s` used (proposed default 7200) |
 | `window` | `name`, `requested_start`, the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark), `clipped` |
 | `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`), `reason`, `last_success`, `stale` |
+| `unattributed` | usage in this repo and window with no recorded branch: `tokens_total` and `harnesses` (today only OMP's). Zero when there is none. |
 | `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
-| `query` | the request echoed back: `repo`, `branches` as given (duplicates kept), `window`, `page` |
+| `query` | the request echoed back: `repo`, `window`, `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window` and each branch in order, each followed by a line feed). A refusal caps the echo (below); `query` is null only when the arguments do not parse. |
 | `rows[]` | one per distinct branch named (below) |
-| `page` | `next` (null, or a token to pass as `--page`) and `returned` |
+
+On a refusal, the fields the meter did not reach are null, and `rows` is empty.
 
 A row:
 
@@ -129,21 +137,21 @@ A row:
 |---|---|
 | `branch`, `requested` | the branch, and how many times the call named it |
 | `state` | `measured`, `zero`, `missing`, `stale` or `unsupported` (next table) |
-| `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `ingestion_stale`, `source_unsupported` |
+| `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `branch_unattributed`, `ingestion_stale`, `source_unsupported` |
 | `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
 | `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models` |
 | `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
-| `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared` |
+| `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero |
 | `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
 | `incomplete_sources` | harnesses whose health means this row may undercount |
 
-#### Missing, stale, unsupported, partial and zero stay apart
+#### Missing, stale, unsupported, partial, unattributed and zero stay apart
 
 | Row state | When | Numbers | A reader shows |
 |---|---|---|---|
-| `measured` | usage found in the window | tokens and cost | the numbers, with `cost.state` |
-| `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, and the repo has usage somewhere in this store | all zero, `cost.state: zero` | a real 0 |
-| `missing` | nothing found, but one of those conditions fails (`reason` says which) | null | unknown |
+| `measured` | usage found in the window | tokens and cost | the numbers, with `cost.state`; "at least" when `coverage` is `partial` |
+| `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, the repo has usage somewhere in this store, and none of the repo's usage in the window lacks a branch | all zero, `cost.state: zero` | a real 0 |
+| `missing` | nothing found, but one of those conditions fails (`reason` says which; `branch_unattributed` for the last) | null | unknown |
 | `stale` | ingestion is older than `stale_after_s` | the last known numbers | unknown, or the numbers labelled with their age |
 | `unsupported` | nothing found while a source on this machine is `unsupported` | null | unknown ("update needed") |
 
@@ -151,28 +159,72 @@ Cost: `priced` when no token is unpriced; `partial` when some are, and `usd` is 
 bound; `unpriced` when none is priced, and `usd` is then null, never 0; `zero` only on a zero
 row. Null or unknown never becomes 0, in the meter or in a reader.
 
+**Usage with no branch.** OMP logs no branch, so its usage reaches the store with its repo known
+and its branch null, and it could belong to any branch of that repo. While the repo has any such
+usage in the window (`unattributed.tokens_total` above zero):
+
+- no row of that call is `zero`: a branch with nothing of its own is `missing` with
+  `branch_unattributed`;
+- every row's `attribution.coverage` is `partial`, so a measured row is a lower bound. A mixed
+  Claude and OMP session shows its Claude subset, priced, marked partial;
+- the meter never assigns the usage to a branch: not from today's checkout, not from another
+  harness's session at the same hour. Only M3's validity intervals may attribute it later, from
+  durable evidence, at `task_interval` precision.
+
+Three questions stay apart on every row: is a source healthy (`incomplete_sources`), is every
+token priced (`cost.state`), and is all of the repo's usage attributed (`attribution.coverage`).
+None of them stands in for another. Usage with no repo at all (a folder that is not a checkout
+with a remote) belongs to no `--repo` and is not counted here.
+
 #### Exit codes
 
 | Exit | `status` | When | Reads rows | Writes |
 |---|---|---|---|---|
 | 0 | `ok` | answered; rows may be `missing`, `stale`, `unsupported` or `zero` | yes | nothing |
-| 2 | `usage` | bad arguments, more than 500 branches, no `--json` | no | nothing |
+| 2 | `usage` | bad arguments, no `--json`, or a request past the request bound (more than 500 branches, or too many bytes); `error.limit_bytes` and `error.needed_bytes` for the bytes | no | nothing |
 | 10 | `absent_store` | no store at the state folder: never synced on this machine | no | nothing; the folder is not created |
-| 11 | `locked` | no consistent snapshot within the busy budget (proposed 2 s), or a migration is in progress; `error.retry_after_s` | no | nothing |
+| 11 | `locked` | no consistent snapshot within the busy budget (proposed 2 s); `error.retry_after_s` | no | nothing |
 | 12 | `newer_schema` | the store's `schema_version` is newer than this binary knows | no | nothing |
 | 13 | `outdated_store` | the store needs a migration only `sync` runs | no | nothing |
 | 14 | `unsupported_contract` | `--contract` names a version this meter does not serve; `error.supported_contracts` | no | nothing |
+| 15 | `too_large` | the full answer would pass the output cap; `error.limit_bytes`, `error.needed_bytes`, and `error.rows_fit` (how many rows, in request order, would have fit) | read, not returned | nothing |
 | 1 | `error` | anything else: an unreadable or corrupt store, an I/O error | no | nothing |
 
 A meter older than v1 has no `query` verb. Today's binary prints `meter: unknown command` on
 stderr, nothing on stdout, and exits 2. A reader that gets no envelope on stdout treats the meter
 as too old.
 
-#### No match is silently dropped
+#### No match is silently dropped, and v1 does not page
 
-Every branch named gets exactly one row, or the call fails. The envelope stays under 256 KiB
-(proposed). When the rows would pass that, the meter returns the rows that fit and a `page.next`
-token, and genie calls again with `--page`. It never truncates the way the doc does.
+Every branch named gets exactly one row in one answer, or the call fails with a refusal whose
+`rows` is empty, so every cost in it is unknown. v1 has no pagination: a page token across
+processes would need a stable order, a token bound to the request and to a data generation,
+prices and bounds frozen between pages, and a refusal when a sync lands in between (open
+question 8). When the full answer would pass the output cap, the meter refuses it whole (exit
+15) and says how many rows would have fit. The reader may then split its branches over several
+calls. Each answer is then its own snapshot, with its own `as_of`, and a reader never adds one
+answer's rows to another's. The meter never truncates the way the doc does.
+
+#### The byte budget
+
+Every number here is proposed. The meter checks all of them before it opens the store, apart from
+the output cap, which it checks before it prints:
+
+| Part | Bound |
+|---|---|
+| Output | the whole envelope, as written to stdout, is at most 448 KiB (458,752 bytes); genie's stdout cap is 512 KiB |
+| Encoding | compact JSON in UTF-8 (the examples are pretty-printed for reading). Only what JSON requires is escaped. Git and the meter refuse a branch holding a space, a backslash or a control character, so `"` is the only character escaping can grow, and an echoed name takes at most twice its bytes plus 3 |
+| Request | at most 500 branches, each at most 255 bytes of UTF-8, at most 64 KiB (65,536 bytes) for all names together, and a `--repo` of at most 512 bytes. Past any of these: exit 2 |
+| Echo | at most 2 × 64 KiB of names, plus 3 bytes per name and the repo: about 134 KiB |
+| Metadata | everything outside `query.branches` and `rows` is at most 16 KiB. Its strings are bounded (`error.message` 1,000 characters; source, label and reason 200) and the source list is short |
+| A row | at most 2 KiB: its escaped branch name and fixed fields |
+| A refusal | at most 8 KiB. Its echo keeps the leading names that fit in 4 KiB, cut at a whole name, with `branches_complete: false`, `branch_count` and `request_sha256`, so the reader can match the refusal to its request without a full echo |
+
+The echo and the metadata together stay under 150 KiB, so any request within the request bound
+leaves room for at least 149 rows. A request whose echo alone could crowd out every row is past
+the request bound, and gets the bounded exit 2. A valid request whose rows overflow gets the
+bounded exit 15. The examples hold one of each: `request-too-large.json` (500 names of about 200
+bytes) and `too-large.json`.
 
 #### A true read-only open
 
@@ -187,6 +239,33 @@ The query opens an existing store and nothing else:
   WAL store can need. A test checks that `meter.db`'s bytes and every other file in the state
   folder are unchanged after a query.
 - M1 moves `usagemeter status` onto the same read-only open, because today it writes.
+
+#### Who refreshes the store
+
+The query never syncs. Only `usagemeter sync` refreshes the store, and today one thing runs it:
+
+- **The Automagik Herdr pack's sidebar** (`herdr/mods/am-sidebar/meter.js`). It syncs 30 s after
+  it loads, then at most every 10 minutes while Herdr is open, one run at a time. Each run covers
+  this computer, then each connected linked machine the person agreed to. Installing the pack
+  installs the meter and turns this timer on. There is no LaunchAgent and no daemon.
+- **Otherwise, the operator.** On a machine where Herdr is not open (one reached only over SSH,
+  or the build host with no desktop), nothing syncs on its own: the operator runs
+  `usagemeter sync`, by hand or from a scheduler of their own. am has `meter install` and
+  `meter uninstall` but no sync command today. If one is added, it runs the same
+  `usagemeter sync`.
+
+This RFC adds no trigger. genie's board refresh never syncs, and no slice adds a daemon or a
+timer. What the reader tells the person, by outcome:
+
+| Outcome | The reader's recovery instruction |
+|---|---|
+| exit 10, or `ingestion.stale` | "not synced yet" or "synced N hours ago": open Herdr, or run `usagemeter sync` |
+| exit 11 | retry after `error.retry_after_s`, at most once per refresh |
+| exit 12, or no envelope at all | update the meter (`am meter install`, or the pack's update) |
+| exit 13 | run `usagemeter sync`, which migrates and keeps a generation first |
+| exit 14 | update whichever side is older |
+| exit 15 | split the branches over smaller calls, within `error.rows_fit` |
+| exit 1 or 2 | report it: genie sent a bad request, or the store is damaged |
 
 #### The caller's side (genie-rs)
 
@@ -357,11 +436,17 @@ And the cases across time:
   opened and row-counted before the migration starts.
 - It migrates only with at least twice the store's size free (proposed); otherwise it refuses,
   says why, and keeps the old store working.
-- The migration runs in one transaction, with a `migrating` marker that makes `query` answer exit
-  11.
+- The migration runs in one write transaction, and there is no `migrating` marker. Until it
+  commits, a reader of the WAL store is served the old snapshot, consistent and with its old
+  `schema_version`. After the commit, the reader sees the new store, or exits 12 if it is an older
+  binary. A reader gets exit 11 only when no snapshot can be had within the busy budget.
 - One generation is kept (proposed), deleted only after a later sync succeeds on the migrated
   store. An interrupted migration leaves the old store or the generation intact, never neither.
 - Nothing migrates on a read: not `query`, not `status`, not a doc publish.
+
+M1 delivers all of these rules (the generation, the free-space refusal, the single transaction and
+keeping one generation). Today's `sync` already resets an outdated store, so the rules are needed
+before the first destructive migration in M3 (the evidence table) as well.
 
 ### (e) Hardware acceptance ceilings
 
@@ -380,7 +465,7 @@ The reference workload is synthetic, generated by the M1 tests:
 |---|---|---|---|---|---|---|
 | Cold import (first sync, default window) | ≤ 25 s per run (20 s read budget); done within 15 min of runs | one core per run; ≤ 6 min in total | ≤ 160 MiB | each log byte read once (≤ 1.05 × corpus) | ≤ 300 MiB in total, ≤ 200 B per call of evidence | ≤ 1 alive; git ≤ 1 per new cwd (cached 7 days); hc ≤ 2 per run |
 | Warm query (1 project, 20 branches) | ≤ 150 ms p95 | ≤ 120 ms | ≤ 40 MiB | ≤ 16 MiB read; stdout ≤ 32 KiB | 0 | meter 0; genie 1 |
-| Many-branch list (1 project, 500 branches) | ≤ 1 s p95 | ≤ 0.8 s | ≤ 64 MiB | stdout ≤ 256 KiB, else it pages | 0 | meter 0; genie 1 per page |
+| Many-branch list (1 project, 500 branches) | ≤ 1 s p95 | ≤ 0.8 s | ≤ 64 MiB | stdout ≤ 448 KiB, else exit 15 | 0 | meter 0; genie 1 |
 | Incremental append (sync after 10 min, about 5 MiB new) | ≤ 2 s | ≤ 1.5 s | ≤ 100 MiB | ≤ 1.1 × the new bytes, plus a stat per known file; no rescan | ≤ 250 B per new call; WAL checkpointed under 64 MiB | hc ≤ 2 |
 | Interrupted backfill (SIGKILL mid-chunk, then rerun) | the rerun recovers within one run (≤ 25 s) | as cold import | as cold import | rereads ≤ one 8 MiB chunk per file in flight | no call counted twice; `PRAGMA integrity_check` passes | as cold import |
 | Rebuild (explicit reimport, or a destructive migration) | as cold import, plus ≤ 30 s per GiB of store for the generation | one core | ≤ 200 MiB | one copy of the store | peak disk ≤ 2.2 × the store; one generation kept | as cold import |
@@ -417,10 +502,18 @@ RFC 0017's build rule.
 
 1. **M0, this RFC** (docs and fixtures; cuts nothing).
 2. **M1, the query.** `usagemeter query` per contract 1; the read-only open, which `status`
-   moves to; `sync` refusing a newer store and keeping a generation before any reset. *Check:* the
-   crate's contract test (below) passes on every fixture; a query leaves the state folder
-   byte-identical; the warm-query, many-branch and concurrent-refresh ceilings hold. *Rollback:*
-   revert; genie falls back to "meter update needed".
+   moves to; `sync` refusing a newer store; and the migration-safety rules of (d). *Check:*
+   - the crate's contract test (below) passes on every fixture;
+   - a query leaves the state folder byte-identical;
+   - `usagemeter status` leaves the state folder byte-identical;
+   - `sync` on a store with a newer `schema_version` exits 12 and writes nothing (the folder is
+     byte-identical after it);
+   - before `sync` resets an outdated store, a generation is written, and its row counts match
+     the old store's;
+   - `sync` with less than twice the store's size free refuses and changes nothing;
+   - the warm-query, many-branch and concurrent-refresh ceilings hold.
+
+   *Rollback:* revert; genie falls back to "meter update needed".
 3. **M2, lifecycle.**
    - Read genie's `tasks.jsonl` v1 with its link and supersede events.
    - Own the lifecycle time formulas genie's S0 adds (`age_min`, `pr_lead_min`, `pr_open_min`,
@@ -462,17 +555,23 @@ genie's side of the boundary, built in genie and named here only so the order is
 
 | Example | Case | Exit |
 |---|---|---|
-| `priced.json` | two measured rows, one partly reported by the harness | 0 |
+| `priced.json` | two measured rows from Claude and Codex, which record a branch | 0 |
 | `partial-priced.json` | an unknown model and `total_only` tokens: `cost.state: partial` | 0 |
 | `missing-branch.json` | a window clipped by `counted_from`: one row `missing` | 0 |
 | `stale-source.json` | ingestion 30 hours old, Codex degraded for three days: rows `stale` | 0 |
 | `ambiguous-branch.json` | one branch named by two cards: `requested: 2`, `shared: true` | 0 |
 | `zero-usage.json` | a vouched zero | 0 |
 | `unsupported-source.json` | an unreadable Codex schema: no zero can be vouched for | 0 |
+| `unattributed-branch.json` | healthy OMP usage in the repo with no branch: a partial Claude subset, and `missing` (`branch_unattributed`) instead of 0 | 0 |
+| `usage.json` | no `--json`: the arguments do not parse, so `query` is null | 2 |
+| `request-too-large.json` | 500 names of about 200 bytes, past the request bound: echo capped at 4 KiB, with count and hash | 2 |
 | `absent-store.json` | no store | 10 |
-| `locked.json` | a migration in progress | 11 |
+| `locked.json` | no snapshot within the busy budget | 11 |
 | `newer-schema.json` | a store from a newer meter | 12 |
 | `outdated-store.json` | a store only `sync` can migrate | 13 |
+| `unsupported-contract.json` | `--contract 2` asked of a meter that serves 1 | 14 |
+| `too-large.json` | an answer past the output cap: refused whole, with `rows_fit` and a capped echo | 15 |
+| `error.json` | a damaged store | 1 |
 
 The data is synthetic: `example.com` repos, made-up branches, no session ids. Who reads them:
 
@@ -496,7 +595,9 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 - **The capability.** A breaking change that a `meter.usage@1` reader cannot read also bumps the
   capability's major, as RFC 0017 says for the doc.
 
-### Answer to RFC 0017's question 7
+### RFC 0017's question 7 (open there, answered here)
+
+RFC 0017 leaves its question 7 open, to be answered by this RFC. The proposed answer:
 
 - **What is ported:** every row of (c).
 - **Where it lives:** proposed, as modules of the one crate in `meter/usagemeter/`: `query`,
@@ -512,8 +613,8 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 
 ## Contracts introduced
 
-- The command `usagemeter query`, its flags, contract version 1, its exit codes 0, 1, 2 and 10
-  to 14, and its envelope (`meter/schema/query/v1/envelope.schema.json`), under
+- The command `usagemeter query`, its flags, contract version 1, its byte budget, its exit codes
+  0, 1, 2 and 10 to 15, and its envelope (`meter/schema/query/v1/envelope.schema.json`), under
   `meter.usage@1`. New, so no install changes. Permanent once a release ships it.
 - `meter/schema/query/v1/` and its examples, owned here, read by the crate's tests and genie's.
 - The evidence contract (b): what M3 must retain, the validity intervals, the retention bounds
@@ -528,8 +629,10 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 - **What the query reveals.** Token counts and estimated cost per branch of one repo, on the
   machine it runs on, to a local caller that could already read the store's folder. No session
   ids, no paths, no content. Nothing leaves the machine.
-- **A hostile caller** can pass up to 500 branches and page; the call stays read-only and bounded
-  by the ceilings. It cannot make the meter write, fetch, publish or start anything.
+- **A hostile caller** can pass up to 500 branches within the request bound; past it, the call
+  is refused before the store is opened, with a refusal of at most 8 KiB. The call stays
+  read-only and bounded by the ceilings. It cannot make the meter write, fetch, publish or start
+  anything.
 - **A hostile store** (a corrupt or crafted `meter.db`) gives exit 1 or 12, or rows the schema
   bounds; genie's timeout and output caps contain a meter that hangs or floods.
 - **Undo.** Every slice reverts on its own. A generation is kept before any destructive
@@ -549,7 +652,18 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 6. **Provider Keeper usage.** Recommended: a reconciliation source after M5 that reads a
    sanitized snapshot mikro writes; the meter never holds the credentials.
 7. **Where ported code lives.** Recommended: modules of the one crate, no workspace yet (the
-   answer to RFC 0017's question 7 above).
+   proposed answer to RFC 0017's question 7, above).
+8. **Pagination.** Recommended: none in contract 1, which refuses past the output cap (exit 15)
+   and leaves splitting to the reader. A later contract version may page. It would need:
+   - a fixed traversal order;
+   - a token bound to the request and to a data generation that changes on every commit that
+     touches the answer;
+   - the window bounds and the price table frozen across pages;
+   - a refusal when the generation moves between pages, and a defined last page;
+   - fixtures for a two-page answer and for a sync landing between pages.
+9. **The sync trigger outside Herdr.** Recommended: the operator runs `usagemeter sync` (or a
+   future am command that runs it) where Herdr is not open, and no daemon is added. The
+   alternative is a scheduled job that am installs, which would need its own RFC.
 
 ## Links
 
@@ -557,11 +671,12 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
   - [0011](0011-monorepo-parts-and-releases.md) parts and lanes;
   - [0012](0012-am-cli-and-parts.md) parts and capabilities;
   - [0017](0017-usagemeter-crate.md) the crate, the doc's keeper, `meter.usage@1` and the build
-    rule. Its question 7 is answered here.
+    rule. Its question 7 is open there, to be answered here.
 - Fixtures: `meter/schema/query/v1/`.
 - Upstream: `automagik-dev/usagemeter` at v0.3.0 (`src/store.rs`, `src/sync.rs`, `src/main.rs`,
-  `src/repo.rs`); automagik-dev/usagemeter#7 (the state folder) and automagik-dev/usagemeter#8
-  (the `space` feed).
+  `src/repo.rs`, `src/sources/omp.rs`); automagik-dev/usagemeter#7 (the state folder) and
+  automagik-dev/usagemeter#8 (the `space` feed).
 - genie: its meter design (rev 2) and its metering inventory against usagemeter v0.3.0, kept
   with genie's design; genie-rs (`list`, `tasks.jsonl` v1, genie-forge).
-- Code here: `scripts/lane.ts` (`NEVER_SHIPPED`), `herdr/mods/am-sidebar/meterFleet.js`.
+- Code here: `scripts/lane.ts` (`NEVER_SHIPPED`), `herdr/mods/am-sidebar/meter.js` (the sync
+  timer), `herdr/mods/am-sidebar/meterFleet.js`.

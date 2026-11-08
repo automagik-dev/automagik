@@ -6,7 +6,7 @@
   "status": "absent_store",
   "error": {
     "code": "absent_store",
-    "message": "no meter store on this machine yet; usagemeter sync creates it"
+    "message": "no meter store on this machine yet; open Herdr or run usagemeter sync"
   },
   "generated_at": "2026-11-08T20:00:05Z",
   "as_of": null,
@@ -15,15 +15,17 @@
   "ingestion": null,
   "window": null,
   "sources": [],
+  "unattributed": null,
   "pricing": null,
   "query": {
     "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 1,
     "branches": [
       "feat/gn-12-cache"
     ],
-    "window": "d30",
-    "page": null
+    "branches_complete": true,
+    "request_sha256": "72c8db08c4bb77d16c2b64c03d871ffaa73ff85f194a12c03282957522931d3c"
   },
-  "rows": [],
-  "page": null
+  "rows": []
 }

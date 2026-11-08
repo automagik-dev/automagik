@@ -57,6 +57,10 @@
       "stale": false
     }
   ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
   "pricing": {
     "table": {
       "origin": "bundled",
@@ -70,11 +74,13 @@
   },
   "query": {
     "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 1,
     "branches": [
       "feat/gn-55-sync"
     ],
-    "window": "d30",
-    "page": null
+    "branches_complete": true,
+    "request_sha256": "d9ca373427957b8a0357c2d1b7f01297cce92221c04470e2674058de9be96433"
   },
   "rows": [
     {
@@ -106,7 +112,8 @@
       "attribution": {
         "precision": "branch_window",
         "exclusive": false,
-        "shared": false
+        "shared": false,
+        "coverage": "complete"
       },
       "activity": {
         "first_hour": "2026-11-01T09:00:00Z",
@@ -120,9 +127,5 @@
         "codex"
       ]
     }
-  ],
-  "page": {
-    "next": null,
-    "returned": 1
-  }
+  ]
 }

@@ -1,0 +1,51 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "usage",
+  "error": {
+    "code": "request_too_large",
+    "message": "the branch names take 101500 bytes; the most one call takes is 65536",
+    "limit_bytes": 65536,
+    "needed_bytes": 101500
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": null,
+  "store": null,
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "unattributed": null,
+  "pricing": null,
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 500,
+    "branches": [
+      "feat/gn-1000-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1001-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1002-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1003-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1004-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1005-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1006-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1007-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1008-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1009-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1010-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1011-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1012-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1013-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1014-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1015-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1016-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1017-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-",
+      "feat/gn-1018-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-données-de-mesure-"
+    ],
+    "branches_complete": false,
+    "request_sha256": "d9237d8547ed7ab3df614cad58cac8f100cb6bae731e57b02ce242c0c118cf8e"
+  },
+  "rows": []
+}

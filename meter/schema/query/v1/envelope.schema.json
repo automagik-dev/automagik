@@ -7,8 +7,8 @@
   "additionalProperties": false,
   "required": [
     "contract", "contract_version", "capability", "meter_version", "status", "error",
-    "generated_at", "as_of", "machine", "store", "ingestion", "window", "sources", "pricing",
-    "query", "rows", "page"
+    "generated_at", "as_of", "machine", "store", "ingestion", "window", "sources", "unattributed",
+    "pricing", "query", "rows"
   ],
   "properties": {
     "contract": { "const": "usagemeter.query" },
@@ -18,7 +18,7 @@
     "status": {
       "enum": [
         "ok", "usage", "error", "absent_store", "locked", "newer_schema", "outdated_store",
-        "unsupported_contract"
+        "unsupported_contract", "too_large"
       ]
     },
     "error": {
@@ -30,11 +30,14 @@
           "required": ["code", "message"],
           "properties": {
             "code": { "type": "string", "minLength": 1 },
-            "message": { "type": "string", "minLength": 1 },
+            "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
             "retry_after_s": { "type": "integer", "minimum": 1 },
             "store_schema_version": { "type": "integer", "minimum": 0 },
             "supported_schema_version": { "type": "integer", "minimum": 1 },
-            "supported_contracts": { "type": "array", "items": { "type": "integer", "minimum": 1 } }
+            "supported_contracts": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+            "limit_bytes": { "type": "integer", "minimum": 1 },
+            "needed_bytes": { "type": "integer", "minimum": 1 },
+            "rows_fit": { "type": "integer", "minimum": 0, "description": "How many rows, in request order, would have fit beside the full echo." }
           }
         }
       ]
@@ -125,11 +128,26 @@
         "properties": {
           "harness": { "type": "string", "minLength": 1 },
           "status": { "enum": ["ok", "degraded", "unsupported", "absent"] },
-          "reason": { "type": ["string", "null"] },
+          "reason": { "type": ["string", "null"], "maxLength": 200 },
           "last_success": { "$ref": "#/$defs/timeOrNull" },
           "stale": { "type": "boolean" }
         }
       }
+    },
+    "unattributed": {
+      "description": "Usage in this repo and window with no recorded branch (OMP logs none). It could belong to any branch named, so above 0 no row is complete or zero.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tokens_total", "harnesses"],
+          "properties": {
+            "tokens_total": { "type": "integer", "minimum": 0 },
+            "harnesses": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
     },
     "pricing": {
       "oneOf": [
@@ -146,8 +164,8 @@
               "properties": {
                 "origin": { "enum": ["bundled", "override", "fetched"] },
                 "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
-                "source": { "type": "string", "minLength": 1 },
-                "label": { "type": "string" },
+                "source": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "label": { "type": "string", "maxLength": 200 },
                 "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
               }
             },
@@ -163,36 +181,28 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["repo", "branches", "window", "page"],
+          "required": ["repo", "window", "branch_count", "branches", "branches_complete", "request_sha256"],
           "properties": {
             "repo": { "$ref": "#/$defs/repo" },
+            "window": { "enum": ["d1", "d7", "d30"] },
+            "branch_count": { "type": "integer", "minimum": 0, "description": "Branches named, duplicates counted." },
             "branches": {
               "type": "array",
-              "minItems": 1,
               "maxItems": 500,
+              "description": "As given, duplicates kept. A refusal keeps only the leading names that fit in 4 KiB.",
               "items": { "$ref": "#/$defs/branch" }
             },
-            "window": { "enum": ["d1", "d7", "d30"] },
-            "page": { "type": ["string", "null"] }
+            "branches_complete": { "type": "boolean" },
+            "request_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "sha256 of the UTF-8 of repo, window and each branch in order, each followed by a line feed."
+            }
           }
         }
       ]
     },
-    "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
-    "page": {
-      "oneOf": [
-        { "type": "null" },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["next", "returned"],
-          "properties": {
-            "next": { "type": ["string", "null"] },
-            "returned": { "type": "integer", "minimum": 0 }
-          }
-        }
-      ]
-    }
+    "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } }
   },
   "allOf": [
     {
@@ -204,16 +214,45 @@
           "store": { "type": "object" },
           "ingestion": { "type": "object" },
           "window": { "type": "object" },
+          "unattributed": { "type": "object" },
           "pricing": { "type": "object" },
-          "query": { "type": "object" },
-          "page": { "type": "object" }
+          "query": {
+            "type": "object",
+            "properties": {
+              "branches": { "type": "array", "minItems": 1 },
+              "branches_complete": { "const": true }
+            }
+          }
         }
       },
       "else": {
         "properties": {
           "error": { "type": "object" },
-          "rows": { "type": "array", "maxItems": 0 },
-          "page": { "type": "null" }
+          "unattributed": { "type": "null" },
+          "rows": { "type": "array", "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["unattributed"],
+        "properties": { "unattributed": { "type": "object", "properties": { "tokens_total": { "const": 0 } } } }
+      },
+      "then": {
+        "properties": {
+          "rows": { "type": "array", "items": { "type": "object", "properties": { "attribution": { "type": "object", "properties": { "coverage": { "const": "complete" } } } } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["unattributed"],
+        "properties": { "unattributed": { "type": "object", "properties": { "tokens_total": { "type": "integer", "minimum": 1 } } } }
+      },
+      "then": {
+        "properties": {
+          "unattributed": { "type": "object", "properties": { "harnesses": { "type": "array", "minItems": 1 } } },
+          "rows": { "type": "array", "items": { "type": "object", "properties": { "attribution": { "type": "object", "properties": { "coverage": { "const": "partial" } } } } } }
         }
       }
     },
@@ -244,6 +283,10 @@
     {
       "if": { "properties": { "status": { "const": "unsupported_contract" } } },
       "then": { "properties": { "error": { "type": "object", "required": ["code", "message", "supported_contracts"] } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "too_large" } } },
+      "then": { "properties": { "error": { "type": "object", "required": ["code", "message", "limit_bytes", "needed_bytes", "rows_fit"] } } }
     }
   ],
   "$defs": {
@@ -257,7 +300,13 @@
       "pattern": "^[a-z0-9.-]+(/[^/\\s]+)+$",
       "maxLength": 512
     },
-    "branch": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^\\S+$" },
+    "branch": {
+      "description": "A branch as git records it: no space, no backslash, no control character; at most 255 bytes of UTF-8, which the meter checks (a schema counts characters).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\s\\\\\\u0000-\\u001f\\u007f]+$"
+    },
     "tokens": {
       "type": "object",
       "additionalProperties": false,
@@ -335,7 +384,7 @@
         "reason": {
           "enum": [
             null, "repo_not_seen", "window_before_counted_from", "backlog", "source_incomplete",
-            "ingestion_stale", "source_unsupported"
+            "branch_unattributed", "ingestion_stale", "source_unsupported"
           ]
         },
         "tokens": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/tokens" }] },
@@ -344,11 +393,15 @@
         "attribution": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["precision", "exclusive", "shared"],
+          "required": ["precision", "exclusive", "shared", "coverage"],
           "properties": {
             "precision": { "enum": ["branch_window"], "description": "v1 rows are (repo, branch) totals over the window: never task cost." },
             "exclusive": { "const": false },
-            "shared": { "type": "boolean" }
+            "shared": { "type": "boolean" },
+            "coverage": {
+              "enum": ["complete", "partial"],
+              "description": "partial when the repo has usage with no recorded branch in the window (envelope unattributed): the row's numbers are then a lower bound. Separate from source health and from price coverage."
+            }
           }
         },
         "activity": {
@@ -393,9 +446,17 @@
           "if": { "properties": { "state": { "const": "zero" } } },
           "then": {
             "properties": {
-              "tokens": { "type": "object", "properties": { "total": { "const": 0 } } },
+              "tokens": {
+                "type": "object",
+                "properties": {
+                  "input": { "const": 0 }, "cache_read": { "const": 0 }, "cache_write_5m": { "const": 0 },
+                  "cache_write_1h": { "const": 0 }, "output": { "const": 0 }, "reasoning": { "const": 0 },
+                  "unsplit": { "const": 0 }, "total": { "const": 0 }
+                }
+              },
               "cost": { "type": "object", "properties": { "state": { "const": "zero" } } },
               "token_precision": { "const": null },
+              "attribution": { "type": "object", "properties": { "coverage": { "const": "complete" } } },
               "incomplete_sources": { "type": "array", "maxItems": 0 }
             }
           }
@@ -413,7 +474,9 @@
           "if": { "properties": { "state": { "const": "missing" } } },
           "then": {
             "properties": {
-              "reason": { "enum": ["repo_not_seen", "window_before_counted_from", "backlog", "source_incomplete"] }
+              "reason": {
+                "enum": ["repo_not_seen", "window_before_counted_from", "backlog", "source_incomplete", "branch_unattributed"]
+              }
             }
           }
         },

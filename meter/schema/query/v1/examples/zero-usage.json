@@ -57,6 +57,10 @@
       "stale": false
     }
   ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
   "pricing": {
     "table": {
       "origin": "bundled",
@@ -70,11 +74,13 @@
   },
   "query": {
     "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 1,
     "branches": [
       "docs/gn-90-readme"
     ],
-    "window": "d30",
-    "page": null
+    "branches_complete": true,
+    "request_sha256": "bbaa385ebe909780bbdad1d7fb1b103e0476f2a9f0c4fa124192f5a58c8ff9bc"
   },
   "rows": [
     {
@@ -106,7 +112,8 @@
       "attribution": {
         "precision": "branch_window",
         "exclusive": false,
-        "shared": false
+        "shared": false,
+        "coverage": "complete"
       },
       "activity": {
         "first_hour": null,
@@ -116,9 +123,5 @@
       },
       "incomplete_sources": []
     }
-  ],
-  "page": {
-    "next": null,
-    "returned": 1
-  }
+  ]
 }
