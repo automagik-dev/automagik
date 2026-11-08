@@ -899,8 +899,8 @@ after `automagik-herdr proxy approve`, so the new pane's proxy reads the newly a
 A working-tree edit that differs warns once, naming the command, and still starts on the approved
 roster; a missing record refuses a proxied pane. A worker's record is keyed by the main checkout
 the pack resolved (its lead seat's project), never by the worktree it owns. A proxied bot cannot
-unset the switch in its own shell to start a plain worker: the proxy refuses the old five-word worker
-argv and accepts only the helper's own shape, which runs from a stable copy under the data home
+unset the switch in its own shell to start a plain worker: the proxy refuses the old five-word
+worker argv and accepts only the helper's own shape, which runs from a stable copy under the data home
 (never the writable pack folder). A node upgrade (nvm, Homebrew, bun) needs `dsh-tui install`
 again: the stable runner bakes one absolute node. Its own README,
 `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
