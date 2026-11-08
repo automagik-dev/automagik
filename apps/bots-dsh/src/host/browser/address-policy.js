@@ -1,6 +1,6 @@
-// The Bot browser and web_fetch share one per-profile address policy. The lists are empty
-// by default, so localhost, LAN and tailnet addresses open as they always did. A deny entry
-// always wins; when the allow list is not empty, only a matching target opens.
+// The Bot browser's per-profile address policy. The lists are empty by default, so
+// localhost, LAN and tailnet addresses open as they always did. A deny entry always wins;
+// when the allow list is not empty, only a matching target opens.
 //
 // An entry is an IPv4/IPv6 literal, an IPv4/IPv6 CIDR range, or a hostname. A hostname
 // covers itself and its subdomains; a leading "*." is accepted and means the same. "*"
@@ -147,27 +147,25 @@ async function addressesOf(host, resolve) {
   }
 }
 
-function refusal(action, host, match, allowMiss) {
-  const verb = action === 'fetch' ? 'fetch' : 'open'
+function refusal(host, match, allowMiss) {
   if (allowMiss) {
-    return `This address is not on this profile's allow list: ${host}. A Bot cannot ${verb} it. `
+    return `This address is not on this profile's allow list: ${host}. A Bot cannot open it. `
       + 'Ask the person to add it in Settings -> Browser -> Address lists, or leave the '
       + 'allow list empty.'
   }
   const where = match.via === host ? host : `${host} (${match.via})`
   return `This address is denied by this profile's address list: ${where} matches `
-    + `"${match.entry.text}". A Bot cannot ${verb} it. Ask the person to change `
+    + `"${match.entry.text}". A Bot cannot open it. Ask the person to change `
     + 'Settings -> Browser -> Address lists.'
 }
 
 /**
- * Decide one navigation or fetch against the profile's lists.
+ * Decide one navigation against the profile's lists.
  * @param {string} url
  * @param {{
  *   allow?: string[],
  *   deny?: string[],
  *   lookup?: Function,
- *   action?: 'open'|'fetch',
  * }} [options]
  * @returns {Promise<{ allowed: boolean, message?: string }>}
  */
@@ -189,13 +187,12 @@ export async function decideAddress(url, options = {}) {
   const addresses = literal
     ? [host]
     : hasAddressEntry(allow) || hasAddressEntry(deny) ? await addressesOf(host, resolve) : []
-  const action = options.action === 'fetch' ? 'fetch' : 'open'
   const denied = matching(deny, host, addresses)
   if (denied !== undefined) {
-    return { allowed: false, message: refusal(action, host, denied, false) }
+    return { allowed: false, message: refusal(host, denied, false) }
   }
   if (allow.length > 0 && matching(allow, host, addresses) === undefined) {
-    return { allowed: false, message: refusal(action, host, undefined, true) }
+    return { allowed: false, message: refusal(host, undefined, true) }
   }
   return ALLOWED
 }

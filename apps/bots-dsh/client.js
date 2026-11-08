@@ -361,7 +361,7 @@ var ZH = {
   "One IPv4/IPv6 address, CIDR range or hostname per line.": "每行一个 IPv4/IPv6 地址、CIDR 范围或主机名。",
   "Empty allows every address not denied above. When set, only these open.": "留空时，除上方拒绝的地址外都允许；填写后只允许这些地址。",
   "Save address lists": "保存地址列表",
-  ["Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open. The same lists apply to web_fetch."]: "默认允许所有地址，包括 localhost、局域网和 tailnet。拒绝项始终优先；允许列表有内容时，只允许匹配的地址。相同的列表也适用于 web_fetch。",
+  ["Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open."]: "默认允许所有地址，包括 localhost、局域网和 tailnet。拒绝项始终优先；允许列表有内容时，只允许匹配的地址。",
   "Bots browse, click and fill in forms freely. Posting, uploading, downloading and deleting ask you first unless you allow them here. Payments are always yours: the Bot hands the page to you.": "Bot 可以自由浏览、点击和填写表单。发布、上传、下载和删除会先征求你的同意，除非你在这里预先允许。付款始终由你自己完成：Bot 会把页面交给你。",
   "Allowed actions": "已允许的操作",
   "Nothing allowed yet.": "还没有允许的操作。",
@@ -19403,7 +19403,7 @@ function ConnectorsPage({ roster, actions }) {
 
 // src/client/browser-settings.js
 var import_react56 = require("react");
-var ADDRESS_NOTE = "Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open. The same lists apply to web_fetch.";
+var ADDRESS_NOTE = "Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open. ";
 var ACTIONS = [["post", "Post"], ["upload", "Upload"], ["download", "Download"], ["delete", "Delete"]];
 var DURATIONS = [["hour", "1 hour"], ["today", "Today"], ["week", "7 days"], ["permanent", "Permanent"]];
 var expired = (grant) => Number.isFinite(grant.until) && grant.until <= Date.now();

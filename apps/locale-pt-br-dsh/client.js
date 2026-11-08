@@ -565,7 +565,7 @@ const pack = createPack({
     "Allow list": "Lista de permissão",
     "One IPv4/IPv6 address, CIDR range or hostname per line.": "Um endereço IPv4/IPv6, faixa CIDR ou nome de host por linha.",
     "Empty allows every address not denied above. When set, only these open.": "Vazia permite todos os endereços não bloqueados acima. Quando preenchida, só estes abrem.",
-    "Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open. The same lists apply to web_fetch.": "Todos os endereços abrem por padrão, incluindo localhost, LAN e tailnet. Uma entrada na lista de bloqueio sempre vence. Quando a lista de permissão tem entradas, só os endereços correspondentes abrem. As mesmas listas valem para web_fetch.",
+    "Every address opens by default, including localhost, LAN and tailnet. A deny entry always wins. When the allow list has entries, only matching addresses open.": "Todos os endereços abrem por padrão, incluindo localhost, LAN e tailnet. Uma entrada na lista de bloqueio sempre vence. Quando a lista de permissão tem entradas, só os endereços correspondentes abrem.",
     "Save address lists": "Salvar listas de endereços",
     "Bots browse, click and fill in forms freely. Posting, uploading, downloading and deleting ask you first unless you allow them here. Payments are always yours: the Bot hands the page to you.": "Os Bots navegam, clicam e preenchem formulários livremente. Publicar, enviar, baixar e excluir pedem sua permissão antes, a menos que você permita aqui. Pagamentos são sempre seus: o Bot passa a página para você.",
     "Allowed actions": "Ações permitidas",
