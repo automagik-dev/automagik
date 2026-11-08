@@ -9,20 +9,22 @@ class ChatUnsupported : IllegalStateException(Chat.UPDATE_LINK)
 
 /**
  * The `chat.*` methods of Pocket Link's `herdr-pocket/chat/1` route, over the same framing herdr-core speaks
- * ([CoreClient]). A write on a DSH chat (read only) is refused here, before anything is sent; the bridge refuses
- * it too (dsh-source.mjs).
+ * ([CoreClient]). A write on a DSH chat is refused here, before anything is sent, unless the bridge's hello said
+ * `dshWrite: true` ([dshWrite]); the bridge refuses it too without a socket that takes writes (dsh-source.mjs).
+ * With it, send, answer and interrupt go to the bridge as on a terminal: the bridge adds the phone's name and key,
+ * which the phone never sets. Held messages never exist on a DSH chat, so sendHeld and cancelHeld stay refused.
  */
-class ChatClient(private val core: CoreClient) : Closeable {
+class ChatClient(private val core: CoreClient, val dshWrite: Boolean = false) : Closeable {
     companion object {
         /** The bridge's answer to a write the phone never sends: the same shape dsh-source.mjs `refusedDsh` gives. */
         fun refusedReadOnly(id: String? = null): JSONObject = JSONObject().put("state", "refused").put("ok", false)
             .put("reason", "read-only").put("message", Chat.ANSWER_ON_COMPUTER).apply { if (id != null) put("id", id) }
 
-        /** Starts [core] and checks the bridge serves chat version 1. */
+        /** Starts [core] and checks the bridge serves chat version 1; DSH writes only for a hello with `dshWrite: true`. */
         suspend fun start(core: CoreClient): ChatClient {
             val hello = core.start()
             if (hello.optInt("chat") != 1) { core.close(); throw ChatUnsupported() }
-            return ChatClient(core)
+            return ChatClient(core, dshWrite = hello.opt("dshWrite") == true)
         }
 
         /** A connect that failed because the bridge does not offer the chat route (an older Pocket Link). */
@@ -33,6 +35,9 @@ class ChatClient(private val core: CoreClient) : Closeable {
     }
 
     private fun params(terminal: String) = JSONObject().put("terminal", terminal)
+
+    /** Whether this phone refuses a write on [terminal] itself: a DSH chat on a bridge without `dshWrite`. */
+    fun readOnly(terminal: String) = Chat.readOnly(terminal, dshWrite)
 
     suspend fun list(): List<Chat.Terminal> {
         val terminals = core.call("chat.list").optJSONArray("terminals") ?: JSONArray()
@@ -66,21 +71,21 @@ class ChatClient(private val core: CoreClient) : Closeable {
         core.call("chat.backfill", params(terminal).put("before", before).put("limit", limit)).optJSONArray("rows") ?: JSONArray()
 
     suspend fun send(terminal: String, text: String, id: String): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly(id) else core.call("chat.send", params(terminal).put("text", text).put("id", id))
+        if (readOnly(terminal)) refusedReadOnly(id) else core.call("chat.send", params(terminal).put("text", text).put("id", id))
 
     suspend fun sendHeld(terminal: String, id: String): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly(id) else core.call("chat.sendHeld", params(terminal).put("id", id))
+        if (Chat.isDsh(terminal)) refusedReadOnly(id) else core.call("chat.sendHeld", params(terminal).put("id", id))
 
     suspend fun cancelHeld(terminal: String, id: String): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly(id) else core.call("chat.cancelHeld", params(terminal).put("id", id))
+        if (Chat.isDsh(terminal)) refusedReadOnly(id) else core.call("chat.cancelHeld", params(terminal).put("id", id))
 
     /** [text]: a question's typed answer, with choice [ChatActions.OTHER] only. */
     suspend fun answer(terminal: String, row: String, choice: String, text: String? = null): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly()
+        if (readOnly(terminal)) refusedReadOnly()
         else core.call("chat.answer", params(terminal).put("row", row).put("choice", choice).apply { if (text != null) put("text", text) })
 
     suspend fun interrupt(terminal: String): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly() else core.call("chat.interrupt", params(terminal))
+        if (readOnly(terminal)) refusedReadOnly() else core.call("chat.interrupt", params(terminal))
 
     override fun close() = core.close()
 }

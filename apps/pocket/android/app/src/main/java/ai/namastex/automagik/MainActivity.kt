@@ -242,7 +242,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             when {
                 // An Automagik Bot's chat has no terminal: the chat alone, read only.
-                selected != null && Chat.readOnly(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
+                selected != null && Chat.isDsh(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace, strip, swipe) { scope.launch { drawer.open() } }
                 space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
                 state.screen == Nav.SETTINGS -> SettingsScreen(state, vm, MachineActions(pair = { pairDesktop = true }, repair = ::repair, connect = { vm.connect(it) },

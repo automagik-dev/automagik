@@ -959,13 +959,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _chat.update { s -> if (s == null || gen != chatGen) s else change(s) }
     }
 
-    /** Opens [ref]'s chat (a terminal's, or a `dsh:` Bot chat); the same chat already open stays as it is. */
+    /**
+     * Opens [ref]'s chat (a terminal's, or a `dsh:` Bot chat); the same chat already open stays as it is. Reopening
+     * the same chat (a reconnect) keeps the messages whose outcome is unknown as "maybe not sent", with Retry.
+     */
     fun openChat(ref: TerminalRef) {
         if (chatRef == ref && chatJob?.isActive == true) return
+        val unknown = _chat.value?.takeIf { chatRef == ref }?.let(Chat::unknown).orEmpty()
         closeChat()
         val gen = ++chatGen
         chatRef = ref
-        _chat.value = Chat.State(ref.address)
+        _chat.value = Chat.State(ref.address, messages = unknown)
         if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
@@ -974,7 +978,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 link = openChatLink(ref.hostId, scope) { reason -> chatUpdate(gen) { it.copy(connected = false, error = "Chat disconnected: $reason",
                     messages = it.messages.map { m -> if (m.state == "sending") m.copy(state = "maybe") else m }) } }
                 chatLink = link
-                if (!Chat.readOnly(ref.address) && link.list().none { it.terminal == ref.address }) { chatUpdate(gen) { it.copy(error = Chat.NO_CHAT) }; return@launch }
+                val dshWrite = link.dshWrite
+                chatUpdate(gen) { it.copy(dshWrite = dshWrite) }
+                if (!Chat.isDsh(ref.address) && link.list().none { it.terminal == ref.address }) { chatUpdate(gen) { it.copy(error = Chat.NO_CHAT) }; return@launch }
                 chatSubscribe(link, ref.address, null, gen)
                 awaitCancellation()
             } catch (e: CancellationException) { throw e }
@@ -1055,7 +1061,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun chatCancelHeld(m: Chat.Message) {
         val s = _chat.value ?: return
-        if (s.readOnly) return
+        if (s.dsh) return
         chatAct { link, st, gen ->
             runCatching { link.cancelHeld(st.terminal, m.id) }
                 .onSuccess { a -> if (a.optBoolean("ok")) chatUpdate(gen) { it.copy(messages = it.messages.filterNot { x -> x.id == m.id }) } }
@@ -1066,7 +1072,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val s = _chat.value ?: return
         if (choice !in ChatActions.choices(s, row)) return
         chatAct { link, st, gen ->
-            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice)) }.getOrElse { "Not confirmed. Check the terminal." }
+            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }
         }
     }
@@ -1076,7 +1082,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val s = _chat.value ?: return
         val (choice, typed) = ChatActions.questionAnswer(s, row, picked, text) ?: return
         chatAct { link, st, gen ->
-            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice, typed)) }.getOrElse { "Not confirmed. Check the terminal." }
+            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice, typed), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }
         }
     }
@@ -1085,10 +1091,16 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val s = _chat.value ?: return
         if (!ChatActions.canInterrupt(s)) return
         chatAct { link, st, gen ->
-            val ok = runCatching { link.interrupt(st.terminal).optBoolean("ok") }.getOrDefault(false)
-            chatUpdate(gen) { it.copy(notice = if (ok) "Interrupt sent." else "Interrupt not confirmed. Check the terminal.") }
+            val notice = Chat.interruptNotice(runCatching { link.interrupt(st.terminal) }.getOrNull(), st.dsh)
+            chatUpdate(gen) { it.copy(notice = notice) }
         }
     }
+
+    /**
+     * An answer the phone sent and saw no answer to (the link dropped, or it timed out). On a DSH chat the open card
+     * stays and a tap sends the same row and choice, which bots-dsh settles at most once (or answers `settled`).
+     */
+    private fun unconfirmed(s: Chat.State) = if (s.dsh) Chat.ANSWER_MAYBE else "Not confirmed. Check the terminal."
 
     fun chatEarlier() {
         val before = _chat.value?.oldest ?: return
@@ -1110,7 +1122,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 coroutineScope {
                     val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
                     val link = openChatLink(hostId, scope) { }
-                    try { link.list().filter { it.readOnly } } finally { link.close(); scope.cancel() }
+                    try { link.list().filter { it.dsh } } finally { link.close(); scope.cancel() }
                 }
             }
             _botChats.update { it + (hostId to result) }

@@ -227,7 +227,9 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                 Text(ChatText.clean(m.text), fontSize = 14.sp, lineHeight = 20.sp, color = Ink)
                 Spacer(Modifier.height(4.dp))
                 Text(when (m.state) {
-                    "sending", "sent" -> "Sending…"
+                    // A DSH chat's `sent` is final (bots-dsh prompted the Session); a terminal's waits for the transcript.
+                    "sent" -> if (s.dsh) "Sent" else "Sending…"
+                    "sending" -> "Sending…"
                     "queued" -> "Queued: the agent reads it after this turn"
                     "held" -> when (m.why) { "draft" -> "The terminal has a half-typed message"; "dialog" -> "Waiting: a question is open in the terminal"
                         "working" -> "Waiting for the agent to finish"; else -> "Waiting to send" }

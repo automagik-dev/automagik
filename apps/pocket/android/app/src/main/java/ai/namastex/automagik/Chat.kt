@@ -11,7 +11,10 @@ import org.json.JSONObject
  * Rows live only here, in memory: never in preferences, Room or the log (docs/privacy.md).
  */
 object Chat {
-    /** An Automagik Bot's chat (bots-dsh, dsh-source.mjs): read only on the phone. */
+    /**
+     * An Automagik Bot's chat (bots-dsh, dsh-source.mjs): read only on the phone unless the bridge's hello says
+     * `dshWrite: true` (RFC 0015, Amendments 2026-11-07).
+     */
     const val DSH_PREFIX = "dsh:"
     const val ANSWER_ON_COMPUTER = "Answer on the computer"
     const val ANSWER_IN_TERMINAL = "Answer in the terminal"
@@ -25,7 +28,11 @@ object Chat {
     /** Rows kept per open chat; older ones come back with Load earlier. */
     const val MAX_ROWS = 1000
 
-    fun readOnly(terminal: String) = terminal.startsWith(DSH_PREFIX)
+    /** An Automagik Bot's chat: no terminal pane, approvals answered as DSH raised them. */
+    fun isDsh(terminal: String) = terminal.startsWith(DSH_PREFIX)
+
+    /** Whether the phone refuses writes on [terminal]: a DSH chat, on a bridge that did not say `dshWrite: true`. */
+    fun readOnly(terminal: String, dshWrite: Boolean = false) = isDsh(terminal) && !dshWrite
 
     /** A terminal worth offering a Chat tab: the program the bridge decodes runs in it (find.js `agentOf`). */
     fun offered(t: CoreTerminal?): Boolean {
@@ -61,7 +68,10 @@ object Chat {
         }
     }
 
-    /** A message this phone wrote, by its own id: sending, sent, queued, held (with why), refused, or maybe not sent. */
+    /**
+     * A message this phone wrote, by its own id: sending, sent, queued, held (with why), refused, or maybe not sent
+     * ("maybe": no answer seen; Retry sends the same id, which the bridge or bots-dsh takes at most once).
+     */
     data class Message(val id: String, val text: String, val state: String, val why: String = "", val reason: String = "")
 
     /**
@@ -70,7 +80,8 @@ object Chat {
      */
     data class Terminal(val terminal: String, val machine: String, val agent: String, val title: String, val status: String, val chat: String,
                         val shown: Boolean = true) {
-        val readOnly: Boolean get() = Chat.readOnly(terminal)
+        /** An Automagik Bot's chat (listed by bots-dsh), not a terminal's. */
+        val dsh: Boolean get() = isDsh(terminal)
         companion object {
             fun parse(j: JSONObject) = Terminal(j.optString("terminal"), if (j.isNull("machine")) "" else j.optString("machine"),
                 j.optString("agent"), j.optString("title"), j.optJSONObject("status")?.optString("state").orEmpty(), j.optString("chat"),
@@ -90,9 +101,12 @@ object Chat {
         val offline: Boolean = false,
         /** No transcript found: history appears once it is. */
         val screenOnly: Boolean = false,
-        val more: Boolean = true
+        val more: Boolean = true,
+        /** The bridge's hello said `dshWrite: true`: a DSH chat takes send, answer and interrupt. */
+        val dshWrite: Boolean = false
     ) {
-        val readOnly: Boolean get() = Chat.readOnly(terminal)
+        val readOnly: Boolean get() = Chat.readOnly(terminal, dshWrite)
+        val dsh: Boolean get() = isDsh(terminal)
         /** Where a resubscribe resumes: the newest transcript row. */
         val cursor get() = rows.lastOrNull()?.id
         val oldest get() = rows.firstOrNull()?.id
@@ -132,18 +146,41 @@ object Chat {
         return s.copy(rows = (older + s.rows).take(MAX_ROWS), more = older.isNotEmpty())
     }
 
-    /** The answer to chat.send (or sendHeld) for message [id]. */
+    /**
+     * The answer to chat.send (or sendHeld) for message [id]. On a DSH chat `offline` is a socket that did not
+     * answer in time, so the prompt may have gone: "maybe", never a plain refusal or a success.
+     */
     fun answered(s: State, id: String, text: String, answer: JSONObject): State {
         val state = answer.optString("state")
+        if (state == "refused" && s.dsh && answer.optString("reason") == "offline") return unanswered(s, id, text)
         if (state == "refused") return s.copy(messages = upsert(s.messages, Message(id, text, "refused", reason = answer.optString("reason"))))
         return s.copy(messages = upsert(s.messages, (s.messages.find { it.id == id } ?: Message(id, text, state))
-            .let { m -> if (m.state == "sending" && state == "sent") m else m.copy(state = state.ifBlank { "sent" }, why = answer.optString("why")) }))
+            .let { m -> if (m.state == "sending" && state == "sent" && !s.dsh) m else m.copy(state = state.ifBlank { "sent" }, why = answer.optString("why")) }))
     }
 
-    /** What the chat says after an approval tap (chat.answer's answer, approve.js reasons); null for a plain success. */
-    fun answerNotice(a: JSONObject): String? = when {
+    /** An answer the phone sent and did not see answered: tapping again sends the same one, taken at most once. */
+    const val ANSWER_MAYBE = "Maybe not sent. Tap it again: it is answered at most once."
+
+    /**
+     * What the chat says after an approval tap (chat.answer's answer, approve.js reasons, or on a [dsh] chat the
+     * bots-dsh socket's refusals passed through by the bridge); null for a plain success.
+     */
+    fun answerNotice(a: JSONObject, dsh: Boolean = false): String? = when {
         a.optString("reason") == "read-only" -> ANSWER_ON_COMPUTER
         a.optBoolean("ok") -> if (a.optString("pressed") == "uncertain") NOT_TAKEN else null
+        dsh -> when (a.optString("reason")) {
+            "settled" -> receipt(a.optJSONObject("receipt"))
+            "changed" -> "The question changed; nothing was answered."
+            "offline" -> ANSWER_MAYBE
+            "busy" -> "Still answering the last tap."
+            "rate" -> "Too many taps. Wait a moment."
+            "not-shown" -> "Show this project in Automagik first."
+            "not-watching" -> "This chat moved on. Reopen it."
+            "text-on-approval", "invalid" -> "Not answered: that answer doesn't fit. $ANSWER_ON_COMPUTER."
+            "empty" -> "Type an answer first."
+            "too-long" -> "That answer is too long."
+            else -> "Not answered. $ANSWER_ON_COMPUTER."
+        }
         else -> when (a.optString("reason")) {
             "changed" -> "The question changed; nothing was pressed."
             "closed", "no-such-row" -> "That question is already closed."
@@ -154,8 +191,34 @@ object Chat {
         }
     }
 
+    /**
+     * What the chat says after an interrupt: sent, refused (a DSH chat passes the socket's reason through), or not
+     * confirmed when no answer came or the socket did not answer in time (never repeated by itself).
+     */
+    fun interruptNotice(a: JSONObject?, dsh: Boolean): String = when {
+        a?.optBoolean("ok") == true -> "Interrupt sent."
+        a != null && dsh && a.optString("reason") !in setOf("", "offline") -> "Interrupt not sent: ${answerNotice(a, dsh = true)}"
+        else -> "Interrupt not confirmed. Check the ${if (dsh) "computer" else "terminal"}."
+    }
+
+    /** Who answered a request first (bots-dsh's settled entry); never more than it says. */
+    private fun receipt(r: JSONObject?): String {
+        if (r == null) return "Already answered."
+        if (r.optString("outcome") == "withdrawn") return "No longer needed."
+        val outcome = when (val o = r.optString("outcome")) { "allow" -> "Allow"; "deny" -> "Deny"; else -> o }
+        val where = when (r.optString("by")) {
+            "phone" -> "on the phone" + r.optString("name").takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+            "computer" -> "on the computer"
+            else -> ""
+        }
+        return listOf("Already answered", where).filter { it.isNotEmpty() }.joinToString(" ") + (if (outcome.isNotEmpty()) ": $outcome." else ".")
+    }
+
     /** A send that got no answer (the link dropped, or it timed out): never sent again by itself, shown with Retry. */
     fun unanswered(s: State, id: String, text: String) = s.copy(messages = upsert(s.messages, Message(id, text, "maybe")))
+
+    /** What a reconnect keeps of [s]: messages whose outcome is unknown (still sending, or maybe), as maybe, with Retry. */
+    fun unknown(s: State): List<Message> = s.messages.filter { it.state == "maybe" || it.state == "sending" }.map { it.copy(state = "maybe") }
 
     private fun message(s: State, id: String, change: (Message) -> Message): State {
         val m = s.messages.find { it.id == id } ?: return s
@@ -188,8 +251,9 @@ object Chat {
 }
 
 /**
- * Which buttons a chat shows: the only place that decides it. A DSH chat (read only) gets none of
- * them, whatever its rows claim; the bridge refuses those writes too (dsh-source.mjs `refusedDsh`).
+ * Which buttons a chat shows: the only place that decides it. A read-only DSH chat (a bridge without
+ * `dshWrite`) gets none of them, whatever its rows claim; the bridge refuses those writes too
+ * (dsh-source.mjs `refusedDsh`). A writable one never offers allow for session (RFC 0015 Amendments).
  */
 object ChatActions {
     /** Allowed keys, as the engine names them (approve.js); anything else is never offered. */
@@ -197,14 +261,14 @@ object ChatActions {
 
     fun canSend(s: Chat.State) = !s.readOnly && s.connected && !s.gone && !s.offline
     fun canInterrupt(s: Chat.State) = canSend(s) && s.status.state in setOf("working", "blocked")
-    fun canShowTerminal(s: Chat.State) = !s.readOnly
+    fun canShowTerminal(s: Chat.State) = !s.dsh
     fun canSendHeld(s: Chat.State, m: Chat.Message) = canSend(s) && m.state == "held"
     fun canRetry(s: Chat.State, m: Chat.Message) = canSend(s) && m.state == "maybe"
 
     /** The approval's buttons: only on a writable chat, an open row the engine raised, with choices it named. */
     fun choices(s: Chat.State, row: Chat.Row?): List<String> {
         if (row == null || s.readOnly || !canSend(s) || !row.open || !row.answerable || row.kind != "approval") return emptyList()
-        return CHOICES.filter { it in row.choices }
+        return CHOICES.filter { it in row.choices && !(s.dsh && it == "allow-always") }
     }
 
     /** The choice that types a question's own answer (chat/question.js `OTHER`). */
@@ -242,7 +306,7 @@ object ChatActions {
     }
 
     /** What an approval or question without buttons says instead. */
-    fun passive(s: Chat.State) = if (s.readOnly) Chat.ANSWER_ON_COMPUTER else Chat.ANSWER_IN_TERMINAL
+    fun passive(s: Chat.State) = if (s.dsh) Chat.ANSWER_ON_COMPUTER else Chat.ANSWER_IN_TERMINAL
 
     /** What a pending row without buttons says: answered (the bridge saw it taken), not taken, or [passive]. */
     fun pendingNote(s: Chat.State, row: Chat.Row) = when (row.why) { "answered" -> "Answered."; "not-taken" -> Chat.NOT_TAKEN; else -> passive(s) }
