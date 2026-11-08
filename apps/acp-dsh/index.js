@@ -117,11 +117,16 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
+  // The flip is also announced on the plugin context: DSH delivers `loader/volatile-update`
+  // only to the plugin whose config changed, so a Bot team watching its own context never sees
+  // this one. A profile-patch edit emits no other event there, and the Bot move reverses on it.
   let toolsSetting = flagOf(config.dshTools)
   const syncTools = () => {
     const next = flagOf(config.dshTools)
-    if (toolsSetting !== next) adapter.endSessions()
+    if (toolsSetting === next) return
     toolsSetting = next
+    adapter.endSessions()
+    try { ctx.emit?.('acp-dsh/dsh-tools-changed', { on: dshToolsOn(config.dshTools) }) } catch {}
   }
   const clis = new Map()
   const signIns = new Map()
