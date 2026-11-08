@@ -249,3 +249,44 @@ test(
     }
   },
 )
+
+test(
+  'a non-empty unwritable workspace with a writable subdirectory is refused and kept whole',
+  { skip: skipAsRoot },
+  () => {
+    const parent = temp()
+    const workspace = join(parent, 'workspace')
+    mkdirSync(workspace)
+    const nested = join(workspace, 'nested')
+    mkdirSync(nested)
+    const keep = join(nested, 'keep.txt')
+    writeFileSync(keep, "the user's file\n")
+    chmodSync(workspace, 0o555)
+    try {
+      assert.equal(
+        prepareWorkspace(workspace, { uid: 1000 }),
+        false,
+        'a non-empty workspace is not claimed as repaired',
+      )
+      assert.throws(
+        () => ensureDataDirs([workspace], { uid: 1000 }),
+        (error) => {
+          assert.equal(error.message.split('\n').length, 1, 'exactly one message line')
+          assert.ok(error.message.includes(workspace), 'the line names the unwritable directory')
+          assert.match(error.message, /is not writable by uid 1000/)
+          assert.match(error.message, /initial\.uid=1000/)
+          assert.match(error.message, /cannot chown/)
+          return true
+        },
+        'the preflight refuses the unwritable workspace',
+      )
+      // The writable subdirectory is the user's data a recursive repair would delete: it and
+      // its file must survive the refusal untouched.
+      assert.ok(existsSync(nested), 'the writable subdirectory is not removed')
+      assert.equal(readFileSync(keep, 'utf8'), "the user's file\n", 'the file is not removed')
+      assert.equal(readdirSync(nested).length, 1, 'the subdirectory keeps its file')
+    } finally {
+      chmodSync(workspace, 0o755)
+    }
+  },
+)

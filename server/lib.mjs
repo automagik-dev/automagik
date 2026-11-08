@@ -21,6 +21,12 @@ export const PORT = 3081
 /** The store pnpm uses for its major version, as the desktop app records it (`v10` for pnpm 10). */
 export const STORE_LAYOUT = 'v10'
 
+// The errors that mean "this directory is not ours to write", so the entrypoint leaves it and
+// the preflight refuses with the uid message. EBUSY is one: removing an empty workspace that is
+// itself a mount point fails that way.
+const UNWRITABLE = ['EACCES', 'EPERM', 'EROFS', 'EBUSY']
+const unwritable = (error) => UNWRITABLE.includes(error?.code)
+
 /**
  * Make each data directory and prove this process can write it. A mkdir on an existing
  * root-owned directory succeeds, so the probe write is the check that matters: an Incus volume
@@ -37,7 +43,7 @@ export function ensureDataDirs(dirs, { uid = process.getuid?.() ?? 1000 } = {}) 
         rmSync(probe, { force: true })
       }
     } catch (error) {
-      if (['EACCES', 'EPERM', 'EROFS'].includes(error?.code)) {
+      if (unwritable(error)) {
         throw new Error(
           `${dir} is not writable by uid ${uid}: create the /data volume with ` +
             `initial.uid=${uid} initial.gid=${uid}, or chown the volume to ${uid}:${uid} ` +
@@ -49,9 +55,6 @@ export function ensureDataDirs(dirs, { uid = process.getuid?.() ?? 1000 } = {}) 
   }
   return dirs
 }
-
-const UNWRITABLE = ['EACCES', 'EPERM', 'EROFS']
-const unwritable = (error) => UNWRITABLE.includes(error?.code)
 
 /**
  * Prepare the workspace before the data-dir preflight. An Incus instance pre-creates the
