@@ -362,10 +362,7 @@ export async function loadRemoteProject(key, machine) {
 async function writeRemoteBots(project, raw) {
   const { key, machine, text: expected } = project;
   const path = under(key, BOTS_PATH);
-  if (raw !== null) {
-    const errors = checkBots(raw, expected);
-    if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
-  }
+  if (raw !== null) checkBotsForSave(raw, expected);
   try {
     if (raw === null) await removeRemoteText(remoteIo, machine, path, expected);
     else await writeRemoteText(remoteIo, machine, path, botsText(raw, expected), expected);
@@ -469,6 +466,13 @@ const fsIo = {
   remove: (path) => unlinkSync(path),
 };
 
+/** Shared save validation: hard errors refuse; read warnings remain visible on stderr. */
+function checkBotsForSave(raw, before) {
+  const errors = checkBots(raw, before);
+  if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
+  report(parseBots(JSON.stringify(raw)).warnings.map((w) => `Warning: ${w}`));
+}
+
 /**
  * Writes a project's definitions by bots.js writeBots' rule: the whole raw file must pass
  * checkBots, and the file must still hold `expected`, the text the edit started from (null:
@@ -480,10 +484,7 @@ const fsIo = {
 export function writeBotsFile(key, raw, expected, io = fsIo, before = expected) {
   if (expected === undefined) throw new Error("writeBotsFile: pass the text the edit started from (null for a new file)");
   const path = under(key, BOTS_PATH);
-  if (raw !== null) {
-    const errors = checkBots(raw, before);
-    if (errors.length) throw new CliError(`Not saved: ${errors.join("; ")}`);
-  }
+  if (raw !== null) checkBotsForSave(raw, before);
   let now;
   try { now = io.read(path); } catch (e) { throw new CliError(`Not saved: can't read ${path} again: ${e?.message ?? e}`); }
   if (now !== expected) throw new CliError(`Not saved: ${path} changed since it was read (another edit landed first). Run the command again.`);
