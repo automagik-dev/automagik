@@ -9,9 +9,9 @@
 // that key; a `session-<uuid>` entry is DSH's own and is not served. Read from the same home
 // file and from this computer's project files (`projects[]` -> `<folder>/.automagik/bots/
 // bots.json`): the Bot with the same id (the link DSH's own export keeps, RFC 0014 delivery 3),
-// else the one with the same name (a DSH Bot's name is unique in the team; a universal Bot is
-// the project's main Bot under a `b-` id in its repo file). Two Bots with one name and no place
-// to tell them apart give null, never a guess.
+// else the one with the same name: a project Bot only among its own project's Bots (a universal
+// Bot is the project's main Bot under a `b-` id in its repo file), a global Bot among all of
+// them. One match links; two or more, or none, give null, never a guess.
 //
 // Fails closed: with no file, nothing is picked and no Bot is linked. An unreadable file or one
 // that does not parse serves the last good read, with a warn, else no project Bot is shown.
@@ -116,10 +116,12 @@ export function shownReader({ path = homeRegistryPathOf(), warn = () => {} } = {
       return read().bots
     },
     /**
-     * The `b-` registry id of the registry Bot a DSH Bot is, or null: the same id (DSH exports
-     * its Bots under their id, RFC 0014 delivery 3), else the same team-unique name among the
-     * Bots this computer knows (the home file's, and its projects' repo files). Two namesakes
-     * with no project to choose by give null, never a wrong Bot; a `session-<uuid>` entry is not
+     * The `b-` registry id of the registry Bot a DSH Bot is, or null: the same id first (DSH
+     * exports its Bots under their id, RFC 0014 delivery 3), else the same name among the Bots
+     * this computer knows (the home file's, and its projects' repo files). A Bot with a project
+     * matches only the Bots in that project folder, so a namesake in another project never takes
+     * its link; a global Bot (no project) links one same-named Bot and gives null for two. One
+     * match links, anything else gives null, never a wrong Bot; a `session-<uuid>` entry is not
      * a registry id.
      * @param {{ id: string, name?: string, project?: string | null }} bot
      */
@@ -139,10 +141,8 @@ export function shownReader({ path = homeRegistryPathOf(), warn = () => {} } = {
       const wanted = nameKey(bot.name)
       if (wanted === '') return null
       let matches = [...all.values()].filter(entry => nameKey(entry.name) === wanted)
-      if (matches.length > 1 && typeof bot.project === 'string') {
-        const placed = matches.filter(entry => entry.folder === bot.project)
-        if (placed.length) matches = placed
-      }
+      // A project Bot is never a namesake in another project: narrow to its own folder always.
+      if (typeof bot.project === 'string') matches = matches.filter(entry => entry.folder === bot.project)
       return matches.length === 1 ? matches[0].id : null
     },
   }
