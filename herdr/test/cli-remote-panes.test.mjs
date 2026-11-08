@@ -89,6 +89,20 @@ const atlasPane = (extra = {}) => ({ address: "vm/t8", name: null, state: "live"
   foreground: { argv: KEEP, name: "sh" }, status: null, ...extra });
 const keysSent = (calls) => calls.filter((c) => ["send", "keys", "interrupt"].includes(c[0]));
 
+test("a linked opt-in dsh-tui launch refuses before any ordinary pane can start", (t) => {
+  const s = scene(t);
+  const path = join(s.project, ".herdr", "bots.json");
+  const file = JSON.parse(readFileSync(path, "utf8"));
+  Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: true });
+  writeFileSync(path, JSON.stringify(file));
+  for (const verb of ["start", "restart"]) {
+    const r = s.cli([verb, "Atlas", ...s.on, "--json"]);
+    assert.notEqual(r.code, 0);
+    assert.match(r.err, /hc proxy: start this opted-in bot on its own computer/);
+  }
+  assert.equal(s.calls().some((call) => call[0] === "run"), false);
+});
+
 test("start --machine: hc run --on there with the Mac's agent table (programs.json's hermes --tui); the row keeps tN, machine and its core", (t) => {
   const s = scene(t);
   const r = s.cli(["start", "Atlas", ...s.on, "--json"]);

@@ -35,6 +35,7 @@ import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, 
   mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
   writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import net from "node:net";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
@@ -871,6 +872,59 @@ export function uninstallDshTui(options = {}) {
   return { status: failed ? "failed" : changed ? "removed" : "absent", changed, detail: lines[0], lines };
 }
 
+/** Probe only an existing per-pane proxy. Never invoke hc or discover a real core socket. */
+function proxyAnswers(socketPath, binding, bot, timeoutMs) {
+  return new Promise((done) => {
+    const socket = net.connect(socketPath);
+    let buffer = "", finished = false;
+    const finish = (up) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      socket.destroy();
+      done(up);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.on("error", () => finish(false));
+    socket.on("close", () => finish(false));
+    socket.on("connect", () => socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1,
+      method: "terminal.get", params: { terminal: binding.terminal } })}\n`));
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer) > 65536) { finish(false); return; }
+      const end = buffer.indexOf("\n");
+      if (end < 0) return;
+      try {
+        const reply = JSON.parse(buffer.slice(0, end));
+        finish(reply.id === 1 && !reply.error && reply.result?.state === "live"
+          && reply.result?.labels?.bot === bot.id
+          && reply.result?.created_ms === binding.created_ms);
+      } catch { finish(false); }
+    });
+  });
+}
+
+/** Settings and observed proxy health for the current project's bots; read-only and bounded. */
+export async function doctorBotProxies({ bots, project, bindings, env = process.env,
+  timeoutMs = 750 }) {
+  return Promise.all(bots.map(async (bot) => {
+    const binding = bindings.get(bot.id);
+    const applicable = process.platform === "linux" && bot.agent === "dsh-tui";
+    const row = { id: bot.id, name: bot.name, hcProxy: bot.hcProxy === true, applicable,
+      terminal: binding?.project === project ? binding.terminal : null, up: false };
+    if (!row.terminal) return { ...row, detail: "no attached local pane" };
+    if (!isAbsolute(env.XDG_RUNTIME_DIR ?? "") || !/^t[0-9a-z]+$/.test(row.terminal)) {
+      return { ...row, detail: "proxy runtime path is unavailable" };
+    }
+    const socket = join(env.XDG_RUNTIME_DIR, "automagik-hc-proxy", row.terminal, "hc.sock");
+    try {
+      if (!lstatSync(socket).isSocket()) return { ...row, detail: "proxy path is not a socket" };
+      row.up = await proxyAnswers(socket, binding, bot, timeoutMs);
+    } catch { /* absent or unreadable: down, never fall back to the real socket */ }
+    return { ...row, detail: row.up ? "proxy is up" : "proxy is down or not responding" };
+  }));
+}
+
 /**
  * `dsh-tui doctor`: whether dsh, the dsh-tui profile and the shim exist, and whether the profile is
  * the pinned one. Read-only. `{ code, checks }`: 0 healthy or installed, 1 broken, 2 not
@@ -929,6 +983,18 @@ export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = und
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
   const sandbox = sandboxState(env, { forbiddenRoots });
+  if (process.platform === "linux") {
+    const capable = sandboxCapable(packRootOf());
+    const problem = executionPathProblem({ stableRoot: sandbox.stableRoot, env,
+      project: process.cwd(), forbiddenRoots });
+    add("dsh-hc-proxy", !capable || !installed || (!problem && sandbox.current && sandbox.row.ok),
+      !capable ? "not applicable: this copy is not the pack's mod folder"
+        : !installed ? "not installed; the per-bot hcProxy switch defaults off"
+        : problem ?? (!sandbox.current ? "the stable proxy execution copy is stale"
+          : !sandbox.row.ok ? sandbox.row.message
+            : "the stable proxy execution copy is current; hcProxy defaults off per bot"),
+      installLine);
+  }
   const sandboxOk = !sandbox.capable || (sandbox.current && sandbox.row.ok);
   add("dsh-sandbox", sandboxOk || !installed,
     !sandbox.capable ? "not applicable: this copy is not the pack's mod folder"

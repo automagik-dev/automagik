@@ -92,6 +92,12 @@ function wrappedScript(command) {
 }
 
 function foregroundOf(launch) {
+  // hcPane is a supervisor: the real core observes its agent child in the foreground.
+  const helper = launch.findIndex((word) => /\/hcPane\.mjs$/.test(word));
+  if (helper >= 0) {
+    const cut = launch.indexOf("--", helper + 1);
+    if (cut >= 0) return foregroundOf(launch.slice(cut + 1));
+  }
   let w = [...launch];
   if (/(^|\/)env$/.test(w[0] ?? "")) { let j = 1; while (j < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[j])) j += 1; w = w.slice(j); }
   if (/(^|\/)(sh|bash)$/.test(w[0] ?? "") && w[1] === "-c" && typeof w[2] === "string") {

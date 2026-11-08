@@ -15,7 +15,7 @@ import { join } from "node:path";
 // A namespace, so each test fails on its own where a name is missing (the fail-before run on dev).
 import * as models from "../mods/am-sidebar/models.js";
 import { restartPlan } from "../mods/am-sidebar/restart.js";
-import { workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
 import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -183,9 +183,11 @@ test("start a dsh-tui bot: plain dsh-tui, its briefing after --; no permission, 
   assert.equal(words.some((w) => /^--(permission|add-dir|approval|model|effort|sandbox)/.test(w)), false, words.join(" "));
 });
 
-test("a sandboxed dsh-tui start runs the per-pane hc helper before DSH", (t) => {
+test("a per-bot opt-in dsh-tui start runs the per-pane hc helper before DSH",
+  { skip: process.platform !== "linux" }, (t) => {
   const s = scene(t);
-  const r = s.cli(["start", "Genie", "--json"], { AM_HC_PROXY: "1" });
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   const words = paneWords(s.runs()[0]);
   assert.equal(words[0], "/bin/sh");
@@ -194,20 +196,76 @@ test("a sandboxed dsh-tui start runs the per-pane hc helper before DSH", (t) => 
   assert.deepEqual(words.slice(3, 7), ["--bot", ID, "--project", s.project]);
   const cut = words.indexOf("--", 3);
   assert.deepEqual(words.slice(cut + 1, cut + 3), ["dsh-tui", "--"]);
-  assert.ok(s.runs()[0].includes("AM_HC_PROXY=1"), "the pane carries the opt-in for its own worker starts");
+  assert.equal(s.runs()[0].includes("AM_HC_PROXY=1"), false, "the saved bot entry controls workers");
 });
 
-test("a default dsh-tui start keeps the old argv; AM_HC_PROXY=1 is the one opt-in", (t) => {
-  const plain = scene(t);
-  assert.equal(plain.cli(["start", "Genie", "--json"]).code, 0);
-  const old = paneWords(plain.runs()[0]);
-  assert.deepEqual(old.slice(0, 2), ["dsh-tui", "--"], "default: no helper");
-  assert.equal(old.includes("AM_HC_PROXY=1"), false);
-  const on = scene(t);
-  assert.equal(on.cli(["start", "Genie", "--json"], { AM_HC_PROXY: "1" }).code, 0);
-  const words = paneWords(on.runs()[0]);
-  assert.match(words[2], /\/hcPane\.mjs$/);
-  assert.deepEqual(words.slice(3, 7), ["--bot", ID, "--project", on.project]);
+test("M4: switch off keeps the complete start argv byte for byte, even with AM_HC_PROXY=1", (t) => {
+  const s = scene(t);
+  const argv = (extra = {}) => {
+    const state = join(s.root, "hc.json");
+    writeFileSync(state, JSON.stringify({ terminals: [], next: 100 }));
+    rmSync(join(s.app, "automagik-herdr", "attach.jsonl"), { force: true });
+    assert.equal(s.cli(["start", "Genie", "--json"], extra).code, 0);
+    return s.runs().at(-1);
+  };
+  const original = argv();
+  // Recorded from C1 (f8083b11), with only fixture folders normalised.
+  const baseline = JSON.parse(readFileSync(new URL("./fixtures/dsh-proxy-off-argv.json",
+    import.meta.url), "utf8")).start;
+  assert.deepEqual(original.map((word) => word.split(s.root).join("<root>")
+    .split(GUARD_DIR).join("<guard>")), baseline);
+  assert.deepEqual(paneWords(original).slice(0, 2), ["dsh-tui", "--"]);
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "off"]).code, 0);
+  assert.deepEqual(argv({ AM_HC_PROXY: "1" }), original);
+});
+
+test("the switch is saved for one bot; invalid values do not write or start a pane", (t) => {
+  const s = scene(t);
+  const file = join(s.project, ".herdr/bots.json");
+  const roster = JSON.parse(readFileSync(file, "utf8"));
+  roster.bots.push({ ...roster.bots[0], id: "b-otheraaaaa", name: "Other", kind: "member" });
+  writeFileSync(file, JSON.stringify(roster));
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  assert.equal(s.cli(["show", "Genie", "--json"]).json().hcProxy, true);
+  assert.equal(s.cli(["show", "Other", "--json"]).json().hcProxy, false);
+  const before = readFileSync(file, "utf8");
+  const bad = s.cli(["edit", "Genie", "--hc-proxy", "yes"]);
+  assert.notEqual(bad.code, 0);
+  assert.match(bad.err, /--hc-proxy is on or off/);
+  assert.equal(readFileSync(file, "utf8"), before);
+  assert.deepEqual(s.runs(), [], "editing a switch never starts or restarts a pane");
+  assert.equal(s.cli(["start", "Other", "--json"], { AM_HC_PROXY: "1" }).code, 0);
+  assert.equal(paneWords(s.runs().at(-1))[0], "dsh-tui");
+});
+
+test("doctor shows the saved switch and a missing proxy for the attached bot",
+  { skip: process.platform !== "linux" }, (t) => {
+  const s = withPane(t, { turn: 1 });
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  const before = readFileSync(join(s.project, ".herdr/bots.json"), "utf8");
+  const report = s.cli(["dsh-tui", "doctor", "--json"]).json();
+  assert.equal(report.bots[0].id, ID);
+  assert.equal(report.bots[0].hcProxy, true);
+  assert.equal(report.bots[0].terminal, "t5");
+  assert.equal(report.bots[0].up, false);
+  const check = report.checks.find((row) => row.check === `hc-proxy:${ID}`);
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /hcProxy on; proxy runtime path is unavailable/);
+  assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before);
+  assert.deepEqual(s.runs(), [], "doctor never starts a proxy or pane");
+});
+
+test("restart reads the saved switch again; off plus restart restores the plain command",
+  { skip: process.platform !== "linux" }, (t) => {
+  const s = withPane(t, { turn: 3, session: SID });
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  assert.equal(s.cli(["restart", "Genie", "--json"]).code, 0);
+  assert.match(paneWords(s.runs().at(-1))[2], /\/hcPane\.mjs$/);
+  assert.deepEqual(agentWords(s.runs().at(-1)).slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "off"]).code, 0);
+  const rollback = s.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(rollback.code, 0, rollback.err);
+  assert.equal(paneWords(s.runs().at(-1))[0], "dsh-tui");
 });
 
 test("edit a dsh-tui bot's --model: refused with one clear line, nothing written", (t) => {

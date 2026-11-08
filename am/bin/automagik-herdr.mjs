@@ -30,7 +30,7 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, HC_NAME_MAX, HC_PROXY_ENV, hcProxyEnabled, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
+import { EFFORT_SHAPE, HC_NAME_MAX, hcProxyEnabled, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
@@ -45,7 +45,7 @@ import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, remove
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
-import { DSH_TUI, approvedDataRootProblem, doctorDshTui, installDshTui,
+import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui } from "../dshTui.mjs";
 import { approveProject, projectKey, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
@@ -966,6 +966,7 @@ function describe(project, bot, view, hcError) {
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     terminal: held?.binding.terminal ?? null, status, duplicate: false, since: held?.binding.at ?? null,
     role: bot.role, rank: bot.rank ?? null, look: bot.look,
+    hcProxy: bot.hcProxy === true,
     worker: bot.worker && typeof bot.worker === "object" ? bot.worker : null,
   };
   if (lead.warning) out.warning = lead.warning;
@@ -1049,7 +1050,7 @@ const OPTIONS = {
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
-  model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" },
+  model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
@@ -1080,6 +1081,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
+         [--hc-proxy on|off]            per-bot Linux proxy; default off, restart to apply
          [--worker-template T]          (an hc template: owns the command, so it wins)
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
@@ -1204,7 +1206,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   dsh-tui uninstall             dsh-TUI out of the dsh-tui profile and the shim away (sessions,
                                 dsh-TUI's state and the profile stay)
   dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
-                                whether the profile is the pinned one (read-only)
+                                whether the profile is the pinned one, plus each bot's hcProxy
+                                setting and whether its attached proxy answers (read-only)
   proxy approve --project <dir> approve a project's working .herdr/bots.json as the proxy's
                                 roster: print the diff against the previous approval, then
                                 write the record 0600 outside the project. The proxy reads
@@ -1307,6 +1310,12 @@ export function entryFrom(opts, base, project, { creating }) {
   if (opts.rank !== undefined) {
     if (opts.rank !== "" && !RANKS.includes(opts.rank)) throw new CliError(`--rank is one of ${RANKS.join(", ")} (or --rank= to clear), not "${opts.rank}".`, 2);
     entry.rank = opts.rank;
+  }
+  if (opts["hc-proxy"] !== undefined) {
+    if (!["on", "off"].includes(opts["hc-proxy"])) {
+      throw new CliError("--hc-proxy is on or off; nothing was saved.", 2);
+    }
+    entry.hcProxy = opts["hc-proxy"] === "on";
   }
   const instructions = readInstructions(opts);
   if (instructions !== undefined) entry.instructions = instructions;
@@ -1548,6 +1557,7 @@ async function cmdShow(opts, [ref]) {
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
     `  rank         ${info.rank ?? "-"}`,
+    `  hc proxy     ${info.hcProxy ? "on (Linux; restart to apply)" : "off"}`,
     `  worker       ${workerText(info.worker) || "-"}`,
     ...(info.worker?.swap ? [`  swap         ${workerText(info.worker.swap)} (planned swaps: about 1 task in 3)`] : []),
     ...(info.warning ? [`  warning      ${info.warning}`] : []),
@@ -2183,6 +2193,12 @@ async function windowPlaceOn(machine, key) {
  */
 async function seatOnMachine(project, bot, over = {}) {
   const { file, key, machine } = project;
+  // A linked launch has no verified stable proxy execution path yet. Never silently start
+  // an opted-in dsh-tui pane with the ordinary remote argv.
+  if (bot.hcProxy === true && (over.agent ?? bot.agent) === "dsh-tui") {
+    throw new CliError("hc proxy: start this opted-in bot on its own computer; "
+      + "linked launches cannot verify the proxy execution path.");
+  }
   const m = await connectedMachine(machine, "nothing was started");
   const agentKey = over.agent ?? bot.agent;
   const agent = agentTable()[agentKey];
@@ -2314,6 +2330,12 @@ async function startOnMachine(opts, project, bot) {
 async function restartOnMachine(opts, project, bot, entry) {
   if (opts.space) throw new CliError("--space and --tab are this computer's window places; a restart on a linked machine keeps the old pane's.", 2);
   const { file, key, machine } = project;
+  // A linked launch has no verified stable proxy execution path yet. Never silently start
+  // an opted-in dsh-tui pane with the ordinary remote argv.
+  if (bot.hcProxy === true && (opts.agent ?? bot.agent) === "dsh-tui") {
+    throw new CliError("hc proxy: start this opted-in bot on its own computer; "
+      + "linked launches cannot verify the proxy execution path.");
+  }
   const m = await connectedMachine(machine, "nothing was restarted");
   const view = await attachView();
   const held = liveFor(view, bot.id, project);
@@ -2516,14 +2538,11 @@ async function launchSeat(project, bot, over = {}) {
   }
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
-  // #650: the CLI's own app home as the pane's, beside the briefing's env (as seatOnMachine does
-  // with the project's pane-env): the hc guard finds the caller's binding there. Unset on the
-  // CLI: no word at all, and the argv stays byte for byte as before. #631 PR B: the proxy is
-  // opt-in (AM_HC_PROXY=1, nothing sets it); only then does the pane get the helper and the
-  // switch, and the bot's own CLI sees the same opt-in for its worker starts.
-  const proxyOn = hcProxyEnabled() && agentKey === "dsh-tui";
+  // One saved switch for this bot, re-read for every start/restart. The pane's CLI reads
+  // the same bot entry for its workers; a process-wide environment cannot opt in others.
+  const proxyOn = hcProxyEnabled(bot) && agentKey === "dsh-tui";
   const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}),
-    ...(proxyOn ? { [HC_PROXY_ENV]: "1" } : {}), ...briefed.env };
+    ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
     env, login, agent: agentKey, project: key, sandbox: proxyOn });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
@@ -4560,7 +4579,7 @@ async function cmdWorker(opts, rest) {
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
-      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: hcProxyEnabled() && plan.agent === "dsh-tui" });
+      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: hcProxyEnabled(bot) && plan.agent === "dsh-tui" });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -4823,6 +4842,18 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   const env = io.env ?? process.env;
   if (verb === "doctor") {
     const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
+    const project = io.project ?? await projectFor(opts);
+    const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
+    const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
+    r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
+      bindings, env });
+    for (const bot of r.bots) {
+      const ok = !bot.hcProxy || !bot.applicable || !bot.terminal || bot.up;
+      r.checks.push({ check: `hc-proxy:${bot.id}`, ok,
+        detail: `${bot.name}: hcProxy ${bot.hcProxy ? "on" : "off"}; ${bot.detail}`,
+        fix: ok ? null : `automagik-herdr restart ${bot.id}` });
+      if (!ok) r.code = 1;
+    }
     exitAfter.code = r.code;
     return opts.json ? r : r.checks.map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");
   }

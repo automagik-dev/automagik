@@ -146,6 +146,40 @@ const labelBot = (s, labels) => {
 
 // ---- the worker's program: defaults, overrides, fallback ----
 
+test("M4: switch off keeps the complete worker argv byte for byte against C1", (t) => {
+  const file = team();
+  Object.assign(file.bots[2], { agent: "dsh-tui", hcProxy: false });
+  delete file.bots[2].worker;
+  const s = scene(t, { file });
+  exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["worker", "do the task", "--branch", "feat/proxy-off", "--json"],
+    { env: { PATH: `${s.root}/bin:/usr/bin:/bin`, AM_HC_PROXY: "1" } });
+  assert.equal(r.code, 0, r.err);
+  const baseline = JSON.parse(readFileSync(new URL("./fixtures/dsh-proxy-off-argv.json",
+    import.meta.url), "utf8")).worker;
+  assert.deepEqual(s.runs()[0].map((word) => word.split(s.root).join("<root>")
+    .split(GUARD_DIR).join("<guard>")), baseline);
+});
+
+test("a dsh-tui worker reads its bot's switch; other agents keep the ordinary launch",
+  { skip: process.platform !== "linux" }, (t) => {
+  const file = team();
+  Object.assign(file.bots[2], { agent: "dsh-tui", worker: { agent: "dsh-tui" }, hcProxy: true });
+  const s = scene(t, { file });
+  exe(join(s.root, "bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  const wrapped = s.cli(["worker", "do the task", "--branch", "feat/proxy", "--json"]);
+  assert.equal(wrapped.code, 0, wrapped.err);
+  const words = s.runs().at(-1);
+  const helper = words.findIndex((word) => word.endsWith("/hcPane.mjs"));
+  assert.ok(helper > 0, words.join(" "));
+  assert.deepEqual(words.slice(helper + 1, helper + 7),
+    ["--bot", ID.dev, "--project", s.project, "--worker", "--"]);
+  const plain = s.cli(["worker", "do another task", "--branch", "feat/plain", "--agent", "codex",
+    "--json"]);
+  assert.equal(plain.code, 0, plain.err);
+  assert.equal(s.runs().at(-1).some((word) => word.endsWith("/hcPane.mjs")), false);
+});
+
 test("worker: the bot's worker defaults are used, and per-task --agent/--model/--effort win", (t) => {
   const s = scene(t);
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
@@ -674,11 +708,15 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });
 
-test("the proxy opt-in is off unless AM_HC_PROXY is exactly 1", () => {
-  assert.equal(hcProxyEnabled({}), false);
-  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "0" }), false);
-  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "true" }), false);
-  assert.equal(hcProxyEnabled({ AM_HC_PROXY: "1" }), true);
+test("the per-bot proxy switch defaults off and enables only boolean true on Linux", () => {
+  for (const bot of [undefined, {}, { hcProxy: false }, { hcProxy: "true" },
+    { hcProxy: 1 }, { AM_HC_PROXY: "1" }]) {
+    assert.equal(hcProxyEnabled(bot, "linux"), false);
+  }
+  assert.equal(hcProxyEnabled({ hcProxy: true }, "linux"), true);
+  for (const platform of ["darwin", "win32"]) {
+    assert.equal(hcProxyEnabled({ hcProxy: true }, platform), false);
+  }
 });
 
 test("worker args: the default dsh-tui worker keeps the old argv; only sandbox:true wraps it", () => {

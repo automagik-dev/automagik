@@ -114,7 +114,7 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
     throw new Error(`the dsh-tui profile's sandbox row is not current (${oneLine(sandbox.row.message ?? "the row does not match")}); run automagik-herdr dsh-tui install`);
   }
 
-  const proxy = await startProxy({
+  const proxy = await (io.startProxy ?? startProxy)({
     terminal,
     upstream,
     appHome: args.appHome ?? undefined,
@@ -129,28 +129,42 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
   });
   const childEnv = paneEnv(env, upstream, proxy.socket);
   let child;
+  let proxyLost = false;
+  const stop = (signal) => {
+    try { child?.kill(signal); } catch { /* already gone */ }
+  };
+  const lost = (error) => {
+    if (proxyLost) return;
+    proxyLost = true;
+    (io.stderr ?? process.stderr).write(
+      `${MSG_PREFIX}${oneLine(error?.message ?? "the proxy stopped")}; ending the pane\n`);
+    stop("SIGTERM");
+  };
+  proxy.server.on("error", lost);
+  proxy.server.on("close", lost);
+  if (!proxy.server.listening) {
+    await proxy.close().catch(() => {});
+    throw new Error("the proxy is not listening; the pane was not started");
+  }
   try {
     child = spawnChild(args.command[0], args.command.slice(1), { stdio: "inherit", env: childEnv });
   } catch (e) {
+    proxy.server.off("error", lost);
+    proxy.server.off("close", lost);
     await proxy.close().catch(() => {});
     throw new Error(`cannot start ${args.command[0]}: ${oneLine(e?.message ?? e)}`);
   }
-  const stop = (signal) => {
-    try { child.kill(signal); } catch { /* already gone */ }
-  };
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, stop);
-  proxy.server.on("error", (e) => {
-    (io.stderr ?? process.stderr).write(`${MSG_PREFIX}${oneLine(e?.message ?? e)}; ending the pane\n`);
-    stop("SIGTERM");
-  });
   return new Promise((resolvePromise) => {
     let done = false;
     const finish = async (code, signal) => {
       if (done) return;
       done = true;
       for (const signalName of ["SIGTERM", "SIGINT", "SIGHUP"]) process.off(signalName, stop);
+      proxy.server.off("error", lost);
+      proxy.server.off("close", lost);
       await proxy.close().catch(() => {});
-      resolvePromise(signal ? 1 : code ?? 0);
+      resolvePromise(proxyLost || signal ? 1 : code ?? 0);
     };
     child.on("error", async (e) => {
       (io.stderr ?? process.stderr).write(`${MSG_PREFIX}cannot run ${args.command[0]}: ${oneLine(e?.message ?? e)}\n`);
