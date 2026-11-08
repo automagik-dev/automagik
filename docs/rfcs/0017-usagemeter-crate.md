@@ -14,9 +14,9 @@ usagemeter, the Rust token meter every machine runs from `~/.local/bin/usagemete
 becomes a `binary` part (RFC 0012) on its own lane: a meter-only merge is a `meter` patch that
 builds the meter alone, with no desktop build and no plugins. Its builds are found through a
 signed rolling `meter-lane` pointer with a key of its own, the way the pack's and am's are
-(RFC 0011, RFC 0012), which answers RFC 0012's question 5. This repository also becomes the
-keeper of the `herdr-meter` doc the meter writes: its schema and fixtures live here, and every
-reader, genie included, tests against them.
+(RFC 0011, RFC 0012), which proposes an answer to RFC 0012's question 5. This repository also
+becomes the keeper of the `herdr-meter` doc the meter writes: its schema and fixtures live here,
+and every reader, genie included, tests against them.
 
 ## Motivation
 
@@ -49,7 +49,7 @@ The owner's answers to this RFC's questions 1 to 6 (2026-11-08):
   frozen after it.
 - The Intel Mac build stays for good: every meter release ships `usagemeter-darwin-x86_64`, and
   it is not dropped after the cutover. D28 still drops Intel Mac for every other part; the meter
-  is the one exception.
+  is the one exception. How the build reaches an Intel Mac is still open (question 8).
 - The standalone installer is retired for `am meter install`. The upstream bridge release points
   there, and Pocket Link's docs follow.
 - The capability is `meter.usage@1`. Its major is not tied to `schema_version`: the doc keeps
@@ -114,6 +114,11 @@ current 3.N.P, so `dev` never holds a 0.3.0 crate. The binary keeps printing
 `usagemeter <version>` from `CARGO_PKG_VERSION`. The jump from 0.3.0 to 3.N.P is safe: every
 installer compares versions field by field as numbers and never downgrades.
 
+Every `chore(release)` commit bumps those two lines. Once the crate ships (delivery 4),
+`scripts/lane.ts`'s `versionOnly` must count them as a release's own bump, as it counts the
+JSON and plain-text version files today; otherwise each release's bump would look like a meter
+change and cut another release.
+
 ### The part
 
 Proposed `meter/usagemeter/part.json`:
@@ -157,12 +162,16 @@ Proposed `meter/usagemeter/part.json`:
   names `meterFleet.js`'s `PLATFORMS` maps `uname -sm` to) to asset name. Code gap: am's reader
   and `parts.mjs` accept a string only. The names stay today's, because a versioned release
   already holds the version, and the binary installs under one fixed name anyway.
-- Intel Mac (decided): `darwin-x86_64` is a target for good. am applies D28's targets to every
+- Intel Mac: `darwin-x86_64` is a target for good (decided). am applies D28's targets to every
   part (RFC 0012), and D28 leaves out Intel Mac; the meter is the one exception, so am takes a
   binary part's targets from its `artifact` keys when it has them. Code gap: am and `parts.mjs`
-  know D28's targets only. Every other part, am included, stays off Intel Mac, and the code set
-  is still refused there: on an Intel Mac the meter installs on its own, through
-  `am meter install`.
+  know D28's targets only.
+- How an Intel Mac gets the meter: proposed, pending the owner (Open question 8). RFC 0012
+  refuses am on an Intel Mac, and the standalone installer is retired, so as written the build
+  has no route. Recommended: am runs on an Intel Mac for its meter verbs only (`am meter
+  install`, `status` and `uninstall`), with every other part and the code set still refused
+  there. This follows from question 4. The alternative keeps the standalone installer for Intel
+  Mac only, against question 5.
 - `entry`: a binary has no folder to run from, so its entries are am's own `meter` verbs.
   Proposed: an entry whose first word is `am` runs the am that is installing. Code gaps: today
   `meter uninstall` takes no `--local`, and there is no `meter doctor`.
@@ -302,8 +311,9 @@ checks both against the pinned sha256, and renames into place. The move, in orde
    argument, now taken from the verified pointer instead of `release.js`. `install.sh` does the
    same. `USAGEMETER` keeps only the repository and the lane's name; its version, hashes and
    `usagemeter-pin.mjs` are retired.
-4. upstream cuts one bridge release whose installer and README point here, an install is seen
-   updating from this repository, and upstream is archived, never deleted.
+4. upstream cuts one bridge release whose README points to `am meter install` (its standalone
+   installer is retired, as question 5 decided), an install is seen updating from this
+   repository, and upstream is archived, never deleted.
 
 ### The `herdr-meter` doc
 
@@ -361,10 +371,10 @@ learn version 3 before the meter writes it. A reader that meets a version it doe
 that machine as "update needed" and never guesses numbers (Pocket's `Unsupported` does this
 today). The same rules hold for `space.version` inside the doc.
 
-The capability `meter.usage@1` is versioned on its own (decided): its major is not
-`schema_version`, and the two numbers are never made to match. Proposed: a `schema_version` bump
-that breaks a reader also bumps the capability's major, so a part that requires `meter.usage@1`
-is never handed a doc it cannot read; an additive change bumps neither.
+The capability `meter.usage@1` is not tied to `schema_version` (decided); the doc keeps
+`schema_version` 2. Proposed: a `schema_version` bump that breaks a reader also bumps the
+capability's major, so a part that requires `meter.usage@1` is never handed a doc it cannot read; an
+additive change bumps neither.
 
 ### The build rule
 
@@ -379,12 +389,12 @@ is never handed a doc it cannot read; an additive change bumps neither.
 
 ### Ports of genie's metering
 
-Answered by RFC 0018 (the meter query contract), which comes in its own pull request. genie
-(genie-rs) has metering of its own; ports of it come from genie's specs and acceptance tests.
-Workers build them under this RFC's contract: the meter lane, the build rule, and the
-`herdr-meter` doc's keeper and versioning rules. What is ported, where it lives (modules of this
-crate or crates beside it under `meter/`), and which acceptance tests come with it, is RFC
-0018's to say. genie's reader moving to `meter.usage@1` is coordinated there too.
+Open; to be answered by RFC 0018 (#764), the meter query contract. genie (genie-rs) has metering of
+its own; ports of it come from genie's specs and acceptance tests. Workers build them under this
+RFC's contract: the meter lane, the build rule, and the `herdr-meter` doc's keeper and versioning
+rules. What is ported, where it lives (modules of this crate or crates beside it under `meter/`),
+and which acceptance tests come with it, is RFC 0018's to say. genie's reader moving to
+`meter.usage@1` is coordinated there too.
 
 ## Contracts introduced
 
@@ -435,10 +445,16 @@ Each is one pull request with an independent review.
    extra field passes both.
    *Rollback:* revert; readers are unchanged.
 4. **The meter lane** (meter). `part.json`; `METER`, `kindOf`, `meter` and `meter-since` in
-   `lane.ts`; `NEVER_SHIPPED` narrowed; the release build and assets; the sweep; `meter-lane.ts`
-   and its job, warning while no key is listed.
+   `lane.ts`; `NEVER_SHIPPED` narrowed; `versionOnly` in `lane.ts` treats the crate's version
+   lines in `meter/usagemeter/Cargo.toml` and `Cargo.lock` as version-only; the release build
+   and assets; the sweep; `meter-lane.ts` and its job, warning while no key is listed.
+   AGENTS.md: the Meter bullet says the crate ships on the meter lane while `meter/statusline`
+   still never ships, and a meter-lane key rule (`METER_LANE_KEY`, two slots,
+   `METER_LANE_SIGNER`) sits beside the herdr and am key rules.
    *Check:* lane tests: a meter-only diff is `meter`, meter with herdr is `herdr` and builds
-   both, a statusline-only diff ships nothing; `meter-lane.test.ts` with a per-run key refuses a
+   both, a statusline-only diff ships nothing, a `chore(release)` bump of the crate's two
+   version lines cuts no meter release while a real crate change does;
+   `meter-lane.test.ts` with a per-run key refuses a
    lower sequence and an unverified posted pointer; the first meter release carries all four
    assets, `usagemeter-darwin-x86_64` included.
    *Rollback:* revert; installs keep the pin.
@@ -454,8 +470,14 @@ Each is one pull request with an independent review.
 7. **The part in am** (am, RFC 0012 delivery 8). `am install automagik.usagemeter`, the object
    `artifact`, `meter doctor`, and `meter uninstall --local`.
    *Check:* `am doctor` lists the meter; install, rollback and uninstall on a temp home.
-8. **Ports of genie's metering.** Planned in RFC 0018 (the meter query contract), its own pull
-   request.
+8. **Ports of genie's metering.** Open; to be answered by RFC 0018 (#764).
+9. **Retire the standalone installer** (meter; after 6 and 7). Remove
+   `meter/usagemeter/install.sh`, its test and the CI job's installer step; repoint any doc that
+   still names it to `am meter install`. If Open question 8 keeps it for Intel Mac, this
+   delivery narrows it to that instead.
+   *Check:* `git grep` finds no reference to the crate's `install.sh`; the `usagemeter` job is
+   green.
+   *Rollback:* revert.
 
 ## Open questions
 
@@ -463,17 +485,23 @@ Questions 1 to 6 were answered by the owner on 2026-11-08 and are in Decided. us
 nine commits came from automagik-pocket's `meter/`, already here under `apps/pocket/meter/` with
 other ids (deleted since); they are imported anyway, as question 2 decided.
 
-7. **Ports of genie's metering.** Answered by RFC 0018 (the meter query contract), which comes in
-   its own pull request: what is ported, where it lives (this crate, or crates beside it under
-   `meter/` with a workspace), which genie specs and acceptance tests come with it, and who
-   reviews them.
+7. **Ports of genie's metering.** Open; to be answered by RFC 0018 (#764): what is ported, where
+   it lives (this crate, or crates beside it under `meter/` with a workspace), which genie specs
+   and acceptance tests come with it, and who reviews them.
+8. **The Intel Mac route.** Question 4 keeps `usagemeter-darwin-x86_64` for good, but RFC 0012
+   refuses am on an Intel Mac and question 5 retires the standalone installer. Options:
+   - A. am runs on an Intel Mac for its meter verbs only (`am meter install`, `status`,
+     `uninstall`); every other part and the code set stay refused there. Follows from question 4.
+   - B. The standalone installer stays, for Intel Mac only. Against question 5.
+
+   Recommended: A. One installer and one trust path (the signed `meter-lane`) for every machine;
+   B keeps a second installer that checks `SHA256SUMS` only.
 
 ## Links
 
 - RFCs: [0011](0011-monorepo-parts-and-releases.md) parts, lanes and the signed pointers;
   [0012](0012-am-cli-and-parts.md) `part.json`, "Sources and trust", Open question 5, delivery 8;
-  [0016](0016-windows-wslc.md) Windows via WSLC; 0018, the meter query contract (its own pull
-  request).
+  [0016](0016-windows-wslc.md) Windows via WSLC; 0018, the meter query contract (#764, open).
 - Closed draft automagik-dev/automagik#298 (usagemeter's import in RFC 0011).
 - Code: `scripts/lane.ts` (`NEVER_SHIPPED`, `kindOf`, `amPaths`), `scripts/herdr-lane.ts`,
   `scripts/am-lane.ts`, `am/part.json`, `herdr/mods/am-sidebar/meterFleet.js` and its copy in
