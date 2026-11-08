@@ -59,6 +59,13 @@ const nestedTransientFailure = (): string =>
     'The staple and validate action failed! Error 68.',
   ].join('\n');
 
+// The shape that ended v3.98.0 attempt 2 before the workflow retry could run: electron-builder's
+// own staple (@electron/notarize staple.ts:16) hits the same outer -1005 with the nested
+// CFNetwork pair, then throws "Failed to staple your application with code: 68". The same
+// classifier decides both the workflow's and electron-builder's round-trip, so both retry.
+const electronBuilderStapleFailure = (): string =>
+  `${nestedTransientFailure()}\nFailed to staple your application with code: 68`;
+
 // xcrun answers from a numbered plan (status line, then output) and logs its whole argv; sleep
 // logs its argument and returns immediately. Both append to one event log, so the waits are
 // proven to sit between the attempts and before the re-staple, not merely to have happened.
@@ -123,6 +130,7 @@ function harness() {
   for (const path of [callsPath, sleepsPath, eventsPath]) writeFileSync(path, '');
 
   return {
+    dir,
     artifact,
     run(replies: Reply[], delays?: string, artifactPath = artifact) {
       replies.forEach((reply, index) => {
@@ -166,6 +174,19 @@ describe('the first attempt succeeds', () => {
     expect(run.status).toBe(0);
     expect(run.sleeps).toEqual([]);
     expect(run.events).toEqual([staple(h.artifact), validate(h.artifact)]);
+    expect(run.out).toContain('attempt 1/3 succeeded: staple and validate');
+  });
+
+  test('an .app bundle directory is an artifact too, not "not found"', () => {
+    const h = harness();
+    const app = join(h.dir, 'Automagik-9.9.9-arm64.app');
+    mkdirSync(join(app, 'Contents'), { recursive: true });
+    writeFileSync(join(app, 'Contents', 'Info.plist'), 'already notarized app bytes\n');
+    // Fail-before: the old `[[ -f ]]` guard exited 2 "artifact not found" before any xcrun.
+    const run = h.run(roundTrip(app), undefined, app);
+    expect(run.status).toBe(0);
+    expect(run.out).not.toContain('artifact not found');
+    expect(run.events).toEqual([staple(app), validate(app)]);
     expect(run.out).toContain('attempt 1/3 succeeded: staple and validate');
   });
 });
@@ -218,6 +239,26 @@ describe('a transient NSURLErrorDomain failure is retried after 10 s', () => {
     expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
     expect(run.out).toContain('transient network failure; retrying in 10s');
     expect(run.out).toContain('attempt 2/3 succeeded: staple and validate');
+  });
+
+  test('the electron-builder staple failure shape retries after 10 s (#704)', () => {
+    const h = harness();
+    const run = h.run([fail(electronBuilderStapleFailure()), ok(), ok()]);
+    // Fail-before: the pre-fix classifier parsed the nested CFNetwork pair as a refusal and
+    // failed on the first response; these assertions print the script output when it does.
+    expect(run.out).not.toContain('failing on the first response, not retrying');
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.events).toEqual([
+      staple(h.artifact),
+      'sleep 10',
+      staple(h.artifact),
+      validate(h.artifact),
+    ]);
+    expect(run.out).toContain("attempt 1/3 failed at 'stapler staple' (exit 68)");
+    expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
   });
 
   test('a direct kCFErrorDomainCFNetwork Code=-1005 is the same transient failure', () => {

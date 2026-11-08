@@ -3,6 +3,10 @@
 #
 #   scripts/staple-retry.sh <artifact>
 #
+# The artifact is a notarized .app bundle or .dmg: `xcrun stapler` handles both. On macOS the
+# updater's zip is packed from the .app, so the .app is stapled first (the build's afterSign hook,
+# apps/desktop/scripts/after-sign.cjs) and the dmg later (the workflow).
+#
 # `xcrun stapler staple` asks Apple's notary service for the ticket (api.apple-cloudkit.com), and
 # `xcrun stapler validate` asks again. A dropped connection there says nothing about the artifact:
 # the notarization already succeeded, and the same command on the same bytes works on the next
@@ -47,7 +51,8 @@ if [[ $# -ne 1 || -z ${1:-} ]]; then
   die "usage: $0 <artifact>"
 fi
 artifact=$1
-[[ -f ${artifact} ]] || die "artifact not found: ${artifact}"
+# A file (.dmg) or a directory (.app bundle): stapler takes either.
+[[ -e ${artifact} ]] || die "artifact not found: ${artifact}"
 command -v xcrun >/dev/null 2>&1 || die "xcrun is not on PATH"
 
 IFS=' ' read -r -a delays <<< "${STAPLE_RETRY_DELAYS:-10 30 90}"

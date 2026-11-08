@@ -13,7 +13,9 @@ name: Desktop build
 # macOS signing and notarization are optional: with the MAC_CSC_LINK and
 # MAC_CSC_KEY_PASSWORD secrets (the Developer ID Application certificate as a base64 .p12)
 # the app and the dmg are signed, and with APPLE_API_KEY (the App Store Connect .p8
-# contents), APPLE_API_KEY_ID and APPLE_API_ISSUER both are notarized and stapled.
+# contents), APPLE_API_KEY_ID and APPLE_API_ISSUER the app is notarized without stapling by
+# afterSign, then stapled by the retry script before the zip/dmg targets, and the dmg is
+# notarized and stapled here. The zip's app is validated before the dmg is notarized.
 # Without them the dmg is unsigned, and the release carries no macOS update: a signed app
 # accepts only an update signed like itself, and an unsigned one cannot update.
 #
@@ -201,17 +203,30 @@ jobs:
             codesign --verify --strict "${dmg}"
           fi
           if [[ -n "${MAC_CSC_LINK}" && -n "${APPLE_API_KEY:-}" ]]; then
-            # electron-builder notarizes the app inside; the dmg someone downloads is a signed
-            # file of its own, so it goes to Apple too and carries its ticket. Stapling changes
-            # its bytes: the feed gets its new sha512 and size, and its blockmap (which no update
-            # reads: macOS updates from the zip) goes.
+            # afterSign notarized the app without stapling and ran the retry script on the
+            # .app before the zip/dmg targets were packed (apps/desktop/scripts/after-sign.cjs).
+            # The updater installs from the zip, so extract its app and prove the ticket is on
+            # the copy someone updates from; an unstapled zip fails here, not on a user's Mac.
+            shopt -s nullglob
+            zips=(dist/*-mac-*.zip)
+            (( ${#zips[@]} == 1 )) || { echo "::error ::expected one macOS updater zip, found ${#zips[@]}"; exit 1; }
+            unzipped=$(mktemp -d)
+            ditto -x -k "${zips[0]}" "${unzipped}"
+            apps=("${unzipped}"/*.app)
+            (( ${#apps[@]} == 1 )) || { echo "::error ::expected one .app in ${zips[0]}, found ${#apps[@]}"; exit 1; }
+            xcrun stapler validate "${apps[0]}"
+            rm -rf "${unzipped}"
+            echo "the updater zip's app is stapled: ${zips[0]}"
+            # The dmg someone downloads is a signed file of its own, so it goes to Apple too
+            # and carries its ticket. Stapling changes its bytes: the feed gets its new sha512
+            # and size, and its blockmap (which no update reads: macOS updates from the zip) goes.
             xcrun notarytool submit "${dmg}" --key "${APPLE_API_KEY}" --key-id "${APPLE_API_KEY_ID}" \
               --issuer "${APPLE_API_ISSUER}" --wait --timeout 30m
             # stapler's ticket round-trip goes to api.apple-cloudkit.com; a dropped connection
-            # there is not a bad ticket, so the script retries only NSURLErrorDomain's transient
+            # there is not a bad ticket, so the script retries only Apple's transient network
             # codes (3 attempts at 10/30/90 s, then one re-staple pass) and fails at once on a
             # real rejection. notarytool and electron-builder stay outside it: this is not a
-            # re-notarization.
+            # re-notarization, and afterSign used the same script on the app before the targets.
             "${GITHUB_WORKSPACE}/scripts/staple-retry.sh" "${dmg}"
             spctl --assess --type open --context context:primary-signature -vv "${dmg}"
             node scripts/restamp-feed.mjs dist/latest-mac.yml "${dmg}"
