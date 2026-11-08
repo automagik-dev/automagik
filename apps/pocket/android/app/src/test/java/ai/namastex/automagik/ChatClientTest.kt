@@ -16,8 +16,11 @@ import kotlin.concurrent.thread
 
 /** [ChatClient] against a fake Pocket Link chat route that speaks chat.mjs's framing over in-memory streams. */
 class ChatClientTest {
-    /** The bridge's side: answers hello, records every frame the phone sends, answers requests with [answer]. */
-    private class FakeBridge(chat: Boolean, val answer: (JSONObject) -> JSONObject = { JSONObject() }) {
+    /**
+     * The bridge's side: answers hello (with [dshWrite] as its `dshWrite` when set), records every frame the phone
+     * sends, answers requests with [answer].
+     */
+    private class FakeBridge(chat: Boolean, dshWrite: Any? = null, val answer: (JSONObject) -> JSONObject = { JSONObject() }) {
         val toPhone = Channel<ByteArray>(Channel.UNLIMITED)
         val fromPhone = Channel<ByteArray>(Channel.UNLIMITED)
         val requests = LinkedBlockingQueue<JSONObject>()
@@ -38,7 +41,7 @@ class ChatClientTest {
                 val line = StringBuilder()
                 while (true) { val c = input.read(); if (c == -1) return@thread; if (c == 10) break; line.append(c.toChar()) }
                 val hello = JSONObject(line.toString())
-                val result = JSONObject().put("generation", 1).put("framed", true).apply { if (chat) put("chat", 1).put("credit", 256 * 1024) }
+                val result = JSONObject().put("generation", 1).put("framed", true).apply { if (chat) put("chat", 1).put("credit", 256 * 1024); if (dshWrite != null) put("dshWrite", dshWrite) }
                 send((JSONObject().put("jsonrpc", "2.0").put("id", hello.get("id")).put("result", result).toString() + "\n").toByteArray())
                 try {
                     while (true) {
@@ -93,7 +96,7 @@ class ChatClientTest {
         withChat(bridge) { chat ->
             val list = chat.list()
             assertEquals(listOf("t3", "dsh:b1"), list.map { it.terminal })
-            assertEquals(listOf(false, true), list.map { it.readOnly })
+            assertEquals(listOf(false, true), list.map { it.dsh })
             assertEquals("working", list[0].status)
             val events = Channel<JSONObject>(Channel.UNLIMITED)
             val channel = chat.subscribe("t3", "1:4.0", { events.trySend(it) }) { }
@@ -150,7 +153,7 @@ class ChatClientTest {
         }
     }
 
-    /** A DSH chat is read only: the phone sends no write for it at all, and answers as the bridge would. */
+    /** A DSH chat on a bridge without `dshWrite` is read only: the phone sends no write for it at all, and answers as the bridge would. */
     @Test fun phoneNeverWritesOnADshChat() {
         val bridge = FakeBridge(chat = true) { JSONObject().put("ok", true) }
         withChat(bridge) { chat ->
@@ -164,6 +167,103 @@ class ChatClientTest {
             chat.list()
             assertEquals("chat.list", bridge.requests.next().getString("method"))
             assertTrue(bridge.requests.isEmpty())
+        }
+    }
+
+    /** Only `dshWrite: true` counts: no flag, false, 1 or "true" in the hello keeps DSH chats read only, nothing sent. */
+    @Test fun aHelloWithoutDshWriteTrueKeepsDshChatsReadOnly() {
+        for (flag in listOf(null, false, 1, "true")) {
+            val bridge = FakeBridge(chat = true, dshWrite = flag) { JSONObject().put("ok", true).put("state", "sent") }
+            withChat(bridge) { chat ->
+                assertFalse(chat.dshWrite)
+                for (a in listOf(chat.send("dsh:b1", "hi", "m1"), chat.answer("dsh:b1", "dsh:s:1:approval", "allow"), chat.interrupt("dsh:b1")))
+                    assertEquals("read-only", a.getString("reason"))
+                chat.list()
+                assertEquals("chat.list", bridge.requests.next().getString("method"))
+                assertTrue(bridge.requests.isEmpty())
+            }
+        }
+    }
+
+    /**
+     * A bridge whose hello says `dshWrite: true` takes send, answer and interrupt on a DSH chat, through chat.*; the
+     * phone sets no phone key or `by` (the bridge adds them). Nothing is ever held on a DSH chat, so those stay local.
+     */
+    @Test fun dshWritesGoToTheBridgeWhenItsHelloSaysDshWrite() {
+        val bridge = FakeBridge(chat = true, dshWrite = true) { m ->
+            if (m.getString("method") == "chat.send") JSONObject().put("ok", true).put("state", "queued").put("id", "m1")
+            else JSONObject().put("ok", true).put("state", "sent")
+        }
+        withChat(bridge) { chat ->
+            assertTrue(chat.dshWrite)
+            assertFalse(chat.readOnly("dsh:b1"))
+            assertEquals("queued", chat.send("dsh:b1", "hi", "m1").getString("state"))
+            val send = bridge.requests.next()
+            assertEquals("chat.send", send.getString("method"))
+            val p = send.getJSONObject("params")
+            assertEquals(listOf("dsh:b1", "hi", "m1"), listOf("terminal", "text", "id").map { p.getString(it) })
+            assertEquals(3, p.length())
+            assertNull(Chat.answerNotice(chat.answer("dsh:b1", "dsh:s:1:approval", "allow"), dsh = true))
+            val answer = bridge.requests.next()
+            assertEquals("chat.answer", answer.getString("method"))
+            assertEquals(setOf("terminal", "row", "choice"), answer.getJSONObject("params").keys().asSequence().toSet())
+            assertEquals("Interrupt sent.", Chat.interruptNotice(chat.interrupt("dsh:b1"), dsh = true))
+            val interrupt = bridge.requests.next()
+            assertEquals("chat.interrupt", interrupt.getString("method"))
+            assertEquals(1, interrupt.getJSONObject("params").length())
+            assertEquals("read-only", chat.sendHeld("dsh:b1", "m1").getString("reason"))
+            assertEquals("read-only", chat.cancelHeld("dsh:b1", "m1").getString("reason"))
+            chat.list()
+            assertEquals("chat.list", bridge.requests.next().getString("method"))
+            assertTrue(bridge.requests.isEmpty())
+        }
+    }
+
+    /**
+     * A send whose answer never came (the link dropped) is "maybe not sent", never a success and never sent again by
+     * itself; a reconnect keeps it, and Retry sends the same id once, which bots-dsh answers `sent` without a prompt.
+     */
+    @Test fun aLostDshSendIsMaybeNotSentAndRetrySendsTheSameIdOnce() {
+        lateinit var lost: FakeBridge
+        lost = FakeBridge(chat = true, dshWrite = true) { lost.toPhone.close(); JSONObject() }
+        var s = Chat.State("dsh:b1", connected = true, dshWrite = true, messages = listOf(Chat.Message("m1", "hi", "sending")))
+        assertFalse(ChatActions.canRetry(s, s.messages.single()))
+        withChat(lost) { chat ->
+            assertTrue(runCatching { chat.send("dsh:b1", "hi", "m1") }.isFailure)
+            s = Chat.unanswered(s, "m1", "hi")
+        }
+        assertEquals("chat.send", lost.requests.next().getString("method"))
+        assertNull(lost.requests.poll(300, TimeUnit.MILLISECONDS))
+        assertEquals("maybe", s.messages.single().state)
+        // The reconnect: a new chat state keeps the unknown message, still with Retry.
+        s = Chat.State("dsh:b1", connected = true, dshWrite = true, messages = Chat.unknown(s))
+        val m = s.messages.single()
+        assertTrue(ChatActions.canRetry(s, m))
+        val again = FakeBridge(chat = true, dshWrite = true) { JSONObject().put("ok", true).put("state", "sent").put("id", "m1").put("repeat", true) }
+        withChat(again) { chat -> s = Chat.answered(s, m.id, m.text, chat.send("dsh:b1", m.text, m.id)) }
+        val retry = again.requests.next().getJSONObject("params")
+        assertEquals(listOf("m1", "hi"), listOf(retry.getString("id"), retry.getString("text")))
+        assertTrue(again.requests.isEmpty())
+        assertEquals("sent", s.messages.single().state)
+        assertFalse(ChatActions.canRetry(s, s.messages.single()))
+    }
+
+    /** The bridge's refusals on a DSH chat (its own or the socket's) reach the chat unchanged, with their reason and receipt. */
+    @Test fun dshRefusalsFromTheBridgePassThrough() {
+        val bridge = FakeBridge(chat = true, dshWrite = true) { m ->
+            when (m.getString("method")) {
+                "chat.send" -> JSONObject().put("state", "refused").put("ok", false).put("reason", "not-shown").put("id", "m1")
+                "chat.answer" -> JSONObject("""{"state":"refused","ok":false,"reason":"settled","receipt":{"id":"r1","by":"computer","outcome":"allow","at":1}}""")
+                else -> JSONObject().put("state", "refused").put("ok", false).put("reason", "rate")
+            }
+        }
+        withChat(bridge) { chat ->
+            val s = Chat.State("dsh:b1", connected = true, dshWrite = true)
+            val sent = Chat.answered(s, "m1", "hi", chat.send("dsh:b1", "hi", "m1"))
+            assertEquals(listOf("refused" to "not-shown"), sent.messages.map { it.state to it.reason })
+            assertFalse(ChatActions.canRetry(sent, sent.messages.single()))
+            assertEquals("Already answered on the computer: Allow.", Chat.answerNotice(chat.answer("dsh:b1", "r1", "allow"), dsh = true))
+            assertEquals("Interrupt not sent: Too many taps. Wait a moment.", Chat.interruptNotice(chat.interrupt("dsh:b1"), dsh = true))
         }
     }
 }

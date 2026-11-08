@@ -77,6 +77,80 @@ class ChatTest {
         assertFalse(ChatActions.canRetry(claimed, Chat.Message("m2", "hi", "maybe")))
     }
 
+    // ---- writes on a DSH chat, only where the bridge's hello said dshWrite (RFC 0015, Amendments 2026-11-07)
+
+    /** With dshWrite: send, interrupt, allow and deny; never allow for session, never a terminal pane. */
+    @Test fun dshChatWithDshWriteOffersSendAnswerAndInterruptButNeverAllowForSession() {
+        val s = blocked(state("dsh:bot-1").copy(dshWrite = true))
+        val claimed = Chat.reduce(s, j("""{"type":"approval","row":${approval(choices = """["allow","allow-always","deny"]""")}}"""))
+        assertFalse(claimed.readOnly)
+        assertEquals(listOf("allow", "deny"), ChatActions.choices(claimed, claimed.approval))
+        assertTrue(ChatActions.canSend(claimed))
+        assertTrue(ChatActions.canInterrupt(claimed))
+        assertFalse(ChatActions.canShowTerminal(claimed))
+        assertTrue(ChatActions.canRetry(claimed, Chat.Message("m2", "hi", "maybe")))
+        // A row without buttons still points at the computer, never at a terminal.
+        assertEquals(Chat.ANSWER_ON_COMPUTER, ChatActions.passive(claimed))
+        // The same chat without the flag stays read only.
+        assertEquals(emptyList<String>(), ChatActions.choices(claimed.copy(dshWrite = false), claimed.approval))
+        assertFalse(ChatActions.canSend(claimed.copy(dshWrite = false)))
+    }
+
+    /**
+     * A DSH send whose socket did not answer in time (`offline`) may have gone: "maybe not sent" with Retry, never a
+     * plain refusal or a success. On a terminal chat `offline` stays a refusal. A DSH `sent` is final.
+     */
+    @Test fun dshSendOfflineIsMaybeNotSentAndSentIsFinal() {
+        val dsh = state("dsh:bot-1").copy(dshWrite = true, messages = listOf(Chat.Message("m", "x", "sending")))
+        val maybe = Chat.answered(dsh, "m", "x", j("""{"state":"refused","ok":false,"reason":"offline","id":"m"}"""))
+        assertEquals("maybe", maybe.messages.single().state)
+        assertTrue(ChatActions.canRetry(maybe, maybe.messages.single()))
+        val terminal = Chat.answered(state(), "m", "x", j("""{"state":"refused","ok":false,"reason":"offline","id":"m"}"""))
+        assertEquals("refused", terminal.messages.single().state)
+        assertEquals("sent", Chat.answered(dsh, "m", "x", j("""{"ok":true,"state":"sent","id":"m"}""")).messages.single().state)
+        assertEquals("queued", Chat.answered(dsh, "m", "x", j("""{"ok":true,"state":"queued","id":"m"}""")).messages.single().state)
+        // A terminal's sent bubble waits for the transcript, as before.
+        val typing = state().copy(messages = listOf(Chat.Message("m", "x", "sending")))
+        assertEquals("sending", Chat.answered(typing, "m", "x", j("""{"ok":true,"state":"sent","id":"m"}""")).messages.single().state)
+    }
+
+    /** A reconnect keeps only messages whose outcome is unknown, as maybe; sent, queued, refused and held are left to the bridge. */
+    @Test fun aReconnectKeepsUnknownMessagesAsMaybe() {
+        val s = state("dsh:bot-1").copy(messages = listOf(Chat.Message("a", "1", "sending"), Chat.Message("b", "2", "maybe"),
+            Chat.Message("c", "3", "sent"), Chat.Message("d", "4", "refused", reason = "rate"), Chat.Message("e", "5", "held", "draft")))
+        assertEquals(listOf("a" to "maybe", "b" to "maybe"), Chat.unknown(s).map { it.id to it.state })
+    }
+
+    /** The socket's refusals on a DSH answer read as what happened; a receipt never claims more than it holds. */
+    @Test fun dshAnswerNoticesPassTheSocketsReasonsThrough() {
+        fun n(text: String) = Chat.answerNotice(j(text), dsh = true)
+        assertNull(n("""{"ok":true,"state":"sent"}"""))
+        assertEquals("Already answered on the computer: Deny.", n("""{"state":"refused","ok":false,"reason":"settled","receipt":{"by":"computer","outcome":"deny"}}"""))
+        assertEquals("Already answered on the phone (Pixel 8): Allow.", n("""{"state":"refused","ok":false,"reason":"settled","receipt":{"by":"phone","name":"Pixel 8","outcome":"allow"}}"""))
+        assertEquals("No longer needed.", n("""{"state":"refused","ok":false,"reason":"settled","receipt":{"by":null,"outcome":"withdrawn"}}"""))
+        assertEquals("Already answered.", n("""{"state":"refused","ok":false,"reason":"settled"}"""))
+        assertEquals("The question changed; nothing was answered.", n("""{"state":"refused","ok":false,"reason":"changed"}"""))
+        assertEquals("Show this project in Automagik first.", n("""{"state":"refused","ok":false,"reason":"not-shown"}"""))
+        assertEquals(Chat.ANSWER_MAYBE, n("""{"state":"refused","ok":false,"reason":"offline"}"""))
+        assertEquals(Chat.ANSWER_ON_COMPUTER, n("""{"state":"refused","ok":false,"reason":"read-only"}"""))
+        assertEquals("Not answered. ${Chat.ANSWER_ON_COMPUTER}.", n("""{"state":"refused","ok":false,"reason":"failed"}"""))
+        // An interrupt the socket did not answer in time is not confirmed, never "sent" and never repeated.
+        assertEquals("Interrupt not confirmed. Check the computer.", Chat.interruptNotice(j("""{"state":"refused","ok":false,"reason":"offline"}"""), dsh = true))
+        assertEquals("Interrupt not confirmed. Check the computer.", Chat.interruptNotice(null, dsh = true))
+        assertEquals("Interrupt not confirmed. Check the terminal.", Chat.interruptNotice(null, dsh = false))
+    }
+
+    /** The read-back from #655/#658 holds on every chat: keys sent but still asking is "not taken", never answered. */
+    @Test fun readBackNotTakenIsNeverShownAsAnswered() {
+        val uncertain = j("""{"ok":true,"pressed":"uncertain","sent":true}""")
+        assertEquals(Chat.NOT_TAKEN, Chat.answerNotice(uncertain))
+        assertEquals(Chat.NOT_TAKEN, Chat.answerNotice(uncertain, dsh = true))
+        val row = Chat.Row("approval:c1", "approval", open = true, why = "not-taken")
+        assertEquals(Chat.NOT_TAKEN, ChatActions.pendingNote(Chat.State("t1", connected = true), row))
+        assertEquals(Chat.NOT_TAKEN, ChatActions.pendingNote(Chat.State("dsh:b1", connected = true, dshWrite = true), row))
+        assertEquals(Chat.ANSWER_ON_COMPUTER, ChatActions.pendingNote(Chat.State("dsh:b1", connected = true, dshWrite = true), row.copy(why = "")))
+    }
+
     @Test fun dshApprovalShowsAnswerOnTheComputer() {
         val row = """{"id":"dsh:s:4:approval","turn":0,"at":null,"source":"session","kind":"approval","tool":"","summary":"Answer on the computer","choices":[],"open":true,"answerable":false}"""
         val s = Chat.reduce(state("dsh:bot-1"), j("""{"type":"approval","row":$row}"""))
