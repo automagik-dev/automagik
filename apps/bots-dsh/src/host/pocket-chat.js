@@ -14,15 +14,19 @@
 //   side closes with a receipt (Amendments, "Approvals on the phone, and the race").
 // - Own Bots only: each live Bot's own current chat Session. No group, task or archived Sessions,
 //   no subagents (a Session whose header says `origin: 'subagent'` is refused). A project Bot is
-//   served only with the person's yes for its project (`shown`); global Bots need none.
+//   served only with the person's yes for its project (`shown`, the home file's `shown[]`, read
+//   by shown.js); global Bots need none. A Bot's project and machine are its home-file folder and
+//   machine; a Bot the home file does not list is global.
 // - No import of a DSH package. The Session API is DSH 0.2.2's Session Controller (`follow`,
 //   `events`, `state`, `observeState`; `prompt` and `cancel` for writes), reached through
 //   `ctx.sessionController`, behind a capability check and a lazy import of the adapter
 //   (pocket-chat-adapter.js). On a runtime without the read methods the source is absent.
 // - Served to Pocket Link over a Unix socket in the team's home, owner-only (pocket-socket.js).
 import { randomUUID } from 'node:crypto'
+import { isBotId } from '../shared/registry.js'
 import { TEAM_LOOKUPS, teamToolOf } from './approvals.js'
 import { startPocketSocket } from './pocket-socket.js'
+import { homeRegistryPathOf, shownReader } from './shown.js'
 
 /** The Session Controller methods this source needs (DSH 0.2.2); all of them, or none is used. */
 export const SESSION_METHODS = Object.freeze(['follow', 'events', 'state', 'observeState'])
@@ -216,7 +220,7 @@ export function refusal(id) {
 /** A row id for a request DSH raised: keyed by the tool call DSH's own card attaches to. */
 const requestRowId = (sessionId, seq, kind, key) => rowIdOf(sessionId, Math.max(0, seq), `${kind}-${encodeURIComponent(key)}`)
 
-/** Whether a project Bot has the person's yes; global Bots (`project: null`) need none. */
+/** Without a reader (tests): global Bots (`project: null`) only; install passes shown.js's. */
 const globalOnly = bot => bot?.project == null
 
 /**
@@ -225,9 +229,10 @@ const globalOnly = bot => bot?.project == null
  *   events(sessionId: string, page: { beforeSeq?: number, maxMessages?: number }, signal: AbortSignal): Promise<{ records: any[], hasMore: boolean }>,
  *   state(sessionId: string, signal: AbortSignal): Promise<any>, observeState(sessionId: string, signal: AbortSignal): AsyncIterable<any>,
  *   prompt?(sessionId: string, prompt: { requestId: string, text: string }, signal: AbortSignal): Promise<any>, cancel?(sessionId: string): any },
- *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string, project?: string | null }>>, timers?: typeof realTimers, pollMs?: number,
+ *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string, project?: string | null, machine?: string, placeUnknown?: true }>>,
+ *   timers?: typeof realTimers, pollMs?: number,
  *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
- *   shown?: (bot: { project?: string | null }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
+ *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
  */
 export class DshChatSource {
   constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, chatOwner, now = Date.now }) {
@@ -729,14 +734,26 @@ function questionAnswer(request, choice, text) {
   return { ok: true, value: { answers: [{ id: question.id, selected }] }, outcome: selected.join(', ') }
 }
 
-/** The team's own live Bots, each with its current own-chat Session (never a group, task or archived one). */
-export function ownBots(rt) {
+/**
+ * The team's own live Bots, each with its current own-chat Session (never a group, task or
+ * archived one). With a reader (shown.js), a Bot the home file lists with a folder takes that
+ * folder as its project and its machine; a Bot it does not list stays global. When the file
+ * can't be read, a Bot with a registry id is marked `placeUnknown`, which is never shown.
+ */
+export function ownBots(rt, reader) {
   return async () => {
     await rt.load?.()
+    const places = reader ? reader.places() : new Map()
     const bots = Object.values(rt.state?.bots ?? {})
     return bots
       .filter(bot => typeof bot?.id === 'string' && rt.botOf(bot.id) === bot)
-      .map(bot => ({ id: bot.id, name: typeof bot.name === 'string' ? bot.name : '', sessionId: rt.chatOf(bot.id), project: typeof bot.project === 'string' ? bot.project : null }))
+      .map((bot) => {
+        const own = { id: bot.id, name: typeof bot.name === 'string' ? bot.name : '', sessionId: rt.chatOf(bot.id) }
+        if (places === null && isBotId(bot.id)) return { ...own, project: null, placeUnknown: true }
+        const place = places?.get(bot.id)
+        if (place) return { ...own, project: place.folder, ...(place.machine !== undefined ? { machine: place.machine } : {}) }
+        return { ...own, project: typeof bot.project === 'string' ? bot.project : null }
+      })
       .filter(bot => typeof bot.sessionId === 'string' && bot.sessionId !== '')
   }
 }
@@ -769,7 +786,10 @@ export function install(rt) {
     const started = (async () => {
       const { createAdapter } = await import('./pocket-chat-adapter.js')
       if (stopped) return
-      source = new DshChatSource({ adapter: createAdapter(controller), bots: ownBots(rt), log: (...args) => rt.warn?.(...args), writable, chatOwner })
+      const reader = shownReader({ path: rt.registryPath ?? homeRegistryPathOf(), warn: (...args) => rt.warn?.(...args) })
+      source = new DshChatSource({
+        adapter: createAdapter(controller), bots: ownBots(rt, reader), shown: reader.shown, log: (...args) => rt.warn?.(...args), writable, chatOwner,
+      })
       socket = await startPocketSocket({ home: rt.home, source, log: (...args) => rt.warn?.(...args) })
       if (stopped) await socket.close()
     })().catch(error => rt.warn?.('omni-ui: Pocket chat is off: %s', error?.message ?? error))
