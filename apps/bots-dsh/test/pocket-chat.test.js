@@ -13,6 +13,7 @@ import {
   ANSWER_ON_COMPUTER, DshChatSource, KEEP_SENT_IDS, KEEP_SETTLED, SEND_TEXT_MAX, cursorOf, hasSessionApi, hasWriteApi, install, ownBots, rowIdOf, rowsOf, statusOf,
 } from '../src/host/pocket-chat.js'
 import { CLOSE_GRACE_MS, INTERRUPT_EVERY_MS, MAX_LINE, MAX_WRITES_PER_MINUTE, socketPathOf, startPocketSocket } from '../src/host/pocket-socket.js'
+import { shownReader } from '../src/host/shown.js'
 import { fakeContext } from './fake-ctx.js'
 
 // ---- the fake Session Controller
@@ -508,7 +509,8 @@ test('a stop and a start at once: the stop finishes first and the new host keeps
 
 // ---- install
 
-const rtFor = (ctx, home) => ({ ...team(), ctx, home, warn() {} })
+// The registry home's bots.json under the temp home, never the person's ~/.automagik.
+const rtFor = (ctx, home) => ({ ...team(), ctx, home, registryPath: join(home, 'registry', 'bots.json'), warn() {} })
 
 test('without DSH 0.2.2\'s Session API, install registers nothing and opens no socket', async (t) => {
   const s = scope(t)
@@ -1055,4 +1057,89 @@ test('questions: answered on the computer first closes the phone\'s card with th
   assert.ok(!JSON.stringify(closed.receipt).includes('not shown'))
   assert.equal((await w.handle.answer({ row: row.id, choice: '1' })).reason, 'settled')
   w.handle.close()
+})
+
+// ---- shown[]: the person's picks in the home file (shown.js)
+
+const REG = 'b-abcdefghij'
+/** A team with one registry Bot (REG, on Ada's Session) beside the state-only Bots. */
+function registryTeam() {
+  const rt = team()
+  rt.state.bots[REG] = { id: REG, name: 'Reg', sessionId: 'ada' }
+  delete rt.state.bots.ada
+  return rt
+}
+const homeFile = (dir, { bots = [{ id: REG, name: 'Reg', folder: '/repo/a' }], shown = [] } = {}) => {
+  const path = join(dir, 'bots.json')
+  writeFileSync(path, JSON.stringify({ version: 2, bots, projects: [], shown }))
+  return path
+}
+const pickedSource = (rt, reader) => writableOf(fakeController(sessions()), rt, {
+  bots: ownBots(rt, reader), shown: reader.shown, chatOwner: sessionId => (sessionId === 'ada' ? REG : OWNERS[sessionId]),
+})
+
+test('shown: a project Bot without its entry is shown:false and not-shown on subscribe and every write; a global Bot needs none', async (t) => {
+  const dir = tempHome()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = homeFile(dir)
+  const rt = registryTeam()
+  const source = pickedSource(rt, shownReader({ path }))
+  assert.deepEqual((await source.list()).map(row => [row.terminal, row.shown]), [['dsh:omni', true], [`dsh:${REG}`, false]])
+  assert.deepEqual(await source.watch(`dsh:${REG}`, () => {}), { ok: false, reason: 'not-shown' })
+  // The global Bot (no home-file entry) is watched with no shown[] at all.
+  const global = await watching(source, 'dsh:omni')
+  global.handle.close()
+  homeFile(dir, { shown: [{ project: '/repo/a', bots: [REG] }] })
+  const w = await watching(source, `dsh:${REG}`)
+  // The yes taken back: every write on the open chat is refused.
+  homeFile(dir)
+  assert.equal((await w.handle.send({ text: 'x', id: 'r1' })).reason, 'not-shown')
+  assert.equal((await w.handle.interrupt()).reason, 'not-shown')
+  assert.equal((await w.handle.answer({ row: rowIdOf('ada', 0, 'approval-c1'), choice: 'allow' })).reason, 'not-shown')
+  w.handle.close()
+})
+
+test('shown: the home file\'s folder and machine set a Bot\'s project; a Bot it does not list stays global', async (t) => {
+  const dir = tempHome()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const rt = registryTeam()
+  const path = homeFile(dir, { bots: [{ id: REG, name: 'Reg', folder: '/repo/a', machine: 'box-1' }] })
+  assert.deepEqual(await ownBots(rt, shownReader({ path }))(), [
+    { id: 'omni', name: 'Omni', sessionId: 's-omni-2', project: null },
+    { id: REG, name: 'Reg', sessionId: 'ada', project: '/repo/a', machine: 'box-1' },
+  ])
+  homeFile(dir, { bots: [{ id: REG, name: 'Reg' }] })
+  assert.equal((await ownBots(rt, shownReader({ path }))()).find(bot => bot.id === REG).project, null, 'no folder: global')
+})
+
+test('shown: a home file that does not parse, with no good read before it, shows no registry Bot', async (t) => {
+  const dir = tempHome()
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = join(dir, 'bots.json')
+  writeFileSync(path, '{ not json')
+  const warns = []
+  const rt = registryTeam()
+  const source = pickedSource(rt, shownReader({ path, warn: (...args) => warns.push(args) }))
+  assert.deepEqual((await source.list()).map(row => [row.terminal, row.shown]), [['dsh:omni', true], [`dsh:${REG}`, false]])
+  assert.deepEqual(await source.watch(`dsh:${REG}`, () => {}), { ok: false, reason: 'not-shown' })
+  assert.equal(warns.length, 1, 'warned once, not on every read')
+})
+
+test('install reads shown[] from the registry path it is given', async (t) => {
+  const s = scope(t)
+  const ctx = fakeContext({ services: { sessionController: fakeController(sessions()) } })
+  s.defer(() => ctx.dispose())
+  const rt = { ...rtFor(ctx, s.home), ...registryTeam() }
+  rt.registryPath = join(s.home, 'reg', 'bots.json')
+  mkdirSync(join(s.home, 'reg'))
+  writeFileSync(rt.registryPath, JSON.stringify({ version: 2, bots: [{ id: REG, name: 'Reg', folder: '/repo/a' }], shown: [{ project: '/repo/a', bots: [REG] }] }))
+  install(rt)
+  let found = null
+  for (let i = 0; i < 200 && !found; i++) {
+    try { found = lstatSync(s.path) } catch { await new Promise(resolve => setTimeout(resolve, 10)) }
+  }
+  const c = s.client()
+  assert.deepEqual((await c.ask('list')).result.terminals.map(row => [row.terminal, row.shown]), [['dsh:omni', true], [`dsh:${REG}`, true]])
+  c.socket.destroy()
+  await within(ctx.dispose())
 })
