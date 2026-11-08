@@ -506,6 +506,22 @@ export default class Spaces extends View {
     this.wakeAt = nextWake(live, now);
   }
 
+  // Name only an unnamed tab whose first terminal is a defined bot. The app persists
+  // named=true; the set also covers renders before that document change comes back.
+  nameBotTabs() {
+    this.namedBotTabs ??= new Set();
+    const first = firstBy(this.snap.panes.filter((p) => p.terminal), (p) => p.tab);
+    const bots = firstBy(this.bots.flatMap((p) => p.file?.bots ?? []), (b) => b.id);
+    for (const space of this.snap.spaces) for (const tab of space.tabs ?? []) {
+      if (tab.named !== false || this.namedBotTabs.has(tab.id)) continue;
+      const terminal = this.coreTerminal(first.get(tab.id));
+      const bot = bots.get(terminal?.labels?.[BOT_LABEL]);
+      if (!bot) continue;
+      run("tab.rename", { id: tab.id, name: bot.name });
+      this.namedBotTabs.add(tab.id);
+    }
+  }
+
   // Copies the Automagik themes into the app home when absent, and selects them the first
   // time only (theme.js). Never an error to the person: it is tried again on the timer, and
   // each distinct failure goes to the mod's log once (not every 15 s tick, never a notice).
@@ -1365,6 +1381,7 @@ export default class Spaces extends View {
     if (changed) setShared("am.space.colors", kept);
     this.prepareAgents();
     this.prepareBots();
+    this.nameBotTabs();
     const list = this.grouped(t, collapsed);
     // agent.next / agent.prev follow the rows; ones not shown come after, in model order.
     setAgentOrder(this.order);

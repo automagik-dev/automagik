@@ -94,6 +94,10 @@ test("a local start with a programs.json override runs it byte for byte (#612)",
   const seen = startOne(t, OVERRIDE, { bots: [...BOTS, OVERRIDE], override: ["dsh-tui-local", "--profile", "worker"] });
   if (process.env.AUTOMAGIK_GOLDEN_RECORD === "1") writeFileSync(OVERRIDE_FIXTURE, `${JSON.stringify(seen, null, 2)}\n`);
   const want = JSON.parse(readFileSync(OVERRIDE_FIXTURE, "utf8"));
+  // Keep the base golden: only the DSH prompt prefix changes; its briefing stays byte-equal.
+  const prompt = seen.argv.pop();
+  assert.equal(prompt, `${OVERRIDE.name} - ${want.argv.at(-1)}`);
+  seen.argv.push(prompt.slice(`${OVERRIDE.name} - `.length));
   assert.deepEqual(seen, want);
   // The override's absolute first word, never the shipped dsh-tui it would fall back to.
   const launched = seen.argv.slice(seen.argv.indexOf("--") + 1);
