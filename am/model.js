@@ -166,6 +166,10 @@ export function parseBots(text) {
     if (!isText(b.name)) return warnings.push(`${where}: no name, left out`);
     if (!KINDS.includes(b.kind)) return warnings.push(`${where}: unknown kind ${JSON.stringify(b.kind)}, left out`);
     const bot = { ...b };
+    if (bot.hcProxy !== undefined && typeof bot.hcProxy !== "boolean") {
+      warnings.push(`${where}: hcProxy is not a boolean; ignored`);
+      delete bot.hcProxy;
+    }
     if (!ID_SHAPE.test(bot.id)) warnings.push(`${where}: id is not b- plus 10 base32 characters`);
     if (typeof bot.role !== "string") { if (bot.role !== undefined) warnings.push(`${where}: role is not text`); bot.role = ""; }
     if (typeof bot.instructions !== "string") { if (bot.instructions !== undefined) warnings.push(`${where}: instructions are not text`); bot.instructions = ""; }
@@ -295,6 +299,9 @@ export function checkBots(file, before = null) {
     if (!KINDS.includes(b.kind)) errors.push(`${at}: unknown kind`);
     if (!isObject(b.look) || !isText(b.look.character) || !isText(b.look.colour)) errors.push(`${at}: no look`);
     if (typeof b.role !== "string") errors.push(`${at}: no role`);
+    if (b.hcProxy !== undefined && typeof b.hcProxy !== "boolean") {
+      errors.push(`${at}: hcProxy is not a boolean`);
+    }
     if (typeof b.instructions !== "string") errors.push(`${at}: no instructions`);
     else if (b.instructions.length > MAX_INSTRUCTIONS) errors.push(`${at}: instructions longer than ${MAX_INSTRUCTIONS} characters`);
     if (b.planned !== undefined && (!isObject(b.planned) || !isWave(b.planned.wave))) errors.push(`${at}: planned needs a positive whole wave`);

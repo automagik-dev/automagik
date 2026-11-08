@@ -9,8 +9,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { installSandboxRow, sandboxRootOf, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
+import { doctorBotProxies, installSandboxRow, sandboxRootOf, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
+import { runPane } from "../mods/am-sidebar/hcPane.mjs";
+import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -103,6 +105,73 @@ test("the helper refuses to start the pane when the proxy refuses (fail closed, 
   assert.match(r.stderr, /not the pinned 0\.1\.14/);
   assert.equal(existsSync(out), false, "the sandboxed command never ran");
   assert.equal(existsSync(join(s.runtime, "automagik-hc-proxy", "t300")), false, "no socket folder was made");
+});
+
+test("M2: proxy down never starts a child or falls back to the real socket", async (t) => {
+  const s = await scene(t);
+  await s.fake.close();
+  const out = join(s.root, "child.json");
+  const r = await runHelper(s, { out });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /^hc-pane: /m);
+  assert.equal(existsSync(out), false, "no fallback child ran");
+});
+
+test("doctor reports each saved switch and probes only its bound proxy, without a core fallback",
+  async (t) => {
+  const s = await scene(t);
+  s.fake.state.terminals[0].created_ms = 1;
+  const bot = { id: ID.dev, name: "Dev", agent: "dsh-tui", hcProxy: true };
+  const bindings = new Map([[bot.id, { terminal: "t300", project: s.project, created_ms: 1 }]]);
+  const status = () => doctorBotProxies({ bots: [bot,
+    { id: "b-otheraaaaa", name: "Other", agent: "dsh-tui" }], project: s.project,
+    bindings, env: s.env });
+  const down = await status();
+  assert.equal(down[0].hcProxy, true);
+  assert.equal(down[0].up, false);
+  assert.equal(down[1].hcProxy, false);
+  assert.equal(down[1].terminal, null);
+  assert.deepEqual(s.fake.log, [], "a missing proxy never falls back to querying the core");
+  const proxy = await startProxy({ env: s.env, terminal: "t300", upstream: s.socket,
+    caller: { bot: bot.id, project: s.project, worker: false }, bound: true,
+    forbiddenRoots: [["the project", s.project], ["the app home", s.app],
+      ["the temp folder", s.env.TMPDIR], ["the runtime folder", s.runtime]] });
+  t.after(() => proxy.close());
+  assert.equal((await status())[0].up, true);
+  bindings.get(bot.id).created_ms = 2;
+  assert.equal((await status())[0].up, false, "an old pane binding cannot report healthy");
+  bindings.get(bot.id).created_ms = 1;
+  bot.hcProxy = false;
+  const rollingBack = (await status())[0];
+  assert.equal(rollingBack.hcProxy, false);
+  assert.equal(rollingBack.up, true, "saved off does not pretend the old proxy has stopped");
+  await proxy.close();
+  const before = s.fake.log.length;
+  assert.equal((await status())[0].up, false);
+  assert.equal(s.fake.log.length, before, "a stopped proxy never queries the real socket");
+});
+
+test("M1: proxy is listening before spawn; unexpected close ends the pane", async (t) => {
+  const s = await scene(t);
+  let proxy, child;
+  const messages = [];
+  const code = await runPane(["--bot", ID.dev, "--project", s.project, "--",
+    process.execPath, "-e", "setInterval(() => {}, 1000)"], s.env, {
+    forbiddenRoots: [["the project", s.project], ["the app home", s.app],
+      ["the temp folder", s.env.TMPDIR], ["the runtime folder", s.runtime]],
+    stderr: { write: (line) => messages.push(line) },
+    startProxy: async (options) => { proxy = await startProxy(options); return proxy; },
+    spawn: (...args) => {
+      assert.equal(proxy?.server.listening, true, "the proxy is listening before spawn");
+      child = spawn(...args);
+      setImmediate(() => proxy.server.close());
+      return child;
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(child.killed, true);
+  assert.equal(existsSync(proxy.socket), false);
+  assert.match(messages.join(""), /hc-pane: the proxy stopped; ending the pane/);
 });
 
 test("a worker pane starts the proxy with its worker.of caller", async (t) => {

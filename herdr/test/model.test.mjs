@@ -150,6 +150,22 @@ function sample(edit = (f) => f) {
 }
 const text = (f) => JSON.stringify(f);
 
+test("hcProxy is an optional boolean, malformed settings warn and never opt in", () => {
+  for (const value of [true, false]) {
+    const file = sample((f) => { f.bots[0].hcProxy = value; return f; });
+    assert.deepEqual(checkBots(file), []);
+    assert.equal(parseBots(text(file)).file.bots[0].hcProxy, value);
+  }
+  for (const value of ["true", 1, {}, null]) {
+    const file = sample((f) => { f.bots[0].hcProxy = value; return f; });
+    assert.ok(checkBots(file).some((line) => /hcProxy is not a boolean/.test(line)));
+    const parsed = parseBots(text(file));
+    assert.equal(parsed.file.bots[0].hcProxy, undefined);
+    assert.ok(parsed.warnings.some((line) => /hcProxy is not a boolean/.test(line)));
+    assert.deepEqual(parsed.raw.bots[0].hcProxy, value);
+  }
+});
+
 test("schema: a valid file parses with no warnings and checks clean", () => {
   const { file, warnings } = parseBots(text(sample()));
   assert.deepEqual(warnings, []);

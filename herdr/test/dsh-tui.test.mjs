@@ -502,6 +502,53 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.equal(half.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
 });
 
+test("proxy doctor detects a stale helper and update repairs it without changing the row",
+  { skip: process.platform !== "linux" }, async (t) => {
+  const s = scene(t);
+  const options = { env: s.env, forbiddenRoots: rootsOf(s), publishedAt: PUBLISHED };
+  assert.equal((await installDshTui(options)).status, "installed");
+  const profile = join(s.home, ".dsh", "profiles", "dsh-tui", "cordis.patch.yml");
+  const before = readFileSync(profile, "utf8");
+  assert.match(before, /^- id: sandbox$/m);
+  const helper = join(sandboxRootOf(s.env), "hcPane.mjs");
+  writeFileSync(helper, "// previous version\n");
+  const stale = doctorDshTui(options);
+  const check = stale.checks.find((row) => row.check === "dsh-hc-proxy");
+  assert.equal(stale.code, 1);
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /stable proxy execution copy is stale/);
+  assert.equal(check.fix, "automagik-herdr dsh-tui install");
+  assert.equal(readFileSync(helper, "utf8"), "// previous version\n", "doctor only reads");
+  assert.equal((await installDshTui(options)).status, "installed");
+  const repaired = doctorDshTui(options);
+  assert.equal(repaired.code, 0, JSON.stringify(repaired.checks));
+  assert.match(repaired.checks.find((row) => row.check === "dsh-hc-proxy").detail,
+    /current; hcProxy defaults off per bot/);
+  assert.equal(readFileSync(profile, "utf8"), before);
+});
+
+test("install and update preserve every bot's saved switch and never opt in a default bot",
+  async (t) => {
+  const s = scene(t);
+  const project = join(s.root, "project");
+  mkdirSync(join(project, ".herdr"), { recursive: true });
+  const bots = [true, false, undefined].map((value, i) => ({
+    id: `b-${["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"][i]}`, name: `Bot ${i}`,
+    kind: i === 0 ? "main" : "member", agent: "dsh-tui",
+    ...(value === undefined ? {} : { hcProxy: value }),
+  }));
+  const file = join(project, ".herdr", "bots.json");
+  const before = `${JSON.stringify({ version: 1, categories: [], bots }, null, 2)}\n`;
+  writeFileSync(file, before);
+  const { cmdDshTui } = await import(CLI);
+  const io = { env: s.env, forbiddenRoots: rootsOf(s) };
+  for (const verb of ["install", "update"]) {
+    const result = await cmdDshTui({ project, json: true }, [verb], io);
+    assert.equal(result.status, "installed", result.detail);
+    assert.equal(readFileSync(file, "utf8"), before, `${verb} keeps every saved switch byte for byte`);
+  }
+});
+
 test("the pane PATH is the login shell's, read between its markers", (t) => {
   const s = scene(t);
   const extra = join(s.root, "extra-bin");
@@ -598,12 +645,13 @@ test("the release-age exception is exact, leaves other packages alone, and is pr
 test("the CLI command installs, reports doctor JSON and uninstalls", async (t) => {
   const s = scene(t);
   const { cmdDshTui } = await import(CLI);
-  const io = { env: s.env, forbiddenRoots: rootsOf(s) };
+  const io = { env: s.env, forbiddenRoots: rootsOf(s),
+    project: { key: join(s.root, "project"), file: { bots: [] } } };
   const installed = await cmdDshTui({ json: true }, ["install"], io);
   assert.equal(installed.status, "installed", installed.detail);
   const report = await cmdDshTui({ json: true }, ["doctor"], io);
   assert.equal(report.code, 0);
-  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", "dsh-sandbox"]);
+  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", ...(process.platform === "linux" ? ["dsh-hc-proxy"] : []), "dsh-sandbox"]);
   const removed = await cmdDshTui({ json: true }, ["uninstall"], io);
   assert.equal(removed.status, "removed");
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);

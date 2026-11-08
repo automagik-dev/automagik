@@ -884,10 +884,14 @@ guarded pane.
 
 ### The per-pane hc proxy (the sandbox boundary, opt-in)
 
-The proxy is **off by default**. One switch, `AM_HC_PROXY=1` in the environment that runs the
-Start (and so in the bot pane it starts), turns it on; nothing sets it and a default dsh-tui
-seat and worker keep their argv byte for byte. C1 adds the approved roster and no enablement;
-C2 turns it on for the PM.
+The proxy is **off by default** for every bot. Set the bot entry's `hcProxy` boolean with
+`automagik-herdr edit <bot> --hc-proxy on|off`; restart that bot to apply it. Only Linux
+pack-started dsh-tui seats and dsh-tui workers get the helper. `AM_HC_PROXY` no longer opts in
+other bots. C2a prepares the switch and lifecycle; leave it off until C2b's approved-worker
+allowance and C2c's coordinated sandbox-row enablement have shipped. C2a leaves the profile
+row unchanged. For rollback, set `--hc-proxy off` and restart the bot; end and relaunch any
+existing workers that also need rollback. Linked starts of opted-in dsh-tui bots refuse until
+they can verify the proxy execution path; start locally on the target computer instead.
 
 When it is on, a pack-started dsh-tui pane runs through one helper,
 `mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process

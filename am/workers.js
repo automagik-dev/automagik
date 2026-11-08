@@ -90,9 +90,9 @@ export const stableRootOf = (env = process.env) => `${dataRootOf(env)}/dsh-sandb
 export const stableGuardDir = (root) => `${root}/guard`;
 export const stableHelper = (root) => `${root}/hcPane.mjs`;
 export const stableRunner = (root) => `${root}/bin/run.sh`;
-/** The one opt-in for the per-pane proxy (#631 PR B); nothing sets it by default. */
-export const HC_PROXY_ENV = "AM_HC_PROXY";
-export const hcProxyEnabled = (env = process.env) => env[HC_PROXY_ENV] === "1";
+/** The saved per-bot opt-in. Environment variables never enable another bot's proxy. */
+export const hcProxyEnabled = (bot, platform = process.platform) =>
+  platform === "linux" && bot?.hcProxy === true;
 
 /**
  * The pane command for a dsh-tui pane: `/bin/sh <run.sh> <hcPane.mjs> --bot <id> [--project

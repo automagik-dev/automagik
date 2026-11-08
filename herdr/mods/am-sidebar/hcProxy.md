@@ -1,15 +1,46 @@
 # The per-pane hc proxy (#631)
 
-**Status: opt-in (`AM_HC_PROXY=1`), wired for pack-started dsh-tui panes and workers; C1 adds
-the approved roster, with no enablement yet.** With the switch on, `startArgs` and `workerArgs`
-run a dsh-tui pane through `hcPane.mjs`, one helper per pane. The helper starts the proxy in its
-own process **before DSH**, then runs the agent as its child, so the proxy reads the project's
-approved roster before the pane can create a sandbox. The proxy ends with the pane; there is no
-service. **A roster change needs a pane restart** after `automagik-herdr proxy approve`:
-the new pane starts a new proxy that reads the newly approved record. Nothing sets the switch by
-default, so a default seat and worker keep the old argv; C2 turns it on for the PM.
-A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again: the helper
-refuses an opted-in pane while the profile's sandbox row is stale.
+**Status: C2a preparation, off by default.** The one rollout setting is the bot entry's
+`hcProxy` boolean, changed with `automagik-herdr edit <bot> --hc-proxy on|off`.
+Missing or `false` keeps the existing command byte for byte. Only `true` on Linux wraps a
+pack-started dsh-tui bot or dsh-tui worker in `hcPane.mjs`. Other agents and templates keep their
+existing launch. `AM_HC_PROXY` no longer enables anything: the saved setting belongs to one bot.
+`automagik-herdr show <bot>` reports it. Editing it never restarts a running pane.
+
+The helper starts the proxy **before DSH** and closes it when the child ends. A failed proxy
+start never launches the child; a listening proxy that errors or closes ends the child and
+returns failure. There is no fallback launch against the real core. A stale execution copy or
+profile row refuses startup and names `automagik-herdr dsh-tui install` as the repair.
+
+C2a leaves the managed sandbox profile row unchanged. It prepares rollout and lifecycle only; the
+socket boundary is not enabled by this slice. Approved template/agent worker allowance follows
+in C2b; the coordinated profile-row enablement and mask review fixes follow in C2c. Keep every
+bot's switch off until those slices have shipped. Localhost administration endpoints remain
+outside this work.
+
+## Rollout and rollback
+
+After the remaining slices land, the captain can roll out one bot at a time from an ordinary
+terminal on the computer running that bot:
+
+1. Run `automagik-herdr dsh-tui update`, then `automagik-herdr dsh-tui doctor`.
+   Install and update refresh the stable helper, proxy, guard and wrapper together. Doctor
+   checks the stable execution copy and managed profile row without changing either.
+   `dsh-tui doctor --project <project>` also shows every bot's saved `hcProxy` value and
+   whether its attached local pane's proxy answers. Off with a proxy still up means the pane
+   has not completed rollback. A missing proxy is reported down; doctor never starts a core,
+   proxy or pane. Install and update preserve every saved switch, including an absent value.
+2. Run `automagik-herdr proxy approve --project <project>` after reviewing the roster diff.
+   A **roster change needs a pane restart** after approval so the new proxy reads it.
+3. Run `automagik-herdr edit <bot> --hc-proxy on`, then
+   `automagik-herdr restart <bot>`. Check that bot before opting in the next.
+4. To roll back, run `automagik-herdr edit <bot> --hc-proxy off`, then
+   `automagik-herdr restart <bot>`. Existing workers keep their launch until restarted;
+   end and relaunch any workers that also need rollback.
+
+An opted-in dsh-tui bot cannot be started or restarted through `--machine` yet: that path
+cannot verify the stable proxy execution path and refuses rather than launch without it.
+Start it locally on the target computer. The saved setting is ignored on non-Linux systems.
 
 ## Run
 
@@ -82,7 +113,7 @@ A worker start needs `--bg`, `parent` = the caller, `cwd` under the caller's pro
 
 No `on` or `line` is accepted, and only identity environment variables are allowed. The old
 plain five-word shape (`/usr/bin/env PATH=… dsh-tui -- <task>`) is refused: a proxied bot could
-unset `AM_HC_PROXY` in its own shell, and a plain worker would have no proxy of its own, so its
+change its local rollout setting, and a plain worker would have no proxy of its own, so its
 sandbox would reach the real core one hop later. The sandbox row binds the data parent
 read-only (covering the stable folder and `approved/`), so its guard, helper and runner cannot
 be rewritten. Any other guard is refused inside the writable project and app home. Only a
@@ -152,7 +183,7 @@ pane with it.
 ## C1 and C2
 
 **C1 (this change) has no enablement.** It adds the approved roster and moves the explicit
-caller off the attach ledger. The switch stays off; nothing sets `AM_HC_PROXY` by default.
+caller off the attach ledger. The per-bot `hcProxy` switch stays off by default.
 
 Residual, recorded for the person who approves: a sandboxed bot can ask an in-team unsandboxed
 pane to run `automagik-herdr proxy approve`. The printed diff is the check, and approving is the
