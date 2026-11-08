@@ -659,6 +659,30 @@ test("a guard copy that calls its caller stops at once instead of looping", (t) 
   assert.deepEqual(calls(s), [], "the stub never ran; the pair stopped at once");
 });
 
+test("an older guard copy after this one cannot turn a refusal into an allow", (t) => {
+  const s = scene(t);
+  const mod = join(s.root, "older-guard"), olderGuard = join(mod, "guard"), marker = join(mod, "older-ran");
+  mkdirSync(olderGuard, { recursive: true });
+  for (const file of ["hcGuard.mjs", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
+    copyFileSync(join(GUARD_DIR, "..", file), join(mod, file));
+  }
+  // An older copy: it predates the re-entry marker, so it ignores the marker on its env.
+  const older = readFileSync(join(mod, "hcGuard.mjs"), "utf8")
+    .replace('    if (reentry(env)) return refused("a re-entry: the guard already ran for this call");\n', "");
+  assert.doesNotMatch(older, /reentry\(env\)/, "the copy ignores the marker");
+  writeFileSync(join(mod, "hcGuard.mjs"), older);
+  copyFileSync(join(GUARD_DIR, "hc"), join(olderGuard, "hc-guard"));
+  chmodSync(join(olderGuard, "hc-guard"), 0o755);
+  writeFileSync(join(olderGuard, "hc"), `#!/bin/sh\n: > "${marker}"\nexec node "${join(olderGuard, "hc-guard")}" "$@"\n`);
+  chmodSync(join(olderGuard, "hc"), 0o755);
+  writeFileSync(s.logPath, "");
+  const r = guardRun(s, ["exec", "echo", "x"], { PATH: `${GUARD_DIR}:${olderGuard}:${s.bin}:${dirname(process.execPath)}` });
+  assertRefused(r);
+  assert.match(r.stderr, /refused exec/);
+  assert.equal(existsSync(marker), false, "the older guard copy never ran");
+  assert.deepEqual(calls(s), [], "the refusal came first; the stub never ran");
+});
+
 test("the guard shim's own failure lines name #628", (t) => {
   const s = scene(t);
   const shim = (name, hcGuard = null) => {

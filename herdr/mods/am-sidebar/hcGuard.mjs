@@ -161,7 +161,9 @@ const looksLikeGuardFolder = (dir) => typeof dir === "string" && dir !== ""
   && existsSync(join(dir, "..", "hcGuard.mjs"));
 /**
  * The env for `real`: the re-entry marker only when that hc looks like a guard this guard
- * cannot vouch for, so the marker never leaks to an ordinary real hc or the panes it starts.
+ * cannot vouch for. A stray hcGuard.mjs beside an ordinary real hc also sets it, and the
+ * panes that hc starts inherit it; their guards then refuse (a denial that needs write access
+ * there), never allow. It is not a boundary.
  */
 function spawnEnv(real, env) {
   const dir = dirname(real);
