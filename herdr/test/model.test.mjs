@@ -273,7 +273,7 @@ test("lead: a missing lead falls back to the main bot with a warning", () => {
   assert.equal(r.lead, ID.main);
   assert.match(r.warning, /missing/);
   assert.ok(parseBots(text(file)).warnings.some((w) => w.startsWith(ID.dev) && /missing/.test(w)));
-  assert.ok(checkBots(file).some((e) => e.startsWith(ID.dev)));
+  assert.deepEqual(checkBots(file), []);
 });
 
 test("lead: a planned lead falls back to the main bot with a warning", () => {
@@ -281,6 +281,7 @@ test("lead: a planned lead falls back to the main bot with a warning", () => {
   const r = effectiveLead(file, ID.dev);
   assert.equal(r.lead, ID.main);
   assert.match(r.warning, /planned/);
+  assert.deepEqual(checkBots(file), []);
 });
 
 test("lead: a cycle falls back to the main bot for every bot in it, not for those under it", () => {
@@ -294,6 +295,10 @@ test("lead: a cycle falls back to the main bot for every bot in it, not for thos
   assert.deepEqual(effectiveLead(file, ID.dev), { lead: ID.cap });
   const self = sample((f) => { f.bots[2].lead = ID.dev; return f; });
   assert.equal(effectiveLead(self, ID.dev).lead, ID.main);
+  assert.ok(checkBots(self).some((e) => e.startsWith(ID.dev)));
+  const plannedSelf = sample((f) => { f.bots[4].lead = ID.plan; return f; });
+  assert.ok(checkBots(plannedSelf).some((e) => e.startsWith(ID.plan)));
+  assert.ok(checkBots(file).some((e) => /leads back to this bot/.test(e)));
 });
 
 test("ids: b- plus 10 lowercase base32 characters, and random", () => {

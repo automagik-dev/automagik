@@ -613,6 +613,55 @@ test("create: lead, category, planned, look, model pin from the agent's list onl
 
 // ---- edit, rm, category ----
 
+for (const leadState of ["planned", "missing"]) {
+  test(`#730 local save: two ${leadState} leads warn without blocking an unrelated edit`, (t) => {
+    const s = scene(t);
+    const file = team();
+    const lead = leadState === "planned" ? ID.plan : "b-zzzzzzzzzz";
+    for (const b of file.bots.slice(1, 3)) b.lead = lead;
+    s.seed(file);
+    const saved = s.cli(["edit", "Genie", "--role", "updated"]);
+    assert.equal(saved.code, 0, saved.err);
+    assert.equal(s.bots().bots[0].role, "updated");
+    for (const id of [ID.cap, ID.dev]) {
+      assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is ${leadState}; reports to the main bot`), saved.err);
+      assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
+      assert.equal(s.cli(["show", id, "--json"]).json().lead, ID.main);
+    }
+  });
+}
+
+test("#730 local save: explicitly choosing a planned lead still refuses create and edit", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const before = readFileSync(s.botsPath, "utf8");
+  for (const args of [["edit", "Dev"], ["create", "--name", "New", "--agent", "claude"]]) {
+    const refused = s.cli([...args, "--lead", "Studio"]);
+    assert.equal(refused.code, 1, refused.err);
+    assert.match(refused.err, /Studio is planned, so it can't lead a bot yet\./);
+    assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  }
+});
+
+for (const [name, breakFile, why] of [
+  ["duplicate ids", (f) => f.bots.push({ ...f.bots[2] }), /id used twice/],
+  ["self lead", (f) => { f.bots[2].lead = ID.dev; }, /leads back to this bot/],
+  ["lead cycle", (f) => { f.bots[1].lead = ID.dev; f.bots[2].lead = ID.cap; }, /leads back to this bot/],
+  ["unknown main kind", (f) => { f.bots[0].kind = "unknown"; }, /unknown kind/],
+]) {
+  test(`#730 local save: ${name} elsewhere still refuses`, (t) => {
+    const s = scene(t);
+    const file = team();
+    breakFile(file);
+    s.seed(file);
+    const before = readFileSync(s.botsPath, "utf8");
+    const refused = s.cli(["edit", "Studio", "--role", "updated"]);
+    assert.equal(refused.code, 1, refused.err);
+    assert.match(refused.err, why);
+    assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  });
+}
+
 test("edit: partial changes keep the rest; --unplanned, --no-model; a lead cycle is refused", (t) => {
   const s = scene(t);
   const f = team();

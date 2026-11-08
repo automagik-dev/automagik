@@ -111,6 +111,68 @@ test("ls, show, edit, category and rm --machine work on the file there", (t) => 
   assert.match(last.err, /bots\.json on vm was deleted/);
 });
 
+const PLAN = "b-eeeeeeeeee", CAP = "b-bbbbbbbbbb";
+const fallbackTeam = (leadState = "planned") => ({
+  version: 1, categories: [], bots: [
+    { id: MAIN, name: "Main", kind: "main" },
+    { id: CAP, name: "Captain", kind: "member", lead: leadState === "planned" ? PLAN : "b-zzzzzzzzzz" },
+    { id: DEV, name: "Dev", kind: "member", lead: leadState === "planned" ? PLAN : "b-zzzzzzzzzz" },
+    { id: PLAN, name: "Studio", kind: "member", planned: { wave: 3 } },
+  ].map((b) => ({ look: { character: "star", colour: "blue" }, role: "", instructions: "", agent: "claude", ...b })),
+});
+const seedFallbackTeam = (s, file) => {
+  mkdirSync(join(s.project, ".herdr"), { recursive: true });
+  writeFileSync(s.botsPath, `${JSON.stringify(file, null, 2)}\n`);
+};
+
+for (const leadState of ["planned", "missing"]) {
+  test(`#730 linked save: two ${leadState} leads warn without blocking an unrelated edit`, (t) => {
+    const s = scene(t);
+    seedFallbackTeam(s, fallbackTeam(leadState));
+    const lead = leadState === "planned" ? PLAN : "b-zzzzzzzzzz";
+    const saved = s.cli(["edit", "Main", ...s.on, "--role", "updated"]);
+    assert.equal(saved.code, 0, saved.err);
+    assert.equal(s.bots().bots[0].role, "updated");
+    for (const id of [CAP, DEV]) {
+      assert.ok(saved.err.includes(`Warning: ${id}: lead ${lead} is ${leadState}; reports to the main bot`), saved.err);
+      assert.equal(s.bots().bots.find((b) => b.id === id).lead, lead);
+      assert.equal(s.cli(["show", id, ...s.on, "--json"]).json().lead, MAIN);
+    }
+    assert.ok(s.calls().some((c) => c[0] === "file" && c[1] === "edit" && c.includes("vm")));
+  });
+}
+
+test("#730 linked save: explicitly choosing a planned lead still refuses create and edit", (t) => {
+  const s = scene(t);
+  seedFallbackTeam(s, fallbackTeam());
+  const before = readFileSync(s.botsPath, "utf8");
+  for (const args of [["edit", "Dev"], ["create", "--name", "New", "--agent", "claude"]]) {
+    const refused = s.cli([...args, ...s.on, "--lead", "Studio"]);
+    assert.equal(refused.code, 1, refused.err);
+    assert.match(refused.err, /Studio is planned, so it can't lead a bot yet\./);
+    assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  }
+});
+
+for (const [name, breakFile, why] of [
+  ["duplicate ids", (f) => f.bots.push({ ...f.bots[2] }), /id used twice/],
+  ["self lead", (f) => { f.bots[2].lead = DEV; }, /leads back to this bot/],
+  ["lead cycle", (f) => { f.bots[1].lead = DEV; f.bots[2].lead = CAP; }, /leads back to this bot/],
+  ["unknown main kind", (f) => { f.bots[0].kind = "unknown"; }, /unknown kind/],
+]) {
+  test(`#730 linked save: ${name} elsewhere still refuses`, (t) => {
+    const s = scene(t);
+    const file = fallbackTeam();
+    breakFile(file);
+    seedFallbackTeam(s, file);
+    const before = readFileSync(s.botsPath, "utf8");
+    const refused = s.cli(["edit", "Studio", ...s.on, "--role", "updated"]);
+    assert.equal(refused.code, 1, refused.err);
+    assert.match(refused.err, why);
+    assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  });
+}
+
 test("--machine: an edit that landed there since the read is never overwritten", (t) => {
   const s = scene(t);
   assert.equal(s.cli(["create", ...s.on, "--name", "Hedge", "--agent", "claude"]).code, 0);
