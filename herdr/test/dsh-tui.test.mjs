@@ -5,7 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+  realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -752,7 +753,8 @@ test("G1 (d): the stable root and approved folder must stay beneath the data par
     symlinkSync(s.root, link);
     assert.match(approvedDataRootProblem({ env: s.env, forbiddenRoots: rootsOf(s) }),
       /not beneath/);
-    rmSync(link);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    unlinkSync(link);
   }
 });
 
