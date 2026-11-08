@@ -193,12 +193,12 @@ object CodeView {
         val elsewhere = bySpace.filterKeys { it == null || it !in listed }.values.flatten()
         if (elsewhere.isNotEmpty()) {
             item(key = "elsewhere") { SectionHeader("From other spaces", elsewhere.size) }
-            agentCards(state, vm, elsewhere, "e")
+            agentCards(state, vm, pulse, elsewhere, "e")
         }
     }
 }
 
-private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, agents: List<Projects.Agent>, prefix: String) {
+private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, agents: List<Projects.Agent>, prefix: String) {
     items(agents.sortedBy { Projects.urgency(it.rank) }, key = { "$prefix:${it.ref.hostId}:${it.ref.address}" }) { a ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val status = Cockpit.status(a.terminal, pulse.seenKey(a.ref, a.terminal) in state.seen).let { if (a.rank == Cockpit.BLOCKED) "blocked" else it }
