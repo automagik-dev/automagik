@@ -258,8 +258,12 @@ function declaredLeads(file, botId) {
   return out;
 }
 
-/** The bots the caller may address: both lead chains, members, main, own workers (and its bot for a worker). */
-function teamOf(file, caller) {
+/**
+ * The bots the caller may address: both lead chains, members, main, own workers (and its bot
+ * for a worker). Exported for the per-pane hc proxy (#631), which reads the same graph from its
+ * start-time snapshot instead of re-reading the writable roster.
+ */
+export function teamOf(file, caller) {
   const allowed = new Set();
   const main = mainBotOf(file);
   if (main) allowed.add(main.id);
