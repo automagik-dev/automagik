@@ -194,7 +194,7 @@ reports a different number that includes the store's layer accounting and compre
 payload and is not used here. The earlier 193 MiB figure was a `docker save` gzip artifact of
 202,734,124 bytes, a different count and never the image size.
 
-`yoga` (IncusOS, Incus 7.6, ZFS), 2026-11-07, on the image in the table below. Pull and create
+A test laptop on an Incus-based OS, 2026-11-07, on the image in the table below. Pull and create
 are the Incus timings for the launch. Memory is the instance's cgroup (`memory.current`) unless
 the row says RSS; anon and file are the 5-minute split.
 
