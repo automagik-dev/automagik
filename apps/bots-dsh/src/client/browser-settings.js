@@ -4,6 +4,7 @@ import { dateLocale, t } from './i18n.js'
 
 const ADDRESS_NOTE = 'Every address opens by default, including localhost, LAN and tailnet. '
   + 'A deny entry always wins. When the allow list has entries, only matching addresses open. '
+  + 'The same lists apply to web_fetch.'
 const ACTIONS = [['post', 'Post'], ['upload', 'Upload'], ['download', 'Download'], ['delete', 'Delete']]
 const DURATIONS = [['hour', '1 hour'], ['today', 'Today'], ['week', '7 days'], ['permanent', 'Permanent']]
 const expired = grant => Number.isFinite(grant.until) && grant.until <= Date.now()
