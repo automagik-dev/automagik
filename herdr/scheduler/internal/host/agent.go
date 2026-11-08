@@ -27,6 +27,10 @@ func (w agentWork) now() time.Time {
 	return time.Now()
 }
 
+// A blocked submit with no observed blocked status is inconclusive. Give a
+// short mismatch time to clear without retrying indefinitely against the CLI.
+const maxSubmitMismatches = 3
+
 func (w agentWork) do(s Session, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	if err := w.start(s); err != nil {
@@ -35,11 +39,15 @@ func (w agentWork) do(s Session, timeout time.Duration) error {
 		}
 		// A blocked startup retains its agent in this pane. Wait for the
 		// dialog before submitting; starting a second agent would be wrong.
-		if err := w.waitBlocked(s, deadline); err != nil {
+		if _, err := w.waitBlocked(s, deadline); err != nil {
 			return err
 		}
 	}
+	mismatches := 0
 	for {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("prompt: run timeout before the agent accepted the prompt")
+		}
 		err := w.submit(s)
 		if err == nil {
 			break
@@ -47,9 +55,21 @@ func (w agentWork) do(s Session, timeout time.Duration) error {
 		if !w.ops.HasCode(err, herdr.CodeAgentBlocked) {
 			return err
 		}
-		if err := w.waitBlocked(s, deadline); err != nil {
+		sawBlocked, err := w.waitBlocked(s, deadline)
+		if err != nil {
 			return err
 		}
+		if sawBlocked {
+			mismatches = 0
+		} else {
+			mismatches++
+			if mismatches >= maxSubmitMismatches {
+				return fmt.Errorf("prompt: agent reported blocked but its status stayed non-blocked after %d attempts", mismatches)
+			}
+		}
+		// Even an immediately cleared dialog gets a poll interval before the
+		// next submit; the loop checks the deadline again before sending it.
+		time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
 	}
 	if err := w.await(s, time.Until(deadline)); err != nil {
 		return err
@@ -59,24 +79,25 @@ func (w agentWork) do(s Session, timeout time.Duration) error {
 
 // waitBlocked covers a dialog that prevents startup or prompt submission from
 // reaching await. Once it clears, the prompt still needs to be submitted.
-func (w agentWork) waitBlocked(s Session, deadline time.Time) error {
+func (w agentWork) waitBlocked(s Session, deadline time.Time) (sawBlocked bool, err error) {
 	var since time.Time
 	for {
 		status, err := w.ops.AgentStatus(s.PaneID)
 		if err != nil {
-			return fmt.Errorf("read blocked agent status: %w", err)
+			return sawBlocked, fmt.Errorf("read blocked agent status: %w", err)
 		}
 		if status != "blocked" {
-			return nil
+			return sawBlocked, nil
 		}
+		sawBlocked = true
 		if since.IsZero() {
 			since = w.now()
 		}
 		if !w.a.WaitsOutBlocked() && w.now().Sub(since) > w.a.BlockedGrace() {
-			return w.blockedOutcome(s)
+			return true, w.blockedOutcome(s)
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("the agent was still blocked at the run timeout")
+			return true, fmt.Errorf("the agent was still blocked at the run timeout")
 		}
 		time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
 	}

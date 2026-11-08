@@ -280,6 +280,11 @@ survive. A refused or unsuccessful request is reported as such. These rechecks
 narrow the read/signal window; a change after them can still race the signal.
 Neither failure path asks to close the pane, tab, or workspace.
 
+Herdr prompt retries check the run deadline and wait one status-poll interval
+between submissions. If submission keeps reporting blocked but status never
+shows it, three consecutive mismatches fail with a clear error; a shorter run
+deadline wins. No signal is requested for this status mismatch.
+
 `ls --json` reports the effective grace (2 when the key is absent). A form that
 echoes that value back through `put` writes an explicit 2. A `put` that omits the
 key preserves the file's value; sending `0` removes the key and uses the default.

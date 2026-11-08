@@ -14,6 +14,55 @@ func agentWorkWith(ops ops, a config.Automation) agentWork {
 	return agentWork{ops: ops, knobs: fast(), a: a}
 }
 
+func TestDoSubmitBlockedStatusIdleRespectsRunDeadline(t *testing.T) {
+	ops := &fakeOps{
+		agentSubmit: func(string, string) error { return apiErr("agent prompt", herdr.CodeAgentBlocked) },
+		agentStatus: func(string) (string, error) { return "idle", nil },
+	}
+	w := agentWorkWith(ops, config.Automation{Prompt: "go"})
+	w.knobs.statusPoll = time.Hour // the run deadline must interrupt this retry delay
+	started := time.Now()
+	err := w.do(Session{PaneID: "p"}, 20*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "run timeout") {
+		t.Fatalf("want the run deadline, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("retry ignored the short deadline: %s", elapsed)
+	}
+	if ops.submits != 1 || ops.waits != 0 || ops.reads != 0 || len(ops.stopRequests)+len(ops.closed)+len(ops.closedTabs) != 0 {
+		t.Fatalf("submits=%d waits=%d reads=%d stops=%v closes=%v/%v", ops.submits, ops.waits, ops.reads, ops.stopRequests, ops.closed, ops.closedTabs)
+	}
+}
+
+func TestDoSubmitBlockedStatusMismatchHasPacedAttemptLimit(t *testing.T) {
+	for _, state := range []string{"idle", "unknown", "", "working"} {
+		t.Run(state, func(t *testing.T) {
+			var submits []time.Time
+			ops := &fakeOps{
+				agentSubmit: func(string, string) error {
+					submits = append(submits, time.Now())
+					return apiErr("agent prompt", herdr.CodeAgentBlocked)
+				},
+				agentStatus: func(string) (string, error) { return state, nil },
+			}
+			w := agentWorkWith(ops, config.Automation{Prompt: "go"})
+			w.knobs.statusPoll = 5 * time.Millisecond
+			err := w.do(Session{PaneID: "p"}, time.Second)
+			if err == nil || !strings.Contains(err.Error(), "status stayed non-blocked after 3 attempts") || len(submits) != 3 {
+				t.Fatalf("submits=%d error=%v", len(submits), err)
+			}
+			for i := 1; i < len(submits); i++ {
+				if delay := submits[i].Sub(submits[i-1]); delay < w.knobs.statusPoll {
+					t.Fatalf("retried without the poll interval: %s", delay)
+				}
+			}
+			if ops.waits != 0 || len(ops.stopRequests) != 0 {
+				t.Fatal("mismatch waited for work or requested a stop")
+			}
+		})
+	}
+}
+
 func TestAwaitBlockedPastGraceFailsWithScreenAndStopRequest(t *testing.T) {
 	clock := time.Unix(0, 0)
 	ops := &fakeOps{

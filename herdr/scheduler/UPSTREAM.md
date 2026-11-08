@@ -51,8 +51,8 @@ internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_
 internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
 internal/herdr/herdr.go        — patched: tab id/list/close; pane process-info for a blocked agent's stop request
 internal/herdr/herdr_test.go   — patched: tab and pane process-info wire cases
-internal/host/agent.go         — patched: herdr blocked grace; screen and stop request; resume when dialog clears
-internal/host/agent_test.go    — patched: herdr blocked in each phase, blips, -1 waits
+internal/host/agent.go         — patched: herdr blocked grace, rechecked stop; deadline and paced bounded submit retries
+internal/host/agent_test.go    — patched: herdr blocked/blips/-1; submit mismatch deadline, attempt limit and pacing
 internal/host/close.go         — added: read and close serialized per workspace within one scheduler process
 internal/host/close_test.go    — added: concurrent closes on two tabs leave the last visible tab
 internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first
@@ -84,6 +84,10 @@ error and log say "asked the agent to stop (SIGTERM)"; exit is not confirmed and
 SIGTERM is not escalated, so a TERM-ignoring dialog can survive. Refused or failed
 requests are reported as such. The read/signal window is narrowed, not atomic.
 Neither failure path asks to close its layout.
+Herdr prompt retries check the run deadline before every submit and wait one
+status-poll interval between submissions. Three consecutive blocked-submit errors
+without an observed blocked status fail with a clear error; the run deadline can
+expire sooner. This mismatch does not request a signal.
 
 `close_workspace: on-success` is valid with `workspace: existing`: it asks to
 close only the tab the run opened, and closes nothing when the run has no tab id,
