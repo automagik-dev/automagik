@@ -1069,7 +1069,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun streams(started: Boolean) {
         if (!started) {
-            held.stop(activeChannel != null || attachJob?.isActive == true || nativeJob?.isActive == true, chatRef?.takeIf { chatJob?.isActive == true })
+            held.stop(activeChannel != null || attachJob?.isActive == true || nativeJob?.isActive == true, chatRef?.takeIf { chatJob?.isActive == true || resumeJob?.isActive == true })
             dropStream()
             chatJob?.cancel(); chatJob = null
             resumeJob?.cancel(); resumeJob = null
