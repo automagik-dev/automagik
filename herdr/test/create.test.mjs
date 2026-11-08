@@ -737,11 +737,13 @@ test("the CLI and the form word the pull warning for an uncommitted or changed b
   const cli = (name) => spawnSync(process.execPath, [CLI, "create", "--name", name, "--agent", "claude", "--lead", MAIN.id], {
     cwd: wt, encoding: "utf8", env: { ...process.env, HOME: home, HERDR_APP_HOME: join(home, "app"), GIT_CONFIG_NOSYSTEM: "1" },
   });
-  // The warning is the sentence after the last mention of the main checkout's file.
+  // The note is one stderr line; a long TMPDIR can add an unrelated "tidy" warning after it
+  // (the machine's socket path limit), so take the note line alone and compare it word for word.
   const warningOf = (text) => {
-    const at = text.lastIndexOf(`${repo}/.herdr/bots.json`);
-    assert.notEqual(at, -1, text);
-    return text.slice(at).trim();
+    const line = text.split("\n").find((l) => /(?:saved|saves) in /i.test(l) && l.includes(`${repo}/.herdr/bots.json`));
+    assert.ok(line, `no saved-in line for ${repo}/.herdr/bots.json in: ${text}`);
+    const at = line.lastIndexOf(`${repo}/.herdr/bots.json`);
+    return line.slice(at).trim();
   };
   const formWarning = async () => {
     const f = await open({ form: "create", project: undefined });
@@ -754,6 +756,8 @@ test("the CLI and the form word the pull warning for an uncommitted or changed b
   const first = cli("Scout");
   assert.equal(first.status, 0, first.stderr);
   assert.equal(untracked, warningOf(first.stderr));
+  // A long TMPDIR adds the CLI's tidy warning after the note; the compare keeps the note alone.
+  assert.equal(warningOf(`${first.stderr}\nautomagik-herdr: tidy: hc ls --json failed: socket path too long`), untracked);
   // Modified: commit it in the main checkout, then change it there.
   g("add", ".herdr/bots.json");
   g("commit", "-q", "-m", "bots");
