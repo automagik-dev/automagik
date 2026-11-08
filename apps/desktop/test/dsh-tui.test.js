@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { SKIP } from '../../../am/dshTui.mjs'
+import { SKIP, findDsh, panePathOf } from '../../../am/dshTui.mjs'
 import {
   DSH_TUI_FILES, DSH_TUI_PACKAGE, ensurePathLine, formatDoctor, pathActionOf, pathDoneView,
   pathView, resultView, runDshTui, setupView, dshTuiModuleDir, dshTuiRunnerOf, dshTuiSourceDir,
@@ -294,7 +294,10 @@ function scene(t) {
   mkdirSync(bin)
   writeFileSync(log, '')
   const localBin = join(home, '.local', 'bin')
-  writeFileSync(join(home, '.profile'), `export PATH="${localBin}:$PATH"\n`)
+  // The login shell's PATH is the scene's, set outright and never appended to the machine's
+  // login PATH, so the fake dsh is the only one a test can reach.
+  const scenePath = `${bin}:${localBin}:/usr/bin:/bin`
+  writeFileSync(join(home, '.profile'), `export PATH="${scenePath}"\n`)
   const helper = join(root, 'fake-dsh.cjs')
   writeFileSync(helper, `
 const fs = require('node:fs'), path = require('node:path')
@@ -330,10 +333,14 @@ if (ours && args[3] === 'add') {
   writeFileSync(dsh, `#!/bin/sh\nexec "${process.execPath}" "${helper}" "$@"\n`)
   chmodSync(dsh, 0o755)
   const env = {
-    HOME: home, SHELL: '/bin/sh', PATH: `${bin}:/usr/bin:/bin`, DSH_HOME: '',
-    DSH_LOG: log, AUTOMAGIK_DSH_TUI_MODULE: AM,
+    HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || '/bin/sh', PATH: scenePath,
+    DSH_HOME: '', DSH_LOG: log, AUTOMAGIK_DSH_TUI_MODULE: AM,
     AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: new Date(Date.now() - 3600e3).toISOString(),
   }
+  const pane = panePathOf({ env })
+  assert.equal(pane.login, true, 'the login shell answered')
+  assert.equal(pane.path, env.PATH, "the login shell gives the pane exactly the scene's PATH")
+  assert.equal(pane.config, '~/.profile')
   const runner = (action, extra = {}) => {
     const result = spawnSync(process.execPath, [RUNNER, action], {
       cwd: root, env: { ...env, ...extra }, encoding: 'utf8', timeout: 60_000,
@@ -342,7 +349,7 @@ if (ours && args[3] === 'add') {
     return JSON.parse(result.stdout)
   }
   const calls = () => readFileSync(log, 'utf8').split('\n').filter(Boolean)
-  return { root, home, bin, runner, calls, dsh }
+  return { root, home, bin, env, pane, runner, calls, dsh }
 }
 
 test('end to end: the runner installs, doctors, updates and uninstalls', posixOnly, (t) => {
@@ -370,6 +377,8 @@ test('end to end: the runner installs, doctors, updates and uninstalls', posixOn
   assert.equal(doctor.result.code, 0, JSON.stringify(doctor.result.checks))
   assert.equal(doctor.result.skip, null)
   assert.ok(doctor.result.checks.every(check => check.ok))
+  assert.equal(doctor.pane.login, true, 'the login shell answered')
+  assert.equal(doctor.pane.path, s.env.PATH, "the login shell gives the pane exactly the scene's PATH")
   assert.ok(doctor.pane.path.split(delimiter).includes(join(s.home, '.local', 'bin')))
 
   const updated = s.runner('install')
@@ -388,8 +397,14 @@ test('end to end: the runner installs, doctors, updates and uninstalls', posixOn
 test('end to end: a dsh only the app sees is skipped', posixOnly, (t) => {
   const s = scene(t)
   writeFileSync(join(s.home, '.profile'), 'export PATH="/usr/bin:/bin"\n')
+  const pane = panePathOf({ env: s.env })
+  assert.equal(pane.login, true, 'the login shell answered')
+  assert.equal(pane.path, '/usr/bin:/bin')
+  assert.equal(pane.config, '~/.profile')
+  assert.equal(findDsh({ ...s.env, PATH: pane.path }), null, 'the login shell PATH has no dsh')
   const doctor = s.runner('doctor', { PATH: `${s.bin}:/usr/bin:/bin` })
   assert.equal(doctor.result.skip, SKIP)
+  assert.equal(doctor.pane.path, '/usr/bin:/bin')
   const dsh = doctor.result.checks.find(check => check.check === 'dsh')
   assert.match(dsh.detail, /is on this process's PATH/)
   const installed = s.runner('install', { PATH: `${s.bin}:/usr/bin:/bin` })
@@ -401,12 +416,20 @@ test('end to end: a dsh only the app sees is skipped', posixOnly, (t) => {
 test('end to end: no dsh is the exact skip line, and nothing is written', posixOnly, (t) => {
   const s = scene(t)
   rmSync(s.dsh)
+  // No scene bin either: the pane PATH has no dsh entry at all, so a real machine dsh cannot leak in.
+  writeFileSync(join(s.home, '.profile'), 'export PATH="/usr/bin:/bin"\n')
+  const pane = panePathOf({ env: s.env })
+  assert.equal(pane.login, true, 'the login shell answered')
+  assert.equal(pane.path, '/usr/bin:/bin')
+  assert.equal(pane.config, '~/.profile')
+  assert.equal(findDsh({ ...s.env, PATH: pane.path }), null, 'no dsh on the scene pane PATH')
   const installed = s.runner('install')
   assert.equal(installed.result.status, 'skipped')
   assert.deepEqual(installed.result.lines, [SKIP])
   const doctor = s.runner('doctor')
   assert.equal(doctor.result.code, 2)
   assert.equal(doctor.result.skip, SKIP)
+  assert.equal(doctor.pane.path, '/usr/bin:/bin')
   assert.equal(existsSync(join(s.home, '.local')), false)
   assert.equal(existsSync(join(s.home, '.dsh-tui')), false)
   assert.equal(existsSync(join(s.home, '.dsh')), false)
