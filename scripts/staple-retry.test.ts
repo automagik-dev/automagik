@@ -35,6 +35,30 @@ const fail = (output: string, status = 68): Reply => ({ status, output });
 const nsurl = (code: number, text = 'The network connection was lost.') =>
   `Error Domain=NSURLErrorDomain Code=${code} "${text}" UserInfo={NSLocalizedDescription=${text}}`;
 
+// The exact v3.98.0 mac failure (#704): the outer NSURLErrorDomain -1005 carries the same
+// connection loss as a nested kCFErrorDomainCFNetwork -1005 inside NSUnderlyingError. The
+// runner's home path is left out; every error domain, code, key and line is as logged.
+const nestedTransientFailure = (): string =>
+  [
+    'Processing: dist/Automagik-3.98.0-mac-arm64.dmg',
+    'error is Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost." ' +
+      'UserInfo={_kCFStreamErrorCodeKey=-4, NSUnderlyingError=0x60000360ca20 {Error ' +
+      'Domain=kCFErrorDomainCFNetwork Code=-1005 "(null)" UserInfo={NSErrorPeerAddressKey=' +
+      '<CFData 0x600001b19d60 [0x1f5acffa8]>{length = 16, capacity = 16, bytes = ' +
+      '0x100201bb11fa61270000000000000000}, _kCFStreamErrorCodeKey=-4, ' +
+      '_kCFStreamErrorDomainKey=4}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask ' +
+      '<A9D05D66-2666-40C2-A499-2C9B427E0714>.<1>, _NSURLErrorRelatedURLSessionTaskErrorKey=(',
+    '    "LocalDataTask <A9D05D66-2666-40C2-A499-2C9B427E0714>.<1>"',
+    '), NSLocalizedDescription=The network connection was lost., ' +
+      'NSErrorFailingURLStringKey=https://api.apple-cloudkit.com/database/1/' +
+      'com.apple.gk.ticket-delivery/production/public/records/lookup, ' +
+      'NSErrorFailingURLKey=https://api.apple-cloudkit.com/database/1/' +
+      'com.apple.gk.ticket-delivery/production/public/records/lookup, ' +
+      '_kCFStreamErrorDomainKey=4}',
+    "CloudKit's response is inconsistent with expections: (null)",
+    'The staple and validate action failed! Error 68.',
+  ].join('\n');
+
 // xcrun answers from a numbered plan (status line, then output) and logs its whole argv; sleep
 // logs its argument and returns immediately. Both append to one event log, so the waits are
 // proven to sit between the attempts and before the re-staple, not merely to have happened.
@@ -175,6 +199,37 @@ describe('a transient NSURLErrorDomain failure is retried after 10 s', () => {
     expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
   });
 
+  test('the real v3.98.0 nested kCFErrorDomainCFNetwork pair retries after 10 s (#704)', () => {
+    const h = harness();
+    const run = h.run([fail(nestedTransientFailure()), ok(), ok()]);
+    // The fail-before proof: the pre-fix classifier failed fast on the nested pair, and this
+    // assertion prints the whole script output on that failure.
+    expect(run.out).not.toContain('failing on the first response, not retrying');
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.events).toEqual([
+      staple(h.artifact),
+      'sleep 10',
+      staple(h.artifact),
+      validate(h.artifact),
+    ]);
+    expect(run.out).toContain("attempt 1/3 failed at 'stapler staple' (exit 68)");
+    expect(run.out).toContain('parsed Domain=NSURLErrorDomain Code=-1005');
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
+    expect(run.out).toContain('attempt 2/3 succeeded: staple and validate');
+  });
+
+  test('a direct kCFErrorDomainCFNetwork Code=-1005 is the same transient failure', () => {
+    const h = harness();
+    const output = 'Error Domain=kCFErrorDomainCFNetwork Code=-1005 "(null)"';
+    const run = h.run([ok(), fail(output), ok(), ok()]);
+    expect(run.status).toBe(0);
+    expect(run.sleeps).toEqual(['10']);
+    expect(run.out).toContain('parsed Domain=kCFErrorDomainCFNetwork Code=-1005');
+    expect(run.out).toContain('transient network failure; retrying in 10s');
+  });
+
   test('a transient failure on staple, not validate, still retries the whole round-trip', () => {
     const h = harness();
     const run = h.run([fail(nsurl(-1005)), ok(), ok()]);
@@ -241,6 +296,7 @@ describe('a failure that is not transient fails on the first response', () => {
   }
   firstResponse('status: Invalid beside a transient -1005', `${nsurl(-1005)}\nstatus: Invalid`);
   firstResponse('another domain', 'Error Domain=NSCocoaErrorDomain Code=-1005 "no"');
+  firstResponse('CFNetwork Code=-2 alone', 'Error Domain=kCFErrorDomainCFNetwork Code=-2 "no"');
   firstResponse('a mixed transient and non-transient pair', `${nsurl(-1005)}\nError Domain=NSURLErrorDomain Code=-2`);
   firstResponse('free text only', 'The network connection was lost. (NSURLErrorDomain -1005)');
   firstResponse('a missing code', 'Error Domain=NSURLErrorDomain');
