@@ -17,6 +17,9 @@
 //   served only with the person's yes for its project (`shown`, the home file's `shown[]`, read
 //   by shown.js); global Bots need none. A Bot's project and machine are its home-file folder and
 //   machine; a Bot the home file does not list is global.
+// - Each listed chat keeps its `dsh:<sessionId>` terminal and Session id and carries the Bot's
+//   registry id beside them (`registryId`, a Herdr `b-...` or null), so Pocket can join the chat
+//   to the registry Bot (#672). Watch, send and the terminal ids are unchanged.
 // - No import of a DSH package. The Session API is DSH 0.2.2's Session Controller (`follow`,
 //   `events`, `state`, `observeState`; `prompt` and `cancel` for writes), reached through
 //   `ctx.sessionController`, behind a capability check and a lazy import of the adapter
@@ -230,13 +233,14 @@ const globalOnly = bot => bot?.project == null
  *   state(sessionId: string, signal: AbortSignal): Promise<any>, observeState(sessionId: string, signal: AbortSignal): AsyncIterable<any>,
  *   prompt?(sessionId: string, prompt: { requestId: string, text: string }, signal: AbortSignal): Promise<any>, cancel?(sessionId: string): any },
  *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string, project?: string | null, machine?: string, placeUnknown?: true }>>,
+ *   registryIdOf?: (bot: { id: string, name?: string, project?: string | null }) => string | null,
  *   timers?: typeof realTimers, pollMs?: number,
  *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
  *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
  */
 export class DshChatSource {
-  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, chatOwner, now = Date.now }) {
-    Object.assign(this, { adapter, bots, timers, pollMs, keep, maxFollowed, log, shown, now })
+  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now }) {
+    Object.assign(this, { adapter, bots, timers, pollMs, keep, maxFollowed, log, shown, registryIdOf, now })
     /** Writes need the adapter's prompt and cancel, and the answerer listeners wired (install). */
     this.writable = writable === true && typeof adapter?.prompt === 'function' && typeof adapter?.cancel === 'function'
     this.chatOwner = chatOwner ?? (sessionId => [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.botId)
@@ -250,12 +254,16 @@ export class DshChatSource {
     this.sent = new Map()
   }
 
-  /** The Bots a phone can open, each as `dsh:<botId>`. */
+  /**
+   * The Bots a phone can open, each as `dsh:<botId>`. The terminal keeps the Session id; the
+   * registry id beside it lets Pocket join the chat to the registry Bot (#672).
+   */
   async list() {
     const bots = await this.bots()
     return bots.map(bot => ({
       terminal: terminalOf(bot.id), machine: null, agent: 'dsh', title: bot.name ?? '',
       status: this.entries.get(bot.id)?.status ?? statusOf(null), chat: 'session', shown: this.shown(bot) === true,
+      registryId: this.registryIdOf(bot) ?? null,
     }))
   }
 
@@ -788,7 +796,8 @@ export function install(rt) {
       if (stopped) return
       const reader = shownReader({ path: rt.registryPath ?? homeRegistryPathOf(), warn: (...args) => rt.warn?.(...args) })
       source = new DshChatSource({
-        adapter: createAdapter(controller), bots: ownBots(rt, reader), shown: reader.shown, log: (...args) => rt.warn?.(...args), writable, chatOwner,
+        adapter: createAdapter(controller), bots: ownBots(rt, reader), shown: reader.shown, registryIdOf: reader.registryIdOf,
+        log: (...args) => rt.warn?.(...args), writable, chatOwner,
       })
       socket = await startPocketSocket({ home: rt.home, source, log: (...args) => rt.warn?.(...args) })
       if (stopped) await socket.close()
