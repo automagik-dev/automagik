@@ -1,0 +1,2 @@
+# The fixture is the exact bytes the carried patch names by sha256; never normalize its EOL.
+client.js -text
