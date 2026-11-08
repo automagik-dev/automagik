@@ -18,10 +18,12 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -80,6 +82,7 @@ class PocketViewModelChatTest {
     private class FakeLink(private val rows: List<Chat.Terminal>, private val autoGone: Boolean) : ChatLink {
         override val dshWrite = true
         val subscribed = CompletableDeferred<Unit>()
+        @Volatile var closed = false
         @Volatile private var event: ((JSONObject) -> Unit)? = null
 
         override suspend fun list() = rows
@@ -87,8 +90,9 @@ class PocketViewModelChatTest {
         override suspend fun subscribe(terminal: String, after: String?, event: (JSONObject) -> Unit,
                                        closed: (String) -> Unit): Int {
             this.event = event
-            subscribed.complete(Unit)
+            // The event goes first, so the test's runCurrent() can never run before it is queued.
             if (autoGone) event(JSONObject().put("type", "gone").put("reason", "unavailable"))
+            subscribed.complete(Unit)
             return 1
         }
 
@@ -100,7 +104,7 @@ class PocketViewModelChatTest {
         override suspend fun cancelHeld(terminal: String, id: String) = JSONObject()
         override suspend fun answer(terminal: String, row: String, choice: String, text: String?) = JSONObject()
         override suspend fun interrupt(terminal: String) = JSONObject()
-        override fun close() {}
+        override fun close() { closed = true }
     }
 
     /** The fake bridge's route: every open is a fresh [FakeLink], listed with [rows]. */
@@ -121,14 +125,19 @@ class PocketViewModelChatTest {
         suspend fun subscribed(index: Int): FakeLink = opened(index).also { link ->
             withContext(Dispatchers.IO) { withTimeout(10_000) { link.subscribed.await() } }
         }
+
+        /** Whether the [index]th link is closed, once the view model's job ran the `finally` that closes it. */
+        suspend fun awaitClosed(index: Int): Boolean = opened(index).let { link ->
+            withContext(Dispatchers.IO) {
+                withTimeoutOrNull(10_000) { while (!link.closed) delay(5) }
+                link.closed
+            }
+        }
     }
 
     private suspend fun awaitBotChats(hostId: String = host) = withContext(Dispatchers.IO) {
         withTimeout(10_000) { while (vm.botChats.value[hostId] == null) delay(5) }
     }
-
-    private fun pulse(chats: Cockpit.Chats, seen: Set<String> = emptySet()) =
-        Projects.pulse(listOf(SidebarHost(host, "Box", true, emptyList(), emptyList(), emptyList())), seen, chats)
 
     /** Row 1: an event for the open card updates it in place, with no second state and no duplicate rows. */
     @Test fun aChatEventForTheOpenCardUpdatesItInPlace() = runTest(dispatcher) {
@@ -177,6 +186,7 @@ class PocketViewModelChatTest {
         assertEquals("done", vm.chatWatch.value[key]?.status)
         vm.closeChat()
         assertNull(vm.chat.value)
+        assertTrue("closeChat closes the chat's link", bridge.awaitClosed(1))
         val kept = vm.chatWatch.value.getValue(key)
         assertEquals("done", kept.status)
         assertEquals("Answered on the phone (Pixel): Allow", kept.receipt)
@@ -186,6 +196,27 @@ class PocketViewModelChatTest {
         val done = chats.agents.single().second
         assertEquals(Cockpit.DONE, Cockpit.rank(done.status))
         assertEquals("Answered on the phone (Pixel): Allow", done.message)
+    }
+
+    /**
+     * Row 2's replacement path: the second chat opens while the first is still open, so `openChat` itself cancels
+     * the replaced chat's job, and only that job's `finally` closes the old link (never a prior `closeChat`).
+     */
+    @Test fun aSecondChatClosesTheLinkOfTheChatItReplaces() = runTest(dispatcher) {
+        val bridge = FakeBridge()
+        vm.chatOpener = bridge.opener
+        vm.openChat(ref("s1"))
+        val first = bridge.subscribed(0)
+        first.emit(snapshot(status = "working"))
+        runCurrent()
+        assertEquals("dsh:s1", vm.chat.value?.terminal)
+
+        vm.openChat(ref("s2"))
+        val second = bridge.subscribed(1)
+        runCurrent()
+        assertEquals("dsh:s2", vm.chat.value?.terminal)
+        assertTrue("opening a second chat closes the replaced chat's link", bridge.awaitClosed(0))
+        assertFalse("the open chat's link stays open", second.closed)
     }
 
     /**
