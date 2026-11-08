@@ -124,9 +124,7 @@ ENV HOME=/data \
 
 # Distroless has no useradd: the uid/gid are numeric, and /data is already theirs.
 USER 1000:1000
-# Off the /data volume on purpose: an Incus instance pre-creates the image WorkingDir on the
-# mounted volume as root, which would leave /data/workspace 0:0 755. The entrypoint chdirs
-# to /data/workspace itself after preparing it as uid 1000.
+# Kept off /data on purpose; see the Incus section in README.md.
 WORKDIR /opt/automagik
 
 # 401 is the healthy answer without a browser session: the auth fence is up. The script prints

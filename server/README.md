@@ -123,7 +123,7 @@ healthy `401` says the fence is up, not that a model is configured.
 | `/data` | the volume: `dsh/`, `bots/`, `workspace/`, `secrets/`, `dsh/launch-url` |
 | `/data/dsh` | `DSH_HOME`: the `automagik-web` profile, dsh settings, `pnpm-store` |
 | `/data/bots` | `AUTOMAGIK_BOTS_HOME`: the Bot team's state |
-| `/data/workspace` | the working directory (the workspace root dsh gives its Sessions) |
+| `/data/workspace` | the working directory dsh gives its Sessions |
 | `/data/secrets/deepseek-api-key` | optional model key, `0400` |
 
 `/opt/automagik` is read-only code. The image bakes nothing into `/data`: the profile is seeded
@@ -154,8 +154,10 @@ on `create`. For an existing root-owned volume, chown it to `1000:1000` on the h
 (`chown -R 1000:1000 <the volume's path>`). Docker's named volume needs neither: Docker seeds a
 fresh volume with the image's `/data` ownership (1000:1000).
 
-The volume flags above stay required. No `oci.cwd` override is needed now: the image's WorkingDir
-is `/opt/automagik`, outside `/data`, and the entrypoint creates `/data/workspace` as uid 1000.
+The volume flags above stay required. The image's WorkingDir is `/opt/automagik`, off the
+`/data` volume on purpose: an Incus instance pre-creates the image WorkingDir on the mounted
+volume as root, which would leave `/data/workspace` 0:0 755. The entrypoint prepares
+`/data/workspace` as uid 1000 and chdirs there afterwards, so no `oci.cwd` override is needed.
 An empty root-owned `/data/workspace` left on a volume by an older image is removed and
 recreated; a non-empty one is refused with the directory's uid 1000 message.
 
