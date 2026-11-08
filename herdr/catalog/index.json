@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-08T17:01:18.433Z",
+  "generatedAt": "2026-11-08T20:10:30.705Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
@@ -12,7 +12,7 @@
       "url": "https://github.com/automagik-dev/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-08T13:56:22-03:00",
+      "pushedAt": "2026-11-08T17:04:32-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",

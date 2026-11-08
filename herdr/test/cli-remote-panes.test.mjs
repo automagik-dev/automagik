@@ -765,7 +765,7 @@ test("restart --machine of a dsh-tui bot (#598): -c only after a finished turn t
   for (const turn of [0, undefined]) {
     const fresh = restartAt(turn, false);
     assert.deepEqual(fresh.words.slice(0, 2), ["dsh-tui", "--"], `turn ${turn}: ${fresh.words.join(" ")}`);
-    assert.match(fresh.words[2], /^<herdr-bot>\n/);
+    assert.match(fresh.words[2], /^Hedge - <herdr-bot>\n/);
     assert.equal(fresh.out.note, "dsh-TUI has no finished turn in vm/t9 to continue");
     assert.match(fresh.err, /Hedge starts on a new conversation: dsh-TUI has no finished turn in vm\/t9 to continue\./);
     // The sidebar shows --json's warnings only: why it didn't resume is there too (#600 review F3).
