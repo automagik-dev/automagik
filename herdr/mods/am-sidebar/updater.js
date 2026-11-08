@@ -1,15 +1,16 @@
 // The sidebar's update runs (A14), wired to what Herdr gives a mod but taking it all as arguments,
 // so `node --test` drives it with a fake exec, fake timers and a Map for the shared values: the
 // checks (CHECK_EVERY_MS), the status bar's requests (REQUEST_KEY), an install (asked for, or on
-// its own when "Install updates automatically" is on), the setting's switch, and the notice the
-// new build posts after Herdr reloads the mods. The plain-data rules are updateCheck.js's.
+// its own when "Install updates automatically" is on), the setting's switch, the notice the new
+// build posts after Herdr reloads the mods, and the one notice after a bad pack was restored.
+// The plain-data rules are updateCheck.js's.
 // Apache-2.0.
 
-import { AUTO_FILE, HELD_FILE, formatAuto, parseAuto } from "./release.js";
+import { AUTO_FILE, CHECK_FILE, HELD_FILE, RESTORE_FILE, formatAuto, parseAuto } from "./release.js";
 import {
   FIRST_CHECK_MS, LANDING_WAIT_MS, REQUEST_KEY, RELOAD_GRACE_MS, RETRY_MS, SHOWN_KEY, STATE_KEY, announce, applyNotice, applyPatch,
-  applyRefusal, autoFailedNotice, autoFailure, autoPlan, busyOf, checkPatch, claim, coolingDown, finish, heldFrom, heldNotice, landedNotice,
-  landing, nextCheckIn, noReloadNotice, requestDue, runCheck, shownFrom, stateFrom,
+  applyRefusal, autoFailedNotice, autoFailure, autoPlan, busyOf, checkFrom, checkPatch, claim, coolingDown, finish, heldFrom, heldNotice, landedNotice,
+  landing, nextCheckIn, noReloadNotice, requestDue, restoreFrom, restoredNotice, restoreFailedNotice, runCheck, shownFrom, stateFrom,
 } from "./updateCheck.js";
 
 export class Updater {
@@ -25,6 +26,8 @@ export class Updater {
     this.mods = `${appHome}/mods`;
     this.autoFile = `${appHome}/automagik-herdr/${AUTO_FILE}`;
     this.heldFile = `${appHome}/automagik-herdr/${HELD_FILE}`;
+    this.restoreFile = `${appHome}/automagik-herdr/${RESTORE_FILE}`;
+    this.checkFile = `${appHome}/automagik-herdr/${CHECK_FILE}`;
     this.version = `${appHome}/mods/am-sidebar/VERSION`;
     this.node = null;
     // A request saved before this load was someone else's to answer.
@@ -97,12 +100,26 @@ export class Updater {
         if (node) this.node = node;
         patch = applyPatch(result, before, this.now());
       } catch (e) { patch = { applyError: String(e?.message ?? e), at: this.now() }; }
+      if (patch.kind === "restored" || patch.kind === "restore-failed") {
+        // The bad release did not load and update.mjs put the kept set back (or could not). One
+        // notice, from this build if it is still here; `announced` keeps the reloaded build quiet.
+        const before = this.state();
+        try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed: null, autoHeld: null, announced: patch.current }); } catch {}
+        try { this.set(SHOWN_KEY, patch.kind === "restored" ? patch.restore?.failedVersion ?? patch.current : patch.current); } catch {}
+        // The restored build may have read update.mjs's note and said it already.
+        if (before.announced !== patch.current) {
+          const note = patch.kind === "restored" ? restoredNotice(patch.restore) : restoreFailedNotice(patch.restoreError, patch.current);
+          if (note) try { this.notify(note); } catch {}
+        }
+        return;
+      }
       if (patch.kind === "installed") {
-        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, held: patch.heldMods ?? [], at: this.now() };
+        const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, held: patch.heldMods ?? [],
+          check: patch.check ?? null, at: this.now() };
         try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed }); } catch {}
         // Herdr reloads the mods as the folders swap, and the new build announces it (arrive).
         // Still here after the grace: no reload happened, so say what to do.
-        try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current, patch.heldMods)); } catch {}
+        try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current, patch.heldMods, patch.check)); } catch {}
         return;
       }
       if (auto && patch.refused) {
@@ -126,10 +143,10 @@ export class Updater {
     return true;
   }
 
-  unreloaded(version, held = []) {
+  unreloaded(version, held = [], check = null) {
     if (this.state().announced === version) return;
     this.patch({ announced: version });
-    try { this.notify(noReloadNotice(version, held)); } catch {}
+    try { this.notify(noReloadNotice(version, held, check)); } catch {}
   }
 
   // At load: when this build is the release an install just put in, say so once. The old build
@@ -138,13 +155,41 @@ export class Updater {
   async arrive(waited = 0) {
     let version = null;
     try { version = (await this.readText(this.version))?.trim() || null; } catch { return; }
-    const step = landing(this.state(), version, this.now());
-    if (!step) return;
-    if (!step.ready && waited < LANDING_WAIT_MS) {
+    let state = this.state();
+    if (typeof version !== "string" || state.announced === version) return;
+    // The update's own build is usually reloaded away before its answer arrives: update.mjs leaves
+    // this note for the restored build, which says the one notice instead (and never repeats it).
+    let note = null;
+    try { note = restoreFrom(await this.readText(this.restoreFile), version, this.now()); } catch {}
+    if (note) {
+      // The update's claim died with the old build: free it here (a later check starts clean).
+      finish(this.get, this.set, state.busy?.id ?? null, { announced: version });
+      try { this.set(SHOWN_KEY, note.error ? version : note.restore.failedVersion); } catch {}
+      try { this.notify(note.error ? restoreFailedNotice(note.error, version) : restoredNotice(note.restore)); } catch {}
+      return;
+    }
+    const step = landing(state, version, this.now());
+    if (!step || !step.ready) {
+      // The build that ran the update is gone and never recorded its answer: update.mjs's note
+      // says the update was kept but herdr-app could not judge it. Checked before the wait, since
+      // the note appearing is itself the answer.
+      let unchecked = null;
+      try { unchecked = checkFrom(await this.readText(this.checkFile), version, this.now()); } catch {}
+      if (unchecked) {
+        finish(this.get, this.set, state.busy?.id ?? null, { announced: version });
+        try { this.set(SHOWN_KEY, version); } catch {}
+        let held = [];
+        try { held = heldFrom(await this.readText(this.heldFile), version); } catch {}
+        try { this.notify(landedNotice(version, unchecked.from, false, held, { checked: false, unavailable: unchecked.unavailable })); } catch {}
+        return;
+      }
+    }
+    if (step && !step.ready && waited < LANDING_WAIT_MS) {
       this.after(1000, () => this.spawn(() => this.arrive(waited + 1000)));
       return;
     }
-    const state = this.state();
+    if (!step) return;
+    state = this.state();
     if (state.announced === version) return;
     if (!step.ready) {
       finish(this.get, this.set, step.id, { kind: "installed", from: step.from, current: version, latest: version, update: null,
@@ -154,7 +199,7 @@ export class Updater {
     // The old build usually stopped before it could record what the install held: the file says.
     let held = step.held ?? [];
     if (held.length === 0) { try { held = heldFrom(await this.readText(this.heldFile), version); } catch {} }
-    try { this.notify(landedNotice(version, step.from, step.restartBots === true, held)); } catch {}
+    try { this.notify(landedNotice(version, step.from, step.restartBots === true, held, step.check)); } catch {}
   }
 
   // "Install updates automatically", switched from the status bar: written to the pack's own

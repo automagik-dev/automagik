@@ -8,7 +8,7 @@ import { Updater } from "../mods/am-sidebar/updater.js";
 import {
   FIRST_CHECK_MS, LANDING_MS, LANDING_WAIT_MS, RELOAD_GRACE_MS, REQUEST_KEY, STATE_KEY, autoPlan, backoffOf, busyOf,
 } from "../mods/am-sidebar/updateCheck.js";
-import { AUTO_FILE, parseAuto } from "../mods/am-sidebar/release.js";
+import { AUTO_FILE, CHECK_FILE, RESTORE_FILE, parseAuto } from "../mods/am-sidebar/release.js";
 import { autoLabel } from "../mods/am-status/label.js";
 
 const HOME = "/fake/herdr-app";
@@ -146,6 +146,167 @@ test("off: no install, today's notice once", async () => {
   assert.deepEqual(h.notes.map((n) => n.body), ["Automagik Herdr 0.8.1 is out. Run `automagik-herdr update` to install it (https://x/v0.8.1)."]);
   await h.tick(backoffOf(1));
   assert.equal(h.notes.length, 1, "the next check doesn't announce it again");
+});
+
+test("a bad pack is restored: one notice names the failed version and mod, the mods reload, nothing restarts", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: ["am-tabs"], checked: true },
+        restored: { version: "0.8.0", failedVersion: "0.8.1", mod: "am-tabs", failed: ["am-tabs"], checked: true } } });
+    h.swap(old, "0.8.0"); // the kept set is back: Herdr reloads the mods into it
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.deepEqual(h.applies(), [["apply", "--expect", "0.8.1", "--auto", "--mods", `${HOME}/mods`]], "only the updater ran");
+  assert.equal(old.reloaded, true, "the restored folders reloaded the mod");
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.8\.0 is back/);
+  assert.equal(h.state().kind, "restored");
+  assert.equal(h.state().announced, "0.8.0");
+  assert.equal(h.state().autoFailed, null, "a restore is not a failed install with a backoff");
+  assert.equal(h.state().autoHeld, null);
+  // The reloaded restored build says nothing more; the bad version is held, not retried.
+  h.check = () => line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), disabled: false, auto: { ...MANAGED, skip: "0.8.1" } });
+  h.build().u.start();
+  await h.tick(LANDING_MS + 1_000);
+  assert.equal(h.notes.length, 1);
+  await h.tick(backoffOf(1));
+  assert.equal(h.applies().length, 1, "the bad version waits for a newer release");
+  assert.equal(h.notes.length, 1, "no second notice for the held version");
+});
+
+test("the restored build reads update.mjs's note when the old build never hears back", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => (args[1] === "check" ? h.check() : new Promise(() => {}));
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  h.files.set(`${HOME}/automagik-herdr/${RESTORE_FILE}`, JSON.stringify({ version: "0.8.0", failedVersion: "0.8.1",
+    mod: "am-tabs", failed: ["am-tabs"], checked: true, at: h.now }));
+  h.check = () => line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), disabled: false, auto: { ...MANAGED, skip: "0.8.1" } });
+  h.swap(old, "0.8.0");
+  h.build().u.start();
+  await h.tick(1);
+  assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr restored 0.8.0"]);
+  assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-tabs failed herdr-app check\): the previous version 0\.8\.0 is back/);
+  // A later build of the restored version says nothing more.
+  h.build().u.start();
+  await h.tick(1);
+  assert.equal(h.notes.length, 1);
+  // The next check holds the bad version.
+  await h.tick(backoffOf(1));
+  assert.equal(h.applies().length, 1);
+});
+
+test("the new build reads update.mjs's unchecked note when the old build never hears back", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => (args[1] === "check" ? h.check() : new Promise(() => {}));
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  h.files.set(`${HOME}/automagik-herdr/${CHECK_FILE}`, JSON.stringify({ version: "0.8.1", from: "0.8.0",
+    unavailable: "herdr-app is not on PATH", at: h.now }));
+  h.swap(old, "0.8.1");
+  h.build().u.start();
+  await h.tick(1);
+  assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr updated to 0.8.1"]);
+  assert.match(h.notes[0].body, /herdr-app is not on PATH: the update was kept, but its mods were not checked/);
+  h.build().u.start();
+  await h.tick(1);
+  assert.equal(h.notes.length, 1, "the note doesn't repeat");
+});
+
+test("a bad pack with nothing kept: one clear notice, the bad version kept, no retry loop", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    h.swap(old, "0.8.1"); // nothing to restore: the bad pack stays installed
+    return line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: ["am-tabs"], checked: true },
+        restoreError: "could not restore: no previous version kept" } });
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /previous version could not be restored: no previous version kept/);
+  assert.equal(h.state().kind, "restore-failed");
+  assert.equal(h.state().announced, "0.8.1");
+  // The build of the bad release stays quiet, and the next check has nothing to install.
+  h.build().u.start();
+  await h.tick(LANDING_MS + 1_000);
+  assert.equal(h.notes.length, 1);
+  await h.tick(backoffOf(1));
+  assert.equal(h.applies().length, 1, "the bad version is not installed again");
+});
+
+test("herdr-app missing after an install: the update is kept, one notice says it was not checked", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: [], checked: false, unavailable: "herdr-app is not on PATH" } } });
+    h.swap(old, "0.8.1");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 0, "the old build waits for the reload");
+  h.build().u.start();
+  await h.tick(1);
+  assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr updated to 0.8.1"]);
+  assert.match(h.notes[0].body, /herdr-app is not on PATH: the update was kept, but its mods were not checked/);
+  await h.tick(LANDING_MS + 1_000);
+  assert.equal(h.notes.length, 1);
+});
+
+
+test("a failed mod wins over a later dead check: one restore notice says both", async () => {
+  const h = herdr();
+  const old = h.build();
+  const unavailable = "the herdr-app check could not run (SIGTERM)";
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: ["am-sidebar"], checked: true, unavailable },
+        restored: { version: "0.8.0", failedVersion: "0.8.1", mod: "am-sidebar", failed: ["am-sidebar"],
+          checked: true, unavailable } } });
+    h.swap(old, "0.8.0");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0].body, /0\.8\.1 failed to load \(am-sidebar failed herdr-app check; the herdr-app check could not run \(SIGTERM\)\): the previous version 0\.8\.0 is back/);
+  assert.equal(h.state().kind, "restored");
+  assert.equal(h.state().announced, "0.8.0");
+});
+
+test("a check killed before any mod is judged: the update is kept, one unchecked notice", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => {
+    if (args[1] === "check") return h.check();
+    const answer = line({ current: "0.8.0", latest: "0.8.1", update: update("0.8.1"), notice: [],
+      installed: { version: "0.8.1", check: { failed: [], checked: false,
+        unavailable: "the herdr-app check could not run (SIGTERM)" } } });
+    h.swap(old, "0.8.1");
+    return answer;
+  };
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.notes.length, 0, "the old build waits for the reload");
+  h.build().u.start();
+  await h.tick(1);
+  assert.deepEqual(h.notes.map((n) => n.title), ["Automagik Herdr updated to 0.8.1"]);
+  assert.match(h.notes[0].body, /the herdr-app check could not run \(SIGTERM\): the update was kept, but its mods were not checked/);
+  await h.tick(LANDING_MS + 1_000);
+  assert.equal(h.notes.length, 1);
 });
 
 test("a version rolled back is skipped and the notice says it waits for a newer one; a newer one installs", async () => {
