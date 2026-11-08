@@ -1,0 +1,34 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "newer_schema",
+  "error": {
+    "code": "newer_schema",
+    "message": "the store was written by a newer usagemeter; update the meter",
+    "store_schema_version": 3,
+    "supported_schema_version": 2
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": null,
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "pricing": null,
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "branches": [
+      "feat/gn-12-cache"
+    ],
+    "window": "d30",
+    "page": null
+  },
+  "rows": [],
+  "page": null
+}

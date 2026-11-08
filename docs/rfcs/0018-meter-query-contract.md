@@ -1,0 +1,567 @@
+# RFC 0018: the meter query contract
+
+| Field | Value |
+|---|---|
+| Status | Draft |
+| Milestone | none (ships outside the five milestones) |
+| Lanes | none for this RFC (docs and fixtures cut nothing); meter (3.N.P, RFC 0017) for M1 to M5 |
+| Created | 2026-11-08 |
+
+## Summary
+
+genie reads usage, cost and time from the meter through one command the meter owns:
+`usagemeter query`, versioned, read-only and fork-and-exit, under the capability
+`meter.usage@1` (RFC 0017). This RFC is M0 of genie's meter design (rev 2): it writes down,
+before any meter code, the query's v1 contract, the per-call evidence the meter must keep before
+anything can be called task cost, who owns each of genie's metering calculations once they move
+to Rust, how old and new versions of both sides meet, and the hardware ceilings each step must
+stay under. The query's JSON Schema and example responses land with it in
+`meter/schema/query/v1/`, so the crate and genie test against the same files. It answers RFC
+0017's question 7.
+
+## Motivation
+
+The owner decided (2026-11-08) that all metering lives in the Rust meter inside this repository:
+genie's usage, cost and time calculations move into it, genie-rs consumes the result, and none
+of it may burn hardware. Folding task linking (the "untracked" cards) into the same plan was
+also the owner's choice. genie's design for this (rev 2, reviewed by a council of three
+independent lenses) splits the work into meter slices M0 to M5, built here, and genie slices S0,
+S1 and R, built in genie. M0 comes first because the council's main finding was that the
+boundary and the evidence must be defined before anything is projected onto a card.
+
+What the design found, and what this RFC answers:
+
+- **The board shows "–" on every card.** genie's Herdr board waits for a `space` block in the
+  `herdr-meter` doc that the meter never wrote (automagik-dev/usagemeter#8).
+- **The doc cannot be the source.** It keeps 127 of about 1,100 task rows to stay under 64 KiB,
+  so a branch missing from it is not "no usage", and `complete: true` holds while rows are cut.
+- **The store cannot answer task questions.** usagemeter keeps usage as hourly rollups keyed by
+  bot, role, harness, model, machine, repo, branch, hour and precision (`store.rs`, the `usage`
+  table), with no session key. No per-session or per-call task split, and no long-prompt tier
+  price, can be recovered from it later. This is why the evidence contract (below) comes before
+  any storage change.
+- **Branch totals are not task cost.** The doc's `tasks[]` rows are rolling d1, d7 and d30
+  windows per repo and branch: never lifetime spend, and two cards on one branch share one total.
+  `hours` counts distinct hours with usage, not elapsed time.
+- **The join key differs.** The meter keys work by `host/owner/repo` and branch; genie keys
+  projects by absolute checkout path. The mapping has to be explicit.
+- **Today's read path writes.** `usagemeter status` opens the store through `Store::open`, which
+  sets the journal mode, recreates a view, may add columns and may write `schema_version`. `sync`
+  resets a store of an older version in place, deleting its rows with no copy kept, and does not
+  refuse a store written by a newer version.
+
+## Decided
+
+From the owner (2026-11-08): the meter is built in Rust in this repository; all of genie's
+metering moves into it; genie-rs consumes it; nothing burns hardware; task linking is part of the
+plan. The capability is `meter.usage@1` (RFC 0017).
+
+From genie's meter design (rev 2) and its council record:
+
+- The boundary is one meter-owned, versioned, read-only, fork-and-exit query, batched per
+  project, with an envelope rather than bare rows (below).
+- A branch-window number is never shown as task cost. Task cost waits for M3.
+- Everything that computes usage, cost or time moves to the meter: normalization, pricing,
+  aggregation, attribution. Behaviour that is not metering stays with its owner: in-flight budget
+  enforcement in the executing runtime, benchmark quality judgments, and the operators' telemetry
+  delivery. No calculation is excluded.
+- genie keeps the opt-in capture switch and its ledger until M5 names their Rust owner.
+- A contract change is a pull request here that genie reviews.
+
+From RFC 0017: the crate is `meter/usagemeter/`, the doc's keeper is `meter/schema/`, and cargo
+runs only on the build host, one build at a time, with `CARGO_BUILD_JOBS` capped.
+
+Proposed here: everything else. Numbers marked "proposed" are starting points the owner may
+change.
+
+## Design
+
+### (a) The query, contract version 1
+
+```
+usagemeter query --repo <host/owner/repo> --branch <b> [--branch <b> ...] --json
+                 [--window d1|d7|d30] [--contract 1] [--page <token>] [--stale-after <s>]
+```
+
+- **One call per project.** One `--repo`, every branch the project's cards need, at most 500 per
+  call (proposed). More than 500 is a usage error, never a silent cut. `--window` defaults to
+  `d30`. `--json` is required: v1 has no text output.
+- **Fork and exit.** The process reads, prints one JSON document on stdout and exits. No daemon,
+  no listener, no background child.
+- **Branches match exactly**, case-sensitive, against the branch the meter recorded from the log
+  or the Codex thread, never against today's checkout. `--repo` is the meter's normalized form of
+  a git remote: credential-free, host lower-cased, no port, no `.git`, path case kept.
+  `repo-normalization.json` holds the shared cases. genie owns the mapping from an absolute
+  checkout to that string. The meter never sees checkout paths in a query.
+- **A branch named twice** (two cards on one branch) is answered once, with `requested: 2` and
+  `attribution.shared: true`. Its total belongs to neither card alone. genie shows both cards as
+  unknown. Collapsing the duplicate without saying so would be a silent drop.
+- **The caller names the contract it reads.** `--contract` defaults to 1. A meter that does not
+  serve the asked version exits 14 and lists the versions it does serve. Once contract 2 exists,
+  the meter keeps serving contract 1 for at least one compatibility release.
+
+#### The envelope
+
+Every exit the contract defines prints an envelope on stdout, refusals included, so a reader
+never has to tell a v1 refusal from an old meter's error by stderr text. The schema is
+`meter/schema/query/v1/envelope.schema.json` (JSON Schema 2020-12).
+
+| Field | Meaning |
+|---|---|
+| `contract`, `contract_version`, `capability` | `usagemeter.query`, 1, `meter.usage@1` |
+| `meter_version` | the binary's version (`usagemeter --version`) |
+| `status`, `error` | the outcome (table below); `error` is null only when `status` is `ok` |
+| `generated_at` | when this call ran, UTC |
+| `as_of` | the moment every `ok` or `degraded` source is counted up to: the oldest of their last successes |
+| `machine` | `id` (herdr-core's core id, or the store's stored id) and `scope`, always `local` in v1 |
+| `store` | the store's `schema_version`, and `location`: `current`, `legacy` (the state folder before automagik-dev/usagemeter#7) or `override` (`METER_STATE_DIR`). Never the path. |
+| `ingestion` | `watermark` (when the last successful sync finished), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`), `stale` and the `stale_after_s` used (proposed default 7200) |
+| `window` | `name`, `requested_start`, the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark), `clipped` |
+| `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`), `reason`, `last_success`, `stale` |
+| `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
+| `query` | the request echoed back: `repo`, `branches` as given (duplicates kept), `window`, `page` |
+| `rows[]` | one per distinct branch named (below) |
+| `page` | `next` (null, or a token to pass as `--page`) and `returned` |
+
+A row:
+
+| Field | Meaning |
+|---|---|
+| `branch`, `requested` | the branch, and how many times the call named it |
+| `state` | `measured`, `zero`, `missing`, `stale` or `unsupported` (next table) |
+| `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `ingestion_stale`, `source_unsupported` |
+| `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
+| `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models` |
+| `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
+| `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared` |
+| `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
+| `incomplete_sources` | harnesses whose health means this row may undercount |
+
+#### Missing, stale, unsupported, partial and zero stay apart
+
+| Row state | When | Numbers | A reader shows |
+|---|---|---|---|
+| `measured` | usage found in the window | tokens and cost | the numbers, with `cost.state` |
+| `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, and the repo has usage somewhere in this store | all zero, `cost.state: zero` | a real 0 |
+| `missing` | nothing found, but one of those conditions fails (`reason` says which) | null | unknown |
+| `stale` | ingestion is older than `stale_after_s` | the last known numbers | unknown, or the numbers labelled with their age |
+| `unsupported` | nothing found while a source on this machine is `unsupported` | null | unknown ("update needed") |
+
+Cost: `priced` when no token is unpriced; `partial` when some are, and `usd` is then a lower
+bound; `unpriced` when none is priced, and `usd` is then null, never 0; `zero` only on a zero
+row. Null or unknown never becomes 0, in the meter or in a reader.
+
+#### Exit codes
+
+| Exit | `status` | When | Reads rows | Writes |
+|---|---|---|---|---|
+| 0 | `ok` | answered; rows may be `missing`, `stale`, `unsupported` or `zero` | yes | nothing |
+| 2 | `usage` | bad arguments, more than 500 branches, no `--json` | no | nothing |
+| 10 | `absent_store` | no store at the state folder: never synced on this machine | no | nothing; the folder is not created |
+| 11 | `locked` | no consistent snapshot within the busy budget (proposed 2 s), or a migration is in progress; `error.retry_after_s` | no | nothing |
+| 12 | `newer_schema` | the store's `schema_version` is newer than this binary knows | no | nothing |
+| 13 | `outdated_store` | the store needs a migration only `sync` runs | no | nothing |
+| 14 | `unsupported_contract` | `--contract` names a version this meter does not serve; `error.supported_contracts` | no | nothing |
+| 1 | `error` | anything else: an unreadable or corrupt store, an I/O error | no | nothing |
+
+A meter older than v1 has no `query` verb. Today's binary prints `meter: unknown command` on
+stderr, nothing on stdout, and exits 2. A reader that gets no envelope on stdout treats the meter
+as too old.
+
+#### No match is silently dropped
+
+Every branch named gets exactly one row, or the call fails. The envelope stays under 256 KiB
+(proposed). When the rows would pass that, the meter returns the rows that fit and a `page.next`
+token, and genie calls again with `--page`. It never truncates the way the doc does.
+
+#### A true read-only open
+
+The query opens an existing store and nothing else:
+
+- SQLite opened read-only (`SQLITE_OPEN_READ_ONLY`), one read transaction for a consistent
+  snapshot, a bounded busy timeout. No DDL, no `PRAGMA` writes, no `meta` writes. It never takes
+  `meter.lock`.
+- No creation (a missing store or folder is exit 10, and nothing is made), no migration (exit 12
+  or 13), no sync, no price fetch, no doc publish, no `hc` call or start, no git call, no network.
+- The only files it may cause are SQLite's own `-wal` and `-shm` companions, which a reader of a
+  WAL store can need. A test checks that `meter.db`'s bytes and every other file in the state
+  folder are unchanged after a query.
+- M1 moves `usagemeter status` onto the same read-only open, because today it writes.
+
+#### The caller's side (genie-rs)
+
+genie-rs bounds every call: a wall-clock timeout (proposed 3 s), after which it kills the child
+and reaps it; a stdout cap (proposed 512 KiB) and a stderr cap (16 KiB), past which it kills the
+child too; one call per project per refresh, never one per card; an answer reused for up to 60
+s per project (proposed). A meter failure of any kind (absent binary, an exit code, a timeout, a
+bad envelope) never breaks `genie-rs list`: the list prints, and each card's cost is unknown with
+the reason. Which labels genie shows is genie's S1.
+
+#### Rejected alternatives
+
+- **The capped doc as the source.** It is cut to 64 KiB (127 of about 1,100 task rows on one
+  machine), it says `complete` while rows are missing, it carries d-windows only, and it can be
+  hours old with no per-row freshness. It stays only as a fallback S1 labels with its age.
+- **Reading `meter.db` directly.** The store is private: hourly rollups whose row ids, precision
+  rules and reset behaviour change with its schema (version 2 rebuilt every row). Prices are
+  applied when a summary is built, not stored, so genie would have to keep a second pricing
+  calculation, which is the opposite of moving metering into one place. It would also put WAL,
+  locking and the read-only guarantee in two codebases.
+- **Linking the crate into genie-rs.** Two binaries on one machine would each carry their own
+  idea of the store's schema, so an older linked copy could meet a newer store, or migrate it.
+  genie's build would take on the meter's dependencies and targets (the meter ships Intel Mac;
+  genie-rs does not). The meter is its own part with its own key (RFC 0017), and a process
+  boundary gives the timeout, output cap and crash containment for free.
+
+### (b) The evidence-retention contract
+
+Before M3 changes storage, the meter must keep, per call, at least:
+
+| Evidence | Why |
+|---|---|
+| timestamp (ms) | half-open interval matching (`start <= at < end`) |
+| machine-local session id, and its parent session | session to task joins; parent-child dedupe |
+| request or delta identity: Claude `message.id` with `requestId`; Codex thread id with the cumulative-total step; OMP entry or side-call id | dedupe across copies, subagent files and rereads |
+| harness, and the model as logged (requested model too, when the log has it) | pricing; requested versus actual |
+| every token kind: input, cache read, cache write 5m and 1h, output, reasoning (inside output), unsplit | pricing and totals without double counting |
+| prompt size (the whole prompt's tokens) | long-prompt tier prices (M4); lost forever once rolled up |
+| precision (`exact`, `total_only`) | never invent a split |
+| price provenance: reported USD and its source, if any | reported wins; an estimate is computed at read time with the table named in the envelope, and never stored as if reported |
+| parent-child dedupe: whether a parent record is a rollup of children that carry the bill | count once |
+| repo and branch, as attributed today | branch-window rows keep working |
+
+No prompt text, answer text, tool arguments, file contents or credentials. The identity is kept
+as a keyed hash per harness (128 bits, proposed), enough to dedupe and to match genie's capture
+ledger, without copying raw log ids around.
+
+**Session to task validity intervals.** A durable table of `(machine, harness, session, project,
+task, valid_from, valid_to)`, half-open, with the evidence for each: a worker started with
+`--task`, an explicit `link` or `unlink` event, a proven task writer, or a time window. Intervals
+come from genie's exported records (`tasks.jsonl` v1, its link and supersede events, and the
+capture ledger), never from a PR number or digits in a branch name. Two tasks valid for one
+session at once make that span shared: its calls are ambiguous, never split. A superseded link
+keeps its row, marked, so a rebuild replays the same answer.
+
+**Bounded retention (proposed).** Per-call evidence is kept for 90 days or 1 GiB, whichever
+comes first, pruned oldest whole day first; the query reports the start as `evidence_from`.
+Validity intervals are small and kept 400 days. Hourly rollups are kept as today. Before
+`evidence_from`, a row's attribution falls back to `branch_window`, and says so.
+
+**Bounded reimport.** Evidence starts empty when M3 lands. An explicit
+`usagemeter sync --evidence-backfill --days <n>` (n up to the retention bound) rereads the
+native logs still on disk, under the same read budget, cursors and chunked commits as a normal
+sync; it is never automatic past the default window. What stays unknown, for good:
+
+- calls whose logs were deleted or rotated (Claude Code removes old transcripts on its own
+  schedule);
+- the split of Codex threads known only as totals;
+- OMP branches (OMP does not log one);
+- the task of any session before linking existed (S0), unless a link event names it: those
+  calls stay unattributed, never guessed from a branch name;
+- anonymous OMP sessions with no unique proof;
+- mikro offload before M5;
+- anything on a machine whose store is gone.
+
+For those hours the branch-window total is still there, labelled as such.
+
+**Session ids stay machine-local.** They live only in the meter's state folder (mode 0600) and
+genie's machine-local capture ledger. They never enter git-tracked state, the `herdr-meter` doc,
+a query envelope (v1 rows are per branch; later task rows count sessions, they do not name
+them), or any telemetry target unless an operator names one.
+
+### (c) The ownership map
+
+Every row of the inventory's gap table (genie's metering against usagemeter v0.3.0). "Meter"
+means a module of the crate in `meter/usagemeter/`; "adapter" is what remains on the producer
+or consumer side once the calculation has moved.
+
+| Capability | Calculation owner | Adapter that remains, or why it stays | Slice |
+|---|---|---|---|
+| Opt-in lifecycle observer | meter reads its ledger | genie writes the capture line inside the task-event transaction (producer) until M5 names a Rust owner | M3, M5 |
+| capture switch: enable, disable, status | stays in genie | operator switch beside the producer; an env var only disables; disabling keeps history | M5 decides |
+| Canonical task-DB filtering | meter (lifecycle) | none; applied when the ledger is read | M3 |
+| Verified task-event join (db, task, event, kind, at) | meter (lifecycle) | genie exports the events it verifies against; the meter never opens genie's DB | M2, M3 |
+| Runtime id and nested-marker ambiguity | meter keeps the `ambiguous` meaning on read | genie detects markers at capture time (only the runtime's environment can) | M3 |
+| Claude usage parsing | meter (exists) | genie's reader retires through R | M3 |
+| Codex usage parsing | meter (exists: cumulative deltas, archives, children, `total_only`) | genie's reader retires through R; summing cumulative deltas is an intended change | M3 |
+| Generic pi source | meter (new source) | none | M3 |
+| OMP assistant and side-call usage | meter (exists) | genie's reader retires; counting side calls is an intended change | M3 |
+| Anonymous OMP writer matching (proven, mention, ambiguous) | meter (attribution) | none | M3 |
+| Fine lifecycle interval timing | meter (lifecycle) | none | M2, M3 |
+| Shared-session overlap flag | meter (attribution) | none | M3 |
+| Transition p50, p90 and usage coverage | meter (lifecycle) | none | M5 |
+| Interval JSONL and the text and JSON CLI | meter computes the rows | `genie metrics export` stays as the front door that calls the meter and keeps its stdout shape | M5 |
+| mikro attempts, retries, failure bucket | meter (new mikro source) | mikro's `call.ts` keeps writing its ledger (producer) | M5 |
+| mikro cross-card ambiguity | meter (attribution) | none | M5 |
+| Price fetch, import, status provenance | meter (prices): explicit `usagemeter prices update` and `status` | genie's `metrics prices` becomes an alias, then retires | M4 |
+| Reported USD precedence, 5m and 1h cache | meter (exists) | none | M4 |
+| Generic model lookup, prompt tiers | meter (prices), from retained prompt size | none | M4 |
+| Calls, priced calls, cost source | meter (prices); in the query's coverage | none | M4 |
+| Phoenix lifecycle projection | meter computes intervals and their deterministic ids | delivery stays: genie's operator export posts, reads back, and never has a default target | M5 |
+| mikro Phoenix attempt projection | meter computes attempt numbers | delivery stays with mikro; a missing value is null, not 0, once it reads the meter's | M5 |
+| Wish workflow v3 record and ledger | meter reads the ledger | `genie wish report` keeps finding, validating and appending records (it knows workflow formats) | M5 |
+| Wish outcome and variant summaries | meter (runs): means, fractions, partial counts, offload totals | outcome judgments stay with the workflow; the meter never infers a verdict | M5 |
+| Forge lifecycle and exclusions | meter reads `tasks.jsonl` | genie-forge stays the producer | M2 |
+| Forge cursor and cache quota bound | stays in genie | no forge poller in the meter; the bounded first pass and monotonic cursor are genie's | none |
+| Task branch identity | stays in genie (S0: `start` mints ids, `link` and `unlink` events) | the meter consumes link events and never mints an id | M2 |
+| `tasks.jsonl` lifecycle import | meter (lifecycle) | none | M2 |
+| Herdr `space.projects` feed | meter writes the `space` block for Pocket (RFC 0017's keeper) | genie's board reads cards from `genie-rs list` and query v1, not from the doc; the checkout to repo mapping stays in genie | M1, S1 |
+| Card cost, work, lead, start | cost: meter (query v1, task cost at M3); time: meter (M2) | genie computes the S0 time fields until M2 removes them; the board formats | M1 to M3 |
+| Card ETA | meter (lifecycle): comparable merged samples, with the basis | genie's S0 formula until M2; the board presents it | M2 |
+| Bots and lead association | meter (attribution) for bot per session, from durable evidence | the lead stays on genie's task record; unknown stays unknown | M3 |
+| Observability annotations and waste | meter: token counts, context size, `waste_usd`, `total_usd` and their price table | behaviour scores (tool errors, interrupts, rework, polling, compactions) are not usage, cost or time and stay; delivery stays | M5 |
+| Benchmark economics | meter: normalized cost, coverage, root and child dedupe, cost per accepted result | quality judgments stay with the bench | M5 |
+| Runtime budget and depth controls | meter: the price math, exported as a frozen table the runtime reads | enforcement stays in the executing runtime; a scanner cannot stop a run | M4 |
+| mikro usage across session files, PG, Langfuse | meter (mikro source) reads one canonical record and counts it once | the other copies are projections; their delivery stays with mikro | M5 |
+| Provider Keeper usage | meter, as a reconciliation source reading a sanitized snapshot | fetching it stays in mikro: the meter never holds provider credentials or cookies | after M5, question 6 |
+| Efficient resumable native scan | meter (exists) | none; a board refresh never scans | M1 |
+| Rust library and binary delivery | meter part (RFC 0017) | genie consumes the binary through the query and does not link the crate | M1 |
+
+Beyond the gap table, the inventory's other families map the same way: the DSH workflow loader's
+journal is a producer M5 reads beside the wish ledger; mikro's facts, egress and status counters
+are attempt provenance, not a bill, and stay with mikro; mikro's batch, benchmark and output
+totals are projections of usage that is counted once at its source; the board's and the DSH
+board's formatting are presentation and stay.
+
+### (d) Upgrade, downgrade and the state-path move
+
+"Old genie" reads only the doc. "Old meter" has no `query` verb (0.3.0, or a 3.N build before
+M1).
+
+| | Old meter | New meter (query v1) | No meter |
+|---|---|---|---|
+| **Old genie** | cards "–", as today | unchanged: the doc stays `schema_version` 2 and `query` is additive | cards "–" |
+| **New genie** | `query` exits 2 with no envelope: "meter update needed", cost unknown, the doc fallback labelled with its age; `list` works | query v1 | binary missing: "no meter", cost unknown; binary but no store: exit 10, "not synced yet"; `list` works |
+
+And the cases across time:
+
+- **A newer meter, an older genie.** The meter serves contract 1 for at least one compatibility
+  release after contract 2 ships. Past that, exit 14 tells genie which versions remain.
+- **A meter binary older than its store** (a rollback): `query` exits 12. M1 makes `sync`
+  refuse a newer store too, exit 12, writing nothing; today it would write into it.
+- **The state-path move** (automagik-dev/usagemeter#7, to `~/.automagik/meter`). Only `sync`
+  moves state: it renames the folder when both paths are on one filesystem, and otherwise copies,
+  checks and fsyncs before switching, keeping the old folder as the recoverable generation until
+  the next successful sync. `query` never moves anything: it reads the current path, then the
+  legacy path, read-only, and says which in `store.location`. `METER_STATE_DIR` is honoured by
+  both and never moved.
+- **An old meter after the move** finds no store at its old path and starts a fresh one there.
+  Nothing is lost, because the new path is untouched. When the newer meter returns, the current
+  path wins and the stray store is reported by `status`, never merged or deleted on its own.
+
+**Migration safety.**
+
+- Before any destructive migration (a reset, a table rebuild, a schema bump that changes row
+  ids, the evidence table's first creation over a full store), `sync` writes a recoverable
+  generation: an online backup to `meter.db.gen-<schema>-<utc>` in the state folder, mode 0600,
+  opened and row-counted before the migration starts.
+- It migrates only with at least twice the store's size free (proposed); otherwise it refuses,
+  says why, and keeps the old store working.
+- The migration runs in one transaction, with a `migrating` marker that makes `query` answer exit
+  11.
+- One generation is kept (proposed), deleted only after a later sync succeeds on the migrated
+  store. An interrupted migration leaves the old store or the generation intact, never neither.
+- Nothing migrates on a read: not `query`, not `status`, not a doc publish.
+
+### (e) Hardware acceptance ceilings
+
+Written before anything is measured. All numbers are proposed. They hold on both of these:
+
+- the build host, with a binary it built under RFC 0017's build rule;
+- an Apple Silicon laptop running a CI-built binary, never one built there.
+
+The reference workload is synthetic, generated by the M1 tests:
+
+- a 30-day native-log corpus of 2 GiB holding 1,000,000 calls across three harnesses, 40 repos
+  and 1,500 branches;
+- for the query cases, a store with 90 days of evidence.
+
+| Case | Wall | CPU | RSS | Bytes | State growth | Child processes |
+|---|---|---|---|---|---|---|
+| Cold import (first sync, default window) | ≤ 25 s per run (20 s read budget); done within 15 min of runs | one core per run; ≤ 6 min in total | ≤ 160 MiB | each log byte read once (≤ 1.05 × corpus) | ≤ 300 MiB in total, ≤ 200 B per call of evidence | ≤ 1 alive; git ≤ 1 per new cwd (cached 7 days); hc ≤ 2 per run |
+| Warm query (1 project, 20 branches) | ≤ 150 ms p95 | ≤ 120 ms | ≤ 40 MiB | ≤ 16 MiB read; stdout ≤ 32 KiB | 0 | meter 0; genie 1 |
+| Many-branch list (1 project, 500 branches) | ≤ 1 s p95 | ≤ 0.8 s | ≤ 64 MiB | stdout ≤ 256 KiB, else it pages | 0 | meter 0; genie 1 per page |
+| Incremental append (sync after 10 min, about 5 MiB new) | ≤ 2 s | ≤ 1.5 s | ≤ 100 MiB | ≤ 1.1 × the new bytes, plus a stat per known file; no rescan | ≤ 250 B per new call; WAL checkpointed under 64 MiB | hc ≤ 2 |
+| Interrupted backfill (SIGKILL mid-chunk, then rerun) | the rerun recovers within one run (≤ 25 s) | as cold import | as cold import | rereads ≤ one 8 MiB chunk per file in flight | no call counted twice; `PRAGMA integrity_check` passes | as cold import |
+| Rebuild (explicit reimport, or a destructive migration) | as cold import, plus ≤ 30 s per GiB of store for the generation | one core | ≤ 200 MiB | one copy of the store | peak disk ≤ 2.2 × the store; one generation kept | as cold import |
+| Concurrent board refreshes (4 boards × 10 projects, a sync running) | each query ≤ 500 ms p95; a full refresh ≤ 3 s | ≤ 2 cores in total, for ≤ 3 s | ≤ 160 MiB in total | as warm query, each | 0 from queries | ≤ 4 meter processes alive at once, all reaped; exit 11 on ≤ 1 % of calls |
+| Idle, between refreshes | n/a | 0 | 0 | 0 | 0 | 0 meter processes |
+
+How they are checked:
+
+- Each slice's pull request records its measured values beside these: `/usr/bin/time -v` on
+  Linux, `-l` on macOS, and a count of child processes.
+- A ceiling that fails blocks the slice.
+- Changing a ceiling amends this RFC.
+- Measurement runs on the build host behind its gate lock, one run at a time, and never as a
+  load or repeat grid.
+
+### Invariants (every slice, both sides)
+
+- No daemon and no resident poller: fork and exit.
+- Null or unknown is never shown as 0.
+- No fabricated ids: no task id from a PR number or digits in a branch name, and no invented
+  token splits.
+- No default telemetry target.
+- Session ids stay machine-local and never enter git-tracked state.
+- A board refresh never scans history and never runs one subprocess per card: one query per
+  project.
+- The forge quota bound stays in genie.
+- A read never writes, creates or migrates.
+
+### The slices
+
+Each is its own later pull request with an independent review. M1 onward is Rust in
+`meter/usagemeter/`, after RFC 0017's import (its delivery 2), on the meter lane, built under
+RFC 0017's build rule.
+
+1. **M0, this RFC** (docs and fixtures; cuts nothing).
+2. **M1, the query.** `usagemeter query` per contract 1; the read-only open, which `status`
+   moves to; `sync` refusing a newer store and keeping a generation before any reset. *Check:* the
+   crate's contract test (below) passes on every fixture; a query leaves the state folder
+   byte-identical; the warm-query, many-branch and concurrent-refresh ceilings hold. *Rollback:*
+   revert; genie falls back to "meter update needed".
+3. **M2, lifecycle.**
+   - Read genie's `tasks.jsonl` v1 with its link and supersede events.
+   - Own the lifecycle time formulas genie's S0 adds (`age_min`, `pr_lead_min`, `pr_open_min`,
+     ETA from comparable merged samples), with S0's fixtures: restart, absent open, reversed
+     timestamps, terminal states.
+   - Additive fields in the envelope.
+   - M2's pull request names the S0 code genie removes.
+4. **M3, attribution.**
+   - The evidence table and validity intervals per (b).
+   - The pi source, anonymous OMP matching, and the shared-session flag.
+   - Task rows behind `--by task`, with `attribution.precision: task_interval`; branch rows are
+     unchanged.
+   - Only now may a card show "task cost". *Check:* the interrupted-backfill and rebuild ceilings
+     hold.
+5. **M4, prices.** Explicit fetch with provenance, long-prompt tiers from retained prompt size,
+   per-call priced coverage, and the frozen table runtimes read.
+6. **M5, the rest** (several pull requests).
+   - Lifecycle interval export.
+   - The wish-runs ledger and its summaries.
+   - mikro offload and its sources.
+   - The shared arithmetic of bench, mikro and observability, per the ownership map.
+   - Each pull request names whether capture production and its switch move, and to whom.
+
+genie's side of the boundary, built in genie and named here only so the order is clear:
+
+- **S0**: time fields from genie's own events, and task linking. Independent of the meter.
+- **S1**: the card's cost from query v1, shown as "branch, last 30d, est.", partial or unknown as
+  the envelope says, never as task cost. Needs M1 released.
+- **R**: a TypeScript path retires only on frozen shared-input fixtures, with one compatibility
+  release and a rollback drill.
+
+### The fixtures
+
+`meter/schema/query/v1/`:
+
+- `envelope.schema.json`, the contract.
+- `repo-normalization.json`, the remote-to-`--repo` cases.
+- `examples/`, one envelope per case.
+
+| Example | Case | Exit |
+|---|---|---|
+| `priced.json` | two measured rows, one partly reported by the harness | 0 |
+| `partial-priced.json` | an unknown model and `total_only` tokens: `cost.state: partial` | 0 |
+| `missing-branch.json` | a window clipped by `counted_from`: one row `missing` | 0 |
+| `stale-source.json` | ingestion 30 hours old, Codex degraded for three days: rows `stale` | 0 |
+| `ambiguous-branch.json` | one branch named by two cards: `requested: 2`, `shared: true` | 0 |
+| `zero-usage.json` | a vouched zero | 0 |
+| `unsupported-source.json` | an unreadable Codex schema: no zero can be vouched for | 0 |
+| `absent-store.json` | no store | 10 |
+| `locked.json` | a migration in progress | 11 |
+| `newer-schema.json` | a store from a newer meter | 12 |
+| `outdated-store.json` | a store only `sync` can migrate | 13 |
+
+The data is synthetic: `example.com` repos, made-up branches, no session ids. Who reads them:
+
+- **The crate's contract test (M1).** It validates every example against the schema. It builds
+  each example's store from synthetic logs, runs the query, and compares the output with the
+  example (timestamps aside). It also checks `repo-normalization.json` against the meter's
+  remote normalization.
+- **genie's reader tests**, at a pinned commit of this repository. They parse every example and
+  check the card each one gives: a number, a partial number, or unknown with its reason. They
+  check genie's checkout-to-repo mapping against the same normalization cases.
+- CI runs the crate's test when `meter/schema/` changes (RFC 0017's `usagemeter` job).
+
+**Versioning.**
+
+- **Additive changes keep contract 1.** These are a new optional field, a new `reason`, or a new
+  source. They change the schema and the examples in the same pull request. Readers ignore
+  fields they do not know and never validate at runtime.
+- **Breaking changes make contract 2.** These are a removed or renamed field, a changed meaning
+  or unit, a new row `state`, or a new `cost.state`. Readers learn it first; a reader that meets
+  a version it does not know shows "update needed", never a guess.
+- **The capability.** A breaking change that a `meter.usage@1` reader cannot read also bumps the
+  capability's major, as RFC 0017 says for the doc.
+
+### Answer to RFC 0017's question 7
+
+- **What is ported:** every row of (c).
+- **Where it lives:** proposed, as modules of the one crate in `meter/usagemeter/`: `query`,
+  `lifecycle`, `attribution`, `evidence`, `prices`, `runs`, and new sources for pi and mikro.
+  There is no workspace until a second binary is needed. A future `meter/Cargo.toml` is decided
+  then.
+- **Which genie specs and tests come with it:** each slice names the genie source files it ports
+  (from the inventory) and brings the frozen shared-input fixtures R needs. Those are pinned
+  revisions with expected ids, nulls and provenance, and with intended differences reviewed and
+  listed.
+- **Who reviews:** a contract change (`meter/schema/query/`, the evidence contract, the map) is
+  reviewed by genie as well as here.
+
+## Contracts introduced
+
+- The command `usagemeter query`, its flags, contract version 1, its exit codes 0, 1, 2 and 10
+  to 14, and its envelope (`meter/schema/query/v1/envelope.schema.json`), under
+  `meter.usage@1`. New, so no install changes. Permanent once a release ships it.
+- `meter/schema/query/v1/` and its examples, owned here, read by the crate's tests and genie's.
+- The evidence contract (b): what M3 must retain, the validity intervals, the retention bounds
+  (proposed) and what stays unknown.
+- Migration rules: a recoverable generation before a destructive migration, and no migration on
+  a read. These change `sync`'s behaviour on an outdated store, not its data.
+- Unchanged: the `herdr-meter` doc (`schema_version` 2), `meter.db`, `meter.lock`, the state
+  folder and the `METER_*` variables.
+
+## Threat model
+
+- **What the query reveals.** Token counts and estimated cost per branch of one repo, on the
+  machine it runs on, to a local caller that could already read the store's folder. No session
+  ids, no paths, no content. Nothing leaves the machine.
+- **A hostile caller** can pass up to 500 branches and page; the call stays read-only and bounded
+  by the ceilings. It cannot make the meter write, fetch, publish or start anything.
+- **A hostile store** (a corrupt or crafted `meter.db`) gives exit 1 or 12, or rows the schema
+  bounds; genie's timeout and output caps contain a meter that hangs or floods.
+- **Undo.** Every slice reverts on its own. A generation is kept before any destructive
+  migration.
+
+## Open questions
+
+1. **A branch named twice.** Recommended: answer once with `requested` and `shared`, as above.
+   The alternative is for genie to dedupe before calling and mark both cards itself.
+2. **Staleness.** Recommended: 2 hours by default, with `--stale-after` for callers that know
+   better. The alternative ties it to the sync trigger's period.
+3. **Fleet scope.** Recommended: v1 answers for the local machine only. Other machines reach the
+   board through their doc, labelled, until a fleet query over hc is designed.
+4. **Retention.** Recommended: 90 days or 1 GiB of evidence, whichever comes first, and 400 days
+   of validity intervals.
+5. **Evidence identity.** Recommended: a keyed 128-bit hash per harness, not raw log ids.
+6. **Provider Keeper usage.** Recommended: a reconciliation source after M5 that reads a
+   sanitized snapshot mikro writes; the meter never holds the credentials.
+7. **Where ported code lives.** Recommended: modules of the one crate, no workspace yet (the
+   answer to RFC 0017's question 7 above).
+
+## Links
+
+- RFCs:
+  - [0011](0011-monorepo-parts-and-releases.md) parts and lanes;
+  - [0012](0012-am-cli-and-parts.md) parts and capabilities;
+  - [0017](0017-usagemeter-crate.md) the crate, the doc's keeper, `meter.usage@1` and the build
+    rule. Its question 7 is answered here.
+- Fixtures: `meter/schema/query/v1/`.
+- Upstream: `automagik-dev/usagemeter` at v0.3.0 (`src/store.rs`, `src/sync.rs`, `src/main.rs`,
+  `src/repo.rs`); automagik-dev/usagemeter#7 (the state folder) and automagik-dev/usagemeter#8
+  (the `space` feed).
+- genie: its meter design (rev 2) and its metering inventory against usagemeter v0.3.0, kept
+  with genie's design; genie-rs (`list`, `tasks.jsonl` v1, genie-forge).
+- Code here: `scripts/lane.ts` (`NEVER_SHIPPED`), `herdr/mods/am-sidebar/meterFleet.js`.

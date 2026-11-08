@@ -1,0 +1,29 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "absent_store",
+  "error": {
+    "code": "absent_store",
+    "message": "no meter store on this machine yet; usagemeter sync creates it"
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": null,
+  "store": null,
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "pricing": null,
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "branches": [
+      "feat/gn-12-cache"
+    ],
+    "window": "d30",
+    "page": null
+  },
+  "rows": [],
+  "page": null
+}
