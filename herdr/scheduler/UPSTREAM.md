@@ -42,19 +42,72 @@ The fork's patch, one line per path: the check script allows exactly these to di
 file, to be here) and prints each as patched or added; any other difference fails.
 
 ```
-internal/api/api.go            — patched: Automation carries close_workspace, set from the entry in List()
-internal/api/api_test.go       — patched: ls --json shows close_workspace, and never by default
-internal/config/edit_test.go   — patched: put's merge cases for close_workspace
-main.go                        — patched: put copies close_workspace into the entry; an empty one removes it
-main_test.go                   — added: the put wire path carries close_workspace
+docs/adr/0012-a-successful-run-may-close-its-workspace.md — patched: existing mode closes its own tab; blocked grace
+internal/api/api.go            — patched: ls --json carries blocked_grace_minutes
+internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default
+internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab
+internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
+internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
+internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
+internal/herdr/herdr.go        — patched: tab id/list/close; pane process-info for a blocked agent's stop request
+internal/herdr/herdr_test.go   — patched: tab and pane process-info wire cases
+internal/host/agent.go         — patched: herdr blocked grace, rechecked stop; deadline and paced bounded submit retries
+internal/host/agent_test.go    — patched: herdr blocked/blips/-1; submit mismatch deadline, attempt limit and pacing
+internal/host/close.go         — added: read and close serialized per workspace within one scheduler process
+internal/host/close_test.go    — added: concurrent closes on two tabs leave the last visible tab
+internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first
+internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close rows including the read/act race
+internal/host/host.go          — patched: Session carries the run's tab; existing mode asks only for a tab a read says is listed and not last
+internal/host/host_test.go     — patched: own-tab close, last tab, unlisted tab, unreadable list, race row, worktree/root unchanged
+internal/host/ops.go           — patched: tab operations and rechecked AgentStop result in the seam
+internal/host/stop_unix.go     — added: recheck status and foreground group before SIGTERM request
+internal/host/stop_unix_test.go — added: status/group changes, unchanged target, read errors and refusals
+internal/host/stop_resume_unix_test.go — added: cleared dialog before signal resumes startup/submit/wait
+internal/host/stop_other.go    — added: unsupported platform stop reports an error
+internal/host/screen.go        — added: the dialog line read from a blocked screen
+internal/host/screen_test.go   — added: dialog line, control characters, the bound and the fallback
+internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default
+main.go                        — patched: put copies blocked_grace_minutes into the entry
+main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted
+README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close
 ```
 
-Why: the pack's panel is to set `close_workspace` per automation (issue #498). Upstream's config
-layer, validation, default and runner already honour it (`never` | `on-success`, default `never`,
-refused with `workspace: existing`); the API did not. `ls --json` now names it for every entry, and
-`put` accepts it with the same merge rules as the other keys: a value writes it, a request without
-the key keeps the hand-written value, an empty value removes the key, and an invalid value (including
-`on-success` with `workspace: existing`) is refused by the loader. Keep the patch to this list.
+Why: the #498 stopgap, two scheduler changes. An agent that stays `blocked` on a
+dialog longer than `blocked_grace_minutes` on either agent backend (default 2,
+`-1` waits for completion or the timeout) now fails at once. The history error carries the
+dialog line from the screen and the failure goes out through notify. On hc the
+terminal is killed without removing its record. Herdr has no agent-stop API:
+the scheduler re-reads the agent status and `pane process-info` before requesting
+SIGTERM for an unchanged foreground group, refusing a missing, shell, or scheduler
+group. A cleared dialog resumes the run without a blocked failure. The failure
+error and log say "asked the agent to stop (SIGTERM)"; exit is not confirmed and
+SIGTERM is not escalated, so a TERM-ignoring dialog can survive. Refused or failed
+requests are reported as such. The read/signal window is narrowed, not atomic.
+Neither failure path asks to close its layout.
+Herdr prompt retries check the run deadline before every submit and wait one
+status-poll interval between submissions. Three consecutive blocked-submit errors
+without an observed blocked status fail with a clear error; the run deadline can
+expire sooner. This mismatch does not request a signal.
+
+`close_workspace: on-success` is valid with `workspace: existing`: it asks to
+close only the tab the run opened, and closes nothing when the run has no tab id,
+when the space's tabs cannot be read, when its tab is no longer listed, or when
+that tab is the space's last one at the time of the check. In one scheduler process,
+closes serialize per workspace (and Herdr session) and re-read under the lock
+immediately before acting: it leaves the last tab it can see. A person closing
+the other tabs between the read and the close can still leave it last, and the
+app then closes the space. The lock is process-local: a manual `run` or a second
+daemon does not share it and can race the same way. The scheduler issues no
+space close itself in existing mode; on hc, where a terminal is the tab, it ends
+the run's terminal only while another one is there at that read. Each refusal logs
+why. The loader no longer refuses that combination, and `ls --json` / `put` carry
+`blocked_grace_minutes` like the other keys.
+
+The earlier patch is still why `close_workspace` exists in the API at all: the pack's
+panel sets it per automation (issue #498). `ls --json` names it for every entry, and
+`put` accepts it with the same merge rules as the other keys: a value writes it, a
+request without the key keeps the hand-written value, an empty value removes the key.
+An invalid value is refused by the loader. Keep the patch to this list.
 
 ## Refreshing
 

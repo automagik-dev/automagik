@@ -141,6 +141,9 @@ type createResult struct {
 	Workspace struct {
 		WorkspaceID string `json:"workspace_id"`
 	} `json:"workspace"`
+	Tab struct {
+		TabID string `json:"tab_id"`
+	} `json:"tab"`
 	RootPane struct {
 		PaneID string `json:"pane_id"`
 	} `json:"root_pane"`
@@ -175,17 +178,42 @@ func (c Client) WorkspaceCreate(cwd, label string) (workspaceID, paneID string, 
 	return res.ids("workspace create")
 }
 
-// TabCreate gives a run its own shell without creating a workspace.
-func (c Client) TabCreate(workspaceID, cwd, label string) (string, error) {
+// TabCreate gives a run its own shell without creating a workspace. It returns
+// the tab it made and that tab's root pane; an older Herdr that leaves the tab
+// id out still returns the pane, so the run can go on without a tab to close.
+func (c Client) TabCreate(workspaceID, cwd, label string) (tabID, paneID string, err error) {
 	var res createResult
 	if err := c.run(&res, "tab", "create", "--workspace", workspaceID,
 		"--cwd", cwd, "--label", label, "--no-focus"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if res.RootPane.PaneID == "" {
-		return "", fmt.Errorf("tab create returned no pane id")
+		return "", "", fmt.Errorf("tab create returned no pane id")
 	}
-	return res.RootPane.PaneID, nil
+	return res.Tab.TabID, res.RootPane.PaneID, nil
+}
+
+// TabClose closes one tab. Closing a workspace's last tab closes the workspace
+// too, so this is only ever aimed at a tab a run made for itself.
+func (c Client) TabClose(tabID string) error {
+	return c.run(nil, "tab", "close", tabID)
+}
+
+// TabList names every tab in a workspace, in the space's order.
+func (c Client) TabList(workspaceID string) ([]string, error) {
+	var res struct {
+		Tabs []struct {
+			TabID string `json:"tab_id"`
+		} `json:"tabs"`
+	}
+	if err := c.run(&res, "tab", "list", "--workspace", workspaceID); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(res.Tabs))
+	for _, tab := range res.Tabs {
+		out = append(out, tab.TabID)
+	}
+	return out, nil
 }
 
 // Worktree is one checkout backing a workspace. OpenWorkspaceID is empty once
@@ -248,6 +276,9 @@ const CodeWorkspaceGone = "workspace_not_found"
 // agent still loading its MCP servers takes longer than that to react.
 const CodeStalled = "agent_prompt_stalled"
 
+const CodeAgentNotReady = "agent_not_ready"
+const CodeAgentBlocked = "agent_blocked"
+
 // AgentSubmit types a prompt into the agent and asks herdr to confirm the
 // agent reacted. A CodeStalled error is inconclusive; callers should check the
 // status before giving up.
@@ -279,6 +310,21 @@ func (c Client) AgentSubmitPending(paneID string) error {
 func (c Client) AgentWait(target string, timeout time.Duration) error {
 	return c.run(nil, "agent", "wait", target,
 		"--timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
+}
+
+// ProcessInfo is the pane's shell and foreground process group. The shell is
+// excluded from a blocked agent's stop request, so its layout stays available.
+type ProcessInfo struct {
+	ShellPID        int `json:"shell_pid"`
+	ForegroundGroup int `json:"foreground_process_group_id"`
+}
+
+func (c Client) PaneProcessInfo(paneID string) (ProcessInfo, error) {
+	var res struct {
+		Info ProcessInfo `json:"process_info"`
+	}
+	err := c.run(&res, "pane", "process-info", "--pane", paneID)
+	return res.Info, err
 }
 
 // ErrGone means the run's workspace no longer exists — the expected outcome

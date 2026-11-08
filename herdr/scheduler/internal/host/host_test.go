@@ -1,8 +1,10 @@
 package host
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +16,9 @@ import (
 // fakeOps scripts Herdr's answers. A nil field means "this call is fine and
 // says nothing", which keeps each test to the calls it actually cares about.
 type fakeOps struct {
-	tabCreate       func(workspaceID, cwd, label string) (string, error)
+	tabCreate       func(workspaceID, cwd, label string) (string, string, error)
+	tabList         func(workspaceID string) ([]string, error)
+	tabClose        func(tabID string) error
 	worktreeCreate  func(repo, branch, label string) (string, string, error)
 	workspaceCreate func(cwd, label string) (string, string, error)
 	agentStart      func(name, kind, paneID string, args []string) error
@@ -22,6 +26,7 @@ type fakeOps struct {
 	submitPending   func(paneID string) error
 	agentStatus     func(target string) (string, error)
 	agentWait       func(target string, d time.Duration) error
+	agentStop       func(paneID string) (bool, error)
 	paneRun         func(paneID string, command ...string) error
 	paneRead        func(paneID string, lines int) (string, error)
 	lookPath        func(file string) error
@@ -32,14 +37,22 @@ type fakeOps struct {
 	session string
 	current string
 
-	starts  int
-	submits int
-	pending int
-	waits   int
-	reads   int
-	closed  []string
-	// closedIn is the session each close was aimed at.
-	closedIn []string
+	starts       int
+	submits      int
+	pending      int
+	waits        int
+	reads        int
+	stopRequests []string
+	// closed is every workspace close, closedTabs every tab close; the *In
+	// slices are the session each was aimed at.
+	closed     []string
+	closedIn   []string
+	closedTabs []string
+	tabsIn     []string
+	// tabListCalls and tabListWorkspace say how often and where Close asked
+	// which tabs a shared space still has.
+	tabListCalls     int
+	tabListWorkspace string
 }
 
 func (f *fakeOps) WorkspaceClose(workspaceID string) error {
@@ -49,6 +62,15 @@ func (f *fakeOps) WorkspaceClose(workspaceID string) error {
 		return nil
 	}
 	return f.workspaceClose(workspaceID)
+}
+
+func (f *fakeOps) TabClose(tabID string) error {
+	f.closedTabs = append(f.closedTabs, tabID)
+	f.tabsIn = append(f.tabsIn, f.session)
+	if f.tabClose == nil {
+		return nil
+	}
+	return f.tabClose(tabID)
 }
 
 func (f *fakeOps) WorktreeCreate(repo, branch, label string) (string, string, error) {
@@ -65,11 +87,20 @@ func (f *fakeOps) WorkspaceCreate(cwd, label string) (string, string, error) {
 	return f.workspaceCreate(cwd, label)
 }
 
-func (f *fakeOps) TabCreate(workspaceID, cwd, label string) (string, error) {
+func (f *fakeOps) TabCreate(workspaceID, cwd, label string) (string, string, error) {
 	if f.tabCreate == nil {
-		return workspaceID + ":p1", nil
+		return "tb1", workspaceID + ":p1", nil
 	}
 	return f.tabCreate(workspaceID, cwd, label)
+}
+
+func (f *fakeOps) TabList(workspaceID string) ([]string, error) {
+	f.tabListCalls++
+	f.tabListWorkspace = workspaceID
+	if f.tabList == nil {
+		return nil, nil
+	}
+	return f.tabList(workspaceID)
 }
 
 func (f *fakeOps) AgentStart(name, kind, paneID string, args []string) error {
@@ -98,7 +129,7 @@ func (f *fakeOps) AgentSubmitPending(paneID string) error {
 
 func (f *fakeOps) AgentStatus(target string) (string, error) {
 	if f.agentStatus == nil {
-		return "working", nil
+		return "idle", nil
 	}
 	return f.agentStatus(target)
 }
@@ -109,6 +140,14 @@ func (f *fakeOps) AgentWait(target string, d time.Duration) error {
 		return nil
 	}
 	return f.agentWait(target, d)
+}
+
+func (f *fakeOps) AgentStop(paneID string) (bool, error) {
+	f.stopRequests = append(f.stopRequests, paneID)
+	if f.agentStop != nil {
+		return f.agentStop(paneID)
+	}
+	return true, nil
 }
 
 func (f *fakeOps) PaneRun(paneID string, command ...string) error {
@@ -287,12 +326,12 @@ func TestProvisionExistingUsesFreshTabsInTheSameWorkspace(t *testing.T) {
 			t.Fatal("created a worktree")
 			return "", "", nil
 		},
-		tabCreate: func(workspaceID, cwd, label string) (string, error) {
+		tabCreate: func(workspaceID, cwd, label string) (string, string, error) {
 			if workspaceID != "w7" || cwd != "/repo" || !strings.HasPrefix(label, "auto: inbox ") {
 				t.Fatalf("unexpected tab: %q %q %q", workspaceID, cwd, label)
 			}
 			calls++
-			return fmt.Sprintf("w7:p%d", calls), nil
+			return fmt.Sprintf("tb%d", calls), fmt.Sprintf("w7:p%d", calls), nil
 		},
 	}
 	h := &live{ops: ops, knobs: fast()}
@@ -308,7 +347,7 @@ func TestProvisionExistingUsesFreshTabsInTheSameWorkspace(t *testing.T) {
 	if first.WorkspaceID != second.WorkspaceID || first.PaneID == second.PaneID || calls != 2 {
 		t.Fatalf("runs must share a workspace with distinct panes: %+v %+v", first, second)
 	}
-	ops.tabCreate = func(string, string, string) (string, error) { return "", errors.New("workspace gone") }
+	ops.tabCreate = func(string, string, string) (string, string, error) { return "", "", errors.New("workspace gone") }
 	if _, err := h.Provision(a); err == nil {
 		t.Fatal("missing workspace must fail, never create a replacement")
 	}
@@ -421,5 +460,168 @@ func TestCloseCountsAWorkspaceAlreadyGoneAsClosed(t *testing.T) {
 	h := &live{ops: ops, knobs: fast()}
 	if err := h.Close(Session{WorkspaceID: "w1", PaneID: "w1:p1"}, config.Automation{Prompt: "p"}); err != nil {
 		t.Fatalf("want nil for a workspace already closed, got %v", err)
+	}
+}
+
+// Existing mode shares its workspace with every other tab: a successful run
+// asks to close its own tab and leaves the last tab it can see.
+func TestCloseExistingClosesOnlyTheRunsTab(t *testing.T) {
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return []string{"tb7", "tb8"}, nil },
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7", HerdrSession: "auto"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops.closed) != 0 {
+		t.Fatalf("closed the shared workspace: %q", ops.closed)
+	}
+	if len(ops.closedTabs) != 1 || ops.closedTabs[0] != "tb7" || ops.tabsIn[0] != "auto" {
+		t.Fatalf("closed tabs %q in %q, want tb7 in auto", ops.closedTabs, ops.tabsIn)
+	}
+	if ops.tabListCalls != 1 || ops.tabListWorkspace != "w7" {
+		t.Fatalf("listed tabs %d time(s) for %q, want once for w7", ops.tabListCalls, ops.tabListWorkspace)
+	}
+}
+
+// A person can close the space's other tabs while the run works. Closing the
+// run's tab then would close the shared space, so the last tab stays open.
+func TestCloseExistingLeavesTheLastTabOpen(t *testing.T) {
+	var logged bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(old)
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return []string{"tb7"}, nil },
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops.closedTabs) != 0 || len(ops.closed) != 0 {
+		t.Fatalf("closed the last tab: tabs %q workspaces %q", ops.closedTabs, ops.closed)
+	}
+	if !strings.Contains(logged.String(), "last one in its space") {
+		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+// A tab that is not on the list is not safe to aim at: the list moved or the
+// tab is gone, and closing by id would still take the space's last tab.
+func TestCloseExistingLeavesATabThatIsNotListed(t *testing.T) {
+	var logged bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(old)
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return []string{"tb8"}, nil },
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops.closedTabs) != 0 || len(ops.closed) != 0 {
+		t.Fatalf("closed an unlisted tab: tabs %q workspaces %q", ops.closedTabs, ops.closed)
+	}
+	if !strings.Contains(logged.String(), "not in the space's tab list") {
+		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+// The read and the close cannot be one step: a person who closes the space's
+// other tab in between leaves the run's tab last. The scheduler still asks only
+// for its own tab; the app is what closes a space whose last tab goes.
+func TestCloseExistingRaceAfterTheReadClosesOnlyItsTab(t *testing.T) {
+	tabs := []string{"tb7", "tb8"}
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return append([]string{}, tabs...), nil },
+		tabClose: func(string) error {
+			tabs = []string{"tb7"}
+			return nil
+		},
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ops.closedTabs, "|"); got != "tb7" {
+		t.Fatalf("closed tabs %q, want only tb7", got)
+	}
+	if len(ops.closed) != 0 {
+		t.Fatalf("the scheduler issued a space close: %q", ops.closed)
+	}
+}
+
+func TestCloseExistingLeavesTheTabOpenWhenTheListIsUnreadable(t *testing.T) {
+	var logged bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(old)
+	ops := &fakeOps{
+		agentStatus: func(string) (string, error) { return "idle", nil },
+		tabList:     func(string) ([]string, error) { return nil, errors.New("herdr is down") },
+	}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2", TabID: "tb7"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops.closedTabs) != 0 || len(ops.closed) != 0 {
+		t.Fatalf("closed without a tab list: tabs %q workspaces %q", ops.closedTabs, ops.closed)
+	}
+	if !strings.Contains(logged.String(), "cannot read the space's tabs") {
+		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+// No tab id means no safe target: close nothing rather than guess at a tab.
+func TestCloseExistingWithNoTabIDClosesNothing(t *testing.T) {
+	ops := &fakeOps{agentStatus: func(string) (string, error) { return "idle", nil }}
+	h := &live{ops: ops, knobs: fast()}
+	s := Session{WorkspaceID: "w7", PaneID: "w7:p2"}
+	a := config.Automation{Prompt: "p", Workspace: config.WorkspaceExisting, WorkspaceID: "w7"}
+
+	if err := h.Close(s, a); err != nil {
+		t.Fatal(err)
+	}
+	if len(ops.closedTabs) != 0 || len(ops.closed) != 0 {
+		t.Fatalf("closed something without a tab id: tabs %q workspaces %q", ops.closedTabs, ops.closed)
+	}
+}
+
+// Worktree and root runs still close their own workspace; the tab rule is
+// existing mode's alone.
+func TestCloseWorktreeAndRootStillCloseTheWorkspace(t *testing.T) {
+	for _, mode := range []config.Workspace{config.WorkspaceWorktree, config.WorkspaceRoot} {
+		ops := &fakeOps{agentStatus: func(string) (string, error) { return "idle", nil }}
+		h := &live{ops: ops, knobs: fast()}
+		s := Session{WorkspaceID: "w1", PaneID: "w1:p1", TabID: "tb1"}
+		if err := h.Close(s, config.Automation{Prompt: "p", Workspace: mode}); err != nil {
+			t.Fatal(err)
+		}
+		if len(ops.closed) != 1 || ops.closed[0] != "w1" {
+			t.Errorf("%s: closed workspaces %q, want w1", mode, ops.closed)
+		}
+		if len(ops.closedTabs) != 0 {
+			t.Errorf("%s: closed tabs %q, want none", mode, ops.closedTabs)
+		}
 	}
 }

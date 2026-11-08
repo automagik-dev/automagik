@@ -22,10 +22,12 @@ import (
 // to assert the runner drives it rather than filtering statuses itself.
 type fakeSink struct {
 	titles []string
+	bodies []string
 }
 
 func (f *fakeSink) NotificationShow(title, body string, sound herdr.Sound) error {
 	f.titles = append(f.titles, title)
+	f.bodies = append(f.bodies, body)
 	return nil
 }
 
@@ -293,6 +295,29 @@ func TestRunToastsAFailureAndNothingBefore(t *testing.T) {
 	}
 }
 
+// A blocked fail-fast is a failure, so it goes out through the same notifier
+// every other failure does, carrying the dialog line.
+func TestRunToastsABlockedFailureWithItsDialogLine(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	h := &fakeHost{do: func(host.Session, config.Automation, time.Duration) error {
+		return errors.New("blocked on a dialog: Do you want to proceed?")
+	}}
+	sink := &fakeSink{}
+	r := NewWith(h, notify.With(sink))
+
+	_ = r.Run(automation(), "cron")
+
+	if len(sink.titles) != 1 || sink.titles[0] != "triage failed" {
+		t.Fatalf("toasts = %v, want one failed toast", sink.titles)
+	}
+	if len(sink.bodies) != 1 || sink.bodies[0] != "blocked on a dialog: Do you want to proceed?" {
+		t.Fatalf("body = %q, want the dialog line", sink.bodies)
+	}
+	if got := runs(t)[0]; got.Status != history.StatusFailed || !strings.Contains(got.Error, "blocked on a dialog:") {
+		t.Fatalf("history = %+v, want a failed run carrying the dialog line", got)
+	}
+}
+
 func TestRunNotifiesTheNotifierOfEveryStatusItRecords(t *testing.T) {
 	// Deciding what deserves a toast is notify's job; a runner that pre-filters
 	// puts the policy in two places.
@@ -378,6 +403,21 @@ func TestRunLeavesTheWorkspaceByDefault(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	h := &fakeHost{}
 	if err := New(h).Run(automation(), "cron"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.closed) != 0 {
+		t.Fatalf("closed without close_workspace: %q", h.closed)
+	}
+}
+
+// Existing mode defaults to never too: a successful run leaves its tab open
+// like any other unread run.
+func TestRunLeavesAnExistingRunsTabByDefault(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	a := automation()
+	a.Workspace, a.WorkspaceID = config.WorkspaceExisting, "w7"
+	h := &fakeHost{}
+	if err := New(h).Run(a, "cron"); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.closed) != 0 {

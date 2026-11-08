@@ -51,6 +51,9 @@ automations:
 	if a.Name != "triage" || !a.Disabled || a.Model != "sonnet" || a.Next.IsZero() || a.Next.Hour() != 9 {
 		t.Fatalf("automation %+v", a)
 	}
+	if a.BlockedGraceMinutes != 2 {
+		t.Fatalf("blocked_grace_minutes = %d, want the loader's default 2", a.BlockedGraceMinutes)
+	}
 	if a.Last == nil || a.Last.RunID != "r1" || a.Last.Status != "done" {
 		t.Fatalf("last %+v", a.Last)
 	}
@@ -119,6 +122,43 @@ func TestListCarriesCloseWorkspace(t *testing.T) {
 		name, _ := entry["name"].(string)
 		if close, _ := entry["close_workspace"].(string); close != want[name] {
 			t.Errorf("%s: close_workspace is %q in %s", name, close, raw)
+		}
+	}
+}
+
+// The panel will send blocked_grace_minutes later, so the listing carries it
+// for every entry, with the loader's default filled in.
+func TestListCarriesBlockedGrace(t *testing.T) {
+	setup(t, `automations:
+  - name: triage
+    cron: "0 9 * * 1-5"
+    repo: /x
+    prompt: p
+  - name: digest
+    cron: "0 17 * * 5"
+    repo: /x
+    prompt: p
+    blocked_grace_minutes: 5
+`)
+	l, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Automations []map[string]any `json:"automations"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]float64{"triage": 2, "digest": 5}
+	for _, entry := range got.Automations {
+		name, _ := entry["name"].(string)
+		if grace, _ := entry["blocked_grace_minutes"].(float64); grace != want[name] {
+			t.Errorf("%s: blocked_grace_minutes is %v in %s", name, entry["blocked_grace_minutes"], raw)
 		}
 	}
 }

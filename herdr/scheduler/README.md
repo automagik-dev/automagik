@@ -262,9 +262,32 @@ automations:
     agent_args: ["--verbose"]               # optional, verbatim agent flags
     timeout_minutes: 60           # optional bound on the run
     catch_up_minutes: 120         # how late a sleep-delayed run may still start; -1 never
-    close_workspace: on-success   # optional: close a done run's workspace; never (default)
+    blocked_grace_minutes: 2      # fail at once on a dialog after this long; -1 waits the timeout
+    close_workspace: on-success   # optional: close a done run's workspace (existing: its own tab)
     disabled: true                # optional: keep it, don't schedule it
 ```
+
+`blocked_grace_minutes` applies to both agent backends: `0` or an omitted key
+uses 2 minutes; `-1` waits until completion or the run timeout. A continuous
+blocked state past the grace fails the run with the dialog line and a notice.
+On hc the terminal is killed without removing its record. On herdr the scheduler
+re-reads both the agent status and `pane process-info` before asking it to stop.
+If the dialog cleared, it resumes the run without a blocked failure. It requests
+SIGTERM only when the foreground group is unchanged and is not missing, the shell,
+or the scheduler. The failure error and log say "asked the agent to stop (SIGTERM)";
+exit is not confirmed and SIGTERM is not escalated, so a TERM-ignoring dialog can
+survive. A refused or unsuccessful request is reported as such. These rechecks
+narrow the read/signal window; a change after them can still race the signal.
+Neither failure path asks to close the pane, tab, or workspace.
+
+Herdr prompt retries check the run deadline and wait one status-poll interval
+between submissions. If submission keeps reporting blocked but status never
+shows it, three consecutive mismatches fail with a clear error; a shorter run
+deadline wins. No signal is requested for this status mismatch.
+
+`ls --json` reports the effective grace (2 when the key is absent). A form that
+echoes that value back through `put` writes an explicit 2. A `put` that omits the
+key preserves the file's value; sending `0` removes the key and uses the default.
 
 For Copilot, `mcp_config` becomes `--additional-mcp-config @<path>`; the `@`
 tells Copilot to read the file rather than parse its path as inline JSON.
@@ -289,7 +312,14 @@ automations:
 Point several automations at the same `workspace_id` to collect their runs in one
 space. Each run opens a fresh tab labeled with its automation name and timestamp,
 uses `repo` as its working directory, and leaves your focus unchanged. Earlier tabs
-remain open for review; each run gets a distinct agent name.
+remain open for review; each run gets a distinct agent name. With
+`close_workspace: on-success` a successful run asks to close only the tab it opened.
+Closes in one scheduler process serialize per workspace and re-read its tabs under
+the lock immediately before acting: it leaves the last tab it can see. It also
+refuses when the list cannot be read or when the tab is no longer listed. A
+person closing the space's other tabs in between can still leave it last, and the
+app then takes the space with it. The lock is process-local: a manual `run` or a
+second daemon does not share it and can race the same way.
 
 Like `root`, this mode works directly in `repo` and creates no Git worktree. Runs
 sharing a directory can see each other's file changes. `workspace_id` is required
@@ -358,20 +388,27 @@ wizard warns while you're still choosing the cron, and `herdr-automations list`
 reports every overlap in the next week. If running them together isn't what you
 want, move a cron — one character, and the file still says what happens.
 
-**What happens to the tabs `workspace: existing` opens?** Same answer, one level
-down: they accumulate, and nothing reaps them. A tab you have read is a tab you
-close. `cleanup` has nothing to say about them — there is no worktree and no
-branch, so the only trace a run leaves is its line in `history.jsonl`.
+**What happens to the tabs `workspace: existing` opens?** They accumulate by default,
+and nothing reaps them: a tab you have read is a tab you close. `cleanup` has
+nothing to say about them — there is no worktree and no branch, so the only trace a
+run leaves is its line in `history.jsonl`. Set `close_workspace: on-success` to have
+a successful run ask for its own tab; the scheduler issues no space close itself.
+Closes in one scheduler process serialize per workspace and re-read under the lock:
+it leaves the last tab it can see. It refuses when the space's tabs cannot be
+read or when they no longer list it. A person closing the
+space's other tabs in the same moment can still leave it last, and the app then
+takes the space. A manual `run` or a second daemon has its own lock and can race
+the same way; the mutex coordinates only closes in one scheduler process.
 
 **What happens to the worktrees?** They accumulate on purpose: a run whose workspace
 is still open is a run nobody has looked at, which makes the Herdr sidebar the inbox.
 Closing it is how you say you're done.
 
 For a chore whose successful runs need no reading, `close_workspace: on-success`
-closes the workspace once the run is recorded `done` (not with `workspace: existing`).
-Failed, cancelled and timed-out runs stay open, and so does a run whose agent waits on
-you. The worktree stays on disk for `cleanup`
-([ADR 0012](docs/adr/0012-a-successful-run-may-close-its-workspace.md)).
+closes the workspace once the run is recorded `done`, or with `workspace: existing`
+only the tab that run opened. Failed, cancelled and timed-out runs stay open, and a
+run whose agent waits on a person is not closed. The worktree stays on disk for
+`cleanup` ([ADR 0012](docs/adr/0012-a-successful-run-may-close-its-workspace.md)).
 
 `herdr-automations cleanup` removes only the ones whose work already landed — the
 branch is an ancestor of the default branch, so either it was merged or the agent

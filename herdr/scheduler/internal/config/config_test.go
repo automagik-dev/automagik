@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func withConfig(t *testing.T, yaml string) {
@@ -212,9 +213,9 @@ automations:
 		"bad close_workspace": `
 automations:
   - {name: a, cron: "@daily", repo: /x, prompt: p, close_workspace: always}`,
-		"close_workspace in a shared workspace": `
+		"bad blocked grace": `
 automations:
-  - {name: a, cron: "@daily", repo: /x, prompt: p, workspace: existing, workspace_id: w1, close_workspace: on-success}`,
+  - {name: a, cron: "@daily", repo: /x, prompt: p, blocked_grace_minutes: -2}`,
 	}
 	for label, yaml := range cases {
 		t.Run(label, func(t *testing.T) {
@@ -277,6 +278,58 @@ func TestExistingWorkspaceValidation(t *testing.T) {
 	a.Workspace = WorkspaceRoot
 	if err := a.validate(BackendHerdr); err == nil {
 		t.Fatal("ignored workspace_id accepted")
+	}
+}
+
+// Closing an existing run is now meaningfully different from closing its
+// workspace: the host closes only the tab the run made, so the loader keeps it.
+func TestExistingWorkspaceMayCloseItsOwnTab(t *testing.T) {
+	withConfig(t, `automations:
+  - name: inbox
+    cron: "@hourly"
+    repo: /repo
+    prompt: check
+    workspace: existing
+    workspace_id: w7
+    close_workspace: on-success
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Invalid) != 0 || len(cfg.Automations) != 1 {
+		t.Fatalf("config = %+v", cfg)
+	}
+	if got := cfg.Find("inbox").CloseWorkspace; got != CloseOnSuccess {
+		t.Fatalf("close_workspace = %q, want on-success", got)
+	}
+}
+
+func TestBlockedGraceDefaultsAndMinusOne(t *testing.T) {
+	withConfig(t, `automations:
+  - {name: default, cron: "@daily", repo: /x, prompt: p}
+  - {name: slower, cron: "@daily", repo: /x, prompt: p, blocked_grace_minutes: 5}
+  - {name: never, cron: "@daily", repo: /x, prompt: p, blocked_grace_minutes: -1}
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]time.Duration{
+		"default": 2 * time.Minute,
+		"slower":  5 * time.Minute,
+		"never":   0,
+	} {
+		a := cfg.Find(name)
+		if a == nil {
+			t.Fatalf("%s did not load: %+v", name, cfg.Invalid)
+		}
+		if got := a.BlockedGrace(); got != want {
+			t.Errorf("%s: BlockedGrace() = %s, want %s", name, got, want)
+		}
+	}
+	if !cfg.Find("never").WaitsOutBlocked() || cfg.Find("default").WaitsOutBlocked() {
+		t.Error("only -1 should wait out a blocked agent")
 	}
 }
 

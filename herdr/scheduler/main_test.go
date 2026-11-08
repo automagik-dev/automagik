@@ -87,14 +87,44 @@ func TestPutCarriesCloseWorkspace(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses on-success with an existing workspace", func(t *testing.T) {
+	t.Run("accepts on-success with an existing workspace", func(t *testing.T) {
 		shared := putBase + "    workspace: existing\n    workspace_id: w7\n"
 		answer, after := runPut(t, shared, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","prompt":"p","workspace":"existing","workspace_id":"w7","close_workspace":"on-success"}`, "--original", "triage")
-		if !strings.Contains(answer, "close_workspace: on-success would close the shared workspace") {
-			t.Fatalf("the loader's refusal is not shown: %s", answer)
+		if strings.Contains(answer, `"problem"`) {
+			t.Fatalf("put refused it: %s", answer)
 		}
-		if after != shared {
-			t.Fatalf("a refused put changed the file:\n%s", after)
+		if !strings.Contains(after, "close_workspace: on-success") {
+			t.Fatalf("close_workspace not written:\n%s", after)
+		}
+	})
+}
+
+// blocked_grace_minutes is one of the keys a put that does not send it must
+// leave alone; sending 0 removes it and reads as the default.
+func TestPutCarriesBlockedGrace(t *testing.T) {
+	with := putBase + "    blocked_grace_minutes: 7\n"
+
+	t.Run("writes it", func(t *testing.T) {
+		answer, after := runPut(t, putBase, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","prompt":"p","blocked_grace_minutes":5}`, "--original", "triage")
+		if strings.Contains(answer, `"problem"`) {
+			t.Fatalf("put refused it: %s", answer)
+		}
+		if !strings.Contains(after, "blocked_grace_minutes: 5") {
+			t.Fatalf("blocked_grace_minutes not written:\n%s", after)
+		}
+	})
+
+	t.Run("keeps a hand-written value when the key is not sent", func(t *testing.T) {
+		_, after := runPut(t, with, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","prompt":"p"}`, "--original", "triage")
+		if !strings.Contains(after, "blocked_grace_minutes: 7") {
+			t.Fatalf("hand-written blocked_grace_minutes lost:\n%s", after)
+		}
+	})
+
+	t.Run("removes the key when sent zero", func(t *testing.T) {
+		_, after := runPut(t, with, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","prompt":"p","blocked_grace_minutes":0}`, "--original", "triage")
+		if strings.Contains(after, "blocked_grace_minutes") {
+			t.Fatalf("a zero blocked_grace_minutes left the key:\n%s", after)
 		}
 	})
 }

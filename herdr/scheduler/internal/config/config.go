@@ -39,6 +39,9 @@ const (
 
 // CloseWorkspace says whether a run closes its workspace once it is done
 // (ADR 0012). The open workspace is otherwise the sign nobody read the run.
+// Existing mode asks for the tab this run opened, after checking that the tab
+// is not the space's last one at that moment. A person closing the other tabs
+// in between can still leave it last.
 type CloseWorkspace string
 
 const (
@@ -92,6 +95,10 @@ type Automation struct {
 	// CatchUpMinutes is how late a missed occurrence may still run — the
 	// laptop-was-asleep case. 0 uses the default (120); -1 never catches up.
 	CatchUpMinutes int `yaml:"catch_up_minutes,omitempty"`
+	// BlockedGraceMinutes is how long the agent may sit on a dialog before
+	// the run fails. 0 uses the default (2); -1 waits as long as the
+	// timeout allows, as before.
+	BlockedGraceMinutes int `yaml:"blocked_grace_minutes,omitempty"`
 	// Session is the Herdr session the run happens in, whoever triggers it.
 	// Empty means the session of the process running it (ADR 0010).
 	Session string `yaml:"session,omitempty"`
@@ -156,6 +163,9 @@ func (a *Automation) applyDefaults() {
 	if a.CatchUpMinutes == 0 {
 		a.CatchUpMinutes = 120
 	}
+	if a.BlockedGraceMinutes == 0 {
+		a.BlockedGraceMinutes = 2
+	}
 }
 
 // CatchUp is how late this automation may still start; negative means never.
@@ -165,6 +175,25 @@ func (a Automation) CatchUp() time.Duration {
 	}
 	return time.Duration(a.CatchUpMinutes) * time.Minute
 }
+
+// BlockedGrace is how long an agent may sit blocked before the run fails.
+// -1 keeps the old wait-for-the-timeout behaviour and yields 0. A zero value
+// reaching here is a raw Automation that never went through the loader, so it
+// gets the default.
+func (a Automation) BlockedGrace() time.Duration {
+	switch {
+	case a.BlockedGraceMinutes < 0:
+		return 0
+	case a.BlockedGraceMinutes == 0:
+		return 2 * time.Minute
+	default:
+		return time.Duration(a.BlockedGraceMinutes) * time.Minute
+	}
+}
+
+// WaitsOutBlocked reports whether the run should wait for the timeout on a
+// blocked agent instead of failing after the grace.
+func (a Automation) WaitsOutBlocked() bool { return a.BlockedGraceMinutes < 0 }
 
 func (a *Automation) validate(backend Backend) error {
 	if a.Name == "" {
@@ -194,9 +223,9 @@ func (a *Automation) validate(backend Backend) error {
 	if a.CloseWorkspace != "" && a.CloseWorkspace != CloseNever && a.CloseWorkspace != CloseOnSuccess {
 		return fmt.Errorf("%s: close_workspace must be never or on-success, got %q", a.Name, a.CloseWorkspace)
 	}
-	// Closing a run's tab can close the workspace it shares with others.
-	if a.CloseWorkspace == CloseOnSuccess && a.Workspace == WorkspaceExisting {
-		return fmt.Errorf("%s: close_workspace: on-success would close the shared workspace; it needs worktree or root", a.Name)
+	if a.BlockedGraceMinutes < -1 {
+		return fmt.Errorf("%s: blocked_grace_minutes must be -1, 0 (the default) or a positive number, got %d",
+			a.Name, a.BlockedGraceMinutes)
 	}
 	// The name becomes a directory under Herdr's config dir; whether that
 	// session is running is a 3am fact, not a load-time one.
