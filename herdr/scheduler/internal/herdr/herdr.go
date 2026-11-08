@@ -141,6 +141,9 @@ type createResult struct {
 	Workspace struct {
 		WorkspaceID string `json:"workspace_id"`
 	} `json:"workspace"`
+	Tab struct {
+		TabID string `json:"tab_id"`
+	} `json:"tab"`
 	RootPane struct {
 		PaneID string `json:"pane_id"`
 	} `json:"root_pane"`
@@ -175,17 +178,25 @@ func (c Client) WorkspaceCreate(cwd, label string) (workspaceID, paneID string, 
 	return res.ids("workspace create")
 }
 
-// TabCreate gives a run its own shell without creating a workspace.
-func (c Client) TabCreate(workspaceID, cwd, label string) (string, error) {
+// TabCreate gives a run its own shell without creating a workspace. It returns
+// the tab it made and that tab's root pane; an older Herdr that leaves the tab
+// id out still returns the pane, so the run can go on without a tab to close.
+func (c Client) TabCreate(workspaceID, cwd, label string) (tabID, paneID string, err error) {
 	var res createResult
 	if err := c.run(&res, "tab", "create", "--workspace", workspaceID,
 		"--cwd", cwd, "--label", label, "--no-focus"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if res.RootPane.PaneID == "" {
-		return "", fmt.Errorf("tab create returned no pane id")
+		return "", "", fmt.Errorf("tab create returned no pane id")
 	}
-	return res.RootPane.PaneID, nil
+	return res.Tab.TabID, res.RootPane.PaneID, nil
+}
+
+// TabClose closes one tab. Closing a workspace's last tab closes the workspace
+// too, so this is only ever aimed at a tab a run made for itself.
+func (c Client) TabClose(tabID string) error {
+	return c.run(nil, "tab", "close", tabID)
 }
 
 // Worktree is one checkout backing a workspace. OpenWorkspaceID is empty once

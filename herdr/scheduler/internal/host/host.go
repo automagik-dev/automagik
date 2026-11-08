@@ -15,6 +15,7 @@ package host
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ import (
 type Session struct {
 	WorkspaceID string
 	PaneID      string
+	// TabID is the tab this run opened when it opened one rather than a whole
+	// workspace (workspace: existing). Empty when the backend cannot say which
+	// tab it made, and then close_workspace leaves it alone.
+	TabID string
 	// HerdrSession is the Herdr session both IDs belong to. Not to be confused
 	// with Session itself, which predates Herdr having sessions.
 	HerdrSession string
@@ -36,8 +41,9 @@ type Session struct {
 type Host interface {
 	Provision(a config.Automation) (Session, error)
 	Do(s Session, a config.Automation, timeout time.Duration) error
-	// Close closes a done run's workspace (close_workspace, ADR 0012). One
-	// already gone is closed. It leaves alone a run still waiting on a person.
+	// Close closes a done run's workspace, or in existing mode only the tab
+	// the run opened (close_workspace, ADR 0012). One already gone is closed.
+	// It leaves alone a run still waiting on a person.
 	Close(s Session, a config.Automation) error
 }
 
@@ -102,7 +108,7 @@ func (h *live) in(a config.Automation) *live {
 func (h *live) Provision(a config.Automation) (Session, error) {
 	h = h.in(a)
 	label := "auto: " + a.Name
-	var workspaceID, paneID string
+	var workspaceID, paneID, tabID string
 	var err error
 	switch a.Workspace {
 	case config.WorkspaceWorktree:
@@ -110,13 +116,13 @@ func (h *live) Provision(a config.Automation) (Session, error) {
 		workspaceID, paneID, err = h.ops.WorktreeCreate(a.Repo, branch, label)
 	case config.WorkspaceExisting:
 		workspaceID = a.WorkspaceID
-		paneID, err = h.ops.TabCreate(workspaceID, a.Repo, label+" "+time.Now().Format("2006-01-02 15:04"))
+		tabID, paneID, err = h.ops.TabCreate(workspaceID, a.Repo, label+" "+time.Now().Format("2006-01-02 15:04"))
 	case config.WorkspaceRoot:
 		workspaceID, paneID, err = h.ops.WorkspaceCreate(a.Repo, label)
 	default:
 		err = fmt.Errorf("unknown workspace mode %q", a.Workspace)
 	}
-	return Session{WorkspaceID: workspaceID, PaneID: paneID, HerdrSession: h.ops.CurrentSession()}, err
+	return Session{WorkspaceID: workspaceID, PaneID: paneID, TabID: tabID, HerdrSession: h.ops.CurrentSession()}, err
 }
 
 // Do runs the automation's work in the session and reports whether it worked.
@@ -124,8 +130,10 @@ func (h *live) Do(s Session, a config.Automation, timeout time.Duration) error {
 	return h.in(a).workFor(a).do(s, timeout)
 }
 
-// Close closes the run's workspace in the session it was opened in, unless
+// Close closes a done run's workspace in the session it was opened in, unless
 // its agent waits on a person: herdr's agent wait counts blocked as settled.
+// In existing mode it closes only the tab this run opened, never the shared
+// workspace, and closes nothing when it cannot tell which tab that was.
 func (h *live) Close(s Session, a config.Automation) error {
 	ops := h.ops
 	if s.HerdrSession != "" {
@@ -135,6 +143,13 @@ func (h *live) Close(s Session, a config.Automation) error {
 		if status, err := ops.AgentStatus(s.PaneID); err == nil && status == "blocked" {
 			return fmt.Errorf("its agent is waiting on you")
 		}
+	}
+	if a.Workspace == config.WorkspaceExisting {
+		if s.TabID == "" {
+			log.Printf("%s: done, but its tab stays open: the run has no tab id", a.Name)
+			return nil
+		}
+		return ops.TabClose(s.TabID)
 	}
 	if err := ops.WorkspaceClose(s.WorkspaceID); err != nil && !ops.HasCode(err, herdr.CodeWorkspaceGone) {
 		return err

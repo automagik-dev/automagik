@@ -42,19 +42,43 @@ The fork's patch, one line per path: the check script allows exactly these to di
 file, to be here) and prints each as patched or added; any other difference fails.
 
 ```
-internal/api/api.go            — patched: Automation carries close_workspace, set from the entry in List()
-internal/api/api_test.go       — patched: ls --json shows close_workspace, and never by default
-internal/config/edit_test.go   — patched: put's merge cases for close_workspace
-main.go                        — patched: put copies close_workspace into the entry; an empty one removes it
-main_test.go                   — added: the put wire path carries close_workspace
+docs/adr/0012-a-successful-run-may-close-its-workspace.md — patched: existing mode closes its own tab; blocked grace
+internal/api/api.go            — patched: ls --json carries blocked_grace_minutes
+internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default
+internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab
+internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
+internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
+internal/hc/hc.go              — patched: hc read, the blocked run's screen
+internal/herdr/herdr.go        — patched: tab create returns the tab id; tab close
+internal/herdr/herdr_test.go   — patched: tab id and tab close wire cases
+internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id
+internal/host/hc_test.go       — patched: blocked past the grace, a blip, and -1
+internal/host/host.go          — patched: Session carries the run's tab; existing mode closes only that tab
+internal/host/host_test.go     — patched: own-tab close, a missing tab id, worktree/root unchanged
+internal/host/ops.go           — patched: TabCreate returns the tab id and TabClose is in the seam
+internal/host/screen.go        — added: the dialog line read from a blocked screen
+internal/host/screen_test.go   — added: dialog line, control characters, the bound and the fallback
+internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default
+main.go                        — patched: put copies blocked_grace_minutes into the entry
+main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted
+README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close
 ```
 
-Why: the pack's panel is to set `close_workspace` per automation (issue #498). Upstream's config
-layer, validation, default and runner already honour it (`never` | `on-success`, default `never`,
-refused with `workspace: existing`); the API did not. `ls --json` now names it for every entry, and
-`put` accepts it with the same merge rules as the other keys: a value writes it, a request without
-the key keeps the hand-written value, an empty value removes the key, and an invalid value (including
-`on-success` with `workspace: existing`) is refused by the loader. Keep the patch to this list.
+Why: the #498 stopgap, two scheduler changes. An agent that stays `blocked` on a
+dialog longer than `blocked_grace_minutes` (default 2, `-1` keeps the old
+wait-for-the-timeout behaviour) now fails at once. The history error carries the
+dialog line from the screen, the failure goes out through notify, and the blocked
+terminal is ended; its workspace/tab stays open like any failed run's. And
+`close_workspace: on-success` is valid with `workspace: existing`: it closes only
+the tab the run opened, never the shared workspace or any other tab, and closes
+nothing when the run has no tab id. The loader no longer refuses that combination,
+and `ls --json` / `put` carry `blocked_grace_minutes` like the other keys.
+
+The earlier patch is still why `close_workspace` exists in the API at all: the pack's
+panel sets it per automation (issue #498). `ls --json` names it for every entry, and
+`put` accepts it with the same merge rules as the other keys: a value writes it, a
+request without the key keeps the hand-written value, an empty value removes the key.
+An invalid value is refused by the loader. Keep the patch to this list.
 
 ## Refreshing
 

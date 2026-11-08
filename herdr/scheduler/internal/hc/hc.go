@@ -117,6 +117,16 @@ func (Client) Get(address string) (Terminal, error) {
 	return t, err
 }
 
+// Read returns the terminal's screen as plain text, without its history. It is
+// what a blocked run quotes in its failure line.
+func (Client) Read(address string) (string, error) {
+	var res struct {
+		Text string `json:"text"`
+	}
+	err := run(&res, "read", address, "--json")
+	return res.Text, err
+}
+
 // Kill ends a terminal's program. A finished terminal is fine.
 func (Client) Kill(address string) error { return run(nil, "kill", address, "--json") }
 

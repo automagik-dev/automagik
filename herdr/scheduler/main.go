@@ -393,8 +393,8 @@ func putCmd(args []string) error {
 		Name: in.Name, Cron: in.Cron, Repo: in.Repo, Workspace: in.Workspace, WorkspaceID: in.WorkspaceID,
 		Agent: in.Agent, Model: in.Model, Template: in.Template, Prompt: in.Prompt, Workflow: in.Workflow,
 		MCPConfig: in.MCPConfig, AgentArgs: in.AgentArgs, TimeoutMinutes: in.TimeoutMinutes,
-		CatchUpMinutes: in.CatchUpMinutes, Disabled: in.Disabled,
-		CloseWorkspace: config.CloseWorkspace(in.CloseWorkspace),
+		CatchUpMinutes: in.CatchUpMinutes, BlockedGraceMinutes: in.BlockedGraceMinutes,
+		Disabled: in.Disabled, CloseWorkspace: config.CloseWorkspace(in.CloseWorkspace),
 	}
 	return printJSON(config.Put(original, a, given, dryRun))
 }

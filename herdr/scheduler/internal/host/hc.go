@@ -23,6 +23,7 @@ type hcOps interface {
 	Run(cwd string, labels map[string]string, argv []string) (string, error)
 	Wait(address string, timeout time.Duration) (hc.Wait, error)
 	Get(address string) (hc.Terminal, error)
+	Read(address string) (string, error)
 	Kill(address string) error
 	Rm(address string) error
 	// MainCheckout is the repo's main working tree, whatever checkout repo is.
@@ -41,6 +42,16 @@ type hcHost struct {
 	ops   hcOps
 	home  string
 	knobs knobs
+	// clock measures the blocked grace. nil is time.Now; the tests advance it
+	// instead of sleeping out a real grace.
+	clock func() time.Time
+}
+
+func (h *hcHost) now() time.Time {
+	if h.clock != nil {
+		return h.clock()
+	}
+	return time.Now()
 }
 
 // Provision makes the place and starts the agent there with its prompt.
@@ -54,6 +65,7 @@ func (h *hcHost) Provision(a config.Automation) (Session, error) {
 		return Session{}, err
 	}
 	space, cwd := newID("sp"), a.Repo
+	var tabID string
 	switch a.Workspace {
 	case config.WorkspaceWorktree:
 		cwd, err = h.worktree(a)
@@ -62,18 +74,25 @@ func (h *hcHost) Provision(a config.Automation) (Session, error) {
 		}
 	case config.WorkspaceExisting:
 		space = a.WorkspaceID
+		// The app adopts this terminal into the tab named by its label, so
+		// that id is what Close can later close without touching the space.
+		tabID = newID("tb")
 	case config.WorkspaceRoot:
 	default:
 		return Session{}, fmt.Errorf("unknown workspace mode %q", a.Workspace)
 	}
+	tab := tabID
+	if tab == "" {
+		tab = newID("tb")
+	}
 	// An id the app does not know becomes a new space or tab, unnamed, so it
 	// is called after its folder and nests under its repo.
-	labels := map[string]string{"herdr.space": space, "herdr.tab": newID("tb"), "automation": a.Name}
+	labels := map[string]string{"herdr.space": space, "herdr.tab": tab, "automation": a.Name}
 	address, err := h.ops.Run(cwd, labels, argv)
 	if err != nil {
 		return Session{WorkspaceID: space}, fmt.Errorf("start %s: %w", argv[0], err)
 	}
-	return Session{WorkspaceID: space, PaneID: address}, nil
+	return Session{WorkspaceID: space, PaneID: address, TabID: tabID}, nil
 }
 
 // worktree checks out a fresh branch where the app's "New worktree…" would:
@@ -96,6 +115,9 @@ func (h *hcHost) Do(s Session, a config.Automation, timeout time.Duration) error
 	deadline := time.Now().Add(timeout)
 	started := time.Now()
 	turn, working := 0, false
+	grace := a.BlockedGrace()
+	failFast := !a.WaitsOutBlocked()
+	var blockedSince time.Time
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -120,6 +142,19 @@ func (h *hcHost) Do(s Session, a config.Automation, timeout time.Duration) error
 		case w.Reason == "status" && (turn > 0 || working) && (w.Status == "done" || w.Status == "idle"):
 			return nil
 		}
+		// A dialog is not work: after the grace the run fails now, with the
+		// line the person would have read, instead of holding its slot until
+		// the timeout. A blocked blip under the grace is left alone.
+		if failFast && w.Status == "blocked" {
+			if blockedSince.IsZero() {
+				blockedSince = h.now()
+			}
+			if h.now().Sub(blockedSince) > grace {
+				return h.blockedOutcome(s)
+			}
+		} else {
+			blockedSince = time.Time{}
+		}
 		// No turn yet after this long: the agent is sitting on something only
 		// a person can answer, like Claude's trust dialog in a folder it has
 		// never seen. It reports no status there at all, not even blocked.
@@ -132,6 +167,25 @@ func (h *hcHost) Do(s Session, a config.Automation, timeout time.Duration) error
 			time.Sleep(h.knobs.statusPoll)
 		}
 	}
+}
+
+// blockedOutcome ends the blocked agent's terminal and reports the dialog it
+// was waiting on. The workspace and tab are left open, as any failed run's
+// are: they are where a person goes to read what happened.
+func (h *hcHost) blockedOutcome(s Session) error {
+	line := ""
+	if screen, err := h.ops.Read(s.PaneID); err == nil {
+		line = promptLine(screen)
+	} else {
+		log.Printf("could not read the screen of %s: %v", s.PaneID, err)
+	}
+	if err := h.ops.Kill(s.PaneID); err != nil && !errors.Is(err, hc.ErrNotFound) {
+		log.Printf("could not end the blocked agent on %s: %v", s.PaneID, err)
+	}
+	if line == "" {
+		return fmt.Errorf("blocked on a dialog")
+	}
+	return fmt.Errorf("blocked on a dialog: %s", line)
 }
 
 // Close kills the run's terminal, which makes the app remove its space, then

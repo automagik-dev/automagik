@@ -14,17 +14,23 @@ next one fail (#13). Users worked around it by telling the agent to run
 
 An opt-in key, `close_workspace: never | on-success`, default `never`. With
 `on-success` the runner records the run `done`, then asks the host to close
-the run's workspace:
+the run's workspace, or the tab the run opened when the automation shares a
+workspace:
 
-- TUI: `herdr workspace close <id>`. The worktree and its uncommitted files stay
-  (measured 2026-11-04), so `cleanup` keeps its job.
+- TUI, `workspace: worktree | root`: `herdr workspace close <id>`. The worktree
+  and its uncommitted files stay (measured 2026-11-04), so `cleanup` keeps its
+  job.
+- TUI, `workspace: existing`: `herdr tab close <tab_id>`, aimed at the tab this
+  run created. The shared workspace and every other tab stay open; a run that
+  never learned its tab id closes nothing and says why in the log.
 - hc: `hc kill` then `hc rm` on the run's terminal. The app removes the space
   itself once its terminal is killed (measured 2026-11-04).
 
 A run whose agent ended `blocked` is not closed: Herdr's `agent wait` counts
-blocked as settled, so it is recorded `done` while waiting on a person.
-`on-success` with `workspace: existing` is refused at load: closing a run's tab
-can close the shared workspace with it.
+blocked as settled, so it is recorded `done` while waiting on a person. The hc
+host instead fails a run that stays blocked past `blocked_grace_minutes`
+(default 2, `-1` waits the timeout out) and ends that agent's terminal; like any
+failure, its space stays open.
 
 ## Why
 
