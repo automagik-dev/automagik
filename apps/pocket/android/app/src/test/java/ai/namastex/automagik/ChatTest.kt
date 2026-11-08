@@ -336,4 +336,97 @@ class ChatTest {
         assertFalse(Chat.offered(t("claude", app = "claude-code", state = "finished")))
         assertFalse(Chat.offered(null))
     }
+
+    // ---- #731: a Main Bot's full DSH chat on the phone
+
+    private fun dshLive(write: Boolean = true) = state("dsh:session-1").copy(dshWrite = write)
+
+    /**
+     * Row "a bots-dsh restart reconnects to the same chat": the bridge losing the socket (`unavailable`) or bots-dsh
+     * shutting down (`closed`) keeps the chat, reconnecting; a send in flight becomes maybe, kept across the reopen
+     * with Retry (same id, deduped by bots-dsh's log); the next snapshot is the same chat again.
+     */
+    @Test fun aBotsDshRestartKeepsTheDshChatAndResumesIt() {
+        for (reason in listOf("unavailable", "closed", "timeout", "moved", "ended")) {
+            val busy = blocked(dshLive()).copy(messages = listOf(Chat.Message("m", "hi", "sending")))
+            val withCard = Chat.reduce(busy, j("""{"type":"approval","row":${approval()}}"""))
+            val dropped = Chat.reduce(withCard, j("""{"type":"gone","reason":"$reason"}"""))
+            assertFalse(reason, dropped.gone)
+            assertTrue(reason, dropped.resuming)
+            assertFalse(dropped.connected)
+            assertEquals(Chat.RESUMING, dropped.error)
+            assertNull("a card from before the drop is never answered blind", dropped.approval)
+            assertFalse(ChatActions.canSend(dropped))
+            assertEquals(listOf("m" to "maybe"), Chat.unknown(dropped).map { it.id to it.state })
+            // The reopen (PocketViewModel.openChat) starts from the unknown messages; its snapshot is the same chat.
+            val back = Chat.reduce(Chat.State("dsh:session-1", messages = Chat.unknown(dropped), dshWrite = true),
+                j("""{"type":"snapshot","rows":[{"id":"r1","kind":"text","role":"assistant","text":"hello"}],"screen":[],
+                "status":{"state":"idle"},"approval":null,"held":[]}"""))
+            assertTrue(back.connected); assertFalse(back.resuming); assertNull(back.error)
+            assertEquals(listOf("r1"), back.rows.map { it.id })
+            assertTrue(ChatActions.canRetry(back, back.messages.single()))
+        }
+        // About a minute of automatic tries, then the Reconnect button.
+        assertEquals(1_000L, Chat.resumeDelayMs(0))
+        assertEquals(30_000L, Chat.resumeDelayMs(Chat.RESUME_DELAYS_MS.size - 1))
+        assertNull(Chat.resumeDelayMs(Chat.RESUME_DELAYS_MS.size))
+        // A terminal's chat that went away ends, as before.
+        val terminal = Chat.reduce(state("t1"), j("""{"type":"gone","reason":"unavailable"}"""))
+        assertTrue(terminal.gone); assertFalse(terminal.resuming); assertNull(terminal.error)
+    }
+
+    /** A subscribe bots-dsh refused ends the DSH chat and says why; an end with no reason reads Ended. */
+    @Test fun aRefusedDshSubscribeEndsTheChatAndSaysWhy() {
+        val hidden = Chat.reduce(dshLive(), j("""{"type":"gone","reason":"not-shown"}"""))
+        assertTrue(hidden.gone); assertFalse(hidden.resuming)
+        assertEquals("Show this project in Automagik first.", hidden.error)
+        assertEquals("This Bot is no longer on the computer.", Chat.reduce(dshLive(), j("""{"type":"gone","reason":"not-found"}""")).error)
+        val plain = Chat.reduce(dshLive(), j("""{"type":"gone"}"""))
+        assertTrue(plain.gone); assertNull(plain.error)
+    }
+
+    /**
+     * Row "a read-only chat cannot send and says why": a DSH chat on a bridge whose hello has no `dshWrite` has no
+     * message box, and its bottom line names the cause and the way out. A chat that cannot send for any other reason
+     * says so too; only a chat still connecting (the list says "Connecting chat…") has no line.
+     */
+    @Test fun aReadOnlyDshChatCannotSendAndSaysWhy() {
+        val ro = dshLive(write = false)
+        assertFalse(ChatActions.canSend(ro))
+        assertEquals(ChatActions.READ_ONLY, ChatActions.whyNoSend(ro))
+        assertTrue(ChatActions.READ_ONLY.contains("Pocket Link") && ChatActions.READ_ONLY.contains(Chat.ANSWER_ON_COMPUTER))
+        assertNull(ChatActions.whyNoSend(dshLive()))
+        assertNull(ChatActions.whyNoSend(state("t1")))
+        assertEquals("This chat ended. Nothing typed here is sent.", ChatActions.whyNoSend(ro.copy(gone = true)))
+        assertEquals("The machine is offline. Nothing is sent until it is back.", ChatActions.whyNoSend(dshLive().copy(offline = true)))
+        val resuming = Chat.reduce(dshLive(), j("""{"type":"gone","reason":"unavailable"}"""))
+        assertEquals("Reconnecting. Nothing is sent until the chat is back.", ChatActions.whyNoSend(resuming))
+        // While resuming the hello may lack dshWrite (bots-dsh still down): it reads reconnecting, not read only.
+        assertEquals("Reconnecting. Nothing is sent until the chat is back.", ChatActions.whyNoSend(resuming.copy(dshWrite = false)))
+        assertEquals("Not connected. Nothing is sent.", ChatActions.whyNoSend(Chat.State("dsh:x", error = "Chat disconnected: hung up")))
+        assertNull(ChatActions.whyNoSend(Chat.State("dsh:x")))
+    }
+
+    /** Row "interrupt stops the turn and the row reads stopped": bots-dsh marks the cut assistant row `interrupted`. */
+    @Test fun anInterruptedTurnReadsStopped() {
+        val working = Chat.reduce(dshLive(), j("""{"type":"status","status":{"state":"working"}}"""))
+        assertTrue(ChatActions.canInterrupt(working))
+        assertEquals("Interrupt sent.", Chat.interruptNotice(j("""{"ok":true}"""), dsh = true))
+        val cut = Chat.reduce(working, j("""{"type":"rows","rows":[{"id":"r1","kind":"text","role":"assistant","text":"Half","interrupted":true},
+            {"id":"r2","kind":"text","role":"assistant","text":"Whole"},{"id":"r3","kind":"text","role":"assistant","text":"x","interrupted":"true"}]}"""))
+        assertEquals(listOf(true, false, false), cut.rows.map { it.interrupted })
+        assertEquals("Stopped", Chat.STOPPED)
+        val idle = Chat.reduce(cut, j("""{"type":"status","status":{"state":"idle"}}"""))
+        assertFalse(ChatActions.canInterrupt(idle))
+    }
+
+    /** The rows and the agent agree: the open chat's state goes into its chat.list row until the next read. */
+    @Test fun theOpenChatsStateGoesIntoItsListRow() {
+        fun row(t: String, status: String) = Chat.Terminal(t, "", "dsh", "Lead", status, "session")
+        val list = listOf(row("dsh:session-1", "blocked"), row("dsh:session-2", "working"))
+        assertEquals(listOf("idle", "working"), Chat.withStatus(list, "dsh:session-1", "idle").map { it.status })
+        assertSame(list, Chat.withStatus(list, "dsh:session-1", "blocked"))
+        assertSame(list, Chat.withStatus(list, "dsh:other", "idle"))
+        assertSame(list, Chat.withStatus(list, "dsh:session-1", ""))
+    }
 }

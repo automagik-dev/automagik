@@ -42,8 +42,10 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 }
 
 /**
- * A chat (RFC 0015 delivery 5): a terminal's agent, or an Automagik Bot's chat (`dsh:`, read only). Rows are plain
- * text ([ChatText]); which buttons show is [ChatActions]'s alone. [onShowTerminal] is null where there is no terminal.
+ * A chat (RFC 0015 delivery 5): a terminal's agent, or an Automagik Bot's chat (`dsh:`; it takes writes only when the
+ * bridge's hello says `dshWrite`). Rows are plain text ([ChatText]); which buttons show is [ChatActions]'s alone, and
+ * without a message box the bottom line says why ([ChatActions.whyNoSend]). [onShowTerminal] is null where there is
+ * no terminal.
  */
 @Composable fun ChatPane(vm: PocketViewModel, ref: TerminalRef, onShowTerminal: (() -> Unit)?, onBack: () -> Unit, modifier: Modifier = Modifier) {
     DisposableEffect(ref) { vm.openChat(ref); onDispose { vm.closeChat(ref) } }
@@ -76,7 +78,8 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
             items(s.messages, key = { "m:" + it.id }) { m -> MessageView(m, s, onSendNow = { confirmDraft = it }, onCancel = vm::chatCancelHeld, onRetry = vm::chatRetry) }
             if (count == 0 && s.error == null) item("empty") { Hint(if (s.connected) "No messages yet." else "Connecting chat…") }
         }
-        if (s.readOnly) Text("Read only on the phone. ${Chat.ANSWER_ON_COMPUTER}.", fontSize = 12.sp, color = Muted,
+        val why = ChatActions.whyNoSend(s)
+        if (why != null) Text(why, fontSize = 12.sp, color = Muted,
             modifier = Modifier.fillMaxWidth().background(Chrome).padding(14.dp).navigationBarsPadding())
         else if (ChatActions.canSend(s)) Row(Modifier.fillMaxWidth().background(Chrome).padding(10.dp, 4.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(draft, { draft = it }, placeholder = { Text("Message this agent…", fontSize = 12.sp) }, modifier = Modifier.weight(1f), maxLines = 5, shape = RoundedCornerShape(12.dp))
@@ -157,6 +160,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                     Column(Modifier.padding(10.dp, 8.dp)) {
                         ChatTextView(row.text, openLink)
                         if (row.cut) Text("Cut here: open in the terminal for the rest.", fontSize = 11.sp, color = Muted)
+                        if (row.interrupted) Text(Chat.STOPPED, fontSize = 11.sp, color = Muted)
                     }
                 }
             }

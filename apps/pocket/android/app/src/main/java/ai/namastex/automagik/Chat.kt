@@ -47,7 +47,9 @@ object Chat {
         val choices: List<String> = emptyList(), val open: Boolean = false, val answerable: Boolean = true,
         val prompt: String = "", val cut: Boolean = false, val why: String = "", val state: String = "", val msg: String = "",
         /** A question's option labels, in order (option 1 first), and whether several can be picked. */
-        val options: List<String> = emptyList(), val multi: Boolean = false
+        val options: List<String> = emptyList(), val multi: Boolean = false,
+        /** An assistant text row whose turn was interrupted (bots-dsh pocket-chat.js rowsOf): it reads [STOPPED]. */
+        val interrupted: Boolean = false
     ) {
         companion object {
             fun parse(j: JSONObject?): Row? {
@@ -57,7 +59,8 @@ object Chat {
                 return Row(id, s("kind"), s("source"), j.optLong("turn", 0), s("role"), s("text"), s("tool"), s("summary"),
                     s("input"), s("output"), j.optBoolean("ok", true), s("call"), j.optJSONArray("choices").strings(),
                     j.optBoolean("open", false), j.optBoolean("answerable", true), s("prompt"), j.optBoolean("cut", false),
-                    s("why"), s("state"), s("msg"), j.optJSONArray("options").strings(), j.optBoolean("multi", false))
+                    s("why"), s("state"), s("msg"), j.optJSONArray("options").strings(), j.optBoolean("multi", false),
+                    j.opt("interrupted") == true)
             }
         }
     }
@@ -107,7 +110,9 @@ object Chat {
         val screenOnly: Boolean = false,
         val more: Boolean = true,
         /** The bridge's hello said `dshWrite: true`: a DSH chat takes send, answer and interrupt. */
-        val dshWrite: Boolean = false
+        val dshWrite: Boolean = false,
+        /** A DSH chat whose bots-dsh socket went away ([RESUMABLE]): the phone connects again by itself. */
+        val resuming: Boolean = false
     ) {
         val readOnly: Boolean get() = Chat.readOnly(terminal, dshWrite)
         val dsh: Boolean get() = isDsh(terminal)
@@ -125,7 +130,8 @@ object Chat {
                 status = Status.parse(e.optJSONObject("status")) ?: s.status,
                 approval = Row.parse(e.optJSONObject("approval"))?.takeIf { it.open },
                 question = Row.parse(e.optJSONObject("question"))?.takeIf { it.open },
-                messages = held(s.messages, e.optJSONArray("held")), connected = true, gone = false, offline = false, error = null)
+                messages = held(s.messages, e.optJSONArray("held")), connected = true, gone = false, offline = false, error = null,
+                resuming = false)
         }
         "rows" -> s.copy(rows = merge(s.rows, e.optJSONArray("rows").rows()).takeLast(MAX_ROWS))
         "screen" -> s.copy(screen = e.optJSONArray("rows").rows())
@@ -139,9 +145,50 @@ object Chat {
         "sending" -> message(s, e.optString("id")) { it.copy(state = "sending", why = "") }
         "matched" -> s.copy(messages = s.messages.filterNot { it.id == e.optString("id") })
         "cancelled" -> s.copy(messages = s.messages.filterNot { it.id == e.optString("id") })
-        "gone" -> s.copy(gone = true, connected = false, approval = null, question = null)
+        "gone" -> gone(s, e.optString("reason"))
         "offline" -> s.copy(offline = true, approval = null, question = null)
         else -> s
+    }
+
+    /** The mark on an assistant row whose turn was interrupted. */
+    const val STOPPED = "Stopped"
+    /** A DSH chat coming back by itself after its bots-dsh socket went away. */
+    const val RESUMING = "Automagik on the computer stopped answering. Reconnecting…"
+    /** A DSH chat that did not come back within [RESUME_DELAYS_MS]: the Reconnect button stays. */
+    const val NOT_ANSWERING = "Automagik on the computer isn’t answering. Reconnect once it is back."
+    /** Waits before each automatic reconnect of a DSH chat, about a minute in all; then the person reconnects. */
+    val RESUME_DELAYS_MS = listOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L)
+
+    /**
+     * Why a DSH chat's stream ended that a new connection can come back from. `unavailable`, `timeout`: the bridge lost
+     * the bots-dsh socket (dsh-source.mjs `onClose`, or a subscribe it could not make); `closed`: bots-dsh shut down
+     * (pocket-chat.js `close`, a restart); `moved`, `ended`: the Bot's Session moved on or its follow ended. The
+     * `dsh:` terminal names the Bot, so the next subscribe follows its current Session, or says why it can't.
+     */
+    val RESUMABLE = setOf("unavailable", "timeout", "closed", "moved", "ended")
+    fun resumable(s: State, reason: String) = s.dsh && reason in RESUMABLE
+
+    /** The wait before automatic reconnect [attempt] (0 first), or null: no more, the person reconnects. */
+    fun resumeDelayMs(attempt: Int): Long? = RESUME_DELAYS_MS.getOrNull(attempt)
+
+    /**
+     * A `gone` event. On a DSH chat a [RESUMABLE] reason keeps the chat: what was sending becomes "maybe" (Retry sends
+     * the same id, which bots-dsh takes at most once) and the phone reconnects. Anything else ends the chat, with the
+     * reason in words where bots-dsh gave one.
+     */
+    private fun gone(s: State, reason: String): State =
+        if (resumable(s, reason)) s.copy(connected = false, resuming = true, error = RESUMING, approval = null, question = null,
+            messages = s.messages.map { if (it.state == "sending") it.copy(state = "maybe") else it })
+        else s.copy(gone = true, connected = false, resuming = false, approval = null, question = null,
+            error = if (s.dsh) goneWhy(reason) ?: s.error else s.error)
+
+    /** A DSH subscribe bots-dsh refused (pocket-socket.js `subscribe`), in words; null for an end with no reason. */
+    private fun goneWhy(reason: String): String? = when (reason) {
+        "not-shown" -> "Show this project in Automagik first."
+        "not-found" -> "This Bot is no longer on the computer."
+        "too-many", "too_many" -> "Too many Bot chats are open on the computer. Close one and reconnect."
+        "" -> null
+        else -> "This chat closed ($reason)."
     }
 
     /** Older rows from chat.backfill, before what is shown; none left means no more. */
@@ -221,6 +268,14 @@ object Chat {
     /** A send that got no answer (the link dropped, or it timed out): never sent again by itself, shown with Retry. */
     fun unanswered(s: State, id: String, text: String) = s.copy(messages = upsert(s.messages, Message(id, text, "maybe")))
 
+    /**
+     * [list] with [terminal]'s state as the open chat last said it, so Team's bubble and Home's rows agree with the
+     * chat between two chat.list reads. The same list when nothing changes.
+     */
+    fun withStatus(list: List<Terminal>, terminal: String, state: String): List<Terminal> =
+        if (state.isBlank() || list.none { it.terminal == terminal && it.status != state }) list
+        else list.map { if (it.terminal == terminal) it.copy(status = state) else it }
+
     /** What a reconnect keeps of [s]: messages whose outcome is unknown (still sending, or maybe), as maybe, with Retry. */
     fun unknown(s: State): List<Message> = s.messages.filter { it.state == "maybe" || it.state == "sending" }.map { it.copy(state = "maybe") }
 
@@ -268,6 +323,25 @@ object ChatActions {
     fun canShowTerminal(s: Chat.State) = !s.dsh
     fun canSendHeld(s: Chat.State, m: Chat.Message) = canSend(s) && m.state == "held"
     fun canRetry(s: Chat.State, m: Chat.Message) = canSend(s) && m.state == "maybe"
+
+    /** A DSH chat the bridge or bots-dsh takes no phone writes on (no `dshWrite` in the hello): why, and what to do. */
+    const val READ_ONLY = "Read only on the phone: Pocket Link or Automagik on this computer takes no phone writes. " +
+        "Update both, or ${Chat.ANSWER_ON_COMPUTER}."
+
+    /**
+     * What the chat's bottom line says when there is no message box, so a chat that cannot send always says why and
+     * never drops a message silently: ended, offline, reconnecting, not connected, or read only. Null: the box shows
+     * (or the chat is still connecting, which the list says).
+     */
+    fun whyNoSend(s: Chat.State): String? = when {
+        canSend(s) -> null
+        s.gone -> "This chat ended. Nothing typed here is sent."
+        s.offline -> "The machine is offline. Nothing is sent until it is back."
+        s.resuming -> "Reconnecting. Nothing is sent until the chat is back."
+        !s.connected -> if (s.error != null) "Not connected. Nothing is sent." else null
+        s.readOnly -> READ_ONLY
+        else -> null
+    }
 
     /** The approval's buttons: only on a writable chat, an open row the engine raised, with choices it named. */
     fun choices(s: Chat.State, row: Chat.Row?): List<String> {

@@ -947,6 +947,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile private var chatRef: TerminalRef? = null
     @Volatile private var chatLink: ChatClient? = null
     @Volatile private var chatGen = 0
+    /** Automatic reconnects of the open DSH chat since its last snapshot (main thread only); see [Chat.RESUMABLE]. */
+    private var resumeAttempt = 0
+    private var resumeJob: Job? = null
 
     private suspend fun openChatLink(hostId: String, scope: CoroutineScope, lost: (String) -> Unit): ChatClient {
         val profile = state.value.hosts.find { it.id == hostId && it.paired } ?: error("This machine isn’t paired with Pocket Link.")
@@ -963,13 +966,21 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
      * Opens [ref]'s chat (a terminal's, or a `dsh:` Bot chat); the same chat already open stays as it is. Reopening
      * the same chat (a reconnect) keeps the messages whose outcome is unknown as "maybe not sent", with Retry.
      */
-    fun openChat(ref: TerminalRef) {
+    fun openChat(ref: TerminalRef) = openChat(ref, resuming = false)
+
+    /**
+     * [resuming]: an automatic reconnect of a DSH chat whose bots-dsh socket went away ([resumeLater]). A new
+     * connection, so the bridge greets the socket again and its hello says `dshWrite` afresh.
+     */
+    private fun openChat(ref: TerminalRef, resuming: Boolean) {
         if (chatRef == ref && chatJob?.isActive == true) return
         val unknown = _chat.value?.takeIf { chatRef == ref }?.let(Chat::unknown).orEmpty()
+        val attempt = if (resuming) resumeAttempt else 0
         closeChat()
+        resumeAttempt = attempt
         val gen = ++chatGen
         chatRef = ref
-        _chat.value = Chat.State(ref.address, messages = unknown)
+        _chat.value = Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null)
         if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
@@ -984,13 +995,54 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 chatSubscribe(link, ref.address, null, gen)
                 awaitCancellation()
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { chatUpdate(gen) { it.copy(connected = false, error = e.message ?: "Chat couldn’t connect") } }
+            catch (e: Exception) {
+                // A DSH chat coming back keeps trying (within RESUME_DELAYS_MS); anything else waits for Reconnect.
+                if (resuming && e !is ChatUnsupported) { chatUpdate(gen) { it.copy(connected = false) }; viewModelScope.launch { resumeLater(ref, gen) } }
+                else chatUpdate(gen) { it.copy(connected = false, resuming = false, error = e.message ?: "Chat couldn’t connect") }
+            }
             finally { if (chatLink === link) chatLink = null; link?.close() }
         }
     }
 
+    /**
+     * After an event of chat [gen] (main thread): a snapshot ends the reconnect count; a `gone` that left the chat
+     * resuming connects again after a wait. The open DSH chat's state goes into its chat.list row, so Team's bubble
+     * and Home's rows say what the chat says.
+     */
+    private fun chatEvent(gen: Int, type: String) {
+        val ref = chatRef
+        val s = _chat.value
+        if (gen != chatGen || ref == null || s == null) return
+        when (type) {
+            "snapshot" -> resumeAttempt = 0
+            "gone" -> if (s.resuming) resumeLater(ref, gen)
+        }
+        if (s.dsh && s.connected) _botChats.update { m ->
+            val list = m[ref.hostId]?.getOrNull() ?: return@update m
+            val now = Chat.withStatus(list, ref.address, s.status.state)
+            if (now === list) m else m + (ref.hostId to Result.success(now))
+        }
+    }
+
+    /** The next automatic reconnect of DSH chat [ref], or, past [Chat.RESUME_DELAYS_MS], the Reconnect button. */
+    private fun resumeLater(ref: TerminalRef, gen: Int) {
+        if (gen != chatGen || chatRef != ref) return
+        val wait = Chat.resumeDelayMs(resumeAttempt)
+            ?: return chatUpdate(gen) { it.copy(resuming = false, error = Chat.NOT_ANSWERING) }
+        resumeAttempt++
+        resumeJob?.cancel()
+        resumeJob = viewModelScope.launch {
+            delay(wait)
+            if (gen == chatGen && chatRef == ref) { chatJob?.cancel(); chatJob = null; openChat(ref, resuming = true) }
+        }
+    }
+
     private suspend fun chatSubscribe(link: ChatClient, terminal: String, after: String?, gen: Int) {
-        link.subscribe(terminal, after, { e -> chatUpdate(gen) { Chat.reduce(it, e) } }) { reason ->
+        link.subscribe(terminal, after, { e ->
+            chatUpdate(gen) { Chat.reduce(it, e) }
+            val type = e.optString("type")
+            viewModelScope.launch { chatEvent(gen, type) }
+        }) { reason ->
             // Too slow to keep up: the bridge closed the stream; come back from the cursor.
             if (reason == "slow" && gen == chatGen) viewModelScope.launch(Dispatchers.IO) {
                 runCatching { chatSubscribe(link, terminal, _chat.value?.cursor, gen) }
@@ -1005,6 +1057,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         ++chatGen
         chatRef = null
         chatJob?.cancel(); chatJob = null
+        resumeJob?.cancel(); resumeJob = null
+        resumeAttempt = 0
         _chat.value = null
     }
 
@@ -1018,6 +1072,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             held.stop(activeChannel != null || attachJob?.isActive == true || nativeJob?.isActive == true, chatRef?.takeIf { chatJob?.isActive == true })
             dropStream()
             chatJob?.cancel(); chatJob = null
+            resumeJob?.cancel(); resumeJob = null
             return
         }
         val (terminal, chat) = held.start()
@@ -1034,10 +1089,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { block(link, s, gen) }
     }
 
-    /** Sends [text] to the open chat (never on a read-only one). */
+    /** Sends [text] to the open chat; a chat that cannot send (read only, ended, reconnecting) says why instead. */
     fun chatSend(text: String, id: String = UUID.randomUUID().toString()) {
         val s = _chat.value ?: return
-        if (!ChatActions.canSend(s) || text.isBlank()) return
+        if (text.isBlank()) return
+        if (!ChatActions.canSend(s)) { chatUpdate(chatGen) { it.copy(notice = ChatActions.whyNoSend(it) ?: "Not sent: the chat isn’t ready yet.") }; return }
         chatUpdate(chatGen) { it.copy(messages = it.messages.filterNot { m -> m.id == id } + Chat.Message(id, text, "sending")) }
         chatAct { link, st, gen ->
             runCatching { link.send(st.terminal, text, id) }

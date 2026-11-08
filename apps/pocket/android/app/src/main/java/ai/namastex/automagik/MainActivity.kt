@@ -146,6 +146,9 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         state.machines.filterKeys { id -> state.hosts.none { it.id == id } }.map { (id, m) -> SidebarHost(id, vm.hostName(id), m.connected, m.spaces, m.terminals, m.linked, m.colors, m.git, m.space, m.bots, m.members) }
     val pulse = remember(sidebar, state.seen) { Projects.pulse(sidebar, state.seen) }
     val teams = rememberTeams(state, vm)
+    // The Bots' `dsh:` chats, for Team's bubbles and Home's rows: a main bot's pane opens its DSH chat (RFC 0015 D29).
+    val dsh = rememberDshChats(state, vm, reading = selected == null && state.screen in setOf(Nav.TEAM, Nav.HOME_TAB))
+    val paneChats = remember(teams, dsh) { Teams.paneChats(Teams.bubbles(teams, dsh)) }
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
     val gitScreen = selected == null && state.screen == Nav.CODE
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
@@ -241,16 +244,16 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     ) { padding ->
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                // An Automagik Bot's chat has no terminal: the chat alone, read only.
+                // An Automagik Bot's chat has no terminal: the chat alone (writes only with the bridge's dshWrite).
                 selected != null && Chat.isDsh(selected.address) -> ChatPane(vm, selected, onShowTerminal = null, onBack = vm::backToList, modifier = Modifier.fillMaxSize())
                 selected != null -> TerminalScreen(vm, state, terminal, terminalSpace, strip, swipe) { scope.launch { drawer.open() } }
-                space != null -> OverviewScreen(state, space, vm, pulse, onAll = vm::showAll)
+                space != null -> OverviewScreen(state, space, vm, pulse, paneChats, onAll = vm::showAll)
                 state.screen == Nav.SETTINGS -> SettingsScreen(state, vm, MachineActions(pair = { pairDesktop = true }, repair = ::repair, connect = { vm.connect(it) },
                     edit = { editHost = it }, disconnect = { vm.disconnect(it) }, remove = vm::removeHost, botChats = { botChats = it.id }))
                 state.screen == Nav.CODE && project != null -> ProjectScreen(state, vm, project, pulse, remember(rows, project) { Projects.tree(rows, project) })
                 state.screen == Nav.CODE -> CodeScreen(state, vm, pulse, rows, codeView, { codeView = it }, tasksOnly) { tasksOnly = it }
                 // Team opens from the cache while no machine is connected; with nothing cached, the welcome shows instead.
-                state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams) { opens ->
+                state.screen == Nav.TEAM && !(disconnected && teams.isEmpty()) -> TeamsScreen(state, vm, teams, dsh) { opens ->
                     when (opens) {
                         is Teams.Opens.DshChat -> vm.selectTerminal(opens.ref)
                         is Teams.Opens.TerminalChat -> vm.selectTerminal(opens.ref, chat = true)
@@ -258,7 +261,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     }
                 }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
-                else -> OverviewScreen(state, null, vm, pulse, onAll = vm::showAll)
+                else -> OverviewScreen(state, null, vm, pulse, paneChats, onAll = vm::showAll)
             }
         } }
     }
@@ -348,7 +351,10 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun OverviewScreen(state: PocketState, space: PocketSpace?, vm: PocketViewModel, pulse: Projects.Pulse, onAll: () -> Unit) {
+@Composable fun OverviewScreen(state: PocketState, space: PocketSpace?, vm: PocketViewModel, pulse: Projects.Pulse,
+                               paneChats: Map<TerminalRef, TerminalRef>, onAll: () -> Unit) {
+    // A main bot's pane opens the bot's DSH chat, as its Team bubble does ([Teams.paneChats]); any other agent its terminal.
+    val open: (TerminalRef) -> Unit = { ref -> vm.selectTerminal(paneChats[ref] ?: ref) }
     var search by remember { mutableStateOf("") }
     val all = state.machines.flatMap { (host, machine) -> machine.terminals.filter { it.live }.map { TerminalRef(host, it.address) to it } }
     val scoped = all.filter { (ref, _) -> space == null || (ref.hostId == state.space?.first && ref.address in space.addresses) }
@@ -424,7 +430,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 section.entries.forEach { e ->
                     item(key = "c:${e.ref.hostId}:${e.ref.address}") {
                         TerminalCard(e.terminal, location(e.ref), e.ref.address, status = Cockpit.status(e.terminal, Cockpit.seenKey(e.ref, e.terminal) in state.seen).let { word ->
-                            if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }) { vm.selectTerminal(e.ref) }
+                            if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }) { open(e.ref) }
                     }
                     items(e.kids, key = { "k:${it.first.hostId}:${it.first.address}" }) { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }
                 }
@@ -455,7 +461,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 section(Cockpit.WORKING); section(Cockpit.IDLE)
                 if (plain.isNotEmpty()) {
                     item(key = "section:plain") { SectionHeader("Terminals", plain.size) }
-                    items(plain, key = { "p:${it.first.hostId}:${it.first.address}" }) { (ref, t) -> TerminalCard(t, location(ref), ref.address) { vm.selectTerminal(ref) } }
+                    items(plain, key = { "p:${it.first.hostId}:${it.first.address}" }) { (ref, t) -> TerminalCard(t, location(ref), ref.address) { open(ref) } }
                 }
             }
             return@LazyColumn
@@ -467,7 +473,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         groups.filter { it.second.isNotEmpty() }.forEach { (title, terminals) ->
             item { SectionHeader(title, terminals.size) }
             items(terminals, key = { "${it.first.hostId}:${it.first.address}" }) { (ref, terminal) ->
-                TerminalCard(terminal, location(ref), ref.address, status = if (done(ref to terminal) || terminal.status != "done") terminal.status else "idle") { vm.selectTerminal(ref) }
+                TerminalCard(terminal, location(ref), ref.address, status = if (done(ref to terminal) || terminal.status != "done") terminal.status else "idle") { open(ref) }
             }
         }
         if (shown.isEmpty()) item {
