@@ -1,13 +1,16 @@
 // Every mod the pack ships is loaded by Herdr's mod runtime (gpui-shell 0.7.1), which provides
 // exactly the modules gpui-kit.d.ts declares and no `node:` prefix. A specifier outside that
 // surface fails the whole mod at load ("am-sidebar did not load: cannot load module node:url",
-// #624), so walk every shipped mod's static import graph and hold every file to the runtime's
-// names. It checks the small named surfaces too: `url` exports only URL and URLSearchParams, so
-// changing the specifier to `"url"` while importing fileURLToPath still fails. The runtime also
-// hands a mod a bare `import.meta.url` path with a `?v=1` cache buster, not a `file:` URL, so a
-// top-level `new URL(..., import.meta.url)` throws at load; only `guardDirOf` (workers.js) or a
-// shared safe helper may read it. This is the #652 check, generalised from am-sidebar to every
-// PACK_MODS folder; its entry comes from that mod's mod.json, never from guessing main.js.
+// #624), so walk every shipped mod's import graph and hold every file to the runtime's names. A
+// dynamic `import()` is followed when it names one plain quoted literal (its target joins the
+// graph); a computed target is refused, because the module it names cannot be checked. It checks
+// the small named surfaces too: `url` exports only URL and URLSearchParams, so changing the
+// specifier to `"url"` while importing fileURLToPath still fails. The runtime also hands a mod a
+// bare `import.meta.url` path with a `?v=1` cache buster, not a `file:` URL, so a top-level
+// `new URL(..., import.meta.url)` throws at load; only `guardDirOf` (workers.js) or a shared safe
+// helper may read it, and a bare top-level `import.meta` (an alias or `["url"]`) is refused. This
+// is the #652 check, generalised from am-sidebar to every PACK_MODS folder; its entry comes from
+// that mod's mod.json, never from guessing main.js.
 // Apache-2.0.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -159,10 +162,12 @@ function isFunctionBrace(code, index) {
 }
 
 /**
- * The `import.meta.url` positions that run while the module is evaluated, outside every function
- * body, and are not handed to a safe helper. A use inside a function does not run at load, so it
- * is not this rule's concern; anything else does, and the runtime's bare path cannot be a URL
- * base. The scan is lexical: it knows blocks and function bodies, not a full syntax tree.
+ * The `import.meta` positions that run while the module is evaluated, outside every function body,
+ * and are not handed to a safe helper. A use inside a function does not run at load, so it is not
+ * this rule's concern; anything else does, and the runtime's bare path cannot be a URL base. The
+ * same rule catches a bare `import.meta`, so an alias (`const m = import.meta;`) or
+ * `import.meta["url"]` cannot slip past a literal `.url` scan. The scan is lexical: it knows
+ * blocks and function bodies, not a full syntax tree.
  */
 function topLevelMetaUses(code) {
   const uses = [];
@@ -170,20 +175,40 @@ function topLevelMetaUses(code) {
   for (let i = 0; i < code.length; i++) {
     if (code[i] === "{") { functions.push(isFunctionBrace(code, i)); continue; }
     if (code[i] === "}") { functions.pop(); continue; }
-    if (!code.startsWith("import.meta.url", i)) continue;
+    if (!code.startsWith("import.meta", i)) continue;
     if (!functions.some(Boolean)) {
       const before = code.slice(Math.max(0, i - 64), i);
       const helper = (before.match(/([A-Za-z_$][\w$]*)\s*\(\s*$/) || [])[1];
       if (!helper || !SAFE_META_HELPERS.has(helper)) uses.push(i);
     }
-    i += "import.meta.url".length - 1;
+    i += "import.meta".length - 1;
   }
   return uses;
 }
 
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
-/** One entry file's static import graph, with every specifier and load-time meta use checked. */
+/**
+ * The plain string a dynamic `import(` at `index` names, or null. Only one quoted literal, alone as
+ * the target (a following `)` or the options comma) and with no escape or template substitution,
+ * is read: a computed target, even one that starts with a literal, is refused, never guessed.
+ */
+function dynamicSpecifier(text, index) {
+  let i = index;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  const quote = text[i];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return null;
+  const end = text.indexOf(quote, i + 1);
+  if (end === -1) return null;
+  let after = end + 1;
+  while (/\s/.test(text[after] ?? "")) after++;
+  if (text[after] !== ")" && text[after] !== ",") return null;
+  const value = text.slice(i + 1, end);
+  if (value.includes("\\") || (quote === "`" && value.includes("${"))) return null;
+  return value;
+}
+
+/** One entry file's import graph, with every specifier and load-time meta use checked. */
 function walkGraph(entry, root, problems, seen) {
   const queue = [entry];
   while (queue.length) {
@@ -194,10 +219,18 @@ function walkGraph(entry, root, problems, seen) {
     const text = readFileSync(file, "utf8");
     const code = blankLiterals(text);
     for (const m of code.matchAll(/\bimport\s*\(/g)) {
-      problems.push(`${relative(root, file)}:${lineOf(text, m.index)}: dynamic import()`);
+      const where = `${relative(root, file)}:${lineOf(text, m.index)}`;
+      const spec = dynamicSpecifier(text, m.index + m[0].length);
+      if (spec === null) {
+        problems.push(`${where}: dynamic import() without a plain string target`);
+      } else if (spec.startsWith("./") || spec.startsWith("../")) {
+        queue.push(resolve(dirname(file), spec));
+      } else if (!RUNTIME_MODULES.has(spec)) {
+        problems.push(`${where}: dynamic import("${spec}"): not a ${RUNTIME} module`);
+      }
     }
     for (const index of topLevelMetaUses(code)) {
-      problems.push(`${relative(root, file)}:${lineOf(text, index)}: top-level import.meta.url ` +
+      problems.push(`${relative(root, file)}:${lineOf(text, index)}: top-level import.meta ` +
         "(the runtime's is a bare path with ?v=1; pass it to guardDirOf)");
     }
     const declarationLines = new Set();
@@ -310,7 +343,7 @@ test("the pack is every mods/<mod>/ with a mod.json, and each declares main.js f
   }
 });
 
-test("every shipped mod's static import graph fits gpui-shell 0.7.1", () => {
+test("every shipped mod's import graph fits gpui-shell 0.7.1", () => {
   const { problems, seen, mods } = walkMods(MODS, PACK_MODS);
   assert.deepEqual([...mods].sort(), [...PACK_MODS].sort(), "every PACK_MODS mod must be walked");
   assert.ok(seen.size >= 40, `walked only ${seen.size} modules: the import scanner missed the graph`);
@@ -336,7 +369,22 @@ test('a fixture importing fileURLToPath from "url" fails', () => {
 
 test("a fixture with a top-level new URL(x, import.meta.url) fails", () => {
   const { problems } = walkMods(join(FIXTURES, "meta-url", "mods"));
-  assert.match(problems.join("\n"), /entry\.js:\d+: top-level import\.meta\.url/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: top-level import\.meta/);
+});
+
+test("a fixture with an aliased top-level import.meta fails", () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-alias", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:1: top-level import\.meta/);
+});
+
+test('a fixture with a top-level import.meta["url"] fails', () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-bracket", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:1: top-level import\.meta/);
+});
+
+test("a fixture handing import.meta to guardDirOf passes", () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-helper", "mods"));
+  assert.deepEqual(problems, []);
 });
 
 test("a fixture mod whose entry is not main.js is still walked", () => {
@@ -350,9 +398,16 @@ test("a fixture re-exporting node:url fails (export-from is walked)", () => {
   assert.match(problems.join("\n"), /entry\.js:\d+: export "node:url": not a gpui-shell 0\.7\.1 module/);
 });
 
-test("a fixture with a dynamic import() fails", () => {
+test("a fixture with a computed dynamic import() fails", () => {
   const { problems } = walkMods(join(FIXTURES, "dynamic-import", "mods"));
-  assert.match(problems.join("\n"), /entry\.js:\d+: dynamic import\(\)/);
+  assert.match(problems.join("\n"), /entry\.js:\d+: dynamic import\(\) without a plain string target/);
+});
+
+test("a fixture's literal dynamic import() target is walked", () => {
+  const { problems, seen } = walkMods(join(FIXTURES, "dynamic-import-target", "mods"));
+  const target = join(FIXTURES, "dynamic-import-target", "mods/dynamic-import-target/target.js");
+  assert.ok(seen.has(target), "the literal import() target must join the graph");
+  assert.match(problems.join("\n"), /target\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
 });
 
 test("guardDirOf: the guard folder beside the module, from either runtime's meta URL", () => {
@@ -367,6 +422,12 @@ test("guardDirOf: the guard folder beside the module, from either runtime's meta
     "/Users/me/.config/herdr-app/mods/am-sidebar/guard", "the mod runtime's bare path plus ?v=1");
   assert.equal(guardDirOf("/tmp/a b/workers.js?v=1#frag"), "/tmp/a b/guard", "query and hash are stripped");
   assert.equal(guardDirOf("/tmp/a%20b/workers.js?v=1"), "/tmp/a%20b/guard", "a bare path is already a path");
+  assert.equal(guardDirOf("C:/x/am-sidebar/workers.js?v=1"), "C:/x/am-sidebar/guard",
+    "a drive-letter path is bare: new URL would read C: as a scheme and drop it");
+  assert.equal(guardDirOf("file:///tmp/a%/workers.js?v=1"), "/tmp/a%/guard",
+    "a lone % keeps the undecoded pathname, never the raw file: string");
+  assert.equal(guardDirOf("/tmp/a/workers.js?v=1/2"), "/tmp/a/guard",
+    "a query with a / is stripped before the folder is taken");
 });
 
 test("workers.js loads with the runtime's bare import.meta.url and keeps the guard path", async () => {

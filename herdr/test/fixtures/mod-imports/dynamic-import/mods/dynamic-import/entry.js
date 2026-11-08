@@ -1,1 +1,1 @@
-export const load = () => import("node:url");
+export const load = (name) => import("./part-" + name + ".js");
