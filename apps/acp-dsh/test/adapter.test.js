@@ -1858,7 +1858,7 @@ test('a plugin reload takes over an idle live chat without a double registration
     // The reload: a new adapter over the same agent and its scoped tools. The construction
     // takeover finds the old registration through the symbol and replaces it — no
     // "already registered in this scope", and the old exact disposer ran once.
-    const reloaded = h.reload()
+    h.reload()
     assert.equal(h.namesOf('live').length, 1, 'one acp_tool in the scope')
     assert.deepEqual(disposalsOf(h, 'live'), [{ id: 'live', name: TOOL_NAME }])
     assert.equal(registrationsOf(h, 'live').length, 2)
