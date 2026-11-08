@@ -21,6 +21,6 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [The phone finds a space's Space Row project itself](space-row-project-key-on-phone.md) | Accepted | automagik-dev/automagik-pocket#45 |
 | [Teams tab v1: home tab, Room cache, Genie bundled at build time](teams-v1.md) | Accepted | automagik-dev/automagik#242 |
 | [Pocket Link doesn't install the usage meter](pocket-link-no-meter-installer.md) | Implemented | automagik-dev/automagik-pocket#53 |
-| [Four tabs: Home, Team, Code, Settings](four-tabs.md) | Implemented | |
+| [Four tabs: Home, Team, Code, Settings](four-tabs.md) | Implemented | automagik-dev/automagik#664 |
 
 Back to the [docs home](../_index.md).

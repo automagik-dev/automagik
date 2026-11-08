@@ -4,7 +4,7 @@ type: decision
 status: Implemented
 created: 2026-11-07
 updated: 2026-11-07
-pr: ""
+pr: "automagik-dev/automagik#664"
 tags: [decisions, navigation, teams, home]
 ---
 # Four tabs: Home, Team, Code, Settings
