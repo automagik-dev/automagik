@@ -8,15 +8,15 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
-  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
+  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
   rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL, workerArgs } from "../mods/am-sidebar/workers.js";
+import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,6 +57,18 @@ function scene() {
   }
   writeFileSync(join(bin, "dsh-tui"), "#!/bin/sh\nexit 0\n");
   chmodSync(join(bin, "dsh-tui"), 0o755);
+  // The installed shim lives under HOME/.local/bin; the worker PATH resolves dsh-tui there.
+  const shimDir = join(home, ".local", "bin");
+  mkdirSync(shimDir, { recursive: true });
+  writeFileSync(join(shimDir, "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(shimDir, "dsh-tui"), 0o755);
+  const paneTmp = join(root, "pane-tmp");
+  mkdirSync(paneTmp, { recursive: true });
+  const stableRoot = join(home, ".local", "share", "automagik-herdr", "dsh-sandbox");
+  const stableGuard = stableGuardDir(stableRoot);
+  for (const dir of [stableGuard, join(stableRoot, "bin")]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(stableRoot, "hcPane.mjs"), "// stable helper\n");
+  writeFileSync(join(stableRoot, "bin", "run.sh"), "#!/bin/sh\n");
   writeFileSync(join(project, ".herdr", "bots.json"), `${JSON.stringify(team(), null, 2)}\n`);
   const ledger = join(app, "automagik-herdr", "attach.jsonl");
   writeFileSync(ledger, `${JSON.stringify({
@@ -84,8 +96,9 @@ function scene() {
     rec("t120", { bot: ID.other }, { name: "other-bot" }),
     rec("t121", { [WORKER_OF_LABEL]: ID.cap }, { name: "cap-worker", parent: "t101", cwd: worktree }),
   ];
-  const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app };
-  return { root, app, project, home, runtime, worktree, bin, ledger, terminals, env };
+  const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app, TMPDIR: paneTmp,
+    PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
+  return { root, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env };
 }
 
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
@@ -171,8 +184,8 @@ const clientFor = (path) => Client.connect(path);
 /** The real hc run argv workerArgs emits for a worker, after hc's run's own `--`. */
 const workerCallArgs = (s, { sandbox = true } = {}) => {
   const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
-    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`,
-    project: s.project, taskId: "gn-1", sandbox });
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox, stableRoot: s.stableRoot });
   return args.slice(args.indexOf("--") + 1);
 };
 const helperArgv = (s) => workerCallArgs(s);
@@ -366,7 +379,7 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
     ["an on param", { on: "mac" }],
     ["a line", { line: "echo hi" }],
     ["a non-worker argv", { argv: (() => { const a = helperArgv(s); a[11] = "sh"; return a; })() }],
-    ["a short argv", { argv: [ENV, `PATH=${GUARD_DIR}:/usr/bin`, "dsh-tui", "--"] }],
+    ["a short argv", { argv: [ENV, `PATH=${s.stableGuard}:/usr/bin`, "dsh-tui", "--"] }],
     ["a parent that is not the caller", { parent: "t101" }],
     ["a cwd outside the worktrees", { cwd: s.root }],
     ["an extra label", { labels: { [WORKER_OF_LABEL]: ID.dev, bot: ID.dev } }],
@@ -383,10 +396,40 @@ test("terminal.run accepts only the exact worker shape and refuses the rest", as
       argv: (() => { const a = helperArgv(s); a[1] = `PATH=${join(s.app, "guard")}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui inside the writable worktree", {
-      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${GUARD_DIR}:${s.worktree}:/usr/bin:/bin`; return a; })(),
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${s.stableGuard}:${s.worktree}:${s.shimDir}:/usr/bin:/bin`; return a; })(),
     }],
     ["a dsh-tui that is not on the worker PATH", {
-      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${GUARD_DIR}:${s.home}`; return a; })(),
+      argv: (() => { const a = helperArgv(s); a[1] = `PATH=${s.stableGuard}:${s.home}`; return a; })(),
+    }],
+    ["a planted guard folder outside both trees", {
+      argv: (() => {
+        const guard = join(s.root, "planted-guard");
+        mkdirSync(guard, { recursive: true });
+        writeFileSync(join(guard, "..", "hcGuard.mjs"), "// fake\n");
+        const a = helperArgv(s);
+        a[1] = `PATH=${guard}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
+    }],
+    ["a node planted inside the writable worktree", {
+      argv: (() => {
+        writeFileSync(join(s.worktree, "node"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(s.worktree, "node"), 0o755);
+        const a = helperArgv(s);
+        a[1] = `PATH=${s.stableGuard}:${s.worktree}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
+    }],
+    ["a dsh-tui planted outside both trees", {
+      argv: (() => {
+        const planted = join(s.root, "planted-bin");
+        mkdirSync(planted, { recursive: true });
+        writeFileSync(join(planted, "dsh-tui"), "#!/bin/sh\nexit 0\n");
+        chmodSync(join(planted, "dsh-tui"), 0o755);
+        const a = helperArgv(s);
+        a[1] = `PATH=${s.stableGuard}:${planted}:${s.shimDir}:/usr/bin:/bin`;
+        return a;
+      })(),
     }],
     ["an env that is not identity only", { env: { LD_PRELOAD: "/tmp/escape.so" } }],
     ["a timeout", { timeout: 5 }],
@@ -425,6 +468,43 @@ test("the plain worker shape is refused, including the real default workerArgs o
     assert.match(answer.error.message, /^hc-proxy: terminal\.run: argv is not the helper worker shape/);
     assert.equal(fake.log.length, before, `${name} never reached the core`);
   }
+});
+
+test("a dsh-tui that is not the installed shim is refused even with a matching PATH", async (t) => {
+  const { s } = await sceneWithCore(t);
+  const params = runParams(s);
+  const snapshot = { terminal: "t100", caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
+    appHome: s.app, path: s.env.PATH, stableRoot: s.stableRoot, shim: join(s.root, "another", "dsh-tui") };
+  assert.match(runProblem(params, snapshot), /dsh-tui is not the installed shim/);
+});
+
+test("the proxy refuses a recorded pane PATH inside a writable tree", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  for (const [name, word] of [["project", s.project], ["app home", s.app], ["temp", s.paneTmp], ["runtime", s.runtime]]) {
+    await assert.rejects(
+      startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
+        env: { ...s.env, PATH: `${s.stableGuard}:${word}:/usr/bin:/bin` } }),
+      new RegExp(`the pane PATH word .* is inside the writable (project|app home)|the pane PATH word .* is inside the (temp|runtime) folder`),
+      name,
+    );
+  }
+});
+
+test("a renamed ancestor of the pack cannot change a worker's stable paths", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  const pack = join(s.root, "fake-pack");
+  mkdirSync(join(pack, "bin"), { recursive: true });
+  writeFileSync(join(pack, "hcPane.mjs"), "// pack\n");
+  writeFileSync(join(pack, "bin", "run.sh"), "#!/bin/sh\n");
+  renameSync(pack, join(s.root, "fake-pack-moved"));
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", cwd: s.worktree, parent: "t100", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`, project: s.project,
+    taskId: "gn-1", sandbox: true, stableRoot: s.stableRoot });
+  const argv = args.slice(args.indexOf("--") + 1);
+  assert.equal(argv.some((word) => word.includes("fake-pack")), false, "no pack path is in the worker start");
+  const answer = await (await clientFor(proxy.socket)).call("terminal.run", runParams(s, { argv }));
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.ok(fake.calls("terminal.run").length > 0);
 });
 
 test("a rename between the check and the forward cannot redirect the target", async (t) => {
@@ -645,7 +725,7 @@ test("an over-limit socket path refuses to start with a named error", async (t) 
   mkdirSync(long, { recursive: true });
   await assert.rejects(
     startProxy({ terminal: "t100", upstream: fake.socket, appHome: s.app, env: { ...s.env, XDG_RUNTIME_DIR: long } }),
-    new RegExp(`socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`),
+    new RegExp(`socket path is \\d+ bytes, over the ${socketPathLimit()}-byte limit`),
   );
   assert.equal(existsSync(join(long, "automagik-hc-proxy")), false);
   const child = spawn(process.execPath, [PROXY, "--terminal", "t100", "--upstream", fake.socket, "--app-home", s.app], {
@@ -656,7 +736,7 @@ test("an over-limit socket path refuses to start with a named error", async (t) 
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   const [code] = await once(child, "exit");
   assert.equal(code, 1, stderr);
-  assert.match(stderr, new RegExp(`hc-proxy: socket path is \\d+ bytes, over the ${MAX_SOCKET_PATH}-byte limit`));
+  assert.match(stderr, new RegExp(`hc-proxy: socket path is \\d+ bytes, over the ${socketPathLimit()}-byte limit`));
 });
 
 test("the connection cap refuses the extra client with a proxy error", async (t) => {
@@ -770,8 +850,8 @@ test("the docs say a roster change needs a pane restart", () => {
 test("a sandboxed worker start: the real workerArgs output is accepted, and only for this caller", async (t) => {
   const { s, fake, proxy } = await sceneWithCore(t);
   const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
-    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`,
-    project: s.project, taskId: "gn-1", sandbox: true });
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox: true, stableRoot: s.stableRoot });
   const cut = args.indexOf("--");
   const argv = args.slice(cut + 1);
   assert.equal(argv.length, 14, argv.join(" "));
@@ -797,12 +877,12 @@ test("a sandboxed worker start: the real workerArgs output is accepted, and only
 test("the pack's own guard is allowed inside the app home; the worker shape is not widened", async (t) => {
   const { s } = await sceneWithCore(t);
   const args = workerArgs({ botId: ID.dev, branch: "feat/worker", cwd: s.worktree, parent: "t100", agent: "dsh-tui",
-    argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`, project: s.project, sandbox: true });
+    argv: ["dsh-tui"], task: "do the task", path: `${s.shimDir}:${s.bin}:/usr/bin:/bin`, project: s.project, sandbox: true, stableRoot: s.stableRoot });
   const argv = args.slice(args.indexOf("--") + 1);
   const params = runParams(s, { argv });
   const snapshot = { terminal: "t100", caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
-    appHome: join(here, "..", "mods", "am-sidebar") };
+    appHome: join(here, "..", "mods", "am-sidebar"), path: s.env.PATH, stableRoot: s.stableRoot, shim: join(s.home, ".local", "bin", "dsh-tui") };
   assert.equal(runProblem(params, snapshot), null, "the installed pack's own guard is the exception");
   const forged = { ...params, argv: argv.map((word, i) => (i === 3 ? join(s.root, "bin", "run.sh") : word)) };
-  assert.match(runProblem(forged, snapshot), /helper runner is not the pack's/);
+  assert.match(runProblem(forged, snapshot), /helper runner is not the stable copy/);
 });

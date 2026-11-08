@@ -894,7 +894,8 @@ starts**, then runs the agent as its child. The proxy snapshots the attach ledge
 project's `.herdr/bots.json` before the pane can create a sandbox, and it ends when the pane
 ends. **A roster change needs a pane restart**, so the new pane's proxy reads the new file. A
 proxied bot cannot unset the switch in its own shell to start a plain worker: the proxy refuses
-the old five-word worker argv and accepts only the helper's own shape. Its own README,
+the old five-word worker argv and accepts only the helper's own shape, which runs from a stable
+copy under the data home (never the writable pack folder). Its own README,
 `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
 A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again; an
 opted-in pane refuses to start while the profile's sandbox row is stale.

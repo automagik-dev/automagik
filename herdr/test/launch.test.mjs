@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
 import { hcName, parentArgs, startRefusal, startArgs, agentInForeground, isClaude, newest, attachRefusal, parseCommand, freshSpare, shellIdle, spareTab, unwrapKeep } from "../mods/am-sidebar/launchArgs.js";
-import { GUARD_DIR, PANE_HELPER, PANE_RUNNER } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, stableGuardDir, stableHelper, stableRunner } from "../mods/am-sidebar/workers.js";
 const { startBot, attachBot, liveTerminalOf, botOfTerminal } = await import("../mods/am-sidebar/launch.js");
 import { briefingFilePath } from "../mods/am-sidebar/briefingText.mjs";
 import { readJsonLines } from "./log-lines.mjs";
@@ -41,10 +41,10 @@ test("start args: a main bot runs with --no-parent, labels, name, cwd and the ag
 test("start args: a sandboxed dsh-tui pane runs through the per-pane helper before DSH", () => {
   const base = { botId: ID.dev, cwd: "/p", parent: ["--no-parent"], argv: ["dsh-tui", "--resume", "abc", "--", "brief"],
     path: "/bin", agent: "dsh-tui" };
-  const sandboxed = startArgs({ ...base, project: "/p", sandbox: true });
+  const sandboxed = startArgs({ ...base, project: "/p", sandbox: true, stableRoot: "/stable" });
   const tail = sandboxed.slice(sandboxed.indexOf("--") + 1);
-  assert.deepEqual(tail, ["/usr/bin/env", `PATH=${GUARD_DIR}:/bin`, "/bin/sh", PANE_RUNNER, PANE_HELPER, "--bot", ID.dev,
-    "--project", "/p", "--", "dsh-tui", "--resume", "abc", "--", "brief"]);
+  assert.deepEqual(tail, ["/usr/bin/env", `PATH=${stableGuardDir("/stable")}:/bin`, "/bin/sh", stableRunner("/stable"),
+    stableHelper("/stable"), "--bot", ID.dev, "--project", "/p", "--", "dsh-tui", "--resume", "abc", "--", "brief"]);
   // Without the switch the argv is byte for byte what it was: the helper is PR B's only change.
   const plain = startArgs({ ...base, sandbox: false });
   assert.deepEqual(plain.slice(plain.indexOf("--") + 1), ["/usr/bin/env", `PATH=${GUARD_DIR}:/bin`, "dsh-tui", "--resume", "abc", "--", "brief"]);

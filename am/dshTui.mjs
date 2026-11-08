@@ -31,7 +31,7 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,9 +163,76 @@ export const sandboxWrapperOf = (env = process.env) => join(sandboxRootOf(env), 
 export const packWrapperOf = () => fileURLToPath(new URL("./bin/hc-socket-mask.mjs", import.meta.url));
 /** This module's own folder: the pack mod when the pack's CLI runs the installer. */
 export const packRootOf = () => dirname(dirname(packWrapperOf()));
-/** Only the pack's mod folder has the pane helper and runner the sandbox row masks. */
-export const sandboxCapable = (root = packRootOf()) => basename(root) === "am-sidebar"
+/** Only the pack's mod folder (or its stable copy) has the pane helper and runner. */
+export const sandboxCapable = (root = packRootOf()) => ["am-sidebar", "dsh-sandbox"].includes(basename(root))
   && existsSync(join(root, "hcPane.mjs")) && existsSync(join(root, "bin", "run.sh"));
+
+/** Every file an unsandboxed worker start can reach, copied byte-equal to the stable folder. */
+export const STABLE_FILES = Object.freeze([
+  "hcPane.mjs", "hcProxy.mjs", "dshTui.mjs", "workers.js", "models.js", "model.js", "logins.js",
+  "attach.js", "hcGuard.mjs", "layoutSafe.mjs", "release.js", "bin/dsh-sandbox.mjs", "bin/run.sh",
+]);
+
+/** Whether every stable file is byte-equal to the pack's copy (a stale copy is never run). */
+export function stableFilesCurrent(source, stable) {
+  try {
+    for (const file of STABLE_FILES) {
+      if (!readFileSync(join(source, file)).equals(readFileSync(join(stable, file)))) return false;
+    }
+    const guardSource = join(source, "guard"), guardStable = join(stable, "guard");
+    const names = readdirSync(guardSource);
+    if (names.length !== readdirSync(guardStable).length) return false;
+    for (const name of names) {
+      if (!readFileSync(join(guardSource, name)).equals(readFileSync(join(guardStable, name)))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The installed pack's mod folder, if it is there; else this module's own folder. */
+export function packSourceOf(env = process.env) {
+  const appHome = (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
+  const installed = join(appHome, "mods", "am-sidebar");
+  return existsSync(join(installed, "hcPane.mjs")) ? installed : packRootOf();
+}
+
+/** Copy the stable execution set from `source` to `stable`, keeping modes; returns changed paths. */
+function copyStable(source, stable) {
+  if (resolve(source) === resolve(stable)) return [];
+  const changed = [];
+  for (const file of STABLE_FILES) {
+    const from = join(source, file), to = join(stable, file);
+    let want;
+    try { want = readFileSync(from); } catch { throw new Error(`the pack is missing ${from}`); }
+    let have = null;
+    try { have = readFileSync(to); } catch { /* first copy */ }
+    if (!have || !want.equals(have)) {
+      mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+      copyFileSync(from, to);
+      chmodSync(to, statSync(from).mode & 0o777);
+      changed.push(to);
+    }
+  }
+  const guardFrom = join(source, "guard");
+  const guardTo = join(stable, "guard");
+  if (existsSync(guardFrom) && resolve(guardFrom) !== resolve(guardTo)) {
+    mkdirSync(guardTo, { recursive: true, mode: 0o700 });
+    for (const name of readdirSync(guardFrom)) {
+      const from = join(guardFrom, name), to = join(guardTo, name);
+      const want = readFileSync(from);
+      let have = null;
+      try { have = readFileSync(to); } catch { /* first copy */ }
+      if (!have || !want.equals(have)) {
+        copyFileSync(from, to);
+        chmodSync(to, statSync(from).mode & 0o777);
+        changed.push(to);
+      }
+    }
+  }
+  return changed;
+}
 /** The dsh-tui profile's patch file, where the sandbox row lives. */
 export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis.patch.yml");
 
@@ -180,8 +247,11 @@ export function installSandboxRow({ env = process.env } = {}) {
   const profile = sandboxProfileOf(dshHomeOf(env));
   const source = packWrapperOf();
   const packRoot = packRootOf();
-  if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot };
+  const stableRoot = sandboxRootOf(env);
+  if (!sandboxCapable(packRoot)) return { changed: false, skipped: true, wrapper, profile, packRoot, stableRoot };
   let changed = false;
+  const copied = copyStable(packRoot, stableRoot);
+  changed = copied.length > 0;
   try {
     const want = readFileSync(source);
     const have = existsSync(wrapper) ? readFileSync(wrapper) : null;
@@ -195,8 +265,8 @@ export function installSandboxRow({ env = process.env } = {}) {
     throw new Error(`cannot copy the sandbox wrapper to ${wrapper}: ${e?.message ?? e}`);
   }
   try {
-    const row = installRow({ profile, wrapper, packRoot });
-    return { changed: changed || row.changed, wrapper, profile, packRoot, backup: row.backup };
+    const row = installRow({ profile, wrapper, packRoot: stableRoot });
+    return { changed: changed || row.changed, wrapper, profile, packRoot: stableRoot, stableRoot, backup: row.backup };
   } catch (e) {
     throw new Error(`cannot install the sandbox row in ${profile}: ${e?.message ?? e}`);
   }
@@ -206,13 +276,17 @@ export function installSandboxRow({ env = process.env } = {}) {
 export function sandboxState(env = process.env) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
+  const stableRoot = sandboxRootOf(env);
   const packRoot = packRootOf();
-  const capable = sandboxCapable(packRoot);
+  const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot);
   let current = false;
-  try { current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper)); } catch { current = false; }
+  try {
+    current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))
+      && stableFilesCurrent(packSourceOf(env), stableRoot);
+  } catch { current = false; }
   let row;
-  try { row = checkRow({ profile, wrapper, packRoot: capable ? packRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
-  return { wrapper, profile, packRoot, capable, current, row };
+  try { row = checkRow({ profile, wrapper, packRoot: capable ? stableRoot : null }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
+  return { wrapper, profile, packRoot, stableRoot, capable, current, row };
 }
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
@@ -501,7 +575,7 @@ export async function installDshTui(options = {}) {
     `The ${SHIM} shim is at ${shim}${onPath(env, binDir) ? "" : `; add ${binDir} to PATH so Herdr's built-in menu entry finds it`}.`,
     sandbox.skipped
       ? "The dsh-tui profile's sandbox row was left to the pack's own dsh-tui install (this copy is not the pack's mod folder)."
-      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} and the pack folder it keeps read-only.`,
+      : `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} and the stable folder it keeps read-only.`,
     guideBefore === null
       ? `Marked dsh-TUI's first-run guide done (${guide}; open it later with /setup).`
       : "Kept dsh-TUI's first-run guide state (a completed guide writes that file).",

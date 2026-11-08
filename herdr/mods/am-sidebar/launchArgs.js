@@ -3,7 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
-import { ENV, GUARD_DIR, guardPathWith, paneArgs } from "./workers.js";
+import { ENV, GUARD_DIR, guardPathWith, paneArgs, stableGuardDir, stableRootOf } from "./workers.js";
 import { envWords } from "./logins.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
@@ -57,7 +57,7 @@ export function startRefusal(file, botId) {
  * agent, or no `sandbox`, keeps the argv byte for byte as before. The guard is a guardrail, not
  * a boundary (#624; #628 is the full send/keys/attach scope; #631 is the hard boundary).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined, project = cwd, sandbox = false }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined, project = cwd, sandbox = false, stableRoot = stableRootOf() }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -65,9 +65,10 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   for (const [k, v] of Object.entries(labels)) if (k !== BOT_LABEL && v) args.push("--label", `${k}=${v}`);
   if (space) args.push("--label", `herdr.space=${space}`);
   if (tab) args.push("--label", `herdr.tab=${tab}`);
-  const guardDir = guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
+  const guardDir = sandbox === true && agent === "dsh-tui" ? stableGuardDir(stableRoot)
+    : guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
   const vars = envWords([...(path ? [`PATH=${guardPathWith(path, guardDir)}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
-  const launchArgv = sandbox === true && agent === "dsh-tui" ? paneArgs(argv, { botId, project }) : argv;
+  const launchArgv = sandbox === true && agent === "dsh-tui" ? paneArgs(argv, { botId, project, stableRoot }) : argv;
   return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...launchArgv];
 }
 

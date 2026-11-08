@@ -14,7 +14,7 @@
 // runnerFailureSignatures entry: 'hc-socket-mask: '.
 import { spawn } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** Pane-start switch: '1' enables the mask; absent (or anything else) is off. */
@@ -27,6 +27,8 @@ export const PROXY_SOCKET = 'AM_HC_PROXY_SOCKET';
 export const MSG_PREFIX = 'hc-socket-mask: ';
 /** The wrapper's own word before its profile args: the pack folder to keep read-only. */
 export const PACK_ROOT_FLAG = '--pack-root';
+/** The shared runtime folder holding every pane's proxy; the mask hides it whole. */
+export const PROXY_ROOT_NAME = 'automagik-hc-proxy';
 
 /**
  * The fixed container runtime sockets this cut knows. The pure helper in the tests receives its
@@ -146,12 +148,25 @@ export function maskArgs(args, env = process.env, options = {}) {
     return failed(args,
       `the proxy folder ${proxyDir} holds the real socket path: the mask would hide the proxy`);
   }
+  // Hide the shared parent, not just this pane's folder: another pane's proxy stays out of
+  // reach (same-uid sockets are otherwise indistinguishable), and only this pane's socket is
+  // bound at the real path.
+  const shared = dirname(proxyDir);
+  if (shared === proxyDir || shared === '/') {
+    return failed(args, `the proxy path ${proxy} has no shared automagik-hc-proxy parent`);
+  }
+  if (basename(shared) !== PROXY_ROOT_NAME) {
+    return failed(args, `the proxy parent ${shared} is not the ${PROXY_ROOT_NAME} folder`);
+  }
+  if (isSameOrAncestor(shared, real)) {
+    return failed(args, `the proxy parent ${shared} holds the real socket path: the mask would hide the real socket`);
+  }
   const mounts = ['--tmpfs', realDir];
   const notices = [];
   const notice = proxyNotice(proxy);
   if (notice) notices.push(notice);
   else mounts.push('--bind', proxy, real);
-  mounts.push('--tmpfs', proxyDir);
+  mounts.push('--tmpfs', shared);
   // The pack's own folder (hcPane.mjs, run.sh, the guard) may sit inside the writable
   // workspace/app home; shadow that grant with a read-only bind, last so it wins.
   if (packRoot !== null) {

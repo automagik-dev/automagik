@@ -58,15 +58,16 @@ the `--`, in this order:
 
 1. `--tmpfs <dirname(AM_HC_REAL_SOCKET)>` - hides the core socket and the holder sockets beside
    it (and any other listener in the core's runtime folder).
-2. `--tmpfs <dirname(AM_HC_PROXY_SOCKET)>` - hides the shared proxy host folder, so another
-   pane's proxy socket is unreachable. When the path is also a live Unix socket, the bind comes
-   first: `--bind <proxy> <real>` (the proxy answers at the path the client already uses, so
-   `HC_TERMINAL_SOCKET`, `core.lock` and the client's address check need no rewrite), then the
-   folder's tmpfs; the bind resolves its source before that tmpfs. When the socket is missing or
-   not a socket, the folder is still hidden (with no bind), and the pane starts with no core
-   socket. An unset or relative path is fatal before `bwrap`: the wrapper cannot name the folder
-   to hide, so another pane's proxy could be impersonated. The hidden folder is the proxy's,
-   never the attach ledger's: the CLI in the pane still reads `attach.jsonl`.
+2. `--tmpfs <dirname(dirname(AM_HC_PROXY_SOCKET))>` - hides the shared `automagik-hc-proxy`
+   folder, so every other pane's proxy socket is unreachable. When the path is also a live Unix
+   socket, the bind comes first: `--bind <proxy> <real>` (the proxy answers at the path the
+   client already uses, so `HC_TERMINAL_SOCKET`, `core.lock` and the client's address check need
+   no rewrite), then the shared folder's tmpfs; the bind resolves its source before that tmpfs.
+   When the socket is missing or not a socket, the shared folder is still hidden (with no bind),
+   and the pane starts with no core socket. An unset or relative path is fatal before `bwrap`:
+   the wrapper cannot name the folder to hide, so another pane's proxy could be impersonated.
+   The parent must be the `automagik-hc-proxy` folder; anything else is fatal. The hidden folder
+   is the proxy's, never the attach ledger's: the CLI in the pane still reads `attach.jsonl`.
 3. `$HOME/.ssh` when it exists, following symlinks: a directory is shadowed with
    `--tmpfs <canonical path>`, anything else is bound over with
    `--bind /dev/null <canonical path>`. Absent, nothing is added (there is nothing to hide).
@@ -105,6 +106,8 @@ Before running `bwrap`, the wrapper refuses with one `hc-socket-mask: ` line and
 - `HOME` is absent or not absolute (the runner will not guess where `~/.ssh` is);
 - the runner arguments have no `--` separator (the command cannot be preserved);
 - `--pack-root` is relative, missing or not a folder (the pack folder could not be made read-only);
+- the proxy parent is not the `automagik-hc-proxy` folder, or it is the real socket path or an
+  ancestor of it (masking it would hide the real socket or a shared system folder);
 - `AM_HC_PROXY_SOCKET` is absolute but its folder is the real socket path or one of its parents
   (masking that folder would hide the proxy again), whether or not a bind is added.
 

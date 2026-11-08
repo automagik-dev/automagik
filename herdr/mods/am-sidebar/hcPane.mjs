@@ -17,8 +17,9 @@
 // Apache-2.0.
 
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { sandboxState } from "./dshTui.mjs";
 import { projectOfFolder, startProxy } from "./hcProxy.mjs";
@@ -155,5 +156,12 @@ async function main() {
   }
 }
 
-const invoked = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
-if (invoked === import.meta.url) main();
+/** Whether this file is the program Node started, comparing real paths (a symlink is the same file). */
+function isMain() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+if (isMain()) main();

@@ -23,23 +23,25 @@
 
 import net from "node:net";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
+import { shimPathOf } from "./dshTui.mjs";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
 export const HC_PIN = "0.1.14";
 /** The dedicated runtime folder, under $XDG_RUNTIME_DIR and outside any writable cwd. */
 export const SOCKET_FOLDER = "automagik-hc-proxy";
-/** This pack's own pane helper and runner; a worker start may only name these exact paths. */
-export const PACK_ROOT = dirname(fileURLToPath(import.meta.url));
-export const PACK_HELPER = join(PACK_ROOT, "hcPane.mjs");
-export const PACK_RUNNER = join(PACK_ROOT, "bin", "run.sh");
+/** The stable pane helper/runner a worker start may name; dsh-tui install writes them. */
+export const stablePaths = (env) => {
+  const root = stableRootOf(env);
+  return { root, guard: stableGuardDir(root), helper: stableHelper(root), runner: stableRunner(root) };
+};
 /** The most lines one terminal.read may ask for (the reply cap is the hard stop). */
 export const MAX_READ_LINES = 5000;
 /** A core reply line larger than this is refused with a clear error, never buffered. */
@@ -125,6 +127,14 @@ function insideReal(child, parent) {
   const root = realOrNull(parent);
   if (!at || !root) return false;
   return at === root || at.startsWith(`${root}${sep}`);
+}
+
+/** Whether `child` is `parent` or beneath it, by resolved path even when it does not exist. */
+function insideLexical(child, parent) {
+  const at = resolve(child);
+  const root = resolve(parent);
+  const rel = relative(root, at);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /** Whether two paths are the same real path (false when either is gone). */
@@ -262,26 +272,24 @@ export function runProblem(params, snapshot) {
   if (!Array.isArray(argv) || argv.length !== 14) return "argv is not the helper worker shape";
   if (argv[0] !== ENV) return `the program is not ${ENV}`;
   if (typeof argv[1] !== "string" || !argv[1].startsWith("PATH=")) return "no PATH word after the program";
+  if (typeof snapshot.path !== "string" || !snapshot.path) return "the proxy has no recorded pane PATH";
+  const expectedPath = `PATH=${guardPathWith(snapshot.path, stableGuardDir(snapshot.stableRoot))}`;
+  if (argv[1] !== expectedPath) return "the PATH is not the pack's own";
   const words = argv[1].slice("PATH=".length).split(delimiter);
-  const first = words[0];
-  if (!isAbsolute(first) || !isGuardFolder(first)) return "the PATH word does not start with a guard";
-  // The installed pack lives under the app home; its own guard is the one writable-tree
-  // exception, and only by its exact path (a copy elsewhere is still refused).
-  if (!sameReal(first, GUARD_DIR)) {
-    if (insideReal(first, snapshot.caller.project)) return "the PATH guard is inside the writable project";
-    if (snapshot.appHome && insideReal(first, snapshot.appHome)) return "the PATH guard is inside the writable app home";
-  }
   for (const word of words) if (!word || !isAbsolute(word)) return "a PATH word is not an absolute folder";
   const program = resolveOnPath("dsh-tui", words);
   if (!program) return "dsh-tui is not on the worker PATH";
+  // Only the installed shim, by real path: a dsh-tui planted anywhere else on the PATH
+  // (a temp or runtime folder, an extra grant) must never be started outside the sandbox.
+  if (!sameReal(program, snapshot.shim)) return "dsh-tui is not the installed shim";
   if (insideReal(program, snapshot.caller.project)) return "dsh-tui is inside the writable project";
   if (snapshot.appHome && insideReal(program, snapshot.appHome)) return "dsh-tui is inside the writable app home";
   // The sandboxed worker's own helper wrapper (#631 PR B), exactly as workerArgs builds it:
   // [/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
   //  --project, <caller project>, --worker, --, dsh-tui, --, <task>].
   if (argv[2] !== "/bin/sh") return "the helper program is not /bin/sh";
-  if (argv[3] !== PACK_RUNNER) return "the helper runner is not the pack's";
-  if (argv[4] !== PACK_HELPER) return "the helper is not the pack's";
+  if (argv[3] !== stableRunner(snapshot.stableRoot)) return "the helper runner is not the stable copy";
+  if (argv[4] !== stableHelper(snapshot.stableRoot)) return "the helper is not the stable copy";
   if (argv[5] !== "--bot" || argv[6] !== snapshot.caller.bot) return "--bot is not the caller's bot";
   if (argv[7] !== "--project" || !sameReal(argv[8], snapshot.caller.project)) return "--project is not the caller's project";
   if (argv[9] !== "--worker") return "--worker is missing";
@@ -310,8 +318,8 @@ export function explicitCaller(value) {
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome }) {
-  return { terminal, upstream, caller, file, bound, appHome, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot }) {
+  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, team: teamOf(file, caller) };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */
@@ -630,7 +638,29 @@ export async function startProxy(options = {}) {
   if (!file.bots.some((bot) => bot.id === caller.bot)) {
     throw new Error(`the caller ${terminal}'s bot ${caller.bot} is not in ${join(caller.project, ".herdr", "bots.json")}`);
   }
-  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home };
+  // The PATH the proxy records is the one hcPane started it with, outside the sandbox. Every
+  // word must be outside the trees a sandboxed bot can write; a worker start may only repeat it.
+  const panePath = typeof env.PATH === "string" ? env.PATH : "";
+  if (!panePath) throw new Error("the pane PATH is not set; the proxy cannot pin the worker PATH");
+  const stableRoot = stableRootOf(env);
+  const tempRoot = env.TMPDIR || tmpdir();
+  const forbidden = [
+    { root: caller.project, why: "the writable project" },
+    { root: home, why: "the writable app home" },
+    { root: tempRoot, why: "the temp folder" },
+    ...(env.XDG_RUNTIME_DIR ? [{ root: env.XDG_RUNTIME_DIR, why: "the runtime folder" }] : []),
+  ];
+  for (const word of panePath.split(delimiter)) {
+    if (!word || !isAbsolute(word)) throw new Error(`the pane PATH word ${word || "(empty)"} is not an absolute folder`);
+    if (sameReal(word, stableGuardDir(stableRoot))) continue;
+    const real = realOrNull(word);
+    for (const { root, why } of forbidden) {
+      if (real ? insideReal(real, root) : insideLexical(word, root)) {
+        throw new Error(`the pane PATH word ${word} is inside ${why}; refusing to start the proxy`);
+      }
+    }
+  }
+  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home, path: panePath, shim: shimPathOf(env), stableRoot };
   const policy = policyOf(snapshot);
   log({ ev: "snapshot", caller: caller.bot, project: caller.project, worker: caller.worker, bots: file.bots.length });
 

@@ -76,7 +76,8 @@ function makeFixture({ ssh = 'dir' } = {}) {
   const root = temp();
   const home = join(root, 'home');
   const coreDir = join(root, 'core');
-  const proxyDir = join(root, 'proxy');
+  const proxyRoot = join(root, 'automagik-hc-proxy');
+  const proxyDir = join(proxyRoot, 't7');
   const sshPath = join(home, '.ssh');
   mkdirSync(home, { recursive: true });
   if (ssh === 'dir') mkdirSync(sshPath, { recursive: true });
@@ -92,6 +93,7 @@ function makeFixture({ ssh = 'dir' } = {}) {
     root,
     home,
     coreDir,
+    proxyRoot,
     proxyDir,
     ssh: sshPath,
     real: join(coreDir, 'default.sock'),
@@ -217,7 +219,7 @@ test('switch on masks the real dir, ~/.ssh and the proxy, and preserves the comm
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--tmpfs', realpathSync(fixture.ssh),
     '--', ...COMMAND,
   ];
@@ -235,7 +237,7 @@ test('a missing proxy still masks everything, says one line and starts bwrap', (
   assert.deepEqual(withoutContainerBinds(args), [
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--tmpfs', realpathSync(fixture.ssh),
     '--', ...COMMAND,
   ]);
@@ -253,11 +255,11 @@ test('a proxy that is not a Unix socket is treated as missing', () => {
   assert.match(line, /is not a Unix socket/);
   const args = recorded(fixture);
   assert.ok(!args.includes(fixture.proxy));
-  assert.ok(args.includes(dirname(fixture.proxy)));
+  assert.ok(args.includes(fixture.proxyRoot));
   assert.deepEqual(withoutContainerBinds(args), [
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--tmpfs', realpathSync(fixture.ssh),
     '--', ...COMMAND,
   ]);
@@ -331,7 +333,7 @@ test('a missing ~/.ssh adds no mask and does not fail', async () => {
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--', ...COMMAND,
   ]);
 });
@@ -350,7 +352,7 @@ test('a non-directory ~/.ssh is bound over /dev/null at its canonical path', asy
     ...PROFILE_ARGS,
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--bind', '/dev/null', ssh,
     '--', ...COMMAND,
   ]);
@@ -370,7 +372,7 @@ test('HC_TERMINAL_SOCKET is the fallback for the real socket', async () => {
   assert.deepEqual(args.slice(PROFILE_ARGS.length, PROFILE_ARGS.length + 9), [
     '--tmpfs', dirname(fixture.real),
     '--bind', fixture.proxy, fixture.real,
-    '--tmpfs', dirname(fixture.proxy),
+    '--tmpfs', fixture.proxyRoot,
     '--tmpfs', realpathSync(fixture.ssh),
   ]);
 });
@@ -480,7 +482,7 @@ test('a live, missing or non-socket proxy hides the folder after the real dir', 
     }
     if (state !== 'live') assert.ok(!args.includes(fixture.proxy), state);
     // The shared proxy folder is hidden even when there is no bind.
-    assert.ok(args.includes(dirname(fixture.proxy)), state);
+    assert.ok(args.includes(fixture.proxyRoot), state);
   }
 });
 
@@ -542,7 +544,8 @@ test('the pure helper uses only its explicit container list: fake, deduped, exis
   const missing = join(fake, 'missing.sock');
   const home = join(root, 'home');
   const coreDir = join(root, 'core');
-  const proxyDir = join(root, 'proxy');
+  const proxyRoot = join(root, 'automagik-hc-proxy');
+  const proxyDir = join(proxyRoot, 't7');
   mkdirSync(join(home, '.ssh'), { recursive: true });
   mkdirSync(coreDir, { recursive: true });
   mkdirSync(proxyDir, { recursive: true });
@@ -560,7 +563,7 @@ test('the pure helper uses only its explicit container list: fake, deduped, exis
   assert.deepEqual(result.args, [
     ...PROFILE_ARGS,
     '--tmpfs', coreDir,
-    '--tmpfs', proxyDir,
+    '--tmpfs', proxyRoot,
     '--tmpfs', realpathSync(join(home, '.ssh')),
     '--bind', '/dev/null', realpathSync(first),
     '--bind', '/dev/null', realpathSync(second),
@@ -576,7 +579,8 @@ test('the pure helper orders the proxy mounts before ~/.ssh and the container ma
   const fake = join(root, 'runtime');
   const home = join(root, 'home');
   const coreDir = join(root, 'core');
-  const proxyDir = join(root, 'proxy');
+  const proxyRoot = join(root, 'automagik-hc-proxy');
+  const proxyDir = join(proxyRoot, 't7');
   mkdirSync(fake, { recursive: true });
   mkdirSync(join(home, '.ssh'), { recursive: true });
   mkdirSync(coreDir, { recursive: true });
@@ -598,7 +602,7 @@ test('the pure helper orders the proxy mounts before ~/.ssh and the container ma
     ...PROFILE_ARGS,
     '--tmpfs', coreDir,
     '--bind', proxy, real,
-    '--tmpfs', proxyDir,
+    '--tmpfs', proxyRoot,
     '--tmpfs', realpathSync(join(home, '.ssh')),
     '--bind', '/dev/null', realpathSync(container),
     '--', ...COMMAND,
@@ -609,7 +613,8 @@ test('the pure helper hides an absolute proxy folder even when there is no bind'
   const root = temp();
   const home = join(root, 'home');
   const coreDir = join(root, 'core');
-  const proxyDir = join(root, 'proxy');
+  const proxyRoot = join(root, 'automagik-hc-proxy');
+  const proxyDir = join(proxyRoot, 't7');
   mkdirSync(join(home, '.ssh'), { recursive: true });
   mkdirSync(coreDir, { recursive: true });
   mkdirSync(proxyDir, { recursive: true });
@@ -626,7 +631,7 @@ test('the pure helper hides an absolute proxy folder even when there is no bind'
   assert.deepEqual(result.args, [
     ...PROFILE_ARGS,
     '--tmpfs', coreDir,
-    '--tmpfs', proxyDir,
+    '--tmpfs', proxyRoot,
     '--tmpfs', realpathSync(join(home, '.ssh')),
     '--', ...COMMAND,
   ]);
@@ -666,6 +671,7 @@ test('--pack-root binds that folder read-only after the writable profile args', 
   const fixture = makeFixture();
   const pack = join(fixture.root, 'pack');
   mkdirSync(pack, { recursive: true });
+  const realPack = realpathSync(pack);
   const env = { [SWITCH]: '1', HOME: fixture.home, [REAL_SOCKET]: fixture.real, [PROXY_SOCKET]: fixture.proxy };
   const own = ownArgs([PACK_ROOT_FLAG, pack, ...RUNNER_ARGS]);
   assert.equal(own.packRoot, pack);
@@ -674,7 +680,7 @@ test('--pack-root binds that folder read-only after the writable profile args', 
   assert.equal(result.fatal, null);
   const at = result.args.lastIndexOf('--ro-bind');
   assert.ok(at > 0, result.args.join(' '));
-  assert.deepEqual(result.args.slice(at, at + 3), ['--ro-bind', pack, pack]);
+  assert.deepEqual(result.args.slice(at, at + 3), ['--ro-bind', realPack, realPack]);
   assert.ok(at >= PROFILE_ARGS.length, 'the read-only bind comes after the profile args (and so after any writable workspace bind)');
   assert.ok(at < result.args.lastIndexOf('--'), 'it is a mount, not the command');
 });
@@ -686,4 +692,25 @@ test('--pack-root refuses a relative or missing folder', async () => {
   assert.match(relative.fatal, /--pack-root must be an absolute folder/);
   const missing = maskArgs(RUNNER_ARGS, env, { containerSockets: [], packRoot: join(fixture.root, 'absent') });
   assert.match(missing.fatal, /--pack-root .* is not a readable folder/);
+});
+
+test('the shared proxy parent is hidden, so another pane\'s proxy is not reachable', async () => {
+  const root = temp();
+  const home = join(root, 'home');
+  const coreDir = join(root, 'core');
+  const proxyRoot = join(root, 'automagik-hc-proxy');
+  const mine = join(proxyRoot, 't7', 'hc.sock');
+  const other = join(proxyRoot, 't8', 'hc.sock');
+  for (const dir of [join(home, '.ssh'), coreDir, join(proxyRoot, 't7'), join(proxyRoot, 't8')]) mkdirSync(dir, { recursive: true });
+  const real = join(coreDir, 'default.sock');
+  await listen(mine);
+  await listen(other);
+  const result = maskArgs(RUNNER_ARGS, {
+    [SWITCH]: '1', HOME: home, [REAL_SOCKET]: real, [PROXY_SOCKET]: mine,
+  }, { containerSockets: [] });
+  assert.equal(result.fatal, null);
+  assert.ok(result.args.includes(other) === false, 'the other pane\'s socket is never named');
+  assert.deepEqual(result.args.slice(result.args.indexOf('--bind'), result.args.indexOf('--bind') + 3), ['--bind', mine, real]);
+  assert.ok(result.args.includes('--tmpfs') && result.args[result.args.indexOf('--tmpfs', result.args.indexOf('--bind') + 3) + 1] === proxyRoot,
+    'the shared parent is masked after the bind');
 });

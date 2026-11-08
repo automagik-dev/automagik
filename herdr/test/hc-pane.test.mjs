@@ -3,13 +3,13 @@
 // a fake core, temp app home/project/runtime, and a tiny child that records its environment.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { installSandboxRow } from "../mods/am-sidebar/dshTui.mjs";
+import { installSandboxRow, sandboxRootOf } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -18,7 +18,9 @@ const ID = { dev: "b-cccccccccc" };
 
 /** One scene: temp app home, project + roster, runtime, home and a fake core. */
 async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address = "t300", sandboxRow = true } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hcpane-")));
+  // A short root: the per-pane socket path must fit the platform's sun_path bound.
+  const shortBase = existsSync("/tmp") ? "/tmp" : tmpdir();
+  const root = realpathSync(mkdtempSync(join(shortBase, "hp-")));
   const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
   for (const dir of [app, join(app, "automagik-herdr"), project, join(project, ".herdr"), home, runtime]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -103,6 +105,16 @@ test("a worker pane starts the proxy with its worker.of caller", async (t) => {
   assert.match(got.env.proxy, /\/automagik-hc-proxy\/t302\/hc\.sock$/);
 });
 
+test("a stale stable execution copy is refused before the proxy starts", async (t) => {
+  const s = await scene(t);
+  writeFileSync(join(sandboxRootOf(s.env), "hcPane.mjs"), "// stale\n");
+  const out = join(s.root, "child.json");
+  const r = await runHelper(s, { out });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /sandbox row is not current/);
+  assert.equal(existsSync(out), false);
+});
+
 test("without the dsh-tui sandbox row the helper starts neither proxy nor pane (no fallback)", async (t) => {
   const s = await scene(t, { sandboxRow: false });
   const out = join(s.root, "child.json");
@@ -137,6 +149,15 @@ test("each pane gets its own proxy folder", async (t) => {
   assert.notEqual(dirname(first), dirname(second));
   assert.match(first, /\/automagik-hc-proxy\/t300\/hc\.sock$/);
   assert.match(second, /\/automagik-hc-proxy\/t301\/hc\.sock$/);
+});
+
+test("the helper runs when it is started through a symlink", async (t) => {
+  const s = await scene(t);
+  const link = join(s.root, "hcPane-link.mjs");
+  symlinkSync(HELPER, link);
+  const r = spawnSync(process.execPath, [link, "--help"], { env: s.env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /usage: hcPane\.mjs/);
 });
 
 test("the pack's sandbox wrapper and helper are byte-equal to the DSH lane's sources", () => {
