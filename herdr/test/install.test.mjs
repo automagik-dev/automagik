@@ -93,10 +93,6 @@ fi
     HOME: home, TMPDIR: tmp, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
     AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
-    AM_HC_TEST: "1",
-    AM_HC_TEST_FORBIDDEN_ROOTS: JSON.stringify([
-      ["the app home", join(home, ".config", "herdr-app")], ["the temp folder", tmp],
-    ]),
   };
   const appHome = join(home, ".config", "herdr-app");
   const pack = join(appHome, "mods", "am-sidebar");

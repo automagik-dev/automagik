@@ -182,23 +182,8 @@ export function defaultForbiddenRoots(env = process.env, project = process.cwd()
   ];
 }
 
-/** Tests run under tmpdir; only an explicit AM_HC_TEST env may replace the root list. */
-function forbiddenRootsFor({ env = process.env, project = process.cwd(), appHome = appHomeFor(env) } = {}) {
-  if (env.AM_HC_TEST === "1" && env.AM_HC_TEST_FORBIDDEN_ROOTS) {
-    try {
-      const roots = JSON.parse(env.AM_HC_TEST_FORBIDDEN_ROOTS);
-      if (Array.isArray(roots) && roots.every((r) => Array.isArray(r) && r.length === 2)) {
-        // Tests replace only the temp roots (they add a scene root); project, app home and
-        // runtime stay checked, and literal /tmp is dropped only for the test scene.
-        return [...defaultForbiddenRoots(env, project, appHome).filter(([why]) => why !== "the literal temp folder"), ...roots];
-      }
-    } catch { /* fall through to the production list */ }
-  }
-  return defaultForbiddenRoots(env, project, appHome);
-}
-
 export function unsafePathProblem(path, label, { project = process.cwd(), env = process.env, appHome = appHomeFor(env), forbiddenRoots = undefined } = {}) {
-  const roots = forbiddenRoots ?? forbiddenRootsFor({ env, project, appHome });
+  const roots = forbiddenRoots ?? defaultForbiddenRoots(env, project, appHome);
   for (const [why, parent] of roots) {
     if (parent && insidePath(path, parent)) return `${label} ${path} is inside ${why}; refusing`;
   }
@@ -427,13 +412,13 @@ export function installSandboxRow({ env = process.env, project = null, forbidden
 }
 
 /** The stable wrapper and the managed row, read-only (doctor and the tests). */
-export function sandboxState(env = process.env) {
+export function sandboxState(env = process.env, { forbiddenRoots = undefined } = {}) {
   const wrapper = sandboxWrapperOf(env);
   const profile = sandboxProfileOf(dshHomeOf(env));
   const stableRoot = sandboxRootOf(env);
   const packRoot = packRootOf();
   const capable = sandboxCapable(stableRoot) && sandboxCapable(packRoot)
-    && executionPathProblem({ stableRoot, env, project: process.cwd() }) === null;
+    && executionPathProblem({ stableRoot, env, project: process.cwd(), forbiddenRoots }) === null;
   let current = false;
   try {
     current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper))
@@ -689,7 +674,7 @@ export async function installDshTui(options = {}) {
   // DSH_SANDBOX_MASK must never run against a profile without the row.
   let sandbox;
   try {
-    sandbox = installSandboxRow({ env });
+    sandbox = installSandboxRow({ env, forbiddenRoots: options.forbiddenRoots });
   } catch (e) {
     undo();
     return { status: "failed", changed: false, detail: `${e?.message ?? e}; removed what was added.`, lines: [] };

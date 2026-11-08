@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { installSandboxRow, sandboxRootOf, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
@@ -21,12 +21,7 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   // A short root: the per-pane socket path must fit the platform's sun_path bound.
   const shortBase = existsSync("/tmp") ? "/tmp" : tmpdir();
   const root = realpathSync(mkdtempSync(join(shortBase, "hp-")));
-  const ext = (() => {
-    const checkout = process.cwd();
-    const underTmp = /^\/(private\/)?tmp(\/|$)/.test(checkout);
-    return realpathSync(mkdtempSync(join(underTmp ? process.env.HOME : join(checkout, ".."), ".hp-home-")));
-  })();
-  const app = join(root, "app"), project = join(root, "project"), home = join(ext, "home"), runtime = join(root, "run");
+  const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
   const paneTmp = join(root, "pane-tmp");
   for (const dir of [app, join(app, "automagik-herdr"), project, join(project, ".herdr"), home, runtime, paneTmp]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -42,19 +37,18 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
     try { await fake.close(); } catch { /* gone */ }
     rmSync(root, { recursive: true, force: true });
   });
-  const testRoots = JSON.stringify([
-    ["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime],
-  ]);
+  const roots = [["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime]];
+  const harness = join(root, "helper-test.mjs");
+  writeFileSync(harness, `import { runPane } from ${JSON.stringify(pathToFileURL(HELPER).href)};\ntry { process.exit(await runPane(process.argv.slice(2), process.env, { forbiddenRoots: ${JSON.stringify(roots)} })); } catch (e) { console.error("hc-pane: " + String(e?.message ?? e).replace(/\\s+/g, " ")); process.exit(1); }\n`);
   const env = { ...process.env, XDG_RUNTIME_DIR: runtime, HOME: home, DSH_HOME: join(home, ".dsh"), HERDR_APP_HOME: app,
-    TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket,
-    AM_HC_TEST: "1", AM_HC_TEST_FORBIDDEN_ROOTS: testRoots };
-  if (sandboxRow) installSandboxRow({ env });
-  return { root, app, project, home, runtime, socket, fake, env };
+    TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket };
+  if (sandboxRow) installSandboxRow({ env, forbiddenRoots: roots });
+  return { root, app, project, home, runtime, socket, fake, env, harness };
 }
 
 /** Run the helper with a child Node script that records the environment it was given. */
 function runHelper(s, { bot = ID.dev, project = s.project, worker = false, out, childScript = envScript, extraArgs = [] } = {}) {
-  const args = [HELPER, ...(bot ? ["--bot", bot] : []), ...(project ? ["--project", project] : []),
+  const args = [s.harness, ...(bot ? ["--bot", bot] : []), ...(project ? ["--project", project] : []),
     ...(worker ? ["--worker"] : []), ...extraArgs, "--", process.execPath, "-e", childScript];
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { env: { ...s.env, PANE_OUT: out }, stdio: ["ignore", "pipe", "pipe"] });

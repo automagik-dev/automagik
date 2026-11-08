@@ -643,7 +643,7 @@ export async function startProxy(options = {}) {
   const panePath = typeof env.PATH === "string" ? env.PATH : "";
   if (!panePath) throw new Error("the pane PATH is not set; the proxy cannot pin the worker PATH");
   const stableRoot = stableRootOf(env);
-  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env, node: process.execPath });
+  const unsafe = executionPathProblem({ stableRoot, project: caller.project, env, node: process.execPath, forbiddenRoots: options.forbiddenRoots });
   if (unsafe) throw new Error(unsafe);
   const tempRoot = env.TMPDIR || tmpdir();
   const forbidden = [

@@ -95,11 +95,11 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
   const caller = args.bot ? { bot: args.bot, project: resolve(project), worker: args.worker } : undefined;
   // The stable runner's baked node, the profile, the shim and the dsh it executes must still be
   // usable and outside the writable trees before any proxy or child exists.
-  const executionProblem = executionPathProblem({ stableRoot: sandboxRootOf(env), env, project: caller?.project ?? process.cwd() });
+  const executionProblem = executionPathProblem({ stableRoot: sandboxRootOf(env), env, project: caller?.project ?? process.cwd(), forbiddenRoots: io.forbiddenRoots });
   if (executionProblem) throw new Error(`the dsh-tui profile's sandbox is not usable (${oneLine(executionProblem)})`);
   // Without the profile's sandbox row the pane would run unsandboxed while we set the switch:
   // the real socket would stay reachable. Refuse before any proxy or child exists.
-  const sandbox = sandboxState(env);
+  const sandbox = sandboxState(env, { forbiddenRoots: io.forbiddenRoots });
   if (!sandbox.current || !sandbox.row.ok) {
     throw new Error(`the dsh-tui profile's sandbox row is not current (${oneLine(sandbox.row.message ?? "the row does not match")}); run automagik-herdr dsh-tui install`);
   }
@@ -109,6 +109,7 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
     upstream,
     appHome: args.appHome ?? undefined,
     env,
+    forbiddenRoots: io.forbiddenRoots,
     ...(caller ? { caller, bound: !caller.worker } : {}),
     log: (event) => {
       if (event.ev === "server_error" || event.ev === "error") {
