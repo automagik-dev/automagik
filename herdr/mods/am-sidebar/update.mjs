@@ -15,7 +15,8 @@
 //       restores the kept set at once (the same rollback, still under the install lock) and
 //       records the bad version as rolled back, so auto-update waits for a newer release. The
 //       failed release's folders are removed, never kept, so a manual rollback refuses instead of
-//       reinstalling them (#671). Exit 5:
+//       reinstalling them (#671); one the removal cannot take is said in the update's warnings,
+//       the restore note and the notice, with where it stays. Exit 5:
 //       installed, then restored; JSON `installed.restored` names the failed and the restored
 //       version and the mods that failed. A missing or unrunnable herdr-app keeps the update
 //       (`installed.check.checked` false, `unavailable` says why); `installed.restoreError` says
@@ -1442,8 +1443,9 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
  * one fails to load the kept set is restored at once (the same rollback, under the install's lock)
  * and the bad version becomes the rollback skip, so auto-update waits for a newer release. A
  * missing or unrunnable herdr-app keeps the update (`checked: false`); a restore that cannot happen
- * is said in `restoreError`, never thrown, so the update's own callers still answer. `version` is
- * the release that was just installed, not the record's version: a restore rewrites that.
+ * is said in `restoreError`, never thrown, so the update's own callers still answer. A restore's
+ * own warnings (a folder it could not remove) ride back in `warnings`. `version` is the release
+ * that was just installed, not the record's version: a restore rewrites that.
  */
 function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herdr-app", binDir = null, window = false }) {
   const list = toCheck(modsDir, mods);
@@ -1477,13 +1479,19 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
     // The restore removed the failed release's folders instead of keeping them (#671): the note
     // says so, so a manual rollback refuses in those words rather than reinstalling them.
     const prevRemoved = !readSet(modsDir);
+    // A folder the restore could not remove is the person's to know about: it is logged here and
+    // rides in the update's answer (installed.warnings) and in the note the restored build reads.
+    const warnings = Array.isArray(back.warnings) ? back.warnings.filter((w) => typeof w === "string" && w !== "") : [];
+    for (const warning of warnings) log(`warning: ${warning}`);
     try {
       saveRestore(modsDir, { version: restored, failedVersion: version, mod: result.failed[0],
-        failed: [...result.failed], checked: true, unavailable, ...(prevRemoved ? { prevRemoved: true } : {}), at: Date.now() });
+        failed: [...result.failed], checked: true, unavailable, ...(prevRemoved ? { prevRemoved: true } : {}),
+        ...(warnings.length ? { warnings } : {}), at: Date.now() });
     } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
     log(`restored ${restored}: ${result.failed.join(", ")} did not load`);
-    return { ...result, checked: true, unavailable, restored: { version: restored, failedVersion: version, mod: result.failed[0],
-      failed: [...result.failed], checked: true, ...(prevRemoved ? { prevRemoved: true } : {}), ...(unavailable ? { unavailable } : {}) } };
+    return { ...result, checked: true, unavailable, warnings, restored: { version: restored, failedVersion: version, mod: result.failed[0],
+      failed: [...result.failed], checked: true, ...(prevRemoved ? { prevRemoved: true } : {}), ...(warnings.length ? { warnings } : {}),
+      ...(unavailable ? { unavailable } : {}) } };
   } catch (error) {
     // A kept set that is gone, or names a folder that is gone, is the same answer to the person:
     // there is no previous version to put back. Anything else keeps its own why.
@@ -1505,6 +1513,9 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, he
     // The swap is the point an update becomes live: check it before anything else touches the home.
     const checked = checkUpdated({ modsDir, mods: installed.mods, version: found.update.version, log, herdrApp, binDir, window });
     installed.check = { failed: checked.failed, checked: checked.checked, ...(checked.unavailable ? { unavailable: checked.unavailable } : {}) };
+    // A restore that could not remove what it rolled away from says where it stays (#671): the
+    // warning rides with the install's own answer, as the other warnings after a swap do.
+    if (checked.warnings?.length) installed.warnings.push(...checked.warnings);
     if (!checked.checked) {
       try {
         saveCheck(modsDir, { version: found.update.version, from: found.current ?? null,

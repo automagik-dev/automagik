@@ -4590,8 +4590,10 @@ export async function cmdUpdate(opts, _rest = [], io = {}) {
     const mods = (restore.failed?.length ? restore.failed : [restore.mod]).filter(Boolean).join(", ");
     const stopped = restore.unavailable ? `; ${restore.unavailable}` : "";
     const removed = restore.prevRemoved ? " The failed pack was removed, so `automagik-herdr update --rollback` has nothing to go back to." : "";
+    const warnings = Array.isArray(restore.warnings) ? restore.warnings.filter((w) => typeof w === "string" && w !== "") : [];
+    const warned = warnings.length > 0 ? ` Warning: ${warnings.join(" ")}` : "";
     return `Automagik Herdr ${restore.failedVersion ?? r.installed.version} failed to load (${mods} failed herdr-app check${stopped}): `
-      + `the previous version ${restore.version} is back.${removed} The bad version is held back; a newer release installs on its own.${note}`;
+      + `the previous version ${restore.version} is back.${removed}${warned} The bad version is held back; a newer release installs on its own.${note}`;
   }
   if (r.installed?.restoreError) {
     return `Automagik Herdr ${r.installed.version} failed to load, and ${r.installed.restoreError}. `

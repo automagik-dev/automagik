@@ -1312,7 +1312,7 @@ function autoHome(served_ = ["0.2.0"]) {
   return { home, mods, table, serve, done };
 }
 
-/** A stand-in herdr-app for the update's own check: logs every call, fails the mods named in `fail`. */
+/** A stand-in herdr-app that fails the mods named in `fail`. */
 function fakeCheckApp(dir, fail = []) {
   mkdirSync(dir, { recursive: true });
   const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app-calls");
@@ -1327,6 +1327,40 @@ esac
 `);
   chmodSync(bin, 0o755);
   return { bin, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []) };
+}
+
+/**
+ * A stand-in herdr-app that fails `mod` and, since the bad pack is live and `.prev` is its kept
+ * set, leaves a folder in `.prev` no removal can take (a file system that refuses it): the restore
+ * still happens, but what it rolled away from stays in its set-aside name, said as a warning.
+ */
+function fakeCheckStuckPrev(dir, mod = "am-tabs") {
+  mkdirSync(dir, { recursive: true });
+  const bin = join(dir, "herdr-app"), calls = join(dir, "herdr-app-calls");
+  writeFileSync(bin, `#!/bin/sh
+printf '%s\\n' "$*" >> "${calls}"
+[ "$1" = check ] || exit 0
+case "$2" in
+  */${mod}) printf '%s\\n' "${mod}: cannot load" >&2
+    state="$(dirname "$(dirname "$2")")/automagik-herdr"
+    mkdir -p "$state/.prev/stuck" && printf x > "$state/.prev/stuck/keep" && chmod 500 "$state/.prev/stuck"
+    exit 1 ;;
+  *) exit 0 ;;
+esac
+`);
+  chmodSync(bin, 0o755);
+  return { bin, calls: () => (existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : []) };
+}
+
+/** Lets go of the read-only folders a stuck-prev test left in the state folder, so cleanup can run. */
+function unlockState(modsDir) {
+  const state = stateDirOf(modsDir);
+  let names = [];
+  try { names = readdirSync(state); } catch { return; }
+  for (const name of [".prev", ...names.filter((n) => n.startsWith(".prev-old-") || n.startsWith(".prev-next-"))]) {
+    const stuck = join(state, name, "stuck");
+    try { if (existsSync(stuck)) chmodSync(stuck, 0o700); } catch {}
+  }
 }
 
 /** A stand-in herdr-app that fails the first mod and dies by signal on the next: a failed A then dead B. */
@@ -1447,6 +1481,47 @@ test("a bad pack is restored at once; the bad version is held, and a newer one i
     assert.equal(readVersion(join(prevSetOf(h.mods), "am-sidebar")), "0.1.0");
     assert.equal(rollback({ modsDir: h.mods }).version, "0.1.0", "a manual rollback goes back to the good pack");
   } finally { h.done(); }
+});
+
+test("#671: a restore that cannot remove the kept set still restores, says where it stays, and a rollback changes nothing", async () => {
+  const h = autoHome(["0.2.0"]);
+  const app = fakeCheckStuckPrev(join(h.home, "stuck"));
+  const state = stateDirOf(h.mods);
+  const path = process.env.PATH;
+  try {
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, herdrApp: app.bin });
+    assert.equal(r.installed.version, "0.2.0", "the answer still names the release that failed");
+    assert.equal(r.installed.restored.version, "0.1.0", "the restore still stands");
+    assert.equal(r.installed.restored.prevRemoved, true);
+    assert.equal(existsSync(prevSetOf(h.mods)), false);
+    assert.ok(r.installed.warnings.some((w) => /^the earlier kept set could not be removed \(/.test(w)), r.installed.warnings.join("; "));
+    assert.ok(r.installed.warnings.some((w) => /\.prev-old-/.test(w)), "the warning names where the folders stay");
+    assert.deepEqual(r.installed.restored.warnings, r.installed.warnings, "the restored answer carries the warning");
+    const note = JSON.parse(readFileSync(join(state, RESTORE_FILE), "utf8"));
+    assert.deepEqual(note.warnings, r.installed.warnings, "the note the restored build reads carries it");
+    // A manual rollback refuses and changes nothing: .prev is gone, and the message names the bad release.
+    assert.throws(() => rollback({ modsDir: h.mods }),
+      (e) => /^no earlier pack kept: 0\.2\.0 was removed after it failed to load, so 0\.1\.0 is the installed pack$/.test(e.message));
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "nothing rolled back");
+    // The CLI says the warning too, on its restore line.
+    process.env.PATH = `${dirname(app.bin)}:${path}`;
+    const line = await cmdUpdate({}, [], { modsDir: h.mods, env: {}, keys, fetch: fakeFetch(h.table) });
+    assert.match(line, /Warning: the earlier kept set could not be removed .*\.prev-old-/);
+    // The leftover set-aside .prev still carries the good set's marker, but not its folders (they are
+    // live again): put it back at .prev, as a failed removal leaves it, and rollback's own validation
+    // refuses it, so the bad pack is never reinstalled.
+    const leftover = readdirSync(state).find((n) => n.startsWith(".prev-old-"));
+    const kept = join(state, leftover);
+    assert.match(readFileSync(join(kept, ".pack"), "utf8"), /^version=0\.1\.0$/m);
+    assert.equal(existsSync(join(kept, "am-sidebar")), false, "its .pack lists folders that are not there");
+    renameSync(kept, prevSetOf(h.mods));
+    assert.throws(() => rollback({ modsDir: h.mods }), /kept set lists am-sidebar, which is not there: nothing rolled back/);
+    assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "still nothing rolled back");
+  } finally {
+    process.env.PATH = path;
+    unlockState(h.mods);
+    h.done();
+  }
 });
 
 test("#671: the CLI's restore line names the failed version and the previous one back; its rollback refuses the bad pack", async () => {
