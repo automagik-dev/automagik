@@ -58,6 +58,7 @@ const readyAcp = (models = ['default', 'opus', 'sonnet', 'haiku']) => ({
 async function start(team, {
   acp = readyAcp(), providers = ['anthropic', 'deepseek', 'acp-claude'],
   acpModels = undefined, extraModels = {}, services = {}, resolveModelInfo = undefined,
+  onRuntime = undefined,
 } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-acp-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify(team))
@@ -102,6 +103,9 @@ async function start(team, {
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
   apply(ctx, { home })
+  // The runtime is on `omniTeam` once every module installed; a test may wrap its calls
+  // before the start pass's first await.
+  onRuntime?.(ctx.provided.get('omniTeam'))
   const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
@@ -111,11 +115,18 @@ async function start(team, {
   }
   const saved = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   const teamNow = async () => Object.fromEntries((await call('state', {})).value.bots.map(bot => [bot.id, bot]))
-  // The move runs after the team loads and the ACP route answers, not synchronously.
-  const moved = () => until(() => {
-    const state = saved()
-    return state.claudeAcpMoved === true || state.bots.m1.model !== team.bots.m1.model
-  }, { label: 'the ACP move ran' })
+  // The move runs after the team loads and the ACP route answers, not synchronously. It saves
+  // before it applies, so wait for the target's applied record too: otherwise a test can read
+  // the seed's previous record in the window between the save and the apply.
+  const moved = async () => {
+    await until(() => {
+      const state = saved()
+      return state.claudeAcpMoved === true || state.bots.m1.model !== team.bots.m1.model
+    }, { label: 'the ACP move ran' })
+    await until(() => saved().bots.m1.appliedModel === 'acp-claude/opus', {
+      label: 'the ACP move applied its target',
+    })
+  }
   return { home, ctx, call, stop, saved, teamNow, selected, moved }
 }
 
@@ -147,6 +158,44 @@ test('a Bot still on the pi-ai model it was moved to goes to acp-claude once, ke
     request.sessionId === 'm1' && request.provider === 'acp-claude')
   assert.equal(applied.reasoningEffort, 'high')
   assert.deepEqual([state.bots.m1.sessionId, state.bots.w2.sessionId], ['m1', 'w2'])
+})
+
+test('the move keeps the previous applied record until the target is applied', async (t) => {
+  // The target's apply rewrites `appliedModel`/`appliedEffort` in the same pass, so the saved
+  // file cannot show a delete-before-apply window: the row snapshots the Bot at the apply call.
+  // A move that drops the pair first leaves the Session record empty instead, and this fails.
+  const snapshots = []
+  const host = await start(seed(), {
+    onRuntime: (rt) => {
+      const applyModel = rt.applyModel
+      rt.applyModel = async (bot, options) => {
+        if (bot.acpMoved !== undefined) {
+          snapshots.push({
+            id: bot.id,
+            model: bot.model,
+            target: bot.acpMoved.target,
+            appliedModel: bot.appliedModel,
+            appliedEffort: bot.appliedEffort,
+          })
+        }
+        return applyModel(bot, options)
+      }
+    },
+  })
+  t.after(host.stop)
+  await host.moved()
+  await until(() => host.saved().bots.m1.appliedModel === 'acp-claude/opus', {
+    label: 'the target model was applied',
+  })
+  const first = snapshots.find(snapshot => snapshot.id === 'm1')
+  assert.ok(first, 'the move applied m1 through applyModel')
+  assert.equal(first.model, first.target)
+  // At that call the Bot still carries the pair the reverse restores, not undefined.
+  assert.equal(first.appliedModel, 'anthropic/claude-opus-5-5')
+  assert.equal(first.appliedEffort, 'high')
+  // And the apply leaves the target's own record, so a later pass sees it is applied.
+  assert.equal(host.saved().bots.m1.appliedModel, 'acp-claude/opus')
+  assert.equal(host.saved().bots.m1.appliedEffort, 'high')
 })
 
 test('the move applies the Bot\'s level once the agent catalog can express it', async (t) => {
@@ -380,6 +429,98 @@ test('a moved Bot comes back when the ACP route disappears', async (t) => {
   assert.equal(state.bots.m1.effort, 'high')
   assert.equal(state.bots.m1.acpMoved, undefined)
   assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('a moved team reverses at the next start with the ACP plugin absent', async (t) => {
+  const base = seed()
+  const moved = {
+    ...base,
+    claudeAcpMoved: true,
+    bots: {
+      ...base.bots,
+      m1: {
+        ...base.bots.m1,
+        model: 'acp-claude/opus',
+        appliedModel: 'acp-claude/opus',
+        acpMoved: {
+          from: { model: 'anthropic/claude-opus-5-5', effort: 'high' },
+          target: 'acp-claude/opus',
+        },
+      },
+      w2: {
+        ...base.bots.w2,
+        model: 'acp-claude/sonnet',
+        appliedModel: 'acp-claude/sonnet',
+        effort: 'low',
+        acpMoved: {
+          from: { model: 'anthropic/claude-sonnet-4-5', effort: 'high' },
+          target: 'acp-claude/sonnet',
+        },
+      },
+      d3: {
+        ...base.bots.d3,
+        model: 'deepseek/deepseek-v4-flash',
+        appliedModel: 'deepseek/deepseek-v4-flash',
+        acpMoved: {
+          from: { model: 'anthropic/claude-opus-5-5', effort: 'high' },
+          target: 'acp-claude/opus',
+        },
+      },
+    },
+  }
+  // No `acpAgents` and no enabled loader entry: nothing announces the off flip, and no plugin
+  // is still loading. The start pass sees the route gone and reverses from the records alone.
+  const host = await start(moved, {
+    acp: false,
+    resolveModelInfo: async provider => (['anthropic', 'deepseek'].includes(provider)
+      ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] } }
+      : {}),
+  })
+  t.after(host.stop)
+  await until(() => {
+    const state = host.saved()
+    return state.bots.m1.appliedModel === 'anthropic/claude-opus-5-5'
+      && state.bots.w2.appliedEffort === 'low'
+  }, { label: 'the start migrate reversed the moves' })
+  const state = host.saved()
+  // The Bot nobody touched gets exactly the recorded model and level back.
+  assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.appliedEffort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  // A person's level pick is kept; the dead route still gives the model back.
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
+  assert.equal(state.bots.w2.effort, 'low')
+  assert.equal(state.bots.w2.appliedEffort, 'low')
+  assert.equal(state.bots.w2.acpMoved, undefined)
+  // A person's model pick wins outright: the Bot stays where they put it.
+  assert.equal(state.bots.d3.model, 'deepseek/deepseek-v4-flash')
+  assert.equal(state.bots.d3.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('a missed live announcement still reverses at the next start', async (t) => {
+  const first = await start(seed())
+  t.after(first.stop)
+  await first.moved()
+  assert.equal(first.saved().bots.m1.model, 'acp-claude/opus')
+  const moved = first.saved()
+  // The first host must close for the second to write the same team; no live event reaches it,
+  // as when acp-dsh's announcement listener threw.
+  await first.stop()
+  // The next start with the bridge off reads the route as off and reverses from the record.
+  const off = { ...readyAcp(), bridge: () => ({ on: false, probesPass: true }) }
+  const host = await start(moved, { acp: off })
+  t.after(host.stop)
+  await until(() => host.saved().bots.m1.appliedModel === 'anthropic/claude-opus-5-5', {
+    label: 'the next start reversed the move',
+  })
+  const state = host.saved()
+  assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(state.bots.m1.effort, 'high')
+  assert.equal(state.bots.m1.acpMoved, undefined)
+  assert.equal(state.claudeAcpMoved, undefined)
+  assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
 })
 
 test('an effort pick still leaves a dead ACP route for the previous model', async (t) => {

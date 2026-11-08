@@ -120,13 +120,21 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The flip is also announced on the plugin context: DSH delivers `loader/volatile-update`
   // only to the plugin whose config changed, so a Bot team watching its own context never sees
   // this one. A profile-patch edit emits no other event there, and the Bot move reverses on it.
+  // A listener that throws must not undo the setting or the ended sessions above, but it must
+  // not vanish either: the live reverse is lost, and the next start (off or route gone) is the
+  // fallback, so the warning makes that deferral visible.
   let toolsSetting = flagOf(config.dshTools)
   const syncTools = () => {
     const next = flagOf(config.dshTools)
     if (toolsSetting === next) return
     toolsSetting = next
     adapter.endSessions()
-    try { ctx.emit?.('acp-dsh/dsh-tools-changed', { on: dshToolsOn(config.dshTools) }) } catch {}
+    try {
+      ctx.emit?.('acp-dsh/dsh-tools-changed', { on: dshToolsOn(config.dshTools) })
+    } catch (error) {
+      const why = error?.message ?? error
+      warn(ctx, `the dshTools flip was not announced: ${why}; the next start reverses`)
+    }
   }
   const clis = new Map()
   const signIns = new Map()

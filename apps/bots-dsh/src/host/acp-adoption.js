@@ -9,7 +9,9 @@
 // the route gone, it moves back to exactly that. A Bot the person changed since keeps their
 // pick: the record is dropped, never applied over it. The off flip is heard live through
 // acp-dsh's `acp-dsh/dsh-tools-changed`: DSH's `loader/volatile-update` reaches only the plugin
-// whose config changed, so the team cannot watch acp-dsh's setting there.
+// whose config changed, so the team cannot watch acp-dsh's setting there. That live path needs
+// acp-dsh loaded; when the route is gone and the plugin absent (or the announcement never
+// arrived), the start pass reads the route as gone here and reverses from the record then.
 //
 // `acpAgents.bridge()` runs a live probe on this machine: a fresh per-session credential, the
 // bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
