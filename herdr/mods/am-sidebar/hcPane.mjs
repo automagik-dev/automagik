@@ -6,10 +6,12 @@
 // lifecycle: no service, no second process to reap.
 //
 // The caller is resolved here, outside the sandbox: the pack passes --bot and --project, and
-// the proxy still checks the pane's own label. The proxy snapshots the attach ledger and the
-// project's .herdr/bots.json before DSH starts, so a sandbox cannot write either before the
-// snapshot. The pane gets DSH_SANDBOX_MASK=1, AM_HC_REAL_SOCKET and AM_HC_PROXY_SOCKET; the
-// mask wrapper binds the proxy at the real path and hides the real socket folder.
+// the proxy still checks the pane's own label. A worker's project is mandatory: it is the main
+// checkout the pack resolved (its lead seat's project), never the worktree the worker owns.
+// The proxy reads that project's approved roster before DSH starts; a sandbox cannot write the
+// record (the data root is bound read-only). The pane gets DSH_SANDBOX_MASK=1,
+// AM_HC_REAL_SOCKET and AM_HC_PROXY_SOCKET; the mask wrapper binds the proxy at the real path
+// and hides the real socket folder.
 //
 // Fail closed: if the proxy cannot start (the pin, the caller, the roster, the socket folder),
 // the pane's command is never started, so no sandbox exists and hc cannot auto-start a core.
@@ -31,8 +33,8 @@ const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 
 const USAGE = `usage: hcPane.mjs [--bot <id> [--project <dir>] [--worker]] [--app-home <dir>] -- <command...>
   --bot        the bot this pane plays (the pack passes it; the proxy checks the pane's label)
-  --project    the project folder whose .herdr/bots.json the proxy snapshots (default: the one
-               above the current folder)
+  --project    the project folder whose approved roster the proxy reads (default: the one
+               above the current folder; a worker must pass its main checkout)
   --worker     the pane is a worker (worker.of), not a bot seat
   --app-home   the app home holding automagik-herdr/attach.jsonl (default: HERDR_APP_HOME,
                else ~/.config/herdr-app)
@@ -89,8 +91,16 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
   const upstream = String(env.HC_TERMINAL_SOCKET ?? "");
   if (!terminal) throw new Error("HC_TERMINAL_ID is not set: this is not an hc terminal");
   if (!upstream || !isAbsolute(upstream)) throw new Error("HC_TERMINAL_SOCKET is not an absolute socket path");
-  const project = args.project ?? (args.bot ? projectOfFolder(process.cwd()) : null);
-  if (args.bot && !project) throw new Error("--project is required (or the current folder must be inside a project)");
+  // A worker's cwd is its worktree and it owns that worktree's .herdr/bots.json: the approved
+  // record is the lead seat's project, which the pack resolved outside the sandbox. Never fall
+  // back to the current folder for a worker.
+  const project = args.project
+    ?? (args.bot && !args.worker ? projectOfFolder(process.cwd()) : null);
+  if (args.bot && !project) {
+    throw new Error(args.worker
+      ? "--project is required for a worker: the project's main checkout, never the worktree"
+      : "--project is required (or the current folder must be inside a project)");
+  }
   if (!args.bot && (args.worker || args.project)) throw new Error("--worker and --project need --bot");
   const caller = args.bot ? { bot: args.bot, project: resolve(project), worker: args.worker } : undefined;
   // The stable runner's baked node, the profile, the shim and the dsh it executes must still be
@@ -112,7 +122,7 @@ export async function runPane(argv = process.argv.slice(2), env = process.env, i
     forbiddenRoots: io.forbiddenRoots,
     ...(caller ? { caller, bound: !caller.worker } : {}),
     log: (event) => {
-      if (event.ev === "server_error" || event.ev === "error") {
+      if (event.ev === "server_error" || event.ev === "error" || event.ev === "roster_unapproved") {
         (io.stderr ?? process.stderr).write(`${MSG_PREFIX}${oneLine(event.message ?? event.ev)}\n`);
       }
     },

@@ -17,7 +17,7 @@ import {
 } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
@@ -671,11 +671,14 @@ test('the pure helper keeps the switch off and never asks for a socket list then
   assert.deepEqual(result.notices, []);
 });
 
-test('--pack-root binds that folder read-only after the writable profile args', async () => {
+test('G1 (g): --pack-root binds the data parent read-only, covering approved/ too', async () => {
   const fixture = makeFixture();
-  const pack = join(fixture.root, 'pack');
+  const dataRoot = join(fixture.root, 'data', 'automagik-herdr');
+  const pack = join(dataRoot, 'dsh-sandbox');
+  const approved = join(dataRoot, 'approved');
   mkdirSync(pack, { recursive: true });
-  const realPack = realpathSync(pack);
+  mkdirSync(approved, { recursive: true });
+  const realRoot = realpathSync(dataRoot), realApproved = realpathSync(approved);
   const env = { [SWITCH]: '1', HOME: fixture.home, [REAL_SOCKET]: fixture.real, [PROXY_SOCKET]: fixture.proxy };
   const own = ownArgs([PACK_ROOT_FLAG, pack, ...RUNNER_ARGS]);
   assert.equal(own.packRoot, pack);
@@ -684,9 +687,23 @@ test('--pack-root binds that folder read-only after the writable profile args', 
   assert.equal(result.fatal, null);
   const at = result.args.lastIndexOf('--ro-bind');
   assert.ok(at > 0, result.args.join(' '));
-  assert.deepEqual(result.args.slice(at, at + 3), ['--ro-bind', realPack, realPack]);
+  assert.deepEqual(result.args.slice(at, at + 3), ['--ro-bind', realRoot, realRoot]);
+  assert.equal(relative(realRoot, realApproved).startsWith('..'), false,
+    'the parent mount covers the approved folder');
   assert.ok(at >= PROFILE_ARGS.length, 'the read-only bind comes after the profile args (and so after any writable workspace bind)');
   assert.ok(at < result.args.lastIndexOf('--'), 'it is a mount, not the command');
+});
+
+test(
+  'G1 (g): --pack-root refuses a folder that is not <data home>/automagik-herdr/dsh-sandbox',
+    () => {
+  const fixture = makeFixture();
+  const pack = join(fixture.root, 'pack');
+  mkdirSync(pack, { recursive: true });
+  const env = { [SWITCH]: '1', HOME: fixture.home, [REAL_SOCKET]: fixture.real,
+    [PROXY_SOCKET]: fixture.proxy };
+  const result = maskArgs(RUNNER_ARGS, env, { containerSockets: [], packRoot: pack });
+  assert.match(result.fatal, /is not a <data home>\/automagik-herdr\/dsh-sandbox folder/);
 });
 
 test('--pack-root refuses a relative or missing folder', async () => {

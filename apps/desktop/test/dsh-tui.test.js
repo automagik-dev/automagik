@@ -26,7 +26,10 @@ const SCRATCH = () => mkdtempSync(join(tmpdir(), 'automagik-dsh-tui-desktop-'))
 const posixOnly = { skip: process.platform === 'win32' ? 'the fake dsh is a sh script' : false }
 
 test('the shipped module is the existing installer and every local module it imports', () => {
-  assert.deepEqual([...DSH_TUI_FILES], ['dshTui.mjs', 'workers.js', 'models.js', 'model.js', 'logins.js', 'retired.js', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs'])
+  assert.deepEqual([...DSH_TUI_FILES], [
+    'dshTui.mjs', 'approved.js', 'workers.js', 'models.js', 'model.js', 'logins.js',
+    'retired.js', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs',
+  ])
   for (const file of DSH_TUI_FILES) {
     assert.ok(existsSync(join(AM, file)), `${file} is missing from am/`)
   }
@@ -396,6 +399,22 @@ test('end to end: the runner installs, doctors, updates and uninstalls', posixOn
   const manifest = JSON.parse(readFileSync(
     join(s.home, '.dsh', 'profiles', 'dsh-tui', 'package.json'), 'utf8'))
   assert.deepEqual(manifest.dependencies, {})
+})
+
+test('plain install accepts a temp/project data root; proxy approve refuses it', posixOnly, (t) => {
+  const s = scene(t)
+  mkdirSync(join(s.root, '.herdr'))
+  writeFileSync(join(s.root, '.herdr', 'bots.json'),
+    JSON.stringify({ version: 1, categories: [], bots: [] }))
+  const installed = s.runner('install')
+  assert.equal(installed.error, undefined, JSON.stringify(installed))
+  assert.equal(installed.result.status, 'installed', JSON.stringify(installed.result))
+  const approved = spawnSync(process.execPath,
+    [join(AM, 'bin', 'automagik-herdr.mjs'), 'proxy', 'approve', '--project', s.root],
+    { cwd: s.root, env: s.env, encoding: 'utf8', timeout: 60_000 })
+  assert.equal(approved.status, 1, approved.stderr)
+  assert.match(approved.stderr, /approved data root .* is inside the project/)
+  assert.equal(existsSync(join(s.home, '.local', 'share', 'automagik-herdr', 'approved')), false)
 })
 
 test('end to end: a dsh only the app sees is skipped', posixOnly, (t) => {

@@ -5,7 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+  realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -14,8 +15,10 @@ import { workerArgs } from "../mods/am-sidebar/workers.js";
 import {
   DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, installSandboxRow, lockIntegrity,
   ownershipOf, packRootOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxRootOf, sandboxState, sandboxWrapperOf, scopeReleaseAge, STABLE_FILES,
-  shimIsOurs, uninstallDshTui,
+  shimIsOurs, uninstallDshTui, MAX_SYMLINK_DEPTH, realOrAbs, stableRootProblem,
+  approvedDataRootProblem,
 } from "../mods/am-sidebar/dshTui.mjs";
+import { approveProject } from "../mods/am-sidebar/approved.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 /** The pinned release's publish time: an hour before this run, so the fresh path never depends on the wall clock. */
@@ -285,7 +288,7 @@ test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) 
   const s = scene(t);
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   appendFileSync(sandboxWrapperOf(s.env), "\n// drift\n");
-  const report = doctorDshTui({ env: s.env, forbiddenRoots: rootsOf(s) });
+  const report = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   const check = report.checks.find((c) => c.check === "dsh-sandbox");
   assert.equal(check.ok, false);
   assert.match(check.detail, /differs from the pack's/);
@@ -457,13 +460,14 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.equal(missingPane.path, missing.env.PATH, "the login shell gives the pane exactly the scene's PATH");
   assert.equal(missingPane.config, "~/.profile");
   assert.equal(findDsh({ ...missing.env, PATH: missingPane.path }), null, "no dsh on the scene's pane PATH");
-  const none = doctorDshTui({ env: missing.env });
+  const none = doctorDshTui({ forbiddenRoots: rootsOf(missing), env: missing.env });
   assert.equal(none.code, 2, "no dsh: not applicable");
   assert.equal(none.checks.find((c) => c.check === "dsh").ok, true);
   assert.match(none.checks.find((c) => c.check === "dsh").detail, /not found on the PATH Herdr panes get/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-profile").detail, /not installed/);
   assert.match(none.checks.find((c) => c.check === "dsh-tui-shim").detail, /not installed/);
-  const noPath = doctorDshTui({ env: missing.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/sh", config: "~/.profile", login: true } });
+  const noPath = doctorDshTui({ forbiddenRoots: rootsOf(missing), env: missing.env,
+    panePath: { path: "/usr/bin:/bin", shell: "/bin/sh", config: "~/.profile", login: true } });
   assert.equal(noPath.code, 2, "nothing installed and ~/.local/bin off PATH is still not applicable, never broken");
   assert.equal(noPath.checks.find((c) => c.check === "dsh-tui-path").ok, true);
   assert.match(noPath.checks.find((c) => c.check === "dsh-tui-path").fix, />> ~\/\.profile$/);
@@ -473,11 +477,11 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.equal(paneBefore.login, true, "the login shell answered");
   assert.equal(paneBefore.path, s.env.PATH, "the login shell gives the pane exactly the scene's PATH");
   assert.equal(paneBefore.config, "~/.profile");
-  const before = doctorDshTui({ env: s.env });
+  const before = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(before.code, 2);
   assert.equal(before.checks.find((c) => c.check === "dsh").detail, s.dsh);
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
-  const after = doctorDshTui({ env: s.env });
+  const after = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(after.code, 0, JSON.stringify(after.checks));
   assert.ok(after.checks.every((c) => c.ok), JSON.stringify(after.checks));
   assert.match(after.checks.find((c) => c.check === "dsh-tui-profile").detail, /integrity ok.*added by this installer/);
@@ -486,13 +490,14 @@ test("doctor states dsh, the dsh-tui profile and the shim honestly, before and a
   assert.equal(pane.config, "~/.profile");
   assert.equal(pane.path, s.env.PATH);
   assert.ok(pane.path.split(":").includes(join(s.home, ".local", "bin")), pane.path);
-  const off = doctorDshTui({ env: s.env, panePath: { path: "/usr/bin:/bin", shell: "/bin/zsh", config: "~/.zshrc", login: true } });
+  const off = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env,
+    panePath: { path: "/usr/bin:/bin", shell: "/bin/zsh", config: "~/.zshrc", login: true } });
   const offPath = off.checks.find((c) => c.check === "dsh-tui-path");
   assert.equal(offPath.ok, false);
   assert.match(offPath.fix, /\$PATH"' >> ~\/\.zshrc$/);
 
   rmSync(join(s.home, ".local", "bin", SHIM));
-  const half = doctorDshTui({ env: s.env });
+  const half = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(half.code, 1);
   assert.equal(half.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
 });
@@ -688,7 +693,7 @@ test("a dangling shim is present but broken; install refuses and uninstall leave
   assert.match(r.detail, /dangling link/);
   assert.ok(lstatSync(shim).isSymbolicLink());
   assert.deepEqual(s.calls(), []);
-  const d = doctorDshTui({ env: s.env });
+  const d = doctorDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
   assert.equal(d.checks.find((c) => c.check === "dsh-tui-shim").ok, false);
   assert.match(d.checks.find((c) => c.check === "dsh-tui-shim").detail, /unreadable/);
   const u = uninstallDshTui({ forbiddenRoots: rootsOf(s), env: s.env });
@@ -701,14 +706,16 @@ test("a shim released before the profile fix is still ours and install replaces 
   const shim = join(s.home, ".local", "bin", SHIM);
   mkdirSync(dirname(shim), { recursive: true });
   exe(shim, `#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile tui -- "$@"\n`);
-  const stale = doctorDshTui({ env: s.env }).checks.find((c) => c.check === "dsh-tui-shim");
+  const stale = doctorDshTui({ forbiddenRoots: rootsOf(s),
+    env: s.env }).checks.find((c) => c.check === "dsh-tui-shim");
   assert.equal(stale.ok, false, "the released shim is not healthy: it still boots the tui profile");
   assert.match(stale.detail, /earlier release's shim/);
   assert.equal(stale.fix, "automagik-herdr dsh-tui install");
   const r = await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   assert.equal(r.status, "installed", r.detail);
   assert.equal(readFileSync(shim, "utf8"), SHIM_TEXT, "the old tui/no-profile shim is replaced");
-  assert.equal(doctorDshTui({ env: s.env }).checks.find((c) => c.check === "dsh-tui-shim").ok, true);
+  assert.equal(doctorDshTui({ forbiddenRoots: rootsOf(s),
+    env: s.env }).checks.find((c) => c.check === "dsh-tui-shim").ok, true);
 });
 
 test("shimIsOurs accepts only the marker and a known exec line", () => {
@@ -717,4 +724,130 @@ test("shimIsOurs accepts only the marker and a known exec line", () => {
   assert.equal(shimIsOurs("#!/bin/sh\nexec dsh --profile dsh-tui -- \"$@\"\n"), false, "no marker");
   assert.equal(shimIsOurs(`#!/bin/sh\n${SHIM_MARK}\nexec dsh --profile dsh-tui -- "$@"\n`), false, "a literal -- is not ours");
   assert.equal(shimIsOurs(`#!/bin/sh\n${SHIM_MARK}\nexec my-own-dsh --profile dsh-tui "$@"\n`), false, "another command is not ours");
+});
+
+// ---- #631 PR C1: approvals survive an install; the dangling last-component symlink ----
+
+test("G1 (d): the approval data-root check refuses every writable tree", (t) => {
+  const s = scene(t);
+  const project = join(s.root, "project"), app = join(s.root, "app");
+  const temp = join(s.root, "pane-tmp"), runtime = join(s.root, "runtime");
+  const forbiddenRoots = [["the project", project], ["the app home", app],
+    ["the temp folder", temp], ["the runtime folder", runtime]];
+  for (const [name, parent] of forbiddenRoots) {
+    const env = { ...s.env, XDG_DATA_HOME: join(parent, "data"), HERDR_APP_HOME: app,
+      XDG_RUNTIME_DIR: runtime };
+    assert.match(approvedDataRootProblem({ env, project, forbiddenRoots }), /is inside/, name);
+    assert.throws(() => installSandboxRow({ env, project, forbiddenRoots }), /is inside/, name);
+    const checked = sandboxState(env, { forbiddenRoots });
+    assert.equal(checked.capable, false, name);
+  }
+});
+
+test("G1 (d): the stable root and approved folder must stay beneath the data parent", (t) => {
+  const s = scene(t);
+  const parent = dirname(sandboxRootOf(s.env));
+  mkdirSync(parent, { recursive: true });
+  for (const name of ["dsh-sandbox", "approved"]) {
+    const link = join(parent, name);
+    symlinkSync(s.root, link);
+    assert.match(approvedDataRootProblem({ env: s.env, forbiddenRoots: rootsOf(s) }),
+      /not beneath/);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    unlinkSync(link);
+  }
+});
+
+test(
+  "G1 (f): a pack install/copyStable leaves an approved record and its parent alone", async (t) => {
+  const s = scene(t);
+  const project = join(s.root, "project");
+  mkdirSync(join(project, ".herdr"), { recursive: true });
+  writeFileSync(join(project, ".herdr", "bots.json"), `${JSON.stringify({
+    version: 1, categories: [], bots: [{
+      id: "b-aaaaaaaaaa", name: "Main", kind: "main", look: { character: "star", colour: "blue" },
+      role: "", instructions: "", agent: "dsh-tui",
+    }],
+  }, null, 2)}\n`);
+  const approved = approveProject({ project, env: s.env, approvedAt: "2026-11-01T00:00:00.000Z",
+    approvedBy: "tester" });
+  const before = readFileSync(approved.path);
+  const first = installSandboxRow({ env: s.env, forbiddenRoots: rootsOf(s) });
+  writeFileSync(join(first.stableRoot, "hcProxy.mjs"), "// previous pack version\n");
+  const second = installSandboxRow({ env: s.env, forbiddenRoots: rootsOf(s) });
+  assert.equal(first.stableRoot, sandboxRootOf(s.env));
+  assert.equal(second.changed, true, "the update replaces a changed stable file");
+  assert.equal(installSandboxRow({ env: s.env, forbiddenRoots: rootsOf(s) }).changed, false);
+  assert.equal(readFileSync(approved.path).equals(before), true,
+    "the approval bytes are untouched");
+  assert.equal(statSync(approved.path).mode & 0o777, 0o600);
+  assert.equal(dirname(dirname(approved.path)), dirname(sandboxRootOf(s.env)),
+    "record and stable root share the parent");
+});
+
+test("LOW1 (j): a dangling final symlink at the checked path resolves and is refused", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, "project"), parent = join(root, "data", "automagik-herdr");
+  mkdirSync(project, { recursive: true });
+  mkdirSync(parent, { recursive: true });
+  const link = join(parent, "dsh-sandbox");
+  symlinkSync("../../project/missing-stable", link);
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.match(stableRootProblem(link, { project, env: { ...process.env, TMPDIR: join(root,
+    "tmp") } }),
+    /the stable execution root .* is inside the project/);
+});
+
+test("LOW1 (k): a dangling final symlink at a forbidden root resolves and is refused", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, "project"), link = join(root, "forbidden");
+  mkdirSync(project, { recursive: true });
+  symlinkSync(join(project, "missing-root"), link);
+  const checked = join(project, "missing-root", "dsh-sandbox");
+  assert.match(stableRootProblem(checked, { project, forbiddenRoots: [["the project", link]],
+    env: { ...process.env, TMPDIR: join(root, "tmp") } }), /inside the project/);
+});
+
+test("LOW1 (l): a valid symlink still resolves to its target", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, "project"), safe = join(root, "safe"), link = join(root, "link");
+  mkdirSync(project, { recursive: true });
+  mkdirSync(safe, { recursive: true });
+  symlinkSync(safe, link);
+  assert.equal(realOrAbs(join(link, "new")), join(realpathSync(safe), "new"));
+  assert.equal(stableRootProblem(join(link, "dsh-sandbox"),
+    { project, forbiddenRoots: [["the project", project]], env: { ...process.env,
+      TMPDIR: join(root, "tmp") } }),
+  null);
+});
+
+test("LOW1 (m): a symlink loop is refused", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const a = join(root, "a"), b = join(root, "b");
+  symlinkSync(b, a);
+  symlinkSync(a, b);
+  assert.throws(() => realOrAbs(a), /symlink loop/);
+  assert.throws(() => stableRootProblem(a, { project: root, env: { ...process.env,
+    TMPDIR: join(root, "tmp") } }),
+    /symlink loop/);
+});
+
+test("LOW1 (n): a chain over 32 symlinks is refused; exactly 32 still resolves", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const real = join(root, "real");
+  mkdirSync(real);
+  let at = real;
+  for (let i = 0; i < MAX_SYMLINK_DEPTH; i += 1) {
+    const link = join(root, `link-${i}`);
+    symlinkSync(at, link);
+    at = link;
+  }
+  assert.equal(realOrAbs(at), real, "exactly 32 links resolve");
+  symlinkSync(at, join(root, "over"));
+  assert.throws(() => realOrAbs(join(root, "over")), /more than 32 symlinks/);
 });

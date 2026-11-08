@@ -5,10 +5,12 @@
 # profile that carries this row behaves as it does today.
 #
 # `{{WRAPPER}}` and `{{PACK_ROOT}}` are placeholders. Only `dsh-sandbox install` substitutes the
-# absolute path to bin/hc-socket-mask.mjs and the pack's own folder, and writes this item inside
-# its managed block; install refuses a relative or missing wrapper path, and check fails on a
-# relative one. The wrapper binds {{PACK_ROOT}} read-only inside the sandbox. Do not copy this
-# file into a profile by hand.
+# absolute path to bin/hc-socket-mask.mjs and the stable execution folder
+# (<data home>/automagik-herdr/dsh-sandbox), and writes this item inside its managed block;
+# install refuses a relative or missing wrapper path, and check fails on a relative one. The
+# wrapper binds the folder's parent (<data home>/automagik-herdr) read-only inside the sandbox,
+# so the stable folder and approved/ are both covered. Do not copy this file into a profile by
+# hand.
 #
 # Rollout: the pack copies the wrapper byte-equal from its release and runs the helper at
 # enablement; the proxy lane sets the switch and absolute AM_HC_REAL_SOCKET / AM_HC_PROXY_SOCKET
