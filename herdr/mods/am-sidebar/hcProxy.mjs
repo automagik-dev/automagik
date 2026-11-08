@@ -1,23 +1,23 @@
 #!/usr/bin/env node
-// The per-pane hc proxy (#631 PR A). Plain-mode JSON-RPC only: one message per line, one
-// upstream connection per downstream client connection, one Unix socket per pane. It refuses
-// `hello`, so framed mode (and terminal.attach) is never reachable through it.
+// The per-pane hc proxy (#631). Plain-mode JSON-RPC only: one message per line, one upstream
+// connection per downstream client connection, one Unix socket per pane. It refuses `hello`,
+// so framed mode (and terminal.attach) is never reachable through it.
 //
-// OFF BY DEFAULT. Nothing imports this module: startArgs, workerArgs, install.sh, run.sh and
-// the launcher do not name it. PR B wires one proxy per sandboxed pane and masks the real core.
+// The per-pane helper (hcPane.mjs) starts it before DSH, and so before the sandbox exists; the
+// helper passes the caller the pack resolved outside the sandbox. The helper and the proxy are
+// one process: it ends with the pane, and there is no service to run.
 //
 // The policy is deny-by-default and is built from a snapshot taken at start: the attach ledger
 // (`<app home>/automagik-herdr/attach.jsonl`) and the project's `.herdr/bots.json` are read once
-// here and never again from the writable tree. A roster change needs a proxy restart. The
-// caller is the pane this proxy serves, fixed at start, and every forwarded request has its
-// `params.caller` overwritten with it. Targets are resolved with one short upstream
-// `terminal.get`, checked, and forwarded by resolved address, so a rename between the check and
-// the call cannot redirect it.
+// here and never again from the writable tree. A roster change needs a pane restart (a new
+// proxy is started with the new pane). The caller is the pane this proxy serves, fixed at
+// start, and every forwarded request has its `params.caller` overwritten with it. Targets are
+// resolved with one short upstream `terminal.get`, checked, and forwarded by resolved address,
+// so a rename between the check and the call cannot redirect it.
 //
 // Fail closed: a dead upstream is a JSON-RPC error, never a fallback. The upstream core must
-// answer `server.status` with HC_PIN or the proxy refuses to start. `hc` auto-starts a core when
-// it cannot connect; PR B must keep that from happening inside the sandbox (the wrapper or an
-// env switch). That is not wired here.
+// answer `server.status` with HC_PIN or the proxy refuses to start. A pane whose proxy cannot
+// start is not started at all (hcPane.mjs), so `hc` cannot auto-start a core inside the sandbox.
 //
 // Apache-2.0.
 
@@ -44,6 +44,10 @@ export const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = 256 * 1024;
 /** A Unix socket path must fit in Linux's 108-byte sun_path, including its NUL. */
 export const MAX_SOCKET_PATH = 107;
+/** The platform's own sun_path bound: macOS accepts 104 bytes, Linux 107. */
+export const SOCKET_PATH_LIMITS = Object.freeze({ linux: 107, darwin: 104 });
+/** The socket-path byte limit for `platform` (an unknown platform takes Linux's bound). */
+export const socketPathLimit = (platform = process.platform) => SOCKET_PATH_LIMITS[platform] ?? MAX_SOCKET_PATH;
 /** The most client connections one pane socket accepts at once. */
 export const MAX_CONNECTIONS = 16;
 /** A connection with no request in flight is closed after this long. */
@@ -65,7 +69,7 @@ const ALLOWED = new Set(["terminal.list", "terminal.label", ...CALLER_METHODS]);
 const OWN_WORKER_METHODS = new Set(["terminal.kill", "terminal.rm", "terminal.label"]);
 const TEAM_METHODS = new Set(["terminal.get", "terminal.read", "terminal.wait", "terminal.send"]);
 /** The exact parameters each method may forward; anything else is an unknown parameter. */
-const METHOD_PARAMS = new Map([
+export const METHOD_PARAMS = new Map([
   ["terminal.list", new Set(["all", "labels"])],
   ["terminal.get", new Set(["terminal", "caller"])],
   ["terminal.read", new Set(["terminal", "lines", "caller"])],
@@ -123,7 +127,7 @@ function insideReal(child, parent) {
 export const appHome = (env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
 
 /** The project a folder belongs to, as hcGuard's callerOf reads it. */
-function projectOfFolder(folder) {
+export function projectOfFolder(folder) {
   if (typeof folder !== "string" || !folder) return null;
   let at = realOrNull(folder);
   if (!at) return null;
@@ -254,6 +258,20 @@ export function runProblem(params, snapshot) {
   if (argv[3] !== "--") return "no -- before the task";
   if (typeof argv[4] !== "string") return "the task is not the one -- <task> word";
   return null;
+}
+
+/**
+ * The caller the per-pane helper passes at start: the pack works it out outside the sandbox
+ * (hcPane.mjs), so the proxy can snapshot the roster before DSH starts and before any sandbox
+ * exists. Returns { bot, project, worker }; the terminal's own labels are checked against it.
+ */
+export function explicitCaller(value) {
+  if (!isObject(value)) throw new Error("the caller must be an object");
+  const bot = typeof value.bot === "string" ? value.bot.trim() : "";
+  const project = typeof value.project === "string" ? value.project : "";
+  if (!bot) throw new Error("the caller has no bot id");
+  if (!project || !isAbsolute(project)) throw new Error("the caller's project must be an absolute folder");
+  return { bot, project: resolve(project), worker: value.worker === true };
 }
 
 /**
@@ -527,6 +545,7 @@ export async function startProxy(options = {}) {
   const home = options.appHome ?? appHome(env);
   const idleTimeoutMs = Number.isFinite(options.idleTimeoutMs) ? options.idleTimeoutMs : IDLE_TIMEOUT_MS;
   const forwardTimeoutMs = Number.isFinite(options.forwardTimeoutMs) ? options.forwardTimeoutMs : FORWARD_TIMEOUT_MS;
+  const explicit = options.caller === undefined || options.caller === null ? null : explicitCaller(options.caller);
 
   // 1. The core pin: fail closed before any socket exists.
   const status = await upstreamCall(upstream, "server.status", {});
@@ -541,16 +560,33 @@ export async function startProxy(options = {}) {
   const callerRecord = callerReply.result;
   if (!isObject(callerRecord)) throw new Error(`terminal.get ${terminal} returned no record`);
   const fold = ledgerSnapshot(home);
-  const bound = boundCaller(fold, terminal);
   let caller;
-  if (bound) {
-    if (!bound.project) throw new Error(`the attach ledger binds ${terminal} but names no project`);
-    caller = bound;
+  let bound;
+  if (explicit) {
+    // The helper (hcPane.mjs) resolved the caller outside the sandbox; the pane's own labels
+    // must still agree, so a helper started for another bot on this terminal is refused.
+    const labels = isObject(callerRecord.labels) ? callerRecord.labels : {};
+    if (explicit.worker) {
+      if (labels[WORKER_OF_LABEL] !== explicit.bot) throw new Error(`the caller ${terminal} is not a worker of ${explicit.bot}`);
+      bound = false;
+    } else {
+      if (labels.bot !== explicit.bot) throw new Error(`the caller ${terminal} does not carry the bot label ${explicit.bot}`);
+      bound = options.bound !== false;
+    }
+    caller = explicit;
   } else {
-    const of = isObject(callerRecord.labels) ? callerRecord.labels[WORKER_OF_LABEL] : null;
-    if (typeof of !== "string" || !of) throw new Error(`the caller ${terminal} is neither bound in the attach ledger nor a worker pane`);
-    caller = { bot: of, project: projectOfFolder(callerRecord.cwd), worker: true };
-    if (!caller.project) throw new Error(`the worker caller ${terminal} has no project above its cwd`);
+    const ledgerBound = boundCaller(fold, terminal);
+    if (ledgerBound) {
+      if (!ledgerBound.project) throw new Error(`the attach ledger binds ${terminal} but names no project`);
+      caller = ledgerBound;
+      bound = true;
+    } else {
+      const of = isObject(callerRecord.labels) ? callerRecord.labels[WORKER_OF_LABEL] : null;
+      if (typeof of !== "string" || !of) throw new Error(`the caller ${terminal} is neither bound in the attach ledger nor a worker pane`);
+      caller = { bot: of, project: projectOfFolder(callerRecord.cwd), worker: true };
+      if (!caller.project) throw new Error(`the worker caller ${terminal} has no project above its cwd`);
+      bound = false;
+    }
   }
   const botsPath = join(caller.project, ".herdr", "bots.json");
   let file;
@@ -569,8 +605,9 @@ export async function startProxy(options = {}) {
   // 3. The socket folder: 0700, outside the writable project and the app home.
   const socketPath = socketPathFor(env, terminal, caller.project, home);
   const pathBytes = Buffer.byteLength(socketPath);
-  if (pathBytes > MAX_SOCKET_PATH) {
-    throw new Error(`socket path is ${pathBytes} bytes, over the ${MAX_SOCKET_PATH}-byte limit`);
+  const pathLimit = socketPathLimit(options.platform ?? process.platform);
+  if (pathBytes > pathLimit) {
+    throw new Error(`socket path is ${pathBytes} bytes, over the ${pathLimit}-byte limit`);
   }
   prepareSocket(socketPath);
   const sessions = new Set();

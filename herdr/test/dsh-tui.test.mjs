@@ -5,13 +5,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
   DSH_TUI, PIN, PROFILE, RECORD_FILE, SHIM, SHIM_MARK, SHIM_TEXT, SKIP, desktopFingerprint, doctorDshTui, findDsh, installDshTui, lockIntegrity,
-  ownershipOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, scopeReleaseAge, shimIsOurs, uninstallDshTui,
+  ownershipOf, packWrapperOf, packageOfEntry, panePathOf, profileState, releaseAgeEntries, sandboxState, sandboxWrapperOf, scopeReleaseAge,
+  shimIsOurs, uninstallDshTui,
 } from "../mods/am-sidebar/dshTui.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -182,6 +183,34 @@ test("install pins exactly 0.19.0 with its integrity into the dsh-tui profile on
   assert.ok(statSync(join(s.home, ".local", "bin", SHIM)).mode & 0o111, "the shim is executable");
   assert.deepEqual(JSON.parse(readFileSync(join(s.home, ".dsh-tui", "onboarding.json"), "utf8")), { completed: true, version: 1 });
   assert.equal(JSON.parse(readFileSync(join(state.dir, RECORD_FILE), "utf8")).version, DSH_TUI.version, "the installer records that it added the pin");
+});
+
+test("install copies the sandbox wrapper byte-equal and installs the managed dsh-tui row", async (t) => {
+  const s = scene(t);
+  const r = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(r.status, "installed", r.detail);
+  const wrapper = sandboxWrapperOf(s.env);
+  assert.ok(existsSync(wrapper), wrapper);
+  assert.ok(readFileSync(wrapper).equals(readFileSync(packWrapperOf())), "the stable wrapper is the pack's, byte for byte");
+  assert.ok(statSync(wrapper).mode & 0o111, "the wrapper is executable");
+  const patch = readFileSync(join(s.home, ".dsh", "profiles", PROFILE, "cordis.patch.yml"), "utf8");
+  assert.match(patch, /^# dsh-sandbox begin$/m);
+  assert.ok(patch.includes(`runnerCommand: ['${wrapper}']`), patch);
+  assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
+  const state = sandboxState(s.env);
+  assert.equal(state.current, true);
+  assert.equal(state.row.ok, true, state.row.message);
+});
+
+test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {
+  const s = scene(t);
+  await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  appendFileSync(sandboxWrapperOf(s.env), "\n// drift\n");
+  const report = doctorDshTui({ env: s.env });
+  const check = report.checks.find((c) => c.check === "dsh-sandbox");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /differs from the pack's/);
+  assert.equal(report.code, 1);
 });
 
 test("a lockfile integrity that is not the pin fails, removes what it added, and writes no shim", async (t) => {
@@ -491,7 +520,7 @@ test("the CLI command installs, reports doctor JSON and uninstalls", async (t) =
   assert.equal(doctor.status, 0, doctor.stderr);
   const report = JSON.parse(doctor.stdout);
   assert.equal(report.code, 0);
-  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide"]);
+  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", "dsh-sandbox"]);
   const removed = s.cli(["dsh-tui", "uninstall", "--json"]);
   assert.equal(removed.status, 0, removed.stderr);
   assert.equal(JSON.parse(removed.stdout).status, "removed");

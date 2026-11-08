@@ -1,29 +1,38 @@
-# The per-pane hc proxy (#631 PR A)
+# The per-pane hc proxy (#631)
 
-**Status: off by default.** This is the hard-boundary proxy from wish #631, shipped in the pack
-for PR A but not wired anywhere. Nothing imports it: `startArgs`, `workerArgs`, `install.sh` and
-the launcher never name it, so a pane today still runs the #624 guardrail. PR B starts one proxy
-before each sandboxed pane, masks the real core socket and binds the proxy at the path the pane
-sees. Until then this file is a rulebook and a runnable module, not behaviour.
+**Status: wired for pack-started dsh-tui panes and workers.** `startArgs` and `workerArgs` run
+a dsh-tui pane through `hcPane.mjs`, one helper per pane. The helper starts the proxy in its
+own process **before DSH**, then runs the agent as its child, so the proxy snapshots the roster
+and the attach ledger before the pane can create a sandbox. The proxy ends with the pane; there
+is no service. **A roster change needs a pane restart**, because the new pane starts a new
+proxy that reads the new file.
 
 ## Run
 
+The pack starts it through the helper, never as a standalone service:
+
 ```sh
-node mods/am-sidebar/hcProxy.mjs \
-  --terminal t7 \
-  --upstream "$XDG_RUNTIME_DIR/herdr-core/default.sock" \
-  --app-home /path/to/herdr-app-home
+sh mods/am-sidebar/bin/run.sh mods/am-sidebar/hcPane.mjs \
+  --bot b-xxxxxxxxxx --project /path/to/project \
+  -- dsh-tui --resume <id>
 ```
 
-`--terminal` is the pane's hc terminal id, fixed for the proxy's life; `--upstream` is the real
-core's socket and is never guessed. The process listens on
-`$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (folder 0700, socket 0600), then serves
-until SIGTERM/SIGINT and removes the socket. Starting fails closed when the core is not the pin,
-the caller is neither in the attach ledger nor a worker pane, the roster or ledger cannot be
-read, or the runtime folder is inside the writable project or app home.
+The helper reads `HC_TERMINAL_ID` and `HC_TERMINAL_SOCKET` from the pane, passes the caller it
+resolved outside the sandbox (the proxy still checks the pane's own label), and starts nothing
+if the proxy refuses. It gives the pane `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET` and
+`AM_HC_PROXY_SOCKET`, and keeps `HC_SOCKET` on the same real path the DSH wrapper binds the
+proxy onto. The proxy listens on `$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock`
+(folder 0700, socket 0600), then serves until the child ends; the helper closes it and removes
+the socket. Starting fails closed when the core is not the pin, the caller's pane label does
+not match the bot it was started for, the roster or ledger cannot be read, or the runtime
+folder is inside the writable project or app home.
 
-The 107-byte socket-path limit is Linux's; macOS's is 104, so a longer path fails at listen
-without the named error.
+`hcProxy.mjs` can still be run by hand with `--terminal <tN> --upstream <socket>
+[--app-home <dir>]`; without an explicit caller it uses the attach ledger (or a worker's
+`worker.of` label) as before.
+
+The socket-path limit is the platform's: 107 bytes on Linux, 104 on macOS; an over-limit path
+is refused with the named error before the folder or socket exists.
 
 ## What it speaks
 
@@ -78,10 +87,11 @@ The policy is built from two reads at start and **never re-read from the writabl
 
 The sandbox's writable cwd holds both the project's `.herdr/bots.json` and, on the box, the app
 home; a bot that edits either widens nothing while the proxy runs. **A roster change therefore
-needs a proxy restart.** This is the design correction in #631: a snapshot (or a copy outside the
-cwd) instead of a live read of bot-writable team data. The proxy's own socket folder is also
-outside both trees: `$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock`, not under the app
-home.
+needs a pane restart**, not only a proxy restart: the helper starts the proxy before DSH, so
+the new pane's proxy sees the new file, and nothing in the old sandbox can write it first. This
+is the design correction in #631: a snapshot (or a copy outside the cwd) instead of a live read
+of bot-writable team data. The proxy's own socket folder is also outside both trees:
+`$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock`, not under the app home.
 
 ## Version pin and fail-closed behaviour
 
@@ -90,17 +100,23 @@ core, hc 0.1.14), or the proxy refuses to start. One constant names it: `HC_PIN`
 `hcProxy.mjs`. The wslc image's separate 0.1.18 pin is a separate note, not this pin.
 
 A dead or vanished upstream is a JSON-RPC error on every call; it never falls back to another
-socket or to a locally started core. Note for PR B: `hc` auto-starts a core when it cannot
-connect. The sandbox must keep that from happening (an environment switch or the wrapper) while
-the real socket is masked, or a missing proxy would create a new core at the bound path. PR A
-does not wire that; it only never falls back.
+socket or to a locally started core. `hc` auto-starts a core when it cannot connect, so a pane
+without a live proxy would create one inside its sandbox. The helper keeps that from happening:
+if the proxy cannot start, the pane's command is not started at all, so no sandbox exists and
+there is no `hc` inside one to auto-start anything. A proxy that dies after start takes its
+pane with it.
 
-## Left for PR B
+## Limits and the real hc 0.1.14 params
 
-- The proxy trusts any same-uid client (Node cannot check peer credentials); the 0700 folder and
-  0600 socket are the only access control.
-- The roster and the attach ledger are writable before the proxy starts; PR B must start the
-  proxy before the sandbox exists.
+The proxy trusts any same-uid client (Node cannot check peer credentials); the 0700 folder and
+0600 socket are the only access control, and every pane has its own folder.
+
+`terminal.run`'s closed parameter set was checked against hc 0.1.14's real request on a pane
+(`hc run --bg --json` from inside a pane): the CLI sends `argv`, `caller`, `cwd`,
+`die_with_parent`, `env`, `keep`, `labels`, `name`, `no_notify`, `no_parent`, `outlive_parent`,
+`parent`, `rm`, `timeout` and `wait`. `--json` is CLI output only and is not an RPC member, so
+there is no `json` gap; `line` and `on` are listed by the schema but the proxy refuses them by
+design, as the worker shape. The `terminal.list` caller refusal stays as it is.
 
 ## What a filesystem mask cannot do
 
@@ -111,7 +127,7 @@ namespace.
 
 The `terminal.run` shape also constrains a process, not the task text: a deliberately forged
 worker start can still choose the task word after `--`. The final fix for that is starting
-workers from the pack side rather than exposing `terminal.run` to the pane; PR A keeps the shape
-because PR B still uses it. The guard folder and the resolved `dsh-tui` are additionally
+workers from the pack side rather than exposing `terminal.run` to the pane; the pack keeps the shape
+because its worker start still uses it. The guard folder and the resolved `dsh-tui` are additionally
 required to be outside the writable project and app home, and every PATH word must be absolute,
 so a file dropped in the worktree cannot pose as the pack's guard or program.

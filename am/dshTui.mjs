@@ -31,9 +31,11 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
 import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
@@ -151,6 +153,58 @@ export function profileDirOf(dshHome) {
 }
 export const binDirOf = (env = process.env) => join(env.HOME || homedir(), ".local", "bin");
 export const shimPathOf = (env = process.env) => join(binDirOf(env), SHIM);
+
+/** The stable folder the pack copies the DSH sandbox runner wrapper into (#631 PR B). */
+export const SANDBOX_DIR = "automagik-herdr/dsh-sandbox";
+export const SANDBOX_WRAPPER = "hc-socket-mask.mjs";
+export const sandboxRootOf = (env = process.env) => join(env.HOME || homedir(), ".local", "share", SANDBOX_DIR);
+export const sandboxWrapperOf = (env = process.env) => join(sandboxRootOf(env), SANDBOX_WRAPPER);
+/** The wrapper beside this module, in the pack release (or its am copy). */
+export const packWrapperOf = () => fileURLToPath(new URL("./bin/hc-socket-mask.mjs", import.meta.url));
+/** The dsh-tui profile's patch file, where the sandbox row lives. */
+export const sandboxProfileOf = (dshHome) => join(profileDirOf(dshHome), "cordis.patch.yml");
+
+/**
+ * Copy the wrapper byte-equal from the pack to its stable path and install the managed sandbox
+ * row in the dsh-tui profile. The wrapper is what DSH runs for a sandboxed command; the row
+ * names it and its failure signature. Throws before writing a half result; an unchanged copy
+ * and an already-current row are no-ops.
+ */
+export function installSandboxRow({ env = process.env } = {}) {
+  const wrapper = sandboxWrapperOf(env);
+  const profile = sandboxProfileOf(dshHomeOf(env));
+  const source = packWrapperOf();
+  let changed = false;
+  try {
+    const want = readFileSync(source);
+    const have = existsSync(wrapper) ? readFileSync(wrapper) : null;
+    if (!have || !want.equals(have)) {
+      mkdirSync(dirname(wrapper), { recursive: true, mode: 0o700 });
+      copyFileSync(source, wrapper);
+      changed = true;
+    }
+    chmodSync(wrapper, 0o755);
+  } catch (e) {
+    throw new Error(`cannot copy the sandbox wrapper to ${wrapper}: ${e?.message ?? e}`);
+  }
+  try {
+    const row = installRow({ profile, wrapper });
+    return { changed: changed || row.changed, wrapper, profile, backup: row.backup };
+  } catch (e) {
+    throw new Error(`cannot install the sandbox row in ${profile}: ${e?.message ?? e}`);
+  }
+}
+
+/** The stable wrapper and the managed row, read-only (doctor and the tests). */
+export function sandboxState(env = process.env) {
+  const wrapper = sandboxWrapperOf(env);
+  const profile = sandboxProfileOf(dshHomeOf(env));
+  let current = false;
+  try { current = existsSync(wrapper) && readFileSync(packWrapperOf()).equals(readFileSync(wrapper)); } catch { current = false; }
+  let row;
+  try { row = checkRow({ profile, wrapper }); } catch (e) { row = { ok: false, message: e?.message ?? String(e) }; }
+  return { wrapper, profile, current, row };
+}
 
 /** `dsh` on PATH, as an absolute file, or null. No program runs (the doctor reads only). */
 export function findDsh(env = process.env) {
@@ -392,6 +446,17 @@ export async function installDshTui(options = {}) {
     return { status: "failed", changed: false, detail: `the install changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`, lines: [] };
   }
 
+  // #631 PR B: the dsh-tui profile's sandbox row names the pack's runner wrapper, copied
+  // byte-equal to a stable path. A failure here undoes the plugin add: a pane that sets
+  // DSH_SANDBOX_MASK must never run against a profile without the row.
+  let sandbox;
+  try {
+    sandbox = installSandboxRow({ env });
+  } catch (e) {
+    undo();
+    return { status: "failed", changed: false, detail: `${e?.message ?? e}; removed what was added.`, lines: [] };
+  }
+
   // The record follows the version this install set, so a later uninstall still knows it is ours.
   const recordText = `${JSON.stringify({ package: DSH_TUI.package, version: DSH_TUI.version, integrity: DSH_TUI.integrity }, null, 2)}\n`;
   const recordChanged = owns && recordBefore !== recordText;
@@ -425,6 +490,7 @@ export async function installDshTui(options = {}) {
       ? `dsh-TUI ${DSH_TUI.version} is already installed in the ${PROFILE} profile (${profile}).`
       : `DSH at ${dsh}: installed dsh-TUI ${DSH_TUI.version} in the ${PROFILE} profile (${profile}).`,
     `The ${SHIM} shim is at ${shim}${onPath(env, binDir) ? "" : `; add ${binDir} to PATH so Herdr's built-in menu entry finds it`}.`,
+    `The ${PROFILE} profile's sandbox row names ${sandbox.wrapper} (the hc proxy mask).`,
     guideBefore === null
       ? `Marked dsh-TUI's first-run guide done (${guide}; open it later with /setup).`
       : "Kept dsh-TUI's first-run guide state (a completed guide writes that file).",
@@ -434,7 +500,7 @@ export async function installDshTui(options = {}) {
   ];
   if (had.length && !aged && owns) lines.splice(2, 0, `The ${PROFILE} profile excludes ${PIN} from pnpm's release-age gate (exact version only).`);
   if (aged && had.includes(PIN) && owns) lines.splice(2, 0, `Removed the release-age exception for ${PIN}: it is older than the profile's minimumReleaseAge now.`);
-  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || recordChanged || staleRecord, lines, detail: lines[0] };
+  return { status: "installed", changed: before.pin !== DSH_TUI.version || before.integrity !== DSH_TUI.integrity || priorShim !== SHIM_TEXT || scoped.changed || guideBefore === null || recordChanged || staleRecord || sandbox.changed, lines, detail: lines[0] };
 }
 
 /**
@@ -520,6 +586,7 @@ export function uninstallDshTui(options = {}) {
     lines.push(`The uninstall changed ${changedDesktop.join(", ")} under ${dshHome}; this installer never writes the desktop profile, its settings or DSH's credentials, so check them.`);
   }
   lines.push(`Kept: DSH sessions (${dshHome}), dsh-TUI's own state (~/${TUI_DATA_DIR}) and the ${PROFILE} profile.`);
+  lines.push("Kept the dsh-tui profile's sandbox row and its stable wrapper: without the pack's pane switch the wrapper is a pass-through, and the next install reuses both.");
   return { status: failed ? "failed" : changed ? "removed" : "absent", changed, detail: lines[0], lines };
 }
 
@@ -580,8 +647,17 @@ export function doctorDshTui({ env = process.env, panePath } = {}) {
   const guide = read(join(env.HOME || homedir(), TUI_DATA_DIR, ONBOARDING_FILE));
   add("dsh-tui-guide", true, guide === null ? "not marked: the first-run guide opens once (/setup opens it later)" : "marked done");
 
+  const sandbox = sandboxState(env);
+  const sandboxOk = sandbox.current && sandbox.row.ok;
+  add("dsh-sandbox", sandboxOk || !installed,
+    !installed ? "not installed: the dsh-tui profile is not set up"
+      : sandboxOk ? `${sandbox.profile}: the sandbox row matches ${sandbox.wrapper}`
+        : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
+          : sandbox.row.message,
+    installLine);
+
   const broken = checks.some((check) => !check.ok);
-  const healthy = pinned && ours;
+  const healthy = pinned && ours && sandboxOk;
   return { code: broken ? 1 : healthy ? 0 : 2, checks };
 }
 

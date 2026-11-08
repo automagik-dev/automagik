@@ -2465,7 +2465,7 @@ async function launchSeat(project, bot, over = {}) {
   // CLI: no word at all, and the argv stays byte for byte as before.
   const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}), ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env, login, agent: agentKey });
+    env, login, agent: agentKey, project: key, sandbox: agentKey === "dsh-tui" });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
@@ -4500,7 +4500,7 @@ async function cmdWorker(opts, rest) {
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
-      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead });
+      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: plan.agent === "dsh-tui" });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;

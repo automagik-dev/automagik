@@ -3,7 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
-import { ENV, GUARD_DIR, guardPathWith } from "./workers.js";
+import { ENV, GUARD_DIR, guardPathWith, paneArgs } from "./workers.js";
 import { envWords } from "./logins.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
@@ -52,10 +52,12 @@ export function startRefusal(file, botId) {
  * hc guard folder goes first on the pane PATH (workers.js GUARD_DIR); any other agent's arguments
  * stay byte for byte as before. `guard`: an explicit guard folder for this pane (a linked
  * machine's own guard, resolved there), or null for none; undefined uses the dsh-tui default.
- * The guard is a guardrail, not a boundary (#624; #628 is the full send/keys/attach scope; #631
- * is the hard boundary).
+ * `sandbox`: a dsh-tui pane runs behind the per-pane hc proxy (hcPane.mjs) before DSH starts;
+ * `project` is the folder whose .herdr/bots.json the proxy snapshots (default `cwd`). Any other
+ * agent, or no `sandbox`, keeps the argv byte for byte as before. The guard is a guardrail, not
+ * a boundary (#624; #628 is the full send/keys/attach scope; #631 is the hard boundary).
  */
-export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined }) {
+export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels = {}, path = null, env: more = {}, login = [], agent = null, guard = undefined, project = cwd, sandbox = false }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${BOT_LABEL}=${botId}`);
@@ -65,7 +67,8 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   if (tab) args.push("--label", `herdr.tab=${tab}`);
   const guardDir = guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
   const vars = envWords([...(path ? [`PATH=${guardPathWith(path, guardDir)}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
-  return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...argv];
+  const launchArgv = sandbox === true && agent === "dsh-tui" ? paneArgs(argv, { botId, project }) : argv;
+  return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...launchArgv];
 }
 
 // hc's keep wrapper (hc run --keep): the program, then a shell once it exits, as

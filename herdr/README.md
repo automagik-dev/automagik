@@ -882,17 +882,26 @@ pack's own CLI still reaches the real `hc` for its trusted calls (system status,
 remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
 guarded pane.
 
-### The per-pane hc proxy (PR A, off by default)
+### The per-pane hc proxy (the sandbox boundary)
 
-PR A ships the hard-boundary proxy in the pack but wires it nowhere: nothing in `startArgs`,
-`workerArgs`, `install.sh` or the launcher starts it, so the guard above is still what runs. Its
-own README, `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
-It snapshots the attach ledger and the project's `.herdr/bots.json` at start, so **a roster
-change needs a proxy restart**; it pins herdr-core 0.1.14 and refuses to start on any other
-version; its socket lives in `$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (0700
-folder, 0600 socket), outside the worktree and the app home. PR B wires it and masks the real
-core. The network stays open: the proxy filters the hc socket, not the box's TCP listeners, and
-localhost admin ports cannot be hidden without a network namespace.
+A pack-started dsh-tui pane runs through one helper, `mods/am-sidebar/hcPane.mjs`: it starts
+the pane's hc proxy in its own process **before DSH starts**, then runs the agent as its child.
+The proxy snapshots the attach ledger and the project's `.herdr/bots.json` before the pane can
+create a sandbox, and it ends when the pane ends. **A roster change needs a pane restart**, so
+the new pane's proxy reads the new file. Its own README, `mods/am-sidebar/hcProxy.md`, has the
+policy, the start checks and the run command.
+
+The helper sets `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET` and `AM_HC_PROXY_SOCKET` for the
+pane; the DSH runner wrapper applies its mount rules and binds the proxy at the real core socket
+path, so the real socket folder is hidden. The wrapper is copied byte-equal from
+`mods/am-sidebar/bin/hc-socket-mask.mjs` to `~/.local/share/automagik-herdr/dsh-sandbox/` by
+`dsh-tui install`, which also installs the profile's managed sandbox row. The proxy pins
+herdr-core 0.1.14 and refuses any other version; its socket lives in
+`$XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock` (0700 folder, 0600 socket), outside
+the worktree and the app home. **Fail closed:** if the proxy cannot start, the pane's command is
+never started, so no sandbox exists and `hc` cannot auto-start a core inside one; a proxy that
+dies takes its pane with it. The network stays open: the proxy filters the hc socket, not the
+box's TCP listeners, and localhost admin ports cannot be hidden without a network namespace.
 
 ## The Create form
 

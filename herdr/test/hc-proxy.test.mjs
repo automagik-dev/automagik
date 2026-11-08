@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, METHOD_PARAMS, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "../mods/am-sidebar/workers.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
@@ -672,4 +672,69 @@ test("a forwarded call other than wait times out", async (t) => {
 test("the version pin is one constant, 0.1.14", () => {
   assert.equal(HC_PIN, "0.1.14");
   assert.equal(readFileSync(PROXY, "utf8").includes('export const HC_PIN = "0.1.14"'), true);
+});
+
+test("the socket-path limit follows the platform: 104 on darwin, 107 on linux", async (t) => {
+  assert.equal(socketPathLimit("linux"), 107);
+  assert.equal(socketPathLimit("darwin"), 104);
+  const { s, proxy } = await sceneWithCore(t, { proxy: false });
+  assert.equal(proxy, null);
+  const long = `t${"a".repeat(120)}`;
+  s.terminals.push({ address: long, name: long, labels: { bot: ID.dev }, cwd: s.project, state: "live" });
+  const before = existsSync(join(s.runtime, "automagik-hc-proxy"));
+  await assert.rejects(
+    startProxy({ terminal: long, upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env, platform: "darwin",
+      caller: { bot: ID.dev, project: s.project, worker: false }, bound: true }),
+    /over the 104-byte limit/,
+  );
+  assert.equal(existsSync(join(s.runtime, "automagik-hc-proxy")), before, "the refused start creates no folder");
+});
+
+test("terminal.run's closed set covers the real hc 0.1.14 params; --json is not an RPC member", () => {
+  // The real 0.1.14 request, captured on a pane with `hc run --bg --json` through a logging
+  // relay: argv, caller, cwd, die_with_parent, env, keep, labels, name, no_notify, no_parent,
+  // outlive_parent, parent, rm, timeout, wait. `--json` is CLI output only.
+  const real = ["argv", "caller", "cwd", "die_with_parent", "env", "keep", "labels", "name",
+    "no_notify", "no_parent", "outlive_parent", "parent", "rm", "timeout", "wait"];
+  const allowed = METHOD_PARAMS.get("terminal.run");
+  for (const key of real) assert.ok(allowed.has(key), `terminal.run allows ${key}`);
+  assert.equal(allowed.has("json"), false, "0.1.14 sends no json member");
+  assert.equal(allowed.has("line"), false, "line is refused by the worker shape");
+  assert.equal(allowed.has("on"), false, "on is refused by the worker shape");
+});
+
+test("the helper's explicit caller starts a bot seat before its attach row exists", async (t) => {
+  const { s, fake } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project, state: "live" });
+  const started = await startProxy({ terminal: "t200", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: s.project, worker: false }, bound: true });
+  t.after(() => started.close());
+  assert.equal(started.policy.caller.bot, ID.dev);
+  assert.equal(started.snapshot.bound, true);
+  const client = await clientFor(started.socket);
+  const answer = await client.call("terminal.send", { terminal: "t101", text: "team" });
+  client.close();
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.equal(fake.calls("terminal.send")[0].params.caller, "t200");
+});
+
+test("an explicit caller whose pane label names another bot is refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+      caller: { bot: ID.other, project: s.project, worker: false } }),
+    /does not carry the bot label/,
+  );
+  await assert.rejects(
+    startProxy({ terminal: "t105", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+      caller: { bot: ID.other, project: s.project, worker: true } }),
+    /is not a worker of/,
+  );
+});
+
+test("the docs say a roster change needs a pane restart", () => {
+  const readme = readFileSync(join(here, "..", "README.md"), "utf8");
+  const doc = readFileSync(join(here, "..", "mods", "am-sidebar", "hcProxy.md"), "utf8");
+  assert.match(readme, /roster change needs a pane restart/i);
+  assert.match(doc, /roster change needs a pane restart/i);
 });
