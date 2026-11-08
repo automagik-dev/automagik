@@ -66,6 +66,10 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'menu'])
  * own desktop app does (its DesktopUpdateIndicator): `{ phase, version?, percent?, failure? }`,
  * phase one of idle, checking, available, downloading, installing, ready, error. `update` is
  * update.js's state; `checking` and `failed` (a check that failed) come from Check for Updates.
+ * A quick retry of a transient failure (a 5xx from the releases API, a changed network) is the
+ * checking phase plus `retrying: true`, so a client that knows only the seven phases still
+ * renders it as a check in progress instead of a failure; a client that reads the marker can
+ * say "Retrying update check…".
  *
  * Given `lane` ({ changes, auto, applying }: the staged plugins as auto-apply.js changesOf names
  * them, the setting, and whether they are going in now), it also carries the app's update and
@@ -100,5 +104,6 @@ function legacyPresentation(update, { checking, failed, plugins, fetching }) {
   if (fetching) return { phase: 'downloading', version: fetching.version, percent: Math.floor(fetching.percent ?? 0), kind: 'plugins' }
   if (checking) return { phase: 'checking' }
   if (failed) return { phase: 'error', failure: 'check' }
+  if (update?.state === 'retrying') return { phase: 'checking', retrying: true }
   return { phase: 'idle' }
 }

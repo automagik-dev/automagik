@@ -1,27 +1,34 @@
-// The sidebar loads in Herdr's mod runtime (gpui-shell 0.7.1), which provides exactly the
-// modules gpui-kit.d.ts declares and no `node:` prefix. A specifier outside that surface fails
-// the whole mod at load ("am-sidebar did not load: cannot load module node:url", #624), so walk
-// main.js's static import graph and hold every file to the runtime's names. It checks the small
-// named surfaces too: `url` exports only URL and URLSearchParams, so changing the specifier to
-// `"url"` while importing fileURLToPath still fails. The list is the `declare module "<name>"`
-// names of the gpui-kit.d.ts the Herdr app installs into a mod folder (it is not in this
-// repository); when that file is readable, the row checks the list against it. Apache-2.0.
+// Every mod the pack ships is loaded by Herdr's mod runtime (gpui-shell 0.7.1), which provides
+// exactly the modules gpui-kit.d.ts declares and no `node:` prefix. A specifier outside that
+// surface fails the whole mod at load ("am-sidebar did not load: cannot load module node:url",
+// #624), so walk every shipped mod's static import graph and hold every file to the runtime's
+// names. It checks the small named surfaces too: `url` exports only URL and URLSearchParams, so
+// changing the specifier to `"url"` while importing fileURLToPath still fails. The runtime also
+// hands a mod a bare `import.meta.url` path with a `?v=1` cache buster, not a `file:` URL, so a
+// top-level `new URL(..., import.meta.url)` throws at load; only `guardDirOf` (workers.js) or a
+// shared safe helper may read it. This is the #652 check, generalised from am-sidebar to every
+// PACK_MODS folder; its entry comes from that mod's mod.json, never from guessing main.js.
+// Apache-2.0.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { PACK_MODS, POCKET_LINK } from "../mods/am-sidebar/release.js";
 import { GUARD_DIR, guardDirOf } from "../mods/am-sidebar/workers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
-const MOD = join(ROOT, "mods/am-sidebar");
-const ENTRY = join(MOD, "main.js");
+const MODS = join(ROOT, "mods");
+const FIXTURES = join(HERE, "fixtures", "mod-imports");
 
-// gpui-shell 0.7.1's modules, exactly gpui-kit.d.ts's `declare module` names.
+// gpui-shell 0.7.1's modules, exactly the `declare module "<name>"` names of the gpui-kit.d.ts
+// (gpui-kit 0.7.1) the Herdr app writes into a mod folder. This is the one list: the clean-pack
+// row also compares it with an installed gpui-kit.d.ts whenever one is readable from this checkout.
+const RUNTIME = "gpui-shell 0.7.1";
 const RUNTIME_MODULES = new Set([
   "gpui-kit", "gpui", "gpui-base", "gpui-component", "gpui-shell", "gpui-fps",
   "buffer", "path", "url", "crypto", "zlib", "console", "process", "os", "fs/promises",
@@ -45,8 +52,11 @@ const SURFACES = new Map([
 ]);
 const DEFAULT_EXPORTS = new Set(["path", "console", "process", "os", "net"]);
 
-const IMPORT = /^[ \t]*import\s+([^;]*);/gm;
-const REEXPORT = /^[ \t]*export\s+((?:\*|\{)[^;]*);/gm;
+// The helpers that may take `import.meta.url`: workers.js's guardDirOf turns the runtime's bare
+// `?v=1` path and Node's `file:` URL into the same guard folder. A new safe helper joins this set.
+const SAFE_META_HELPERS = new Set(["guardDirOf"]);
+const CONTROL = new Set(["if", "for", "while", "switch", "catch", "with"]);
+const DECL = /^[ \t]*(import|export)\s+([^;]*);/gm;
 
 /** The names of an import or export list: `{ a, b as c }` -> ["a", "b"]. */
 function namesOf(block) {
@@ -75,61 +85,236 @@ function declarationOf(clause) {
   return out;
 }
 
-/** main.js's static import graph, with every specifier held to the runtime's surface. */
-function graphProblems() {
-  const problems = [];
-  const seen = new Set();
-  const queue = [ENTRY];
+/**
+ * `text` with comments, strings, template literals and regex literals blanked out, newlines and
+ * every index kept. The scan below needs code positions, not prose: an `import` line in a
+ * comment or an `import.meta.url` in a template must not count. Regex literals are recognised by
+ * what precedes the slash; a division is left as it is.
+ */
+function blankLiterals(text) {
+  const out = text.split("");
+  const blank = (from, to) => {
+    for (let i = from; i < to; i++) if (out[i] !== "\n" && out[i] !== "\r") out[i] = " ";
+  };
+  const regexAllowed = (prev) => prev === "" || "([{=,:;!&|?+-*%^~<>".includes(prev);
+  let i = 0;
+  let prev = "";
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i + 2);
+      const stop = end === -1 ? text.length : end;
+      blank(i, stop); i = stop; continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      blank(i, stop); i = stop; continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === "\\") { j += 2; continue; }
+        if (text[j] === quote) { j++; break; }
+        if (quote !== "`" && text[j] === "\n") { j++; break; }
+        j++;
+      }
+      blank(i, j); i = j; prev = quote; continue;
+    }
+    if (c === "/" && regexAllowed(prev)) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < text.length) {
+        if (text[j] === "\\") { j += 2; continue; }
+        if (text[j] === "[") inClass = true;
+        else if (text[j] === "]") inClass = false;
+        else if (text[j] === "/" && !inClass) { j++; break; }
+        else if (text[j] === "\n") break;
+        j++;
+      }
+      while (j < text.length && /[a-z]/i.test(text[j])) j++;
+      blank(i, j); i = j; prev = "/"; continue;
+    }
+    if (!/\s/.test(c)) prev = c;
+    i++;
+  }
+  return out.join("");
+}
+
+/** Whether the `{` at `index` opens a function body (`function`, `=>`, a method), not a block. */
+function isFunctionBrace(code, index) {
+  const before = code.slice(Math.max(0, index - 240), index).trimEnd();
+  if (before.endsWith("=>")) return true;
+  if (!before.endsWith(")")) return false;
+  let depth = 0;
+  let j = before.length - 1;
+  for (; j >= 0; j--) {
+    if (before[j] === ")") depth++;
+    else if (before[j] === "(") { depth--; if (depth === 0) break; }
+  }
+  const head = before.slice(0, j).trimEnd();
+  const word = (head.match(/([A-Za-z_$][\w$]*)$/) || [])[1] ?? "";
+  return !CONTROL.has(word);
+}
+
+/**
+ * The `import.meta.url` positions that run while the module is evaluated, outside every function
+ * body, and are not handed to a safe helper. A use inside a function does not run at load, so it
+ * is not this rule's concern; anything else does, and the runtime's bare path cannot be a URL
+ * base. The scan is lexical: it knows blocks and function bodies, not a full syntax tree.
+ */
+function topLevelMetaUses(code) {
+  const uses = [];
+  const functions = [];
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === "{") { functions.push(isFunctionBrace(code, i)); continue; }
+    if (code[i] === "}") { functions.pop(); continue; }
+    if (!code.startsWith("import.meta.url", i)) continue;
+    if (!functions.some(Boolean)) {
+      const before = code.slice(Math.max(0, i - 64), i);
+      const helper = (before.match(/([A-Za-z_$][\w$]*)\s*\(\s*$/) || [])[1];
+      if (!helper || !SAFE_META_HELPERS.has(helper)) uses.push(i);
+    }
+    i += "import.meta.url".length - 1;
+  }
+  return uses;
+}
+
+const lineOf = (text, index) => text.slice(0, index).split("\n").length;
+
+/** One entry file's static import graph, with every specifier and load-time meta use checked. */
+function walkGraph(entry, root, problems, seen) {
+  const queue = [entry];
   while (queue.length) {
     const file = queue.pop();
     if (seen.has(file)) continue;
     seen.add(file);
-    if (!existsSync(file)) { problems.push(`${relative(ROOT, file)}: imported but missing`); continue; }
+    if (!existsSync(file)) { problems.push(`${relative(root, file)}: imported but missing`); continue; }
     const text = readFileSync(file, "utf8");
-    const declarations = [];
-    for (const m of text.matchAll(IMPORT)) declarations.push(["import", m[1].trim()]);
-    for (const m of text.matchAll(REEXPORT)) declarations.push(["export", m[1].trim()]);
-    for (const [kind, clause] of declarations) {
-      const d = declarationOf(clause);
+    const code = blankLiterals(text);
+    for (const m of code.matchAll(/\bimport\s*\(/g)) {
+      problems.push(`${relative(root, file)}:${lineOf(text, m.index)}: dynamic import()`);
+    }
+    for (const index of topLevelMetaUses(code)) {
+      problems.push(`${relative(root, file)}:${lineOf(text, index)}: top-level import.meta.url ` +
+        "(the runtime's is a bare path with ?v=1; pass it to guardDirOf)");
+    }
+    const declarationLines = new Set();
+    for (const m of text.matchAll(DECL)) {
+      const keywordIndex = m.index + m[0].indexOf(m[1]);
+      // A declaration that starts inside a comment, string or template is not a declaration.
+      if (!code.startsWith(m[1], keywordIndex)) continue;
+      declarationLines.add(lineOf(text, keywordIndex));
+      const d = declarationOf(m[2].trim());
       if (!d?.specifier) continue;
       const spec = d.specifier;
-      const where = `${relative(ROOT, file)}: ${kind} "${spec}"`;
+      const where = `${relative(root, file)}:${lineOf(text, keywordIndex)}: ${m[1]} "${spec}"`;
       if (spec.startsWith("./") || spec.startsWith("../")) {
         queue.push(resolve(dirname(file), spec));
         continue;
       }
       if (!RUNTIME_MODULES.has(spec)) {
-        problems.push(`${where}: not a gpui-shell 0.7.1 module`);
+        problems.push(`${where}: not a ${RUNTIME} module`);
         continue;
       }
-      if (kind === "import" && spec === "url" && (d.namespace || d.defaultImport)) {
+      if (m[1] === "import" && spec === "url" && (d.namespace || d.defaultImport)) {
         problems.push(`${where}: import URL or URLSearchParams by name`);
       }
-      if (kind === "import" && SURFACES.has(spec) && d.defaultImport && !DEFAULT_EXPORTS.has(spec)) {
+      if (m[1] === "import" && SURFACES.has(spec) && d.defaultImport && !DEFAULT_EXPORTS.has(spec)) {
         problems.push(`${where}: no default export`);
       }
       if (SURFACES.has(spec)) for (const name of d.named) {
         if (!SURFACES.get(spec).has(name)) problems.push(`${where}: ${name} is not exported`);
       }
     }
+    // An import or export-from without a semicolon would slip past DECL, leaving a hole in the
+    // graph; name it as a declaration the walk could not read instead of passing it silently.
+    const codeLines = code.split("\n");
+    const textLines = text.split("\n");
+    for (let n = 0; n < codeLines.length; n++) {
+      const start = codeLines[n].match(/^[ \t]*(import|export)\s+(?!\()/);
+      if (!start || declarationLines.has(n + 1)) continue;
+      if (start[1] === "export" && !/\bfrom\s*["']/.test(textLines.slice(n, n + 12).join("\n"))) continue;
+      problems.push(`${relative(root, file)}:${n + 1}: unparsed ${start[1]} declaration (end it with a semicolon)`);
+    }
   }
-  return { problems, seen };
+}
+
+/**
+ * Every mod under `modsDir` (or just `names`) read from its mod.json: the entry it declares is
+ * the graph's root, so a mod whose entry is not main.js is walked like any other.
+ */
+function walkMods(modsDir, names) {
+  const problems = [];
+  const seen = new Set();
+  const root = dirname(modsDir);
+  const listed = names ?? readdirSync(modsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(modsDir, e.name, "mod.json")))
+    .map((e) => e.name).sort();
+  const walked = [];
+  for (const name of listed) {
+    const dir = join(modsDir, name);
+    const manifestPath = join(dir, "mod.json");
+    if (!existsSync(manifestPath)) { problems.push(`mods/${name}: no mod.json`); continue; }
+    let manifest;
+    try {
+      manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    } catch (error) {
+      problems.push(`mods/${name}/mod.json: ${error.message}`);
+      continue;
+    }
+    const entry = manifest.entry;
+    if (typeof entry !== "string" || !entry) {
+      problems.push(`mods/${name}/mod.json: no entry`);
+      continue;
+    }
+    const entryPath = resolve(dir, entry);
+    if (!entryPath.startsWith(dir + sep)) {
+      problems.push(`mods/${name}/mod.json: entry escapes the mod folder`);
+      continue;
+    }
+    if (!existsSync(entryPath)) {
+      problems.push(`${relative(root, entryPath)}: entry is missing`);
+      continue;
+    }
+    walked.push(name);
+    walkGraph(entryPath, root, problems, seen);
+  }
+  return { problems, seen, mods: walked };
 }
 
 /** The gpui-kit.d.ts a Herdr app installed, when one is readable from this checkout. */
 function installedDeclaration() {
   const candidates = [
-    join(MOD, "gpui-kit.d.ts"),
+    ...PACK_MODS.map((mod) => join(MODS, mod, "gpui-kit.d.ts")),
     process.env.HERDR_APP_HOME && join(process.env.HERDR_APP_HOME, "mods/am-sidebar/gpui-kit.d.ts"),
     join(homedir(), ".config/herdr-app/mods/am-sidebar/gpui-kit.d.ts"),
   ].filter(Boolean);
   return candidates.find((path) => existsSync(path)) ?? null;
 }
 
-test("the sidebar's static import graph fits gpui-shell 0.7.1", () => {
-  const { problems, seen } = graphProblems();
-  assert.ok(seen.size >= 20, `walked only ${seen.size} modules: the import scanner missed the graph`);
-  assert.ok(seen.has(join(MOD, "workers.js")), "the graph must reach workers.js, where GUARD_DIR lives");
+test("the pack is every mods/<mod>/ with a mod.json, and each declares main.js for Herdr", () => {
+  // Pocket Link is Pocket's (mods/pocket-link, never in PACK_MODS), so the pack's set is every
+  // other folder with a mod.json. A new pack mod that forgets its mod.json fails here;
+  // scripts/parts.mjs checks its part.
+  const found = readdirSync(MODS, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(MODS, e.name, "mod.json")))
+    .map((e) => e.name).filter((name) => name !== POCKET_LINK).sort();
+  assert.deepEqual(found, [...PACK_MODS].sort(), "herdr/mods' mod.json folders must be PACK_MODS");
+  for (const mod of PACK_MODS) {
+    const manifest = JSON.parse(readFileSync(join(MODS, mod, "mod.json"), "utf8"));
+    // Herdr's loader requires main.js (herdr-app src/mods.rs scan_dir); the pack declares the
+    // same entry its own gate reads, so the walk below never checks a file the runtime skips.
+    assert.equal(manifest.entry, "main.js", `mods/${mod}/mod.json must declare entry main.js`);
+  }
+});
+
+test("every shipped mod's static import graph fits gpui-shell 0.7.1", () => {
+  const { problems, seen, mods } = walkMods(MODS, PACK_MODS);
+  assert.deepEqual([...mods].sort(), [...PACK_MODS].sort(), "every PACK_MODS mod must be walked");
+  assert.ok(seen.size >= 40, `walked only ${seen.size} modules: the import scanner missed the graph`);
+  assert.ok(seen.has(join(MODS, "am-sidebar/workers.js")), "the graph must reach workers.js, where GUARD_DIR lives");
   assert.deepEqual(problems, [], problems.join("\n"));
   const dts = installedDeclaration();
   if (dts) {
@@ -139,7 +324,39 @@ test("the sidebar's static import graph fits gpui-shell 0.7.1", () => {
   }
 });
 
+test("a fixture mod importing node:url fails", () => {
+  const { problems } = walkMods(join(FIXTURES, "node-url", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
+});
+
+test('a fixture importing fileURLToPath from "url" fails', () => {
+  const { problems } = walkMods(join(FIXTURES, "url-surface", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:\d+: import "url": fileURLToPath is not exported/);
+});
+
+test("a fixture with a top-level new URL(x, import.meta.url) fails", () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-url", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:\d+: top-level import\.meta\.url/);
+});
+
+test("a fixture mod whose entry is not main.js is still walked", () => {
+  const { problems, seen } = walkMods(join(FIXTURES, "other-entry", "mods"));
+  assert.ok(seen.has(join(FIXTURES, "other-entry", "mods/other-entry/boot.js")), "boot.js must be the walked entry");
+  assert.match(problems.join("\n"), /mods\/other-entry\/boot\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
+});
+
+test("a fixture re-exporting node:url fails (export-from is walked)", () => {
+  const { problems } = walkMods(join(FIXTURES, "export-from", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:\d+: export "node:url": not a gpui-shell 0\.7\.1 module/);
+});
+
+test("a fixture with a dynamic import() fails", () => {
+  const { problems } = walkMods(join(FIXTURES, "dynamic-import", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:\d+: dynamic import\(\)/);
+});
+
 test("guardDirOf: the guard folder beside the module, from either runtime's meta URL", () => {
+  const MOD = join(MODS, "am-sidebar");
   assert.equal(GUARD_DIR, join(MOD, "guard"), "Node's file: URL still gives the same path");
   assert.equal(guardDirOf("file:///opt/herdr/mods/am-sidebar/workers.js"),
     "/opt/herdr/mods/am-sidebar/guard");
@@ -153,7 +370,7 @@ test("guardDirOf: the guard folder beside the module, from either runtime's meta
 });
 
 test("workers.js loads with the runtime's bare import.meta.url and keeps the guard path", async () => {
-  const file = join(MOD, "workers.js");
+  const file = join(MODS, "am-sidebar/workers.js");
   const bare = `${file}?v=1`;
   const runtimeUrl = `${pathToFileURL(file).href}?v=1`;
   const hook = registerHooks({
@@ -167,7 +384,7 @@ test("workers.js loads with the runtime's bare import.meta.url and keeps the gua
   });
   try {
     const runtime = await import(runtimeUrl);
-    assert.equal(runtime.GUARD_DIR, join(MOD, "guard"));
+    assert.equal(runtime.GUARD_DIR, join(MODS, "am-sidebar/guard"));
     assert.equal(runtime.GUARD_DIR, GUARD_DIR);
   } finally {
     hook.deregister();

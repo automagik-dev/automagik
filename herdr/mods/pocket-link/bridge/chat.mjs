@@ -11,8 +11,8 @@
 //
 // Methods: chat.list; chat.subscribe {terminal, after?} -> {channel}; chat.backfill
 // {terminal, before, limit?}; chat.send {terminal, text, id}; chat.sendHeld / chat.cancelHeld
-// {terminal, id}; chat.answer {terminal, row, choice}; chat.interrupt {terminal}. Every write needs
-// a subscription to that terminal on this connection (the engine refuses others). Rows are never
+// {terminal, id}; chat.answer {terminal, row, choice, text?}; chat.interrupt {terminal}. Every write
+// needs a subscription to that terminal on this connection (the engine refuses others). Rows are never
 // logged. A `dsh:<botId>` terminal is an Automagik Bot's chat (dsh-source.mjs): read only, every
 // write on it is refused.
 
@@ -236,7 +236,10 @@ export class ChatConnection {
         return ok(await this.engine.cancelHeld(this.client, terminal, { id: p.id }))
       case 'chat.answer':
         if (!terminal || typeof p.row !== 'string' || typeof p.choice !== 'string') return errorOf(id, 'invalid_params')
-        return ok(await this.engine.answer(this.client, terminal, { row: p.row, choice: p.choice }))
+        // text: a question's free-text answer (choice 'other', chat/question.js); nothing else reads it.
+        if (p.text !== undefined && typeof p.text !== 'string') return errorOf(id, 'invalid_params')
+        if (typeof p.text === 'string' && Buffer.byteLength(p.text, 'utf8') > SEND_TEXT_MAX) return ok({ ok: false, reason: 'too-long' })
+        return ok(await this.engine.answer(this.client, terminal, { row: p.row, choice: p.choice, ...(typeof p.text === 'string' ? { text: p.text } : {}) }))
       case 'chat.interrupt':
         if (!terminal) return errorOf(id, 'invalid_params')
         return ok(await this.engine.interrupt(this.client, terminal))
@@ -261,7 +264,8 @@ export class ChatConnection {
     this.event(channel, {
       type: 'snapshot', reset,
       rows: missed && !reset ? page(missed) : page(sub.handle.rows() ?? []),
-      screen: sub.handle.screen().map(cutRow), status: sub.handle.status(), approval: sub.handle.approval(), held: sub.handle.held()
+      screen: sub.handle.screen().map(cutRow), status: sub.handle.status(), approval: sub.handle.approval(),
+      question: sub.handle.question?.() ?? null, held: sub.handle.held()
     })
     return channel
   }

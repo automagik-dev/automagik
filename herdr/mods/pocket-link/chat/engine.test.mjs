@@ -430,3 +430,108 @@ test('a device that reconnects does not get back a held message its old connecti
   assert.equal(writes().length, 1)
   engine.close()
 })
+
+// ---- questions (Claude Code AskUserQuestion). Keys as probed on Claude Code 2.1.319: a
+// single-select answers with the option's digit alone (no Enter); free text is digit N+1, then the
+// text, then Enter; a multi-select is each digit, then Right, then Enter. Every key its own send.
+
+const askCall = (uuid, id, question) => line({ type: 'assistant', uuid, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: [question] } }] } })
+const dbQuestion = (multiSelect = false) => ({ question: 'Which database should we use?', header: 'Database', multiSelect,
+  options: [{ label: 'Postgres', description: 'Relational' }, { label: 'SQLite', description: 'A file' }] })
+// Synthetic, not a recording: the question and its options drawn at the bottom of the screen.
+const questionScreen = (multi = false) => [
+  '❯ pick a database', '', '⏺ AskUserQuestion', '─'.repeat(40), ' ☐ Database', '', 'Which database should we use?', '',
+  `❯ 1. ${multi ? '[ ] ' : ''}Postgres`, '     Relational', `  2. ${multi ? '[ ] ' : ''}SQLite`, '     A file', '  3. Type something.', '',
+  'Enter to select · ↑/↓ to navigate · Esc to cancel'
+].join('\n') + '\n'
+
+async function questionSetup({ multi = false, done = null } = {}) {
+  const s = setup({ transcript: user('u1', 'pick a database') + askCall('a1', 'toolu_q', dbQuestion(multi)) })
+  const a = client(s.engine)
+  await settle(); await s.engine.entries.get('t1').projection.ready
+  s.hc.screens.t1 = questionScreen(multi)
+  s.hc.change('t1', 'status', { status: { app: 'claude-code', state: 'blocked', kind: 'question', msg: 'Which database should we use?' }, turn: 3 })
+  await settle()
+  // The send that answers the question: then the status leaves blocked.
+  if (done) s.hc.onWrite((m, p) => { if (done(m, p)) s.hc.set('t1', { status: { app: 'claude-code', state: 'working' } }) })
+  const waits = []
+  s.engine.timers = { ...s.engine.timers, setTimeout: (fn, ms) => { waits.push(ms); setImmediate(fn) } }
+  const sends = () => s.writes().map((c) => (c.method === 'terminal.keys' ? ['keys', c.params.keys] : [c.method === 'terminal.send' ? 'send' : c.method, c.params.text, c.params.force]))
+  const row = a.events.filter((e) => e.type === 'question').at(-1)?.row
+  return { ...s, a, row, waits, sends }
+}
+
+test('a question row carries the open AskUserQuestion call’s options', async () => {
+  const { engine, row } = await questionSetup()
+  assert.deepEqual([row.id, row.prompt, row.options, row.multi, row.answerable, row.call],
+    ['question:1:2.0', 'Which database should we use?', ['Postgres', 'SQLite'], false, true, '1:2.0'])
+  engine.close()
+})
+
+test('single-select: the option digit alone, one send, no Enter', async () => {
+  const { engine, a, row, sends } = await questionSetup({ done: (m) => m === 'terminal.keys' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '2' }), { ok: true, pressed: 'done', sent: true })
+  assert.deepEqual(sends(), [['keys', ['2']]])
+  engine.close()
+})
+
+test('free text: digit N+1, then the text and Enter, as separate sends 500 ms apart', async () => {
+  const { engine, a, row, sends, waits } = await questionSetup({ done: (m) => m === 'terminal.send' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'other', text: 'MySQL 8' }), { ok: true, pressed: 'done', sent: true })
+  assert.deepEqual(sends(), [['keys', ['3']], ['send', 'MySQL 8', true]])
+  assert.equal(waits[0], 500)
+  engine.close()
+})
+
+test('multi-select: each digit, then Right, then Enter, every key its own send 500 ms apart', async () => {
+  const { engine, a, row, sends, waits } = await questionSetup({ multi: true, done: (m, p) => m === 'terminal.keys' && p.keys[0] === 'enter' })
+  assert.equal(row.multi, true)
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '1,2' }), { ok: true, pressed: 'done', sent: true })
+  assert.deepEqual(sends(), [['keys', ['1']], ['keys', ['2']], ['keys', ['right']], ['keys', ['enter']]])
+  assert.deepEqual(waits.slice(0, 3), [500, 500, 500])
+  engine.close()
+})
+
+test('a question that moves on mid-answer stops: no further key, finish in the terminal', async () => {
+  const { engine, a, hc, row, sends } = await questionSetup({ multi: true })
+  // After the first digit the terminal answers something else: the status leaves the question.
+  hc.onWrite((m) => { if (m === 'terminal.keys') hc.set('t1', { status: { app: 'claude-code', state: 'working' } }) })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '1,2' }), { ok: false, reason: 'stopped', sent: true })
+  assert.deepEqual(sends(), [['keys', ['1']]])
+  engine.close()
+})
+
+test('a question not on the screen, a choice out of range or free text on a multi-select: nothing pressed', async () => {
+  const { engine, a, hc, row, writes } = await questionSetup()
+  for (const choice of ['0', '3', '1,2', 'allow', '']) assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice }), { ok: false, reason: 'choice' })
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: 'other', text: 'two\nlines' }), { ok: false, reason: 'choice' })
+  hc.screens.t1 = screen('claude-idle')
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '1' }), { ok: false, reason: 'changed' })
+  assert.equal(writes().length, 0)
+  const m = await questionSetup({ multi: true })
+  assert.deepEqual(await m.engine.answer(m.a.me, 't1', { row: m.row.id, choice: 'other', text: 'x' }), { ok: false, reason: 'choice' })
+  assert.equal(m.writes().length, 0)
+  engine.close(); m.engine.close()
+})
+
+test('a question answered uncertain (still up after the read-back) is not-taken, and not pressed twice', async () => {
+  const { engine, a, row, writes } = await questionSetup()
+  assert.equal((await engine.answer(a.me, 't1', { row: row.id, choice: '1' })).pressed, 'uncertain')
+  await settle()
+  assert.deepEqual(await engine.answer(a.me, 't1', { row: row.id, choice: '1' }), { ok: false, reason: 'answered' })
+  assert.equal(writes().length, 1)
+  const last = a.events.filter((e) => e.type === 'question').at(-1).row
+  assert.deepEqual([last.answerable, last.why], [false, 'not-taken'])
+  engine.close()
+})
+
+test('a client watching after the question was raised reads it from its handle, then it clears', async () => {
+  const { engine, hc } = await questionSetup()
+  const late = client(engine)
+  assert.deepEqual([late.handle.question()?.id, late.handle.question()?.options], ['question:1:2.0', ['Postgres', 'SQLite']])
+  assert.equal(late.events.filter((e) => e.type === 'question').length, 0)
+  hc.change('t1', 'status', { status: { app: 'claude-code', state: 'working' }, turn: 3 })
+  await settle()
+  assert.equal(late.handle.question(), null)
+  engine.close()
+})

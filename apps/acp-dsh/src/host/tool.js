@@ -143,6 +143,16 @@ function sandboxOf(session, sandboxPolicy) {
   return undefined
 }
 
+// The Session's stored permission preset, from its own log: the identity the permission service
+// folds, including Auto under a delegated child's `never` approval.
+function presetOf(session) {
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.type === 'permission/preset') return events[i].data?.preset
+  }
+  return undefined
+}
+
 /** The Session's level: its sandbox mode, its approval policy, and whether that is full access. */
 export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
   let policy
@@ -153,13 +163,28 @@ export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
     sandbox = sandboxOf(session, sandboxPolicy)
     preset = permissionPresets?.current?.(session)
   } catch {}
-  // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Auto is
-  // `ask` with no sandbox (AUTO_PRESET_SPEC), and Manual is the stock `ask` + workspace-write.
-  // A Session's Auto row wins over the effective policy: dsh-subagent pins a child to `never` so
-  // its reviewer's denials stay final, and reading only that policy would report the child as
-  // full access, bypassing the Auto review the row promises.
+  // Auto is the identity the review gate reads (dsh-experimental-auto-review checks
+  // `permissionPresets.current(session) !== AUTO_PRESET`), never the knob bundle: a custom
+  // preset with Auto's `ask` + `danger-full-access` has no reviewer, so the bridge must keep its
+  // own ask. Without the permission-preset service no identity exists (and no Auto gate can be
+  // installed), so the Session's Auto row may only stop it reading Full — it cannot claim Auto.
+  if (preset === undefined) {
+    const auto = presetOf(session) === 'auto'
+    const full = !auto && policy === 'never' && sandbox === 'danger-full-access'
+    return { sandbox, policy, full, auto: false }
+  }
+  // DSH's real presets (dsh-permission-presets): Full access is `never` with no sandbox, Manual
+  // is the stock `ask` + workspace-write. A Session's Auto row wins over the effective policy:
+  // dsh-subagent pins a child to `never` so its reviewer's denials stay final, and reading only
+  // that policy would report the child as full access, bypassing the Auto review the row
+  // promises.
   if (preset === 'auto') return { sandbox, policy, full: false, auto: true }
-  return { sandbox, policy, full: policy === 'never' && sandbox === 'danger-full-access', auto: policy === 'ask' && sandbox === 'danger-full-access' }
+  return {
+    sandbox,
+    policy,
+    full: policy === 'never' && sandbox === 'danger-full-access',
+    auto: false,
+  }
 }
 
 // Full access (no approval prompts, no sandbox) lets the agent's calls through as it lets DSH's

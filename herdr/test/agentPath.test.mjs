@@ -269,7 +269,7 @@ function codexProject(t, extra = [], { terminals = [], env: more = {} } = {}) {
   const env = { ...s.env, PATH: path, HERDR_APP_HOME: app, HC_FAKE_STATE: state, HC_FAKE_LOG: log, HC_TERMINAL_ID: "t1", ...more };
   const cli = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
   const run = () => readJsonLines(log).find((c) => c[0] === "run");
-  return { s, prefix, path, cli, run };
+  return { s, prefix, path, app, cli, run };
 }
 
 test("worker CLI: a codex the pane reaches without node starts under env PATH=<nvm bin>:<pane PATH>, and says so", (t) => {
@@ -282,14 +282,14 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
 });
 
 test("start CLI (#56): a codex bot whose node is only in nvm starts under env PATH=<nvm bin>:<PATH>, and the command runs", (t) => {
-  const { prefix, path, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }]);
+  const { prefix, path, app, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }]);
   const r = cli("start", "Maint", "--json");
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
-  assert.match(argv[3], /^-c$/);
-  assert.match(argv[4], /^developer_instructions="<herdr-bot>\\nAutomagik Herdr briefing/, "codex takes it as a TOML string");
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex"]);
+  assert.match(argv[4], /^-c$/);
+  assert.match(argv[5], /^developer_instructions="<herdr-bot>\\nAutomagik Herdr briefing/, "codex takes it as a TOML string");
   assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
   // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
@@ -302,14 +302,14 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
 test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs under env PATH=<nvm bin>:<PATH>, not into 127", (t) => {
   const old = { address: "t7", name: "maint", cwd: "", state: "live", parent: null, created_ms: 1, labels: { bot: "b-dddddddddd" },
     foreground: { argv: ["codex"], cwd: "", pid: 4100 }, status: { app: "codex", state: "idle" } };
-  const { prefix, path, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }],
+  const { prefix, path, app, cli, run: runCall } = codexProject(t, [{ id: "b-dddddddddd", name: "Maint", kind: "member", agent: "codex" }],
     { terminals: [old], env: { AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300" } });
   const r = cli("restart", "Maint", "--json");
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).replaced, "t7");
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "resume", "--last"]);
   assert.ok(argv.findIndex((w) => w.startsWith("developer_instructions=")) < argv.indexOf("resume"), "its -c before the subcommand");
   assert.equal(argv.filter((w) => w.startsWith("developer_instructions=")).length, 1, "never twice after a restart");
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });

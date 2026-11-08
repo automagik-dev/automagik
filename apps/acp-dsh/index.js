@@ -28,8 +28,15 @@ import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
-// claude, codex and sideModel are live (volatile): DSH's settings service writes them without remounting
-// the plugin, and loader/volatile-update brings the change here.
+// The bridge, its DSH approval, the drift detector and live switching: an absent key takes the
+// per-agent default (Claude on; Codex only on an explicit true), and false is the kill switch.
+// The key is public (installed teams keep it in their profile patch). DSH_TOOLS_DEFAULT is the
+// Claude/service view used for the bridge probe, crossings and effort carry; it is not a schema
+// default, so an absent key still reaches the adapter as absent.
+export const DSH_TOOLS_DEFAULT = true
+
+// claude, codex, sideModel and dshTools are live (volatile): DSH's settings service writes them
+// without remounting the plugin, and loader/volatile-update brings the change here.
 export const Config = z.object({
   claude: z.boolean().default(true).volatile().description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
   codex: z.boolean().default(true).volatile().description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
@@ -38,9 +45,20 @@ export const Config = z.object({
     model: z.string().required(),
   }).default({ ...SIDE_MODEL }).volatile().description("The model that writes a Session's title when the Session is on an agent and DSH's default model is an agent too. Never an agent."),
   fakeAgent: z.string().description('Tests only: a script that speaks ACP, served as the acp-fake model. The command comes from these host settings, never from a client route.'),
-  // Off unless set: the 2026-11-03 behaviour, and the rollback (RFC 0003, amendment, "Setting
-  // and order"). On: the bridge, its DSH approval, the drift detector and live switching.
-  dshTools: z.boolean().default(false).volatile().description("Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own rules say, turn the agent's built-in tools off where its adapter allows, and carry the transcript when a Session moves between providers. Off is the behaviour without it: each agent keeps its own tools and its own approvals."),
+  // No schema default: absent is the per-agent default (Claude Code on, because only its
+  // adapter can drop the built-in tool set; Codex off, so it never runs two tool sets), and an
+  // explicit true/false is the person's word. False is also the kill switch and the 2026-11-03
+  // behaviour. A schema default would materialise true and erase the difference. Hidden from
+  // settings forms (`.hidden()`): it is a rollback lever, not a preference, and stays writable
+  // through DSH's settings service and the profile patch.
+  dshTools: z.boolean().volatile().hidden().description([
+    "Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's",
+    "preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own",
+    "rules say, turn the agent's built-in tools off where its adapter allows, and carry the",
+    'transcript when a Session moves between providers. On by default for Claude Code; an agent',
+    "whose adapter cannot drop its own tools (Codex) bridges only on an explicit true. False is",
+    'the kill switch and the behaviour without it: each agent keeps its own tools and approvals.',
+  ].join(' ')),
 })
 
 export const SERVICE = 'acpAgents'
@@ -52,6 +70,13 @@ export const PROBE_RETRY_MS = 10 * 60 * 1000
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
 
+// The Claude Code (and Bot-move) view of `dshTools`: absent means on, and only an explicit
+// false is the kill switch. Per-agent bridging reads the raw setting in AcpAdapter.
+export const dshToolsOn = (value) => {
+  const read = flagOf(value)
+  return (read === undefined ? DSH_TOOLS_DEFAULT : read) === true
+}
+
 // The Node that runs an adapter: the one running DSH (as Node when that is Electron's binary),
 // never another node on the PATH, which may be too old for the adapter (Node 22 or newer).
 export function nodeCommand() {
@@ -60,7 +85,8 @@ export function nodeCommand() {
 
 /**
  * @param {any} ctx
- * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string }} [config]
+ * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
+ *   [config]
  * @param {{ store?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  */
@@ -74,16 +100,29 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       // Tests only: keep a test of the missing-bridge failure from waiting the real grace period.
       ...(Number(process.env.ACP_BRIDGE_READY_MS) > 0 ? { bridgeReadyMs: Number(process.env.ACP_BRIDGE_READY_MS) } : {}),
       catalog: new Catalog({ id: 'acp-fake', name: 'Fake agent', defaultName: 'Fake agent', fallback: [{ id: DEFAULT_MODEL, name: 'Fake agent' }], key: () => config.fakeAgent, spawn, log }),
+      // The fake stands in for Claude Code where the bridge default is concerned: it declares
+      // the adapter switch that drops its own built-in tool set.
+      disableBuiltInTools: true,
       spawn,
     })
   }
   const backchannel = new Backchannel({ ctx, log })
   const redact = redactorFor(ctx)
   const adapter = new AcpAdapter(ctx, agents, {
-    dshTools: () => flagOf(config.dshTools) === true,
+    // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
+    dshTools: () => flagOf(config.dshTools),
     backchannel,
     redactor: redact,
   })
+  // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
+  // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
+  // started with the bridge never runs on the old tool set. The next turn starts afresh.
+  let toolsSetting = flagOf(config.dshTools)
+  const syncTools = () => {
+    const next = flagOf(config.dshTools)
+    if (toolsSetting !== next) adapter.endSessions()
+    toolsSetting = next
+  }
   const clis = new Map()
   const signIns = new Map()
   let registration
@@ -116,6 +155,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand()) => ({
     name: spec.name,
     modeFor: spec.modeFor,
+    // The adapter reads these off the agent object: without them the bridge default would not
+    // find Claude's switch, the drift detector would never run and Codex would never fork.
+    ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),
+    ...(spec.drift === true ? { drift: true } : {}),
+    ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
     cli,
     // The agent's own models and efforts, read from the adapter release installed now.
     catalog: new Catalog({
@@ -309,7 +353,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
 
   async function bridgeStatus() {
     if (disposed) return { on: false, probesPass: false }
-    const on = flagOf(config.dshTools) === true
+    const on = dshToolsOn(config.dshTools)
     if (!on) return { on: false, probesPass: false }
     const spec = AGENTS['acp-claude']
     const bin = store.binOf(spec.adapter, spec.bin)
@@ -373,10 +417,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
-  const crossing = crossed(agents, ctx, redact, () => flagOf(config.dshTools) === true)
+  const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
   ctx.on?.('llm/stream', crossing)
   // A switch flipped in the settings: offer or withdraw the agent now, and install what it needs.
-  ctx.on?.('loader/volatile-update', () => reconcile())
+  ctx.on?.('loader/volatile-update', () => { syncTools(); reconcile() })
   // A model selection that moves a Session off its agent: its boundary row, and the agent
   // session (and bridge) belonging to the old route ends (RFC 0003, amendment, "Live switching").
   ctx.on?.('session/event', (session, event) => adapter.noteEvent(session, event))
@@ -385,7 +429,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // follows `dshTools`.
   const carry = carryEffort(
     async (provider, model) => (await ctx.llm.resolveModelInfo?.(provider, model))?.reasoning,
-    () => flagOf(config.dshTools) === true,
+    () => dshToolsOn(config.dshTools),
     (previous, next) => agentRoute(agents, previous.provider) || agentRoute(agents, next.provider),
   )
   ctx.on?.('session/event', (session, event) => { void carry(session, event) })

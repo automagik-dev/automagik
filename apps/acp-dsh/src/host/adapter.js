@@ -132,8 +132,9 @@ function redactedReview(options, redact) {
  * summary) away from the agents: they would reach the agent as prompts of their own. A Session
  * title on an agent's route goes to a model that answers on its own instead, without the
  * agent's effort, which is the agent's model's: DSH's default model when that is not an agent,
- * else `sideModel()` (acp-dsh's `sideModel` setting, DeepSeek by default). DSH's default is the
- * model the person last picked, so on a team that chats with an agent it is usually an agent.
+ * else an explicitly chosen `sideModel`, each configured non-agent route in turn, and the
+ * built-in DeepSeek Flash last. DSH's default is the model the person last picked, so on a team
+ * that chats with an agent it is usually an agent.
  * Auto review is another side request: DSH's Auto preset sends it on the Session's route, and
  * it must reach a model that answers on its own just as a title does. It is redacted first:
  * the reviewer reads the Session's history, so its text passes the shared redactor.
@@ -154,6 +155,49 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     && !agentRoute(providers, choice.provider)
   const synthetic = message => message?.source?.synthetic === SYNTHETIC_KIND
   const refuse = () => (async function* () { yield finish('error', 'An ACP agent answers only in its own chat', 'UNSUPPORTED') })()
+  // A credential or route failure on one candidate is not a review verdict: try the next model
+  // the team has. Anything else (a bad reply, a timeout) is that candidate's answer.
+  const NEXT_MODEL = new Set(['MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'NO_ADAPTER'])
+  // Every model that can answer beside the chat, in the order the team can reach it: DSH's
+  // default model when it is not an agent, a sideModel the person chose, each configured
+  // non-agent route in turn (capped), and only then the built-in DeepSeek Flash. Nothing here
+  // reaches an agent: a review must never become a prompt in the chat it reviews.
+  const choicesFor = async () => {
+    const choices = []
+    const add = (choice) => {
+      if (!answers(choice)) return
+      const same = seen => seen.provider === choice.provider && seen.model === choice.model
+      if (choices.some(same)) return
+      choices.push({ provider: choice.provider, model: choice.model })
+    }
+    try { add(ctx.get?.('agentDefaultModel')?.currentSelection?.()) } catch {}
+    let configured
+    try { configured = sideModel() } catch {}
+    const explicit = computed => computed !== undefined
+      && (computed.provider !== SIDE_MODEL.provider || computed.model !== SIDE_MODEL.model)
+    if (answers(configured) && explicit(configured)) add(configured)
+    let routes = []
+    try { routes = ctx.llm?.listProviders?.() ?? [] } catch {}
+    let probed = 0
+    for (const route of Array.isArray(routes) ? routes : []) {
+      // The cap is on routes examined, not candidates kept: one slow or model-less route must
+      // not make the chain walk every provider on the machine.
+      if (probed >= 8) break
+      if (!answers({ provider: route?.id, model: 'candidate' })) continue
+      probed += 1
+      let models
+      try { models = await ctx.llm?.listModels?.(route.id) } catch {}
+      const first = Array.isArray(models)
+        ? models.find(model => typeof model?.id === 'string' && model.id !== '')
+        : undefined
+      if (first === undefined) continue
+      add({ provider: route.id, model: first.id })
+    }
+    // The built-in fallback is last, whatever the person configured: an explicit side model
+    // that cannot run must not remove it.
+    add(SIDE_MODEL)
+    return choices
+  }
   return (options, next) => {
     if (!providers.has(options.provider)) {
       // A bridge review block that outlived its call (a crash, a failed replacement) is not a
@@ -165,11 +209,44 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     }
     if (isAgentLoopRequest(options)) return next()
     if (!SIDE_PURPOSES.has(options.purpose) || ctx?.llm === undefined) return refuse()
-    const chosen = [ctx.get?.('agentDefaultModel')?.currentSelection?.(), sideModel()].find(answers)
-    if (chosen === undefined) return refuse()
     const routed = options.purpose === REVIEW_PURPOSE ? redactedReview(options, redact) : options
     const { reasoningEffort: _agentEffort, ...request } = routed
-    return ctx.llm.stream({ ...request, provider: chosen.provider, model: chosen.model })
+    return (async function* () {
+      let last
+      for (const chosen of await choicesFor()) {
+        const chunks = []
+        let failure
+        let finished = false
+        try {
+          const attempt = { ...request, provider: chosen.provider, model: chosen.model }
+          const stream = ctx.llm.stream(attempt)
+          for await (const chunk of stream) {
+            chunks.push(chunk)
+            if (chunk?.type !== 'finish') continue
+            finished = true
+            const kind = chunk.reason?.kind
+            if (kind === 'error' || kind === 'aborted') failure = chunk.reason.failure
+            break
+          }
+        } catch (error) {
+          failure = { message: error?.message ?? String(error), code: error?.code }
+        }
+        if (failure === undefined && finished) {
+          for (const chunk of chunks) yield chunk
+          return
+        }
+        last = failure ?? {
+          message: `${chosen.provider}/${chosen.model} ended without an answer`,
+          code: 'EMPTY_RESPONSE',
+        }
+        if (!NEXT_MODEL.has(last.code)) {
+          yield finish('error', last.message, last.code)
+          return
+        }
+      }
+      yield finish('error', last?.message ?? 'An ACP agent answers only in its own chat',
+        last?.code ?? 'UNSUPPORTED')
+    })()
   }
 }
 
@@ -240,9 +317,38 @@ export class AcpAdapter extends LlmAdapter {
     this.scoped.add(agent)
   }
 
-  /** Whether DSH's tools reach an agent in this Session at all (`dshTools`, off unless set). */
-  bridgeOn() {
-    return this.dshTools() === true && this.backchannel !== undefined
+  /**
+   * Whether DSH's tools reach this agent when the setting says nothing. Only an adapter that
+   * can drop its own built-in tools is in the default: today that is Claude Code's. Codex keeps
+   * its own tool set, so bridging it by default would run two tool sets; an explicit true
+   * still does it.
+   */
+  bridgeDefault(agent) {
+    return agent?.disableBuiltInTools === true
+  }
+
+  /**
+   * Whether DSH's tools reach an agent at all: an explicit true/false decides, and an absent
+   * setting takes the adapter's own switch (`bridgeDefault`).
+   */
+  bridgeOn(agent) {
+    if (this.backchannel === undefined) return false
+    const setting = this.dshTools()
+    if (setting === true || setting === false) return setting
+    return this.bridgeDefault(agent)
+  }
+
+  /**
+   * The kill switch flipped off: end every live agent session and its bridge. The DSH Session
+   * keeps its transcript; the next turn starts a fresh agent session without the bridge, so a
+   * credential minted while `dshTools` was on cannot keep reaching DSH tools.
+   */
+  endSessions() {
+    for (const live of this.live.values()) {
+      live.run?.dispose()
+      if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
+    }
+    this.live.clear()
   }
 
   /** The `session/new` server entry for one bridge: the adapter spawns it with this env only. */
@@ -323,7 +429,7 @@ export class AcpAdapter extends LlmAdapter {
    * the same trace and the record says what ran.
    */
   checkDrift(sessionId, agent, tool) {
-    if (!this.bridgeOn() || agent.drift !== true || tool.drift === true) return
+    if (!this.bridgeOn(agent) || agent.drift !== true || tool.drift === true) return
     const name = tool.structuredName
     if (name === undefined || name.startsWith('mcp__') || name === 'ToolSearch') return
     // Every drifted call stays cardless, but the record and the cancel belong to the turn: a
@@ -347,12 +453,12 @@ export class AcpAdapter extends LlmAdapter {
    * shows; the model selection itself is DSH's.
    */
   noteEvent(session, event) {
-    // Off is the old path, byte for byte: the agent session is kept across a turn on another
-    // provider, so switching back resumes the same ACP session.
-    if (!this.bridgeOn()) return
     if (event?.type !== 'model/selection') return
     const live = this.live.get(session?.id)
     if (live === undefined) return
+    // Off is the old path, byte for byte: the agent session is kept across a turn on another
+    // provider, so switching back resumes the same ACP session. The default is per agent.
+    if (!this.bridgeOn(this.agents.get(live.provider))) return
     const provider = event.data?.provider
     if (agentRoute(this.agents, provider)) return
     this.live.delete(session.id)
@@ -431,11 +537,11 @@ export class AcpAdapter extends LlmAdapter {
       let crossing = false
       const prior = lastProviderOf(options.messages)
       if (live === undefined) {
-        crossing = this.bridgeOn() && prior !== undefined && prior !== options.provider
+        crossing = this.bridgeOn(agent) && prior !== undefined && prior !== options.provider
         const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, drifted: false }
         try {
           const spec = await agent.spawn()
-          if (this.bridgeOn()) {
+          if (this.bridgeOn(agent)) {
             await this.backchannel.listen()
             state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
           }
@@ -444,8 +550,10 @@ export class AcpAdapter extends LlmAdapter {
             cwd: dshAgent?.session?.header?.cwd ?? homedir(),
             name: agent.name,
             mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
-            ...(this.bridgeOn() && agent.disableBuiltInTools === true ? { sessionMeta: { disableBuiltInTools: true } } : {}),
-            dshTools: this.bridgeOn(),
+            ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
+              ? { sessionMeta: { disableBuiltInTools: true } }
+              : {}),
+            dshTools: this.bridgeOn(agent),
             onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
             onToolCall: tool => this.checkDrift(sessionId, agent, tool),
           })
@@ -471,7 +579,7 @@ export class AcpAdapter extends LlmAdapter {
       }
       // A preset or level change since the last turn: the bridge serves the new set, and an
       // agent that ignores `tools/list_changed` gets the list through a fork instead.
-      if (live.bridge !== undefined && this.bridgeOn()) {
+      if (live.bridge !== undefined && this.bridgeOn(agent)) {
         const changed = this.backchannel.refresh(live.bridge)
         if (changed && agent.refresh === 'fork') {
           try {
@@ -538,7 +646,10 @@ export class AcpAdapter extends LlmAdapter {
         // left to the bridge too; its own tools keep their cards.
         // `ToolSearch` is the adapter's own deferred-tool loader (it stays with `tools: []`); it
         // is not a DSH tool and gets no card or dialog either.
-        if (this.bridgeOn() && (tool.drift === true || tool.bridge === true || tool.structuredName === 'ToolSearch' || (agent.refresh === 'fork' && tool.mcp === true))) continue
+        const skip = tool.drift === true || tool.bridge === true
+          || tool.structuredName === 'ToolSearch'
+          || (agent.refresh === 'fork' && tool.mcp === true)
+        if (this.bridgeOn(agent) && skip) continue
         await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply, Config, flagOf, SERVICE } from '../index.js'
+import { apply, Config, dshToolsOn, flagOf, SERVICE } from '../index.js'
 import { AGENTS, signedInOf } from '../src/host/agents.js'
 
 // A live setting, as the running fiber holds it: a reference DSH's settings service rewrites.
@@ -67,8 +67,35 @@ test('the switches are live settings under their old keys, read through a refere
   const parsed = new Config({})
   assert.equal(flagOf(parsed.claude), true)
   assert.equal(flagOf(parsed.codex), true)
+  assert.equal(flagOf(parsed.dshTools), undefined)
   assert.equal(flagOf(new Config({ claude: false }).claude), false)
   assert.equal(flagOf(false), false)
+})
+
+test('dshTools keeps its key, is live, hidden, and has no schema default', () => {
+  // The key is public: an installed team's profile patch keeps it, and an explicit false stays
+  // the kill switch.
+  assert.equal(flagOf(new Config({}).dshTools), undefined)
+  assert.equal(flagOf(new Config({ dshTools: false }).dshTools), false)
+  assert.equal(flagOf(new Config({ dshTools: true }).dshTools), true)
+  // No schema default: absent must stay distinguishable from an explicit true, or Codex would
+  // read the materialised true as the person's word and bridge by default.
+  const { uid, refs } = Config.toJSON()
+  const node = refs[refs[uid].dict.dshTools]
+  assert.equal('default' in node.meta, false)
+  assert.deepEqual({ type: node.type, ...node.meta }, {
+    type: 'boolean',
+    volatile: true,
+    hidden: true,
+    description: node.meta.description,
+  })
+  // A direct apply without a parsed Config reads the same default.
+  assert.equal(dshToolsOn(undefined), true)
+  assert.equal(dshToolsOn(true), true)
+  assert.equal(dshToolsOn(false), false)
+  assert.equal(dshToolsOn(live(false)), false)
+  assert.equal(dshToolsOn(live(true)), true)
+  assert.equal(dshToolsOn(live(undefined)), true)
 })
 
 test('the service answers even with no CLI here, with each install link, and registers no route', async () => {

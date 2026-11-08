@@ -123,12 +123,14 @@ otherwise, and a removed phone's chats end within 2 seconds. Its header line is 
 - **Requests** (JSON-RPC on channel 0): `chat.list`; `chat.subscribe {terminal, after?}` →
   `{channel}`; `chat.backfill {terminal, before, limit}` (≤ 200 rows, ≤ 1 MiB); `chat.send
   {terminal, text, id}` (≤ 32 KiB; answers `sent`, `queued`, `held` or `refused`);
-  `chat.sendHeld` and `chat.cancelHeld {terminal, id}`; `chat.answer {terminal, row, choice}`;
+  `chat.sendHeld` and `chat.cancelHeld {terminal, id}`; `chat.answer {terminal, row, choice,
+  text?}` (an approval's `allow`/`deny`; a question's option digit, digits joined by `,` on a
+  multi-select, or `other` with `text`; `chat/question.js`);
   `chat.interrupt {terminal}`. Every write needs a subscription to that terminal on the same
   connection.
 - **Events** (JSON lines on the subscription's channel, sent while the phone has credit; it
-  grants more with CREDIT): first a `snapshot` (rows, screen, status, approval, held; `reset`
-  when the cursor in `after` is no longer held), then `rows`, `screen`, `status`, `approval`,
+  grants more with CREDIT): first a `snapshot` (rows, screen, status, approval, question, held;
+  `reset` when the cursor in `after` is no longer held), then `rows`, `screen`, `status`, `approval`,
   `question`, `held`, `sent`, `sending`, `matched`, `source`, `gone` and `offline`. A row's text
   is cut at 64 KiB (`cut: true`). A subscriber that stops granting credit gets CLOSE `slow` and
   resubscribes with its cursor. A CLOSE from the phone ends the subscription.

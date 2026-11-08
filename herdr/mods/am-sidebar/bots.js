@@ -332,19 +332,41 @@ export async function editFolderOf(folder, key, machine = null) {
 /**
  * What git says about `key`'s .herdr/bots.json (this machine): "untracked" when git doesn't
  * know the file, "modified" when it is committed but has local changes, "deleted" when it is
- * committed and deleted in the working tree without that deletion being staged, null when it
- * is clean or git can't say. A pull that brings a worktree's committed file stops on the first
- * two (#234, #332); an unstaged deletion is restored with the worktree's version instead.
+ * committed and deleted in the working tree without that deletion being staged,
+ * "committed-deletion" when HEAD has no file, `dir` (the worktree an edit came from) does, and
+ * the merge base of HEAD and that worktree had it; null when it is clean or git can't say. A
+ * pull that brings a worktree's committed file stops on the first two (#234, #332); an unstaged
+ * deletion is restored by a merge pull and refused by a rebase pull instead (#626); a deletion
+ * committed after the worktree branched ends in modify/delete too, one before it only adds.
  */
-export async function changesIn(key) {
+export async function changesIn(key, dir = null) {
   try {
-    const out = (await gitOn(null)(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "";
-    if (!out.trim()) return null;
-    const state = out.slice(0, 2);
-    if (state === "??") return "untracked";
-    if (state === " D") return "deleted";
+    // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
+    // space to a trimmed stdout, while a v2 record's "1" is its first character (#626).
+    const out = (await gitOn(null)(["status", "--porcelain=v2", "--", BOTS_PATH], key)) ?? "";
+    if (!out.trim()) return await committedDeletion(key, dir);
+    const line = out.split("\n").find((l) => l);
+    if (line.startsWith("? ")) return "untracked";
+    if (line.startsWith("1 ") && line.split(" ")[1] === ".D") return "deleted";
     return "modified";
   } catch { return null; }
+}
+
+/**
+ * #626: a committed deletion leaves `git status` empty, yet a pull that brings the worktree's
+ * version of a file the merge base has, and HEAD has deleted, ends in a modify/delete conflict.
+ * The merge base, not the path's history, is the test: a deletion committed before the worktree
+ * branched leaves no file at the base, and the pull only adds the worktree's file.
+ */
+async function committedDeletion(key, dir) {
+  if (!dir || dir === key) return null;
+  if ((await gitOn(null)(["show", `HEAD:${BOTS_PATH}`], key)) !== null) return null;
+  if ((await readTextFile(under(dir, BOTS_PATH))) === null) return null;
+  const worktreeHead = (await gitOn(null)(["rev-parse", "HEAD"], dir))?.trim();
+  if (!worktreeHead) return null;
+  const base = (await gitOn(null)(["merge-base", "HEAD", worktreeHead], key))?.trim();
+  if (!base) return null;
+  return (await gitOn(null)(["cat-file", "-e", `${base}:${BOTS_PATH}`], key)) !== null ? "committed-deletion" : null;
 }
 
 /**

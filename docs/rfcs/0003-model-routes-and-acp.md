@@ -70,7 +70,7 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 - **The team's tools over MCP.** A Bot's team tools reach the agent through an MCP server the
   plugin hands to the agent per session. It exposes only the tools the Bot's level allows.
   (Amended, 2026-11-06: that bridge carries the Session's whole preset tool set, the team's tools
-  included; it ships behind `dshTools`, off unless set; see Amendments.)
+  included; it ships behind `dshTools` (absent means the per-agent default; see Amendments.)
 - **The person's own CLI, the newest adapter.** (Amended, owner decision D17.) An agent is offered
   only when its CLI is installed (`claude`, `codex`, found on PATH or where their installers put
   them); it runs that CLI, which the person signs in to and which updates itself. Between DSH and
@@ -97,7 +97,7 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
 - **Claude Code keeps the person's own settings.** (Owner decision, 2026-11-03. Superseded for
   tools and approvals while `dshTools` is on, 2026-11-06: see Amendments, delivery 6. Their
   CLAUDE.md, MCP servers and hooks keep working; what changes is that the agent runs DSH's tool
-  set, and DSH approves each DSH tool call.) With `dshTools` off (the default), the Claude
+  set, and DSH approves each DSH tool call.) With `dshTools` off (the kill switch), the Claude
   adapter loads the person's Claude Code settings (user, project and local), and Claude Code asks
   DSH only for what those leave as "ask": in Manual, a call the person's allow rules or saved
   "always allow" rules permit, or a PreToolUse or PermissionRequest hook approves, runs with no
@@ -139,9 +139,10 @@ and D17). Claude runs on pi-ai's `anthropic` route until `acp-claude` ships.
 - An ACP agent runs the same DSH tool set as a vanilla Session, built from the Session's preset,
   over a per-session stdio MCP bridge; every DSH tool call is approved by DSH, whatever the
   agent's own rules say; the agent's built-in tools are off where its adapter has a switch
-  (owner, 2026-11-06, #516). Both ship behind `dshTools`, off unless set; live switching carries
-  history each way, redacted, with a visible provider-boundary notice (owner, 2026-11-06, #516).
-  The council behind this: [dsh-022-council.md](../research/dsh-022-council.md).
+  (owner, 2026-11-06, #516). Both ship behind `dshTools`, whose absent default is per agent (the
+  default flipped, see Amendments, "Default and kill switch"); live switching carries history
+  each way, redacted, with a visible provider-boundary notice (owner, 2026-11-06, #516). The
+  council behind this: [dsh-022-council.md](../research/dsh-022-council.md).
 
 ### Per-teammate models (status note)
 
@@ -176,14 +177,17 @@ patch is removed in the release whose DSH carries the change.
   preset's tools, filtered by the Session's level, and answers every DSH tool call through DSH's
   approval service. Its failure is the turn's: a bridge the adapter skipped (a same-named server
   in the person's Codex config) fails the turn instead of running with half a tool set.
-- Setting `dshTools` (off unless set): the bridge and live switching. Off is the 2026-11-03
-  behaviour: each agent keeps its own tools and its own approvals.
+- Setting `dshTools` (absent means the per-agent default; false is the kill switch): the bridge
+  and live
+  switching. Off is the 2026-11-03 behaviour: each agent keeps its own tools and its own
+  approvals.
 - The provider-boundary row: a Session-log row that names the provider a turn came from or went
   to, so a switch is visible in the chat.
 
 ## Threat model
 
-Each bullet names the `dshTools` state it describes; `dshTools` is off unless set (Contracts).
+Each bullet names the `dshTools` state it describes; `dshTools` is absent by default, which
+means the per-agent default (Contracts).
 
 - **Who can reach it.** The agent is third-party code running as the user, with its own tools.
   With `dshTools` on, the MCP bridge also hands it DSH's tools (amended, 2026-11-06); with it
@@ -240,10 +244,11 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    DSH, headless). Rollback: the next
    release drops them; the Claude Code plugin route is untouched.
 4. **Bots' tools over MCP.** The bridge's first slice: the team's tools reach the agent over the
-   same per-session bridge delivery 6 completes. Lane: plugin, behind `dshTools`, off unless
-   set. Check: with the setting on, a Bot on `acp-claude` posts to its group through a team tool,
-   and a tool above its level is not offered. The back-channel is probed here, not only in
-   delivery 6: a team-tool call raises `approval/asked` before it runs, a request without
+   same per-session bridge delivery 6 completes. Lane: plugin, behind `dshTools`, on unless
+   explicitly false. Check: with the setting on, a Bot on `acp-claude` posts to its group
+   through a team tool, and a tool above its level is not offered. The back-channel is probed
+   here, not only in delivery 6: a team-tool call raises `approval/asked` before it runs, a
+   request without
    `DSH_BRIDGE_CREDENTIAL` is refused, one Session's credential is refused for another, and a
    fork revokes the old one. A build whose bridge cannot pass those is not offered under
    `dshTools`. With it, once per team, a Bot that ran on the Claude Code plugin
@@ -257,7 +262,8 @@ Each bullet names the `dshTools` state it describes; `dshTools` is off unless se
    built from the Session's preset (`standard`, or `cordis` in creator mode) and filtered by the
    Session's level; every DSH tool call is approved by DSH; the agent's built-in tools are off
    where its adapter has a switch; its tool list refreshes on a preset or level change. Lane:
-   plugin, behind `dshTools`, off unless set. Built on the DSH 0.2.2 branch (`feat/dsh-022-upgrade`)
+   plugin, behind `dshTools`, whose absent default is per agent. Built on the DSH 0.2.2 branch
+   (`feat/dsh-022-upgrade`)
    and rebased onto `dev` once that merges. Check: on `acp-claude`, an approval is asked for a DSH
    tool call the agent makes, an always-allow `mcp__*` rule in the person's Claude Code settings
    cannot skip it, exactly one DSH dialog appears for that call in Manual, a tool above the level
@@ -414,13 +420,36 @@ prompt; the test is a saved secret sitting in the transcript. Each crossing writ
 provider-boundary row into the Session log ("Claude Code via acp-claude", "DSH"), so the chat
 shows who answered, not only a log file.
 
-**Setting and order.** Deliveries 4, 6 and 7 ship behind `dshTools`, off unless set, until the
-owner tries them; off is the 2026-11-03 behaviour and the rollback. Delivery 4 is the bridge's
+**Setting and order.** Deliveries 4, 6 and 7 shipped behind `dshTools`, off unless set, until
+the owner tried them; off is the 2026-11-03 behaviour and the rollback. The default flipped to on
+later (below, "Default and kill switch"), where an explicit false is the kill switch. Delivery 4
+is the bridge's
 first slice, so it carries the same back-channel probes (above) before it is offered. The build
 branches from the DSH 0.2.2 branch (`feat/dsh-022-upgrade`) and is rebased onto `dev` once that
 merges; nothing of it is built in the docs PR that carries this amendment. This amendment is the
 design correction that unblocks Lane D's build: no Lane D code (deliveries 4, 6 and 7) merges
 before it lands.
+
+**Default and kill switch (2026-11-06, later).** `dshTools` has no schema default: absent means the
+per-agent default, on for an adapter that can drop its own built-in tools (`acp-claude`) and off for
+one that cannot (`acp-codex`), from the desktop trial (refs #516/#559/#580). The key is unchanged
+and stays public; an explicit true bridges Codex too, and an explicit false is the kill switch and
+keeps the 2026-11-03 behaviour. The field is hidden from settings forms: it is a rollback lever, not
+a preference, and remains writable through DSH's settings service and the profile patch. The flip
+moves Claude Bots to `acp-claude` once per team (the Bot team's move, below), so it lands only after
+#559 and #580's #585 are in a released build and the desktop trial passes. The one-time move
+requires the route's CLI to be signed in as well as ready, so an installed-but-signed-out Claude
+moves nothing and no Bot lands on a dead route; the team stays unmarked, and a later sign-in moves
+it on the next pass (a settings or adapter change) or the next start. Auto review no longer depends
+on a DeepSeek key: the reviewer resolves to a model the team can reach (DSH's default when it is not
+an agent, an explicitly chosen side model, each configured non-agent route in turn, then the
+built-in DeepSeek fallback) and falls through on a credential or missing-route failure, so a team
+with only a Claude login reviews on that model. It fails closed only when no candidate answers. Auto
+is the preset's identity, never its `ask` + `danger-full-access` bundle: a custom preset with the
+same knobs has no reviewer, so the bridge keeps its own approval. Flipping the setting ends the
+running agent sessions and revokes their bridges at once; the Session keeps its transcript. Codex is
+bridged only with an explicit `true`; absent or `false` means no bridge, and its built-ins stay its
+own tool set.
 
 ## Links
 

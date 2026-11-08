@@ -82,7 +82,8 @@ function host({ answer = 'allowed-once' } = {}) {
     on: (name, listener) => { listeners.set(name, [...(listeners.get(name) ?? []), listener]); return () => {} },
     effect: (fn) => { disposers.push(fn()) },
   }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  // The old path, explicitly: dshTools defaults on, so this host is the kill-switch suite.
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
   const h = {
     adapter: registered['acp-fake'],
@@ -238,11 +239,14 @@ test('a Session title or Auto review on an agent\'s chat goes to DSH\'s default 
   }
   side = { provider: 'anthropic', model: 'claude-haiku-5-5' }
   assert.equal(await route(), 'anthropic/claude-haiku-5-5')
+  // An agent or malformed sideModel is ignored; the built-in DeepSeek fallback is still tried.
   for (const unusable of [{ provider: 'acp-codex', model: 'default' }, { provider: 'deepseek-official' }, undefined]) {
     side = unusable
-    assert.equal(await route(), 'UNSUPPORTED')
+    assert.equal(await route(), 'deepseek-official/deepseek-flash')
   }
-  assert.equal(codeOf(await drain(aside(new Map([['acp-fake', {}]]))(title, next))), 'UNSUPPORTED')
+  // With nothing that can answer beside the chat (the built-in is an agent route here too):
+  const blocked = aside(new Map([['acp-fake', {}], ['deepseek-official', {}]]), ctx)
+  assert.equal(codeOf(await drain(blocked(title, next))), 'UNSUPPORTED')
 
   // Auto review on the same route: the same non-agent route, with its own system, messages and
   // temperature kept and the Session text redacted before the reviewer sees it.
@@ -266,10 +270,13 @@ test('a Session title or Auto review on an agent\'s chat goes to DSH\'s default 
   assert.equal('reasoningEffort' in sent[0], false)
   assert.doesNotMatch(JSON.stringify(sent[0].messages), /sk-abcdef123456/)
   assert.match(JSON.stringify(sent[0].messages), /sk-\[hidden\]/)
-  // No non-agent reviewer model: the review is refused, never sent to the agent.
+  // No non-agent side model: the built-in fallback answers, never the agent.
   selection = undefined
   side = { provider: 'acp-codex', model: 'default' }
-  assert.equal(codeOf(await drain(listen(review, next))), 'UNSUPPORTED')
+  sent.length = 0
+  await drain(listen(review, next))
+  assert.deepEqual(sent.map(options => `${options.provider}/${options.model}`),
+    ['deepseek-official/deepseek-flash'])
 
   // Any other side request on an agent's route is refused, whatever the default.
   selection = { provider: 'deepseek-official', model: 'deepseek-v4' }
@@ -304,8 +311,9 @@ test('a leaked synthetic bridge block never reaches a native provider', async ()
 
 // The same through DSH's own llm service and DSH's own default-model service, saved on an agent
 // as it is after the person picks one: the listener's nested call passes through the waterfall
-// again, sideModel's adapter answers the title, and the agent's adapter sees no side request.
-test('through DSH\'s real llm and default-model services, a title on an agent\'s chat is answered by sideModel', async () => {
+// again, the team's first configured non-agent model answers the title, and the agent's adapter
+// sees no side request.
+test('through DSH llm services, an agent-chat title runs on the team model', async () => {
   const { Context } = await import('@deepseek-ai/cordis')
   const { default: LlmRuntime, LlmAdapter } = await import('@deepseek-ai/dsh-llm')
   const { default: AgentDefaultModel } = await import('@deepseek-ai/dsh-agent-default-model')
@@ -333,7 +341,10 @@ test('through DSH\'s real llm and default-model services, a title on an agent\'s
   assert.equal(await run({ provider: 'acp-fake', model: 'default', purpose: 'compaction', messages }), 'UNSUPPORTED')
   assert.equal(await run(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', messages })), 'from agent')
   assert.deepEqual(seen, [
-    { adapter: 'deepseek', provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: undefined, agentLoop: false },
+    {
+      adapter: 'deepseek', provider: 'deepseek-official', model: 'm',
+      reasoningEffort: undefined, agentLoop: false,
+    },
     { adapter: 'agent', provider: 'acp-fake', model: 'default', reasoningEffort: undefined, agentLoop: true },
   ])
 })
@@ -343,7 +354,13 @@ test('the plugin sends titles on its agents\' routes to its sideModel setting wh
   const sent = []
   const defaults = { currentSelection: () => ({ provider: 'acp-fake', model: 'default' }) }
   const ctx = {
-    llm: { registerAdapter: () => () => {}, stream: options => { sent.push(options); return (async function* () {})() } },
+    llm: {
+      registerAdapter: () => () => {},
+      stream: options => {
+        sent.push(options)
+        return (async function* () { yield { type: 'finish', reason: { kind: 'stop' } } })()
+      },
+    },
     agents: { get: () => undefined },
     get: name => (name === 'agentDefaultModel' ? defaults : undefined),
     on: (name, listener) => {
@@ -365,11 +382,97 @@ test('the plugin sends titles on its agents\' routes to its sideModel setting wh
   const title = () => drain(call({
     provider: 'acp-fake', model: 'default', purpose: 'session-title', messages: [],
   }))
-  assert.deepEqual(await title(), [])
+  assert.deepEqual(await title(), [{ type: 'finish', reason: { kind: 'stop' } }])
   // A live setting: the next title reads the new value.
   side = { provider: 'anthropic', model: 'claude-haiku-5-5' }
   await title()
   assert.deepEqual(sent.map(options => `${options.provider}/${options.model}`), ['deepseek-official/deepseek-v4', 'anthropic/claude-haiku-5-5'])
+})
+
+test('Auto review uses a Claude route when the team has no DeepSeek key', async () => {
+  const listeners = new Map()
+  const sent = []
+  const routes = {
+    'deepseek-official': [{ id: 'deepseek-flash' }],
+    anthropic: [{ id: 'claude-sonnet-4-5' }],
+  }
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      listProviders: () => [{ id: 'deepseek-official' }, { id: 'anthropic' }, { id: 'acp-fake' }],
+      listModels: async provider => routes[provider] ?? [],
+      stream: options => {
+        sent.push(`${options.provider}/${options.model}`)
+        return (async function* () {
+          if (options.provider === 'deepseek-official') {
+            yield { type: 'finish', reason: { kind: 'error', failure: {
+              message: 'no API key', code: 'MISSING_CREDENTIAL',
+            } } }
+            return
+          }
+          yield { type: 'text-delta', index: 0, text: '{"risk":"low","decision":"allow"}' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    },
+    agents: { get: () => undefined },
+    get: name => (name === 'agentDefaultModel'
+      ? { currentSelection: () => ({ provider: 'acp-fake', model: 'default' }) }
+      : undefined),
+    on: (name, listener) => {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => {}
+    },
+  }
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  const call = (options) => {
+    let next = () => assert.fail('the agent got a side request')
+    for (const listener of [...(listeners.get('llm/stream') ?? [])].reverse()) {
+      const rest = next
+      next = () => listener(options, rest)
+    }
+    return next()
+  }
+  const chunks = await drain(call({
+    provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [],
+  }))
+  // The hard-coded DeepSeek default is refused by its missing key; the Claude route answers.
+  assert.deepEqual(sent, ['deepseek-official/deepseek-flash', 'anthropic/claude-sonnet-4-5'])
+  assert.equal(chunks.find(chunk => chunk.type === 'text-delta')?.text,
+    '{"risk":"low","decision":"allow"}')
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+})
+
+test('an Auto review with no reachable reviewer surfaces the last failure', async () => {
+  const sent = []
+  const ctx = {
+    llm: {
+      registerAdapter: () => () => {},
+      listProviders: () => [{ id: 'deepseek-official' }, { id: 'anthropic' }],
+      listModels: async provider => (provider === 'anthropic'
+        ? [{ id: 'claude' }]
+        : [{ id: 'deepseek-flash' }]),
+      stream: options => {
+        sent.push(`${options.provider}/${options.model}`)
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'error', failure: {
+            message: `${options.provider} has no key`, code: 'MISSING_CREDENTIAL',
+          } } }
+        })()
+      },
+    },
+    get: () => undefined,
+  }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx)
+  const review = { provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [] }
+  const chunks = await drain(listen(review, () => {
+    throw new Error('the agent got a side request')
+  }))
+  // Both configured candidates were tried (the built-in DeepSeek Flash dedupes with the first
+  // route); the last failure is the answer, and no failure is turned into a decision.
+  assert.deepEqual(sent, ['deepseek-official/deepseek-flash', 'anthropic/claude'])
+  assert.equal(chunks.at(-1).reason.failure.code, 'MISSING_CREDENTIAL')
+  assert.doesNotMatch(JSON.stringify(chunks), /decision/)
 })
 
 test('sideModel is a live setting, DeepSeek Flash by default', async () => {
@@ -383,9 +486,11 @@ test('sideModel is a live setting, DeepSeek Flash by default', async () => {
 test('an agent that cannot start fails the step with its reason', async () => {
   const registered = {}
   // The Session's agent exists (scope finds it); the agent's process is what cannot start.
+  // The old path, explicitly: dshTools defaults on, so the failure is the agent's spawn.
   const agent = { session: { id: 's9' }, ctx: { tools: { register: () => () => {} } } }
   const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: id => (id === 's9' ? agent : undefined) }, get: () => undefined }
-  apply(ctx, { fakeAgent: join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs'), claude: false, codex: false })
+  const fake = join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs')
+  apply(ctx, { fakeAgent: fake, claude: false, codex: false, dshTools: false })
   const chunks = []
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
@@ -787,7 +892,10 @@ function dshHost({ env = {}, answer = 'allowed-once', sandbox = 'workspace-write
     ...extra,
   }
   const backchannel = new Backchannel({ ctx })
-  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]), { dshTools: () => toolsOn, backchannel, redactor })
+  // `toolsOn` is true/false, or a getter for a live switch a test flips mid-run.
+  const dshTools = typeof toolsOn === 'function' ? toolsOn : () => toolsOn
+  const adapter = new AcpAdapter(ctx, new Map([['acp-fake', spec]]),
+    { dshTools, backchannel, redactor })
   const close = () => { adapter.dispose(); backchannel.dispose() }
   return { adapter, spec, ctx, agent, session, definitions, asked, executed, backchannel, close }
 }
@@ -1130,11 +1238,14 @@ test('a Session moving to an agent carries its transcript redacted, and each cro
   }
 })
 
-test('the plugin wiring hands the bridge to a Session when dshTools is set', async () => {
+// The plugin's own wiring (apply), with DSH's tools service behind the bridge: what a real
+// DSH tools call needs, and the one place `dshTools` is read from Config.
+function bridgeWiring() {
   const session = Session.create('s1')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 0 })
   const asked = []
+  const listeners = new Map()
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
   const definitions = bridgeTools()
   const ctx = {
@@ -1153,21 +1264,63 @@ test('the plugin wiring hands the bridge to a Session when dshTools is set', asy
       if (name === 'agentPresets') return { presetForSession: () => 'standard' }
       return undefined
     },
-    on: () => () => {},
+    on: (name, listener) => {
+      listeners.set(name, [...(listeners.get(name) ?? []), listener])
+      return () => {}
+    },
+    emit: (name) => (listeners.get(name) ?? []).forEach(listener => listener()),
     effect: () => {},
     logger: { warn: () => {}, info: () => {} },
   }
   const registered = {}
   ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: true })
+  return { ctx, registered, asked, agent, session, emit: ctx.emit }
+}
+
+test('the plugin wiring hands the bridge to a Session by default (dshTools unset)', async () => {
+  const w = bridgeWiring()
+  apply(w.ctx, { fakeAgent: FAKE, claude: false, codex: false })
   try {
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
-    const chunks = await step(registered['acp-fake'], messages)
+    const chunks = await step(w.registered['acp-fake'], messages)
     assert.match(textIn(chunks), /The bridge said: ran bash/)
-    assert.equal(asked.length, 1)
-    assert.equal(asked[0].toolName, 'bash')
+    assert.equal(w.asked.length, 1)
+    assert.equal(w.asked[0].toolName, 'bash')
   } finally {
-    registered['acp-fake'].dispose()
+    w.registered['acp-fake'].dispose()
+  }
+})
+
+test('the kill switch is live: false ends the bridge now, true brings it back', async () => {
+  const w = bridgeWiring()
+  let on = true
+  apply(w.ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: { get: () => on } })
+  const adapter = w.registered['acp-fake']
+  try {
+    const ask = text => [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }],
+    }]
+    const first = await step(adapter, ask('bridge bash'))
+    assert.match(textIn(first), /The bridge said: ran bash/)
+    assert.equal(adapter.backchannel.records.size, 1)
+    // False is the kill switch: the plugin ends the agent session and revokes its bridge when
+    // the live setting changes, so no credential minted while on can keep calling DSH tools.
+    on = false
+    w.emit('loader/volatile-update')
+    assert.equal(adapter.live.size, 0)
+    assert.equal(adapter.backchannel.records.size, 0)
+    // The next turn is the old path, in a fresh agent session with no bridge.
+    const second = await step(adapter, ask('plain'))
+    assert.match(textIn(second), /turn 1: you said "plain"/)
+    assert.equal(adapter.live.get('s1').bridge, undefined)
+    // On again: the next turn gets the bridge back.
+    on = true
+    w.emit('loader/volatile-update')
+    const third = await step(adapter, ask('bridge bash'))
+    assert.match(textIn(third), /The bridge said: ran bash/)
+    assert.equal(adapter.backchannel.records.size, 1)
+  } finally {
+    adapter.dispose()
   }
 })
 
@@ -1215,6 +1368,179 @@ test('the plugin wiring carries effort both ways on a model selection', async ()
   } finally {
     for (const off of offs) off()
   }
+})
+
+test('a real config with no dshTools keeps Codex out and bridges Claude', async () => {
+  // Through resolveConfig and the plugin's own agent objects, the way DSH builds them.
+  const { resolveConfig } = await import('@deepseek-ai/cordis')
+  const plugin = await import('../index.js')
+  const adapterFor = (data) => {
+    const registered = {}
+    const ctx = {
+      llm: {
+        registerAdapter: (providers, adapter) => {
+          for (const id of providers) registered[id] = adapter
+          return () => {}
+        },
+      },
+      agents: { get: () => undefined },
+      get: () => undefined,
+      provide: () => {},
+      on: () => {},
+      effect: () => {},
+      logger: { warn: () => {}, info: () => {} },
+    }
+    plugin.apply(ctx, resolveConfig(plugin, data), {
+      find: name => `/bin/${name}`,
+      signedIn: async () => true,
+      store: {
+        binOf: () => ({ path: '/adapter', version: '1' }),
+        update: async () => {},
+        home: undefined,
+      },
+    })
+    return registered['acp-claude']
+  }
+  const unset = adapterFor({})
+  const claude = unset.agents.get('acp-claude')
+  const codex = unset.agents.get('acp-codex')
+  // The registered objects carry the capabilities the adapter reads.
+  assert.equal(claude.disableBuiltInTools, true)
+  assert.equal(claude.drift, true)
+  assert.equal(codex.refresh, 'fork')
+  // No schema default: absent stays absent, so each agent's own switch decides.
+  assert.equal(unset.bridgeOn(claude), true)
+  assert.equal(unset.bridgeOn(codex), false)
+  // The person's word still wins both ways.
+  const forced = adapterFor({ dshTools: true })
+  assert.equal(forced.bridgeOn(forced.agents.get('acp-codex')), true)
+  const off = adapterFor({ dshTools: false })
+  assert.equal(off.bridgeOn(off.agents.get('acp-claude')), false)
+})
+
+test('the bridge default is per agent: Claude on, Codex off until explicitly asked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-agent-default-'))
+  const trace = name => join(dir, `${name}.ndjson`)
+  // Claude Code declares the adapter switch that drops its own tools: the default bridges it.
+  const claude = dshHost({
+    toolsOn: () => undefined, spec: { disableBuiltInTools: true }, trace: trace('claude'),
+  })
+  // Codex has no such switch: its default is the old path, so it never runs two tool sets.
+  const codex = dshHost({
+    toolsOn: () => undefined, spec: { refresh: 'fork' }, trace: trace('codex'),
+  })
+  // An explicit true still bridges Codex (the person asked for two tool sets).
+  const forced = dshHost({ toolsOn: () => true, spec: { refresh: 'fork' }, trace: trace('forced') })
+  try {
+    const ask = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }],
+    }]
+    await step(claude.adapter, ask)
+    await step(codex.adapter, ask)
+    await step(forced.adapter, ask)
+    const servers = name => traceEvents(trace(name))
+      .find(event => event.event === 'new-session').servers
+    assert.deepEqual(servers('claude'), ['dsh'])
+    assert.deepEqual(servers('codex'), [])
+    assert.deepEqual(servers('forced'), ['dsh'])
+  } finally {
+    claude.close()
+    codex.close()
+    forced.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an explicit sideModel that cannot run still leaves the built-in fallback', async () => {
+  const sent = []
+  const ctx = {
+    llm: {
+      stream: options => {
+        sent.push(`${options.provider}/${options.model}`)
+        return (async function* () {
+          if (options.provider === 'anthropic') {
+            yield { type: 'finish', reason: { kind: 'error', failure: {
+              message: 'no key', code: 'MISSING_CREDENTIAL',
+            } } }
+            return
+          }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    },
+  }
+  const listen = aside(new Map([['acp-fake', {}]]), ctx,
+    () => ({ provider: 'anthropic', model: 'side' }))
+  const review = { provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [] }
+  const chunks = await drain(listen(review, () => {
+    throw new Error('the agent got a side request')
+  }))
+  assert.deepEqual(sent, ['anthropic/side', 'deepseek-official/deepseek-flash'])
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+})
+
+test('the reviewer walks the real provider list in order, capped at eight routes', async () => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { default: LlmRuntime, LlmAdapter } = await import('@deepseek-ai/dsh-llm')
+  const seen = []
+  class Route extends LlmAdapter {
+    constructor(id, answer = false) { super(); this.id = id; this.answer = answer }
+    async listModels(provider) { return [{ provider, id: `m-${this.id}`, name: this.id }] }
+    async resolveModel(provider, model) { return { provider, id: model, name: model } }
+    async *stream(options) {
+      seen.push(options.provider)
+      if (this.answer) {
+        yield { type: 'text-delta', index: 0, text: '{"risk":"low","decision":"allow"}' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+        return
+      }
+      yield { type: 'finish', reason: { kind: 'error', failure: {
+        message: 'no key', code: 'MISSING_CREDENTIAL',
+      } } }
+    }
+  }
+  const ctx = new Context()
+  await ctx.plugin(LlmRuntime)
+  ctx.llm.registerAdapter(['acp-fake'], new Route('acp-fake'))
+  for (let i = 1; i <= 10; i += 1) ctx.llm.registerAdapter([`p${i}`], new Route(`p${i}`, i === 3))
+  ctx.on('llm/stream', aside(new Map([['acp-fake', {}]]), ctx))
+  const run = async () => {
+    const chunks = []
+    for await (const chunk of ctx.llm.stream({
+      provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [],
+    })) chunks.push(chunk)
+    return chunks
+  }
+  const chunks = await run()
+  assert.deepEqual(seen, ['p1', 'p2', 'p3'])
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+
+  // Past the cap the ninth route is never even examined, whatever its catalog does: one
+  // model-less route and one whose listModels throws must not let the chain walk every
+  // provider on the machine. The built-in is still asked and, unregistered here, fails as
+  // NO_ADAPTER rather than the chain pretending a decision.
+  const late = new Context()
+  await late.plugin(LlmRuntime)
+  late.llm.registerAdapter(['acp-fake'], new Route('acp-fake'))
+  const examined = []
+  for (let i = 1; i <= 10; i += 1) {
+    const route = new Route(`p${i}`, i === 9)
+    route.listModels = async (provider) => {
+      examined.push(provider)
+      if (i === 1) return []
+      if (i === 2) throw new Error('the catalog is unavailable')
+      return [{ provider, id: `m-${i}`, name: `p${i}` }]
+    }
+    late.llm.registerAdapter([`p${i}`], route)
+  }
+  late.on('llm/stream', aside(new Map([['acp-fake', {}]]), late))
+  const chunks2 = []
+  const lateReview = {
+    provider: 'acp-fake', model: 'default', purpose: 'auto-review', messages: [],
+  }
+  for await (const chunk of late.llm.stream(lateReview)) chunks2.push(chunk)
+  assert.deepEqual(examined, ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
+  assert.equal(chunks2.at(-1).reason.failure.code, 'NO_ADAPTER')
 })
 
 test('switching away and back resumes the agent session with dshTools off, and starts clean with it on', async () => {
@@ -1303,7 +1629,7 @@ test('with dshTools off the agent\'s stream is logged as it arrived', async () =
   }
 })
 
-test('with dshTools unset (the default), the agent runs its own tools and no bridge is spawned', async () => {
+test('dshTools false is the kill switch: own tools, no bridge spawned', async () => {
   const session = Session.create('s1')
   const agent = { session, ctx: { tools: { register: () => () => {} } } }
   const ctx = {
@@ -1316,7 +1642,7 @@ test('with dshTools unset (the default), the agent runs its own tools and no bri
   }
   const registered = {}
   ctx.llm.registerAdapter = (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} }
-  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false })
+  apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   try {
     const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'bridge bash' }] }]
     const chunks = await step(registered['acp-fake'], messages)
@@ -1327,6 +1653,37 @@ test('with dshTools unset (the default), the agent runs its own tools and no bri
     assert.equal(JSON.parse(call.block.arguments).title, 'mcp__dsh__bash')
   } finally {
     registered['acp-fake'].dispose()
+  }
+})
+
+test("a person's own MCP server passes the drift check; a built-in tool is drift", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-mcp-drift-'))
+  const trace = join(dir, 'trace.ndjson')
+  const h = dshHost({ spec: { drift: true }, trace })
+  try {
+    const plain = [{
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'plain' }],
+    }]
+    await step(h.adapter, plain)
+    // DSH hands the agent only the bridge. Anything else in its tool list is the person's own
+    // server, loaded by their CLI from its own user-scope config, not by this plugin.
+    const opened = traceEvents(trace).find(event => event.event === 'new-session')
+    assert.deepEqual(opened.servers, ['dsh'])
+    // The allowlist is `mcp__*`, by design: a user-scope server's call is not adapter drift.
+    const personal = { structuredName: 'mcp__personalmcp__search', title: 'search', mcp: true }
+    h.adapter.checkDrift('s1', AGENTS['acp-claude'], personal)
+    assert.notEqual(personal.drift, true)
+    const drift = () => h.session.snapshotEvents()
+      .filter(event => event.type === 'plugin:acp-dsh/toolset-drift')
+    assert.equal(drift().length, 0)
+    // A built-in tool is drift: recorded on the turn and cancelled.
+    const bash = { structuredName: 'Bash', title: 'Bash' }
+    h.adapter.checkDrift('s1', AGENTS['acp-claude'], bash)
+    assert.equal(bash.drift, true)
+    assert.equal(drift().length, 1)
+  } finally {
+    h.close()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
