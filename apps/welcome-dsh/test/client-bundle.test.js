@@ -29,7 +29,7 @@ test('client.js registers its three onboarding steps on settings.onboarding, in 
   assert.deepEqual([...requested].sort(), ['react', 'react-dom'])
   assert.equal(Object.prototype.toString.call(exports), '[object Module]')
   assert.deepEqual(Object.keys(exports).sort(), ['apply', 'inject'])
-  assert.deepEqual(Array.from(exports.inject), ['slots'])
+  assert.deepEqual(Array.from(exports.inject), ['slots', 'locale'])
 
   const injected = []
   const registered = []

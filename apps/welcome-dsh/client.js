@@ -12409,7 +12409,7 @@ var STEPS = [
   { id: "omni-team", order: -270, component: TeamStep },
   { id: "omni-connect-ai", order: -200, component: ConnectAiStep }
 ];
-var inject = ["slots"];
+var inject = ["slots", "locale"];
 function installStyles() {
   const style = document.createElement("style");
   style.dataset.omniAi = "";
