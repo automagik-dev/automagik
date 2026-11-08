@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open; amendment drafted 2026-11-07, owner gate: writes on DSH chats, see Amendments) |
+| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open; amended 2026-11-07: writes on DSH chats, global Bots included, see Amendments) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -322,7 +322,7 @@ second ALPN beside the session one:
   `chat.backfill {terminal, before, limit}`; `chat.send {terminal, text, id}` (answers `sent`,
   `queued`, `held` or `refused` with a reason); `chat.sendHeld` and `chat.cancelHeld`
   `{terminal, id}`; `chat.answer {terminal, row, choice}`; `chat.interrupt {terminal}`.
-  (Amendment draft, 2026-11-07: on a `dsh:<botId>` chat, send, answer and interrupt stop being
+  (Amended, 2026-11-07: on a `dsh:<botId>` chat, send, answer and interrupt stop being
   refusals where the bridge's `hello` says `dshWrite: true`; see Amendments.)
 - **Limits.** A row's text is cut at 64 KiB and a tool output preview at 8 KiB, each with "open
   in terminal"; a backfill page is at most 200 rows and 1 MiB; a send at most 32 KiB; at most 8
@@ -400,7 +400,7 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   never registered as a DSH tool, never given to an automation or another plugin, and refused
   without a client that watches that terminal. Each carries the action the person took: the
   message they wrote, or the id of an open approval or question row the engine itself raised.
-  (Amendment draft, 2026-11-07: the same rule for writes on DSH chats, through the owner-only
+  (Amended, 2026-11-07: the same rule for writes on DSH chats, through the owner-only
   socket; see Amendments, "Threat model".)
 - **The per-project yes** (0014 Threat model, item 3). It lives in 0014's `shown[]`, keyed by
   (machine, project). This RFC adds nothing to it and reads no repo file: a chat opens only for a
@@ -411,7 +411,7 @@ Orca's own list of gaps (research note, "Parity gaps") and our answer:
   label is never trusted more than the rule allows.
 - **What it can send.** Text, through the cleaner and the draft check; mapped approval and answer
   keys under the guards in "Input"; interrupt. Only on the person's action in a client, enforced
-  as in "Who can call the engine". (Amendment draft, 2026-11-07: on a DSH chat also a prompt, a
+  as in "Who can call the engine". (Amended, 2026-11-07: on a DSH chat also a prompt, a
   cancel and one answer to a DSH request; see Amendments, "Threat model".)
 - **Rendering.** Transcript text is written by the agent and by whatever it read (web pages,
   files, tool output). It is shown as text or sanitized markdown, with no HTML and no remote load
@@ -541,9 +541,10 @@ they stay below as the record.
 
 ### RFC 0015 (live chat projection): writes on `dsh:<botId>` chats
 
-**Status: Draft, owner gate.** No write code starts before the owner signs this section, after the
-threat-model review by t2x5 and Reviewer t37n (wish `pocket-four-tabs`, Group 0b; Group 4 builds
-it). Owner line, when signed: *Accepted by the owner, date.*
+**Accepted by the owner, 2026-11-07, with global Bots writable under the same limits.**
+
+Signed on PR #663 after the threat-model review by t2x5 and Reviewer t37n (wish
+`pocket-four-tabs`, Group 0b). Group 4 builds it; its code starts only after this PR merges.
 
 Owner decision D1 (wish `pocket-four-tabs`): **a paired phone can send, interrupt and approve in
 the team's DSH chats.** This reverses the read-only rule for `dsh:<botId>` chats: today the
@@ -594,8 +595,8 @@ so `dsh-source.mjs` forwards them unchanged.
   `devices.json`, which the phone does not set. Anything else is refused.
 - **Refusal reasons.** `read-only` (a socket or bridge without writes), `not-watching`,
   `not-shown` (the per-project yes, below), `settled` (with the receipt), `changed` (the row is
-  no longer the open one: "The question changed"), `global` (a global Bot, below), `rate`
-  (Limits), `too-long`, `busy`, `offline`.
+  no longer the open one: "The question changed"), `rate` (Limits), `too-long`, `busy`,
+  `offline`.
 
 #### Approvals on the phone, and the race
 
@@ -717,23 +718,28 @@ finds out what the other accepts, and fails closed to read-only.
   Session log tells phone prompts apart (Open question 2).
 - **A stolen paired phone, before and after.** Before: it read transcripts and typed into
   Herdr terminals (the whole `hc connect` API, "Who can reach it"). Now also: it can prompt the
-  team's project Bots shown under a yes, stop their turns, and approve or deny their tool calls
-  one call at a time, at the level DSH's sandbox gives that Session, at up to 20 writes a
-  minute, and it sees each request's input. It cannot write to a global Bot, grant allow for
-  session, pick a project without the yes, start a Bot, change a Bot's settings or its level,
-  or reach the socket. Undo
-  as before: remove the phone in Pocket Link (its writes end within 2 s), or turn the bridge off.
+  team's project Bots shown under a yes and the global Bots, the Main Bot included; stop their
+  turns; and approve or deny their tool calls one call at a time, at the level DSH's sandbox
+  gives that Session, at up to 20 writes a minute; and it sees each request's input. It cannot
+  grant allow for session, pick a project without the yes, start a Bot, change a Bot's settings
+  or its level, or reach the socket. Undo as before: remove the phone in Pocket Link (its
+  writes end within 2 s), or turn the bridge off.
 - **The per-project yes still gates the chat** (0014 Threat model, item 3; `shown[]`). A DSH
   chat of a Bot whose project has no entry in the home file's `shown[]` is listed with
   `shown: false`; `subscribe` and every write on it are refused `not-shown`, by the socket and
   again by the bridge. A Team bubble for that project shows "Show in Automagik first" and opens
   no DSH chat. Pairing never counts as the yes, and no `chat.*` method or socket method writes
   `shown[]`: the yes is given only in Herdr or Automagik.
-- **Global Bots stay read-only on the phone.** Global Bots (`project: null`, such as the Main
-  Bot) need no project yes to be shown (0014), and they are the team's widest Bots. So the
-  phone may read their chats but never write to them: every write on a global Bot is refused
-  `global`, by the socket and again by the bridge. Team's bubbles are per project, so D1 does
-  not need them. Opening writes on global Bots needs its own yes and a later amendment.
+- **Global Bots are writable from the phone, under the same limits** (owner decision at
+  signing, 2026-11-07: "include Main Bot"). Global Bots (`project: null`, the Main Bot
+  included) need no project yes to be shown (0014), and they are the team's widest Bots. The
+  phone may send, interrupt and answer on them under every rule above, with no exception: the
+  owner-only socket; a paired connection subscribed to that chat; 20 writes a minute and one
+  interrupt per chat every 5 s per phone; approvals one call at a time, never allow for
+  session; writes end within 2 s of removing the phone; the phone acts as the owner, and its
+  prompts carry a `pocket-` request id. The `shown[]` gate above still applies to project Bots
+  only. What this accepts: a paired or stolen phone can prompt, stop and approve one call at a
+  time on the Main Bot, with no project yes in between; removing the phone is the undo.
 - **Privacy.** What the person types or approves on the phone now goes to the computer's DSH.
   Group 4's pocket PR says so in `apps/pocket/docs/privacy.md` in the same PR (Pocket's
   AGENTS.md); this text changes nothing on the phone yet.
@@ -745,8 +751,10 @@ finds out what the other accepts, and fails closed to read-only.
    write on an unwatched channel is refused; a write is not callable as a tool or by an
    automation; an approval answered on the computer closes the phone's card with its receipt; a
    phone answer that comes second gets `settled`; a `hello` without `write` gets today's answer
-   and no writes; a write on a global Bot gets `global`; allow for session from the phone is
-   refused; the 21st write in a minute gets `rate`; a Retry with a known `id` prompts nothing.
+   and no writes; a write on a global Bot (the Main Bot) is served under the same limits, with
+   no project yes; a project Bot without its yes gets `not-shown`; allow for session from the
+   phone is refused; the 21st write in a minute gets `rate`; a Retry with a known `id` prompts
+   nothing.
    *Rollback:* a release without the methods; bridges see `readOnly: true`.
 2. **Pocket Link** (herdr, copied by hand with the owner's OK). `dsh-source.mjs` asks for writes,
    forwards them only to a socket that answered `write: 1`, refuses otherwise as today, and
