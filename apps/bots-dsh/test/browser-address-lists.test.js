@@ -3,11 +3,15 @@
 // The Bot browser host is real (openBotBrowser -> createSession, its main-frame route and
 // its saved-tab filter); only Playwright itself is the fake fixture.
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
+import WebRuntime from '@deepseek-ai/dsh-web'
+import { DEFAULT_USER_AGENT, HttpFetchProvider } from '@deepseek-ai/dsh-web-fetch-http'
+import { apply as applyWebTools } from '@deepseek-ai/dsh-tool-web'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
@@ -19,6 +23,7 @@ import { mountBrowserPlugin } from '../src/host/browser/mount.js'
 import { toolDefs as refsTools } from '../src/host/browser/refs.js'
 import { toolDefs as scriptTools } from '../src/host/browser/script.js'
 import { decideAddress } from '../src/host/browser/address-policy.js'
+import { install as installAddressPolicy } from '../src/host/address-policy.js'
 import { browserAddress, blockedAddress } from '../src/client/bot-browsers.js'
 import { contexts } from './fixtures/fake-playwright.mjs'
 
@@ -201,4 +206,138 @@ test('the person\'s own browser path still opens local and LAN addresses', () =>
   assert.equal(blockedAddress('http://127.0.0.1:3000/'), false)
   assert.equal(blockedAddress('http://192.168.1.10/'), false)
   assert.equal(blockedAddress('http://169.254.169.254/'), true)
+})
+
+async function fetchHarness(lists) {
+  const ctx = new Context()
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await ctx.plugin({ apply: applyToolExecutor, inject: toolExecutorInject })
+  const rt = { ctx, state: { prefs: {} }, load: async () => {} }
+  installAddressPolicy(rt)
+  let calls = 0
+  ctx.tools.register(defineTool({
+    name: 'web_fetch',
+    description: 'Fetch a URL.',
+    parameters: { url: { type: 'string', required: true } },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    async execute() {
+      calls += 1
+      return 'fetched'
+    },
+  }))
+  const set = (allow, deny) => {
+    rt.state.prefs.browserAllow = allow
+    rt.state.prefs.browserDeny = deny
+  }
+  set(lists.allow, lists.deny)
+  return {
+    ctx,
+    calls: () => calls,
+    set,
+    run: url => runTool(ctx, 'web_fetch', { url }),
+    async close() { await ctx.fiber.dispose() },
+  }
+}
+
+test('web_fetch uses the same default, lists and deny-wins rule', async t => {
+  const h = await fetchHarness({ allow: [], deny: [] })
+  t.after(h.close)
+  const open = await h.run('http://127.0.0.1:3000/')
+  assert.equal(open.isError, false, open.error?.message)
+  assert.equal(h.calls(), 1)
+
+  h.set([], ['127.0.0.1'])
+  const denied = await h.run('http://127.0.0.1:3000/')
+  assert.equal(denied.isError, true)
+  assert.match(denied.error.message, /denied by this profile's address list/u)
+  assert.equal(h.calls(), 1)
+
+  h.set(['127.0.0.0/8'], ['127.0.0.1'])
+  const precedence = await h.run('http://127.0.0.1:3000/')
+  assert.equal(precedence.isError, true)
+  assert.match(precedence.error.message, /denied by this profile's address list/u)
+  assert.equal(h.calls(), 1)
+
+  h.set(['10.0.0.0/8'], [])
+  const allowMiss = await h.run('http://127.0.0.1:3000/')
+  assert.equal(allowMiss.isError, true)
+  assert.match(allowMiss.error.message, /not on this profile's allow list/u)
+  assert.equal(h.calls(), 1)
+})
+
+test('the real web_fetch tool allows local by default and refuses a denied address', async t => {
+  let hits = 0
+  const server = createServer((_request, response) => {
+    hits += 1
+    response.writeHead(200, { 'content-type': 'text/plain' })
+    response.end('local page')
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    server.closeAllConnections?.()
+    return new Promise(resolve => server.close(resolve))
+  })
+  const url = `http://127.0.0.1:${server.address().port}/`
+  const ctx = new Context()
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await ctx.plugin({ apply: applyToolExecutor, inject: toolExecutorInject })
+  await ctx.plugin(WebRuntime, { fetchProvider: 'http' })
+  ctx.web.registerFetchProvider(new HttpFetchProvider({
+    maxResponseBytes: 5_000_000,
+    maxBodyChars: 100_000,
+    timeoutMs: 30_000,
+    maxRedirects: 5,
+    userAgent: DEFAULT_USER_AGENT,
+  }))
+  applyWebTools(ctx, {
+    search: false,
+    fetch: true,
+    searchMaxResults: 8,
+    searchMaxQueries: 4,
+    searchSummaryMaxChars: 800,
+    fetchTimeoutMs: 30_000,
+    searchTimeoutMs: 30_000,
+    fetchMaxOutputChars: 200_000,
+  })
+  const rt = { ctx, state: { prefs: {} }, load: async () => {} }
+  installAddressPolicy(rt)
+  t.after(() => ctx.fiber.dispose())
+
+  // web_fetch is conditional on its provider being ready, so the call needs the step's
+  // admitted tool set, as a model step supplies it; a bare call would read as unknown.
+  const agent = { id: 'address-list-test' }
+  const signal = new AbortController().signal
+  const toolSet = await ctx.tools.resolve({
+    agent,
+    modelSelection: { provider: 'test', model: 'test' },
+    signal,
+  })
+  t.after(() => toolSet.dispose())
+  const fetch = () => ctx.tools.execute({
+    signal,
+    agent,
+    toolSet,
+    calls: [{
+      type: 'tool-call',
+      id: ToolCallId('web_fetch'),
+      name: 'web_fetch',
+      arguments: JSON.stringify({ url }),
+    }],
+  }).then(batch => batch.results[0].result)
+
+  const open = await fetch()
+  assert.equal(open.isError, false, open.error?.message)
+  assert.match(open.value.body.content, /local page/u)
+  assert.equal(hits, 1)
+
+  rt.state.prefs.browserDeny = ['127.0.0.1']
+  const denied = await fetch()
+  assert.equal(denied.isError, true)
+  assert.match(denied.error.message, /denied by this profile's address list/u)
+  assert.equal(hits, 1)
 })

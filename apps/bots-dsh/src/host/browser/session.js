@@ -129,7 +129,7 @@ export async function openBotBrowser({
   const first = context.pages()[0] ?? await context.newPage()
   const allowed = addressPolicy === undefined
     ? undefined
-    : url => addressPolicy.check(url).then(d => d.allowed, () => true)
+    : url => addressPolicy.check(url, 'open').then(d => d.allowed, () => true)
   const page = await restoreTabs(context, userDataDir, first, allowed)
   const cookieFile = join(userDataDir, 'cookies.json')
   if (!browser) {
@@ -167,7 +167,7 @@ export function createSession({
   const refusalOf = async (url) => {
     if (addressPolicy?.check === undefined) return undefined
     try {
-      const decision = await addressPolicy.check(String(url))
+      const decision = await addressPolicy.check(String(url), 'open')
       if (decision?.allowed !== false) return undefined
       const message = decision.message ?? 'This address is blocked by the profile.'
       return Object.assign(new Error(message), { code: 'ADDRESS_REFUSED' })
