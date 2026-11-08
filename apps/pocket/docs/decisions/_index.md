@@ -24,5 +24,6 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [Four tabs: Home, Team, Code, Settings](four-tabs.md) | Implemented | automagik-dev/automagik#664 |
 | [Team: one bubble per project, keyed by registry bot id](team-bubbles.md) | Implemented | automagik-dev/automagik#674 |
 | [A DSH chat reconnects by itself; the phone needs no dedupe flag](dsh-chat-resume.md) | Implemented | |
+| [Home counts the Bots' chats with the terminals](home-bot-chats.md) | Implemented | |
 
 Back to the [docs home](../_index.md).

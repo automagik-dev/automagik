@@ -130,19 +130,29 @@ object Projects {
 
     /** Everything the tabs count, from one reading of every machine: Today's sections, projects and tasks. */
     data class Pulse(val sections: List<Cockpit.Section>, val projects: List<Project>, val tasks: List<Task>,
-                     val machines: Int, val spaces: Int) {
+                     val machines: Int, val spaces: Int,
+                     /** A pane row that is its chat's ([Cockpit.raised]), by pane ref: the chat ref its Done is looked at as. */
+                     val fromChat: Map<TerminalRef, TerminalRef> = emptyMap()) {
         private fun count(rank: Int) = sections.find { it.rank == rank }?.entries?.size ?: 0
         val needsYou get() = count(Cockpit.BLOCKED)
         val working get() = count(Cockpit.WORKING)
+        /** The key a row's finished turn is looked at by: its chat's for a pane row raised to its chat, else its own. */
+        fun seenKey(ref: TerminalRef, t: CoreTerminal) = Cockpit.seenKey(fromChat[ref] ?: ref, t.turn)
     }
 
-    /** [seen]: the [Cockpit.seenKey]s of finished turns the person looked at. */
-    fun pulse(hosts: List<SidebarHost>, seen: Set<String>): Pulse {
+    /**
+     * [seen]: the [Cockpit.seenKey]s of finished turns the person looked at. [chats]: the Automagik Bots' chats
+     * ([Cockpit.chats]), rows of Home beside the terminals (one per Bot, with its pane); projects and tasks stay the
+     * terminals', since a chat has no folder.
+     */
+    fun pulse(hosts: List<SidebarHost>, seen: Set<String>, chats: Cockpit.Chats = Cockpit.Chats()): Pulse {
         val all = hosts.flatMap { h -> h.terminals.filter { it.live }.map { TerminalRef(h.hostId, it.address) to it } }
         val paned = hosts.flatMap { h -> h.spaces.flatMap { s -> s.addresses.map { TerminalRef(h.hostId, it) } } }.toSet()
-        val sections = Cockpit.sections(all, { it in paned }) { r, t -> Cockpit.seenKey(r, t) in seen }
-        val projects = build(hosts, sections.flatMap { it.entries })
-        return Pulse(sections, projects, tasks(projects), machinesConnected(hosts), hosts.sumOf { it.spaces.size })
+        val raised = Cockpit.raised(all, chats)
+        fun key(r: TerminalRef, t: CoreTerminal) = Cockpit.seenKey(raised.fromChat[r] ?: r, t.turn)
+        val sections = Cockpit.sections(raised.terminals + chats.agents, { it in paned || Chat.isDsh(it.address) }) { r, t -> key(r, t) in seen }
+        val projects = build(hosts, sections.flatMap { s -> s.entries.filter { !Chat.isDsh(it.ref.address) } })
+        return Pulse(sections, projects, tasks(projects), machinesConnected(hosts), hosts.sumOf { it.spaces.size }, raised.fromChat)
     }
 
     /** Machines up right now: each connected core, and the machines it reaches that are connected too. */
