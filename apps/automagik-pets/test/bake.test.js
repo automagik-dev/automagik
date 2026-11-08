@@ -237,14 +237,53 @@ describe('concurrent bakes of the same look', () => {
     const { dir } = await bakePet('hex-cyan', { home, render: cachedRender })
     const pets = join(home, 'pets')
     const tags = Array.from({ length: 12 }, (_, index) => `${process.pid}.${index.toString(16).padStart(8, '0')}`)
-    await Promise.all(tags.map(tag => cp(dir, join(pets, `.hex-cyan.${tag}.tmp`), { recursive: true })))
-    // Each rename waits a moment first, so every move has looked at the folder before any moves
-    // it: the race is certain, not left to scheduling.
-    const slowRename = async (from, to) => {
-      await new Promise(done => setTimeout(done, 1 + Math.random() * 4))
-      return rename(from, to)
+    const staging = tag => join(pets, `.hex-cyan.${tag}.tmp`)
+    await Promise.all(tags.map(tag => cp(dir, staging(tag), { recursive: true })))
+    // One interleave, pinned rather than left to scheduling: every move looks at the pet before
+    // any moves it, the first moves it aside, and the other eleven try while it is away. Their
+    // failures wait until the first lands its folder, so they find a complete pet and stand down.
+    // No timer and no random delay: an idle and a loaded runner take the same order.
+    const winner = tags[0]
+    let looked = 0
+    let allLooked
+    const sawPet = new Promise(done => { allLooked = done })
+    let winnerMoved
+    const movedAside = new Promise(done => { winnerMoved = done })
+    let losersTried = 0
+    let allLosersTried
+    const everyLoserTried = new Promise(done => { allLosersTried = done })
+    let winnerLanded
+    const landed = new Promise(done => { winnerLanded = done })
+    const tagOf = path => tags.find(tag => path.includes(`.${tag}.`))
+    const pinnedRename = async (from, to) => {
+      const tag = tagOf(from === dir ? to : from)
+      if (from === dir) {
+        looked += 1
+        if (looked === tags.length) allLooked()
+        await sawPet
+        if (tag === winner) {
+          await rename(from, to)
+          winnerMoved()
+          return
+        }
+        await movedAside
+        try {
+          await rename(from, to)
+        } catch (error) {
+          losersTried += 1
+          if (losersTried === tags.length - 1) allLosersTried()
+          await landed
+          throw error
+        }
+        throw new Error(`move ${tag} moved the pet aside after the winner landed`)
+      }
+      if (tag !== winner) throw new Error(`move ${tag} did not look at the pet first`)
+      await everyLoserTried
+      await rename(from, to)
+      winnerLanded()
     }
-    const results = await Promise.all(tags.map(tag => moveIntoPlace(join(pets, `.hex-cyan.${tag}.tmp`), dir, tag, { rename: slowRename })))
+    const moves = tags.map(tag => moveIntoPlace(staging(tag), dir, tag, { rename: pinnedRename }))
+    const results = await Promise.all(moves)
     assert.ok(results.some(result => result.raced), 'the moves raced')
     assert.ok(await isCompletePet(dir, 'hex-cyan'))
     assert.deepEqual(await readdir(pets), ['hex-cyan'])
