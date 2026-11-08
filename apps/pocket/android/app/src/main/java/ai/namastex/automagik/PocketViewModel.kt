@@ -976,7 +976,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Opens [ref]'s chat (a terminal's, or a `dsh:` Bot chat); the same chat already open stays as it is. Reopening
-     * the same chat (a reconnect) keeps the messages whose outcome is unknown as "maybe not sent", with Retry.
+     * the same chat (a reconnect) keeps the messages whose outcome is unknown as "maybe not sent", with Retry, and
+     * what [Chat.carry] names, so the cards that closed meanwhile get their receipts (#733).
      */
     fun openChat(ref: TerminalRef) = openChat(ref, resuming = false)
 
@@ -986,13 +987,14 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun openChat(ref: TerminalRef, resuming: Boolean) {
         if (chatRef == ref && chatJob?.isActive == true) return
-        val unknown = _chat.value?.takeIf { chatRef == ref }?.let(Chat::unknown).orEmpty()
+        val prior = _chat.value?.takeIf { chatRef == ref }
+        val unknown = prior?.let(Chat::unknown).orEmpty()
         val attempt = if (resuming) resumeAttempt else 0
         closeChat()
         resumeAttempt = attempt
         val gen = ++chatGen
         chatRef = ref
-        _chat.value = Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null)
+        _chat.value = Chat.carry(prior, Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null))
         if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
@@ -1054,10 +1056,16 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun chatSubscribe(link: ChatClient, terminal: String, after: String?, gen: Int) {
         link.subscribe(terminal, after, { e ->
+            val before = _chat.value?.takeIf { gen == chatGen }?.receipts.orEmpty()
             chatUpdate(gen) { Chat.reduce(it, e) }
             val type = e.optString("type")
-            // A closed card's receipt goes on the chat's Home row, for its Done line.
-            if (Chat.isDsh(terminal)) Chat.receiptLine(e)?.let { line -> chatRef?.let { r -> _chatWatch.update { ChatWatch.receipt(it, ChatWatch.key(r.hostId, terminal), line) } } }
+            // A closed card's receipt goes on the chat's Home row, for its Done line: one seen close, or the newest a
+            // reconnect's snapshot found settled while the phone was away.
+            if (Chat.isDsh(terminal)) {
+                val fresh = _chat.value?.takeIf { gen == chatGen }?.receipts.orEmpty().filter { r -> before.none { it.id == r.id } }
+                (Chat.receiptLine(e) ?: fresh.lastOrNull { it.settled }?.let(Chat::doneLine))
+                    ?.let { line -> chatRef?.let { r -> _chatWatch.update { ChatWatch.receipt(it, ChatWatch.key(r.hostId, terminal), line) } } }
+            }
             viewModelScope.launch { chatEvent(gen, type) }
         }) { reason ->
             // Too slow to keep up: the bridge closed the stream; come back from the cursor.
@@ -1187,6 +1195,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun dismissChatNotice() { _chat.update { it?.copy(notice = null) } }
+    /** Dismisses the receipt of a card that closed while the phone was away; it does not come back on the next reconnect. */
+    fun dismissReceipt(id: String) { _chat.update { it?.let { s -> Chat.dismissReceipt(s, id) } } }
 
     /** Reads machine [hostId]'s Automagik Bot chats (read only) for the Bot chats list, on a short-lived connection. */
     fun loadBotChats(hostId: String) {
