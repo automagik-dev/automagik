@@ -13,6 +13,7 @@
     "--",
     "/usr/bin/env",
     "PATH=<guard>:<root>/bin:/usr/bin:/bin",
+    "HERDR_APP_HOME=<root>/app",
     "<root>/bin/dsh-tui-local",
     "--profile",
     "worker",

@@ -60,7 +60,9 @@ export function exec(command, args = [], { cwd, on, timeout } = {}) {
   if (on && state.hung.has(on)) return new Promise(() => {});
   return new Promise((resolve, reject) => execFile(command, args, { cwd }, (err, stdout, stderr) => {
     if (err && typeof err.code !== "number") reject(err);
-    else resolve({ code: err ? err.code : 0, stdout, stderr });
+    // state.trimExec: Herdr returning stdout trimmed (#626); the rule must not need a v1
+    // status line's leading space to read an unstaged deletion.
+    else resolve({ code: err ? err.code : 0, stdout: state.trimExec ? stdout.trim() : stdout, stderr });
   }));
 }
 

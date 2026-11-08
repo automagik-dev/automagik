@@ -128,6 +128,28 @@ class ChatClientTest {
         }
     }
 
+    /** A tap on a question's option sends chat.answer with that option's digit; a typed answer adds its text. */
+    @Test fun aQuestionTapSendsChatAnswerWithTheOptionsDigit() {
+        val bridge = FakeBridge(chat = true) { JSONObject().put("ok", true).put("pressed", "done").put("sent", true) }
+        val row = """{"id":"question:1:2.0","kind":"question","source":"status","prompt":"Which database?","options":["Postgres","SQLite"],"multi":false,"answerable":true,"call":"1:2.0","open":true}"""
+        val s = Chat.reduce(Chat.reduce(Chat.State("t3", connected = true), JSONObject("""{"type":"status","status":{"state":"blocked","kind":"question"}}""")),
+            JSONObject("""{"type":"question","row":$row}"""))
+        withChat(bridge) { chat ->
+            assertEquals(listOf("Postgres", "SQLite"), ChatActions.options(s, s.question))
+            val (choice, text) = ChatActions.questionAnswer(s, s.question, listOf(1))!!
+            assertNull(Chat.answerNotice(chat.answer("t3", s.question!!.id, choice, text)))
+            val tap = bridge.requests.next()
+            assertEquals("chat.answer", tap.getString("method"))
+            val p = tap.getJSONObject("params")
+            assertEquals(listOf("t3", "question:1:2.0", "2"), listOf("terminal", "row", "choice").map { p.getString(it) })
+            assertFalse(p.has("text"))
+            val (other, typed) = ChatActions.questionAnswer(s, s.question, emptyList(), "MySQL")!!
+            chat.answer("t3", s.question!!.id, other, typed)
+            val p2 = bridge.requests.next().getJSONObject("params")
+            assertEquals(listOf("other", "MySQL"), listOf(p2.getString("choice"), p2.getString("text")))
+        }
+    }
+
     /** A DSH chat is read only: the phone sends no write for it at all, and answers as the bridge would. */
     @Test fun phoneNeverWritesOnADshChat() {
         val bridge = FakeBridge(chat = true) { JSONObject().put("ok", true) }

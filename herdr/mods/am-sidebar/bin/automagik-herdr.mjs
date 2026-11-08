@@ -373,33 +373,57 @@ async function saveProject(project, raw, { list = true } = {}) {
   if (project.machine) return writeRemoteBots(project, raw);
   writeBotsFile(project.dir, raw, project.expected, fsIo, project.text);
   if (list) listProject(project.key);
-  if (project.dir !== project.key) report([worktreeNote(project, await changesIn(project.key))]);
+  if (project.dir !== project.key) report([worktreeNote(project, await changesIn(project.key, project.dir))]);
 }
 /**
  * Said after an edit written in a worktree: where it went, what the readers show meanwhile, and,
  * when the main checkout's file was never committed or has local changes, that its pull would
  * stop on it (git won't overwrite an untracked file, nor local changes, with the merged one);
- * when it is deleted in the working tree, that the pull restores it with the worktree's version.
+ * when it is deleted in the working tree, that a merge pull restores it with the worktree's
+ * version and a rebase pull refuses until it is committed or discarded; when the deletion is
+ * committed after the worktree branched, that the pull ends in a modify/delete conflict.
  */
 const worktreeNote = ({ key, dir }, changes = null) => `saved in ${under(dir, BOTS_PATH)} (this worktree); ls, `
   + `whois and the sidebar read ${under(key, BOTS_PATH)} until that change is merged there.`
   + (changes === "untracked" ? ` ${under(key, BOTS_PATH)} isn't committed: commit or remove it before pulling, or git pull stops on it.` : "")
   + (changes === "modified" ? ` ${under(key, BOTS_PATH)} has local changes: commit or discard them before pulling, or git pull stops on it.` : "")
-  + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a pull here brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead).` : "");
+  + (changes === "deleted" ? ` ${under(key, BOTS_PATH)} is deleted: a merge pull brings it back with this worktree's version (a committed deletion would be a modify/delete conflict instead); pull.rebase=true refuses the pull until the deletion is committed or discarded.` : "")
+  + (changes === "committed-deletion" ? ` ${under(key, BOTS_PATH)} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict; restore and commit the file before pulling, or resolve the conflict after.` : "");
 /**
  * What git says about `key`'s .herdr/bots.json: "untracked" when git doesn't know the file,
  * "modified" when it is committed but has local changes, "deleted" when it is committed and
- * deleted in the working tree without that deletion being staged, null when it is clean or git
- * can't say. A pull that brings a worktree's committed file stops on the first two (#234, #332);
- * an unstaged deletion is restored with the worktree's version instead.
+ * deleted in the working tree without that deletion being staged, "committed-deletion" when
+ * HEAD has no file, `dir` (the worktree an edit came from) does, and the merge base of HEAD and
+ * that worktree had it; null when it is clean or git can't say. A pull that brings a worktree's
+ * committed file stops on the first two (#234, #332); an unstaged deletion is restored by a
+ * merge pull and refused by a rebase pull instead (#626); a deletion committed after the
+ * worktree branched ends in modify/delete too, one before it only adds.
  */
-async function changesIn(key) {
-  const out = (await git(["status", "--porcelain", "--", BOTS_PATH], key)) ?? "";
-  if (!out.trim()) return null;
-  const state = out.slice(0, 2);
-  if (state === "??") return "untracked";
-  if (state === " D") return "deleted";
+async function changesIn(key, dir = null) {
+  // porcelain=v2 keeps the state an explicit field: v1's unstaged " D" loses its leading
+  // space to a trimmed stdout, while a v2 record's "1" is its first character (#626).
+  const out = (await git(["status", "--porcelain=v2", "--", BOTS_PATH], key)) ?? "";
+  if (!out.trim()) return await committedDeletion(key, dir);
+  const line = out.split("\n").find((l) => l);
+  if (line.startsWith("? ")) return "untracked";
+  if (line.startsWith("1 ") && line.split(" ")[1] === ".D") return "deleted";
   return "modified";
+}
+/**
+ * #626: a committed deletion leaves `git status` empty, yet a pull that brings the worktree's
+ * version of a file the merge base has, and HEAD has deleted, ends in a modify/delete conflict.
+ * The merge base, not the path's history, is the test: a deletion committed before the worktree
+ * branched leaves no file at the base, and the pull only adds the worktree's file.
+ */
+async function committedDeletion(key, dir) {
+  if (!dir || dir === key) return null;
+  if ((await git(["show", `HEAD:${BOTS_PATH}`], key)) !== null) return null;
+  if (readText(under(dir, BOTS_PATH)) === null) return null;
+  const worktreeHead = (await git(["rev-parse", "HEAD"], dir))?.trim();
+  if (!worktreeHead) return null;
+  const base = (await git(["merge-base", "HEAD", worktreeHead], key))?.trim();
+  if (!base) return null;
+  return (await git(["cat-file", "-e", `${base}:${BOTS_PATH}`], key)) !== null ? "committed-deletion" : null;
 }
 
 const fsIo = {
@@ -2376,7 +2400,9 @@ const seatJson = (bot, seat) => ({ id: bot.id, terminal: seat.terminal, parent: 
  * (the whole command, checked by the caller), `agent`, `model`, `cwd`, `place` (undefined:
  * placementOf the project), `carry` (labels kept from the old pane), `replacing` (the old pane's
  * binding: hc run alone, past the "already running" check; the attach rows are restart's, once
- * the new pane has stayed up, and the seat row is left to `logSeat()`). Resolves { terminal,
+ * the new pane has stayed up, and the seat row is left to `logSeat()`). A pane of a CLI that
+ * runs with HERDR_APP_HOME set also gets it as an env word (#650), as a linked machine's pane
+ * gets the project's pane-env one. Resolves { terminal,
  * created_ms, parent, argv, labels, place, hook, logSeat }, or { running } when the ledger
  * names another terminal for the bot by the time the lock is taken.
  */
@@ -2418,8 +2444,12 @@ async function launchSeat(project, bot, over = {}) {
   }
   // The Claude login this launch uses (#453): read from claude-logins.json now, Claude only.
   const login = claudeLogin(argv, briefed.warnings);
+  // #650: the CLI's own app home as the pane's, beside the briefing's env (as seatOnMachine does
+  // with the project's pane-env): the hc guard finds the caller's binding there. Unset on the
+  // CLI: no word at all, and the argv stays byte for byte as before.
+  const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}), ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env: briefed.env, login, agent: agentKey });
+    env, login, agent: agentKey });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);

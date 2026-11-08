@@ -95,3 +95,19 @@ test('the update reaches the sidebar in DSH desktop\'s phases, with its version 
   // Restart pressed: the sidebar says it installs while the window goes.
   assert.deepEqual(updatePresentation({ version: '3.17.0', state: 'restarting' }), { phase: 'installing', version: '3.17.0' })
 })
+
+test('a quick retry is the checking phase with a retrying marker, not the failure phase', () => {
+  // A client that knows only the seven phases still shows a check in progress; the marker says
+  // it is a retry. main.js keeps checkFailed off for this state. main.js is the Electron entry
+  // (it cannot be imported under node --test), so its checkForUpdates wiring is read at source.
+  assert.deepEqual(updatePresentation({ state: 'retrying', failure: 'check' }), { phase: 'checking', retrying: true })
+  assert.deepEqual(updatePresentation({ state: 'retrying', failure: 'check' }, { lane: { changes: [], auto: true } }).app, { phase: 'checking', retrying: true })
+  const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+  assert.match(main, /\{ result, retrying \}[^\n]*= await Promise\.all\(\[updates\.check\(\)/)
+  const flags = main.split('\n').filter(line => line.includes('checkFailed = result'))
+  assert.equal(flags.length, 1)
+  assert.match(flags[0], /result === 'error' && !retrying/)
+  const failureDialogs = main.split('\n').filter(line => line.includes('Could not check for updates'))
+  assert.equal(failureDialogs.length, 1, 'the failure dialog is still there')
+  assert.match(failureDialogs[0], /result === 'error' && !retrying/)
+})

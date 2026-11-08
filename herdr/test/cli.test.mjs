@@ -102,12 +102,16 @@ const term = (address, { bot: b, argv = ["claude"], cwd = "/x", app = "claude-co
 const runCall = (calls) => calls.find((c) => c[0] === "run");
 /**
  * What an hc run call runs: the words after `--`, past the `/usr/bin/env PATH=…` every pane gets
- * (#213), and a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453).
+ * (#213), a Claude pane's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453) and every
+ * other env word after PATH (a Hermes briefing's, the CLI's HERDR_APP_HOME, #650).
  */
 const agentWords = (run) => {
   const w = run.slice(run.indexOf("--") + 1);
   const at = w[1] === "-u" && w[2] === "CLAUDE_CONFIG_DIR" ? 3 : 1;
-  return w[0] === "/usr/bin/env" && w[at]?.startsWith("PATH=") ? w.slice(at + 1) : w;
+  if (w[0] !== "/usr/bin/env" || !w[at]?.startsWith("PATH=")) return w;
+  let i = at;
+  while (i < w.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i])) i += 1;
+  return w.slice(i);
 };
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
@@ -293,6 +297,106 @@ test("a worktree edit says the main checkout's bots.json is deleted, and the pul
   assert.equal(git(s.project, "status", "--porcelain"), "");
   assert.equal(readFileSync(s.botsPath, "utf8"), readFileSync(join(wt, ".herdr/bots.json"), "utf8"));
   assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+});
+
+// #626: the deleted note assumed a merge pull. With pull.rebase=true git refuses an unstaged
+// deletion instead, so the note names both modes.
+test("a worktree edit names both pull modes for the main checkout's deleted bots.json", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  git(s.project, "config", "pull.rebase", "true");
+  rmSync(s.botsPath);
+  assert.equal(git(s.project, "status", "--porcelain"), " D .herdr/bots.json\n");
+  const r = s.cli(["create", "--name", "Scout", "--agent", "claude", "--lead", ID.cap], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} is deleted: a merge pull brings it back with this worktree's version`));
+  assert.match(r.err, /pull\.rebase=true refuses the pull until the deletion is committed or discarded/);
+  assert.doesNotMatch(r.err, /a pull here brings it back/);
+  // As the note says: the rebase pull refuses while the deletion is unstaged, the file stays gone.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "scout");
+  assert.throws(() => git(s.project, "pull", ".", "wt"),
+    (err) => /cannot pull with rebase: You have unstaged changes/.test(String(err.stderr)));
+  assert.equal(existsSync(s.botsPath), false);
+  // And as it says of a merge pull: that one brings the file back with the worktree's version.
+  git(s.project, "pull", "-q", "--no-rebase", ".", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.ok(s.bots().bots.some((b) => b.name === "Scout"));
+});
+
+// #626: a committed deletion leaves porcelain empty, so the old note was silent, yet the pull
+// ends in a modify/delete conflict. HEAD:path against the worktree's view now warns.
+test("a worktree edit warns when the main checkout has committed its bots.json deletion", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  // The worktree commits its change; main commits the deletion of the same file.
+  const wtPath = join(wt, ".herdr/bots.json");
+  const file = JSON.parse(readFileSync(wtPath, "utf8"));
+  file.bots.find((b) => b.id === ID.dev).role = "worktree edit";
+  writeFileSync(wtPath, `${JSON.stringify(file, null, 2)}\n`);
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "worktree bots");
+  git(s.project, "rm", "-q", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "delete bots");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  const r = s.cli(["edit", ID.dev, "--role", "ranging"], { cwd: wt });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, new RegExp(`${s.botsPath} has a committed deletion: a pull that brings this worktree's version ends in a modify/delete conflict`));
+  assert.match(r.err, /restore and commit the file before pulling, or resolve the conflict after/);
+  assert.doesNotMatch(r.err, /isn't committed|has local changes|is deleted: a merge pull/);
+  // As the note says, the pull ends in a modify/delete conflict.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "ranging");
+  assert.throws(() => git(s.project, "merge", "-q", "wt"),
+    (err) => /CONFLICT \(modify\/delete\)/.test(`${err.stdout}${err.stderr}`));
+});
+
+// #626: a main checkout that never had .herdr/bots.json is not a committed deletion: the pull
+// only adds the worktree's file, so no warning.
+test("a worktree edit does not warn when the main checkout never had a bots.json", (t) => {
+  const s = scene(t);
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  const made = s.cli(["create", "--name", "Genie", "--agent", "claude"], { cwd: wt });
+  assert.equal(made.code, 0, made.err);
+  assert.match(made.err, new RegExp(`saved in ${join(wt, ".herdr/bots.json")} \\(this worktree\\)`));
+  assert.doesNotMatch(made.err, /committed deletion|modify\/delete|isn't committed|has local changes|is deleted/);
+  // HEAD has no file there, and no commit ever touched the path: the pull only adds it.
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.throws(() => git(s.project, "show", "HEAD:.herdr/bots.json"));
+  assert.equal(git(s.project, "log", "-1", "--format=%H", "HEAD", "--", ".herdr/bots.json"), "");
+});
+
+// #626 F1: a deletion committed before the worktree branched is not a modify/delete: the merge
+// base has no file, so the pull only adds the worktree's file — no warning, and a clean merge.
+test("a worktree edit does not warn when main deleted bots.json before the worktree branched", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  git(s.project, "add", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "bots");
+  git(s.project, "rm", "-q", ".herdr/bots.json");
+  git(s.project, "commit", "-q", "-m", "delete bots");
+  const wt = join(s.root, "wt");
+  git(s.project, "worktree", "add", "-q", "-b", "wt", wt);
+  assert.throws(() => git(s.project, "show", "HEAD:.herdr/bots.json"));
+  const made = s.cli(["create", "--name", "Genie", "--agent", "claude"], { cwd: wt });
+  assert.equal(made.code, 0, made.err);
+  assert.doesNotMatch(made.err, /committed deletion|modify\/delete/);
+  // The worktree's commit merges cleanly: the file is added, not a modify/delete conflict.
+  git(wt, "add", ".herdr/bots.json");
+  git(wt, "commit", "-q", "-m", "genie");
+  git(s.project, "merge", "-q", "wt");
+  assert.equal(git(s.project, "status", "--porcelain"), "");
+  assert.ok(s.bots().bots.some((b) => b.name === "Genie"));
 });
 
 test("from a worktree branched before a bot was added: edit names both files, restart --save says why nothing was saved", (t) => {
@@ -2073,7 +2177,8 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   // Before #213 nothing was passed here (this PATH already had node), and the pane got herdr-core's.
-  assert.deepEqual(plain(run.slice(run.indexOf("--") + 1)), ["/usr/bin/env", `PATH=${path}`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(run.slice(run.indexOf("--") + 1)),
+    ["/usr/bin/env", `PATH=${path}`, `HERDR_APP_HOME=${s.app}`, "codex", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -2304,7 +2409,7 @@ test("start #453: login 2's folder by value after PATH; a bad record starts Clau
   let { env, program } = envAndProgram(runsOf(s).at(-1));
   assert.equal(env[0], "/usr/bin/env");
   assert.match(env[1], /^PATH=/);
-  assert.deepEqual(env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
+  assert.deepEqual(env.slice(2), [`HERDR_APP_HOME=${s.app}`, `CLAUDE_CONFIG_DIR=${two}`], "the login's folder, by value, last");
   assert.equal(program[0], "claude");
   assert.doesNotMatch(r.err, /claude-logins/);
   assert.deepEqual(r.json().argv.slice(0, 1), ["claude"], "start's own argv is the agent's, as before");
@@ -2315,7 +2420,7 @@ test("start #453: login 2's folder by value after PATH; a bad record starts Clau
   assert.equal(codex.code, 0, codex.err);
   ({ env, program } = envAndProgram(runsOf(s).at(-1)));
   assert.equal(program[0], "codex");
-  assert.equal(env.length, 2, `codex: env and PATH only, no login words: ${env.join(" ")}`);
+  assert.deepEqual(env.slice(2), [`HERDR_APP_HOME=${s.app}`], `codex: no login words: ${env.join(" ")}`);
   assert.doesNotMatch(codex.err, /claude-logins/, "a codex launch never reads or warns about the record");
 
   const dev = s.cli(["start", "Dev", "--json"]);
@@ -2344,10 +2449,10 @@ test("restart --tree #453: the bot's own -u launch is rebuilt on login 2; a Clau
   const r = s.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 0, r.err);
   const [bot, claude, codex] = runs(s).map(envAndProgram);
-  assert.deepEqual(bot.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(bot.env.slice(2), [`HERDR_APP_HOME=${s.app}`, `CLAUDE_CONFIG_DIR=${two}`]);
   assert.deepEqual(plain(bot.program), ["claude", "--resume", SID], "the source's command, never the pane's --model");
   assert.match(r.err, /Genie: its pane's command differs from its source now \(drops --model=\*\*\*\)/);
-  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`]);
+  assert.deepEqual(claude.env.slice(2), [`CLAUDE_CONFIG_DIR=${two}`], "a helper (workerArgs) keeps its env words");
   assert.equal(claude.program[0], "claude");
   assert.equal(codex.program[0], "codex");
   assert.equal(codex.env.length, 2, `codex helper: env and PATH only: ${codex.env.join(" ")}`);
@@ -2721,8 +2826,9 @@ test("start: hermes gets the briefing in its environment, unless its config sets
   const w = run.slice(run.indexOf("--") + 1);
   assert.equal(w[0], "/usr/bin/env");
   assert.match(w[1], /^PATH=/);
-  assert.match(w[2], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
-  assert.equal(w[3], "hermes");
+  assert.equal(w[2], `HERDR_APP_HOME=${plainStart.app}`, "the CLI's app home beside the briefing's env (#650)");
+  assert.match(w[3], /^HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\n/);
+  assert.equal(w[4], "hermes");
   for (const text of ["agent:\n  system_prompt: Be terse.\n", "display:\n  personality: pirate\n"]) {
     const own = agentScene(t, "hermes", { config: { path: ".hermes/config.yaml", text } });
     const o = own.cli(["start", "Genie", "--json"]);

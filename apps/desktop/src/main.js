@@ -71,7 +71,9 @@ let laneProfile = null
 let laneDsh = null
 // The lane update being downloaded ({ version, percent }), while it is.
 let laneFetching = null
-// Check for Updates is under way, or its last check failed (frame.js updatePresentation).
+// Check for Updates is under way, or its last check failed (frame.js updatePresentation). A
+// transient failure that update.js is retrying within a minute is not a failure: its state
+// carries the retrying marker instead.
 let checking = false
 let checkFailed = false
 // logs/start.log (timeline.js): a start's steps from the process's own start, and the way out
@@ -698,16 +700,16 @@ async function checkForUpdates({ quiet = false } = {}) {
   checkFailed = false
   publishUpdate()
   // The app's own releases and the plugin lane, at once: a check finds either.
-  const [{ result }, staged] = await Promise.all([updates.check(), lookAtLanes().catch(() => false)])
+  const [{ result, retrying }, staged] = await Promise.all([updates.check(), lookAtLanes().catch(() => false)])
   checking = false
-  checkFailed = result === 'error'
+  checkFailed = result === 'error' && !retrying
   publishUpdate()
   if (quiet) return
   if (result === 'latest' && staged && laneReady) {
     const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Update now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `${changeText(laneWaiting)}. It goes in when DSH restarts, in a few seconds; the window stays.${readAutoApply(settingsFileOf(home)) ? ' Later, it goes in by itself once no agent is at work.' : ''} You have ${runningVersion()}.` })
     if (response === 0) void applyLaneNow()
   } else if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
-  else if (result === 'error') void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
+  else if (result === 'error' && !retrying) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
 // The title bar's menu, on a right click; on macOS the app menu has the same entry.

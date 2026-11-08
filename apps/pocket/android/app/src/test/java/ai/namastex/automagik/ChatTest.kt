@@ -99,6 +99,59 @@ class ChatTest {
         assertEquals(emptyList<String>(), ChatActions.choices(s.copy(connected = false), s.approval))
     }
 
+    // ---- questions: the engine's options, tapped as the digits chat/question.js reads
+
+    private fun question(multi: Boolean = false, answerable: Boolean = true) =
+        """{"id":"question:1:2.0","kind":"question","source":"status","turn":3,"prompt":"Which database?","options":["Postgres","SQLite"],"multi":$multi,"answerable":$answerable,"call":"1:2.0","open":true}"""
+    private fun asked(s: Chat.State, row: String) = Chat.reduce(Chat.reduce(s, j("""{"type":"status","status":{"state":"blocked","kind":"question","msg":"Which database?"}}""")), j("""{"type":"question","row":$row}"""))
+
+    @Test fun questionRowShowsItsOptionsAndATapIsThatOptionsDigit() {
+        val s = asked(state(), question())
+        assertEquals(listOf("Postgres", "SQLite"), ChatActions.options(s, s.question))
+        assertTrue(ChatActions.canType(s, s.question))
+        assertEquals("2" to null, ChatActions.questionAnswer(s, s.question, listOf(1)))
+        assertEquals(ChatActions.OTHER to "MySQL 8", ChatActions.questionAnswer(s, s.question, emptyList(), " MySQL 8 "))
+        // One option on a single-select, in range; a typed answer is one line, not blank.
+        for (picked in listOf(listOf(0, 1), listOf(2), listOf(-1), emptyList())) assertNull(ChatActions.questionAnswer(s, s.question, picked))
+        for (text in listOf("", "  ", "two\nlines")) assertNull(ChatActions.questionAnswer(s, s.question, emptyList(), text))
+        // Approval buttons are not question options, and the other way round.
+        assertEquals(emptyList<String>(), ChatActions.choices(s, s.question))
+    }
+
+    @Test fun multiSelectQuestionSubmitsTheTickedDigitsAndTakesNoTypedAnswer() {
+        val s = asked(state(), question(multi = true))
+        assertEquals(listOf("Postgres", "SQLite"), ChatActions.options(s, s.question))
+        assertFalse(ChatActions.canType(s, s.question))
+        assertEquals("2,1" to null, ChatActions.questionAnswer(s, s.question, listOf(1, 0)))
+        assertNull(ChatActions.questionAnswer(s, s.question, listOf(1, 1)))
+        assertNull(ChatActions.questionAnswer(s, s.question, emptyList(), "x"))
+    }
+
+    /** A phone that opens the chat after the question was raised (an app restart, another device) gets it from the snapshot. */
+    @Test fun questionInTheSnapshotShowsOnAFreshChatAndCanBeAnswered() {
+        val fresh = Chat.reduce(Chat.State("t1"), j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],
+            "status":{"state":"blocked","kind":"question","msg":"Which database?"},"approval":null,"question":${question()},"held":[]}"""))
+        assertEquals("question:1:2.0", fresh.question?.id)
+        assertEquals(listOf("Postgres", "SQLite"), ChatActions.options(fresh, fresh.question))
+        assertEquals("2" to null, ChatActions.questionAnswer(fresh, fresh.question, listOf(1)))
+        // A closed question in the snapshot, or none: no card.
+        val closed = question().replace("\"open\":true", "\"open\":false")
+        assertNull(Chat.reduce(fresh, j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],"status":{"state":"blocked","kind":"question"},"question":$closed,"held":[]}""")).question)
+        assertNull(Chat.reduce(fresh, j("""{"type":"snapshot","reset":false,"rows":[],"screen":[],"status":{"state":"working"},"question":null,"held":[]}""")).question)
+    }
+
+    @Test fun questionWithoutTheEngineOptionsOffersNothingToTap() {
+        for (s in listOf(asked(state(), question(answerable = false)), asked(state("dsh:bot-1"), question()),
+            asked(state(), question()).copy(offline = true), asked(state(), question()).copy(connected = false))) {
+            assertEquals(emptyList<String>(), ChatActions.options(s, s.question))
+            assertNull(ChatActions.questionAnswer(s, s.question, listOf(0)))
+            assertNull(ChatActions.questionAnswer(s, s.question, emptyList(), "x"))
+        }
+        // An approval row never gets question options.
+        val a = Chat.reduce(blocked(state()), j("""{"type":"approval","row":${approval()}}"""))
+        assertEquals(emptyList<String>(), ChatActions.options(a, a.approval))
+    }
+
     @Test fun approvalClosesWhenTheEngineSaysSo() {
         val s = Chat.reduce(blocked(state()), j("""{"type":"approval","row":${approval()}}"""))
         assertEquals("approval:c1", s.approval?.id)
@@ -186,6 +239,7 @@ class ChatTest {
         assertNull(Chat.answerNotice(j("""{"ok":true,"pressed":"done","sent":true}""")))
         assertEquals("The question changed; nothing was pressed.", Chat.answerNotice(j("""{"ok":false,"reason":"changed"}""")))
         assertEquals(Chat.ANSWER_ON_COMPUTER, Chat.answerNotice(j("""{"state":"refused","ok":false,"reason":"read-only"}""")))
+        assertEquals("Stopped partway: the question moved on. Finish in the terminal.", Chat.answerNotice(j("""{"ok":false,"reason":"stopped","sent":true}""")))
         // Keys sent but the dialog stayed past the bridge's read-back: not taken, never a success.
         assertEquals("Not taken: answer on the Mac.", Chat.answerNotice(j("""{"ok":true,"pressed":"uncertain","sent":true}""")))
     }
