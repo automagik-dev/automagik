@@ -38,8 +38,9 @@ jobs:
       - run: bun run check
 
   herdr:
-    # The herdr pack (herdr/, the old automagik-herdr CI): its tests, a syntax check of every pack
-    # mod and its tooling, shellcheck on the installer and the CLI's shell scripts, and its catalog
+    # The herdr pack (herdr/, the old automagik-herdr CI): the real Herdr app's loader on every
+    # pack mod (a pinned Linux herdr-app, headless), its tests, a syntax check of every pack mod
+    # and its tooling, shellcheck on the installer and the CLI's shell scripts, and its catalog
     # index (its version is the root's: `bun run check` above). Plain JavaScript that Herdr loads as
     # it is: no install, no dependencies. On the newest Node 22 and on 24, the tests' floor: the
     # pack's users run it on 22.7 or later (AGENTS.md), but the test stubs need
@@ -71,7 +72,7 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, tests the pack anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "herdr=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'; then
             echo "herdr=true" >> "$GITHUB_OUTPUT"
           else
             echo "herdr/ did not change: nothing to test"
@@ -81,6 +82,22 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         with:
           node-version: ${{ matrix.node }}
+
+      # The app's own mod loader, not a stand-in: every PACK_MODS mod of the pack built from this
+      # commit must load in the pinned Linux herdr-app. #624's node:url import passed the pack's
+      # tests and failed only here, so this runs before them and prints herdr-app's own output.
+      # One matrix leg is enough: the loader does not depend on the job's Node. libxkbcommon-x11-0
+      # is the app's one missing library (libxcb-xkb1 comes with it); check needs no X server.
+      - name: herdr-app system libraries
+        if: steps.changed.outputs.herdr == 'true' && matrix.node == '24'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-x11-0 libxcb-xkb1
+
+      - name: Every pack mod loads in herdr-app
+        if: steps.changed.outputs.herdr == 'true' && matrix.node == '24'
+        working-directory: .
+        run: node .github/scripts/herdr-app-check.mjs
 
       # am-quota's Keychain tests run against the stand-in in test/am-quota-keychain.mjs, first on
       # PATH; am-quota-keychain-guard.test.mjs fails any that could reach the real `security`.
