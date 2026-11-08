@@ -1507,16 +1507,15 @@ test("#671: a restore that cannot remove the kept set still restores, says where
     process.env.PATH = `${dirname(app.bin)}:${path}`;
     const line = await cmdUpdate({}, [], { modsDir: h.mods, env: {}, keys, fetch: fakeFetch(h.table) });
     assert.match(line, /Warning: the earlier kept set could not be removed .*\.prev-old-/);
-    // The leftover set-aside .prev still carries the good set's marker, but not its folders (they are
-    // live again): put it back at .prev, as a failed removal leaves it, and rollback's own validation
-    // refuses it, so the bad pack is never reinstalled.
-    const leftover = readdirSync(state).find((n) => n.startsWith(".prev-old-"));
-    const kept = join(state, leftover);
-    assert.match(readFileSync(join(kept, ".pack"), "utf8"), /^version=0\.1\.0$/m);
-    assert.equal(existsSync(join(kept, "am-sidebar")), false, "its .pack lists folders that are not there");
-    renameSync(kept, prevSetOf(h.mods));
+    // A leftover .prev whose marker lists a folder that is no longer there (as a failed removal can
+    // leave, and where rmSync's last failed unlink is not deterministic) is caught by rollback's own
+    // validation: it refuses and changes nothing, so the bad pack is never reinstalled.
+    assert.equal(existsSync(prevSetOf(h.mods)), false, "the restore left no .prev");
+    mkdirSync(prevSetOf(h.mods), { recursive: true });
+    writeFileSync(join(prevSetOf(h.mods), ".pack"), formatMarker({ version: "0.1.0", mods: ["am-sidebar"] }));
     assert.throws(() => rollback({ modsDir: h.mods }), /kept set lists am-sidebar, which is not there: nothing rolled back/);
     assert.equal(readVersion(join(h.mods, "am-sidebar")), "0.1.0", "still nothing rolled back");
+    assert.equal(readAuto(h.mods).skip, "0.2.0", "the skip did not change either");
   } finally {
     process.env.PATH = path;
     unlockState(h.mods);
