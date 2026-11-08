@@ -50,9 +50,10 @@ const treeSum = (dir) => {
 /** herdr: true, an app with bundle id dev.herdr.app in the fake /Applications; a string, that bundle id. */
 function scratch(t, { herdr = true, os = "Darwin", arch = "arm64" } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ah-install-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const home = join(root, "home"), bin = join(root, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
-  const tmp = join(root, "tmp");
+  const ext = realpathSync(mkdtempSync(join(ROOT, "..", ".ah-install-home-")));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(ext, { recursive: true, force: true }); });
+  const home = join(ext, "home"), bin = join(ext, "bin"), apps = join(root, "Applications"), rel = join(root, "release");
+  const tmp = join(ext, "tmp");
   for (const d of [home, bin, apps, rel, tmp]) mkdirSync(d, { recursive: true });
   if (herdr) appBundle(join(apps, "Herdr.app"), herdr === true ? HERDR_ID : herdr);
   const brewLog = join(root, "brew.log");
@@ -498,8 +499,8 @@ test("unsupported OS: explains and exits 1; Node too old with no brew: says wher
   assert.equal(r.code, 1);
   assert.match(r.err, /supports macOS and Linux; this is FreeBSD/);
   const old = scratch(t);
-  exe(join(old.root, "bin", "node"), "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v18.0.0; exit 0; fi\nexit 1\n");
-  rmSync(join(old.root, "bin", "brew"));
+  exe(join(old.bin, "node"), "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v18.0.0; exit 0; fi\nexit 1\n");
+  rmSync(join(old.bin, "brew"));
   const n = old.run("--yes");
   assert.equal(n.code, 1);
   assert.match(n.err, /Node 22\.7 or later is needed \(found: v18\.0\.0\)\. Install it from https:\/\/nodejs\.org/);
@@ -1318,7 +1319,7 @@ test("a download cut short runs nothing (the body is one function called on the 
   for (const cut of [0.3, 0.6, 0.95]) {
     const part = text.slice(0, Math.floor(text.length * cut));
     const r = spawnSync("sh", ["-s", "--", "--yes"], { cwd: s.root, input: part, encoding: "utf8",
-      env: { HOME: s.home, PATH: `${join(s.root, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin` } });
+      env: { HOME: s.home, PATH: `${s.bin}:${dirname(process.execPath)}:/usr/bin:/bin` } });
     assert.equal(r.stdout, "", `cut at ${cut}`);
   }
   assert.deepEqual(s.brewCalls(), []);

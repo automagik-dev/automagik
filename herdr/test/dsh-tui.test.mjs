@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 import { workerArgs } from "../mods/am-sidebar/workers.js";
@@ -30,8 +31,9 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
  */
 function scene(t, { dsh = true, config = {} } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dsh-tui-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const home = join(root, "home"), bin = join(root, "bin"), log = join(root, "dsh.log");
+  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".dsh-tui-home-")));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(ext, { recursive: true, force: true }); });
+  const home = join(ext, "home"), bin = join(ext, "bin"), log = join(root, "dsh.log");
   const paneTmp = join(root, "pane-tmp");
   mkdirSync(home);
   mkdirSync(bin);
@@ -202,8 +204,10 @@ test("install copies the sandbox wrapper byte-equal and installs the managed dsh
   assert.ok(patch.includes(`runnerCommand: ['${wrapper}', '--pack-root', '${stableRoot}']`), patch);
   assert.ok(patch.includes(`'--pack-root', '${stableRoot}'`), "the row names the stable folder the wrapper keeps read-only");
   for (const file of STABLE_FILES) {
+    if (file === "bin/run.sh") continue;
     assert.ok(readFileSync(join(stableRoot, file)).equals(readFileSync(join(packRootOf(), file))), `${file} is byte-equal`);
   }
+  assert.ok(readFileSync(join(stableRoot, "bin", "run.sh"), "utf8").includes(`# am-node: ${process.execPath}`));
   assert.ok(readFileSync(join(stableRoot, "guard", "hc")).equals(readFileSync(join(packRootOf(), "guard", "hc"))), "the guard is byte-equal");
   assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
   const state = sandboxState(s.env);
@@ -224,18 +228,18 @@ test("install refuses a DSH profile or a node inside a writable tree", (t) => {
   writeFileSync(join(s.root, "node"), "#!/bin/sh\nexit 0\n");
   chmodSync(join(s.root, "node"), 0o755);
   assert.throws(
-    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: `${s.root}-data` }, project: s.root }),
+    () => installSandboxRow({ env: { ...s.env, DSH_HOME: s.root, XDG_DATA_HOME: join(dirname(s.home), "data") }, project: s.root }),
     /the DSH profile .* is inside the project/,
   );
   assert.throws(
-    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: `${s.root}-home`, DSH_HOME: `${s.root}-dsh`, XDG_DATA_HOME: `${s.root}-data`, HERDR_APP_HOME: `${s.root}-app` }, project: s.root }),
+    () => installSandboxRow({ env: { ...s.env, PATH: s.root, HOME: join(dirname(s.home), "node-home"), DSH_HOME: join(dirname(s.home), "dsh"), XDG_DATA_HOME: join(dirname(s.home), "data"), HERDR_APP_HOME: join(dirname(s.home), "app") }, project: s.root }),
     /the node that runs the helper .* is inside the project/,
   );
 });
 
 test("XDG_DATA_HOME names one stable root for install and the pane start", async (t) => {
   const s = scene(t);
-  const dataHome = join(s.root, "data");
+  const dataHome = join(dirname(s.home), "data");
   const env = { ...s.env, XDG_DATA_HOME: dataHome };
   const installed = await installDshTui({ env, publishedAt: PUBLISHED });
   assert.equal(installed.status, "installed", installed.detail);
@@ -248,6 +252,14 @@ test("XDG_DATA_HOME names one stable root for install and the pane start", async
   const tail = args.slice(args.indexOf("--") + 1);
   assert.ok(tail.includes(join(root, "hcPane.mjs")), "the start names the install's root");
   assert.ok(tail.includes(join(root, "bin", "run.sh")));
+});
+
+test("the stable copy from STABLE_FILES loads hcPane.mjs", async (t) => {
+  const s = scene(t);
+  const installed = await installDshTui({ env: s.env, publishedAt: PUBLISHED });
+  assert.equal(installed.status, "installed", installed.detail);
+  const mod = await import(`${pathToFileURL(join(sandboxRootOf(s.env), "hcPane.mjs")).href}?t=${Date.now()}`);
+  assert.equal(typeof mod.runPane, "function");
 });
 
 test("doctor reports a sandbox wrapper that drifted from the pack's", async (t) => {

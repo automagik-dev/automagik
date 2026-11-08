@@ -21,7 +21,8 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   // A short root: the per-pane socket path must fit the platform's sun_path bound.
   const shortBase = existsSync("/tmp") ? "/tmp" : tmpdir();
   const root = realpathSync(mkdtempSync(join(shortBase, "hp-")));
-  const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
+  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".hp-home-")));
+  const app = join(root, "app"), project = join(root, "project"), home = join(ext, "home"), runtime = join(root, "run");
   const paneTmp = join(root, "pane-tmp");
   for (const dir of [app, join(app, "automagik-herdr"), project, join(project, ".herdr"), home, runtime, paneTmp]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -36,11 +37,12 @@ async function scene(t, { version = "0.1.14", labels = { bot: ID.dev }, address 
   t.after(async () => {
     try { await fake.close(); } catch { /* gone */ }
     rmSync(root, { recursive: true, force: true });
+    rmSync(ext, { recursive: true, force: true });
   });
   const env = { ...process.env, XDG_RUNTIME_DIR: runtime, HOME: home, DSH_HOME: join(home, ".dsh"), HERDR_APP_HOME: app,
     TMPDIR: paneTmp, HC_TERMINAL_ID: address, HC_TERMINAL_SOCKET: socket };
   if (sandboxRow) installSandboxRow({ env });
-  return { root, app, project, home, runtime, socket, fake, env };
+  return { root, ext, app, project, home, runtime, socket, fake, env };
 }
 
 /** Run the helper with a child Node script that records the environment it was given. */

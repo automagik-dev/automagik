@@ -151,4 +151,6 @@ that changes its own PATH gets its worker start refused (fail closed): the proxy
 PATH it was started with outside the sandbox and requires the exact `guardPathWith` of it. The
 installed shim under `~/.local/bin` and the stable root's parent are assumed read-only inside the
 sandbox, as the policy states; a stable root inside the project, the app home, the temp folder or
-the runtime folder is refused by `dsh-tui install` and by the proxy at start.
+the runtime folder is refused by `dsh-tui install` and by the proxy at start. The stable runner
+bakes one absolute node at install; a custom `NVM_DIR` or `AUTOMAGIK_HERDR_RUNTIME_DIRS` inside a
+writable tree is refused too.

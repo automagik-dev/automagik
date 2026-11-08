@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
-  rmSync, statSync, writeFileSync,
+  rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
+import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,9 +49,12 @@ const team = () => ({
 /** One scene: temp app home + ledger, project + bots.json, a worktree and the runtime folder. */
 function scene() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hcp-")));
-  const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
+  // HOME and the tool folder are outside /tmp: the stable copy, its runner and the dsh shim
+  // must not sit under the literal temp folder the mask protects.
+  const ext = realpathSync(mkdtempSync(join(process.cwd(), "..", ".hcp-home-")));
+  const app = join(root, "app"), project = join(root, "project"), home = join(ext, "home"), runtime = join(root, "run");
   const worktree = join(project, ".claude", "worktrees", "wt");
-  const bin = join(root, "bin");
+  const bin = join(ext, "bin");
   for (const dir of [app, join(app, "automagik-herdr"), project, join(project, ".herdr"), worktree, home, runtime, bin]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
@@ -68,7 +72,7 @@ function scene() {
   const stableGuard = stableGuardDir(stableRoot);
   for (const dir of [stableGuard, join(stableRoot, "bin")]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(stableRoot, "hcPane.mjs"), "// stable helper\n");
-  writeFileSync(join(stableRoot, "bin", "run.sh"), "#!/bin/sh\n");
+  writeFileSync(join(stableRoot, "bin", "run.sh"), stableRunnerText(process.execPath), { mode: 0o755 });
   writeFileSync(join(project, ".herdr", "bots.json"), `${JSON.stringify(team(), null, 2)}\n`);
   const ledger = join(app, "automagik-herdr", "attach.jsonl");
   writeFileSync(ledger, `${JSON.stringify({
@@ -98,7 +102,7 @@ function scene() {
   ];
   const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app, TMPDIR: paneTmp,
     PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
-  return { root, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env };
+  return { root, ext, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env };
 }
 
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
@@ -115,6 +119,7 @@ async function sceneWithCore(t, { version = "0.1.14", proxy = true, proxyOptions
     for (const started of proxies) { try { await started.close(); } catch { /* gone */ } }
     try { await fake.close(); } catch { /* gone */ }
     rmSync(s.root, { recursive: true, force: true });
+    rmSync(s.ext, { recursive: true, force: true });
   });
   const first = proxy ? await start("t100", proxyOptions) : null;
   return { s, fake, start, proxy: first };
@@ -525,7 +530,7 @@ test("the proxy refuses a DSH profile, a shim, or a run.sh node inside a writabl
   chmodSync(join(s.project, "node"), 0o755);
   const cases = [
     ["profile", { DSH_HOME: s.project }, /the DSH profile .* is inside the project/],
-    ["shim", { HOME: s.project, DSH_HOME: join(s.root, "dsh"), XDG_DATA_HOME: join(s.root, "data") }, /the dsh-tui shim .* is inside the project/],
+    ["shim", { HOME: s.project, DSH_HOME: join(s.ext, "dsh"), XDG_DATA_HOME: join(s.ext, "data") }, /the dsh-tui shim .* is inside the project/],
     ["node", { PATH: s.project }, /the node that runs the helper .* is inside the project/],
   ];
   for (const [name, extra, re] of cases) {
@@ -535,6 +540,44 @@ test("the proxy refuses a DSH profile, a shim, or a run.sh node inside a writabl
       name,
     );
   }
+});
+
+test("NVM_DIR, the runtime-dirs override, and a baked node inside the project are refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "node"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "node"), 0o755);
+  for (const [name, extra, re] of [
+    ["NVM_DIR", { NVM_DIR: s.project }, /NVM_DIR .* is inside the project/],
+    ["runtime dirs", { AUTOMAGIK_HERDR_RUNTIME_DIRS: s.project }, /AUTOMAGIK_HERDR_RUNTIME_DIRS .* is inside the project/],
+  ]) {
+    await assert.rejects(
+      startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: { ...s.env, ...extra } }),
+      re,
+      name,
+    );
+  }
+  writeFileSync(join(s.stableRoot, "bin", "run.sh"), stableRunnerText(join(s.project, "node")));
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the node that runs the helper .* is inside the project/,
+  );
+});
+
+test("the dsh a shim executes is checked by real path, and literal /tmp is refused", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  writeFileSync(join(s.project, "dsh-real"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(s.project, "dsh-real"), 0o755);
+  symlinkSync(join(s.project, "dsh-real"), join(s.bin, "dsh"));
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
+    /the dsh the shim executes .* is inside the project/,
+  );
+  rmSync(join(s.bin, "dsh"));
+  await assert.rejects(
+    startProxy({ terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app,
+      env: { ...s.env, XDG_DATA_HOME: join(s.root, "data") } }),
+    /the stable execution root .* is inside the literal temp folder/,
+  );
 });
 
 test("a rename between the check and the forward cannot redirect the target", async (t) => {
