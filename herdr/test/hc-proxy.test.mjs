@@ -16,6 +16,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
 import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
@@ -101,8 +102,10 @@ function scene() {
     rec("t121", { [WORKER_OF_LABEL]: ID.cap }, { name: "cap-worker", parent: "t101", cwd: worktree }),
   ];
   const forbiddenRoots = [["the project", project], ["the app home", app], ["the temp folder", paneTmp], ["the runtime folder", runtime]];
-  const env = { XDG_RUNTIME_DIR: runtime, HOME: home, HERDR_APP_HOME: app, TMPDIR: paneTmp,
-    PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
+  const env = { XDG_RUNTIME_DIR: runtime, XDG_DATA_HOME: join(home, ".local", "share"), HOME: home,
+    HERDR_APP_HOME: app, TMPDIR: paneTmp, PATH: `${stableGuard}:${shimDir}:${bin}:/usr/bin:/bin` };
+  // The approved record every explicit-caller row reads (the by-hand rows keep the ledger).
+  approveProject({ project, env, approvedAt: "2026-11-01T00:00:00.000Z", approvedBy: "test" });
   return { root, app, project, home, runtime, worktree, bin, shimDir, paneTmp, stableRoot, stableGuard, ledger, terminals, env, forbiddenRoots };
 }
 
@@ -1000,4 +1003,120 @@ test("the pack's own guard is allowed inside the app home; the worker shape is n
   assert.equal(runProblem(params, snapshot), null, "the installed pack's own guard is the exception");
   const forged = { ...params, argv: argv.map((word, i) => (i === 3 ? join(s.root, "bin", "run.sh") : word)) };
   assert.match(runProblem(forged, snapshot), /helper runner is not the stable copy/);
+});
+
+// ---- #631 PR C1: the approved roster snapshot, the explicit-caller ledger removal ----
+
+test(
+  "G1 (a,b): an approved record is used, and a working-file edit warns once and still starts",
+    async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project,
+    state: "live" });
+  // The working tree widens itself: dev becomes pm and an extra bot appears. The approved
+  // record keeps the original team; a mutant that reads the working file would take both.
+  const changed = team();
+  changed.bots.find((bot) => bot.id === ID.dev).rank = "pm";
+  changed.bots.push(bot("b-zzzzzzzzzz", "member", { name: "Injected" }));
+  writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(changed, null, 2)}\n`);
+  const events = [];
+  const started = await startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t200",
+    upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
+    log: (event) => events.push(event) });
+  t.after(() => started.close());
+  assert.equal(started.policy.file.bots.length, team().bots.length, "the approved roster is used");
+  assert.equal(started.policy.file.bots.find((bot) => bot.id === ID.dev).rank, undefined);
+  assert.equal(started.policy.file.bots.some((bot) => bot.id === "b-zzzzzzzzzz"), false);
+  const warnings = events.filter((event) => event.ev === "roster_unapproved");
+  assert.equal(warnings.length, 1, "one warning for the start, not one per request");
+  assert.match(warnings[0].message, /automagik-herdr proxy approve/);
+  assert.match(warnings[0].message, /differs from the approved one/);
+});
+
+test("G1 (c): a missing record refuses a proxied pane and names the command", async (t) => {
+  const { s, start } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project,
+    state: "live" });
+  rmSync(recordFileOf(s.project, s.env));
+  await assert.rejects(
+    start("t200", { caller: { bot: ID.dev, project: s.project, worker: false }, bound: true }),
+    /no approved roster .*automagik-herdr proxy approve/s,
+  );
+});
+
+test("G1 (d): a data root inside a writable tree refuses at start", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project,
+    state: "live" });
+  for (const [name, dataHome] of [["project", join(s.project, "data")], ["app home", join(s.app,
+    "data")],
+    ["temp", join(s.paneTmp, "data")], ["runtime", join(s.runtime, "data")]]) {
+    await assert.rejects(
+      startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t200", upstream: join(s.root,
+        "core.sock"),
+        appHome: s.app, env: { ...s.env, XDG_DATA_HOME: dataHome },
+        caller: { bot: ID.dev, project: s.project, worker: false }, bound: true }),
+      /is inside the (writable )?(project|app home|temp|runtime)|inside the (temp|runtime) folder/,
+      name,
+    );
+  }
+});
+
+test("G1 (o): a worker in a worktree gets the main project's approved roster", async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  // The worker owns its worktree's .herdr/bots.json; it names only another bot. The approved
+  // record is the lead seat's project, keyed by that main-checkout realpath, never the cwd.
+  mkdirSync(join(s.worktree, ".herdr"), { recursive: true });
+  writeFileSync(join(s.worktree, ".herdr", "bots.json"), `${JSON.stringify({
+    version: 1, categories: [], bots: [bot(ID.other, "member", { name: "Other" })],
+  }, null, 2)}\n`);
+  const mainLink = join(s.root, "main-checkout");
+  symlinkSync(s.project, mainLink);
+  const started = await startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t105",
+    upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: mainLink, worker: true }, bound: false });
+  t.after(() => started.close());
+  assert.equal(started.snapshot.caller.project, realpathSync(s.project));
+  assert.equal(started.policy.file.bots.length, team().bots.length,
+    "the main project's approved roster");
+  assert.equal(started.policy.file.bots.some((bot) => bot.id === ID.dev), true);
+  assert.equal(started.policy.file.bots.some((bot) => bot.id === ID.other), true);
+});
+
+test(
+  "G2 (h): an explicit start never opens the ledger, so an unreadable one still starts",
+    async (t) => {
+  const { s } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project,
+    state: "live" });
+  rmSync(s.ledger);
+  mkdirSync(s.ledger, { recursive: true });
+  const started = await startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t200",
+    upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: s.project, worker: false }, bound: true });
+  t.after(() => started.close());
+  assert.equal(started.policy.caller.bot, ID.dev);
+});
+
+test(
+  "G2 (i): a forged ledger row naming another bot has no effect on an explicit start",
+    async (t) => {
+  const { s, start } = await sceneWithCore(t, { proxy: false });
+  s.terminals.push({ address: "t200", name: "new-seat", labels: { bot: ID.dev }, cwd: s.project,
+    state: "live" });
+  const options = { caller: { bot: ID.dev, project: s.project, worker: false }, bound: true };
+  const before = await start("t200", options);
+  await before.close();
+  appendFileSync(s.ledger, `${JSON.stringify({
+    v: 1, event: "attach", bot: ID.other, project: s.project, terminal: "t200", core: "fake-core",
+    created_ms: 999, machine: null, at: "2026-11-01T00:02:00.000Z", by: "forged",
+  })}\n`);
+  const started = await startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t200",
+    upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env,
+    caller: { bot: ID.dev, project: s.project, worker: false }, bound: true });
+  t.after(() => started.close());
+  assert.equal(started.policy.caller.bot, ID.dev, "the explicit caller, not the ledger row");
+  assert.equal(started.policy.team.has(ID.other), false, "the team comes from the approved roster");
+  assert.deepEqual(started.policy, before.policy, "the entire policy is identical after forgery");
 });

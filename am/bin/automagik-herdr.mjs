@@ -45,7 +45,9 @@ import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, remove
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
-import { DSH_TUI, doctorDshTui, installDshTui, uninstallDshTui } from "../dshTui.mjs";
+import { DSH_TUI, approvedDataRootProblem, doctorDshTui, installDshTui,
+  uninstallDshTui } from "../dshTui.mjs";
+import { approveProject, projectKey, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
 import { fixNonVisual, readState, spacesOf } from "./state.mjs";
@@ -1203,6 +1205,12 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 dsh-TUI's state and the profile stay)
   dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
                                 whether the profile is the pinned one (read-only)
+  proxy approve --project <dir> approve a project's working .herdr/bots.json as the proxy's
+                                roster: print the diff against the previous approval, then
+                                write the record 0600 outside the project. The proxy reads
+                                only this record: a working-tree edit warns until approved,
+                                and a missing record refuses a proxied pane. Approving is the
+                                person's act; the printed diff is the check.
   doc get <name> [--machine M]  a herdr-core doc's value, as one line of JSON on stdout (hc's
                                 doc.get through hc connect; read-only, 10 s at most); --machine:
                                 that linked machine's doc. Exit 0 with the JSON; 3: no such doc
@@ -1233,6 +1241,19 @@ reports no status to hc can't say it is waiting for an approval: restart refuses
 --force, which still sends it no keys. restart --tree is this computer's only for now: with
 --machine it is refused before anything is read or started there, and a bot whose helpers
 end with its pane there is refused until each helper's pane is ended (hc kill M/tN).`;
+
+/** `proxy approve`'s own help: the residual is part of the command's contract. */
+export const PROXY_USAGE = `usage: automagik-herdr proxy approve --project <dir>
+
+Approve a project's worked roster: reads <dir>'s .herdr/bots.json, prints the diff against the
+previous approval (bots added/removed, rank/lead/kind changes), then writes the record
+0600 outside the project. The proxy reads only this record; a working-tree roster that
+differs warns once naming this command and still starts on the approved one. A missing
+record refuses a proxied pane.
+
+Residual: a sandboxed bot can ask an in-team unsandboxed pane to run this command. The
+printed diff is the check, and approving is the person's act.
+`;
 
 function readInstructions(opts) {
   if (opts.instructions !== undefined && opts["instructions-file"] !== undefined) throw new CliError("Give --instructions or --instructions-file, not both.", 2);
@@ -4840,6 +4861,55 @@ export async function meterAfterUpdate(io) {
 }
 
 /**
+ * `proxy approve --project <dir>` (#631 PR C1): the one writer of a project's approved roster
+ * record. It reads the project's working .herdr/bots.json, prints the diff from the previous
+ * approval, then writes the record 0600 under the data root, outside the project. `--project`
+ * is mandatory: the record is keyed by the project's canonical main-checkout realpath.
+ */
+export async function cmdProxy(opts, [verb, ...rest], { forbiddenRoots } = {}) {
+  if (verb !== "approve") {
+    const extra = verb ? `, not "${verb}"` : "";
+    throw new CliError(`proxy needs approve${extra}: proxy approve --project <dir>.`, 2);
+  }
+  if (rest.length) {
+    throw new CliError(`proxy approve takes no argument after --project `
+      + `(got ${rest.join(" ")}).`, 2);
+  }
+  if (opts.project === undefined)
+    throw new CliError("proxy approve needs --project <dir>: the project to approve.", 2);
+  const project = await namedKeyOf(opts.project);
+  const unsafe = approvedDataRootProblem({ env: process.env, project, appHome: appHome(),
+    forbiddenRoots });
+  if (unsafe) throw new CliError(unsafe);
+  const countOf = (record) => JSON.parse(record.roster).bots.length;
+  let result;
+  try {
+    result = approveProject({
+      project,
+      beforeWrite: ({ diff, record, previous, note }) => {
+        if (opts.json) {
+          process.stdout.write(`${JSON.stringify({
+            project, key: projectKey(project), record: recordFileOf(project),
+            approvedAt: record.approvedAt, approvedBy: record.approvedBy,
+            bots: countOf(record), previous, note, diff,
+          }, null, 2)}\n`);
+          return;
+        }
+        process.stdout.write(`approved ${countOf(record)} bots for ${project}\n`);
+        if (note) process.stdout.write(`note: ${note}\n`);
+        if (diff.length) for (const line of diff) process.stdout.write(`${line}\n`);
+        else process.stdout.write("no roster changes from the previous approval\n");
+      },
+    });
+  } catch (e) {
+    throw new CliError(`proxy approve: ${e?.message ?? e}`);
+  }
+  if (opts.json) return PRINTED;
+  process.stdout.write(`record: ${result.path} (0600)\n`);
+  return PRINTED;
+}
+
+/**
  * `doc get <name> [--machine M]`: a herdr-core doc's value as JSON on stdout (docGet.mjs: doc.get
  * through hc connect, read-only), for a mod that can only exec a program. Exit 3 when the doc is
  * not there, 2 for a usage mistake, 1 for any other failure.
@@ -4874,11 +4944,11 @@ export async function cmdLaunchPath(_opts, [program, ...rest]) {
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
   tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc,
-  "launch-path": cmdLaunchPath };
+  proxy: cmdProxy, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
 /** Runs one command line; resolves with the exit code. Output goes to stdout, problems to stderr. */
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), io = {}) {
   let parsed;
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
@@ -4895,6 +4965,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(opts.json ? `${JSON.stringify({ version })}\n` : `automagik-herdr ${version}\n`);
     return 0;
   }
+  if (opts.help && command === "proxy") { process.stdout.write(`${PROXY_USAGE}\n`); return 0; }
   if (opts.help || !command || command === "help") { process.stdout.write(`${USAGE}\n`); return command || opts.help ? 0 : 2; }
   const run = COMMANDS[command];
   if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
@@ -4904,7 +4975,7 @@ export async function main(argv = process.argv.slice(2)) {
       throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
     }
     exitAfter.code = 0;
-    const out = await run(opts, rest);
+    const out = command === "proxy" ? await run(opts, rest, io) : await run(opts, rest);
     if (out === PRINTED) return exitAfter.code;
     if (opts.json) process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     else if (out) process.stdout.write(`${out}\n`);

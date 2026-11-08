@@ -259,9 +259,9 @@ describe('the workflow', () => {
   test('validates the updater zip’s app before the dmg is notarized', () => {
     const text = readFileSync(WORKFLOW, 'utf8');
     const extract = text.indexOf('ditto -x -k');
-    const validate = text.indexOf('xcrun stapler validate "${apps[0]}"');
+    const validate = text.indexOf('--validate-only "${apps[0]}"');
     const submit = text.indexOf('notarytool submit "${dmg}"');
-    const retry = text.indexOf('scripts/staple-retry.sh"');
+    const retry = text.indexOf('staple-retry.sh" "${dmg}"');
     expect(extract).toBeGreaterThan(-1);
     expect(validate).toBeGreaterThan(extract);
     expect(submit).toBeGreaterThan(validate);

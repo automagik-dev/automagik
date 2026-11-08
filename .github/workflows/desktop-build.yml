@@ -214,7 +214,7 @@ jobs:
             ditto -x -k "${zips[0]}" "${unzipped}"
             apps=("${unzipped}"/*.app)
             (( ${#apps[@]} == 1 )) || { echo "::error ::expected one .app in ${zips[0]}, found ${#apps[@]}"; exit 1; }
-            xcrun stapler validate "${apps[0]}"
+            "${GITHUB_WORKSPACE}/scripts/staple-retry.sh" --validate-only "${apps[0]}"
             rm -rf "${unzipped}"
             echo "the updater zip's app is stapled: ${zips[0]}"
             # The dmg someone downloads is a signed file of its own, so it goes to Apple too

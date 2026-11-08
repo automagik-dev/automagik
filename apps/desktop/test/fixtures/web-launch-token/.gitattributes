@@ -1,0 +1,3 @@
+# The fixture is the exact bytes the carried patch names by sha256; never normalize its EOL.
+index.js -text
+public-url-D_dMK-yI.js -text

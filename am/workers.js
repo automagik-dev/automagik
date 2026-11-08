@@ -78,12 +78,15 @@ export function guardPath(path, agent) {
  * The helper starts the hc proxy before DSH, so the sandbox the pane later creates never sees
  * an unsnapshotted roster or attach ledger. am carries byte-equal copies of both (am-copies).
  */
-const dataHomeOf = (env = process.env) => env.XDG_DATA_HOME || (env.HOME ? `${env.HOME}/.local/share` : "");
-export const stableRootOf = (env = process.env) => {
+export const dataHomeOf = (env = process.env) =>
+  env.XDG_DATA_HOME || (env.HOME ? `${env.HOME}/.local/share` : "");
+/** The pack's data root: the stable execution folder and the approved rosters both live here. */
+export const dataRootOf = (env = process.env) => {
   const dataHome = dataHomeOf(env);
-  if (!dataHome) throw new Error("HOME or XDG_DATA_HOME is required for the stable pane helper");
-  return `${dataHome}/automagik-herdr/dsh-sandbox`;
+  if (!dataHome) throw new Error("HOME or XDG_DATA_HOME is required for the pack's data root");
+  return `${dataHome}/automagik-herdr`;
 };
+export const stableRootOf = (env = process.env) => `${dataRootOf(env)}/dsh-sandbox`;
 export const stableGuardDir = (root) => `${root}/guard`;
 export const stableHelper = (root) => `${root}/hcPane.mjs`;
 export const stableRunner = (root) => `${root}/bin/run.sh`;

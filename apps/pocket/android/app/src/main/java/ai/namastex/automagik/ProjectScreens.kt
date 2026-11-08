@@ -187,21 +187,21 @@ object CodeView {
         item(key = "spaces") { SectionHeader("Spaces", project.spaces.size) }
         for (row in spaceRows) {
             sidebarRows(listOf(row), state.space, state.selected, onToggle = {}, onSpace = { vm.selectSpace(it.hostId, it.space.id) }, onTerminal = vm::selectTerminal, onStats = vm::openStats)
-            agentCards(state, vm, bySpace[row.hostId to row.space.id].orEmpty(), "s:${row.key}")
+            agentCards(state, vm, pulse, bySpace[row.hostId to row.space.id].orEmpty(), "s:${row.key}")
         }
         // Agents working in this repository from a space that belongs to another project, or from no space.
         val elsewhere = bySpace.filterKeys { it == null || it !in listed }.values.flatten()
         if (elsewhere.isNotEmpty()) {
             item(key = "elsewhere") { SectionHeader("From other spaces", elsewhere.size) }
-            agentCards(state, vm, elsewhere, "e")
+            agentCards(state, vm, pulse, elsewhere, "e")
         }
     }
 }
 
-private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, agents: List<Projects.Agent>, prefix: String) {
+private fun LazyListScope.agentCards(state: PocketState, vm: PocketViewModel, pulse: Projects.Pulse, agents: List<Projects.Agent>, prefix: String) {
     items(agents.sortedBy { Projects.urgency(it.rank) }, key = { "$prefix:${it.ref.hostId}:${it.ref.address}" }) { a ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val status = Cockpit.status(a.terminal, Cockpit.seenKey(a.ref, a.terminal) in state.seen).let { if (a.rank == Cockpit.BLOCKED) "blocked" else it }
+            val status = Cockpit.status(a.terminal, pulse.seenKey(a.ref, a.terminal) in state.seen).let { if (a.rank == Cockpit.BLOCKED) "blocked" else it }
             TerminalCard(a.terminal, listOfNotNull(a.space?.name, a.branch).joinToString(" · ").ifBlank { a.machine }, a.ref.address, status) { vm.selectTerminal(a.ref) }
             a.entry.kids.forEach { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }
         }

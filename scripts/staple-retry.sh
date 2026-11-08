@@ -2,17 +2,20 @@
 # Staple and validate a notarized macOS artifact, retrying only Apple's transient network errors.
 #
 #   scripts/staple-retry.sh <artifact>
+#   scripts/staple-retry.sh --validate-only <artifact>
 #
 # The artifact is a notarized .app bundle or .dmg: `xcrun stapler` handles both. On macOS the
 # updater's zip is packed from the .app, so the .app is stapled first (the build's afterSign hook,
-# apps/desktop/scripts/after-sign.cjs) and the dmg later (the workflow).
+# apps/desktop/scripts/after-sign.cjs) and the dmg later (the workflow). The workflow also extracts
+# that .app from the updater zip and validates it with `--validate-only`: the copy someone updates
+# from must carry the ticket, and validating it is another CloudKit round-trip.
 #
 # `xcrun stapler staple` asks Apple's notary service for the ticket (api.apple-cloudkit.com), and
 # `xcrun stapler validate` asks again. A dropped connection there says nothing about the artifact:
 # the notarization already succeeded, and the same command on the same bytes works on the next
-# try. This runs the staple/validate round-trip up to 3 times, waiting 10 s, 30 s and then 90 s
-# (the last wait is before the re-staple pass), and only when the failure's TOP-LEVEL NSError pair
-# has a domain AND code in the transient set:
+# try. The staple path runs the staple/validate round-trip up to 3 times, waiting 10 s, 30 s and
+# then 90 s (the last wait is before the re-staple pass), and only when the failure's TOP-LEVEL
+# NSError pair has a domain AND code in the transient set:
 #
 #   NSURLErrorDomain -1001 (timed out), -1004 (cannot connect), -1005 (connection lost),
 #   -1009 (offline)
@@ -28,6 +31,10 @@
 # response and is never retried. The error output stays in the log. After the three attempts, one
 # re-staple pass (staple again, then validate; stapling is idempotent) runs before the final
 # failure: the artifact is already notarized, so there is no re-notarization and no rebuild.
+#
+# `--validate-only` runs only `xcrun stapler validate` through the same classifier and the same
+# three attempts at 10/30/90 s, then fails. It never staples, so there is no re-staple pass: the
+# extracted updater zip's app already carries its ticket, and this proves it before the upload.
 #
 # Every attempt logs its number, the parsed Domain/Code, and the action taken (retry in Ns,
 # non-transient -> fail, re-staple, success), so the job log alone diagnoses the step.
@@ -47,13 +54,28 @@ die() {
   exit 2
 }
 
+validate_only=false
+if [[ ${1:-} == --validate-only ]]; then
+  validate_only=true
+  shift
+fi
 if [[ $# -ne 1 || -z ${1:-} ]]; then
-  die "usage: $0 <artifact>"
+  die "usage: $0 [--validate-only] <artifact>"
 fi
 artifact=$1
 # A file (.dmg) or a directory (.app bundle): stapler takes either.
 [[ -e ${artifact} ]] || die "artifact not found: ${artifact}"
 command -v xcrun >/dev/null 2>&1 || die "xcrun is not on PATH"
+
+if [[ ${validate_only} == true ]]; then
+  stages=(validate)
+  attempt_label="validate"
+  success_label="validate"
+else
+  stages=(staple validate)
+  attempt_label="staple + validate"
+  success_label="staple and validate"
+fi
 
 IFS=' ' read -r -a delays <<< "${STAPLE_RETRY_DELAYS:-10 30 90}"
 if (( ${#delays[@]} != MAX_ATTEMPTS )); then
@@ -80,11 +102,11 @@ capture() {
   return "${status}"
 }
 
-# Run the round-trip: staple, then validate. A failure leaves the failing stage in last_stage, its
-# exit status in last_status, and its combined output in step_output.
+# Run the round-trip: staple, then validate (validate alone in --validate-only). A failure leaves
+# the failing stage in last_stage, its exit status in last_status, and its output in step_output.
 run_round_trip() {
   local stage status
-  for stage in staple validate; do
+  for stage in "${stages[@]}"; do
     last_stage=${stage}
     status=0
     capture xcrun stapler "${stage}" "${artifact}" || status=$?
@@ -209,9 +231,9 @@ classify_failure() {
 }
 
 for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
-  echo "::notice::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS}: xcrun stapler staple + validate ${artifact}"
+  echo "::notice::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS}: xcrun stapler ${attempt_label} ${artifact}"
   if run_round_trip; then
-    echo "::notice::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS} succeeded: staple and validate"
+    echo "::notice::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS} succeeded: ${success_label}"
     exit 0
   fi
   echo "::warning::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS} failed at 'stapler ${last_stage}' (exit ${last_status})"
@@ -222,11 +244,18 @@ for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
   delay=${delays[attempt - 1]}
   if (( attempt < MAX_ATTEMPTS )); then
     echo "::warning::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS}: transient network failure; retrying in ${delay}s"
+  elif [[ ${validate_only} == true ]]; then
+    echo "::warning::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS}: transient network failure; waiting ${delay}s, then failing"
   else
     echo "::warning::[staple-retry] attempt ${attempt}/${MAX_ATTEMPTS}: transient network failure; waiting ${delay}s, then one re-staple pass"
   fi
   sleep "${delay}"
 done
+
+if [[ ${validate_only} == true ]]; then
+  echo "::error::[staple-retry] giving up after ${MAX_ATTEMPTS} transient validate attempts"
+  exit 1
+fi
 
 echo "::notice::[staple-retry] re-staple pass: staple ${artifact} again, then validate"
 if run_round_trip; then

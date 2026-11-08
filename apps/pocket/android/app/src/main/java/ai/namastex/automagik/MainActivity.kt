@@ -358,7 +358,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
 @Composable fun OverviewScreen(state: PocketState, space: PocketSpace?, vm: PocketViewModel, pulse: Projects.Pulse,
                                paneChats: Map<TerminalRef, TerminalRef>, onAll: () -> Unit) {
     // A main bot's pane opens the bot's DSH chat, as its Team bubble does ([Teams.paneChats]); any other agent its terminal.
-    val open: (TerminalRef) -> Unit = { ref -> vm.selectTerminal(paneChats[ref] ?: ref) }
+    val open: (TerminalRef) -> Unit = { ref -> vm.selectTerminal(paneChats[ref] ?: ref, row = ref) }
     var search by remember { mutableStateOf("") }
     val all = state.machines.flatMap { (host, machine) -> machine.terminals.filter { it.live }.map { TerminalRef(host, it.address) to it } }
     val scoped = all.filter { (ref, _) -> space == null || (ref.hostId == state.space?.first && ref.address in space.addresses) }
@@ -433,7 +433,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 item(key = "section:$rank") { SectionHeader(section.title, section.entries.size) }
                 section.entries.forEach { e ->
                     item(key = "c:${e.ref.hostId}:${e.ref.address}") {
-                        TerminalCard(e.terminal, location(e.ref), Cockpit.addressLabel(e.ref), status = Cockpit.status(e.terminal, Cockpit.seenKey(e.ref, e.terminal) in state.seen).let { word ->
+                        TerminalCard(e.terminal, location(e.ref), Cockpit.addressLabel(e.ref), status = Cockpit.status(e.terminal, pulse.seenKey(e.ref, e.terminal) in state.seen).let { word ->
                             if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }) { open(e.ref) }
                     }
                     items(e.kids, key = { "k:${it.first.hostId}:${it.first.address}" }) { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }

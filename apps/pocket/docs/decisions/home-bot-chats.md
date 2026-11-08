@@ -25,9 +25,11 @@ Issue #732 (signed four-tab work, part 2).
   `selectTerminal` on it, which shows the chat (`MainActivity`, `ChatPane`), scrolled to its end,
   where the open card is. Never the terminal screen.
 - **One conversation, one row** (RFC 0015 D29). A Bot with both a chat and a labelled pane (joined
-  by registry id as `Teams.bubbles` joins them, else `dsh:<id>` itself) is its pane's row: the pane
-  takes the chat's word when that is the more urgent, keeps its sub-agents, and opens the chat
-  (`Teams.paneChats`, #731). The chat is no second row (`Cockpit.chats`, `Cockpit.raised`).
+  by registry id as `Teams.bubbles` joins them, else `dsh:<id>` itself) is its pane's row: when the
+  chat's word is the more urgent the pane's row takes the chat's word, kind, line, turn and time,
+  and its Done is looked at by the chat's key (`Projects.Pulse.seenKey`); it keeps its sub-agents
+  and opens the chat (`Teams.paneChats`, #731). Opened from Home, the chat marks the pane's own Done
+  looked at too (`PocketState.row`). The chat is no second row (`Cockpit.chats`, `Cockpit.raised`).
 - **Done is the phone's own.** bots-dsh words a chat blocked, working or idle, never done. The phone
   remembers what it saw of each chat between readings (`ChatWatch`): a chat that goes quiet after
   being seen blocked or working is Done, until it is looked at (`Cockpit.seenKey`, with the phone's

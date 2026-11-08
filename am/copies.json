@@ -6,6 +6,10 @@
       "to": "am/agentPath.mjs"
     },
     {
+      "from": "herdr/mods/am-sidebar/approved.js",
+      "to": "am/approved.js"
+    },
+    {
       "from": "herdr/mods/am-sidebar/attach.js",
       "to": "am/attach.js"
     },
