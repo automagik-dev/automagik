@@ -48,11 +48,11 @@ internal/api/api_test.go       — patched: the listing carries blocked_grace_mi
 internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab
 internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
 internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
-internal/hc/hc.go              — patched: hc read, the blocked run's screen
+internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
 internal/herdr/herdr.go        — patched: tab create returns the tab id; tab close
 internal/herdr/herdr_test.go   — patched: tab id and tab close wire cases
-internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id
-internal/host/hc_test.go       — patched: blocked past the grace, a blip, and -1
+internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close skips a space's last tab
+internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close with and without another tab
 internal/host/host.go          — patched: Session carries the run's tab; existing mode closes only that tab
 internal/host/host_test.go     — patched: own-tab close, a missing tab id, worktree/root unchanged
 internal/host/ops.go           — patched: TabCreate returns the tab id and TabClose is in the seam
@@ -71,8 +71,12 @@ dialog line from the screen, the failure goes out through notify, and the blocke
 terminal is ended; its workspace/tab stays open like any failed run's. And
 `close_workspace: on-success` is valid with `workspace: existing`: it closes only
 the tab the run opened, never the shared workspace or any other tab, and closes
-nothing when the run has no tab id. The loader no longer refuses that combination,
-and `ls --json` / `put` carry `blocked_grace_minutes` like the other keys.
+nothing when the run has no tab id. On hc, where a terminal is the tab, the run's
+terminal is ended only while another terminal remains in the space: the app removes
+a tab when its last pane goes and the space with its last tab, so a run whose tab
+is the space's only one is left open and the reason is logged. The loader no longer
+refuses that combination, and `ls --json` / `put` carry `blocked_grace_minutes`
+like the other keys.
 
 The earlier patch is still why `close_workspace` exists in the API at all: the pack's
 panel sets it per automation (issue #498). `ls --json` names it for every entry, and

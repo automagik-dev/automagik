@@ -1,8 +1,10 @@
 package host
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,20 +16,23 @@ import (
 
 // fakeHC scripts herdr-core and git: each Wait pops the next answer.
 type fakeHC struct {
-	cwd       string
-	labels    map[string]string
-	argv      []string
-	worktree  [3]string // repo, branch, path
-	waits     []hc.Wait
-	term      hc.Terminal
-	screen    string
-	screenErr error
-	runErr    error
-	delay     time.Duration // per Wait
-	onWait    func()        // lets a test advance its clock
-	calls     []string      // kill and rm, with their address
-	readCalls int
-	killErr   error
+	cwd        string
+	labels     map[string]string
+	argv       []string
+	worktree   [3]string // repo, branch, path
+	waits      []hc.Wait
+	term       hc.Terminal
+	screen     string
+	screenErr  error
+	terminals  []string
+	termErr    error
+	termLabels map[string]string
+	runErr     error
+	delay      time.Duration // per Wait
+	onWait     func()        // lets a test advance its clock
+	calls      []string      // kill and rm, with their address
+	readCalls  int
+	killErr    error
 }
 
 func (f *fakeHC) Kill(address string) error {
@@ -43,6 +48,11 @@ func (f *fakeHC) Rm(address string) error {
 func (f *fakeHC) Read(string) (string, error) {
 	f.readCalls++
 	return f.screen, f.screenErr
+}
+
+func (f *fakeHC) Terminals(labels map[string]string) ([]string, error) {
+	f.termLabels = labels
+	return f.terminals, f.termErr
 }
 
 func (f *fakeHC) Run(cwd string, labels map[string]string, argv []string) (string, error) {
@@ -252,6 +262,66 @@ func TestHCCloseCountsATerminalAlreadyGoneAsClosed(t *testing.T) {
 	f := &fakeHC{killErr: fmt.Errorf("hc kill: no terminal: %w", hc.ErrNotFound)}
 	if err := newHCTest(f).Close(Session{WorkspaceID: "sp1", PaneID: "t7"}, hcAutomation()); err != nil {
 		t.Fatalf("want nil for a terminal already gone, got %v", err)
+	}
+}
+
+func hcExistingAutomation() config.Automation {
+	a := hcAutomation()
+	a.Workspace, a.WorkspaceID = config.WorkspaceExisting, "sp7"
+	return a
+}
+
+// The app removes a space with its last tab, so a run sharing a space may end
+// its own terminal only while another terminal (another tab) is still there.
+func TestHCCloseExistingEndsOnlyTheRunsTerminalWhenAnotherTabExists(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.termLabels["herdr.space"] != "sp7" {
+		t.Fatalf("looked for terminals labeled %v, want the run's space", f.termLabels)
+	}
+	if got := strings.Join(f.calls, "|"); got != "kill t7|rm t7" {
+		t.Fatalf("calls %q, want only the run's terminal ended", got)
+	}
+}
+
+func TestHCCloseExistingLeavesTheLastTabOpen(t *testing.T) {
+	var logged bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(old)
+	f := &fakeHC{terminals: []string{"t7"}}
+	err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("ended the last tab's terminal: %q", f.calls)
+	}
+	if !strings.Contains(logged.String(), "last one in its space") {
+		t.Fatalf("the refusal was not logged: %q", logged.String())
+	}
+}
+
+func TestHCCloseExistingWithNoTabIDClosesNothing(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}}
+	if err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7"}, hcExistingAutomation()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("closed a tab it could not name: %q", f.calls)
+	}
+}
+
+func TestHCCloseExistingListFailureLeavesTheTabOpen(t *testing.T) {
+	f := &fakeHC{terminals: []string{"t7", "t8"}, termErr: errors.New("hc is down")}
+	if err := newHCTest(f).Close(Session{WorkspaceID: "sp7", PaneID: "t7", TabID: "tb7"}, hcExistingAutomation()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("closed without knowing the space's tabs: %q", f.calls)
 	}
 }
 

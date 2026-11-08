@@ -23,8 +23,14 @@ workspace:
 - TUI, `workspace: existing`: `herdr tab close <tab_id>`, aimed at the tab this
   run created. The shared workspace and every other tab stay open; a run that
   never learned its tab id closes nothing and says why in the log.
-- hc: `hc kill` then `hc rm` on the run's terminal. The app removes the space
-  itself once its terminal is killed (measured 2026-11-04).
+- hc, `workspace: worktree | root`: `hc kill` then `hc rm` on the run's
+  terminal. The app removes the space itself once its terminal is killed
+  (measured 2026-11-04).
+- hc, `workspace: existing`: the same `hc kill` and `hc rm` on the run's
+  terminal, but only while another terminal remains in the space. The app
+  removes a tab when its last pane goes and the space with its last tab
+  (`remove_pane` → `remove_tab` → `remove_space`), so a run whose tab is the
+  space's only one closes nothing and says why in the log.
 
 A run whose agent ended `blocked` is not closed: Herdr's `agent wait` counts
 blocked as settled, so it is recorded `done` while waiting on a person. The hc

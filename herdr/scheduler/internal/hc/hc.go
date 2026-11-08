@@ -117,6 +117,32 @@ func (Client) Get(address string) (Terminal, error) {
 	return t, err
 }
 
+// Terminals lists the live terminals carrying every given label, by address.
+func (Client) Terminals(labels map[string]string) ([]string, error) {
+	args := []string{"ls", "--json"}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--label", k+"="+labels[k])
+	}
+	var res struct {
+		Terminals []struct {
+			Address string `json:"address"`
+		} `json:"terminals"`
+	}
+	if err := run(&res, args...); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(res.Terminals))
+	for _, t := range res.Terminals {
+		out = append(out, t.Address)
+	}
+	return out, nil
+}
+
 // Read returns the terminal's screen as plain text, without its history. It is
 // what a blocked run quotes in its failure line.
 func (Client) Read(address string) (string, error) {

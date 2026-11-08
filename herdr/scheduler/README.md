@@ -292,7 +292,8 @@ space. Each run opens a fresh tab labeled with its automation name and timestamp
 uses `repo` as its working directory, and leaves your focus unchanged. Earlier tabs
 remain open for review; each run gets a distinct agent name. With
 `close_workspace: on-success` a successful run closes only the tab it opened — never
-the shared workspace or any other tab.
+the shared workspace or any other tab. If it is the space's last tab it stays open,
+because closing it would take the workspace with it.
 
 Like `root`, this mode works directly in `repo` and creates no Git worktree. Runs
 sharing a directory can see each other's file changes. `workspace_id` is required
@@ -366,6 +367,8 @@ and nothing reaps them: a tab you have read is a tab you close. `cleanup` has
 nothing to say about them — there is no worktree and no branch, so the only trace a
 run leaves is its line in `history.jsonl`. Set `close_workspace: on-success` to have
 a successful run close its own tab; the shared workspace and every other tab stay.
+The run's tab stays open when it is the space's last one, since closing it would
+close the workspace.
 
 **What happens to the worktrees?** They accumulate on purpose: a run whose workspace
 is still open is a run nobody has looked at, which makes the Herdr sidebar the inbox.

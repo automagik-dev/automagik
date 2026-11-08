@@ -23,6 +23,7 @@ type hcOps interface {
 	Run(cwd string, labels map[string]string, argv []string) (string, error)
 	Wait(address string, timeout time.Duration) (hc.Wait, error)
 	Get(address string) (hc.Terminal, error)
+	Terminals(labels map[string]string) ([]string, error)
 	Read(address string) (string, error)
 	Kill(address string) error
 	Rm(address string) error
@@ -188,10 +189,31 @@ func (h *hcHost) blockedOutcome(s Session) error {
 	return fmt.Errorf("blocked on a dialog: %s", line)
 }
 
-// Close kills the run's terminal, which makes the app remove its space, then
+// Close ends the run's terminal, which makes the app remove its tab, then
 // removes the finished terminal. hc counts blocked as unfinished, so Do never
 // reports done for an agent waiting on a person.
-func (h *hcHost) Close(s Session, _ config.Automation) error {
+//
+// In existing mode the tab is the run's, but the space is shared: the app
+// removes a space with its last tab, so a tab that is the only one there is
+// left open rather than taking the workspace with it.
+func (h *hcHost) Close(s Session, a config.Automation) error {
+	if a.Workspace == config.WorkspaceExisting {
+		if s.TabID == "" {
+			log.Printf("%s: done, but its tab stays open: the run has no tab id", a.Name)
+			return nil
+		}
+		terminals, err := h.ops.Terminals(map[string]string{"herdr.space": s.WorkspaceID})
+		if err != nil {
+			log.Printf("%s: done, but its tab stays open: cannot tell whether it is the space's last one (%v)", a.Name, err)
+			return nil
+		}
+		// The run's tab id is minted for it alone, so any other terminal in
+		// the space is another tab: only then is closing this one safe.
+		if len(terminals) <= 1 {
+			log.Printf("%s: done, but its tab stays open: it is the last one in its space, and closing it would close the workspace", a.Name)
+			return nil
+		}
+	}
 	if err := h.ops.Kill(s.PaneID); err != nil && !errors.Is(err, hc.ErrNotFound) {
 		return err
 	}
