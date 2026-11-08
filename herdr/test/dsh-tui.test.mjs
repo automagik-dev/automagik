@@ -224,6 +224,15 @@ test("install refuses a stable execution root inside a writable tree", (t) => {
   );
 });
 
+test("install refuses a not-yet-created stable root under literal /tmp", (t) => {
+  const s = scene(t);
+  const missing = join(realpathSync("/tmp"), `am-hc-install-${process.pid}-${Date.now()}`, "data");
+  assert.throws(
+    () => installSandboxRow({ env: { ...s.env, XDG_DATA_HOME: missing }, project: process.cwd() }),
+    /the stable execution root .* is inside the literal temp folder/,
+  );
+});
+
 test("install refuses a DSH profile or a node inside a writable tree", (t) => {
   const s = scene(t);
   writeFileSync(join(s.root, "node"), "#!/bin/sh\nexit 0\n");

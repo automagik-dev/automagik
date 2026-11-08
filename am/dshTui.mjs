@@ -158,8 +158,14 @@ export const shimPathOf = (env = process.env) => join(binDirOf(env), SHIM);
 /** The app home a pack install uses, without the trailing slash. */
 const appHomeFor = (env = process.env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
 
-/** Real path when it exists, else the resolved path (a root that will be created soon). */
-const realOrAbs = (path) => { try { return realpathSync(path); } catch { return resolve(path); } };
+/** Real path, resolving the nearest existing ancestor and appending the rest for a missing child. */
+const realOrAbs = (path) => {
+  const abs = resolve(path);
+  try { return realpathSync(abs); } catch { /* missing: resolve its existing ancestor */ }
+  const parent = dirname(abs);
+  if (parent === abs) return abs;
+  return join(realOrAbs(parent), basename(abs));
+};
 /** Whether `child` is `parent` or beneath it, by real/resolved path. */
 const insidePath = (child, parent) => {
   const at = realOrAbs(child), root = realOrAbs(parent);

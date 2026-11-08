@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
-import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
+import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -595,6 +595,19 @@ test("the stable runner must match its baked node, and the baked node must still
     startProxy({ forbiddenRoots: s.forbiddenRoots, terminal: "t100", upstream: join(s.root, "core.sock"), appHome: s.app, env: s.env }),
     /the baked node .* is gone; run automagik-herdr dsh-tui install again/,
   );
+});
+
+test("a missing path under literal /tmp or a symlinked temp root is refused", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-hc-missing-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const literal = join(realpathSync("/tmp"), `am-hc-literal-${process.pid}-${Date.now()}`, "data");
+  assert.match(stableRootProblem(literal), /inside the (literal )?temp folder/);
+  const real = join(root, "real-tmp");
+  const link = join(root, "link-tmp");
+  mkdirSync(real);
+  symlinkSync(real, link);
+  const missing = join(link, "new", "data");
+  assert.match(stableRootProblem(missing, { env: { ...process.env, TMPDIR: link } }), /the temp folder/);
 });
 
 test("the production default still refuses a stable root under literal /tmp", async (t) => {
