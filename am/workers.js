@@ -81,6 +81,9 @@ export function guardPath(path, agent) {
 const modDirOf = (metaUrl) => guardDirOf(metaUrl).replace(/\/guard$/, "");
 export const PANE_HELPER = `${modDirOf(import.meta.url)}/hcPane.mjs`;
 export const PANE_RUNNER = `${modDirOf(import.meta.url)}/bin/run.sh`;
+/** The one opt-in for the per-pane proxy (#631 PR B); nothing sets it by default. */
+export const HC_PROXY_ENV = "AM_HC_PROXY";
+export const hcProxyEnabled = (env = process.env) => env[HC_PROXY_ENV] === "1";
 
 /**
  * The pane command for a dsh-tui pane: `/bin/sh <run.sh> <hcPane.mjs> --bot <id> [--project

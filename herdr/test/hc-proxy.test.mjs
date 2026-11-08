@@ -15,8 +15,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, METHOD_PARAMS, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "../mods/am-sidebar/workers.js";
+import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, MAX_SOCKET_PATH, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { ENV, GUARD_DIR, WORKER_OF_LABEL, workerArgs } from "../mods/am-sidebar/workers.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -737,4 +737,44 @@ test("the docs say a roster change needs a pane restart", () => {
   const doc = readFileSync(join(here, "..", "mods", "am-sidebar", "hcProxy.md"), "utf8");
   assert.match(readme, /roster change needs a pane restart/i);
   assert.match(doc, /roster change needs a pane restart/i);
+});
+
+test("a sandboxed worker start: the real workerArgs output is accepted, and only for this caller", async (t) => {
+  const { s, fake, proxy } = await sceneWithCore(t);
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one", cwd: s.worktree,
+    parent: "t100", agent: "dsh-tui", argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`,
+    project: s.project, taskId: "gn-1", sandbox: true });
+  const cut = args.indexOf("--");
+  const argv = args.slice(cut + 1);
+  assert.equal(argv.length, 14, argv.join(" "));
+  const params = runParams(s, { argv, labels: { [WORKER_OF_LABEL]: ID.dev, branch: "feat/worker", "worker.role": "dev", task: "gn-1" } });
+  const client = await clientFor(proxy.socket);
+  const answer = await client.call("terminal.run", params);
+  client.close();
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.deepEqual(fake.calls("terminal.run")[0].params.argv, argv, "the real workerArgs output reached the core");
+  // The same shape for another bot or another project is refused before the core.
+  for (const [at, value] of [[6, ID.other], [8, "/tmp/not-the-project"]]) {
+    const before = fake.calls("terminal.run").length;
+    const bad = { ...params, argv: argv.map((word, i) => (i === at ? value : word)) };
+    const c = await clientFor(proxy.socket);
+    const refused = await c.call("terminal.run", bad);
+    c.close();
+    assert.ok(refused.error, `${at}: ${JSON.stringify(refused)}`);
+    assert.match(refused.error.message, /^hc-proxy: terminal\.run: /);
+    assert.equal(fake.calls("terminal.run").length, before, `${at}: never reached the core`);
+  }
+});
+
+test("the pack's own guard is allowed inside the app home; the worker shape is not widened", async (t) => {
+  const { s } = await sceneWithCore(t);
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", cwd: s.worktree, parent: "t100", agent: "dsh-tui",
+    argv: ["dsh-tui"], task: "do the task", path: `${s.bin}:/usr/bin:/bin`, project: s.project, sandbox: true });
+  const argv = args.slice(args.indexOf("--") + 1);
+  const params = runParams(s, { argv });
+  const snapshot = { terminal: "t100", caller: { bot: ID.dev, project: s.project, worker: false }, bound: true,
+    appHome: join(here, "..", "mods", "am-sidebar") };
+  assert.equal(runProblem(params, snapshot), null, "the installed pack's own guard is the exception");
+  const forged = { ...params, argv: argv.map((word, i) => (i === 3 ? join(s.root, "bin", "run.sh") : word)) };
+  assert.match(runProblem(forged, snapshot), /helper runner is not the pack's/);
 });

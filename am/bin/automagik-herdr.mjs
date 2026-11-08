@@ -30,7 +30,7 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
-import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
+import { EFFORT_SHAPE, HC_NAME_MAX, HC_PROXY_ENV, hcProxyEnabled, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, ledgerLine, ledgerPath, optionLike, readLedger, reapCandidates, reapPath, reapRow, sessionRow,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
@@ -2462,10 +2462,14 @@ async function launchSeat(project, bot, over = {}) {
   const login = claudeLogin(argv, briefed.warnings);
   // #650: the CLI's own app home as the pane's, beside the briefing's env (as seatOnMachine does
   // with the project's pane-env): the hc guard finds the caller's binding there. Unset on the
-  // CLI: no word at all, and the argv stays byte for byte as before.
-  const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}), ...briefed.env };
+  // CLI: no word at all, and the argv stays byte for byte as before. #631 PR B: the proxy is
+  // opt-in (AM_HC_PROXY=1, nothing sets it); only then does the pane get the helper and the
+  // switch, and the bot's own CLI sees the same opt-in for its worker starts.
+  const proxyOn = hcProxyEnabled() && agentKey === "dsh-tui";
+  const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}),
+    ...(proxyOn ? { [HC_PROXY_ENV]: "1" } : {}), ...briefed.env };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
-    env, login, agent: agentKey, project: key, sandbox: agentKey === "dsh-tui" });
+    env, login, agent: agentKey, project: key, sandbox: proxyOn });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = agentKey === "claude" ? await writeBriefingHook(bot, cwd) : { written: false, warnings: [] };
   hook.warnings.unshift(...briefed.warnings);
@@ -4500,7 +4504,7 @@ async function cmdWorker(opts, rest) {
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
-      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: plan.agent === "dsh-tui" });
+      path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead, sandbox: hcProxyEnabled() && plan.agent === "dsh-tui" });
     const r = await hc(args);
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;

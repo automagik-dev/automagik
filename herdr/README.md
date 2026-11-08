@@ -882,14 +882,20 @@ pack's own CLI still reaches the real `hc` for its trusted calls (system status,
 remote file/exec, docs), so `automagik-herdr worker` and the remote commands keep working in a
 guarded pane.
 
-### The per-pane hc proxy (the sandbox boundary)
+### The per-pane hc proxy (the sandbox boundary, opt-in)
 
-A pack-started dsh-tui pane runs through one helper, `mods/am-sidebar/hcPane.mjs`: it starts
-the pane's hc proxy in its own process **before DSH starts**, then runs the agent as its child.
-The proxy snapshots the attach ledger and the project's `.herdr/bots.json` before the pane can
-create a sandbox, and it ends when the pane ends. **A roster change needs a pane restart**, so
-the new pane's proxy reads the new file. Its own README, `mods/am-sidebar/hcProxy.md`, has the
-policy, the start checks and the run command.
+The proxy is **off by default**. One switch, `AM_HC_PROXY=1` in the environment that runs the
+Start (and so in the bot pane it starts), turns it on; nothing sets it and a default dsh-tui
+seat and worker keep their argv byte for byte. PR C turns it on for the PM.
+
+When it is on, a pack-started dsh-tui pane runs through one helper,
+`mods/am-sidebar/hcPane.mjs`: it starts the pane's hc proxy in its own process **before DSH
+starts**, then runs the agent as its child. The proxy snapshots the attach ledger and the
+project's `.herdr/bots.json` before the pane can create a sandbox, and it ends when the pane
+ends. **A roster change needs a pane restart**, so the new pane's proxy reads the new file. Its
+own README, `mods/am-sidebar/hcProxy.md`, has the policy, the start checks and the run command.
+A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again; an
+opted-in pane refuses to start while the profile's sandbox row is stale.
 
 The helper sets `DSH_SANDBOX_MASK=1`, `AM_HC_REAL_SOCKET` and `AM_HC_PROXY_SOCKET` for the
 pane; the DSH runner wrapper applies its mount rules and binds the proxy at the real core socket

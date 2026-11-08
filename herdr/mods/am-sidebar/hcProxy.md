@@ -1,11 +1,13 @@
 # The per-pane hc proxy (#631)
 
-**Status: wired for pack-started dsh-tui panes and workers.** `startArgs` and `workerArgs` run
-a dsh-tui pane through `hcPane.mjs`, one helper per pane. The helper starts the proxy in its
-own process **before DSH**, then runs the agent as its child, so the proxy snapshots the roster
-and the attach ledger before the pane can create a sandbox. The proxy ends with the pane; there
-is no service. **A roster change needs a pane restart**, because the new pane starts a new
-proxy that reads the new file.
+**Status: opt-in (`AM_HC_PROXY=1`), wired for pack-started dsh-tui panes and workers.** With
+the switch on, `startArgs` and `workerArgs` run a dsh-tui pane through `hcPane.mjs`, one helper
+per pane. The helper starts the proxy in its own process **before DSH**, then runs the agent as
+its child, so the proxy snapshots the roster and the attach ledger before the pane can create a
+sandbox. The proxy ends with the pane; there is no service. **A roster change needs a pane restart**, because the new pane starts a new proxy that reads the new file. Nothing sets the
+switch by default, so a default seat and worker keep the old argv; PR C turns it on for the PM.
+A pack update that changes the wrapper needs `automagik-herdr dsh-tui install` again: the helper
+refuses an opted-in pane while the profile's sandbox row is stale.
 
 ## Run
 

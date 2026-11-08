@@ -30,12 +30,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
-import { ENV, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, GUARD_DIR, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
 export const HC_PIN = "0.1.14";
 /** The dedicated runtime folder, under $XDG_RUNTIME_DIR and outside any writable cwd. */
 export const SOCKET_FOLDER = "automagik-hc-proxy";
+/** This pack's own pane helper and runner; a worker start may only name these exact paths. */
+export const PACK_ROOT = dirname(fileURLToPath(import.meta.url));
+export const PACK_HELPER = join(PACK_ROOT, "hcPane.mjs");
+export const PACK_RUNNER = join(PACK_ROOT, "bin", "run.sh");
 /** The most lines one terminal.read may ask for (the reply cap is the hard stop). */
 export const MAX_READ_LINES = 5000;
 /** A core reply line larger than this is refused with a clear error, never buffered. */
@@ -123,6 +127,13 @@ function insideReal(child, parent) {
   return at === root || at.startsWith(`${root}${sep}`);
 }
 
+/** Whether two paths are the same real path (false when either is gone). */
+function sameReal(a, b) {
+  const at = realOrNull(a);
+  const root = realOrNull(b);
+  return Boolean(at && root && at === root);
+}
+
 /** The app home hcGuard and the ledger use. */
 export const appHome = (env) => (env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app")).replace(/\/+$/, "");
 
@@ -207,7 +218,11 @@ function underWorktrees(cwd, project) {
 /**
  * Why `params` is not hcGuard.runProblem's exact dsh-tui worker shape, or null. This is the
  * argv check ported to the RPC params the CLI sends: the program, its PATH guard word, the one
- * task word, the parent, the worktree cwd, the worker labels, and the identity-only env.
+ * task word, the parent, the worktree cwd, the worker labels, and the identity-only env. It
+ * accepts the plain shape and, when the pack's opt-in is on, the per-pane helper shape
+ * `[/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
+ * --project, <caller project>, --worker, --, dsh-tui, --, <task>]`. The pack's own guard is
+ * allowed even inside the app home, where the installed pack lives; any other copy is not.
  */
 export function runProblem(params, snapshot) {
   const p = isObject(params) ? params : {};
@@ -241,22 +256,44 @@ export function runProblem(params, snapshot) {
     }
   }
   const argv = p.argv;
-  if (!Array.isArray(argv) || argv.length !== 5) return "argv is not the worker shape";
+  const plain = Array.isArray(argv) && argv.length === 5;
+  const helper = Array.isArray(argv) && argv.length === 14;
+  if (!plain && !helper) return "argv is not the worker shape";
   if (argv[0] !== ENV) return `the program is not ${ENV}`;
-  if (argv[2] !== "dsh-tui") return "the program is not dsh-tui";
   if (typeof argv[1] !== "string" || !argv[1].startsWith("PATH=")) return "no PATH word after the program";
   const words = argv[1].slice("PATH=".length).split(delimiter);
   const first = words[0];
   if (!isAbsolute(first) || !isGuardFolder(first)) return "the PATH word does not start with a guard";
-  if (insideReal(first, snapshot.caller.project)) return "the PATH guard is inside the writable project";
-  if (snapshot.appHome && insideReal(first, snapshot.appHome)) return "the PATH guard is inside the writable app home";
+  // The installed pack lives under the app home; its own guard is the one writable-tree
+  // exception, and only by its exact path (a copy elsewhere is still refused).
+  if (!sameReal(first, GUARD_DIR)) {
+    if (insideReal(first, snapshot.caller.project)) return "the PATH guard is inside the writable project";
+    if (snapshot.appHome && insideReal(first, snapshot.appHome)) return "the PATH guard is inside the writable app home";
+  }
   for (const word of words) if (!word || !isAbsolute(word)) return "a PATH word is not an absolute folder";
   const program = resolveOnPath("dsh-tui", words);
   if (!program) return "dsh-tui is not on the worker PATH";
   if (insideReal(program, snapshot.caller.project)) return "dsh-tui is inside the writable project";
   if (snapshot.appHome && insideReal(program, snapshot.appHome)) return "dsh-tui is inside the writable app home";
-  if (argv[3] !== "--") return "no -- before the task";
-  if (typeof argv[4] !== "string") return "the task is not the one -- <task> word";
+  if (plain) {
+    if (argv[2] !== "dsh-tui") return "the program is not dsh-tui";
+    if (argv[3] !== "--") return "no -- before the task";
+    if (typeof argv[4] !== "string") return "the task is not the one -- <task> word";
+    return null;
+  }
+  // The sandboxed worker's own helper wrapper (#631 PR B), exactly as workerArgs builds it:
+  // [/usr/bin/env, PATH=..., /bin/sh, <pack>/bin/run.sh, <pack>/hcPane.mjs, --bot, <caller>,
+  //  --project, <caller project>, --worker, --, dsh-tui, --, <task>].
+  if (argv[2] !== "/bin/sh") return "the helper program is not /bin/sh";
+  if (argv[3] !== PACK_RUNNER) return "the helper runner is not the pack's";
+  if (argv[4] !== PACK_HELPER) return "the helper is not the pack's";
+  if (argv[5] !== "--bot" || argv[6] !== snapshot.caller.bot) return "--bot is not the caller's bot";
+  if (argv[7] !== "--project" || !sameReal(argv[8], snapshot.caller.project)) return "--project is not the caller's project";
+  if (argv[9] !== "--worker") return "--worker is missing";
+  if (argv[10] !== "--") return "no -- before the helper's command";
+  if (argv[11] !== "dsh-tui") return "the helper's program is not dsh-tui";
+  if (argv[12] !== "--") return "no -- before the task";
+  if (typeof argv[13] !== "string") return "the task is not the one -- <task> word";
   return null;
 }
 
