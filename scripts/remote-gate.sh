@@ -498,7 +498,11 @@ gate_plugin() {
     step harness bun run harness
   fi
   if [ -f scripts/build-client.mjs ]; then step client node scripts/build-client.mjs --check; fi
-  step lint bun run lint
+  if grep -q '"lint"' package.json; then
+    step lint bun run lint
+  else
+    say "lint skipped (no lint script)"
+  fi
   n=$(find test -maxdepth 1 -name '*.test.js' | wc -l | tr -d ' ')
   t0=$SECONDS
   step test bun run test
