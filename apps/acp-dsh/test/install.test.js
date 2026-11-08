@@ -179,24 +179,48 @@ const PRESET = Object.freeze({
   auto: presetService.specOf('auto'),
   full: presetService.resolve('danger-full-access'),
 })
-const levelOfPreset = ({ sandbox, approval }) => levelOf({ effectivePolicy: () => approval }, { snapshotEvents: () => [{ type: 'sandbox/mode', data: { mode: sandbox } }] })
+// DSH resolves both the identity and the knobs; a real Session logs both. The service read is
+// what the review gate itself uses, so the fixture supplies it.
+const levelOfPreset = ({ sandbox, approval }, preset) => levelOf(
+  { effectivePolicy: () => approval },
+  { snapshotEvents: () => [
+    { type: 'permission/preset', data: { preset } },
+    { type: 'sandbox/mode', data: { mode: sandbox } },
+  ] },
+  undefined,
+  { current: () => preset },
+)
 
 test("DSH's Manual preset (workspace-write, ask) stays Manual for every agent", () => {
-  const level = levelOfPreset(PRESET.manual)
+  const level = levelOfPreset(PRESET.manual, 'workspace-write')
   assert.deepEqual(level, { sandbox: 'workspace-write', policy: 'ask', full: false, auto: false })
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['workspace-write'])
 })
 
 test("DSH's Auto preset (danger-full-access, ask) is Auto, not Manual", () => {
-  const level = levelOfPreset(PRESET.auto)
+  const level = levelOfPreset(PRESET.auto, 'auto')
   assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'ask', full: false, auto: true })
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['auto', 'default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
 })
 
+test("a custom preset with Auto's knobs is not Auto: the bridge keeps its own ask", () => {
+  // dsh-experimental-auto-review gates on identity (`current !== 'auto'`), so this Session has
+  // no reviewer; the bridge must not skip its approval.
+  const level = levelOfPreset(PRESET.auto, 'custom')
+  assert.deepEqual(level,
+    { sandbox: 'danger-full-access', policy: 'ask', full: false, auto: false })
+  const session = { snapshotEvents: () => [
+    { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+  ] }
+  const ask = { effectivePolicy: () => 'ask' }
+  assert.equal(fullAccess(ask, session, undefined, { current: () => 'custom' }), false)
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['default'])
+})
+
 test("DSH's Full access preset (danger-full-access, never) is full access, not Auto", () => {
-  const level = levelOfPreset(PRESET.full)
+  const level = levelOfPreset(PRESET.full, 'danger-full-access')
   assert.deepEqual(level, { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['bypassPermissions', 'default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent-full-access', 'workspace-write'])
@@ -212,6 +236,32 @@ test("a Session's Auto row beats a delegated child's never policy: not full acce
   assert.equal(fullAccess(never, session, undefined, autoRow), false)
   assert.deepEqual(AGENTS['acp-claude'].modeFor(level), ['auto', 'default'])
   assert.deepEqual(AGENTS['acp-codex'].modeFor(level), ['agent', 'workspace-write'])
+})
+
+test('an Auto row without the preset service is never Full and never claims Auto', () => {
+  // dsh-subagent pins a delegated child to `never`. With no permission-preset service there is
+  // no Auto identity and no review gate, so the row may only stop a Full read; claiming Auto
+  // would skip the bridge's own approval while nothing reviews the call.
+  const auto = { snapshotEvents: () => [
+    { type: 'permission/preset', data: { preset: 'auto' } },
+    { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+  ] }
+  const never = { effectivePolicy: () => 'never' }
+  assert.deepEqual(levelOf(never, auto),
+    { sandbox: 'danger-full-access', policy: 'never', full: false, auto: false })
+  assert.equal(fullAccess(never, auto), false)
+  assert.deepEqual(AGENTS['acp-claude'].modeFor(levelOf(never, auto)), ['default'])
+  // A service that throws on the read falls back to the same row.
+  const throwing = { current: () => { throw new Error('the preset service went away') } }
+  assert.equal(fullAccess(never, auto, undefined, throwing), false)
+  assert.equal(levelOf(never, auto, undefined, throwing).auto, false)
+  // No Auto row and no service: Full access still reads Full, as DSH's own Full preset should.
+  const full = { snapshotEvents: () => [
+    { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+  ] }
+  assert.deepEqual(levelOf(never, full),
+    { sandbox: 'danger-full-access', policy: 'never', full: true, auto: false })
+  assert.equal(fullAccess(never, full), true)
 })
 
 test("the Session's sandbox is the one DSH's sandbox-policy service resolves, deployment default included", () => {
@@ -384,9 +434,12 @@ test('the service gates the Bot team\'s Claude move on a real bridge probe, cach
     apply(ctx, config, { store: { home: undefined, update: async () => {}, binOf: () => bin ?? undefined }, find: () => undefined, signedIn: async () => undefined })
     return { service, toolReads: () => toolReads, setMode: next => { toolsMode = next } }
   }
-  // Off is the 2026-11-03 behaviour and never spawns the bridge.
-  assert.deepEqual(await serviceFor({}).service.bridge(), { on: false, probesPass: false })
-  // On, the bridge really answers initialize + tools/list for a minted credential.
+  // On is the default: an absent dshTools still probes and the bridge answers initialize +
+  // tools/list for a minted credential.
+  assert.deepEqual(await serviceFor({}).service.bridge(), { on: true, probesPass: true })
+  // False is the kill switch: the 2026-11-03 behaviour, and the bridge is never spawned.
+  assert.deepEqual(await serviceFor({ dshTools: false }).service.bridge(),
+    { on: false, probesPass: false })
   const on = serviceFor({ dshTools: true })
   assert.deepEqual(await on.service.bridge(), { on: true, probesPass: true })
   // Success is cached: a second ask reads no tools again (no second probe).

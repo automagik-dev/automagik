@@ -54,7 +54,7 @@ function acpLoading(ctx) {
 
 /**
  * What the `acp-claude` route is doing on this machine: `ready` with its listed models,
- * `waiting` while its plugin or adapter loads or its catalog has not answered, `off` with
+ * `waiting` while its plugin, adapter, catalog or CLI sign-in is not ready, `off` with
  * `dshTools` off, or `gone` when the route is no longer served (the plugin, the agent setting
  * or its CLI). A `gone` or `off` route is the rollback: moved Bots go back to before.
  * @returns {Promise<{ state: 'ready', listed: string[] } | { state: 'waiting' | 'off' | 'gone' }>}
@@ -75,17 +75,43 @@ async function acpClaudeState(ctx) {
   // still be served while its tools cannot reach DSH.
   if (bridge?.probesPass !== true) return { state: 'waiting' }
   let status
+  let agent
+  const agentOf = value => value?.agents?.find?.(row => row?.id === ACP_AGENT)
   try {
     status = await acp.status?.()
   } catch {
     return { state: 'waiting' }
   }
-  const agent = status?.agents?.find?.(row => row?.id === ACP_AGENT)
+  agent = agentOf(status)
   if (agent === undefined) return { state: 'gone' }
   // Installing is a route on its way in; off, no CLI and a failed install are a route gone.
   // Ready without a model list is a route that is still here, its catalog not answered yet.
   if (!['installing', 'ready'].includes(agent?.connector?.state)) return { state: 'gone' }
-  if (agent.connector.state !== 'ready' || agent.model?.listed !== true) return { state: 'waiting' }
+  if (agent.connector.state !== 'ready' || agent.model?.listed !== true) {
+    return { state: 'waiting' }
+  }
+  // The CLI's sign-in is cached by the ACP service until it refreshes. Ask on every pass that
+  // finds the route otherwise ready, so a later sign-in moves the team at the next pass (the
+  // next start or a settings/adapter change) with no separate action; not signed in is a route
+  // that must not take anyone yet.
+  if (agent?.signedIn !== true) {
+    try {
+      await acp.refresh?.()
+    } catch {}
+    try {
+      status = await acp.status?.()
+    } catch {
+      // A read that fails after the ask is not a route that disappeared: leave everything as
+      // it is (a transient failure must not trigger the restore).
+      return { state: 'waiting' }
+    }
+    agent = agentOf(status)
+    if (agent === undefined) return { state: 'gone' }
+    if (agent.connector?.state !== 'ready' || agent.model?.listed !== true) {
+      return { state: 'waiting' }
+    }
+    if (agent?.signedIn !== true) return { state: 'waiting' }
+  }
   try {
     const models = await ctx.llm.listModels(ACP_AGENT)
     const listed = (Array.isArray(models) ? models : []).map(model => model?.id).filter(id => typeof id === 'string')

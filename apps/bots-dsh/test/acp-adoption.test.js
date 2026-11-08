@@ -45,7 +45,13 @@ const seed = (bots = {}) => ({
 // aliases as Claude Code's own catalog does.
 const readyAcp = (models = ['default', 'opus', 'sonnet', 'haiku']) => ({
   bridge: () => ({ on: true, probesPass: true }),
-  status: async () => ({ agents: [{ id: 'acp-claude', connector: { state: 'ready' }, model: { id: 'default', listed: true } }] }),
+  refresh: async () => undefined,
+  status: async () => ({ agents: [{
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+    signedIn: true,
+  }] }),
   models,
 })
 
@@ -246,7 +252,10 @@ test('a moved Bot whose person picked another level stays on the route', async (
 test('a moved Bot comes back when the ACP route disappears', async (t) => {
   let route = true
   const ready = {
-    id: 'acp-claude', connector: { state: 'ready' }, model: { id: 'default', listed: true },
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+    signedIn: true,
   }
   const acp = {
     ...readyAcp(),
@@ -270,7 +279,10 @@ test('a moved Bot comes back when the ACP route disappears', async (t) => {
 test('an effort pick still leaves a dead ACP route for the previous model', async (t) => {
   let route = true
   const ready = {
-    id: 'acp-claude', connector: { state: 'ready' }, model: { id: 'default', listed: true },
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+    signedIn: true,
   }
   const acp = {
     ...readyAcp(),
@@ -391,7 +403,12 @@ test('an event that lands while the route is being read runs one more pass', asy
           release = () => resolve({ agents: [{ id: 'acp-claude', connector: { state: 'installing' }, model: { listed: false } }] })
         })
       }
-      return Promise.resolve({ agents: [{ id: 'acp-claude', connector: { state: 'ready' }, model: { listed: true } }] })
+      return Promise.resolve({ agents: [{
+        id: 'acp-claude',
+        connector: { state: 'ready' },
+        model: { listed: true },
+        signedIn: true,
+      }] })
     },
   }
   const host = await start(seed(), { acp })
@@ -401,6 +418,42 @@ test('an event that lands while the route is being read runs one more pass', asy
   host.ctx.emit('llm/adapters-updated')
   release()
   await until(() => host.saved().claudeAcpMoved === true, { label: 'the queued pass moved the team' })
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  // The first pass saw `installing` and left; the queued pass made the second read.
+  assert.equal(calls, 2)
+})
+
+test('the sign-in is asked once when the status has no answer yet', async (t) => {
+  let refreshes = 0
+  let calls = 0
+  const acp = {
+    ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
+    status: async () => {
+      calls += 1
+      return { agents: [{
+        id: 'acp-claude',
+        connector: { state: 'ready' },
+        model: { listed: true },
+        ...(calls === 1 ? {} : { signedIn: true }),
+      }] }
+    },
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(refreshes, 1)
+  assert.equal(calls, 2)
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+})
+
+test('a known signed-in route is not asked again', async (t) => {
+  let refreshes = 0
+  const acp = { ...readyAcp(), refresh: async () => { refreshes += 1 } }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.moved()
+  assert.equal(refreshes, 0)
   assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
 })
 
@@ -414,6 +467,82 @@ test('dshTools off is the 2026-11-03 behaviour: no Bot moves', async (t) => {
   assert.equal(state.bots.m1.model, 'anthropic/claude-opus-5-5')
   assert.equal(state.bots.w2.model, 'anthropic/claude-sonnet-4-5')
   assert.equal(state.claudeAcpMoved, undefined)
+})
+
+test('an installed but signed-out Claude moves nothing', async (t) => {
+  // The route is ready and listed, but its CLI says it is not signed in. The Bots stay on the
+  // pi-ai model they are on, and the team is not marked done, so signing in can still move them.
+  let refreshes = 0
+  const signedOut = {
+    ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
+    status: async () => ({ agents: [{
+      id: 'acp-claude',
+      connector: { state: 'ready' },
+      model: { listed: true },
+      signedIn: false,
+    }] }),
+  }
+  const host = await start(seed(), { acp: signedOut })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(refreshes > 0, 'the CLI was asked again on this pass')
+  assert.equal(host.saved().bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.equal(host.saved().claudeAcpMoved, undefined)
+})
+
+test('signing in later still moves the team: a signed-out pass marks nothing', async (t) => {
+  let signedIn = false
+  let refreshes = 0
+  const acp = {
+    ...readyAcp(),
+    refresh: async () => { refreshes += 1 },
+    status: async () => ({ agents: [{
+      id: 'acp-claude', connector: { state: 'ready' }, model: { listed: true }, signedIn,
+    }] }),
+  }
+  const host = await start(seed(), { acp })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 60))
+  assert.equal(host.saved().claudeAcpMoved, undefined)
+  assert.equal(host.saved().bots.m1.model, 'anthropic/claude-opus-5-5')
+  assert.ok(refreshes > 0, 'the signed-out pass asked the CLI')
+  signedIn = true
+  host.ctx.emit('llm/adapters-updated')
+  await until(() => host.saved().claudeAcpMoved === true, { label: 'the team moved after sign-in' })
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+})
+
+test('a status read that fails after the sign-in ask is waiting', async (t) => {
+  // The team is already moved; a flaky second read during a signed-out pass must not restore it.
+  const first = await start(seed(), { acp: readyAcp() })
+  t.after(first.stop)
+  await first.moved()
+  assert.equal(first.saved().bots.m1.model, 'acp-claude/opus')
+  let calls = 0
+  const ready = {
+    id: 'acp-claude',
+    connector: { state: 'ready' },
+    model: { id: 'default', listed: true },
+  }
+  const flaky = {
+    ...readyAcp(),
+    status: async () => {
+      calls += 1
+      if (calls === 1) return { agents: [{ ...ready, signedIn: false }] }
+      throw new Error('the CLI did not answer')
+    },
+  }
+  const host = await start(first.saved(), { acp: flaky })
+  t.after(host.stop)
+  await host.call('state', {})
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(calls > 1, 'the sign-in ask ran and its re-read failed')
+  assert.equal(host.saved().bots.m1.model, 'acp-claude/opus')
+  assert.equal(host.saved().claudeAcpMoved, true)
+  assert.equal(host.saved().bots.m1.acpMoved?.target, 'acp-claude/opus')
 })
 
 test('a bridge whose probes do not pass, or an adapter that is not installed, moves nothing', async (t) => {
