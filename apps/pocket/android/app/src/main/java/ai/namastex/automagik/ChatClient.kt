@@ -74,8 +74,10 @@ class ChatClient(private val core: CoreClient) : Closeable {
     suspend fun cancelHeld(terminal: String, id: String): JSONObject =
         if (Chat.readOnly(terminal)) refusedReadOnly(id) else core.call("chat.cancelHeld", params(terminal).put("id", id))
 
-    suspend fun answer(terminal: String, row: String, choice: String): JSONObject =
-        if (Chat.readOnly(terminal)) refusedReadOnly() else core.call("chat.answer", params(terminal).put("row", row).put("choice", choice))
+    /** [text]: a question's typed answer, with choice [ChatActions.OTHER] only. */
+    suspend fun answer(terminal: String, row: String, choice: String, text: String? = null): JSONObject =
+        if (Chat.readOnly(terminal)) refusedReadOnly()
+        else core.call("chat.answer", params(terminal).put("row", row).put("choice", choice).apply { if (text != null) put("text", text) })
 
     suspend fun interrupt(terminal: String): JSONObject =
         if (Chat.readOnly(terminal)) refusedReadOnly() else core.call("chat.interrupt", params(terminal))

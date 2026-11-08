@@ -1068,6 +1068,16 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** A question answered on the phone: the options picked (0-based) or a typed answer, only as [ChatActions] offers it. */
+    fun chatAnswerQuestion(row: Chat.Row, picked: List<Int>, text: String? = null) {
+        val s = _chat.value ?: return
+        val (choice, typed) = ChatActions.questionAnswer(s, row, picked, text) ?: return
+        chatAct { link, st, gen ->
+            val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice, typed)) }.getOrElse { "Not confirmed. Check the terminal." }
+            chatUpdate(gen) { it.copy(notice = notice) }
+        }
+    }
+
     fun chatInterrupt() {
         val s = _chat.value ?: return
         if (!ChatActions.canInterrupt(s)) return
