@@ -16,10 +16,11 @@
 // does, as the pack's workersIn does. The team is model.js's graph: the caller's lead chain
 // (effectiveLead), the declared lead chain it names (`bot.lead`, a planned lead included),
 // its members (descendantsOf), the project's main bot (mainBotOf), its own workers
-// (worker.of = the caller's bot) and the shared reviewer/fixer roles (RANKS). A pm, integrator
+// (worker.of = the caller's bot) and the shared tester/reviewer/fixer ranks (RANKS). A pm, integrator
 // or fixer bot the project lists may also send to any bot the project lists (planned entries
 // included); that rank is the bots.json entry's, never the pane's role= label or an
-// environment variable, and one of its workers inherits nothing.
+// environment variable, and one of its workers inherits nothing. A captain bot may also send
+// to another listed captain; both ranks come from bots.json, and workers inherit nothing.
 
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -41,8 +42,8 @@ const DOC_ONLY = new Set(["--help", "-h", "--version", "--skill"]);
 const WORKER_LABELS = new Set([
   WORKER_OF_LABEL, "task", "task.project", "task.lead", "branch", "worker.role", "herdr.space",
 ]);
-/** The shared review roles: a target pane carrying one of these role= labels is reachable. */
-export const SHARED_ROLES = ["reviewer", "fixer"].filter((role) => RANKS.includes(role));
+/** The shared verdict ranks: targets with one of these bots.json ranks are reachable. */
+export const SHARED_ROLES = ["tester", "reviewer", "fixer"].filter((role) => RANKS.includes(role));
 /**
  * The shared coordination roles: a caller whose bots.json entry has one of these ranks may
  * send to any bot the project lists. The rank is bots.json's, never the pane's role= label.
@@ -319,6 +320,20 @@ export function teamOf(file, caller) {
   return allowed;
 }
 
+/** Shared send rules for the guard and proxy; these never widen the team graph for reads. */
+export function sharedSendAllowed(file, caller, labels) {
+  const self = file.bots.find((bot) => bot.id === caller.bot);
+  const target = typeof labels.bot === "string"
+    ? file.bots.find((bot) => bot.id === labels.bot) : null;
+  if (target && !caller.worker && self) {
+    if (SHARED_SEND_RANKS.includes(self.rank)) return true;
+    if (self.rank === "captain" && target.rank === "captain") return true;
+  }
+  // Keep the existing reviewer/fixer label path; tester access requires a roster rank.
+  if (labels.role === "reviewer" || labels.role === "fixer") return true;
+  return Boolean(target && SHARED_ROLES.includes(target.rank));
+}
+
 // ---- send: resolve the target with hc, then check its labels and the team graph ----
 
 const SEND_VALUE_OPTIONS = new Set(["--if", "--timeout", "--on"]);
@@ -411,15 +426,7 @@ function sendProblem(real, args, env, terminal, on) {
   const allowed = teamOf(file, caller);
   if (typeof labels.bot === "string" && allowed.has(labels.bot)) return null;
   if (labels[WORKER_OF_LABEL] === caller.bot) return null;
-  // A shared coordination role may send to any bot the project lists, planned entries
-  // included. The rank is bots.json's entry for the caller, never its pane's role= label or an
-  // environment variable; a worker (no ledger row) inherits nothing.
-  const listed = typeof labels.bot === "string" && file.bots.some((b) => b.id === labels.bot);
-  if (listed && !caller.worker && SHARED_SEND_RANKS.includes(self.rank)) return null;
-  const role = typeof labels.role === "string" ? labels.role : "";
-  if (SHARED_ROLES.includes(role)) return null;
-  const def = typeof labels.bot === "string" ? file.bots.find((b) => b.id === labels.bot) : null;
-  if (def && SHARED_ROLES.includes(def.rank)) return null;
+  if (sharedSendAllowed(file, caller, labels)) return null;
   return "the target is not in the caller's team";
 }
 

@@ -859,9 +859,13 @@ allowed `send`.
 chain (`bot.lead`, then that bot's lead, while each id is listed in bots.json, planned entries
 included — so a captain whose lead is a planned Orchestrator reaches it), its members
 (`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the
-caller's bot) and the shared reviewer/fixer roles (`RANKS`). A pm, integrator or fixer bot the
-project lists may also send to any bot the project lists, planned entries included: their job
-is to message the Orchestrator, the captains and each other. That rank is the caller's
+caller's bot) and the shared tester/reviewer/fixer ranks in bots.json (`RANKS`). The existing
+reviewer/fixer pane-label path also remains; a `role=tester` label alone grants nothing.
+A captain bot may send to another squad's captain when both bots.json ranks are `captain`.
+Its workers do not inherit that rule, and a `role=captain` label alone grants nothing.
+A pm, integrator or fixer bot the project lists may also send to any bot the project lists,
+planned entries included: their job is to message the Orchestrator, the captains and each other.
+That rank is the caller's
 bots.json entry, never its pane's `role=` label or an environment variable, and a worker of
 such a bot does not inherit the widening. The caller comes from the attach ledger, the
 authority; a worker pane has no ledger row, so its `worker.of` label names its bot and its
