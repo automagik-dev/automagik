@@ -116,7 +116,9 @@ test('routes are offered only for CLIs that are here; before its adapter is in, 
   let installed
   let failed
   const store = { binOf: () => installed, update: async (pkg) => { updates.push(pkg) }, lastError: () => failed }
-  const ctx = { llm: { registerAdapter: (providers, adapter) => registered.push({ providers, adapter }) }, agents: { get: () => undefined }, get: () => undefined, on: () => {} }
+  // A live agent for the Session: this test is about the install message, not a missing agent.
+  const agent = { session: { id: 's1' }, ctx: { tools: { register: () => () => {} } } }
+  const ctx = { llm: { registerAdapter: (providers, adapter) => registered.push({ providers, adapter }) }, agents: { get: id => (id === 's1' ? agent : undefined) }, get: () => undefined, on: () => {} }
   apply(ctx, { codex: false }, { store })
   assert.deepEqual(registered[0].providers, ['acp-claude'])
   // No model until the adapter is installed: nothing (a picker, a Bot) can pick it before it can answer.

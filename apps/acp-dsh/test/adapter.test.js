@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { ToolNotFoundError } from '@deepseek-ai/dsh-tools'
 import { isAgentLoopRequest, markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import { apply } from '../index.js'
@@ -24,7 +25,9 @@ function host({ answer = 'allowed-once' } = {}) {
   const registered = {}
   const asked = []
   const disposers = []
-  const tools = new Map()
+  const agents = new Map()
+  const scopes = new Map()
+  const listeners = new Map()
   // What the adapter writes to the Session's log itself: DSH's session.append, recorded. A test
   // that sets `h.log` gets each message there too, where DSH would put it in the chat.
   const appended = []
@@ -33,18 +36,71 @@ function host({ answer = 'allowed-once' } = {}) {
     h.log?.push(data)
     return { seq: appended.length }
   }
-  const agent = { session: { id: 's1', header: { cwd }, append }, ctx: { tools: { register: (def) => { assert.ok(!tools.has(def.name), 'registered once'); tools.set(def.name, def); return () => tools.delete(def.name) } } } }
+  // One Session's agent: its own scoped tools, each with the step condition it registered.
+  const addAgent = (id, provider = 'acp-fake') => {
+    const tools = new Map()
+    const names = []
+    const conditions = new Map()
+    const agent = {
+      session: { id, header: { cwd }, append },
+      model: { current: () => ({ provider, model: 'default' }) },
+      options: { provider },
+      ctx: {
+        tools: {
+          register: (def, options = {}) => {
+            assert.ok(!tools.has(def.name), 'registered once')
+            names.push(def.name)
+            tools.set(def.name, def)
+            conditions.set(def.name, options.when)
+            return () => { tools.delete(def.name); conditions.delete(def.name) }
+          },
+        },
+      },
+    }
+    agents.set(id, agent)
+    scopes.set(id, { tools, names, conditions })
+    return agent
+  }
+  // What dsh-agent-loop's preStep resolves before the adapter streams a step: the scope's
+  // visible tools whose registration condition admits this step's model selection, the way
+  // dsh-tools' ToolsService.resolve evaluates `when`.
+  const admit = async (id, modelSelection) => {
+    const { tools, conditions } = scopes.get(id)
+    const admitted = new Map()
+    for (const [name, definition] of tools) {
+      const when = conditions.get(name)
+      const context = { agent: agents.get(id), modelSelection, signal: new AbortController().signal }
+      if (when === undefined || await when(context)) admitted.set(name, definition)
+    }
+    return admitted
+  }
+  const agent = addAgent('s1')
   const ctx = {
     llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter; return () => {} } },
-    agents: { get: id => (id === 's1' ? agent : undefined) },
+    agents: { get: id => agents.get(id) },
     get: name => (name === 'approval' ? { request: async (req) => { asked.push(req); return typeof answer === 'function' ? answer(req) : answer } } : undefined),
-    on: () => {},
+    on: (name, listener) => { listeners.set(name, [...(listeners.get(name) ?? []), listener]); return () => {} },
     effect: (fn) => { disposers.push(fn()) },
   }
   // The old path, explicitly: dshTools defaults on, so this host is the kill-switch suite.
   apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
-  const h = { adapter: registered['acp-fake'], agent, tools, asked, appended, close, registered }
+  const h = {
+    adapter: registered['acp-fake'],
+    agent,
+    agents,
+    addAgent,
+    admit,
+    tools: scopes.get('s1').tools,
+    toolsOf: id => scopes.get(id).tools,
+    namesOf: id => scopes.get(id).names,
+    // DSH dispatches agent/created after the agent's scoped setup and before queued input.
+    emit: (name, payload) => { for (const listener of listeners.get(name) ?? []) listener(payload) },
+    asked,
+    appended,
+    close,
+    registered,
+  }
   return h
 }
 
@@ -429,13 +485,142 @@ test('sideModel is a live setting, DeepSeek Flash by default', async () => {
 
 test('an agent that cannot start fails the step with its reason', async () => {
   const registered = {}
-  const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: () => undefined }, get: () => undefined }
+  // The Session's agent exists (scope finds it); the agent's process is what cannot start.
+  // The old path, explicitly: dshTools defaults on, so the failure is the agent's spawn.
+  const agent = { session: { id: 's9' }, ctx: { tools: { register: () => () => {} } } }
+  const ctx = { llm: { registerAdapter: (providers, adapter) => { for (const id of providers) registered[id] = adapter } }, agents: { get: id => (id === 's9' ? agent : undefined) }, get: () => undefined }
   const fake = join(import.meta.dirname, 'fixtures', 'no-such-agent.mjs')
   apply(ctx, { fakeAgent: fake, claude: false, codex: false, dshTools: false })
   const chunks = []
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
   assert.match(chunks.at(-1).reason.failure.message, /Fake agent did not start/)
+})
+
+// #661: DSH resolves a step's admitted tool set in preStep, before the adapter streams that
+// step. A new chat's first step is resolved right after its agent is created, so a registration
+// made lazily when the stream starts is too late for it: the mirrored acp_tool call was
+// ToolNotFoundError UNKNOWN_TOOL until the next step. The adapter registers it on agent/created.
+test('a fresh Session\'s first mirrored call resolves from agent/created, in its own scope only', async () => {
+  const h = host()
+  try {
+    // Another Session on the same route (the event may reach it later), and DSH's own Session
+    // on another provider: registration is per agent, and the step condition admits only ACP.
+    const second = h.addAgent('s2')
+    const native = h.addAgent('native', 'deepseek-official')
+
+    // What DSH does when it creates the agent: announce it, then resolve the first step's tools.
+    h.emit('agent/created', { agent: h.agent })
+    h.emit('agent/created', { agent: native })
+
+    // The first step's admitted set, as dsh-agent-loop's preStep resolves it before streaming.
+    // Pre-fix it has no acp_tool: scope() only registers it once this stream has begun.
+    const admitted = await h.admit('s1', { provider: 'acp-fake', model: 'default' })
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
+    const first = await step(h.adapter, messages)
+    assert.equal(first.at(-1).reason.kind, 'tool-calls')
+    const call = first.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')?.block
+    assert.equal(call?.name, TOOL_NAME)
+    const tool = admitted.get(call.name)
+    // Exactly what dsh-tools raises for a call outside the step's admitted set: on the
+    // pre-fix behaviour this test fails here with `unknown tool "acp_tool"` (UNKNOWN_TOOL).
+    if (tool === undefined) throw new ToolNotFoundError(call.name)
+
+    // It is in this agent's first-step set, and the registration is per agent; the step
+    // condition keeps DSH's own steps out (and a step with no model selection sees nothing),
+    // while an agent whose event never fired keeps no tool at all.
+    assert.ok(h.tools.has(TOOL_NAME))
+    assert.deepEqual(h.namesOf('s2'), [])
+    assert.deepEqual([...await h.admit('native', { provider: 'deepseek-official', model: 'deepseek-flash' })], [])
+    assert.deepEqual([...await h.admit('native', undefined)], [])
+
+    // DSH executes the call from that admitted set: the mirror tool waits for the agent's call
+    // and asks DSH's approval service about it (the approval pair for this exact call).
+    const args = JSON.parse(call.arguments)
+    const value = await tool.execute(args, { agent: h.agent, callId: call.id, signal: new AbortController().signal })
+    assert.equal(value.status, 'completed')
+    assert.deepEqual(tool.output.render(args, value), [{ type: 'text', text: 'hello 1' }])
+    assert.deepEqual(tool.presentCall(args), { card: 'terminal', title: 'Run echo hello 1', description: 'echo hello 1' })
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, TOOL_NAME)
+    assert.equal(h.asked[0].callId, call.id)
+    assert.equal(h.asked[0].agent, h.agent)
+
+    // The result goes back as DSH's tool row and the agent goes on: the first step was not an
+    // unknown tool, and neither stream carries a UNKNOWN_TOOL failure.
+    messages.push(
+      { role: 'assistant', source: { kind: 'model', provider: 'acp-fake', model: 'default' }, content: first.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block) },
+      { role: 'tool', toolCallId: call.id, source: { kind: 'tool', callId: call.id }, content: tool.output.render(args, value), meta: tool.output.presentationMeta(args, value) },
+    )
+    const next = await step(h.adapter, messages)
+    assert.equal(next.at(-1).reason.kind, 'stop')
+    assert.equal(textIn(next), ' It printed hello 1.')
+    for (const chunk of [...first, ...next]) assert.notEqual(chunk.reason?.failure?.code, 'UNKNOWN_TOOL')
+
+    // scope() is the fallback for an agent the event missed: registered once, then kept
+    // idempotent by the scoped WeakSet.
+    assert.equal(h.adapter.scope('s2'), second)
+    assert.ok(h.toolsOf('s2').has(TOOL_NAME))
+    assert.deepEqual(h.namesOf('s2'), [TOOL_NAME])
+    h.adapter.scope('s2')
+    assert.deepEqual(h.namesOf('s2'), [TOOL_NAME])
+
+    // A Session with no live agent fails the turn clearly, naming the Session, with its code.
+    const missing = []
+    for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 'gone', messages: [] }))) missing.push(chunk)
+    const end = missing.at(-1)
+    assert.equal(end.reason.kind, 'error')
+    assert.equal(end.reason.failure.code, 'acp_agent_missing')
+    assert.match(end.reason.failure.message, /gone/)
+    assert.ok(end.reason.failure.message.length > 0)
+  } finally {
+    h.close()
+  }
+})
+
+// #661's coverage gap: `session.create` takes no model, so a new chat starts on DSH's default
+// route and `agent/created` sees that provider. The person picks an ACP route (or a live switch
+// moves there) before the first prompt; the step's own model selection is what decides admission.
+test('a Session created on a DSH route then picked to an ACP route has acp_tool in step 1', async () => {
+  const h = host()
+  try {
+    // `session.create` starts on `agentDefaultModel`: this agent exists on that route when DSH
+    // announces it.
+    const late = h.addAgent('late', 'deepseek-official')
+    h.emit('agent/created', { agent: late })
+    // The picker (`agent.model.select`) or a live switch moves it to the ACP route before the
+    // first prompt, and DSH records the new selection.
+    late.model = { current: () => ({ provider: 'acp-fake', model: 'default' }) }
+    late.options = { provider: 'acp-fake' }
+
+    // Step 1's admitted set, as dsh-agent-loop's preStep resolves it before streaming. At
+    // 1d2524e8 the listener only registered agents already on an ACP route, so this is empty
+    // and the mirrored call below is UNKNOWN_TOOL.
+    const admitted = await h.admit('late', { provider: 'acp-fake', model: 'default' })
+    const messages = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]
+    const request = markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 'late', messages })
+    const chunks = []
+    for await (const chunk of h.adapter.stream(request)) chunks.push(chunk)
+    assert.equal(chunks.at(-1).reason.kind, 'tool-calls')
+    const call = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')?.block
+    assert.equal(call?.name, TOOL_NAME)
+    const tool = admitted.get(call.name)
+    if (tool === undefined) throw new ToolNotFoundError(call.name)
+
+    // It resolves from step 1's set: the mirrored call runs through DSH's approval, from this
+    // Session's own agent scope.
+    const args = JSON.parse(call.arguments)
+    const value = await tool.execute(args, { agent: late, callId: call.id, signal: new AbortController().signal })
+    assert.equal(value.status, 'completed')
+    assert.deepEqual(tool.output.render(args, value), [{ type: 'text', text: 'hello 1' }])
+    assert.equal(h.asked.length, 1)
+    assert.equal(h.asked[0].toolName, TOOL_NAME)
+    assert.equal(h.asked[0].callId, call.id)
+    assert.equal(h.asked[0].agent, late)
+    assert.deepEqual(h.namesOf('late'), [TOOL_NAME], 'registered in its own scope, once')
+  } finally {
+    h.close()
+  }
 })
 
 test('without an agent the plugin registers no route', () => {

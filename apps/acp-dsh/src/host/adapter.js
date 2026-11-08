@@ -294,6 +294,27 @@ export class AcpAdapter extends LlmAdapter {
     this.live = new Map()
     this.scoped = new WeakSet()
     this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
+    // A new chat's first model step lists its tools after `agent/created`: register the mirror
+    // tool there in every agent's own scope, with the step condition that admits it only on
+    // this adapter's routes. A chat is created on DSH's default route and may be picked to an
+    // ACP one before its first prompt, so a create-time check would miss that first step. The
+    // stream's `scope()` stays as the fallback for an agent this event missed.
+    this.ctx.on?.('agent/created', ({ agent } = {}) => this.registerMirror(agent))
+  }
+
+  /**
+   * Put the mirror tool in the Session agent's own scope, once, with the condition DSH
+   * evaluates when it resolves a step's tools: admitted only while the step's provider is one
+   * of this adapter's routes. No model selection means no admission, never a throw. A missing
+   * agent is a no-op; `scope()` decides what that means for a turn.
+   * @param {any} agent
+   */
+  registerMirror(agent) {
+    if (agent === undefined || this.scoped.has(agent)) return
+    agent.ctx.tools.register(this.tool, {
+      when: ({ modelSelection }) => this.agents.has(modelSelection?.provider),
+    })
+    this.scoped.add(agent)
   }
 
   /**
@@ -470,12 +491,17 @@ export class AcpAdapter extends LlmAdapter {
     return { provider, id: found.id, name: found.name, ...(found.description ? { description: found.description } : {}), ...(found.reasoning ? { reasoning: found.reasoning } : {}) }
   }
 
-  // The mirror tool lives in the agent's own scope: no other Session's model sees it.
+  // The mirror tool lives in the agent's own scope: no other Session's model sees it. The
+  // agent/created listener registers it before the first step; this fallback covers an agent
+  // that event missed and fails clearly when the Session has no live agent at all.
   scope(sessionId) {
     const agent = this.ctx.agents?.get?.(sessionId)
-    if (agent === undefined || this.scoped.has(agent)) return agent
-    agent.ctx.tools.register(this.tool)
-    this.scoped.add(agent)
+    if (agent === undefined) {
+      const error = new Error(`the Session ${sessionId} has no live agent`)
+      error.code = 'acp_agent_missing'
+      throw error
+    }
+    this.registerMirror(agent)
     return agent
   }
 
@@ -489,7 +515,7 @@ export class AcpAdapter extends LlmAdapter {
     try {
       dshAgent = this.scope(sessionId)
     } catch (error) {
-      return yield finish('error', `${agent.name} cannot show its tools here: ${error?.message ?? error}`)
+      return yield finish('error', `${agent.name} cannot show its tools here: ${error?.message ?? error}`, error?.code)
     }
     const blocks = new Blocks()
     let live = this.live.get(sessionId)
