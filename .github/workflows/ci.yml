@@ -138,6 +138,8 @@ jobs:
       # (mods/am-automations/scheduler.js): checked against that release's checksums.txt.
       - name: Scheduler pin
         if: steps.changed.outputs.herdr == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/scheduler-pin.mjs
 
       # On every pull request, whatever changed: herdr.dev skips the whole repository when a herdr-mod
