@@ -99,6 +99,22 @@ class HomeChatsTest {
         assertEquals(setOf(paneRef), chats(listOf(row("b-main", "blocked")), teams = listOf(team)).panes.keys)
     }
 
+    /** The issue's case (#752): a project main Bot with no pane, its shown DSH chat blocked on a question, is a Needs you row. */
+    @Test fun aDshOnlyMainBotWithAnOpenQuestionIsANeedsYouRow() {
+        val lead = Teams.Bot("b-main", "Lead", true, null, Teams.IDLE, "", 0L, null, "")
+        val team = Teams.Team("$host||/w", host, "", "/w", "W", Teams.Icon.Letter, null, listOf(lead))
+        val blocked = listOf(row("s1", "blocked", kind = "question", msg = "Which branch?", registryId = "b-main"))
+        val p = pulse(chats(blocked, teams = listOf(team)), pane("t1", "working"))
+        assertEquals(1, p.needsYou); assertEquals(1, Nav.badge(Nav.HOME_TAB, p.needsYou, 0))
+        val e = p.sections.first { it.rank == Cockpit.BLOCKED }.entries.single()
+        assertEquals(TerminalRef(host, "dsh:s1"), e.ref); assertEquals("Lead", e.terminal.title)
+        assertEquals("question", e.terminal.kind); assertEquals("Which branch?", e.terminal.message)
+        // An idle such chat adds no needs-you row: it is in Home's Idle, and the badge stays clear.
+        val idle = pulse(chats(listOf(row("s1", "idle", registryId = "b-main")), teams = listOf(team)), pane("t1", "working"))
+        assertEquals(0, idle.needsYou); assertEquals(listOf("dsh:s1"), refs(idle, Cockpit.IDLE))
+        assertTrue(idle.sections.none { it.rank == Cockpit.BLOCKED })
+    }
+
     /** The joined row's Done is the chat's: its receipt is the line, and looking at the chat clears it. The pane's own Done keeps its own key. */
     @Test fun aJoinedRowsDoneIsTheChatsAndClearsWithTheChatsKey() {
         val paneRef = TerminalRef(host, "t1"); val chatRef = TerminalRef(host, "dsh:s1"); val key = ChatWatch.key(host, "dsh:s1")

@@ -11,7 +11,7 @@ tags: [decisions, home, bots, chat]
 
 Home is the needs-you cockpit, and an Automagik Bot's `dsh:` chat is in it: a chat blocked on a
 question or an approval counts, carries the Home badge and is a Needs you row that opens the chat.
-Issue #732 (signed four-tab work, part 2).
+Issue #732 (signed four-tab work, part 2); #752 adds the chat nobody has open yet.
 
 ## Decision
 
@@ -21,6 +21,13 @@ Issue #732 (signed four-tab work, part 2).
   it asks (the row's line when bots-dsh gives one, else the open card's text while the chat is
   open), and "Needs you · question" or "· permission". The count card and the Home badge are the
   sections' Needs you count, so a blocked chat raises both (`Projects.Pulse.needsYou`).
+- **A chat nobody has open is read when listed.** bots-dsh serves the watch's word for a Bot a
+  phone watches and, for every other Bot, reads its Session state while listing it (in parallel,
+  with a short timeout; a failed or slow read keeps the idle row). That row carries the blocked
+  word and its kind and, with writes on, the open request's text as its line: the question's
+  prompt, else the approval's summary. So Home counts a DSH-only Bot that asks something before
+  any phone opens its chat (#752). Read-only bridges keep "Answer on the computer". Nothing is
+  stored: the state read and the open requests are memory only ([privacy](../privacy.md)).
 - **The row opens the chat.** Its ref is the `dsh:<sessionId>` chat itself: a tap is
   `selectTerminal` on it, which shows the chat (`MainActivity`, `ChatPane`), scrolled to its end,
   where the open card is. Never the terminal screen.
@@ -34,10 +41,11 @@ Issue #732 (signed four-tab work, part 2).
   remembers what it saw of each chat between readings (`ChatWatch`): a chat that goes quiet after
   being seen blocked or working is Done, until it is looked at (`Cockpit.seenKey`, with the phone's
   own turn count) or starts again. A chat first seen quiet is idle, and so is one the phone left
-  while it was blocked or working (bots-dsh lists a chat no phone watches as idle, so that quiet is
-  no finish; seen active again, the turn goes on). The Done line is the receipt of
-  the request the open chat saw settled ("Answered on the phone (Pixel): Allow"), kept with that
-  turn. All of it in memory only, like the chats ([privacy](../privacy.md)).
+  while it was blocked or working (a listing after the phone left can still be idle, when the
+  state read fails, so that quiet is no finish; seen active again, the turn goes on). The Done line
+  is the receipt of the request the open chat saw settled ("Answered on the phone (Pixel):
+  Allow"), kept with that turn. All of it in memory only, like the chats
+  ([privacy](../privacy.md)).
 - **Read only says so.** A blocked chat on a machine whose bridge takes no phone writes (`dshWrite`
   false in the last listing's hello) says "Read only on the phone: answer on the computer" on its
   row; the chat it opens says the same on its bottom line (#731). bots-dsh's own "Answer on the
@@ -55,20 +63,25 @@ Issue #732 (signed four-tab work, part 2).
   the open chat's state and card text on its row; `Chat.receiptLine` reads a closed card's receipt.
 - `PocketViewModel`: `chatWatch`, `botWrites`; `loadBotChats` feeds the watch and the writes flag,
   `chatEvent` the open chat's status, `chatSubscribe` the receipts; `markSeen` marks a chat's Done.
-- Tested in `HomeChatsTest`, one test per acceptance row of #732.
+- The list itself: `apps/bots-dsh/src/host/pocket-chat.js` `list` serves a watched Bot's status and,
+  for an unwatched one, the Session state it reads while listing (`LIST_STATE_MS`), with the open
+  request's text in `msg` when the bridge takes writes. Tested in
+  `apps/bots-dsh/test/pocket-chat.test.js`, the `list:` tests.
+- Tested in `HomeChatsTest`, one test per acceptance row of #732, plus
+  `aDshOnlyMainBotWithAnOpenQuestionIsANeedsYouRow` for #752's case.
 
 ## Open questions
 
-1. bots-dsh's `chat.list` serves a live status only for a Bot some phone is watching
-   (`pocket-chat.js` `list`: the followed entry's status, else `statusOf(null)`, idle). With that,
-   a chat nobody has open always reads idle, so Home can count it only while some phone has it
-   open (the watch does not take the quiet after leaving as a finish). The fix is on the bots-dsh
-   side: `list` reads each unwatched Bot's state from DSH, and, with writes on, puts the open
-   request's text in `msg`. The lead decides where it lands.
-2. The question's text reaches an unopened chat's row only when bots-dsh puts it in the row's
-   `msg` (see 1); until then the row says the kind.
-3. Team's bubble keeps bots-dsh's word (never Done) for a DSH-only main bot. Whether it should
+1. Team's bubble keeps bots-dsh's word (never Done) for a DSH-only main bot. Whether it should
    take the watch's word too: the owner.
+
+## Resolved
+
+- bots-dsh's `chat.list` served a live status only for a Bot some phone was watching (the followed
+  entry's status, else `statusOf(null)`, idle), so a chat nobody had open always read idle and Home
+  could count it only while some phone had it open. In #752, `list` reads each unwatched Bot's
+  state from DSH, and the question's text reaches an unopened chat's row in `msg`.
+  `HomeChatsTest.aDshOnlyMainBotWithAnOpenQuestionIsANeedsYouRow` pins the phone's side.
 
 ## Related
 
