@@ -31,8 +31,8 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync,
-  mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
+import { accessSync, chmodSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync,
+  mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
   writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import net from "node:net";
@@ -40,8 +40,6 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
 import { approvedProxyState, approvedRootOf } from "./approved.js";
-import { ATTACH_FILE } from "./attach.js";
-import { PROJECTS_FILE, listedProjects } from "./model.js";
 import { LEDGER_FILE, dataRootOf, stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
@@ -965,6 +963,33 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
   }));
 }
 
+const ATTACH_LEDGER_FILE = "automagik-herdr/attach.jsonl";
+const PROJECTS_LIST_FILE = "am-sidebar-projects.json";
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
+function listedProjectKeys(text) {
+  let list;
+  try { list = typeof text === "string" && text ? JSON.parse(text) : []; } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.filter((k) => typeof k === "string" && k.startsWith("/")))];
+}
+
+function readSafeLedgerForDoctor(path, uid) {
+  const flags = (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  let fd;
+  try { fd = openSync(path, flags); } catch { return ""; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.isSymbolicLink?.()) return "";
+    if (uid !== null && typeof st.uid === "number" && st.uid !== uid) return "";
+    return readFileSync(fd, "utf8");
+  } catch {
+    return "";
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
 /**
  * Read-only inspection of Herdr ledgers (`automagik-herdr/workers.jsonl` and `attach.jsonl`)
  * under the app home, the current project's `.herdr/app-home` (when `project` is given), and
@@ -972,34 +997,37 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
  */
 export function doctorLedgers({ env = process.env, project = null, getuid = process.getuid, stat = lstatSync } = {}) {
   const appHome = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config", "herdr-app");
+  const uid = typeof getuid === "function" ? getuid() : null;
   const homes = [resolve(appHome)];
-  const projects = [];
-  if (typeof project === "string" && isAbsolute(project) && resolve(project) !== "/") projects.push(project);
+  const projects = new Set();
+  if (typeof project === "string" && isAbsolute(project) && resolve(project) !== "/") projects.add(project);
   try {
     const shared = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8"));
     for (const key of ["am.sidebar.projects", "spaces-agents.projects"]) {
       const list = shared && typeof shared === "object" && Object.hasOwn(shared, key) ? shared[key] : null;
       for (const p of Array.isArray(list) ? list : []) {
-        if (typeof p?.key === "string" && !p.machine) projects.push(p.key);
+        if (typeof p?.key === "string" && !p.machine) projects.add(p.key);
       }
     }
   } catch { /* none */ }
-  for (const name of [PROJECTS_FILE, "spaces-agents-projects.json"]) {
-    try { projects.push(...listedProjects(readFileSync(join(appHome, name), "utf8"))); } catch { /* none */ }
+  for (const name of [PROJECTS_LIST_FILE, "spaces-agents-projects.json"]) {
+    try {
+      for (const k of listedProjectKeys(readFileSync(join(appHome, name), "utf8"))) projects.add(k);
+    } catch { /* none */ }
   }
-  for (const rel of [LEDGER_FILE, ATTACH_FILE]) {
-    let text = "";
-    try { text = readFileSync(join(appHome, rel), "utf8"); } catch { continue; }
+  for (const rel of [LEDGER_FILE, ATTACH_LEDGER_FILE]) {
+    const text = readSafeLedgerForDoctor(join(appHome, rel), uid);
+    if (!text) continue;
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       let row;
       try { row = JSON.parse(line); } catch { continue; }
-      if (typeof row?.project === "string") projects.push(row.project);
+      if (typeof row?.project === "string") projects.add(row.project);
       if (typeof row?.worktree === "string") {
-        projects.push(row.worktree);
+        projects.add(row.worktree);
         const marker = "/.claude/worktrees/";
         const at = row.worktree.indexOf(marker);
-        if (at > 0) projects.push(row.worktree.slice(0, at));
+        if (at > 0) projects.add(row.worktree.slice(0, at));
       }
     }
   }
@@ -1011,10 +1039,10 @@ export function doctorLedgers({ env = process.env, project = null, getuid = proc
   const seenResolved = new Set();
   const seenCanonical = new Set();
   const problems = [];
+  const chmodFiles = [];
   let present = 0;
-  const uid = typeof getuid === "function" ? getuid() : null;
   for (const home of homes) {
-    for (const rel of [LEDGER_FILE, ATTACH_FILE]) {
+    for (const rel of [LEDGER_FILE, ATTACH_LEDGER_FILE]) {
       const file = join(home, rel);
       const abs = resolve(file);
       if (seenResolved.has(abs)) continue;
@@ -1022,7 +1050,7 @@ export function doctorLedgers({ env = process.env, project = null, getuid = proc
       let st;
       try { st = stat(file); } catch (e) {
         if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
-        problems.push({ file, detail: `${file} could not be inspected (${e?.message ?? e})` });
+        problems.push(`${file} could not be inspected (${e?.message ?? e})`);
         continue;
       }
       if (!st) continue;
@@ -1034,25 +1062,26 @@ export function doctorLedgers({ env = process.env, project = null, getuid = proc
       present += 1;
       if (st.isSymbolicLink() || !st.isFile()) {
         const kind = st.isSymbolicLink() ? "a symlink" : "not a regular file";
-        problems.push({ file, detail: `${file} is ${kind} (Herdr ledgers must be plain 0600 files)` });
+        problems.push(`${file} is ${kind} (Herdr ledgers must be plain 0600 files)`);
         continue;
       }
       const mode = st.mode & 0o777;
       const oct = `0${mode.toString(8).padStart(3, "0")}`;
       if (uid !== null && typeof st.uid === "number" && st.uid !== uid) {
-        problems.push({ file, detail: `${file} is owned by uid ${st.uid}, not ${uid} (mode ${oct})` });
+        problems.push(`${file} is owned by uid ${st.uid}, not ${uid} (mode ${oct})`);
         continue;
       }
       if ((mode & 0o177) !== 0) {
-        problems.push({ file, detail: `${file} is mode ${oct}, wider than 0600` });
+        problems.push(`${file} is mode ${oct}, wider than 0600`);
+        chmodFiles.push(file);
       }
     }
   }
   if (problems.length) {
     return {
       ok: false,
-      detail: problems.map((p) => p.detail).join("; "),
-      fix: `chmod 600 ${problems.map((p) => p.file).join(" ")}`,
+      detail: problems.join("; "),
+      fix: chmodFiles.length ? `chmod 600 ${chmodFiles.map(shQuote).join(" ")}` : null,
     };
   }
   return {

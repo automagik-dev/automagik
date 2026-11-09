@@ -2440,4 +2440,21 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   assert.equal(lstatSync(attachFile).mode & 0o777, 0o400, "0464 tightened to 0400, not widened to 0600");
   chmodSync(workersFile, 0o600);
   chmodSync(attachFile, 0o600);
+
+  // (c) M1 + M2: a FIFO ledger never blocks, and 2,000 repeated rows deduplicate before git resolution.
+  const projDir = join(home, "proj-dedup");
+  mkdirSync(projDir, { recursive: true });
+  const row = `${JSON.stringify({ event: "start", worktree: projDir, project: projDir })}\n`;
+  writeFileSync(workersFile, row.repeat(2000));
+  chmodSync(workersFile, 0o644);
+  unlinkSync(attachFile);
+  assert.equal(spawnSync("mkfifo", [attachFile]).status, 0);
+  let gitCalls = 0;
+  const rFifo = tightenLedgers(home, {
+    git: () => { gitCalls += 1; return ""; },
+  });
+  assert.deepEqual(rFifo.tightened, [workersFile]);
+  assert.equal(rFifo.warnings.length, 1);
+  assert.match(rFifo.warnings[0], /attach\.jsonl is not a regular file: left as it is/);
+  assert.ok(gitCalls <= 2, `expected distinct folders resolved at most once, got ${gitCalls} git calls`);
 });

@@ -918,13 +918,13 @@ test("#839: doctorDshTui and cmdDshTui doctor report wide or unowned ledgers rea
   writeFileSync(projAttach, '{"event":"attach","session":"s-2"}\n');
   chmodSync(projAttach, 0o664);
 
-  const report = await cmdDshTui({ json: true }, ["doctor"], io);
+  const report = await cmdDshTui({ json: true, project }, ["doctor"], io);
   assert.equal(report.code, 1);
   const ledgerCheck = report.checks.find((c) => c.check === "herdr-ledgers");
   assert.equal(ledgerCheck.ok, false);
   assert.match(ledgerCheck.detail, /workers\.jsonl is mode 0644, wider than 0600/);
   assert.match(ledgerCheck.detail, /attach\.jsonl is mode 0664, wider than 0600/);
-  assert.equal(ledgerCheck.fix, `chmod 600 ${globalWorkers} ${projAttach}`);
+  assert.equal(ledgerCheck.fix, `chmod 600 '${globalWorkers}' '${projAttach}'`);
   assert.equal(lstatSync(globalWorkers).mode & 0o777, 0o644, "doctor is read-only");
   assert.equal(lstatSync(projAttach).mode & 0o777, 0o664, "doctor is read-only");
 
@@ -934,14 +934,34 @@ test("#839: doctorDshTui and cmdDshTui doctor report wide or unowned ledgers rea
   chmodSync(globalWorkers, 0o600);
   chmodSync(projAttach, 0o600);
 
-  const unowned = await cmdDshTui({ json: true }, ["doctor"], { ...io, getuid: () => 999999 });
+  const unowned = await cmdDshTui({ json: true, project }, ["doctor"], { ...io, getuid: () => 999999 });
   assert.equal(unowned.code, 1);
   const unownedCheck = unowned.checks.find((c) => c.check === "herdr-ledgers");
   assert.equal(unownedCheck.ok, false);
   assert.match(unownedCheck.detail, /owned by uid \d+, not 999999/);
-  assert.equal(unownedCheck.fix, `chmod 600 ${globalWorkers} ${projAttach}`);
+  assert.equal(unownedCheck.fix, null, "never suggest chmod 600 for another user's file");
 
-  const clean = await cmdDshTui({ json: true }, ["doctor"], io);
+  // Symlink and FIFO ledgers: doctor never hangs on a FIFO and never prints chmod 600 for symlinks or FIFOs.
+  unlinkSync(globalWorkers);
+  assert.equal(spawnSync("mkfifo", [globalWorkers]).status, 0);
+  unlinkSync(projAttach);
+  symlinkSync(join(s.root, "outside.jsonl"), projAttach);
+  const nonRegular = await cmdDshTui({ json: true, project }, ["doctor"], io);
+  assert.equal(nonRegular.code, 1);
+  const nonRegularCheck = nonRegular.checks.find((c) => c.check === "herdr-ledgers");
+  assert.equal(nonRegularCheck.ok, false);
+  assert.match(nonRegularCheck.detail, /workers\.jsonl is not a regular file/);
+  assert.match(nonRegularCheck.detail, /attach\.jsonl is a symlink/);
+  assert.equal(nonRegularCheck.fix, null, "never suggest chmod 600 for FIFO or symlink");
+
+  unlinkSync(globalWorkers);
+  unlinkSync(projAttach);
+  writeFileSync(globalWorkers, '{"event":"start","session":"s-1"}\n');
+  chmodSync(globalWorkers, 0o600);
+  writeFileSync(projAttach, '{"event":"attach","session":"s-2"}\n');
+  chmodSync(projAttach, 0o600);
+
+  const clean = await cmdDshTui({ json: true, project }, ["doctor"], io);
   assert.equal(clean.code, 0, JSON.stringify(clean.checks));
   const cleanCheck = clean.checks.find((c) => c.check === "herdr-ledgers");
   assert.equal(cleanCheck.ok, true);

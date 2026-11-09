@@ -10,7 +10,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -766,16 +766,23 @@ function coreId() {
 
 /** The ledger's rows, or null when there is no file. A group- or world-writable file is refused. */
 export function readAttachFile(path = attachPath(appHome())) {
-  let st;
-  try { st = statSync(path); } catch (e) {
+  const flags = (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  let fd;
+  try { fd = openSync(path, flags); } catch (e) {
     if (e?.code === "ENOENT" || e?.code === "ENOTDIR") return null;
     throw new LedgerRefusal(`Can't read ${path}: ${e?.message ?? e}`);
   }
-  const why = modeProblem(path, st.mode);
-  if (why) throw new LedgerRefusal(why);
-  let text;
-  try { text = readFileSync(path, "utf8"); } catch (e) { throw new LedgerRefusal(`Can't read ${path}: ${e?.message ?? e}`); }
-  return readAttach(text).rows;
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new LedgerRefusal(`Can't read ${path}: not a regular file`);
+    const why = modeProblem(path, st.mode);
+    if (why) throw new LedgerRefusal(why);
+    let text;
+    try { text = readFileSync(fd, "utf8"); } catch (e) { throw new LedgerRefusal(`Can't read ${path}: ${e?.message ?? e}`); }
+    return readAttach(text).rows;
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
+  }
 }
 
 /** Appends rows, one O_APPEND write each, the file made 0600 when new (`flag` "ax": only when absent). */
@@ -5422,7 +5429,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   const env = io.env ?? process.env;
   if (verb === "doctor") {
     let roster = [];
-    let projectKey = typeof opts?.project === "string" ? resolve(opts.project) : null;
+    let projectKey = typeof opts?.project === "string" ? resolvePath(opts.project) : null;
     let rosterError = null;
     try {
       const project = io.project ?? await projectFor(opts);
@@ -5443,7 +5450,9 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
           detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
         const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
-        const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
+        let attachRows = [];
+        try { attachRows = readAttachFile(attachPath(app)) ?? []; } catch { attachRows = []; }
+        const bindings = foldAttach(attachRows).byBot;
         r.bots = await doctorBotProxies({ bots: roster, project: projectKey,
           bindings, env });
       } catch (e) {
