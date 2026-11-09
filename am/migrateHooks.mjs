@@ -17,7 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
+  chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -265,7 +265,9 @@ function ledgerProjectFolders(appHome, git = runGit) {
  * stricter mode (0400/0000), and leaves unowned files alone with a warning.
  */
 export function tightenLedgers(appHome, {
-  extra = [], git = runGit, getuid = process.getuid, stat = lstatSync, chmod = chmodSync,
+  extra = [], git = runGit, getuid = process.getuid,
+  stat = lstatSync, chmod = chmodSync,
+  open = openSync, fstat = fstatSync, fchmod = fchmodSync, close = closeSync,
   log = () => {}, warn = true,
 } = {}) {
   const homes = [resolve(appHome)];
@@ -280,9 +282,30 @@ export function tightenLedgers(appHome, {
   const tightened = [];
   const warnings = [];
   const uid = typeof getuid === "function" ? getuid() : null;
+  const useFd = typeof constants?.O_NOFOLLOW === "number"
+    && ((stat === lstatSync && chmod === chmodSync)
+      || open !== openSync || fstat !== fstatSync || fchmod !== fchmodSync);
   const noteWarn = (w) => {
     warnings.push(w);
     if (warn) log(`warning: ${w}`);
+  };
+  const restatAndChmod = (file, st) => {
+    const after = stat(file);
+    if (!after || after.isSymbolicLink() || !after.isFile()
+      || after.dev !== st.dev || after.ino !== st.ino) {
+      const kind = after?.isSymbolicLink?.() ? "became a symlink" : "changed during inspection";
+      noteWarn(`${file} ${kind}: left as it is (Herdr ledgers must be plain files)`);
+      return false;
+    }
+    if (uid !== null && typeof after.uid === "number" && after.uid !== uid) {
+      noteWarn(`${file} is owned by uid ${after.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+      return false;
+    }
+    const afterMode = after.mode & 0o777;
+    if ((afterMode & 0o177) === 0) return false;
+    const target = afterMode & 0o600;
+    chmod(file, target);
+    return true;
   };
   for (const home of homes) {
     for (const rel of HERDR_LEDGERS) {
@@ -312,10 +335,49 @@ export function tightenLedgers(appHome, {
       }
       const mode = st.mode & 0o777;
       if ((mode & 0o177) !== 0) {
-        const target = mode & 0o600;
         try {
-          chmod(file, target);
-          tightened.push(file);
+          let changed = false;
+          if (useFd) {
+            let fd = null;
+            try {
+              fd = open(file, (constants.O_RDONLY ?? 0) | constants.O_NOFOLLOW);
+            } catch (e) {
+              if (e?.code === "ELOOP" || e?.code === "EFTYPE") {
+                noteWarn(`${file} became a symlink: left as it is (Herdr ledgers must be plain files)`);
+                continue;
+              }
+              if ((e?.code === "EACCES" || e?.code === "EPERM") && (mode & 0o400) === 0) {
+                changed = restatAndChmod(file, st);
+              } else {
+                throw e;
+              }
+            }
+            if (fd !== null) {
+              try {
+                const fst = fstat(fd);
+                if (!fst || fst.isSymbolicLink?.() || !fst.isFile()
+                  || fst.dev !== st.dev || fst.ino !== st.ino) {
+                  noteWarn(`${file} changed during inspection: left as it is (Herdr ledgers must be plain files)`);
+                  continue;
+                }
+                if (uid !== null && typeof fst.uid === "number" && fst.uid !== uid) {
+                  noteWarn(`${file} is owned by uid ${fst.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+                  continue;
+                }
+                const fmode = fst.mode & 0o777;
+                if ((fmode & 0o177) !== 0) {
+                  const target = fmode & 0o600;
+                  fchmod(fd, target);
+                  changed = true;
+                }
+              } finally {
+                close(fd);
+              }
+            }
+          } else {
+            changed = restatAndChmod(file, st);
+          }
+          if (changed) tightened.push(file);
         } catch (e) {
           noteWarn(`${file} could not be tightened to 0600 (${e?.message ?? e})`);
         }
