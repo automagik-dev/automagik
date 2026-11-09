@@ -16,12 +16,14 @@
 //
 // What this does NOT cover: a real DSH home or session, the full app startup, the server image
 // build, and directory permissions (a synthetic tree cannot portably make readdir fail as root).
+// Two rows replace one method on the real backend instance to get what a synthetic tree cannot
+// portably make: a header read that fails with EIO or EACCES, and the listing's arrival order.
 // The stand-ins cover the pinned modules' imports (the catalog reads a synthetic v4 header, and a
 // minimal cordis context constructs the plugin); the listing path and the registry are the real
 // pinned code.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -299,10 +301,10 @@ function projectKey(cwd) {
 
 // A synthetic current-generation session log: one header line, no real session content. `dirName`
 // lets a backup copy carry the original header under a sibling folder name.
-function writeSession(sessions, cwd, { id = 'valid-one', dirName = id, headerId = id, headerCwd = cwd } = {}) {
+function writeSession(sessions, cwd, { id = 'valid-one', dirName = id, headerId = id, headerCwd = cwd, extra = {} } = {}) {
   const dir = join(sessions, projectKey(headerCwd), dirName)
   mkdirSync(dir, { recursive: true })
-  const header = { type: 'session', version: 4, id: headerId, createdAt: 1, isSeeded: false, delegationDepth: 0, cwd: headerCwd }
+  const header = { type: 'session', version: 4, id: headerId, createdAt: 1, isSeeded: false, delegationDepth: 0, cwd: headerCwd, ...extra }
   writeFileSync(join(dir, 'session.v4.jsonl'), `${JSON.stringify(header)}\n`)
   return dir
 }
@@ -362,7 +364,9 @@ test('patches.json pins the real 0.2.2-rc.1 listing to the desktop runtime', () 
   assert.ok(text.startsWith(`--- a/${PERSIST}/${FILE}\n+++ b/${PERSIST}/${FILE}\n`), text.slice(0, 120))
   assert.ok(text.includes('+\tskippedPaths = /* @__PURE__ */ new Set();'), 'the patch adds the per-instance skipped set')
   assert.ok(text.includes('+function warnSkippedSession(kind, path, error) {'), 'the patch adds the one-line reporter')
-  assert.ok(text.includes('this.warnSkipped("session folder", dirname(selected.sourcePath), error);'), 'the header stage reports the skipped folder')
+  assert.ok(text.includes('this.warnSkipped("session folder", dirname(selected.sourcePath), error ?? "no readable session header");'), 'the header stage reports the skipped folder')
+  assert.ok(text.includes('+\t\t}, void 0, { skipFlatFiles: true });'), 'the root encoding check stays strict')
+  assert.ok(text.includes('+\t\t\tconst children = async () => (await this.listArtifacts(signal, { strict: true })).filter('), 'the migration child catalog lists strictly')
   assert.ok(text.includes('session backups belong outside the sessions tree, in session-backups/'), 'the skip warning points backups outside the tree')
 })
 
@@ -436,8 +440,146 @@ test('a duplicate session id aborts the unpatched listing; the patched one keeps
   assert.deepEqual(listed.map(snapshot => snapshot.header.id), ['same-id'], 'the valid session is kept, not silently dropped')
   assert.equal(warnings.length, 1, 'one line per skipped folder')
   assert.ok(warnings[0].includes(projectKey(cwd)) || warnings[0].includes(projectKey(copyCwd)), warnings[0])
-  assert.match(warnings[0], /duplicate session id "same-id"/)
+  assert.match(warnings[0], /duplicate session id "same-id" \(kept ".*"\) \(session backups/)
   assert.ok(warnings[0].endsWith('(session backups belong outside the sessions tree, in session-backups/)'), warnings[0])
+})
+
+test('a duplicate session id keeps the copy first in sorted path order, whatever order the scan arrives in', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd, { id: 'same-id' })
+  const copyCwd = `${cwd}-copy`
+  writeSession(sessions, cwd, { id: 'same-id', headerCwd: copyCwd })
+  // "--…-project--" sorts before "--…-project-copy--" ("-" < "c"), so the original folder is kept.
+  const keptKey = projectKey(cwd)
+  const otherKey = projectKey(copyCwd)
+
+  await assert.rejects(
+    async () => (await openPersistence(runtime.persist, sessions, 'unpatched')).list(),
+    error => /^duplicate JSONL session id "same-id"/.test(error.message),
+  )
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  // readdir order is the filesystem's, so each pass replaces listGenerations on the real instance
+  // to hand listArtifacts the same generations in one order and then the reverse.
+  for (const [tag, order] of [['forward', list => list], ['reverse', list => [...list].reverse()]]) {
+    const persistence = await openPersistence(runtime.persist, sessions, `patched-order-${tag}`)
+    const listGenerations = persistence.listGenerations.bind(persistence)
+    persistence.listGenerations = async (...args) => order(await listGenerations(...args))
+    const { value: artifacts, warnings } = await withWarnings(() => persistence.listArtifacts())
+    assert.equal(artifacts.length, 1, tag)
+    assert.ok(artifacts[0].path.includes(keptKey) && !artifacts[0].path.includes(otherKey), `${tag}: ${artifacts[0].path}`)
+    assert.equal(warnings.length, 1, tag)
+    assert.ok(warnings[0].includes(otherKey), `${tag}: ${warnings[0]}`)
+    assert.match(warnings[0], /duplicate session id "same-id" \(kept ".*"\)/, tag)
+  }
+})
+
+test('a session of the other compression still fails the patched listing with the root encoding mismatch', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  const other = writeSession(sessions, cwd, { id: 'other-one' })
+  renameSync(join(other, 'session.v4.jsonl'), join(other, 'session.v4.jsonl.zstd'))
+  const mismatch = error => /uses \.jsonl\.zstd, but this backend is configured for compression "none"/.test(error.message) && error.message.includes('other-one')
+
+  await assert.rejects(async () => (await openPersistence(runtime.persist, sessions, 'unpatched')).list(), mismatch)
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched')
+  const { warnings } = await withWarnings(async () => {
+    await assert.rejects(() => persistence.list(), mismatch)
+    // ensureRootEncoding caches its first result: a second listing must refuse again, not pass.
+    await assert.rejects(() => persistence.list(), mismatch)
+  })
+  assert.deepEqual(warnings, [], 'the mismatch is a refusal, not a skipped folder')
+})
+
+test('the root encoding check still fails on a session folder it cannot read', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  writeSession(sessions, cwd, { id: 'locked-one' })
+  // A synthetic tree cannot portably make readdir fail as root, so the real instance's per-folder
+  // encoding probe is wrapped to throw EACCES for one folder; the listing still reads it for real.
+  const locked = async (path, tag) => {
+    const persistence = await openPersistence(path, sessions, tag)
+    const probe = persistence.findOppositeGenerationInDirectory.bind(persistence)
+    persistence.findOppositeGenerationInDirectory = async (dir, ...rest) => {
+      if (dir.includes('locked-one')) throw Object.assign(new Error(`EACCES: permission denied, scandir '${dir}'`), { code: 'EACCES' })
+      return probe(dir, ...rest)
+    }
+    return persistence
+  }
+
+  const unpatched = await locked(runtime.persist, 'unpatched')
+  await assert.rejects(() => unpatched.list(), error => error.code === 'EACCES')
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await locked(runtime.persist, 'patched')
+  const { warnings } = await withWarnings(async () => {
+    await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
+    await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
+  })
+  assert.deepEqual(warnings, [], 'the root check refuses; it does not skip the folder and cache OK')
+})
+
+test('a header read that fails with an unnamed error still fails the patched listing; a named one is skipped', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  writeSession(sessions, cwd, { id: 'faulty-one' })
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  // A synthetic tree cannot portably make a read fail with EIO, so the real instance's header read
+  // is wrapped to throw a filesystem-shaped error for one folder and read every other one for real.
+  const failing = async (code, tag) => {
+    const persistence = await openPersistence(runtime.persist, sessions, tag)
+    const readGenerationHeader = persistence.readGenerationHeader.bind(persistence)
+    persistence.readGenerationHeader = async (selected, ...rest) => {
+      if (selected.sourcePath.includes('faulty-one')) throw Object.assign(new Error(`${code}: read failed, read`), { code })
+      return readGenerationHeader(selected, ...rest)
+    }
+    return persistence
+  }
+
+  for (const code of ['EIO', 'EMFILE']) {
+    const persistence = await failing(code, `patched-${code}`)
+    const { warnings } = await withWarnings(() => assert.rejects(() => persistence.list(), error => error.code === code))
+    assert.deepEqual(warnings, [], `${code} is not skipped`)
+  }
+
+  const persistence = await failing('EACCES', 'patched-EACCES')
+  const { value: listed, warnings } = await withWarnings(() => persistence.list())
+  assert.deepEqual(listed.map(snapshot => snapshot.header.id), ['valid-one'])
+  assert.equal(warnings.length, 1)
+  assert.ok(warnings[0].includes('faulty-one') && warnings[0].includes('EACCES'), warnings[0])
+  assert.ok(!warnings[0].includes('session-backups/'), 'an unreadable folder is not backup-shaped')
+})
+
+test('a misplaced child drops out of the tolerant listing but still fails the migration child catalog', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  const parent = writeSession(sessions, cwd, { id: 'parent-one' })
+  // The child's only copy sits in a backup-named folder, so its header does not identify its path.
+  writeSession(sessions, cwd, {
+    id: 'child-one',
+    dirName: 'child-one.backup-20260101T000000',
+    extra: { origin: 'subagent', parentSession: 'parent-one' },
+  })
+  const selected = { sourcePath: join(parent, 'session.v4.jsonl'), sourceVersion: 4, currentPath: join(parent, 'session.v4.jsonl') }
+  const childIdentity = error => /corrupt session log .*header id "child-one"/.test(error.message)
+
+  const unpatched = await openPersistence(runtime.persist, sessions, 'unpatched')
+  await assert.rejects(() => unpatched.prepareStoredMigration('parent-one', selected, new AbortController().signal), childIdentity)
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched')
+  const { value: listed, warnings } = await withWarnings(() => persistence.list())
+  assert.deepEqual(listed.map(snapshot => snapshot.header.id), ['parent-one'], 'the tolerant listing skips the child')
+  assert.equal(warnings.length, 1)
+  // prepareStoredMigration's children() lists strictly, so the child cannot silently drop out of
+  // the parent's catalog: the migration refuses exactly as the unpatched one does.
+  await assert.rejects(() => persistence.prepareStoredMigration('parent-one', selected, new AbortController().signal), childIdentity)
 })
 
 test('the real WorkspaceRegistry does not activate over the unpatched listing, and activates over the patched one', async (t) => {
@@ -480,6 +622,36 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
   assert.ok(warnings.some(line => line.includes(BACKUP)), warnings.join('\n'))
   assert.ok(warnings.some(line => line.includes(STRAY)), warnings.join('\n'))
   assert.ok(warnings.every(line => line.endsWith('(session backups belong outside the sessions tree, in session-backups/)')), warnings.join('\n'))
+})
+
+test('the root still fails closed when it stops being a directory after the backend is built', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-late-root')
+  // The first listing passes and caches the root encoding check; only then does the root go.
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id), [SESSION])
+  rmSync(sessions, { recursive: true, force: true })
+  writeFileSync(sessions, 'not a directory\n')
+  const { warnings } = await withWarnings(() => assert.rejects(() => persistence.list(), error => error.code === 'ENOTDIR'))
+  assert.deepEqual(warnings, [], 'the root is a refusal, not a skipped project')
+})
+
+test('many bad folders print at most 20 skip lines and one summary line with the rest', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  for (let i = 0; i < 25; i++) writeFileSync(join(sessions, projectKey(cwd), `stray-${String(i).padStart(2, '0')}.jsonl`), '{}\n')
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-cap')
+  const { value: listed, warnings } = await withWarnings(() => persistence.list())
+  assert.deepEqual(listed.map(snapshot => snapshot.header.id), [SESSION])
+  assert.equal(warnings.length, 21, warnings.join('\n'))
+  assert.equal(warnings.filter(line => /^dsh-session: skipped session file /.test(line)).length, 20)
+  assert.equal(warnings[20], 'dsh-session: skipped 5 more session paths without a line each (the first 20 are reported)')
+  const { warnings: again } = await withWarnings(() => persistence.list())
+  assert.deepEqual(again, [], 'a later listing of the same tree repeats nothing')
 })
 
 test('the root itself still fails closed when it is not a readable directory', async (t) => {

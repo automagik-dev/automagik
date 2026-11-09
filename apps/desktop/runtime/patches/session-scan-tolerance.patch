@@ -1,94 +1,205 @@
 --- a/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
 +++ b/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
-@@ -2365,6 +2365,12 @@
+@@ -2365,6 +2365,48 @@
  		return outcome.value;
  	});
  }
++/** Skip lines a backend instance prints before it only counts them (#861). */
++const SKIPPED_SESSION_LINES = 20;
 +/** Report one skipped session folder or file without aborting the whole listing (#861). */
 +function warnSkippedSession(kind, path, error) {
 +	const reason = (typeof error === "string" ? error : error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, " ");
 +	const hint = kind !== "session project" && /corrupt session log|duplicate session id|flat-file layout/.test(reason) ? " (session backups belong outside the sessions tree, in session-backups/)" : "";
 +	console.warn(`dsh-session: skipped ${kind} ${JSON.stringify(path)}: ${reason}${hint}`);
 +}
++/** A session project or folder the tolerant listing may skip: it is gone or not readable (#861). */
++function isSkippableListingError(error) {
++	return [
++		"ENOENT",
++		"ENOTDIR",
++		"EACCES",
++		"EPERM"
++	].includes(error?.code);
++}
++/**
++* A header read the tolerant listing may skip (#861): an unsupported format, a corrupt log, an
++* identity mismatch (assertStoredIdentity's plain `corrupt session log "<path>": ...` Error, as a
++* backup copy carrying the original header gets), or a log that is gone or not readable. Anything
++* else (EIO, EMFILE, an abort) propagates as before.
++*/
++function isSkippableHeaderError(error) {
++	if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) return true;
++	if (error instanceof Error && error.constructor === Error && error.message.startsWith("corrupt session log \"")) return true;
++	return isSkippableListingError(error);
++}
++/**
++* The copy a tolerant listing keeps for each session id (#861): the first valid header in sorted
++* sourcePath order (code-unit order), so the pick does not depend on readdir order.
++*/
++function keptSessionPaths(outcomes) {
++	const kept = /* @__PURE__ */ new Map();
++	for (const outcome of outcomes) {
++		if (outcome.status !== "fulfilled" || outcome.value.metadata === void 0) continue;
++		const { selected, metadata } = outcome.value;
++		const current = kept.get(metadata.header.id);
++		if (current === void 0 || selected.sourcePath < current) kept.set(metadata.header.id, selected.sourcePath);
++	}
++	return kept;
++}
  /** Whether a filesystem-owned failure should retain its original errno and path. */
  function isErrnoException(error) {
  	return typeof error?.code === "string";
-@@ -2414,6 +2420,8 @@
+@@ -2414,6 +2456,11 @@
  	*/
  	listLimit;
  	rootEncodingCheck;
 +	/** Skipped paths already reported, so each folder gets one warning line (#861). */
 +	skippedPaths = /* @__PURE__ */ new Set();
++	/** Skip lines printed, and skips past the cap that a summary line still has to count (#861). */
++	skippedLines = 0;
++	skippedUnreported = 0;
  	generationFormat;
  	/**
  	* Bounded LRU of parsed, validated stored logs keyed by session id and
-@@ -3070,18 +3078,27 @@
+@@ -2733,7 +2780,7 @@
+ 		let prepared;
+ 		let validateRelatedSources;
+ 		try {
+-			const children = async () => (await this.listArtifacts(signal)).filter((source) => source.header.origin === "subagent" && source.header.parentSession === id);
++			const children = async () => (await this.listArtifacts(signal, { strict: true })).filter((source) => source.header.origin === "subagent" && source.header.parentSession === id);
+ 			const sources = await children();
+ 			const related = await prepareCatalogFacts(id, sources, this.compression, signal);
+ 			for (const failure of related.failures) this.ctx.logger.warn(`${this.name}: session "${id}" catalog retained a child with unknown descriptor (raw log: ${failure.path}): ${String(failure.error)}`);
+@@ -3052,12 +3099,16 @@
+ 			decoder.close();
+ 		}
+ 	}
+-	/** Enumerate selected physical generations without interpreting their headers or bodies. */
+-	async listGenerations(signal) {
++	/**
++	* Enumerate selected physical generations without interpreting their headers or bodies.
++	* Tolerant unless `options.strict` (#861): a project or folder that is gone or not readable,
++	* and a flat session file, are reported and skipped.
++	*/
++	async listGenerations(signal, options) {
+ 		return (await this.mapSessionDirectories((dir) => {
+ 			signal?.throwIfAborted();
+ 			return this.resolveGenerationInDirectory(dir, signal);
+-		}, signal)).filter((source) => source !== void 0);
++		}, signal, { tolerant: options?.strict !== true })).filter((source) => source !== void 0);
+ 	}
+ 	/**
+ 	* Apply `task` to every Session directory through the shared listing
+@@ -3066,21 +3117,42 @@
+ 	* traversal after the directories of the projects before it.
+ 	* @param task - per-directory operation; must not wait on the listing limiter.
+ 	* @param signal - optional cancellation for directory listings.
++	* @param options - `tolerant` (the listing only, #861): a project or directory that is gone or
++	* not readable (ENOENT, ENOTDIR, EACCES, EPERM) is reported and skipped, and a flat session file
++	* is reported instead of failing its project; `skipFlatFiles`: only the latter. The default is
++	* strict, as upstream; every other failure follows the order above.
+ 	* @returns per-directory results in traversal order.
  	*/
- 	async mapSessionDirectories(task, signal) {
+-	async mapSessionDirectories(task, signal) {
++	async mapSessionDirectories(task, signal, options) {
++		const tolerant = options?.tolerant === true;
  		const limit = this.listLimit;
 -		const projects = await settleLimited(limit, await limit(() => this.listProjectDirs(signal)), (project) => this.listSessionDirs(project, signal));
 +		const projectPaths = await limit(() => this.listProjectDirs(signal));
-+		const projects = await settleLimited(limit, projectPaths, (project) => this.listSessionDirs(project, signal));
++		const projects = await settleLimited(limit, projectPaths, (project) => this.listSessionDirs(project, signal, tolerant || options?.skipFlatFiles === true));
  		const dirs = [];
--		let projectFailure;
+ 		let projectFailure;
 -		for (const outcome of projects) {
 +		for (const [index, outcome] of projects.entries()) {
  			if (outcome.status === "rejected") {
--				projectFailure = outcome;
--				break;
-+				signal?.throwIfAborted();
-+				this.warnSkipped("session project", projectPaths[index], outcome.reason);
-+				continue;
++				if (tolerant && isSkippableListingError(outcome.reason)) {
++					signal?.throwIfAborted();
++					this.warnSkipped("session project", projectPaths[index], outcome.reason);
++					continue;
++				}
+ 				projectFailure = outcome;
+ 				break;
  			}
  			for (const dir of outcome.value) dirs.push(dir);
  		}
 -		const results = settledValues(await settleLimited(limit, dirs, task));
--		if (projectFailure !== void 0) throw projectFailure.reason;
 +		const settled = await settleLimited(limit, dirs, task);
 +		const results = [];
 +		for (const [index, outcome] of settled.entries()) {
-+			if (outcome.status === "rejected") {
++			if (outcome.status === "rejected" && tolerant && isSkippableListingError(outcome.reason)) {
 +				signal?.throwIfAborted();
 +				this.warnSkipped("session folder", dirs[index], outcome.reason);
 +				continue;
 +			}
++			if (outcome.status === "rejected") throw outcome.reason;
 +			results.push(outcome.value);
 +		}
+ 		if (projectFailure !== void 0) throw projectFailure.reason;
  		return results;
  	}
- 	/** Historical logical events depend on the corpus, including members with unreadable headers. */
-@@ -3107,6 +3124,13 @@
+@@ -3107,11 +3179,38 @@
  		signal?.throwIfAborted();
  		return hash.digest("hex");
  	}
-+	/** Report one skipped session folder or file once per backend instance (#861). */
+-	async listArtifacts(signal) {
++	/**
++	* Report one skipped session folder or file once per backend instance (#861). At most
++	* SKIPPED_SESSION_LINES lines are printed; reportSkippedSummary counts the rest.
++	*/
 +	warnSkipped(kind, path, error) {
 +		const key = `${kind}\0${path}`;
 +		if (this.skippedPaths.has(key)) return;
 +		this.skippedPaths.add(key);
++		if (this.skippedLines >= SKIPPED_SESSION_LINES) {
++			this.skippedUnreported += 1;
++			return;
++		}
++		this.skippedLines += 1;
 +		warnSkippedSession(kind, path, error);
 +	}
- 	async listArtifacts(signal) {
++	/** One line for the skips past the cap since the last summary, so a bad tree cannot flood the log. */
++	reportSkippedSummary() {
++		if (this.skippedUnreported === 0) return;
++		console.warn(`dsh-session: skipped ${this.skippedUnreported} more session paths without a line each (the first ${SKIPPED_SESSION_LINES} are reported)`);
++		this.skippedUnreported = 0;
++	}
++	/**
++	* The listing is tolerant (#861): a folder whose header is skippable (isSkippableHeaderError) is
++	* reported and skipped, and a duplicate id keeps keptSessionPaths' copy and reports the others.
++	* With `options.strict` (the migration child catalog) it keeps upstream's fail-closed behaviour.
++	*/
++	async listArtifacts(signal, options) {
++		const strict = options?.strict === true;
  		signal?.throwIfAborted();
  		await this.ensureRootEncoding();
-@@ -3120,21 +3144,35 @@
+ 		signal?.throwIfAborted();
+-		const generations = await this.listGenerations(signal);
++		const generations = await this.listGenerations(signal, { strict });
+ 		const headers = await settleLimited(this.listLimit, generations, async (selected) => {
+ 			signal?.throwIfAborted();
+ 			try {
+@@ -3120,21 +3219,34 @@
  					metadata: await this.readGenerationHeader(selected, void 0, signal)
  				};
  			} catch (error) {
 -				if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) return {
-+				signal?.throwIfAborted();
-+				return {
- 					selected,
+-					selected,
 -					metadata: void 0
-+					metadata: void 0,
-+					error
- 				};
--				throw error;
+-				};
++				if (strict ? error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError : isSkippableHeaderError(error)) {
++					signal?.throwIfAborted();
++					return {
++						selected,
++						metadata: void 0,
++						error
++					};
++				}
+ 				throw error;
  			}
  		});
  		const artifacts = [];
  		const ids = /* @__PURE__ */ new Set();
-+		const idPaths = /* @__PURE__ */ new Map();
++		const kept = strict ? void 0 : keptSessionPaths(headers);
  		for (const outcome of headers) {
  			if (outcome.status === "rejected") throw outcome.reason;
 -			const { selected, metadata } = outcome.value;
@@ -96,30 +207,40 @@
 -			if (ids.has(metadata.header.id)) throw new Error(`duplicate JSONL session id "${metadata.header.id}" appears in multiple project directories`);
 -			ids.add(metadata.header.id);
 +			const { selected, metadata, error } = outcome.value;
-+			if (error !== void 0) {
-+				this.warnSkipped("session folder", dirname(selected.sourcePath), error);
-+				continue;
-+			}
 +			if (metadata === void 0) {
-+				this.warnSkipped("session folder", dirname(selected.sourcePath), "no readable session header");
++				if (!strict) this.warnSkipped("session folder", dirname(selected.sourcePath), error ?? "no readable session header");
 +				continue;
 +			}
 +			const id = metadata.header.id;
-+			if (ids.has(id)) {
-+				this.warnSkipped("session folder", dirname(selected.sourcePath), `duplicate session id "${id}" (kept ${JSON.stringify(dirname(idPaths.get(id)))}`);
++			if (strict && ids.has(id)) throw new Error(`duplicate JSONL session id "${id}" appears in multiple project directories`);
++			if (!strict && kept.get(id) !== selected.sourcePath) {
++				this.warnSkipped("session folder", dirname(selected.sourcePath), `duplicate session id "${id}" (kept ${JSON.stringify(dirname(kept.get(id)))})`);
 +				continue;
 +			}
 +			ids.add(id);
-+			idPaths.set(id, selected.sourcePath);
  			artifacts.push({
  				...metadata,
  				path: selected.sourcePath,
-@@ -3527,8 +3565,10 @@
+@@ -3142,6 +3254,7 @@
+ 			});
+ 		}
+ 		signal?.throwIfAborted();
++		if (!strict) this.reportSkippedSummary();
+ 		return artifacts;
+ 	}
+ 	/** Read and translate one selected generation header without inspecting its body. */
+@@ -3523,12 +3636,16 @@
+ 		}
+ 	}
+ 	/** List session-owned directories and reject the obsolete flat-file layout. */
+-	async listSessionDirs(project, signal) {
++	async listSessionDirs(project, signal, skipFlatFiles) {
  		signal?.throwIfAborted();
  		const entries = await readdir(project, { withFileTypes: true });
  		signal?.throwIfAborted();
--		const legacy = entries.find((entry) => entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zstd")));
+ 		const legacy = entries.find((entry) => entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zstd")));
 -		if (legacy !== void 0) throw this.legacyLayout(join(project, legacy.name));
++		if (legacy !== void 0 && skipFlatFiles !== true) throw this.legacyLayout(join(project, legacy.name));
 +		for (const entry of entries) {
 +			if (!entry.isFile() || !(entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zstd"))) continue;
 +			this.warnSkipped("session file", join(project, entry.name), "unsupported flat-file layout");
@@ -127,3 +248,17 @@
  		return entries.filter((entry) => entry.isDirectory()).map((entry) => join(project, entry.name));
  	}
  	/** Reject a root that already belongs to the other physical encoding. */
+@@ -3537,10 +3654,12 @@
+ 		return this.rootEncodingCheck;
+ 	}
+ 	async checkRootEncoding() {
++		// Strict (#861): any failure, a session of the other encoding included, still fails the root.
++		// Only a flat session file is left to the listing to report and skip.
+ 		await this.mapSessionDirectories(async (dir) => {
+ 			const incompatible = await this.findOppositeGenerationInDirectory(dir);
+ 			if (incompatible !== void 0) throw this.encodingMismatch(incompatible);
+-		});
++		}, void 0, { skipFlatFiles: true });
+ 	}
+ 	async rejectLegacyFlatArtifact(project, id, signal) {
+ 		signal?.throwIfAborted();
