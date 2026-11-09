@@ -172,36 +172,39 @@ pub struct DshHeader {
     pub created_at: Option<i64>,
 }
 
-/// The header of a dsh-tui session file, from its first line (in its first frame, for a `.zstd`
-/// file), reading at most 1 MiB. None when the file cannot be read or does not start with a whole
-/// header. Used only to order reads, so a parent session is read before its forks.
+/// The header of a dsh-tui session file: its first line, decoded only as far as that line's end
+/// (at most 64 KiB of it), however large the frame holding it. None when the file cannot be read
+/// or does not start with a header. Used only to order reads, so a parent session is read before
+/// its forks.
 pub fn dsh_header(path: &Path) -> Option<DshHeader> {
-    let mut f = open_nofollow(path).ok()?;
-    let mut buf = Vec::new();
-    f.by_ref().take(1 << 20).read_to_end(&mut buf).ok()?;
-    let mut ctx = FileCtx::default();
-    let mut events = Vec::new();
+    const MAX: usize = 64 * 1024;
+    let f = open_nofollow(path).ok()?;
+    let mut line = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut read_line = |r: &mut dyn Read| -> Option<()> {
+        while line.len() < MAX {
+            let n = r.read(&mut chunk).ok()?;
+            if n == 0 {
+                return None;
+            }
+            match memchr::memchr(b'\n', &chunk[..n]) {
+                Some(end) => {
+                    line.extend_from_slice(&chunk[..end]);
+                    return Some(());
+                }
+                None => line.extend_from_slice(&chunk[..n]),
+            }
+        }
+        None
+    };
     if path.to_string_lossy().ends_with(".zstd") {
-        let Frame::Whole {
-            len,
-            skippable: false,
-        } = frame_at(&buf)
-        else {
-            return None;
-        };
-        let mut health = Health::default();
-        parse_frame(
-            &buf[..len],
-            Source::DshTui,
-            64 * 1024,
-            &mut ctx,
-            &mut events,
-            &mut health,
-        );
+        let mut d = ruzstd::decoding::StreamingDecoder::new(f).ok()?;
+        read_line(&mut d)?;
     } else {
-        let end = memchr::memchr(b'\n', &buf)?;
-        dsh_tui::parse_line(&buf[..end], &mut ctx, &mut events);
+        read_line(&mut io::BufReader::new(f))?;
     }
+    let mut ctx = FileCtx::default();
+    dsh_tui::parse_line(&line, &mut ctx, &mut Vec::new());
     ctx.session.as_ref()?;
     Some(DshHeader {
         seeded: ctx.seeded,

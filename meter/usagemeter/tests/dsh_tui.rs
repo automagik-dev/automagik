@@ -537,6 +537,72 @@ fn a_forks_copied_calls_are_the_parents_in_any_read_order() {
     assert_eq!(by_bot(&env), want(None));
 }
 
+// Fixer L1 on #835: a fork whose first frame is large is still read after its parent.
+#[test]
+fn a_fork_with_a_large_first_frame_is_still_read_last() {
+    let env = Env::new();
+    let (pp, pb, cp, cb) = attributed_fork(&env);
+    // The fork again, its header sharing one frame with over a megabyte of incompressible text.
+    let mut noise = String::with_capacity(3 << 20);
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    while noise.len() < 3 << 20 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        noise.push_str(&format!("{x:016x}"));
+    }
+    let child = decoded(&cb);
+    let mut lines: Vec<String> = child.lines().map(str::to_owned).collect();
+    let pad = format!(r#"{{"type":"note","seq":-1,"time":1,"data":{{"text":"{noise}"}}}}"#);
+    lines.insert(1, pad);
+    let big = frame(&lines);
+    assert!(big.len() > 1 << 20, "{}", big.len());
+    append(&pp, &pb);
+    append(&cp, &big);
+    set_mtime(&pp, now() - 7_200_000);
+    set_mtime(&cp, now() - 60_000);
+    env.run(&env.opts());
+    let mut want = std::collections::BTreeMap::new();
+    want.insert(Some("b-parentseat".to_owned()), 300);
+    want.insert(Some("b-forkseat0".to_owned()), 7);
+    assert_eq!(by_bot(&env), want);
+}
+
+/// The lines of one zstd frame.
+fn decoded(bytes: &[u8]) -> String {
+    let mut d = ruzstd::decoding::StreamingDecoder::new(bytes).unwrap();
+    let mut v = Vec::new();
+    std::io::Read::read_to_end(&mut d, &mut v).unwrap();
+    String::from_utf8(v).unwrap()
+}
+
+// Reviewer L2 on #835: a fork an older meter read part of (no createdAt or cut in its file
+// context) still gets its own later calls.
+#[test]
+fn a_fork_read_in_part_by_an_older_meter_keeps_its_own_calls() {
+    let env = Env::new();
+    let (pp, pb, cp, cb) = attributed_fork(&env);
+    append(&pp, &pb);
+    // The fork up to its marker, read once.
+    let text = decoded(&cb);
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let (head, own) = lines.split_at(lines.len() - 1);
+    append(&cp, &frame(head));
+    env.run(&env.opts());
+    // What an older meter kept: no createdAt, no cut.
+    env.store()
+        .conn
+        .execute(
+            "UPDATE files SET ctx = json_remove(ctx, '$.created_at', '$.seed_cut')
+             WHERE source = 'dsh-tui'",
+            [],
+        )
+        .unwrap();
+    append(&cp, &frame(own));
+    env.run(&env.opts());
+    assert_eq!(by_bot(&env).get(&Some("b-forkseat0".to_owned())), Some(&7));
+}
+
 /// An `hc` that answers `server.status` with a synthetic core id and `terminal.list` with
 /// `terminals` (a JSON array), and refuses anything else.
 fn fake_hc(env: &Env, terminals: &str) -> PathBuf {

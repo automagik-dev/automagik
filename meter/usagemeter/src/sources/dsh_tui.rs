@@ -24,8 +24,8 @@
 //!   attributed from the fork: `sync` reads every fork after the sessions it may have been
 //!   copied from ([`crate::scan::dsh_header`]), so the parent's own read counts the call first,
 //!   under the parent's session. Read from a fork, a copy counts only when the parent's file is
-//!   gone or unreadable, and is then unlinked, never the fork's. A copy is a call before the
-//!   fork's first inherited `session/end-seed`, or at or before its `createdAt`.
+//!   gone or unreadable, and is then unlinked, never the fork's. A copy is a call at or before the
+//!   fork's `createdAt` (with none recorded: before its first inherited `session/end-seed`).
 //! - Two line types carry `data.usage` = {inputTokens, outputTokens, cacheReadTokens,
 //!   cacheWriteTokens, totalTokens}; `inputTokens` is already uncached (`totalTokens` is the sum of
 //!   the other four):
@@ -174,13 +174,16 @@ fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error
         .map(|x| x as i64))
 }
 
-/// Whether a call at `ts_ms` in this session is a copy of another session's: in a fork, every
-/// call before the first inherited `session/end-seed`, and every call at or before the fork's
-/// `createdAt`. The second rule matters for a fork of a fork, which inherits its parent's own
-/// marker and then its parent's own calls: they happened before the fork existed. A fork whose
-/// header has no `createdAt` treats calls after its first marker as its own.
+/// Whether a call at `ts_ms` in this session is a copy of another session's. In a fork, a copy
+/// happened before the fork existed: every call at or before its `createdAt` is one, which also
+/// covers a fork of a fork (it inherits its parent's marker, then its parent's own calls). With no
+/// `createdAt`, every call before the fork's first inherited `session/end-seed` is one.
 fn is_copy(ctx: &FileCtx, ts_ms: i64) -> bool {
-    ctx.seeded && (!ctx.seed_cut || ctx.created_at.is_some_and(|c| ts_ms <= c))
+    ctx.seeded
+        && match ctx.created_at {
+            Some(c) => ts_ms <= c,
+            None => !ctx.seed_cut,
+        }
 }
 
 pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> Line {
@@ -483,11 +486,20 @@ mod tests {
         assert_eq!(copied, [true, true, false]);
         assert!(ctx.seed_cut);
         assert_eq!(ctx.created_at, Some(created));
-        // Before its first marker every call is a copy, whatever its time; an unseeded session
-        // copies nothing.
+        // With no createdAt, every call before the first marker is a copy and none after it;
+        // an unseeded session copies nothing.
+        let no_created = fork(created).replace(r#""createdAt":2000,"#, "");
         let mut ctx = FileCtx::default();
-        let (_, ev) = run(&[&fork(created), &at(0, 9_000)], &mut ctx);
-        assert!(ev[0].copied);
+        let (_, ev) = run(
+            &[
+                &no_created,
+                &at(0, 9_000),
+                &marker(1, r#"{"inherited":true}"#),
+                &at(2, 1_000),
+            ],
+            &mut ctx,
+        );
+        assert_eq!((ev[0].copied, ev[1].copied), (true, false));
         let mut ctx = FileCtx::default();
         let (_, ev) = run(&[HEADER, &at(0, 1_000), &marker(1, "{}")], &mut ctx);
         assert!(!ev[0].copied && !ctx.seed_cut);

@@ -754,6 +754,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             Plan::Unchanged => continue,
             Plan::Read { state, rewritten } => (*state, rewritten),
         };
+        // A fork an older meter read part of has no createdAt in its file context: read it from
+        // the header, so its own later calls are never taken for copies.
+        if c.source == Source::DshTui && state.ctx.seeded && state.ctx.created_at.is_none() {
+            state.ctx.created_at = scan::dsh_header(&c.path).and_then(|h| h.created_at);
+        }
         let res = read_into_store(
             &mut store,
             &mut attr,
