@@ -72,6 +72,56 @@ test("a request no sidebar takes turns into 'couldn't check' after ANSWER_MS, th
   assert.deepEqual(clicks(l), [["0.8.0 · couldn't check", "check"]]);
   const old = statusLabel({ state: { kind: "current", at: NOW - 3_600_000 }, request: { ...request, at: NOW - 3 * 60_000 }, version: "0.8.0", now: NOW });
   assert.equal(text(old), "Automagik Herdr 0.8.0");
+  // No sidebar at all: checking just before ANSWER_MS, failed from it, never before.
+  const fresh = { id: "r2", what: "check", at: NOW };
+  const state = { kind: "current", at: NOW - 3_600_000 };
+  assert.equal(text(statusLabel({ state, request: fresh, version: "0.8.0", now: NOW + label.ANSWER_MS - 1 })),
+    "Automagik Herdr 0.8.0 · checking…");
+  assert.equal(text(statusLabel({ state, request: fresh, version: "0.8.0", now: NOW + label.ANSWER_MS })),
+    "0.8.0 · couldn't check");
+});
+
+test("a request queued behind a busy run waits (checking/updating), never 'couldn't check'", () => {
+  const request = { id: "r", what: "check", at: NOW - 15_000 };
+  const busy = { what: "apply", since: NOW - 40_000, id: "a", to: "0.8.1", from: "0.8.0" };
+  // The folders swapped (VERSION says 0.8.1) while the old build still holds the install's lock:
+  // the install branch is skipped, but the queued request is waiting for its answer.
+  const state = { kind: "update", busy, queued: { id: request.id, what: "check", at: request.at } };
+  assert.equal(text(statusLabel({ state, request, version: "0.8.1", now: NOW })), "Automagik Herdr 0.8.1 · checking…");
+  // The run's own lock says it waited too, acknowledged or not.
+  assert.equal(text(statusLabel({ state: { kind: "update", busy }, request, version: "0.8.1", now: NOW })),
+    "Automagik Herdr 0.8.1 · checking…");
+  // The acknowledgment alone, once the lock is gone, is a dead run: couldn't check, clickable.
+  const dead = statusLabel({ state: { queued: state.queued }, request, version: "0.8.1", now: NOW });
+  assert.equal(text(dead), "0.8.1 · couldn't check");
+  assert.deepEqual(clicks(dead), [["0.8.1 · couldn't check", "check"]]);
+  assert.match(dead.tooltip, /run did not finish/);
+  // An install asked for while the install ran is waiting for it, not failed.
+  const apply = { id: "a2", what: "apply", to: "0.8.1", at: NOW - 15_000 };
+  const l = statusLabel({ state, request: apply, version: "0.8.1", now: NOW });
+  assert.equal(text(l), "Automagik Herdr 0.8.1 · updating…");
+  assert.doesNotMatch(text(l), /couldn't/);
+});
+
+test("a queued request whose run died falls back to couldn't check (the run did not finish), not checking forever", () => {
+  const request = { id: "r", what: "check", at: NOW };
+  // The sidebar took the click and then closed: no lock, no answer, no sidebar.
+  const state = { kind: "current", at: NOW - 3_600_000, queued: { id: request.id, what: "check", at: NOW } };
+  const at = (ms, s = state) => statusLabel({ state: s, request, version: "0.8.0", now: NOW + ms });
+  assert.equal(text(at(label.ANSWER_MS - 1)), "Automagik Herdr 0.8.0 · checking…", "the first 10 s are grace");
+  const dead = at(label.ANSWER_MS);
+  assert.equal(text(dead), "0.8.0 · couldn't check", "dead run: the wait is bounded");
+  assert.deepEqual(clicks(dead), [["0.8.0 · couldn't check", "check"]], "and it can be clicked again");
+  assert.match(dead.tooltip, /run did not finish/);
+  // A lock left behind and gone stale is the same dead run, not a live wait.
+  const stale = { ...state, busy: { what: "check", since: NOW - label.CHECK_STALE_MS - 1_000, id: "c" } };
+  assert.equal(text(at(30_000, stale)), "0.8.0 · couldn't check");
+  // A live run keeps the wait: checking while it runs, however long ANSWER_MS is past.
+  const live = { ...state, busy: { what: "check", since: NOW - 1_000, id: "c" } };
+  assert.equal(text(at(30_000, live)), "Automagik Herdr 0.8.0 · checking…");
+  assert.doesNotMatch(text(at(30_000, live)), /couldn't/);
+  // After the 2-minute request window it is forgotten, as before.
+  assert.equal(text(at(2 * 60_000)), "Automagik Herdr 0.8.0");
 });
 
 test("offline or an error: '0.8.0 · couldn't check', the reason in the tooltip, a click tries again", () => {
