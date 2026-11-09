@@ -275,13 +275,14 @@ const plannedBot = (id, extra = {}) => ({
 });
 const sharedTeam = () => {
   const file = team();
+  file.bots.find((entry) => entry.id === ID.dev).rank = "dev";
   file.bots.push(
     bot(SHARED_ID.pm, "member", { name: "PM", rank: "pm", lead: ID.main }),
     bot(SHARED_ID.integrator, "member", { name: "Integrator", rank: "integrator", lead: ID.main }),
     bot(SHARED_ID.fixer, "member", { name: "Fixer", rank: "fixer", lead: ID.main }),
     bot(SHARED_ID.capB, "member", { name: "Captain B", rank: "captain", lead: ID.main }),
     bot(SHARED_ID.devB, "member", { name: "Dev B", rank: "dev", lead: SHARED_ID.capB }),
-    bot(SHARED_ID.testerB, "member", { name: "Tester B", rank: "tester", lead: ID.main }),
+    bot(SHARED_ID.testerB, "member", { name: "Tester B", rank: "tester", lead: SHARED_ID.capB }),
     bot(SHARED_ID.plain, "member", { name: "Plain", lead: ID.main }),
     plannedBot(SHARED_ID.planned, { name: "Orchestrator" }),
     bot(SHARED_ID.capOrch, "member", { name: "Captain Orch", rank: "captain", lead: SHARED_ID.planned }),
@@ -318,6 +319,8 @@ function sharedScene(t) {
   add("t212", { "worker.of": SHARED_ID.integrator }, { cwd: s.worktree, parent: "t201" });
   add("t213", { "worker.of": SHARED_ID.fixer }, { cwd: s.worktree, parent: "t202" });
   add("t214", { bot: SHARED_ID.capMissing, role: "captain" });
+  add("t215", { "worker.of": SHARED_ID.capOrch, role: "captain" },
+    { cwd: s.worktree, parent: "t210" });
   writeFileSync(s.statePath, JSON.stringify(state));
   const bind = (terminal, id) => ({ v: 1, event: "attach", bot: id, project: s.project, terminal, core: "core",
     created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" });
@@ -417,12 +420,64 @@ test("a captain reaches its declared lead even when that lead is planned", (t) =
   assert.deepEqual(calls(s).filter((argv) => argv[0] === "send"), [args]);
 });
 
-test("a captain with a declared lead still cannot send sideways to another squad's captain", (t) => {
+test("a captain can send to another squad's captain by roster rank", (t) => {
   const s = sharedScene(t);
+  const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+  delete state.get.t203.labels.role;
+  state.get.t210.labels.role = "dev";
+  writeFileSync(s.statePath, JSON.stringify(state));
   writeFileSync(s.logPath, "");
-  const r = guardRun(s, ["send", "t203", "hi"], { HC_TERMINAL_ID: "t210" });
+  const args = ["send", "t203", "gate request"];
+  const r = guardRun(s, args, { HC_TERMINAL_ID: "t210" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s).filter((argv) => argv[0] === "send"), [args]);
+});
+
+test("a dev can send to another squad's tester by roster rank", (t) => {
+  const s = sharedScene(t);
+  const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+  delete state.get.t206.labels.role;
+  writeFileSync(s.statePath, JSON.stringify(state));
+  const args = ["send", "t206", "verdict request"];
+  const r = guardRun(s, args, { HC_TERMINAL_ID: "t208" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(calls(s).filter((argv) => argv[0] === "send"), [args]);
+});
+
+test("a dev cannot send to another squad's captain", (t) => {
+  const s = sharedScene(t);
+  const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+  state.get.t208.labels.role = "captain";
+  writeFileSync(s.statePath, JSON.stringify(state));
+  const r = guardRun(s, ["send", "t203", "hi"], { HC_TERMINAL_ID: "t208" });
   assertRefused(r);
+  assert.match(r.stderr, /the target is not in the caller's team/);
   assert.equal(calls(s).some((argv) => argv[0] === "send"), false);
+});
+
+test("a captain's worker cannot use captain-to-captain sends", (t) => {
+  const s = sharedScene(t);
+  const r = guardRun(s, ["send", "t203", "hi"], { HC_TERMINAL_ID: "t215" });
+  assertRefused(r);
+  assert.match(r.stderr, /the target is not in the caller's team/);
+  assert.equal(calls(s).some((argv) => argv[0] === "send"), false);
+});
+
+test("tester and captain target labels alone do not widen sends", (t) => {
+  const s = sharedScene(t);
+  for (const role of ["tester", "captain"]) {
+    const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+    state.get.t205.labels.role = role;
+    state.get.t209.labels.role = role;
+    writeFileSync(s.statePath, JSON.stringify(state));
+    for (const target of ["t205", "t209"]) {
+      writeFileSync(s.logPath, "");
+      const r = guardRun(s, ["send", target, "hi"], { HC_TERMINAL_ID: "t210" });
+      assertRefused(r);
+      assert.match(r.stderr, /the target is not in the caller's team/);
+      assert.equal(calls(s).some((argv) => argv[0] === "send"), false);
+    }
+  }
 });
 
 test("a declared lead id not listed in bots.json adds nothing", (t) => {

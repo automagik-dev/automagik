@@ -123,9 +123,14 @@ ids are never reused, so a rename between the check and the call cannot redirect
 |---|---|
 | `terminal.list` | allowed as is: metadata only (no screen text) |
 | `terminal.get`, `terminal.read`, `terminal.wait` | the caller itself, hcGuard's `teamOf` graph, and its own workers |
-| `terminal.send` | the same, plus hcGuard's pm/integrator/fixer widening for a bot whose bots.json entry has that rank, and the shared reviewer/fixer targets. The widening never reaches a worker pane |
+| `terminal.send` | the same, plus hcGuard's shared send rules: pm/integrator/fixer callers may send to any listed bot; captain callers may send to other captains; tester/reviewer/fixer targets serve every squad. Ranks come from the approved roster. Workers inherit no caller-rank widening |
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
 | `terminal.run` | the helper worker shape below, started only by a bound bot pane |
+
+The guard and proxy use the same shared send check. Tester targets require a roster rank;
+`role=tester` alone grants nothing. The existing reviewer/fixer label path remains.
+Both ranks for captain-to-captain sends come from the roster, never `role=captain` labels.
+These rules widen only sends; get/read/wait keep the same team graph.
 
 A worker start needs `--bg`, `parent` = the caller, `cwd` under the caller's project
 `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, and this argv:
