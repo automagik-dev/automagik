@@ -185,13 +185,24 @@ approved name, preserving that entry's metadata. A missing template cannot becom
 
 Only dsh-tui workers take the helper wrapper and mask. Approved template workers and workers
 using other agents run unsandboxed by the owner's choice and keep their existing plain launch.
-The single generated env exception is the default Claude login wrapper,
-`/usr/bin/env -u CLAUDE_CONFIG_DIR`: trusted code rebuilds it from the approved plan and core
-template text. The caller cannot add or change an unset or assignment. Separately, the real
-worker CLI wire carries `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`; only
-those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,64}`. All other
-keys and bad values refuse. Only `caller` is overwritten with the verified pane's identity.
-A forged `parent` or `worker.of` is refused before forwarding; neither is overwritten.
+
+**Known trust boundary of that choice:** such a worker runs in a worktree the sandboxed pane can
+write, so what the pane writes there before the start still shapes the worker — for example,
+`.claude/settings.json` hooks in that worktree. An approved agent worker also starts with the PATH
+the pane was started with, rebuilt from the pane's recorded PATH; a different PATH word is
+refused. A template worker runs the command the core holds, so no pane PATH word is pinned for it.
+Approving a worker means trusting what the sandboxed pane can write in that worktree to run
+outside the sandbox.
+
+The one generated allowed env exception is the default Claude login wrapper,
+`/usr/bin/env -u CLAUDE_CONFIG_DIR`: trusted code builds it from the approved plan and core
+template text when the approved agent or template runs Claude. The caller cannot add or change an
+unset or assignment. Separately, the real worker CLI wire carries `TERM`, `COLORTERM`,
+`TERM_PROGRAM` and `TERM_PROGRAM_VERSION`; only those four optional RPC env keys are allowed. For
+an approved named worker each value must also match `[A-Za-z0-9._+-]{1,64}`; for the helper shape
+the four only have to be text. All other keys and bad values refuse. Only `caller` is overwritten
+with the verified pane's identity. A forged `parent` request field or `worker.of` label is refused
+before forwarding; neither is overwritten.
 
 The proxy refuses these starts and transport requests:
 
@@ -202,18 +213,25 @@ The proxy refuses these starts and transport requests:
 - **A `worker.template` or `worker.agent` name the approved snapshot does not hold** — only names
   in the snapshot are approved; a live roster edit, an unapproved template or agent, or a
   template the core no longer has cannot become a program.
-- **Any caller env beyond the four bounded terminal variables** (`TERM`, `COLORTERM`,
-  `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`), plus the one generated Claude login wrapper — only
-  those identity vars ride the real worker wire; anything else changes the launch the owner
-  approved.
-- **Any argv that differs from the command rebuilt from the approved snapshot and core template
-  text** — the request contributes only the task text and checked metadata; extra args, changed
-  programs or assignments are a different start than the approved one.
-- **A forged `parent` or `worker.of` label** — identity belongs to the verified pane; a forged
-  label would attach the worker to another bot or pane. Both are checked and never overwritten.
-- **An unbound pane asking for the worker transport** — only a bound bot pane (the helper's seat
-  or a by-hand ledger row) has a verified bot identity; an unbound pane gets no transport
-  identity, keeps the guard route and cannot use the approved worker allowance.
+- **A caller env key other than the four terminal identity variables** (`TERM`, `COLORTERM`,
+  `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`). A non-default Claude login is one such refusal: the
+  caller's `CLAUDE_CONFIG_DIR=<dir>` is refused, and the only allowed form is the generated
+  `-u CLAUDE_CONFIG_DIR` login wrapper for a Claude agent or template, built by trusted code.
+- **An argv that differs from the command rebuilt from the approved snapshot and core template
+  text** — the request contributes only the task text and checked metadata. A widened npm-agent
+  PATH is refused: the `PATH=` word is rebuilt from the pane's recorded PATH, so an interpreter
+  folder the CLI's npm-agent widening puts first is not the rebuilt word. Per-task `--agent`,
+  `--model` and `--effort` picks are refused by the argv and label match; only the approved
+  entry's `worker.agent`, `worker.model` and `worker.effort` defaults are accepted. Extra args,
+  changed programs and assignments are a different start than the approved one.
+- **A forged `parent` request field or `worker.of` label** — identity belongs to the verified
+  pane; a forged value would attach the worker to another bot or pane. Both are checked and never
+  overwritten.
+- **An unapproved or unbound pane asking for the worker transport** — the proxy answers
+  `proxy.workerTransport` only for a pane that is both approved and bound (the helper's seat);
+  approval is set only on the helper path. A by-hand ledger row is bound but unapproved, so it is
+  refused with `only an approved bot pane has a worker transport`, keeps the guard route and
+  cannot use the approved worker allowance. An unbound pane gets no transport identity.
 
 The CLI skips the PATH guard only when the actual transport answers the proxy's local
 `proxy.workerTransport` request for this pane. That single reply supplies both the verified
