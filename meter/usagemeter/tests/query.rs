@@ -686,7 +686,48 @@ fn scenario_raw(name: &str) -> (u8, String) {
             corrupt_usage(&fx.db());
             fx.query_raw(&args(&["feat/gn-12-cache"]))
         }
+        "read-only-folder" => {
+            // A state folder the reader cannot write, and a store with no -wal or -shm beside it.
+            let fx = plain_store();
+            assert!(
+                !fx.env.state().join("meter.db-shm").exists(),
+                "the store is at rest"
+            );
+            read_only(&fx.env.state(), || {
+                fx.query_raw(&args(&["feat/gn-12-cache"]))
+            })
+        }
         other => panic!("no scenario builds the example {other}: add one"),
+    }
+}
+
+/// Whether a folder's mode binds this process: on Unix and not as root.
+fn permissions_bind() -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() != 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// Runs `f` with `dir` at mode 0500 (readable, not writable), then gives the mode back.
+fn read_only<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |m: u32| fs::set_permissions(dir, fs::Permissions::from_mode(m)).unwrap();
+        mode(0o500);
+        let out = f();
+        mode(0o700);
+        out
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, f);
+        panic!("a read-only folder needs Unix permissions")
     }
 }
 
@@ -781,7 +822,7 @@ fn pretty_in_order(compact: &str) -> String {
 fn every_example_validates_against_the_schema() {
     let s = schema();
     let names = example_names();
-    assert!(names.len() >= 18, "{names:?}");
+    assert!(names.len() >= 20, "{names:?}");
     for n in names {
         let e = s.errors(&example(&n));
         assert!(e.is_empty(), "{n}: {e:#?}");
@@ -793,6 +834,10 @@ fn each_example_is_what_the_meter_answers() {
     let s = schema();
     let update = std::env::var_os("UPDATE_QUERY_EXAMPLES").is_some();
     for name in example_names() {
+        if name == "read-only-folder" && !permissions_bind() {
+            eprintln!("{name}: skipped, a folder's mode does not bind root");
+            continue;
+        }
         let want = example(&name);
         let (code, raw) = scenario_raw(&name);
         let got: Value = serde_json::from_str(&raw).unwrap();
@@ -966,6 +1011,22 @@ fn the_schema_refuses_what_the_contract_forbids() {
     let mut v = example("zero-usage");
     v["rows"][0]["cost"]["unpriced_models_omitted"] = json!(1);
     bad.push(("a zero row that left models out", v));
+    // genie's re-check of M1: unpriced_models_omitted is always there, and above 0 the list holds
+    // all 8 names.
+    let mut v = example("priced");
+    v["rows"][0]["cost"]
+        .as_object_mut()
+        .unwrap()
+        .remove("unpriced_models_omitted");
+    bad.push(("a cost without unpriced_models_omitted", v));
+    let mut v = example("partial-priced");
+    v["rows"][0]["cost"]["unpriced_models_omitted"] = json!(1);
+    bad.push(("models left out of a list that is not full", v));
+    let mut full = example("partial-priced");
+    full["rows"][0]["cost"]["unpriced_models"] =
+        json!((0..8).map(|i| format!("model-{i}")).collect::<Vec<_>>());
+    full["rows"][0]["cost"]["unpriced_models_omitted"] = json!(3);
+    assert!(s.valid(&full), "{:#?}", s.errors(&full));
     let mut v = example("missing-branch");
     v["rows"][1]["tokens"] = priced_row()["tokens"].clone();
     bad.push(("missing row with tokens", v));
@@ -989,6 +1050,24 @@ fn the_schema_refuses_what_the_contract_forbids() {
 
     for (what, v) in bad {
         assert!(!s.valid(&v), "the schema accepts {what}");
+    }
+}
+
+/// genie's re-check of M1: every cost the meter writes says how many unpriced models it left out,
+/// 0 included, so a reader never has to treat an absent count as unknown.
+#[test]
+fn every_cost_says_how_many_unpriced_models_it_left_out() {
+    for name in ["priced", "partial-priced", "zero-usage", "unpriced-cost"] {
+        let (code, v) = scenario(name);
+        assert_eq!(code, 0, "{name}: {v}");
+        for r in rows_of(&v) {
+            let cost = r["cost"].as_object().unwrap();
+            assert_eq!(
+                cost.get("unpriced_models_omitted"),
+                Some(&json!(0)),
+                "{name}: {r}"
+            );
+        }
     }
 }
 

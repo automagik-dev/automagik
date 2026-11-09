@@ -1,0 +1,31 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "error",
+  "error": {
+    "code": "read_only_folder",
+    "message": "the state folder cannot be written and the store has no -wal and -shm files, which SQLite needs to read it without writing; make the folder writable, or read it where a reader already left them"
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": null,
+  "store": null,
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "unattributed": null,
+  "pricing": null,
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 1,
+    "branches": [
+      "feat/gn-12-cache"
+    ],
+    "branches_complete": true,
+    "request_sha256": "72c8db08c4bb77d16c2b64c03d871ffaa73ff85f194a12c03282957522931d3c"
+  },
+  "rows": []
+}
