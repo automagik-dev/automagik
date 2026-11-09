@@ -590,9 +590,9 @@ fn missing_or_unreadable_ledgers_give_no_tags() {
 
 #[test]
 fn ledger_and_app_home_paths_follow_herdr() {
-    let home = Some(PathBuf::from("/work/home"));
+    let home = Some(PathBuf::from("/work/user"));
     let default = Some(PathBuf::from(
-        "/work/home/.config/herdr-app/automagik-herdr/workers.jsonl",
+        "/work/user/.config/herdr-app/automagik-herdr/workers.jsonl",
     ));
     assert_eq!(
         ledger_path(Some("/work/ledger.jsonl".into()), None, home.clone()),
@@ -607,7 +607,7 @@ fn ledger_and_app_home_paths_follow_herdr() {
     );
     assert_eq!(
         app_home(None, home),
-        Some(PathBuf::from("/work/home/.config/herdr-app"))
+        Some(PathBuf::from("/work/user/.config/herdr-app"))
     );
 }
 
