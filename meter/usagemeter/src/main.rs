@@ -140,7 +140,7 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             growth,
         } => {
             eprintln!(
-                "meter: the store needs a migration, which keeps a copy first and needs {} free \
+                "meter: the store needs a rebuild or migration, which keeps a copy first and needs {} free \
                  (twice the store, plus {} the logs still to import may add); only {} is free, \
                  so nothing was changed and the store keeps working as it is",
                 human_bytes(needed),
@@ -186,7 +186,12 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             for g in &r.generations_removed {
                 println!("meter: removed the generation {}", g.display());
             }
-            if r.migrated {
+            if r.migrated && r.reimported {
+                println!(
+                    "meter: migrated the store to schema {SCHEMA_VERSION} and rebuilt it from \
+                     the logs: its rows were from a meter older than schema 2"
+                );
+            } else if r.migrated {
                 println!(
                     "meter: migrated the store to schema {SCHEMA_VERSION}: every row kept, \
                      per-call evidence from the next hour on"
