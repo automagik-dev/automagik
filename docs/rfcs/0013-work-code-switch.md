@@ -14,12 +14,12 @@ team. Code is herdr-app, used exactly as today with its mods. Nothing in Herdr i
 RFC only glues the two together. A Work / Code switch in Automagik brings the real herdr-app
 window forward, on the space for the current Bot's folder. A button in Herdr brings the person
 back. One install sets up DSH, herdr-app and the Automagik Herdr pack, and herdr-app is kept on
-its latest release. Both modes read one Bot registry and one pet system. Felipe's answers are
+its latest release. Both modes read one Bot registry and one pet system. The owner's answers are
 D27 and the Decided section (2026-11-03).
 
 ## Motivation
 
-Felipe wants one Automagik for work and code (D7, D12; "start the switch", 2026-11-03). Today
+The owner wants one Automagik for work and code (D7, D12; "start the switch", 2026-11-03). Today
 people switch between the two apps by hand. Nothing carries the Bot or the folder across.
 Nothing tells them Herdr is missing, out of date, or has an agent that needs them.
 
@@ -274,7 +274,7 @@ Any remote send would be a new share on the Privacy page, off by default.
   Windows: install herdr-app from the feed, start a window on a temp `HERDR_APP_HOME`, run
   `status`, `ls` and `do space.new`, and fire `automagik://open`. Record whether each window
   raised or the no-focus message showed.
-- **Manual, with Felipe's OK** (it drives the real window): Code with Herdr closed, open, out of
+- **Manual, with the owner's OK** (it drives the real window): Code with Herdr closed, open, out of
   date and not set up (through `AUTOMAGIK_HERDR_APP`); a remote space; the Work button back.
 
 ## Deliveries
@@ -336,7 +336,7 @@ breaks fullscreen and Spaces (route C). **Rejected.**
 
 ## Decided
 
-D27 answered the first fourteen questions. Felipe answered the rest on 2026-11-03, relayed by
+D27 answered the first fourteen questions. The owner answered the rest on 2026-11-03, relayed by
 the orchestrator.
 
 1. **The Herdr source** is `dev.herdr.app`, from herdrdev, self-updating. It ships macOS,
@@ -359,7 +359,7 @@ the orchestrator.
 
 ## Open questions
 
-None. Felipe answered every question (D27 and Decided).
+None. The owner answered every question (D27 and Decided).
 
 ## Links
 

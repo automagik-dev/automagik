@@ -43,12 +43,12 @@ Decided (the log):
   installed from herdrdev's feed and kept latest (RFC 0013, Decided 1 to 3).
 - The handoff's eight rules, and t259 and t22n's rules (a) and (b) below. Rules (a) and (b)
   settle t2zx's questions 1 and 2.
-- D35 (Felipe 2026-11-03; first logged as a second D34): `am` is its own small signed part,
+- D35 (the owner, 2026-11-03; first logged as a second D34): `am` is its own small signed part,
   attached to every Automagik release, out of the herdr pack, so work-only machines get it.
   `--trust` is accepted only through a dialog in the Automagik window or a prompt outside any
   Herdr terminal; signed release parts need no confirmation. herdr-app is a part, and all three
   OSes are prerequisites of "Set up".
-- D35 additions (Felipe 2026-11-03, the rest of this RFC's questions):
+- D35 additions (the owner, 2026-11-03, the rest of this RFC's questions):
   - am's home: a top-level `am/` folder, its own lane kind `am` (a 3.N.P patch for an am-only
     merge), and its own rolling `am-lane` pointer signed with its own rotatable key.
   - Bootstrap: the `install.sh` one-liner and the desktop app's "Set up", both verifying the
@@ -676,7 +676,7 @@ check passes on all three OSes.
 
 ## Open questions
 
-Felipe answered the rest on 2026-11-03 (D35 additions, under Decided). One question is left.
+The owner answered the rest on 2026-11-03 (D35 additions, under Decided). One question is left.
 
 5. **usagemeter's trust** (owner: t22b). Its `SHA256SUMS` proves integrity, not provenance
    (handoff). Recommended: sign a usagemeter pointer as `herdr-lane` does, or pin its hash in

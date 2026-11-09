@@ -15,7 +15,7 @@ profile under `~/.automagik/web/dsh/profiles/web`, and the `automagik-web.servic
 ## TL;DR
 
 ```sh
-# from an SSH shell on the host, as the service user (namastex)
+# from an SSH shell on the host, as the service user
 cd ~/workspace/repos/automagik
 bun scripts/upgrade.ts --check      # read-only: current vs latest, signature, tarballs, engines
 bun scripts/upgrade.ts --dry-run    # print every step and command; change nothing
@@ -58,19 +58,19 @@ in `cordis.yml`. See [Configuration layers](#configuration-layers-and-cordisyml)
 
 ## Prerequisites
 
-- Run as the service user (`namastex`), from an SSH shell — **not** from an agent inside the Web
+- Run as the service user, from an SSH shell — **not** from an agent inside the Web
   GUI. Restarting `automagik-web` stops the whole unit cgroup, including GUI sessions and agent
   jobs running inside it.
 - `gh` authenticated (`gh auth status`), `node`, `curl`, `tar`, `systemctl`, passwordless `sudo`.
 - At least 2 GiB free under `~/prod/automagik` (a runtime + profile backup is written).
 - The checkout has `plugin-lane/keys.json` (always committed); `bun install` is only needed for
   `bun test`, not for `bun scripts/upgrade.ts --check` / the upgrade itself.
-- `DSH_HOME` for this host is `/home/namastex/.automagik/web/dsh` (the unit sets it).
+- `DSH_HOME` for this host is `~/.automagik/web/dsh` (the unit sets it).
 
 All paths can be overridden with `AUTOMAGIK_UPGRADE_*` environment variables (`HOME`, `DSH_HOME`,
 `PROFILE`, `SERVICE`, `PUBLIC_URL`, `HEALTH_URL`, `BACKUP_ROOT`); the defaults are the host
 layout above. The prefix is `AUTOMAGIK_UPGRADE_*` on purpose: the unit already sets
-`AUTOMAGIK_HOME=/home/namastex/.automagik` for the app, which is a different directory.
+`AUTOMAGIK_HOME=$HOME/.automagik` for the app, which is a different directory.
 
 ## What the script does
 
@@ -228,19 +228,19 @@ RESULT: FAILED target=3.49.0 error=... rollback=INCOMPLETE rollback_error=... ba
 The one-off runbook remains the reference; the short form:
 
 ```sh
-export DSH_HOME=/home/namastex/.automagik/web/dsh
-export DSH_BIN=/home/namastex/prod/automagik/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js
+export DSH_HOME="$HOME/.automagik/web/dsh"
+export DSH_BIN="$HOME/prod/automagik/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"
 
 # 1. back up
 STAMP=$(date -u +%Y%m%d-%H%M%S)
-BK=/home/namastex/prod/automagik/backups/upgrade-<version>-$STAMP
+BK="$HOME/prod/automagik/backups/upgrade-<version>-$STAMP"
 sudo mkdir -p "$BK"
 sudo tar -C "$DSH_HOME" -czf "$BK/dsh-home-before.tgz" --exclude=profiles/web/node_modules .
-sudo tar -C /home/namastex/prod/automagik/runtime -czf "$BK/runtime-before.tgz" .
+sudo tar -C "$HOME/prod/automagik/runtime" -czf "$BK/runtime-before.tgz" .
 
 # 2. download and verify
 VER=3.49.0
-REL=/home/namastex/prod/automagik/releases/$VER
+REL="$HOME/prod/automagik/releases/$VER"
 mkdir -p "$REL/dist" && cd "$REL/dist"
 gh release download "v$VER" -R automagik-dev/automagik -D . \
   --pattern 'plugins.json' --pattern 'PLUGINS.SHA256SUMS' \
@@ -248,11 +248,11 @@ gh release download "v$VER" -R automagik-dev/automagik -D . \
   --pattern 'automagik-bots-dsh-*.tgz' --pattern 'automagik-welcome-dsh-*.tgz' \
   --pattern 'automagik-locale-pt-br-dsh-*.tgz'
 sha256sum --ignore-missing -c PLUGINS.SHA256SUMS
-(cd /home/namastex/workspace/repos/automagik && bun scripts/lane.ts verify "$REL/dist/lane.json" "$REL/dist/lane.json.sig")
+(cd "$HOME/workspace/repos/automagik" && bun scripts/lane.ts verify "$REL/dist/lane.json" "$REL/dist/lane.json.sig")
 
 # 3. stop, swap, install, regenerate, start
 sudo systemctl stop automagik-web
-cd /home/namastex/workspace
+cd "$HOME/workspace"
 DSH_HOME=$DSH_HOME node "$DSH_BIN" plugin --profile web add \
   "file:$REL/dist/automagik-bots-dsh-$VER.tgz" \
   "file:$REL/dist/automagik-welcome-dsh-$VER.tgz" \

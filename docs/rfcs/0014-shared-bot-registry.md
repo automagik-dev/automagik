@@ -14,13 +14,13 @@ places today, with two id shapes and two pet systems. This RFC proposes one Bot 
 read and write: a `bots.json` version 2 in `~/.automagik/bots/` for Bots that belong to no
 project, and in `<repo>/.automagik/bots/` for a project's Bots. It covers writes that never
 overwrite each other, global Bots in Herdr, the desktop app's move to `~/.automagik/bots` (D6),
-one pet folder, Bots on other machines, and the deliveries. Felipe made Herdr's Bots the main
+one pet folder, Bots on other machines, and the deliveries. The owner made Herdr's Bots the main
 team: Automagik shows the ones the person picks, and chatting with one talks to its live Herdr
 agent. RFC 0013's delivery 8 (shared Bots in the switch) waits on it.
 
 ## Motivation
 
-Felipe decided one registry and one way to register a Bot (D1), one main Bot per repo (D2),
+The owner decided one registry and one way to register a Bot (D1), one main Bot per repo (D2),
 DSH's global Bots as the level above the repo main Bots (D3), one pet system (D4, D11) and one
 home (D5, D6). RFC 0013 ("Shared state") lists what the two modes need from this RFC. Today:
 
@@ -44,15 +44,15 @@ checkouts claim one pane), #230 (2-space JSON), #234 (edits on the main checkout
 
 ## Decided and proposed
 
-Decided by Felipe (handoff `bot-system-unification.md`): D1 one registry, home
+Decided by the owner (handoff `bot-system-unification.md`): D1 one registry, home
 `~/.automagik/bots`, a repo may keep a committable copy at `<repo>/.automagik/bots/`, replacing
 `.herdr/bots.json`; D2 one main Bot per repo; D3 global Bots above repo main Bots; D4 one pet
 system, Codex-pet compatible, Herdr renders pets; D5 the home is `~/.automagik/bots` on every
-platform; D6 the desktop app's home merges into it, Felipe starts from scratch, migration is
+platform; D6 the desktop app's home merges into it, the owner starts from scratch, migration is
 optional and offered to others; D11 bake on demand into `~/.automagik/bots/pets/`; D27 one
 registry RFC before the shared-Bot step.
 
-Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
+Decided by the owner on this RFC (2026-11-03, relayed by t2x5):
 
 - **Q1: A, one file per Bot.** A project with a repo file keeps its Bots only there.
 - **Q2: the repo file.** `<repo>/.automagik/bots/bots.json`, version 2, `pets/` beside it.
@@ -87,7 +87,7 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
 - **D32: where the projection lives.** JavaScript in `herdr/`, next to Pocket Link; the
   Automagik window imports the same module; the phone (Kotlin) only renders. RFC 0015, "Live
   chat projection" (t2ws), designs it; this RFC does not.
-- **Q7, reframed.** Felipe: "the real team is on herdr, the automagik one not yet really
+- **Q7, reframed.** The owner: "the real team is on herdr, the automagik one not yet really
   exist... i will want to expose some orchestrators, so that i can talk to them from within the
   friendlier interface, and switch to code when i want". Herdr's Bots are the real team. The
   main path is Herdr Bots exposed in Automagik; the handling of a clashing home stays, for
@@ -105,7 +105,7 @@ Decided by Felipe on this RFC (2026-11-03, relayed by t2x5):
   level.
 
 Agreed between the two orchestrators (t259, t22n): the order of the pack's reads (delivery 2).
-Felipe has decided every question; none is open.
+The owner has decided every question; none is open.
 
 Everything else in Design is this RFC's proposal.
 
@@ -247,7 +247,7 @@ At the first start of a new app:
 `~/.automagik/bots` may already be a team home: a Bot team installed in the person's own dsh
 uses it by default (`folders.js:23`).
 
-1. No old team and no `state.json` in `~/.automagik/bots`: the app starts there. Felipe's case
+1. No old team and no `state.json` in `~/.automagik/bots`: the app starts there. The owner's case
    (D6).
 2. An old team, and no `state.json` in `~/.automagik/bots` (its `bots.json` and `pets/`
    may already be there from delivery 3): the app offers "Bring my Bots" once. Yes copies the
@@ -277,7 +277,7 @@ codex-pets.net pets, are Q13.
 ### Other machines
 
 Automagik lists, and chats with, Bots on the person's other machines too (decided, Q12): every
-machine `hc machine ls` shows connected (on Felipe's setup: khal-labs, g9, g10, ryzen, hx470).
+machine `hc machine ls` shows connected (on the owner's setup: five machines).
 
 - **Where they come from.** A repo file on a linked machine lives on that machine. Herdr already
   reads it through herdr-core (`bots.js:41`) and remembers the project with its machine
@@ -443,7 +443,7 @@ RFC 0013's delivery 8 can start after deliveries 1-3.
 
 ### Universal Bots: one Bot, one DSH Session, two faces (2026-11-07)
 
-Owner decision D4 (Felipe, 2026-11-07, relayed by t3q1; wish `pocket-four-tabs`, Group 0a): a
+Owner decision D4 (2026-11-07, relayed by t3q1; wish `pocket-four-tabs`, Group 0a): a
 project's orchestrator is one Bot. It is defined once in this registry, runs as Claude Code
 through DSH's ACP route, and shows as a DSH chat in work mode and in Herdr in code mode. Pocket
 shows it once. The dsh-tui question this raised was spiked before this text was written:
@@ -502,7 +502,7 @@ on this amendment.
 
 ## Open questions
 
-No open questions. Felipe answered all nineteen (see Decided); they stay below as the record.
+No open questions. The owner answered all nineteen (see Decided); they stay below as the record.
 
 1. **What is a repo's "committable copy" (D1)?** *Decided:* A, one file per Bot. A home Bot whose
    folder later gets a repo file stays at home until the person moves it.
@@ -553,7 +553,7 @@ No open questions. Felipe answered all nineteen (see Decided); they stay below a
 18. **Ids DSH did not mint as `session-<uuid>`.** Host-pinned Bots (Unfold's `unfold-root`) and
     any id outside the pattern. *Decided:* they stay Automagik-only and are not exported.
 19. **How Automagik talks to the live agent.** *Decided* (D29 Q19, with D30-D32): Orca's way,
-    with drafts held; see Decided. Felipe asked to "check how orca does it". Orca
+    with drafts held; see Decided. The owner asked to "check how orca does it". Orca
     (`stablyai/orca` at `e1dfc022`, MIT) shows a terminal agent as chat from its transcript file
     first, then hooks, then screen text. It types into the same terminal: a bracketed paste,
     then Enter as a separate write. Approvals are answered with keys. Unlike our rule, it clears
