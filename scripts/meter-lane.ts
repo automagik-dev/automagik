@@ -11,10 +11,12 @@
  * meter.json names the newest meter's release and, per target, its asset's name, URL, sha256 and
  * size; meter.json.sig is ed25519 over its exact bytes, detached, base64, made with the
  * METER_LANE_KEY Actions secret, the meter's own key (never PLUGIN_LANE_KEY, HERDR_PACK_KEY or
- * AM_LANE_KEY). The public keys are meter/usagemeter/meter-keys.json; it lists none until the owner
- * makes the key (RFC 0017 delivery 5). The key comes first (Chat, 2026-11-09): no release builds,
- * attaches or signs the meter while it lists none (scripts/lane.ts meterHeld), so every meter build
- * that reaches a release is signed; installers keep the pack's pin until then.
+ * AM_LANE_KEY). The public keys are meter/usagemeter/meter-keys.json (RFC 0017 delivery 5). The key
+ * comes first (Chat, 2026-11-09): no release builds, attaches or signs the meter while it lists none
+ * (scripts/lane.ts meterHeld), so every meter build that reaches a release is signed. The installers
+ * carry copies (RFC 0017 delivery 6): herdr/mods/am-sidebar/meter-keys.json (the pack's CLI, and am's
+ * byte copy through scripts/am-copies.mjs) and herdr/install.sh's METER_KEYS line, kept equal by
+ * meter-lane.test.ts; keygen writes all three.
  *
  *   bun scripts/meter-lane.ts manifest <dir> <version> <commit> <issuedAt>   print meter.json for the
  *       four binaries and usagemeter.SHA256SUMS in <dir>, each checked against that list; its keyId
@@ -36,7 +38,8 @@
  *   bun scripts/meter-lane.ts keygen [--repo <owner/repo>] [--key-id <id>]
  *       the owner's step, never CI's or a contributor's: an ed25519 pair generated in memory; the
  *       private key goes straight to `gh secret set` on its stdin (never printed, never written to
- *       disk), and only then is the public key added to meter-keys.json (commit it). The first key
+ *       disk), and only then is the public key added to meter-keys.json, the pack's copy and install.sh's
+ *       METER_KEYS (commit them, after node scripts/am-copies.mjs --write). The first key
  *       goes to METER_LANE_KEY. A rotation is two phases (RFC 0011): keygen puts the new key in the
  *       slot that is NOT signing (the METER_LANE_SIGNER variable names the one that is;
  *       METER_LANE_KEY when unset), so releases keep signing with the old key while installers
@@ -64,6 +67,9 @@ const DOWNLOADS = `${REPOSITORY}/releases/download/`;
 export const SLOTS = ['METER_LANE_KEY', 'METER_LANE_KEY_NEXT'] as const;
 export const KEYS_FILE = join(ROOT, 'meter', 'usagemeter', 'meter-keys.json');
 export const PART_FILE = join(ROOT, 'meter', 'usagemeter', 'part.json');
+/** The installers' copies of KEYS_FILE: the pack's (am carries it byte for byte) and install.sh's METER_KEYS line. */
+export const PACK_KEYS_COPY = join(ROOT, 'herdr', 'mods', 'am-sidebar', 'meter-keys.json');
+export const INSTALL_SH = join(ROOT, 'herdr', 'install.sh');
 
 /** Target (`<os>-<arch>`) to asset name, from part.json's `artifact`: the four every meter release carries. */
 export const ARTIFACTS: Record<string, string> = JSON.parse(readFileSync(PART_FILE, 'utf8')).artifact;
@@ -232,6 +238,15 @@ export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: st
 export const slotFor = (keys: MeterKey[], signer: string | null) =>
   keys.length === 0 ? SLOTS[0] : (signer === SLOTS[1] ? SLOTS[0] : SLOTS[1]);
 
+/** install.sh's embedded copy of meter-keys.json: its `METER_KEYS='…'` line, parsed. */
+export const installKeys = (text: string): MeterKey[] => JSON.parse(/^\s*METER_KEYS='([^']*)'$/m.exec(text)?.[1] ?? 'null')?.keys;
+
+/** `text` (install.sh) with its METER_KEYS line set to `keys`. */
+export const withInstallKeys = (text: string, keys: MeterKey[]) => {
+  if (!/^\s*METER_KEYS='[^']*'$/m.test(text)) throw new Error('install.sh has no METER_KEYS line');
+  return text.replace(/^(\s*)METER_KEYS='[^']*'$/m, (_, indent: string) => `${indent}METER_KEYS='${JSON.stringify({ keys })}'`);
+};
+
 const readKeys = (): MeterKey[] => JSON.parse(readFileSync(KEYS_FILE, 'utf8')).keys ?? [];
 
 if (import.meta.main) {
@@ -288,8 +303,11 @@ if (import.meta.main) {
     const secret = spawnSync('gh', ['secret', 'set', slot, '--repo', repo], { input: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), stdio: ['pipe', 'inherit', 'inherit'] });
     if (secret.status !== 0) { console.error('meter lane: gh secret set failed; nothing was written'); process.exit(1); }
     const next = [...keys, { keyId, publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString() }];
-    writeFileSync(KEYS_FILE, `${JSON.stringify({ keys: next }, null, 2)}\n`);
-    console.log(`meter lane: ${slot} set on ${repo}; ${keyId} added to meter/usagemeter/meter-keys.json. Commit it.`);
+    const file = `${JSON.stringify({ keys: next }, null, 2)}\n`;
+    writeFileSync(KEYS_FILE, file);
+    writeFileSync(PACK_KEYS_COPY, file);
+    writeFileSync(INSTALL_SH, withInstallKeys(readFileSync(INSTALL_SH, 'utf8'), next));
+    console.log(`meter lane: ${slot} set on ${repo}; ${keyId} added to meter/usagemeter/meter-keys.json, herdr/mods/am-sidebar/meter-keys.json and herdr/install.sh. Run node scripts/am-copies.mjs --write, then commit them.`);
     if (keys.length > 0) console.log(`Phase 2, only after a release has shipped this meter-keys.json and installers have taken it: gh variable set METER_LANE_SIGNER --body ${slot} --repo ${repo}`);
   } else {
     console.error('usage: bun scripts/meter-lane.ts manifest <dir> <version> <commit> <issuedAt> | sign <meter.json> | verify <meter.json> <sig> | matches <meter.json> <dir> | posted <meter.json> <dir> | check-key | keygen [--repo <owner/repo>] [--key-id <id>]');

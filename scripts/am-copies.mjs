@@ -4,7 +4,7 @@
  * am/ carries byte-equal copies of herdr/mods/am-sidebar's CLI (bin/automagik-herdr.mjs and its
  * wrapper), the briefing (briefing.mjs, briefingEntry.mjs), run.sh and every module they import,
  * at the same relative paths so each import resolves unchanged, plus the trust anchors am carries
- * (pack-keys.json, the plugin lane's keys). At run time am reads nothing from the pack's folders.
+ * (pack-keys.json, meter-keys.json, the plugin lane's keys). At run time am reads nothing from the pack's folders.
  *
  * The list is not kept by hand: it is the import closure of ROOTS inside the sidebar, plus EXTRA.
  * am/copies.json records what --write copied, so a module the CLI stops importing is removed.
@@ -36,6 +36,7 @@ export const EXTRA = [
   [`${SOURCE}/guard/hc`, `${TARGET}/guard/hc`],
   [`${SOURCE}/hcGuard.mjs`, `${TARGET}/hcGuard.mjs`],
   [`${SOURCE}/pack-keys.json`, `${TARGET}/pack-keys.json`],
+  [`${SOURCE}/meter-keys.json`, `${TARGET}/meter-keys.json`],
   ["plugin-lane/keys.json", `${TARGET}/plugin-lane-keys.json`],
 ];
 

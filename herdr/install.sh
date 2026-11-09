@@ -25,11 +25,13 @@
 # layout (replacing only v0.2's unchanged copy; in a kept one, or one of the person's own showing
 # the sidebar, Herdr's workspace-status block becomes am-status, and it says so), runs
 # `herdr-app check` on each mod, and links
-# the `automagik-herdr` command into ~/.local/bin. It installs the pinned usagemeter release (the
-# token meter the sidebar runs every 10 minutes) to ~/.local/bin/usagemeter, hash-checked and never
-# over a newer one, and the same release on every connected linked machine (`hc machine ls`, through
-# the pack's `automagik-herdr meter install --linked`: each machine downloads and checks it
-# itself); a failure there is only a warning. When asked at a terminal (or with --dsh-tui; --yes
+# the `automagik-herdr` command into ~/.local/bin. It installs usagemeter (the token meter the
+# sidebar runs every 10 minutes) to ~/.local/bin/usagemeter: the build the signed meter-lane pointer
+# names (meter.json and its ed25519 signature, checked against the keys embedded below; never one
+# older than a pointer it took before), checked against the sha256 that pointer names, never over a
+# newer one; and the same build on every connected linked machine (`hc machine ls`, through the
+# pack's `automagik-herdr meter install --linked`: each machine downloads and checks it itself); a
+# failure there is only a warning. When asked at a terminal (or with --dsh-tui; --yes
 # never does), it installs the pinned dsh-TUI into DSH's own `dsh-tui` profile and the `dsh-tui` shim
 # into ~/.local/bin, so Herdr's built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
@@ -45,8 +47,9 @@
 # the pointer at <url>/download/herdr-lane/pack.json) or a page of this repository on github.com;
 # with a file:// one also AUTOMAGIK_HERDR_TTY (default /dev/tty), AUTOMAGIK_HERDR_APPS (default
 # /Applications; ~/Applications is read too) and AUTOMAGIK_HERDR_PACK_KEYS (the trusted keys, as TRUSTED_KEYS: a test's own;
-# never honoured for a GitHub URL). HERDR_APP_HOME as Herdr reads it. A file:// release folder also serves usagemeter's
-# releases from <url>/usagemeter/download/v<version>/, so a test never reaches the network.
+# never honoured for a GitHub URL), and AUTOMAGIK_HERDR_METER_KEYS the same for METER_KEYS. HERDR_APP_HOME as Herdr reads
+# it. A file:// release folder also serves the meter lane (<url>/download/meter-lane/meter.json) and the builds it names
+# (<url>/download/v<version>/<asset>), so a test never reaches the network.
 
 main() {
   set -eu
@@ -82,9 +85,10 @@ main() {
   # so.pen.herdr-gpui) is a different app and never counts.
   HERDR_ID=dev.herdr.app
   HERDR_INSTALLER=https://releases.herdr.dev/app/install.sh
-  # usagemeter (Group 6c): release.js USAGEMETER.version, kept equal by a test. One shared path.
-  METER_VERSION=0.3.0
-  METER_RELEASES=https://github.com/automagik-dev/usagemeter/releases
+  # usagemeter (Group 6c): the build the signed meter-lane pointer names. The keys it may be signed
+  # with: mods/am-sidebar/meter-keys.json, a copy of meter/usagemeter/meter-keys.json, kept equal by
+  # tests (bun scripts/meter-lane.ts keygen writes all three). One shared path.
+  METER_KEYS='{"keys":[{"keyId":"meter-2026-11","publicKey":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAf2gfjEnFdw08xICy53pSDqo6uQxkoYOE+UvHQaZ0RPE=\n-----END PUBLIC KEY-----\n"}]}'
   METER=$BIN_DIR/usagemeter
   METER_OK=1
   # Linked machines too (meterFleet.js): 0 with --usagemeter-local-only (or --no-usagemeter).
@@ -128,7 +132,7 @@ main() {
     esac
     say "Releases from $RELEASES (AUTOMAGIK_HERDR_RELEASE_URL)."
     case $RELEASES in
-      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; STATUS_SECONDS=${AUTOMAGIK_HERDR_STATUS_SECONDS:-$STATUS_SECONDS}; METER_RELEASES=$RELEASES/usagemeter; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS} ;;
+      file://*) TTY=${AUTOMAGIK_HERDR_TTY:-$TTY}; APPS=${AUTOMAGIK_HERDR_APPS:-$APPS}; STATUS_SECONDS=${AUTOMAGIK_HERDR_STATUS_SECONDS:-$STATUS_SECONDS}; TRUSTED_KEYS=${AUTOMAGIK_HERDR_PACK_KEYS:-$TRUSTED_KEYS}; METER_KEYS=${AUTOMAGIK_HERDR_METER_KEYS:-$METER_KEYS} ;;
     esac
   fi
 
@@ -608,20 +612,52 @@ meter_version() {
   "$1" --version </dev/null 2>/dev/null \
     | sed -n 's/^usagemeter \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\([-+][0-9A-Za-z.+-]*\)\{0,1\}\)$/\1/p' | head -n 1
 }
-# The sha256 this installer pins for usagemeter asset $1 (release.js USAGEMETER.sha256, kept equal by
-# a test, and checked against the release by scripts/usagemeter-pin.mjs in CI). A file:// test
-# release may pin its own with AUTOMAGIK_HERDR_METER_PIN (SHA256SUMS lines); never a real one.
-meter_pin() {
-  case $METER_RELEASES in
-    file://*) if [ -n "${AUTOMAGIK_HERDR_METER_PIN:-}" ]; then
-      sed -n "s/^\([0-9a-f]\{64\}\) [ *]$1\$/\1/p" "$AUTOMAGIK_HERDR_METER_PIN" | head -n 1; return 0; fi ;;
-  esac
-  case $1 in
-    usagemeter-darwin-arm64) echo 80542d40e71369359cc1048c2d3a00b5703a10657651ca36e4207dfcf7d9824f ;;
-    usagemeter-darwin-x86_64) echo f44107b3b5482b58e8592d482a01299c559ab71ded4d68a5c76b597c96ae6670 ;;
-    usagemeter-linux-aarch64) echo fa08460ebba5f4670bfa5777340c9ac20c89788f560bfadd24aeb30babdcfff4 ;;
-    usagemeter-linux-x86_64) echo 25094c783abf14081d03547596e109b8601b7b47b8efccf76fa4473141cc26c6 ;;
-  esac
+# The meter-lane pointer: meter.json ($1) and its signature ($2), checked against METER_KEYS (ed25519
+# over its exact bytes, every key tried before any field is read), then its fields as
+# scripts/meter-lane.ts checkPointer checks them, then against the sequence this install took
+# before ($3, may be empty): an older one is refused, so a re-posted older pointer never downgrades.
+# Prints `<version> <sequence> <asset> <sha256>` for target $4; on a refusal prints why and
+# returns 1. Node is checked before this runs.
+read_meter_pointer() {
+  # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
+  node -e '
+    const fs = require("fs"), crypto = require("crypto");
+    const [file, sigFile, keysJson, haveSeq, target] = process.argv.slice(1);
+    const no = (why) => { console.log(`the meter-lane pointer ${why}: nothing was installed`); process.exit(1); };
+    const REPO = "https://github.com/automagik-dev/automagik", DOWNLOADS = `${REPO}/releases/download`;
+    const TARGETS = { "darwin-arm64": "usagemeter-darwin-arm64", "darwin-x86_64": "usagemeter-darwin-x86_64",
+      "linux-x86_64": "usagemeter-linux-x86_64", "linux-aarch64": "usagemeter-linux-aarch64" };
+    const bytes = fs.readFileSync(file);
+    let sig = Buffer.alloc(0), keys = [];
+    try { sig = Buffer.from(fs.readFileSync(sigFile, "utf8").trim(), "base64"); } catch {}
+    try { keys = JSON.parse(keysJson).keys || []; } catch {}
+    const signer = sig.length === 0 ? null : keys.find((k) => { try { return crypto.verify(null, bytes, crypto.createPublicKey(k.publicKey), sig); } catch { return false; } });
+    if (!signer) no("is not signed by a key this installer trusts");
+    let p;
+    try { p = JSON.parse(bytes.toString("utf8")); } catch { no("is not JSON"); }
+    if (!p || typeof p !== "object" || Array.isArray(p)) no("is not a JSON object");
+    if (p.keyId !== signer.keyId) no(`names the key ${p.keyId}, but ${signer.keyId} signed it`);
+    if (p.schemaVersion !== 1 || p.part !== "automagik.usagemeter") no(`is not a usagemeter pointer (schema ${p.schemaVersion}, part ${p.part})`);
+    if (p.publisher !== "automagik" || p.repository !== REPO) no(`names another repository (${p.repository})`);
+    const m = /^3\.(0|[1-9]\d{0,2})\.(0|[1-9]\d{0,2})$/.exec(typeof p.version === "string" ? p.version : "");
+    if (!m) no(`names no release version (${p.version})`);
+    if (p.tag !== `v${p.version}`) no(`names the tag ${p.tag}, not v${p.version}`);
+    if (!Number.isSafeInteger(p.sequence) || p.sequence !== Number(m[1]) * 10000 + Number(m[2])) no(`has the sequence ${p.sequence}, not the one ${p.version} has`);
+    if (typeof p.commit !== "string" || !/^[0-9a-f]{40}$/.test(p.commit)) no("names no commit");
+    const assets = p.assets && typeof p.assets === "object" && !Array.isArray(p.assets) ? p.assets : {};
+    if (Object.keys(assets).sort().join() !== Object.keys(TARGETS).sort().join()) no(`does not name exactly the targets ${Object.keys(TARGETS).join(", ")}`);
+    for (const [t, name] of Object.entries(TARGETS)) {
+      const a = assets[t] && typeof assets[t] === "object" ? assets[t] : {};
+      if (a.name !== name) no(`names ${a.name} for ${t}, not ${name}`);
+      if (a.url !== `${DOWNLOADS}/${p.tag}/${name}`) no(`has ${name} at ${a.url}, off the tag ${p.tag}`);
+      if (typeof a.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(a.sha256)) no(`names no sha256 for ${name}`);
+      if (!Number.isSafeInteger(a.size) || a.size <= 0) no(`names no size for ${name}`);
+    }
+    if (/^\d{1,15}$/.test(haveSeq || "") && p.sequence < Number(haveSeq)) no(`names ${p.version} (sequence ${p.sequence}), older than the sequence ${haveSeq} this install already took: refusing to downgrade`);
+    const a = assets[target];
+    if (!a) no(`names no build for ${target}`);
+    console.log(`${p.version} ${p.sequence} ${a.name} ${a.sha256}`);
+  ' "$1" "$2" "$METER_KEYS" "$3" "$4" </dev/null
 }
 # Whether version $1 >= $2, field by field as numbers (0.10.0 >= 0.9.0).
 version_ge() {
@@ -630,15 +666,17 @@ version_ge() {
     exit 0 }' </dev/null
 }
 # The marker's usagemeter lines, last and in release.js formatMarker's order (usagemeter=,
-# usagemeter-machines=, usagemeter-scope=), so a later rewrite by update.mjs changes nothing:
-# $1 the usagemeter= value and $2 the usagemeter-scope= one (empty: dropped); the machines line kept.
+# usagemeter-sequence=, usagemeter-machines=, usagemeter-scope=), so a later rewrite by update.mjs
+# changes nothing: $1 the usagemeter= value, $2 the usagemeter-scope= one and $3 the
+# usagemeter-sequence= one (empty: dropped); the machines line kept.
 # Unchanged values leave the record byte for byte (a rerun changes nothing). A v2 marker only.
 mark_usagemeter() {
   grep -q '^mods=' "$MARK" 2>/dev/null || return 0
   machines=$(mark_get usagemeter-machines)
   m=$(mktemp "$STATE/.marker.XXXXXX") || return 1
-  if { sed -e '/^usagemeter=/d' -e '/^usagemeter-machines=/d' -e '/^usagemeter-scope=/d' "$MARK"
+  if { sed -e '/^usagemeter=/d' -e '/^usagemeter-sequence=/d' -e '/^usagemeter-machines=/d' -e '/^usagemeter-scope=/d' "$MARK"
     if [ -n "$1" ]; then printf 'usagemeter=%s\n' "$1"; fi
+    if [ -n "$3" ]; then printf 'usagemeter-sequence=%s\n' "$3"; fi
     if [ -n "$machines" ]; then printf 'usagemeter-machines=%s\n' "$machines"; fi
     if [ -n "$2" ]; then printf 'usagemeter-scope=%s\n' "$2"; fi; } >"$m"; then
     if cmp -s "$m" "$MARK"; then rm -f "$m"; return 0; fi
@@ -647,13 +685,16 @@ mark_usagemeter() {
   rm -f "$m"
   return 1
 }
-mark_meter() { mark_usagemeter "$1" "$(mark_get usagemeter-scope)"; }
-mark_scope() { mark_usagemeter "$(mark_get usagemeter)" "$1"; }
-# Puts the pinned release at $METER: the binary for this OS and CPU, checked against the release's
-# SHA256SUMS, written to a temp file beside it, chmod 755, renamed into place. Never over a newer
-# usagemeter (Pocket Link installs the same one; a pre-release counts by its X.Y.Z, so 0.3.0-dev
-# stays), one that reports no version, a link or a folder. Returns 1 with $why on a failure; the
-# caller only warns. Runs in a || list, where set -e is off: every step checks itself.
+mark_meter() { mark_usagemeter "$1" "$(mark_get usagemeter-scope)" "$(mark_get usagemeter-sequence)"; }
+mark_scope() { mark_usagemeter "$(mark_get usagemeter)" "$1" "$(mark_get usagemeter-sequence)"; }
+mark_sequence() { mark_usagemeter "$(mark_get usagemeter)" "$(mark_get usagemeter-scope)" "$1"; }
+# Puts the build the signed meter-lane pointer names at $METER: the one for this OS and CPU,
+# checked against the sha256 the pointer names, written to a temp file beside it, chmod 755,
+# renamed into place. Never over a newer usagemeter (Pocket Link installs the same one; a
+# pre-release counts by its X.Y.Z, so 3.N.P-dev stays), one that reports no version, a link or a
+# folder. The pointer's sequence is recorded (a lower one is refused next time). Returns 1 with
+# $why on a failure or a refusal; the caller only warns. Runs in a || list, where set -e is off:
+# every step checks itself.
 install_meter() {
   why=
   have=
@@ -665,48 +706,56 @@ install_meter() {
   if [ -f "$METER" ]; then
     have=$(meter_version "$METER")
     if [ -z "$have" ]; then
-      say "Warning: $METER reports no usagemeter version; left it as it is (remove it to get usagemeter $METER_VERSION)."
-      mark_meter ""
-      return 0
-    fi
-    if [ "$have" = "$METER_VERSION" ]; then say "usagemeter $have: already installed ($METER)."; return 0; fi
-    # Not older by its X.Y.Z: a newer release, or a dev build of this one or a newer one.
-    if version_ge "${have%%[-+]*}" "$METER_VERSION"; then
-      say "usagemeter $have is installed ($METER), not older than $METER_VERSION: not replacing it."
+      say "Warning: $METER reports no usagemeter version; left it as it is (remove it to get usagemeter)."
       mark_meter ""
       return 0
     fi
   fi
   case $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) in
-    Darwin-arm64) asset=usagemeter-darwin-arm64 ;;
-    Darwin-x86_64) asset=usagemeter-darwin-x86_64 ;;
-    Linux-x86_64|Linux-amd64) asset=usagemeter-linux-x86_64 ;;
-    Linux-aarch64|Linux-arm64) asset=usagemeter-linux-aarch64 ;;
+    Darwin-arm64|Darwin-aarch64) target=darwin-arm64 ;;
+    Darwin-x86_64) target=darwin-x86_64 ;;
+    Linux-x86_64|Linux-amd64) target=linux-x86_64 ;;
+    Linux-aarch64|Linux-arm64) target=linux-aarch64 ;;
     *) why="no usagemeter build for $(uname -s 2>/dev/null) $(uname -m 2>/dev/null)"; return 1 ;;
   esac
-  ubase=$METER_RELEASES/download/v$METER_VERSION
   udir=$TMP/usagemeter
   mkdir -p "$udir" || { why="could not make $udir"; return 1; }
-  say "Downloading usagemeter $METER_VERSION..."
-  curl -fsSL --path-as-is "$ubase/SHA256SUMS" -o "$udir/SHA256SUMS" </dev/null 2>/dev/null \
-    || { why="could not download $ubase/SHA256SUMS"; return 1; }
-  curl -fsSL --path-as-is "$ubase/$asset" -o "$udir/$asset" </dev/null 2>/dev/null \
+  upointer=$RELEASES/download/meter-lane/meter.json
+  curl -fsSL --path-as-is "$upointer" -o "$udir/meter.json" </dev/null 2>/dev/null \
+    || { why="could not download the meter-lane pointer $upointer"; return 1; }
+  curl -fsSL --path-as-is "$upointer.sig" -o "$udir/meter.json.sig" </dev/null 2>/dev/null \
+    || { why="the meter-lane pointer has no signature ($upointer.sig): nothing was installed"; return 1; }
+  ulane=$(read_meter_pointer "$udir/meter.json" "$udir/meter.json.sig" "$(mark_get usagemeter-sequence)" "$target") \
+    || { why=$ulane; return 1; }
+  uwant=${ulane%% *}; urest=${ulane#* }
+  useq=${urest%% *}; urest=${urest#* }
+  asset=${urest%% *}; usum=${urest#* }
+  mark_sequence "$useq" || say "usagemeter: the ownership record could not note the meter-lane pointer's sequence."
+  if [ -n "$have" ]; then
+    if [ "$have" = "$uwant" ]; then say "usagemeter $have: already installed ($METER)."; return 0; fi
+    # Not older by its X.Y.Z: a newer release, or a dev build of this one or a newer one.
+    if version_ge "${have%%[-+]*}" "$uwant"; then
+      say "usagemeter $have is installed ($METER), not older than $uwant: not replacing it."
+      mark_meter ""
+      return 0
+    fi
+  fi
+  ubase=$RELEASES/download/v$uwant
+  case $ubase in file://*) uproto='=file' ;; *) uproto='=https' ;; esac
+  say "Downloading usagemeter $uwant (the signed meter-lane pointer's)..."
+  curl -fsSL --path-as-is --proto "$uproto" "$ubase/$asset" -o "$udir/$asset" </dev/null 2>/dev/null \
     || { why="could not download $ubase/$asset"; return 1; }
-  usum=$(sed -n "s/^\([0-9a-fA-F]\{64\}\) [ *]$asset\$/\1/p" "$udir/SHA256SUMS" | head -n 1 | tr 'A-F' 'a-f')
-  [ -n "$usum" ] || { why="$ubase/SHA256SUMS does not list $asset"; return 1; }
   if command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$udir/$asset" </dev/null); else got=$(sha256sum "$udir/$asset" </dev/null); fi
   got=${got%% *}
-  [ "$got" = "$usum" ] || { why="$asset does not match SHA256SUMS (sha256 $got, expected $usum): nothing was installed"; return 1; }
-  pin=$(meter_pin "$asset")
-  if [ -z "$pin" ] || [ "$got" != "$pin" ]; then
-    why="$asset is not the build this installer pins (sha256 $got, pinned ${pin:-none}): nothing was installed"
+  if [ "$got" != "$usum" ]; then
+    why="$asset is not the build the signed meter-lane pointer names (sha256 $got, expected $usum): nothing was installed"
     return 1
   fi
   mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
   part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
   if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then
-    say "Installed usagemeter $METER_VERSION ($METER, checksum ok)."
-    mark_meter "$METER_VERSION" || say "usagemeter: the ownership record could not note it; --uninstall will leave it."
+    say "Installed usagemeter $uwant ($METER, signed pointer, checksum ok)."
+    mark_meter "$uwant" || say "usagemeter: the ownership record could not note it; --uninstall will leave it."
     return 0
   fi
   rm -f "$part"

@@ -48,8 +48,7 @@
 # throwaway worktree, never cached across shas.
 #
 # What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, by the owner's
-# rule that it never runs on our machines (CI still runs it), and scripts/usagemeter-pin.mjs (it
-# reads a release over the network). Its static checks run once, on the first Node. A version like 24 is the
+# rule that it never runs on our machines (CI still runs it). Its static checks run once, on the first Node. A version like 24 is the
 # newest one nvm has installed, not the newest released; the record names the exact one. bun is
 # whatever PATH has (CI pins 1.4.4); the record names it. The plugin gate does not fetch Omni for
 # welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,

@@ -1,5 +1,5 @@
-// Where a GitHub release's assets come from, for the pin checks in CI (usagemeter-pin.mjs,
-// scheduler-pin.mjs). The public release-download URL is tried first. When it fails with a 5xx, a
+// Where a GitHub release's assets come from, for the pin check in CI
+// (scheduler-pin.mjs). The public release-download URL is tried first. When it fails with a 5xx, a
 // timeout or a network error, the same asset is fetched through the REST API asset route (`gh
 // release download`'s): GET /repos/<repo>/releases/tags/<tag>, then the named asset's `url` as
 // octet-stream. A 4xx means the release or asset really is not there, and is reported at once.
