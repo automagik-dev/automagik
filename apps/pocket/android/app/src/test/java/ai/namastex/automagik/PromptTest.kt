@@ -202,6 +202,17 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assertFalse(Prompt.sameDialog(then.dialog, null))
     }
 
+    @Test fun aRewrappedDialogIsStillTheSameDialog() {
+        // The phone pane rewraps a long command at its width: the same words, so the same dialog.
+        val rewrapped = permissionAtYes.replace(" Bash command\n make build\n", " Bash command\n make\n build\n")
+        val now = Prompt.menu(rewrapped)!!
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, now.options)
+        assertTrue(Prompt.sameDialog(Prompt.menu(permissionAtYes)!!.dialog, now))
+        // A changed word is still a different dialog.
+        val changed = permissionAtYes.replace("make build", "make deploy")
+        assertFalse(Prompt.sameDialog(Prompt.menu(permissionAtYes)!!.dialog, Prompt.menu(changed)))
+    }
+
     /** The same permission with the cursor where Claude Code puts it first: on 1. Yes. */
     private val permissionAtYes = permission.replace(" ❯ 2.", "   2.").replace("   1. Yes", " ❯ 1. Yes")
 
@@ -286,6 +297,36 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assertEquals("Answered elsewhere or changed; look again", answered)
         assertEquals(listOf("terminal.get"), answeredCalls)
         assertFalse(goneCalls.contains("terminal.keys") || answeredCalls.contains("terminal.keys"))
+    }
+
+    /**
+     * Claude Code's permission with no rule, its question flush left above a blank line before the options: the walk
+     * cannot capture the dialog, so two different commands over the same options read as the same (empty) text.
+     */
+    private val blankDialog = """
+⏺ Bash(make build)
+Bash command
+make build
+Do you want to proceed?
+
+❯ 1. Yes
+  2. Yes, and always allow access to /work/example from this project
+  3. Yes, and switch to auto mode · auto mode handles these prompts for you
+  4. No
+""".trimIndent()
+
+    @Test fun aBlankCapturedDialogSendsNoKeysEvenWithMatchingOptions() {
+        val captured = Prompt.menu(blankDialog)!!
+        val changed = Prompt.menu(blankDialog.replace("make build", "make deploy"))!!
+        assertEquals("", captured.dialog)
+        assertEquals("", changed.dialog)
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, captured.options)
+        assertEquals(captured.options, changed.options)
+        // There is no text above the options to compare, so blank must not equal blank: the keys stay.
+        val (outcome, calls) = tapped(landing = "working", fresh = blankDialog.replace("make build", "make deploy"),
+            dialog = captured.dialog)
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
+        assertEquals(Prompt.CHANGED, outcome)
     }
 
     @Test fun anOptionsOnlyChangeKeepsItsOwnMessage() {

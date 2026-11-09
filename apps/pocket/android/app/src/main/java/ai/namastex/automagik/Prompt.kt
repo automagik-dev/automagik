@@ -32,6 +32,8 @@ object Prompt {
     private val OPEN = Regex("""^[─━]{8,}\s*$""")
     /** Claude Code's rotating hint inside a permission dialog: not the prompt, so it is not compared. */
     private val TIP = Regex("""^Tip:""")
+    /** Any run of whitespace: the pane wraps a long line at the phone's width, and that is layout, not text. */
+    private val SPACE = Regex("""\s+""")
     private val FREE_TEXT = listOf("type something", "chat about this")
 
     /** The last numbered menu on [screen] (1., 2., … in order, one highlighted), or null if there isn't one. */
@@ -138,8 +140,17 @@ object Prompt {
     /** The menu still on screen is the one the button was made from (same options in the same order). */
     fun unchanged(then: List<String>, now: Menu?) = now != null && now.options == then
 
-    /** The prompt above that menu still reads as it did when the button was made. */
-    fun sameDialog(then: String, now: Menu?) = now != null && now.dialog == then
+    /**
+     * The prompt above that menu still reads as it did when the button was made, its lines compared as words: a line
+     * re-wrapped at the phone's width is the same dialog. A blank capture on either side never matches, not even
+     * against another blank, because then there is no text to compare.
+     */
+    fun sameDialog(then: String, now: Menu?): Boolean {
+        if (now == null) return false
+        val before = then.trim().replace(SPACE, " ")
+        val after = now.dialog.trim().replace(SPACE, " ")
+        return before.isNotEmpty() && after.isNotEmpty() && before == after
+    }
 
     /** Nothing was pressed because the dialog on screen is no longer the one the button was made from. */
     const val CHANGED = "Answered elsewhere or changed; look again"
