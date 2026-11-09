@@ -286,13 +286,13 @@
     },
     {
       "file": "apps/dsh-sandbox/test/profile.test.mjs",
-      "text": "/home/a",
+      "text": "/home/a'",
       "why": "a test fixture home path, not a host account"
     },
     {
-      "file": "apps/landing/landing.test.mjs",
-      "text": "feliperosa",
-      "why": "a name the test's negative guard names on purpose, not data"
+      "file": "apps/dsh-sandbox/test/profile.test.mjs",
+      "text": "/home/a/",
+      "why": "a test fixture home path, not a host account"
     },
     {
       "file": "apps/unfold-events-dsh/test/presence.test.js",
@@ -477,6 +477,10 @@
     },
     {
       "folder": "apps/desktop",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/landing",
       "issue": "#795"
     }
   ]
