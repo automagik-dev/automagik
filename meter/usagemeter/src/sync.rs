@@ -206,11 +206,14 @@ pub enum Outcome {
     NewerSchema {
         store: i64,
     },
-    /// A destructive migration needs at least twice the store's size free and the filesystem
-    /// has less: the store was left as it was, and nothing else changed.
+    /// A destructive migration needs at least twice the store's size, plus the growth the logs
+    /// still to import are projected to add ([`projected_growth`]), free and the filesystem has
+    /// less: the store was left as it was, and nothing else changed.
     NoSpace {
         free: u64,
         needed: u64,
+        /// The projected growth inside `needed`.
+        growth: u64,
     },
     Ran(Box<Report>),
 }
@@ -668,7 +671,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let destructive = (reset_from.is_some() || migrate) && holds_rows;
     let reimported = reset_from.is_some() && (stored.is_some() || holds_rows);
     // Writing to an existing store's schema (a reset, or the index an older store lacks) needs at
-    // least twice the store's size free; without it nothing changes.
+    // least twice the store's size free; without it nothing changes. A rebuild, a backfill or a
+    // migration also needs room for what the logs still to import will add, so a disk that
+    // would fill mid-run is refused up front.
     let needs_index = peek.as_ref().is_some_and(|p| !p.has_repo_index);
     if destructive || needs_index {
         let size: u64 = ["meter.db", "meter.db-wal"]
@@ -676,7 +681,20 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             .filter_map(|f| opts.state_dir.join(f).metadata().ok())
             .map(|m| m.len())
             .sum();
-        let needed = size.saturating_mul(2);
+        let growth = if destructive {
+            let offsets = match reset_from {
+                Some(_) => None,
+                None => Some(crate::store::imported_offsets(&db_path)?),
+            };
+            projected_growth(
+                opts,
+                reset_from.or(stored).unwrap_or(wanted),
+                offsets.as_ref(),
+            )
+        } else {
+            0
+        };
+        let needed = size.saturating_mul(2).saturating_add(growth);
         let free = match opts.free_bytes {
             Some(f) => f,
             None => paths::free_bytes(&opts.state_dir).map_err(|e| {
@@ -687,7 +705,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             })?,
         };
         if free < needed {
-            return Ok(Outcome::NoSpace { free, needed });
+            return Ok(Outcome::NoSpace {
+                free,
+                needed,
+                growth,
+            });
         }
     }
     // Before a reset drops a store's rows, a generation that holds every row, checked by count.
@@ -1022,6 +1044,40 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     report.summary = Some(doc);
     report.elapsed = started.elapsed();
     Ok(Outcome::Ran(Box::new(report)))
+}
+
+/// What the store is assumed to grow by per byte of log still to import, evidence included: 1/8,
+/// far above what was measured (a full rebuild of 2.0 GB of logs made a 14.7 MB store, about
+/// 1/137), so a projection never falls short.
+pub const GROWTH_PER_LOG_BYTE: u64 = 8;
+
+/// The bytes a run that starts at `from_ms` may add to the store: the log bytes it still has to
+/// import, divided by [`GROWTH_PER_LOG_BYTE`]. With `offsets` (a run that keeps the store's rows),
+/// a log counts from the offset the store already read it to; without (a reset), every log in the
+/// window counts whole. Codex rollouts count by their files. Only file sizes are read.
+pub fn projected_growth(
+    opts: &Options,
+    from_ms: i64,
+    offsets: Option<&HashMap<String, u64>>,
+) -> u64 {
+    let mut logs = Vec::new();
+    scan::discover(&opts.omp_root, Source::Omp, &mut logs);
+    scan::discover(&opts.claude_root, Source::Claude, &mut logs);
+    scan::discover(&opts.dsh_root, Source::DshTui, &mut logs);
+    for d in ["sessions", "archived_sessions"] {
+        scan::discover(&opts.codex_home.join(d), Source::Codex, &mut logs);
+    }
+    let mut bytes: u64 = 0;
+    for c in &logs {
+        let read = offsets.and_then(|o| o.get(c.path.to_string_lossy().as_ref()).copied());
+        let left = match read {
+            Some(off) => c.size.saturating_sub(off),
+            None if c.mtime_ms < from_ms => 0,
+            None => c.size,
+        };
+        bytes = bytes.saturating_add(left);
+    }
+    bytes.div_ceil(GROWTH_PER_LOG_BYTE)
 }
 
 /// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, the project

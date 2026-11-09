@@ -307,7 +307,10 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
   counts. Only one is kept; the next sync that succeeds on the migrated store removes it, never
   the run that made it. The migration itself is one transaction that refuses to commit if any
   table would lose a row; `query` and `status` never migrate (a schema 2 store gives `query` exit
-  13 until `sync` runs).
+  13 until `sync` runs). For a reset, a backfill or the migration, the room needed also counts
+  what the logs still to import may add, so a disk that would fill mid-run refuses up front: their
+  bytes (every log in the window for a reset, else what lies past each log's stored offset)
+  divided by 8, far above the measured ratio (about 1/137).
 
 ## Query
 

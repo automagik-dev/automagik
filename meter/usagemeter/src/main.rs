@@ -133,11 +133,17 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             );
             return Ok(ExitCode::from(query::exit::NEWER_SCHEMA));
         }
-        Outcome::NoSpace { free, needed } => {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth,
+        } => {
             eprintln!(
-                "meter: the store needs a migration, which keeps a copy first and needs {} free; \
-                 only {} is free, so nothing was changed and the store keeps working as it is",
+                "meter: the store needs a migration, which keeps a copy first and needs {} free \
+                 (twice the store, plus {} the logs still to import may add); only {} is free, \
+                 so nothing was changed and the store keeps working as it is",
                 human_bytes(needed),
+                human_bytes(growth),
                 human_bytes(free)
             );
             return Ok(ExitCode::from(EXIT_NO_SPACE));

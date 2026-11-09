@@ -776,3 +776,82 @@ fn a_migration_that_would_lose_a_row_is_refused_and_changes_nothing() {
     assert_eq!(counts(&db), old);
     assert_eq!(meter::store::peek(&db).unwrap().unwrap().version, 2);
 }
+
+/// A store with rows, and `log_bytes` of Claude Code logs written after it (one real line, then
+/// filler lines the parser skips) that a backfill would import.
+fn store_with_logs(env: &Env, log_bytes: usize) -> u64 {
+    write_lines(
+        &env.claude("-work-app/s-grow.jsonl"),
+        &[line("m1", "s-grow", "/work/app", now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    drop(Store::open(&env.state().join("meter.db")).unwrap());
+    let filler = format!("{{\"type\":\"filler\",\"pad\":\"{}\"}}", "x".repeat(1000));
+    let n = log_bytes / (filler.len() + 1);
+    write_lines(&env.claude("-work-app/s-big.jsonl"), &vec![filler; n]);
+    ["meter.db", "meter.db-wal"]
+        .iter()
+        .filter_map(|f| env.state().join(f).metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+// The Meter Captain's ruling on PR 849 (2): a rebuild or backfill checks the free space against
+// the store's projected grown size, so a disk that would fill mid-rebuild refuses up front (exit 4,
+// nothing changed). Here the disk has room for twice the store, but not for the growth.
+#[test]
+fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
+    let env = Env::new();
+    let size = store_with_logs(&env, 4 << 20);
+    let before = folder(&env.state());
+    let mut o = env.opts();
+    o.backfill = true;
+    let growth = meter::sync::projected_growth(&env.hermetic(&o), 0, None);
+    assert!(
+        growth >= (4 << 20) / meter::sync::GROWTH_PER_LOG_BYTE - 4096,
+        "{growth}"
+    );
+    o.free_bytes = Some(2 * size + growth - 1);
+    match env.sync(&o) {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth: g,
+        } => assert_eq!(
+            (free, needed, g),
+            (2 * size + growth - 1, 2 * size + growth, growth)
+        ),
+        other => panic!("expected the up-front refusal, got {other:?}"),
+    }
+    assert_eq!(folder(&env.state()), before, "nothing changed");
+    // With room for the growth it runs.
+    o.free_bytes = Some(2 * size + growth);
+    let r = env.run(&o);
+    assert!(r.reimported && r.generation.is_some());
+    // A run that keeps the rows counts only what is past each log's offset.
+    let read = meter::store::imported_offsets(&env.state().join("meter.db")).unwrap();
+    assert_eq!(
+        meter::sync::projected_growth(&env.hermetic(&env.opts()), 0, Some(&read)),
+        0
+    );
+}
+
+// The same refusal through the real statvfs: a sparse log (it takes no disk) whose size projects a
+// growth larger than any free space, so a real backfill refuses before writing a byte.
+#[cfg(unix)]
+#[test]
+fn a_backfill_refuses_through_the_real_free_space() {
+    let env = Env::new();
+    store_with_logs(&env, 0);
+    let sparse = env.claude("-work-app/s-sparse.jsonl");
+    fs::File::create(&sparse).unwrap().set_len(1 << 44).unwrap();
+    let before = folder(&env.state());
+    let mut o = env.opts();
+    o.backfill = true;
+    assert_eq!(o.free_bytes, None, "the real filesystem is asked");
+    match env.sync(&o) {
+        Outcome::NoSpace { free, needed, .. } => assert!(free < needed),
+        other => panic!("expected the real refusal, got {other:?}"),
+    }
+    assert_eq!(folder(&env.state()), before, "nothing changed");
+}

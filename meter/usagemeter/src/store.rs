@@ -856,6 +856,26 @@ fn open_peek(path: &Path) -> rusqlite::Result<Connection> {
     )
 }
 
+/// How far the store has read each log (`files.offset`), by path, read without writing a byte.
+/// Empty when the store has no `files` table.
+pub fn imported_offsets(path: &Path) -> rusqlite::Result<std::collections::HashMap<String, u64>> {
+    let mut out = std::collections::HashMap::new();
+    if !path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
+        return Ok(out);
+    }
+    let conn = open_peek(path)?;
+    if !table_exists(&conn, "files")? {
+        return Ok(out);
+    }
+    let mut st = conn.prepare("SELECT path, offset FROM files")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (p, o) = row?;
+        out.insert(p, o.max(0) as u64);
+    }
+    Ok(out)
+}
+
 /// Row counts of every table, by name.
 pub fn row_counts(conn: &Connection) -> rusqlite::Result<BTreeMap<String, i64>> {
     let names: Vec<String> = {
