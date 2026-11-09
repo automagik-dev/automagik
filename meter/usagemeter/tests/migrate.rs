@@ -1058,14 +1058,10 @@ fn a_sync_stopped_by_its_budget_keeps_the_old_copies() {
         let (m, r) = (format!("msg_l{i}"), format!("req_l{i}"));
         write_lines(&f, &[claude_line(&m, &r, &ts, "model-a", &U2, 0)]);
     }
-    let mut o = meter::sync::Options::new(h.home(), new.clone(), meter::time::now_ms());
+    let mut o = h.env.opts();
+    o.state_dir = new.clone();
+    o.now_ms = meter::time::now_ms();
     o.migrate_from = Some(old.clone());
-    o.claude_root = h.home().join(".claude/projects");
-    o.codex_home = h.home().join(".codex");
-    o.use_hc = false;
-    o.resolve_repos = false;
-    o.publish = false;
-    o.force = true;
     o.chunk_limit = Some(1);
     let r = h.env.run(&o);
     assert!(r.pending_bytes > 0, "the run stopped at its budget");

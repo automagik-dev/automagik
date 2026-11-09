@@ -115,9 +115,43 @@ impl Env {
         o
     }
 
-    pub fn run(&self, o: &Options) -> Report {
+    /// `o` with every harness root outside this test's temp folder moved under the temp home, as
+    /// [`Env::opts`] sets them: an `Options` built by hand (`Options::new` reads `DSH_HOME`,
+    /// `CODEX_HOME` and `CLAUDE_CONFIG_DIR`) can never read the machine's own sessions. A root
+    /// a test points inside its temp folder on purpose is kept.
+    pub fn hermetic(&self, o: &Options) -> Options {
+        let mut o = o.clone();
+        let inside = |p: &Path| p.starts_with(self.dir.path());
+        let home = self.home();
+        for (root, default) in [
+            (&mut o.omp_root, home.join(".omp/agent/sessions")),
+            (&mut o.claude_root, home.join(".claude/projects")),
+            (&mut o.codex_home, home.join(".codex")),
+            (&mut o.dsh_root, home.join(".dsh/sessions")),
+        ] {
+            if !inside(root) {
+                *root = default;
+            }
+        }
+        for p in [&o.state_dir].into_iter().chain(o.migrate_from.as_ref()) {
+            assert!(
+                inside(p),
+                "a test's state stays in its temp folder: {}",
+                p.display()
+            );
+        }
+        o
+    }
+
+    /// The one way a test syncs in-process: [`Env::hermetic`] options, under [`serial`].
+    pub fn sync(&self, o: &Options) -> Outcome {
+        let o = self.hermetic(o);
         let _serial = serial();
-        match sync::run(o).unwrap() {
+        sync::run(&o).unwrap()
+    }
+
+    pub fn run(&self, o: &Options) -> Report {
+        match self.sync(o) {
             Outcome::Ran(r) => *r,
             other => panic!("expected a run, got {other:?}"),
         }

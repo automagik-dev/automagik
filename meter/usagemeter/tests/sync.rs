@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use common::*;
 use meter::event::Tokens;
-use meter::sync::{self, Outcome};
+use meter::sync::Outcome;
 
 const TS: &str = "2026-01-15T10:15:00.000Z";
 
@@ -297,7 +297,7 @@ fn budget_stop_resumes_without_double_counting() {
     let mut runs = 0;
     loop {
         runs += 1;
-        let r = match sync::run(&o).unwrap() {
+        let r = match env.sync(&o) {
             Outcome::Ran(r) => r,
             other => panic!("a run with pending bytes must not be skipped as fresh: {other:?}"),
         };
@@ -315,7 +315,7 @@ fn budget_stop_resumes_without_double_counting() {
     assert!(runs > 3, "the limit should have sliced the import");
     assert_eq!(env.totals()["model-a"], want);
     // Complete and fresh now: the next run does nothing.
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Fresh { .. }));
+    assert!(matches!(env.sync(&o), Outcome::Fresh { .. }));
 }
 
 #[test]
@@ -535,13 +535,13 @@ fn single_flight_and_staleness() {
     write_lines(&f, &[claude_line("msg_1", "req_1", TS, "model-a", &U1, 0)]);
     let mut o = env.opts();
     o.force = false;
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Ran(_)));
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Fresh { .. }));
+    assert!(matches!(env.sync(&o), Outcome::Ran(_)));
+    assert!(matches!(env.sync(&o), Outcome::Fresh { .. }));
     o.now_ms += 11 * 60 * 1000;
     let held = meter::paths::try_lock(&env.state()).unwrap().unwrap();
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Locked));
+    assert!(matches!(env.sync(&o), Outcome::Locked));
     drop(held);
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Ran(_)));
+    assert!(matches!(env.sync(&o), Outcome::Ran(_)));
 }
 
 #[test]

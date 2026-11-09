@@ -1415,12 +1415,11 @@ fn folder(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 
 fn bin(fx: &Fx, a: &[&str]) -> Output {
     let _g = serial();
-    std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+    // Env::command: an empty environment but PATH, HOME (the temp home) and METER_HC.
+    fx.env
+        .command()
         .args(a)
-        .env("HOME", fx.home())
         .env("METER_STATE_DIR", fx.env.state())
-        .env("METER_HC", fx.env.dir.path().join("no-hc"))
-        .env_remove("AM_HOME")
         .output()
         .unwrap()
 }
@@ -1652,11 +1651,10 @@ fn writes_an_older_meter_made_after_the_move_are_signalled_not_folded_in() {
     // status says it too.
     let out = {
         let _g = serial();
-        std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+        home.command()
             .arg("status")
             .env("HOME", home.dir.path().join("h"))
             .env("AM_HOME", home.dir.path().join("am"))
-            .env_remove("METER_STATE_DIR")
             .output()
             .unwrap()
     };
@@ -1733,10 +1731,7 @@ fn sync_refuses_a_newer_store_and_writes_nothing() {
     {
         let _g = serial();
         let o = sync_opts(&fx, t(GENERATED));
-        assert!(matches!(
-            meter::sync::run(&o).unwrap(),
-            Outcome::NewerSchema { store: 3 }
-        ));
+        assert!(matches!(fx.env.sync(&o), Outcome::NewerSchema { store: 3 }));
     }
     strictly_same_folder(&folder(&state), &before, "sync on a newer store");
 
@@ -1875,10 +1870,7 @@ fn a_migration_without_twice_the_store_free_refuses_and_changes_nothing() {
     let before = folder(&state);
     let mut o = sync_opts(&fx, t(GENERATED));
     o.free_bytes = Some(2 * size - 1);
-    let out = {
-        let _g = serial();
-        meter::sync::run(&o).unwrap()
-    };
+    let out = fx.env.sync(&o);
     match out {
         Outcome::NoSpace { free, needed } => {
             assert_eq!((free, needed), (2 * size - 1, 2 * size));
@@ -2198,10 +2190,7 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     let (before_new, before_old) = (folder(&fx.env.state()), folder(&old));
     let mut o = sync_opts(&fx, t(GENERATED));
     o.migrate_from = Some(old.clone());
-    let out = {
-        let _g = serial();
-        meter::sync::run(&o).unwrap()
-    };
+    let out = fx.env.sync(&o);
     assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
     strictly_same_folder(&folder(&fx.env.state()), &before_new, "the state folder");
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
@@ -2210,14 +2199,14 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     let fresh = Env::new();
     let new = fresh.state();
     meter::paths::ensure_dir(&new).unwrap();
+    let old = fresh.dir.path().join("old-state");
+    fs::create_dir_all(&old).unwrap();
+    fs::copy(fx.db(), old.join("meter.db")).unwrap();
     let before_old = folder(&old);
     let mut o = fresh.opts();
     o.now_ms = t(GENERATED);
     o.migrate_from = Some(old.clone());
-    let out = {
-        let _g = serial();
-        meter::sync::run(&o).unwrap()
-    };
+    let out = fresh.sync(&o);
     assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
     assert!(!new.join("meter.db").exists() && !new.join(".meter-moved").exists());
@@ -2303,10 +2292,7 @@ fn adding_the_index_to_an_older_store_needs_twice_its_size_free() {
     let before = folder(&state);
     let mut o = sync_opts(&fx, t(GENERATED));
     o.free_bytes = Some(2 * size - 1);
-    let out = {
-        let _g = serial();
-        meter::sync::run(&o).unwrap()
-    };
+    let out = fx.env.sync(&o);
     assert!(matches!(out, Outcome::NoSpace { .. }), "{out:?}");
     strictly_same_folder(&folder(&state), &before, "a refused index");
     o.free_bytes = Some(2 * size);
@@ -2358,10 +2344,7 @@ fn a_real_free_space_refusal_reads_the_filesystem() {
     );
     let o = sync_opts(&fx, t(GENERATED));
     assert_eq!(o.free_bytes, None, "the real filesystem is asked");
-    let out = {
-        let _g = serial();
-        meter::sync::run(&o).unwrap()
-    };
+    let out = fx.env.sync(&o);
     match out {
         Outcome::NoSpace { free: f, needed } => {
             assert_eq!(needed, 2 * len_before, "{f}");
