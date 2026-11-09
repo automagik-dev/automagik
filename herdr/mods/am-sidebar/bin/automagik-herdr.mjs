@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -978,6 +978,9 @@ function describe(project, bot, view, hcError) {
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id) : { lead: "" };
   const fallback = bot.agent ? defaultModel(bot.agent, modelIo()) : null;
   const shown = shownModel({ argv: live?.foreground?.argv, agentKey: bot.agent, pinned: bot.model, fallback });
+  // The workers' Antigravity mode is shown as the default (auto) when their agent is Antigravity.
+  const worker = bot.worker && typeof bot.worker === "object" ? { ...bot.worker } : null;
+  if (worker && resolveAgent(worker.agent ?? bot.agent) === "antigravity") worker.agyMode = agyModeOf(worker.agyMode);
   let status = "not running";
   if (bot.planned) status = "planned";
   else if (hcError) status = "hc unavailable";
@@ -989,10 +992,11 @@ function describe(project, bot, view, hcError) {
     category: bot.kind === "member" && lead.lead === mainBotOf(file)?.id ? (bot.category ?? null) : null,
     planned: bot.planned ?? null, agent: bot.agent ?? null,
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
+    agyMode: bot.agent === "antigravity" ? agyModeOf(bot.agyMode) : (typeof bot.agyMode === "string" && bot.agyMode ? bot.agyMode : null),
     terminal: held?.binding.terminal ?? null, status, duplicate: false, since: held?.binding.at ?? null,
     role: bot.role, rank: bot.rank ?? null, look: bot.look,
     hcProxy: bot.hcProxy === true,
-    worker: bot.worker && typeof bot.worker === "object" ? bot.worker : null,
+    worker,
   };
   if (lead.warning) out.warning = lead.warning;
   if (hcError && !bot.planned) out.hcError = hcError;
@@ -1080,6 +1084,7 @@ const OPTIONS = {
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
+  "agy-mode": { type: "string" }, "worker-agy-mode": { type: "string" },
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
@@ -1103,20 +1108,22 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                                  machine (hc machine ls), through hc
        automagik-herdr --version                 the installed pack's version
 
-  ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, pane, status
+  ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, agy-mode, pane, status
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
+         [--agy-mode accept-edits|auto|plan]   Antigravity's --mode; default auto
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
+         [--worker-agy-mode accept-edits|auto|plan]                  (Antigravity's --mode)
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
-                                (empty: cleared)
+             [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -1264,10 +1271,11 @@ Antigravity (\`agy\`, 1.5.3): --model takes the ids \`agy models\` lists (a Gemi
 id, e.g. gemini-4-argon-high), never the label its settings.json keeps. The pack caches that
 list under <app home>/automagik-herdr/antigravity-models.json, refreshed at most once a run
 when it is missing or a day old; agy not installed, signed in or listing nothing keeps the
-last cached list and the refusal says when there is none. The pack starts agy with no
-permission flag (it also has --dangerously-skip-permissions, --mode and --sandbox), so its
-own permission prompt stays the person's answer. Its first prompt goes through -i, its resume
-through --conversation <id> (--fresh starts new).
+last cached list and the refusal says when there is none. Every Antigravity launch passes
+\`--mode\` (auto, accept-edits or plan): a bot's \`agyMode\` field, else auto; its workers'
+\`worker.agyMode\`, else auto. The pack never passes --dangerously-skip-permissions and never
+writes agy's own settings, so its trust list and saved settings stay the person's. Its first
+prompt goes through -i, its resume through --conversation <id> (--fresh starts new).
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -1357,6 +1365,18 @@ function checkModel(agent, model) {
 }
 
 /**
+ * The execution mode a launch of `bot` on `agentKey` passes: auto unless the roster's
+ * agyMode names another one; null for every other agent, whose launch line stays unchanged. An
+ * unknown roster mode is refused here, one line, before anything starts.
+ */
+function launchAgyMode(bot, agentKey) {
+  if (agentKey !== "antigravity") return null;
+  const why = agyModeProblem(bot.agyMode);
+  if (why) throw new CliError(`${bot.name}: ${why} Fix it with automagik-herdr edit ${bot.id} --agy-mode <accept-edits|auto|plan>.`);
+  return agyModeOf(bot.agyMode);
+}
+
+/**
  * The entry create or edit writes: `base` (the stored raw entry, or a new one) with the
  * options given applied and checked against the project. Throws a CliError on a refusal.
  */
@@ -1423,6 +1443,14 @@ export function entryFrom(opts, base, project, { creating }) {
   else if (entry.model && opts.agent !== undefined && !modelList(entry.agent, entry.model).includes(entry.model)) {
     throw new CliError(`${entry.name} is pinned to ${entry.model}, which ${entry.agent} doesn't list; pass --model or --no-model.`);
   }
+  // Antigravity's execution mode: applied at launch (auto unless another is stored), so the
+  // default is written as no field at all and auto clears a stored one.
+  if (opts["agy-mode"] !== undefined) {
+    const why = agyModeProblem(opts["agy-mode"]);
+    if (why) throw new CliError(`--agy-mode: ${why}`, 2);
+    const mode = agyModeOf(opts["agy-mode"]);
+    entry.agyMode = mode === AGY_MODE_DEFAULT ? "" : mode;
+  }
   workerDefaults(opts, entry);
   // Lead (A1): the main bot or another non-planned member, never itself or one of its own.
   if (opts.lead !== undefined) {
@@ -1454,14 +1482,15 @@ export function entryFrom(opts, base, project, { creating }) {
 }
 
 /**
- * The bot's worker defaults (`worker: { agent?, model?, effort?, template? }`) from
- * --worker-agent, --worker-model, --worker-effort and --worker-template; an empty value clears
- * that one. A template is an hc template name; it isn't looked up here (edit runs anywhere). The agent is canonical
+ * The bot's worker defaults (`worker: { agent?, model?, effort?, template?, agyMode? }`) from
+ * --worker-agent, --worker-model, --worker-effort, --worker-template and --worker-agy-mode; an
+ * empty value clears that one. A template is an hc template name; it isn't looked up here (edit runs anywhere). The agent is canonical
  * (`claude-code` is stored as `claude`); a model must be on the worker agent's list when it
- * has one (an agent with no list takes any model: workers' models are swap-test data).
+ * has one (an agent with no list takes any model: workers' models are swap-test data). An
+ * Antigravity mode is one of AGY_MODES; auto, the default, clears a stored one.
  */
 function workerDefaults(opts, entry) {
-  const given = ["agent", "model", "effort", "template"].filter((k) => opts[`worker-${k}`] !== undefined);
+  const given = ["agent", "model", "effort", "template", "agy-mode"].filter((k) => opts[`worker-${k}`] !== undefined);
   if (!given.length) return;
   const w = entry.worker && typeof entry.worker === "object" && !Array.isArray(entry.worker) ? { ...entry.worker } : {};
   const agentText = opts["worker-agent"];
@@ -1471,6 +1500,14 @@ function workerDefaults(opts, entry) {
     const key = resolveAgent(agentText, agents);
     if (!key) throw new CliError(`--worker-agent: "${agentText}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.`, 2);
     w.agent = key;
+  }
+  const agyMode = opts["worker-agy-mode"];
+  if (agyMode === "") delete w.agyMode;
+  else if (agyMode !== undefined) {
+    const why = agyModeProblem(agyMode);
+    if (why) throw new CliError(`--worker-agy-mode: ${why}`, 2);
+    const mode = agyModeOf(agyMode);
+    if (mode === AGY_MODE_DEFAULT) delete w.agyMode; else w.agyMode = mode;
   }
   const effort = opts["worker-effort"];
   if (effort === "") delete w.effort;
@@ -1606,8 +1643,9 @@ function lsLines(projects) {
     for (const b of p.bots) {
       const where = b.kind === "main" ? "main" : `→ ${b.leadName ?? "?"}${b.category ? ` [${b.category}]` : ""}`;
       const model = b.model ? `${b.model} (${b.modelSource})` : "-";
+      const agy = b.agyMode ? `  agy-mode ${b.agyMode}` : "";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${p.machine ? `${p.machine}/` : ""}${b.terminal}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}${agy}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -1616,9 +1654,13 @@ function lsLines(projects) {
   return lines.join("\n");
 }
 
-/** A bot's worker defaults (or its swap arm) as one line: `agent codex · model gpt-5.5 · effort high`. */
-const workerText = (w) => (w ? ["template", "agent", "model", "effort"].filter((k) => typeof w[k] === "string" && w[k])
-  .map((k) => `${k} ${w[k]}`).join(" · ") : "");
+/** A bot's worker defaults (or its swap arm) as one line: `agent codex · model gpt-5.5 · agy mode plan`. */
+const workerText = (w) => {
+  if (!w) return "";
+  const mode = w.agyMode ? [`agy mode ${w.agyMode}`] : [];
+  return ["template", "agent", "model", "effort"].filter((k) => typeof w[k] === "string" && w[k])
+    .map((k) => `${k} ${w[k]}`).concat(mode).join(" · ");
+};
 
 const proxyStateText = (state) => `working ${state.working ? "on" : "off"}; approved `
   + `${state.error ? "unknown" : state.approved === null ? "missing" : state.approved ? "on" : "off"}`
@@ -1705,6 +1747,7 @@ async function cmdShow(opts, [ref]) {
     ...(info.category ? [`  category     ${info.category}`] : []),
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
+    ...(info.agyMode ? [`  agy mode     ${info.agyMode}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
     `  rank         ${info.rank ?? "-"}`,
@@ -2349,12 +2392,14 @@ async function seatOnMachine(project, bot, over = {}) {
   const agentKey = over.agent ?? bot.agent;
   const agent = agentTable()[agentKey];
   if (!agent?.run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
+  // Antigravity's mode: validated even when over.argv (a restart's plan) already carries it.
+  const agyMode = launchAgyMode(bot, agentKey);
   if (!over.argv && bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const command = over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)];
+  const command = over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const paneEnv = await paneEnvOn(machine, key);
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
@@ -2651,6 +2696,8 @@ async function launchSeat(project, bot, over = {}) {
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
   }
   const agent = startableAgent(bot, agentKey);
+  // Antigravity always gets a mode (auto by default); every other agent's argv is unchanged.
+  const agyMode = launchAgyMode(bot, agentKey);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
   const leadGet = lead ? await attachedGet(lead) : null;
@@ -2660,7 +2707,7 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // The briefing goes into the command itself (start and restart alike), so no hook prints it every turn.
-  const briefed = await briefedLaunch(project, bot, agentKey, over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)]);
+  const briefed = await briefedLaunch(project, bot, agentKey, over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)]);
   const argv = briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
@@ -4742,7 +4789,7 @@ async function cmdWorker(opts, rest) {
     const taken = new Set(rowsOf(ls).map((r) => r?.name).filter(Boolean));
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
-      agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv, task, template: plan.template, templateArgv,
+      agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: plan.argv, task, template: plan.template, templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
@@ -4780,14 +4827,15 @@ async function cmdWorker(opts, rest) {
   warnings.push(...(await reapWorktrees()).lines);
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
-    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, pid, argv: plan.argv,
+    base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, pid, argv: plan.argv,
     warnings: [...fileWarnings, ...warnings],
     task: taskId ?? null, project: project.key, lead, baseCommit: base, swap, override, override_requested: overrideRequested };
   if (opts.json) return out;
   const how = place.created ? `new, from ${place.base ?? place.branch}` : "existing";
   const what = plan.template ? [`  template  ${plan.template}${runs ? ` (runs ${runs})` : ""}`]
     : [`  agent     ${plan.agent}`, `  model     ${plan.model ?? "(the agent's default)"}`,
-      `  effort    ${plan.effort ?? "(the agent's default)"}`];
+      `  effort    ${plan.effort ?? "(the agent's default)"}`,
+      ...(plan.agyMode ? [`  agy mode  ${plan.agyMode}`] : [])];
   const contract = taskId !== undefined ? [`  task      ${taskId} (lead ${lead})`] : [];
   const swapped = swap ? [`  swap      yes: ${bot.name}'s planned swap task`] : [];
   return [terminal, `  role      ${role}`, ...contract, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
@@ -5015,8 +5063,10 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   if (verb === "doctor") {
     const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
     r.bots = [];
+    let roster = [];
     try {
       const project = io.project ?? await projectFor(opts);
+      roster = project.file.bots;
       const approval = approvedProxyState({ project: project.key, bot: { id: "" }, env });
       if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
         detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
@@ -5029,13 +5079,16 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         detail: String(e?.message ?? e).replace(/\s+/g, " "), fix: "repair the project roster" });
       r.code = 1;
     }
+    const byId = new Map(roster.map((b) => [b.id, b]));
     for (const bot of r.bots) {
       const state = bot.hcProxyState;
       const needsApproval = state.working && state.approved !== true;
       const ok = !bot.applicable || (!needsApproval
         && (state.approved !== true || !bot.terminal || bot.up));
+      const agent = byId.get(bot.id);
+      const agy = agent?.agent === "antigravity" ? `agy mode ${agyModeOf(agent.agyMode)}; ` : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
-        detail: `${bot.name}: hcProxy ${proxyStateText(state)}; ${bot.detail}`,
+        detail: `${bot.name}: ${agy}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
           : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;

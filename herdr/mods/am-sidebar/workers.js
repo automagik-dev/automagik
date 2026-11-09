@@ -5,7 +5,8 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, effortArgs, hasEffortFlag, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
+import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
+  promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
 
@@ -121,6 +122,8 @@ export const BRANCH_LABEL = "branch";
 export const WORKER_ROLE_LABEL = "worker.role";
 export const WORKER_MODEL_LABEL = "worker.model";
 export const WORKER_EFFORT_LABEL = "worker.effort";
+/** The Antigravity execution mode a worker runs (`--mode`): written only when it isn't auto. */
+export const WORKER_AGY_MODE_LABEL = "worker.agyMode";
 /** The hc template a worker runs (`--template`, or the bot's `worker.template`). */
 export const WORKER_TEMPLATE_LABEL = "worker.template";
 /** The Claude session a terminal runs, set by the briefing hook when it changes. */
@@ -230,16 +233,18 @@ export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
  * template wins over default agent, model and effort (with a warning); and any per-task agent,
  * model or effort sets a default template aside. A bot's default model is for its default
  * worker agent: a task that picks another agent runs that agent's own default model unless it
- * names one. The bot's own model pin is its seat's, never its workers'. A model or effort the
- * agent has no flag for is left out with a warning. `agents`: the table Herdr starts from.
- * Returns { template, agent, model, effort, argv, warnings } (template null, or agent, model,
- * effort and argv null) or { error }.
+ * names one. The bot's own model pin is its seat's, never its workers'. An Antigravity worker
+ * always gets `--mode` (the bot's `worker.agyMode`, auto by default; an unknown one is refused).
+ * A model or effort the agent has no flag for is left out with a warning. `agents`: the table
+ * Herdr starts from.
+ * Returns { template, agent, model, effort, agyMode, argv, warnings } (template null, or agent,
+ * model, effort, agyMode and argv null) or { error }.
  */
 export function workerPlan(bot, pick = {}, agents = AGENTS) {
   const warnings = [];
   const defaults = bot?.worker && typeof bot.worker === "object" ? bot.worker : {};
   const picked = ["agent", "model", "effort"].filter((k) => pick[k]);
-  const asTemplate = (template) => (TEMPLATE_SHAPE.test(template) ? { template, agent: null, model: null, effort: null, argv: null, warnings }
+  const asTemplate = (template) => (TEMPLATE_SHAPE.test(template) ? { template, agent: null, model: null, effort: null, agyMode: null, argv: null, warnings }
     : { error: `"${template}" isn't an hc template name (letters, digits, ".", "_" and "-", no dash first).` });
   if (pick.template) {
     if (picked.length) return { error: `A template owns its command: --template goes alone, without --${picked.join(", --")}.` };
@@ -262,6 +267,14 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     if (!agent) return { error: `"${pick.agent}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.` };
   }
   if (!agent || !agents[agent]?.run?.length) return { error: `${bot?.name ?? "This bot"} has no coding agent for its workers; pass --agent.` };
+  // The bot's worker agyMode reaches only an Antigravity worker; an unknown one is refused by
+  // name, never replaced with the default behind the person's back.
+  const agyModeWhy = agent === "antigravity" ? agyModeProblem(defaults.agyMode) : null;
+  if (agyModeWhy) {
+    const fix = bot?.id ? ` Fix it with automagik-herdr edit ${bot.id} --worker-agy-mode <accept-edits|auto|plan>.` : "";
+    return { error: `${bot?.name ?? "This bot"}'s workers: ${agyModeWhy}${fix}` };
+  }
+  const agyMode = agent === "antigravity" ? agyModeOf(defaults.agyMode) : null;
   // An agent whose model and effort its own setup decides (dsh-tui, #598): a model or effort
   // asked for, or set in the bot's worker defaults for it, is refused, never left out unsaid.
   // Defaults count only when they are that agent's (the bot's own agent), as the model default
@@ -287,8 +300,8 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...agents[agent].run, ...modelArgs(agent, model), ...effortArgs(agent, effort)];
-  return { template: null, agent, model, effort, argv, warnings };
+  const argv = [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 
 /**
@@ -303,13 +316,15 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * `login`: a Claude worker's login words (logins.js chooseLogin), after PATH. A Claude template
  * can't take them through hc's template form, so it runs its own command instead
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
- * `/usr/bin/env <login words>`, its template label kept. `agent` `dsh-tui`: the pack's
+ * `/usr/bin/env <login words>`, its template label kept. `agyMode`: an Antigravity worker's
+ * execution mode (auto by default), written in the `worker.agyMode` label only when it isn't
+ * auto, so Restart --tree runs it with the same mode. `agent` `dsh-tui`: the pack's
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
  * boundary (#624, #628, #631). `sandbox`: a dsh-tui worker runs behind the per-pane hc proxy
  * (hcPane.mjs) before DSH starts; `project` is the main checkout the proxy snapshots (omitted:
  * the helper finds the project above the worktree).
  */
-export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, argv, task, template, path,
+export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, agyMode, argv, task, template, path,
   taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
@@ -328,6 +343,7 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (template) return [...args, "--label", `${WORKER_TEMPLATE_LABEL}=${template}`, "--parent", parent, template, task];
   if (model) args.push("--label", `${WORKER_MODEL_LABEL}=${model}`);
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
+  if (agyMode && agyMode !== AGY_MODE_DEFAULT) args.push("--label", `${WORKER_AGY_MODE_LABEL}=${agyMode}`);
   const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
   const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
   const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);

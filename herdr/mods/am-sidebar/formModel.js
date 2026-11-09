@@ -6,7 +6,7 @@
 // so `node --test` runs it. Apache-2.0.
 
 import { MAX_INSTRUCTIONS, OMNI_LOOK, RANKS, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
-import { LEGACY_AGENTS, defaultModelFrom, knownModelsFrom } from "./models.js";
+import { AGY_MODE_DEFAULT, AGY_MODES, LEGACY_AGENTS, defaultModelFrom, knownModelsFrom } from "./models.js";
 
 /** Waves the stepper offers (the mockup's 1..9); a stored later wave stays reachable. */
 export const MAX_WAVE = 9;
@@ -59,6 +59,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
       mode, id: bot.id, name: str(bot.name), kind: bot.kind === "main" ? "main" : "member",
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
       role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: currentAgent(str(bot.agent)) === str(bot.agent) ? str(bot.model) : "",
+      agyMode: AGY_MODES.includes(bot.agyMode) ? bot.agyMode : AGY_MODE_DEFAULT,
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
       rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,
@@ -68,6 +69,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
   return {
     mode: "create", id, name: "", kind: file && mainBotOf(file) ? "member" : "main",
     character: look.character, colour: look.colour, role: "", instructions: "", agent, pin: "",
+    agyMode: AGY_MODE_DEFAULT,
     lead: "", category: "", catTitle: "", catSub: "", rank: "", planned: false, wave: 1, note: "", storedPlanned: null,
   };
 }
@@ -228,6 +230,9 @@ export function problemOf(state, { key = null, loadError = null, file = null, in
   if (state.pin && info && !info.models.includes(state.pin)) {
     return `${state.pin} isn't a model ${state.agent} lists; pick one from the list or use the default.`;
   }
+  if (state.agyMode !== undefined && !AGY_MODES.includes(state.agyMode)) {
+    return `Antigravity mode "${state.agyMode}" isn't one of ${AGY_MODES.join(", ")}.`;
+  }
   const { byMain } = placeOf(state, file);
   if (byMain && state.category === NEW_CATEGORY && !state.catTitle.trim()) return "Give the new category a title.";
   if (state.kind === "member" && state.rank && !RANKS.includes(state.rank)) {
@@ -256,6 +261,8 @@ export function entryOf(state, file) {
       look: { character: state.character, colour: state.colour },
       role: state.role.trim(), instructions: state.instructions,
       agent: state.agent || undefined, model: state.pin || undefined,
+      // Antigravity's launch mode: the default is applied at launch, so only another one is stored.
+      agyMode: state.agyMode && state.agyMode !== AGY_MODE_DEFAULT ? state.agyMode : undefined,
       // An untouched stale lead is written back as stored; the view keeps warning on it.
       lead: member ? (state.lead && state.lead !== leadId ? state.lead : leadId && leadId !== main?.id ? leadId : undefined) : undefined,
       category: byMain && state.category && !newCat ? state.category : undefined,
@@ -299,6 +306,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     if (state.kind === "member" && state.rank) parts.push(opt("rank", state.rank));
     parts.push(opt("character", state.character), opt("colour", state.colour));
     if (state.pin) parts.push(opt("model", state.pin));
+    if (state.agyMode !== AGY_MODE_DEFAULT) parts.push(opt("agy-mode", state.agyMode));
     if (state.planned) {
       parts.push(opt("planned-wave", wave));
       if (state.note.trim()) parts.push(opt("planned-note", state.note.trim()));
@@ -318,6 +326,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     if (state.kind === "member" && changed("rank")) parts.push(state.rank ? opt("rank", state.rank) : "--rank=");
     if (changed("character") || changed("colour")) parts.push(opt("character", state.character), opt("colour", state.colour));
     if (changed("pin") || (changed("agent") && was.pin)) parts.push(state.pin ? opt("model", state.pin) : "--no-model");
+    if (changed("agyMode")) parts.push(opt("agy-mode", state.agyMode));
     if (!state.planned && was.planned) parts.push("--unplanned");
     if (state.planned && (!was.planned || changed("wave") || changed("note"))) {
       parts.push(opt("planned-wave", wave));
@@ -332,7 +341,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
 /** Whether an edit changed anything the form edits. */
 export function editChanged(state, initial) {
   if (!initial) return true;
-  return ["name", "kind", "character", "colour", "role", "instructions", "agent", "pin", "lead", "category",
+  return ["name", "kind", "character", "colour", "role", "instructions", "agent", "pin", "agyMode", "lead", "category",
     "catTitle", "catSub", "rank", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
 }
 

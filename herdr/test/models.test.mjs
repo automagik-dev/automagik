@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 
 import { agModelsCacheText, agModelsPath, parseAgModelsOutput } from "../mods/am-sidebar/models.js";
 
-import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom, modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom, modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
   withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { launchChange, paneCommand, paneLaunch, restartPlan } from "../mods/am-sidebar/restart.js";
@@ -166,7 +166,7 @@ test("antigravity replaces gemini: agy argv is antigravity, gemini resolves to i
   assert.equal(configPaths("/h").geminiSettings, undefined);
 });
 
-test("agy 1.5.3's flags: --model/-model, --effort, -i/--prompt-interactive, -c/--continue, --conversation; no permission flag is passed", () => {
+test("agy 1.5.3's flags: --model/-model, --effort, --mode auto by default, -i/--prompt-interactive, -c/--continue, --conversation", () => {
   // What the fixture help (test/fixtures/agy/help-1.5.3.txt) says, and what Start, a worker
   // and Restart pass: the same words, no guessed one.
   assert.deepEqual(modelArgs("antigravity", "gemini-4-argon-high"), ["--model", "gemini-4-argon-high"]);
@@ -174,8 +174,23 @@ test("agy 1.5.3's flags: --model/-model, --effort, -i/--prompt-interactive, -c/-
   assert.deepEqual(promptArgs("antigravity", "fix the build"), ["-i", "fix the build"]);
   assert.deepEqual(resumeArgs("antigravity", "3f1c2d4e-0000-4000-8000-000000000001"), ["--conversation", "3f1c2d4e-0000-4000-8000-000000000001"]);
   assert.deepEqual(resumeArgs("antigravity"), ["--continue"]);
-  const words = [...modelArgs("antigravity", "claude-sonnet-5-5-high"), ...effortArgs("antigravity", "max"), ...promptArgs("antigravity", "t")];
-  for (const flag of ["--dangerously-skip-permissions", "--sandbox", "--mode"]) assert.ok(!words.includes(flag), flag);
+  // The execution mode is always named for Antigravity: auto unless the roster says otherwise.
+  assert.deepEqual(agyModeArgs("antigravity"), ["--mode", AGY_MODE_DEFAULT]);
+  assert.deepEqual(agyModeArgs("antigravity", null), ["--mode", "auto"]);
+  for (const mode of AGY_MODES) {
+    assert.equal(agyModeProblem(mode), null, mode);
+    assert.deepEqual(agyModeArgs("antigravity", mode), ["--mode", mode], mode);
+  }
+  assert.equal(agyModeOf(""), "auto");
+  assert.equal(agyModeOf(undefined), "auto");
+  assert.equal(agyModeOf("plan"), "plan");
+  assert.equal(agyModeProblem("yolo"), 'Antigravity mode "yolo" isn\'t one of accept-edits, auto, plan.');
+  // Every other agent's launch line stays byte-identical: no mode words at all.
+  for (const key of Object.keys(AGENTS).filter((k) => k !== "antigravity")) assert.deepEqual(agyModeArgs(key, "plan"), [], key);
+  const words = [...agyModeArgs("antigravity", "accept-edits"), ...modelArgs("antigravity", "claude-sonnet-5-5-high"),
+    ...effortArgs("antigravity", "max"), ...promptArgs("antigravity", "t")];
+  assert.ok(words.includes("--mode"), words.join(" "));
+  for (const flag of ["--dangerously-skip-permissions", "--sandbox"]) assert.ok(!words.includes(flag), flag);
 });
 
 // ---- the briefing at launch (each agent's own system-prompt mechanism) ----

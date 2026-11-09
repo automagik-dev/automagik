@@ -22,9 +22,10 @@ export const AGENTS = Object.freeze({
   copilot: { name: "Copilot", run: ["copilot"], match: ["github-copilot"] },
   amp: { name: "Amp", run: ["amp"] },
   grok: { name: "Grok", run: ["grok"] },
-  // agy 1.5.3 also takes permission flags (--dangerously-skip-permissions, --mode
-  // accept-edits|auto|plan, --sandbox); this pack passes none of them, so a bot's own
-  // permission prompt stays the person's answer, as for every other agent it starts.
+  // agy 1.5.3 takes permission flags (--dangerously-skip-permissions, --mode
+  // accept-edits|auto|plan, --sandbox); this pack passes only --mode (agyModeArgs: auto unless
+  // the roster names another mode), never a skip-permissions flag, and never writes agy's own
+  // settings, so its trust list and saved settings stay the person's.
   antigravity: { name: "Antigravity", run: ["agy"], match: ["agy"] },
   kimi: { name: "Kimi", run: ["kimi"] },
   kiro: { name: "Kiro", run: ["kiro-cli"], match: ["kiro-cli"] },
@@ -378,6 +379,28 @@ export const hasEffortFlag = (agentKey) => Boolean(EFFORT[agentKey]);
 export function effortArgs(agentKey, effort) {
   if (!effort || !EFFORT[agentKey]) return [];
   return EFFORT[agentKey](effort);
+}
+
+// agy 1.5.3's execution mode (`--mode accept-edits|auto|plan`): the pack names one on every
+// Antigravity launch, auto unless the roster's agyMode says otherwise, so a bot doesn't stop at
+// its first command. Never --dangerously-skip-permissions, and agy's own settings (its trust
+// list included) stay the person's: the mode goes on the launch line only.
+export const AGY_MODES = Object.freeze(["accept-edits", "auto", "plan"]);
+/** The mode an Antigravity launch gets when the roster names none. */
+export const AGY_MODE_DEFAULT = "auto";
+
+/** `mode` when it names a launch, else AGY_MODE_DEFAULT (absent and empty included). */
+export const agyModeOf = (mode) => (mode === undefined || mode === null || mode === "" ? AGY_MODE_DEFAULT : mode);
+/** Why `mode` can't be passed to agy's --mode, or null (absent: the default). One line. */
+export const agyModeProblem = (mode) => (AGY_MODES.includes(agyModeOf(mode)) ? null
+  : `Antigravity mode ${JSON.stringify(mode)} isn't one of ${AGY_MODES.join(", ")}.`);
+
+/**
+ * The arguments that set `agentKey`'s execution mode: `--mode <mode>` for Antigravity, []
+ * for every other agent, so its launch line stays byte-identical.
+ */
+export function agyModeArgs(agentKey, mode = null) {
+  return agentKey === "antigravity" ? ["--mode", agyModeOf(mode)] : [];
 }
 
 // How each agent takes a first prompt that starts an interactive session. Most read a bare

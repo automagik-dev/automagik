@@ -34,6 +34,7 @@ import { pathToFileURL } from "node:url";
 import { readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
+import { AGY_MODE_DEFAULT } from "./models.js";
 import { commandArgv } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
@@ -283,13 +284,16 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     login = ["-u", "CLAUDE_CONFIG_DIR"];
   }
   const labels = p.labels;
+  // A chosen Antigravity mode is a worker label; auto is the default, so it has none (workers.js
+  // workerArgs writes the label only when it isn't auto), and the label must name the approved mode.
+  const agyModeLabel = plan.agyMode && plan.agyMode !== AGY_MODE_DEFAULT ? plan.agyMode : null;
   for (const [key, value] of [["worker.template", plan.template],
-    ["worker.model", plan.model], ["worker.effort", plan.effort]]) {
+    ["worker.model", plan.model], ["worker.effort", plan.effort], ["worker.agyMode", agyModeLabel]]) {
     if ((labels[key] ?? null) !== value) return `approved worker label ${key} does not match approval`;
   }
   const args = workerArgs({ botId: snapshot.caller.bot, branch: labels.branch,
     role: labels["worker.role"], name: p.name, cwd: p.cwd, parent: snapshot.terminal,
-    agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv,
+    agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: plan.argv,
     task, template: plan.template, templateArgv, login, path: snapshot.path,
     taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
     space: labels["herdr.space"] });
@@ -340,7 +344,7 @@ export function runProblem(params, snapshot, templates = []) {
   }
   const namedWorker = bot?.worker?.template || (bot?.worker?.agent && bot.worker.agent !== "dsh-tui");
   const workerLabels = namedWorker
-    ? new Set([...WORKER_LABELS, "worker.template", "worker.model", "worker.effort"]) : WORKER_LABELS;
+    ? new Set([...WORKER_LABELS, "worker.template", "worker.model", "worker.effort", "worker.agyMode"]) : WORKER_LABELS;
   const labels = p.labels;
   if (!isObject(labels)) return "labels are not the worker shape";
   if (labels[WORKER_OF_LABEL] !== snapshot.caller.bot) return `${WORKER_OF_LABEL} is not the caller's bot`;
