@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import {
   AGY_FIXED_DENY, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW,
   agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsFile, agySettingsPlan,
-  normalizeAgyPermissions, withAgySettings, withoutAgySettings,
+  agyTrustedWorkspaces, normalizeAgyPermissions, withAgySettings, withoutAgySettings,
 } from "../mods/am-sidebar/models.js";
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
@@ -59,6 +59,17 @@ test("normalizeAgyPermissions: trims, dedupes, keeps the good rules and says wha
   assert.match(bad.problems.join("\n"), /deny is not a list/);
   assert.match(bad.problems.join("\n"), /extra isn't allow or deny/);
   assert.match(normalizeAgyPermissions(null).problems[0], /not an object/);
+});
+
+test("agyTrustedWorkspaces (#879): only the launch's own absolute folder, trailing slashes stripped, never the root", () => {
+  assert.deepEqual(agyTrustedWorkspaces(SEAT), [SEAT]);
+  assert.deepEqual(agyTrustedWorkspaces(`  ${SEAT}/  `), [SEAT], "trimmed, trailing slashes stripped");
+  assert.deepEqual(agyTrustedWorkspaces(`${SEAT}//`), [SEAT]);
+  assert.deepEqual(agyTrustedWorkspaces("/a"), ["/a"]);
+  for (const bad of [null, undefined, "", "/", "///", "work/proj", "./proj", 42, ["/work/proj"],
+    "/work/a\n/work/b", "/work/a\r", "/work/a\0b"]) {
+    assert.deepEqual(agyTrustedWorkspaces(bad), [], JSON.stringify(bad) ?? String(bad));
+  }
 });
 
 test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gates, PR-writing gh verbs and every fixed deny", () => {
@@ -120,6 +131,51 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
   }
 });
 
+test("agyPermissionPlan and agySettingsPlan (#879): a seat trusts its project only, never its parent or the home", () => {
+  const plan = agyPermissionPlan({ bot: BOT, scope: "seat", folder: SEAT });
+  assert.deepEqual(plan.trustedWorkspaces, [SEAT], "the project folder, exact");
+  const settings = agySettingsPlan({ bot: BOT, scope: "seat", folder: `${SEAT}/`, settingsDir: SETTINGS });
+  assert.deepEqual(settings.trustedWorkspaces, [SEAT]);
+  const data = JSON.parse(settings.text);
+  assert.deepEqual(data.trustedWorkspaces, [SEAT], "the file agy reads lists the launch's own folder");
+  for (const wrong of ["/work", "/", "/home", "/home/u", APP]) {
+    assert.equal(data.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
+});
+
+test("agyPermissionPlan and agySettingsPlan (#879): a worker trusts its worktree only, a read-only role too", () => {
+  for (const role of ["dev", "test", "fix", "review"]) {
+    const plan = agyPermissionPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt" });
+    assert.deepEqual(plan.trustedWorkspaces, ["/work/wt"], role);
+    const data = JSON.parse(agySettingsPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt", settingsDir: SETTINGS }).text);
+    assert.deepEqual(data.trustedWorkspaces, ["/work/wt"], role);
+    for (const wrong of ["/work", "/", "/home/u", APP]) {
+      assert.equal(data.trustedWorkspaces.includes(wrong), false, `${role} never trusts ${wrong}`);
+    }
+  }
+});
+
+test("agyPermissionPlan (#879): the root and an empty or absent folder trust nothing", () => {
+  for (const folder of ["/", "///", "", null, undefined, 42]) {
+    const seat = agyPermissionPlan({ bot: BOT, scope: "seat", folder });
+    assert.deepEqual(seat.trustedWorkspaces, [], JSON.stringify(folder) ?? String(folder));
+    const review = agyPermissionPlan({ bot: BOT, scope: "worker", role: "review", folder });
+    assert.deepEqual(review.trustedWorkspaces, [], `review ${JSON.stringify(folder) ?? String(folder)}`);
+    const data = JSON.parse(agySettingsPlan({ bot: BOT, scope: "seat", folder, settingsDir: SETTINGS }).text);
+    assert.deepEqual(data.trustedWorkspaces, [], `settings ${JSON.stringify(folder) ?? String(folder)}`);
+  }
+});
+
+test("agySettingsPlan is Antigravity's alone: Claude, Codex and dsh-tui launches never get its words", () => {
+  for (const agent of ["claude", "codex", "dsh-tui"]) {
+    assert.deepEqual(agySettingsArgs(agent, "/app/x.json"), [], agent);
+    const plan = restartPlan({ bot: { agent }, run: [agent], runningAgent: agent, fresh: true });
+    assert.equal(plan.agySettings, null, agent);
+    assert.equal(plan.argv.includes("--settings"), false, agent);
+    assert.deepEqual(plan.argv, [agent], `${agent}'s launch argv is byte-identical`);
+  }
+});
+
 test("AGY_SHELL_READ (#840): 24 read-only shell tools in both default allow lists; writer-only tools and launchers excluded", () => {
   assert.deepEqual(AGY_SHELL_READ, SHELL_READ);
   assert.ok(AGY_WRITE_ALLOW.includes("command(hc)"));
@@ -151,6 +207,11 @@ test("README (#840): Antigravity permission caveat documents writer-only tools, 
   assert.match(readme, /`echo`\/`printf` with a shell redirection/);
   assert.match(readme, /observed on\s+`agy 1\.5\.3`, not documented by agy/);
   assert.match(readme, /`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send`.*`hc run` and\s+`hc exec` are not allowed on read-only roles/s);
+  // #879: the file lists the launch's own folder, and agy 1.5.3's key is documented.
+  assert.match(readme, /"trustedWorkspaces": \["<folder>"\]/);
+  assert.match(readme, /`agy` 1\.5\.3 reads\s+`TrustedWorkspaces \[\]string json:"trustedWorkspaces,omitempty"` as a\s+top-level key of `--settings`/s);
+  assert.match(readme, /Never a parent folder and never the home folder is listed/);
+  assert.match(readme, /the project folder for a seat, the worker's worktree\s+for a worker, the helper's folder for a helper/s);
 });
 
 test("agySettingsPlan: a roster allow identical to a fixed deny never cancels the deny", () => {
@@ -196,8 +257,9 @@ test("agySettingsPlan: the JSON agy reads, both arrays in full, private path und
   const plan = agySettingsPlan({ bot, scope: "seat", folder: SEAT, settingsDir: SETTINGS });
   assert.equal(plan.path, agySettingsFile(SETTINGS, bot.id));
   const data = JSON.parse(plan.text);
-  assert.deepEqual(Object.keys(data), ["permissions"]);
+  assert.deepEqual(Object.keys(data), ["permissions", "trustedWorkspaces"]);
   assert.deepEqual(Object.keys(data.permissions), ["allow", "deny"]);
+  assert.deepEqual(data.trustedWorkspaces, [SEAT], "the launch's own folder, the only trusted one");
   assert.ok(data.permissions.allow.includes("command(npm publish)"));
   assert.ok(data.permissions.allow.includes(`write_file(${SEAT})`));
   assert.deepEqual(data.permissions.deny, [...AGY_FIXED_DENY]);

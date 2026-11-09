@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createHash } from "node:crypto";
 
@@ -561,6 +561,11 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the bot's roster reaches its worker");
   assert.ok(data.permissions.deny.includes("command(git stash)"));
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
+  // #879: the file trusts the worker's own worktree, exact, so agy asks no trust question.
+  assert.deepEqual(data.trustedWorkspaces, [cwd], "the worker's settings trust its worktree");
+  for (const wrong of [s.project, dirname(cwd), s.env.HOME, "/"]) {
+    assert.equal(data.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
   // A reviewer runs on another branch's worktree: no write_file and no writer shell of its own.
   const g = team();
   g.bots[2].worker = { agent: "antigravity" };
@@ -589,6 +594,47 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
     "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
     assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
   }
+  // #879: a read-only launch prompts for folder trust before its first tool, so it is listed too.
+  assert.deepEqual(review.trustedWorkspaces, [cwd2], "the review worker's settings trust its worktree");
+  for (const wrong of [s2.project, dirname(cwd2), s2.env.HOME, "/"]) {
+    assert.equal(review.trustedWorkspaces.includes(wrong), false, `review worker never trusts ${wrong}`);
+  }
+});
+
+test("worker #879: a fake agy reads --settings and trusts only its session cwd, never a saved trust list", (t) => {
+  const f = team();
+  f.bots[2].worker = { agent: "antigravity" };
+  const s = scene(t, { file: f });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const cwd = run[run.indexOf("--cwd") + 1];
+  const words = after(run);
+  assert.deepEqual(words.slice(0, 2), ["agy", "--mode"], JSON.stringify(words));
+  const at = words.indexOf("--settings");
+  assert.ok(at > 0, "the launch names its settings file");
+  // A stand-in agy like the one a worker runs: it reads the file the launch names, from the
+  // worker's own folder, and records whether it had to fall back to a saved trust list.
+  const script = join(s.root, "fake-agy-trust.mjs");
+  writeFileSync(script, [
+    'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+    'import { join } from "node:path";',
+    "const args = process.argv.slice(2);",
+    "const at = args.indexOf('--settings');",
+    "const data = at < 0 ? null : JSON.parse(readFileSync(args[at + 1], 'utf8'));",
+    "const gemini = existsSync(join(process.env.HOME, '.gemini'));",
+    "const trusted = data?.trustedWorkspaces ?? [];",
+    "writeFileSync(process.env.AGY_TRUST_OUT, JSON.stringify({ cwd: process.cwd(), trusted, gemini }));",
+    "process.exit(trusted.length === 1 && trusted[0] === process.cwd() && !gemini ? 0 : 1);",
+  ].join("\n"));
+  const report = join(s.root, "fake-agy-trust.json");
+  const res = spawnSync(process.execPath, [script, ...words], {
+    cwd, env: { ...s.env, HOME: s.env.HOME, AGY_TRUST_OUT: report }, encoding: "utf8" });
+  assert.equal(res.status, 0, `fake agy refused the launch: ${res.stderr}`);
+  const seen = JSON.parse(readFileSync(report, "utf8"));
+  assert.deepEqual(seen.trusted, [cwd], "agy trusts the session's cwd, exact");
+  assert.equal(seen.gemini, false, "the fake agy read no saved trust list");
+  assert.equal(existsSync(join(s.env.HOME, ".gemini")), false, "the pack never writes agy's saved settings");
 });
 
 test("worker #823: a template that runs agy is rebuilt with --settings and its task, or says it can't take the list", (t) => {

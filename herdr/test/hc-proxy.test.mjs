@@ -1322,6 +1322,11 @@ test("approved Antigravity worker: the proxy writes the permission file itself, 
   assert.ok(written.permissions.allow.includes("command(gh pr create)"), "the approved defaults");
   assert.ok(written.permissions.allow.includes(`write_file(${s.worktree})`), "the approved worker's worktree");
   assert.ok(written.permissions.deny.includes("command(git push --force)"), "the fixed denies");
+  // #879: the proxy-written file trusts the approved worktree, exact, and nothing above it.
+  assert.deepEqual(written.trustedWorkspaces, [s.worktree], "the approved worker trusts its worktree");
+  for (const wrong of [s.project, dirname(s.worktree), s.home, "/"]) {
+    assert.equal(written.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
 });
 
 test("approved Antigravity worker: a symlinked permission folder or file is refused, never followed", async (t) => {

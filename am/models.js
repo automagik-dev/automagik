@@ -528,16 +528,32 @@ export const AGY_READ_ALLOW = Object.freeze(["hc ls", "hc get", "hc read", "hc w
   ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
 
 /**
+ * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879). agy trusts a
+ * folder by exact path, so a new worker worktree would stop at its first-run question, "Do you
+ * trust the contents of this project?". Only `folder` itself is listed, never a parent folder
+ * and never the home folder; anything but a trimmed absolute path (the root included, a
+ * line-broken one, a non-string) lists nothing. The pack never writes agy's saved settings.
+ */
+export function agyTrustedWorkspaces(folder) {
+  if (typeof folder !== "string") return [];
+  const path = folder.trim();
+  if (!path.startsWith("/") || !path.replace(/\/+$/, "") || /[\n\r\0]/.test(folder)) return [];
+  return [path.replace(/\/+$/, "")];
+}
+
+/**
  * The effective allow and deny rules of an Antigravity launch: the defaults its scope and role
  * need, plus the roster's own additions (a bot's `agyPermissions` reaches its workers too).
  * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
  * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
- * `write_file` opens to a writer. The fixed deny rules are always there; nothing drops them.
- * These lists are a guardrail against accidents, not a security boundary: a rule matches word
- * prefixes only, and allowing `node`, `bun` or `git` with any arguments lets a determined agent
- * do anything. Returns { allow, deny, warnings }.
+ * `write_file` opens to a writer and that the launch's settings file trusts (#879: for a
+ * read-only launch too, since agy asks before any tool). The fixed deny rules are always there;
+ * nothing drops them. These lists are a guardrail against accidents, not a security boundary: a
+ * rule matches word prefixes only, and allowing `node`, `bun` or `git` with any arguments lets
+ * a determined agent do anything. Returns { allow, deny, trustedWorkspaces, warnings }.
  */
 export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null }) {
+  const trustedWorkspaces = agyTrustedWorkspaces(folder);
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
   const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
   const warnings = [];
@@ -550,7 +566,7 @@ export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = n
   allow.push(...roster.allow);
   for (const why of roster.problems) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
   const deny = [...AGY_FIXED_DENY, ...roster.deny];
-  return { allow: [...new Set(allow)], deny: [...new Set(deny)], warnings };
+  return { allow: [...new Set(allow)], deny: [...new Set(deny)], trustedWorkspaces, warnings };
 }
 
 // A stable, path-free tag for a folder in a settings file's name: FNV-1a, 8 hex characters.
@@ -585,18 +601,20 @@ export function agySettingsFile(dir, botId, scope = "seat", role = null, folder 
 }
 
 /**
- * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny, warnings },
- * or null for a bot with no id. `settingsDir` is the folder it goes in (agySettingsDir under the
- * app home; the proxy's own folder under the data root for an approved worker). `text` is the JSON
- * agy reads from `--settings`: permissions.allow and permissions.deny, both arrays in full (agy
- * replaces its saved lists field by field).
+ * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny,
+ * trustedWorkspaces, warnings }, or null for a bot with no id. `settingsDir` is the folder it
+ * goes in (agySettingsDir under the app home; the proxy's own folder under the data root for an
+ * approved worker). `text` is the JSON agy reads from `--settings`: permissions.allow and
+ * permissions.deny, both arrays in full (agy replaces its saved lists field by field), and
+ * trustedWorkspaces, the launch's own folder (agy trusts folders by exact path, #879), so agy
+ * asks no first-run trust question.
  */
 export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir }) {
   if (!bot?.id || !settingsDir) return null;
   const plan = agyPermissionPlan({ bot, scope, role, folder });
   const path = agySettingsFile(settingsDir, bot.id, scope, role, folder);
-  const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny } }, null, 2)}\n`;
-  return { path, text, allow: plan.allow, deny: plan.deny, warnings: plan.warnings };
+  const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny }, trustedWorkspaces: plan.trustedWorkspaces }, null, 2)}\n`;
+  return { path, text, allow: plan.allow, deny: plan.deny, trustedWorkspaces: plan.trustedWorkspaces, warnings: plan.warnings };
 }
 
 /** The words that hand `agentKey` a permission list from `path`: ["--settings", path], or []. */

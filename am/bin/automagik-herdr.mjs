@@ -1004,8 +1004,8 @@ function describe(project, bot, view, hcError) {
     role: bot.role, rank: bot.rank ?? null, code: bot.code !== false, look: bot.look,
     hcProxy: bot.hcProxy === true,
     worker,
-    ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
-    ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
+    ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces } } : {}),
+    ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: ["<worktree>"] } } : {}),
   };
   if (lead.warning) out.warning = lead.warning;
   if (hcError && !bot.planned) out.hcError = hcError;
@@ -1327,9 +1327,12 @@ last cached list and the refusal says when there is none. Every Antigravity laun
 \`worker.agyMode\`, else auto. Each launch also writes its own session permission list, 0600
 under <app home>/automagik-herdr/agy-settings/, and passes it as \`--settings\`: a narrow allow
 list for its scope and the fixed denies --force pushes, hard resets, rm -rf, PR merges and
-releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny dropped. The pack
-never passes --dangerously-skip-permissions and never writes agy's own settings, so its trust
-list and saved settings stay the person's. Its first prompt goes through -i, its resume
+releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny dropped. The file
+also lists the launch's own folder in \`trustedWorkspaces\` -- the project folder for a seat,
+the worker's worktree for a worker, never a parent or the home folder -- so agy's first-run
+trust question is already answered. The pack never passes --dangerously-skip-permissions and
+never writes agy's own saved settings, so the rest of its trust list and saved settings stay
+the person's. Its first prompt goes through -i, its resume
 through --conversation <id> (--fresh starts new).
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
@@ -1829,7 +1832,8 @@ async function cmdShow(opts, [ref]) {
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
     ...(info.agyMode ? [`  agy mode     ${info.agyMode}`] : []),
-    ...(info.agyPermissions ? [`  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
+    ...(info.agyPermissions ? [`  agy trusted  ${(info.agyPermissions.trustedWorkspaces ?? []).join(", ") || "-"}`,
+      `  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
       `  agy deny     ${info.agyPermissions.deny.join(", ") || "-"}`] : []),
     ...(info.workerAgyPermissions ? [`  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
       `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
@@ -5479,11 +5483,13 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       const workerAgent = agent && !agent.worker?.template ? resolveAgent(agent.worker?.agent ?? agent.agent) : null;
       const workerAgy = workerAgent === "antigravity"
         ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRole(agent).role, folder: null }) : null;
-      if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny };
-      if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny };
+      if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces };
+      if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: ["<worktree>"] };
       const perms = [
-        seatAgy ? `agy allow ${seatAgy.allow.join(", ")}; agy deny ${seatAgy.deny.join(", ")}` : "",
-        workerAgy ? `worker agy allow ${workerAgy.allow.join(", ")}; worker agy deny ${workerAgy.deny.join(", ")}` : "",
+        seatAgy ? `agy trusted ${seatAgy.trustedWorkspaces.join(", ") || "-"}; agy allow ${seatAgy.allow.join(", ")}; `
+          + `agy deny ${seatAgy.deny.join(", ")}` : "",
+        workerAgy ? `worker agy trusted <worktree>; worker agy allow ${workerAgy.allow.join(", ")}; `
+          + `worker agy deny ${workerAgy.deny.join(", ")}` : "",
       ].filter(Boolean).join("; ");
       // The lists are a guardrail against accidents, never the boundary: say so wherever they print.
       const guardrail = perms ? "these lists are a guardrail against accidents, not a security boundary: "
@@ -5493,8 +5499,8 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         + "agent do anything" : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
         detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
-        ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
-        ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
+        ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces } } : {}),
+        ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: ["<worktree>"] } } : {}),
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
           : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;

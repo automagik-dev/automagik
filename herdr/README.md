@@ -1105,7 +1105,9 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
   other value is refused at launch with one line and never passed to agy. It applies only to
   an Antigravity seat: the pack never passes `--dangerously-skip-permissions` and never writes
-  agy's own settings, so its trust list and saved settings stay the person's.
+  agy's own saved settings; every launch's own `--settings` file lists just that launch's folder
+  in `trustedWorkspaces` (see below), so the rest of the person's trust list and saved settings
+  stay theirs.
   `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
@@ -1144,11 +1146,20 @@ an unattended bot would stop at its first command. agy 1.5.3 takes a permission 
 `--settings` for one session, never saved, so every Antigravity launch of this pack — a bot's
 start, restart and resume, a worker, a helper Restart --tree runs again — writes its own file
 0600 under `<app home>/automagik-herdr/agy-settings/` and passes it as `--settings <file>`.
-The pack never writes agy's own `settings.json`, so its trust list and saved settings stay the
-person's.
+The pack never writes agy's own `settings.json`, so its saved settings stay the person's.
 
-The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
-time (agy replaces its saved list field by field). The allow list is as narrow as the launch
+The file is
+`{ "permissions": { "allow": [...], "deny": [...] }, "trustedWorkspaces": ["<folder>"] }`,
+both arrays in full every time (agy replaces its saved list field by field). `trustedWorkspaces`
+lists exactly one folder, the launch's own: the project folder for a seat, the worker's worktree
+for a worker, the helper's folder for a helper. agy trusts folders by exact path, so without it a
+new worker worktree would stop at the first-run question, "Do you trust the contents of this
+project?" (`agy` 1.5.3 reads `TrustedWorkspaces []string json:"trustedWorkspaces,omitempty"` as a
+top-level key of `--settings`). A read-only review launch gets it too, because agy asks before its
+first tool. Never a parent folder and never the home folder is listed, and the pack never writes
+agy's own `settings.json`, so its saved trust list stays the person's.
+
+The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
 `bun`, the 24 read-only shell tools (`ls`, `cat`, `head`, `tail`, `grep`, `wc`, `diff`, `pwd`,
 `echo`, `cut`, `tr`, `jq`, `printf`, `basename`, `dirname`, `true`, `which`, `stat`, `realpath`,
@@ -1204,10 +1215,11 @@ command ends in a separator or a comment can't take either, so it runs without t
 plain warning. A linked machine's start writes the file under that machine's app home, through
 `hc`; with no app home there the start is refused rather than launched without its list.
 
-`dsh-tui doctor` prints each Antigravity bot's effective allow and deny lists (its seat's and
-its worker defaults'), in JSON too, plus one host-level row saying whether agy's terminal
-sandbox, and so `--mode`, can work here: Linux's user namespace controls, or macOS's
-`/usr/bin/sandbox-exec`. Unreadable evidence is a note, not a false warning.
+`dsh-tui doctor` prints each Antigravity bot's effective trusted folder and allow and deny lists
+(its seat's and its worker defaults'; a worker's trusted folder is its worktree, named at launch),
+in JSON too, plus one host-level row saying whether agy's terminal sandbox, and so `--mode`, can
+work here: Linux's user namespace controls, or macOS's `/usr/bin/sandbox-exec`. Unreadable evidence
+is a note, not a false warning.
 
 ### The briefing hook (Claude bots)
 
