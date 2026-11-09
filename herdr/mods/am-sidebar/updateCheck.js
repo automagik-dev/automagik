@@ -119,9 +119,11 @@ export function announce(check, get, set, notify) {
 // shared value can't interleave). REQUEST_KEY (written by am-status): "check now" or "install".
 
 /** The last check or install, and `busy` while one runs: `{ kind, current, latest, update, why,
- *  at, request, applyError, from, auto, autoFailed, autoHeld, landed, announced, check, restore,
- *  restoreError, busy: { what, since, id, request?, to?, from?, auto? } | null }`. auto: the setting
- *  as the last check read it (`{ on, skip, managed, why, at? }`); the rest: autoPlan and landing below. */
+ *  at, request, queued, applyError, from, auto, autoFailed, autoHeld, landed, announced, check, restore,
+ *  restoreError, busy: { what, since, id, request?, to?, from?, auto? } | null }`. `queued`: the
+ *  request that arrived while that run held the lock (`{ id, what, at }`), answered by its result when
+ *  it finishes. auto: the setting as the last check read it (`{ on, skip, managed, why, at? }`); the
+ *  rest: autoPlan and landing below. */
 export const STATE_KEY = "am.update.state";
 /** What am-status asks for: `{ id, what: "check" | "apply", at }`. */
 export const REQUEST_KEY = "am.update.request";
@@ -346,6 +348,30 @@ export function requestDue(value, seen, now) {
   if (!r || typeof r.id !== "string" || r.id === seen || typeof r.at !== "number") return null;
   if (r.what !== "check" && r.what !== "apply" && r.what !== "auto") return null;
   return now - r.at <= REQUEST_FRESH_MS && r.at - now <= 5_000 ? r.what : null;
+}
+
+/**
+ * The request saved before a build loaded that something else already has: its answer recorded
+ * (`state.request`), the run in flight took it (`busy.request`), or an answer came after it
+ * (`state.at`). Null: it still waits, and the new build answers it (queued behind the run, or run).
+ */
+export function seenRequest(request, state) {
+  const r = objectOr(request, null);
+  if (!r || typeof r.id !== "string" || typeof r.at !== "number") return null;
+  const s = objectOr(state, {});
+  if (s.request === r.id) return r.id;
+  if (objectOr(s.busy, null)?.request === r.id) return r.id;
+  return typeof s.at === "number" && s.at >= r.at ? r.id : null;
+}
+
+/**
+ * The STATE_KEY patch for a finished run's request: the one `state.queued` recorded while it ran is
+ * answered by its result (the bar's latest click), else the run's own `own` id. Frees `queued`.
+ */
+export function requestAnswer(state, own = null) {
+  const queued = objectOr(state?.queued, null);
+  const id = typeof queued?.id === "string" && queued.id !== "" ? queued.id : null;
+  return { request: id ?? (typeof own === "string" && own !== "" ? own : null), queued: null };
 }
 
 // ---- Installing on its own (auto-update) ----
