@@ -134,4 +134,48 @@ mod tests {
             xxh64(&[&x100])
         );
     }
+
+    /// Every length from 4 to 31 bytes: inputs under one 32-byte stripe go through the tail
+    /// alone (the 8-, 4- and 1-byte steps in every mix). The expected values are the zstd CLI's
+    /// content checksums for these inputs (`zstd --check`: XXH64's low 32 bits), taken once with
+    /// a script that is not kept. The input is byte `i` = (37 i + 11) mod 256.
+    #[test]
+    fn every_tail_length_matches_the_zstd_cli() {
+        const VECTORS: [(usize, u32); 28] = [
+            (4, 0xF1AE4D95),
+            (5, 0x1F68F273),
+            (6, 0x1449561E),
+            (7, 0x0496C04E),
+            (8, 0x21F3E21A),
+            (9, 0x75257B66),
+            (10, 0x474903FF),
+            (11, 0x443A2D5A),
+            (12, 0x66039E64),
+            (13, 0x7BB13C7A),
+            (14, 0x0A97D46F),
+            (15, 0xB00E8D29),
+            (16, 0x99721174),
+            (17, 0x2B272AD6),
+            (18, 0x75A43C96),
+            (19, 0x26258CEA),
+            (20, 0x8D2D838D),
+            (21, 0xD78F8827),
+            (22, 0xDEFC3911),
+            (23, 0x5D7C06F8),
+            (24, 0x57E1565E),
+            (25, 0x854B47A5),
+            (26, 0x9DA33210),
+            (27, 0xE95CBBBC),
+            (28, 0x1446F7E5),
+            (29, 0x1A84DBDB),
+            (30, 0x1F080751),
+            (31, 0xE519A4AE),
+        ];
+        let data: Vec<u8> = (0..31u32).map(|i| ((i * 37 + 11) % 256) as u8).collect();
+        for (n, want) in VECTORS {
+            assert_eq!(xxh64(&[&data[..n]]) as u32, want, "length {n}");
+            let (a, b) = data[..n].split_at(n / 2);
+            assert_eq!(xxh64(&[a, b]) as u32, want, "length {n} in two chunks");
+        }
+    }
 }
