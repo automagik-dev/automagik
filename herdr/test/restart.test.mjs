@@ -30,7 +30,8 @@ test("restartPlan resume: claude with the pane's session and the bot's pin; --co
   const withId = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID });
   assert.equal(withId.mode, "resume");
   assert.deepEqual(withId.argv, ["claude", "--resume", SID, "--model", "claude-opus-5-5"]);
-  assert.equal(planText(withId, SID), `resuming session ${SID}`);
+  // RFC 0021: no session id in any output.
+  assert.equal(planText(withId, SID), "resuming its session by id");
   const latest = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude" });
   assert.deepEqual(latest.argv, ["claude", "--continue", "--model", "claude-opus-5-5"]);
   assert.match(planText(latest, null), /--continue/);
@@ -45,7 +46,7 @@ test("agy 1.5.3 restart (#793): a session resumes by --conversation, else --cont
   const agy = { agent: "antigravity", model: "gemini-4-argon-high" };
   const resume = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID });
   assert.deepEqual([resume.mode, resume.argv], ["resume", ["agy", "--conversation", SID, "--model", "gemini-4-argon-high"]]);
-  assert.equal(planText(resume, SID), `resuming session ${SID} (--conversation ${SID})`);
+  assert.equal(planText(resume, SID), "resuming its session by id (--conversation ***)");
   const latest = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity" });
   assert.deepEqual(latest.argv, ["agy", "--continue", "--model", "gemini-4-argon-high"]);
   const fresh = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID, fresh: true });

@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -19,6 +19,18 @@ import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // the tests on the rest of the command compare it with those words out.
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
 const plain = (argv) => { const i = argv.indexOf("--"); return i < 0 ? strip(argv) : [...argv.slice(0, i + 1), ...strip(argv.slice(i + 1))]; };
+/**
+ * A fresh Claude command's words with the `--session-id <uuid>` RFC 0021 adds checked and taken
+ * out (exactly one, a UUID, last); any other command as it is.
+ */
+const SID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const freshClaude = (words) => {
+  const i = words.indexOf("--session-id");
+  if (i < 0) return words;
+  assert.match(words[i + 1] ?? "", SID_SHAPE);
+  assert.equal(words.lastIndexOf("--session-id"), i, "one --session-id");
+  return [...words.slice(0, i), ...words.slice(i + 2)];
+};
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 import { readJsonLines } from "./log-lines.mjs";
 
@@ -1115,14 +1127,23 @@ test("start a main bot: hc run --bg with the label, name, cwd, --no-parent, the 
   const run = runCall(s.calls());
   // Every seat runs as /usr/bin/env PATH=<this PATH> <agent>, as a worker does (#213): without it
   // the pane would get herdr-core's PATH, which may have no node for an npm agent.
-  assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main", "--no-parent",
-    "--", "/usr/bin/env"]);
+  // RFC 0021 (f) 2: a fresh Claude start runs on a session id Herdr chose, labelled on the pane.
+  const sid = run.find((w) => w.startsWith("agent.session="))?.slice("agent.session=".length);
+  assert.match(sid ?? "", SID_SHAPE);
+  assert.deepEqual(run.slice(0, run.indexOf("--") + 2), ["run", "--bg", "--json", "--name", "genie", "--cwd", s.project, "--label", `bot=${ID.main}`, "--label", "role=main",
+    "--label", `agent.session=${sid}`, "--no-parent", "--", "/usr/bin/env"]);
   // No claude-logins.json: the default login, the variable unset before PATH (#453).
   assert.deepEqual(run.slice(run.indexOf("--") + 2, run.indexOf("--") + 4), ["-u", "CLAUDE_CONFIG_DIR"], run.join(" "));
   assert.ok(run[run.indexOf("--") + 4].startsWith("PATH="), run.join(" "));
-  assert.deepEqual(plain(agentWords(run)), ["claude", "--model", "claude-opus-5-5"]);
+  assert.deepEqual(plain(agentWords(run)), ["claude", "--model", "claude-opus-5-5", "--session-id", sid]);
   const words = agentWords(run);
   assert.equal(words[1], "--append-system-prompt-file", "the briefing in its system prompt, right after the executable");
+  // The seat row names the same session; output never shows it (RFC 0021).
+  const seatRow = readLedger(readFileSync(join(s.app, "automagik-herdr/workers.jsonl"), "utf8")).find((x) => x.event === "start");
+  assert.equal(seatRow.session, sid);
+  assert.equal(r.out.includes(sid), false, "the --json answer masks it");
+  assert.deepEqual(r.json().argv.slice(-2), ["--session-id", "***"]);
+  assert.equal(r.json().labels["agent.session"], "***");
   assert.match(readFileSync(words[2], "utf8"), /^<herdr-bot>\nAutomagik Herdr briefing, written from \.herdr\/bots\.json/);
   assert.equal(run.includes("--no-notify"), false);
   assert.equal(run.some((a) => a.startsWith("herdr.space=") || a.startsWith("herdr.tab=")), false, "no placement labels unless asked");
@@ -1638,7 +1659,9 @@ test("start labels the pane: role from rank or captaincy, category, and the lead
   assert.equal(s.cli(["start", "Dev"]).code, 0);
   const run = runCall(s.calls());
   const labels = run.flatMap((w, i) => (run[i - 1] === "--label" ? [w] : []));
-  assert.deepEqual(labels, [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
+  assert.deepEqual(labels.slice(0, 5), [`bot=${ID.dev}`, "role=dev", "category=eng", "squad=memory", "automagik-herdr.squad=memory"]);
+  assert.match(labels[5] ?? "", /^agent\.session=[0-9a-f-]{36}$/, "a Claude start's chosen session (RFC 0021)");
+  assert.equal(labels.length, 6);
 });
 
 test("attach labels the pane and keeps its own squad; detach takes off bot, role, category and only a copied squad", (t) => {
@@ -1799,7 +1822,8 @@ test("restart: the new pane resumes the session in the old one's space and tab, 
   const r = s.cli(["restart", "Genie"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.out.trim(), "t100", "prints the new terminal");
-  assert.match(r.err, new RegExp(`Genie: t100 replaces t5, resuming session ${SID}\\.`));
+  assert.match(r.err, /Genie: t100 replaces t5, resuming its session by id\./);
+  assert.ok(!r.err.includes(SID), r.err); // RFC 0021: never printed
   const calls = s.calls();
   const run = runCall(calls);
   assert.deepEqual(plain(agentWords(run)), ["claude", "--resume", SID]);
@@ -1849,7 +1873,7 @@ test("restart rebuilds the launch from the bot's source, never the old pane's ar
   const fresh = f.cli(["restart", "Genie", "--fresh", "--json"]);
   assert.equal(fresh.code, 0, fresh.err);
   const words = plain(agentWords(runCall(f.calls())));
-  assert.deepEqual(words, ["claude"], "neither the proxy nor a resume word");
+  assert.deepEqual(freshClaude(words), ["claude"], "neither the proxy nor a resume word");
   assert.equal(words.some((w) => ["-c", "--continue", "--resume"].includes(w)), false);
 });
 
@@ -1970,7 +1994,7 @@ test("restart with no session id known: claude --continue, with a warning; --fre
   const fresh = s2.cli(["restart", "Genie", "--fresh", "--json"]);
   assert.equal(fresh.code, 0, fresh.err);
   assert.equal(fresh.json().mode, "fresh");
-  assert.deepEqual(plain(agentWords(runCall(s2.calls()))), ["claude"]);
+  assert.deepEqual(freshClaude(plain(agentWords(runCall(s2.calls())))), ["claude"]);
 });
 
 test("restart --agent swaps fresh without touching bots.json; --save writes the agent and drops the old pin; --save alone is a usage mistake", (t) => {
@@ -2008,7 +2032,7 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   const started = s.cli(["restart", "Genie", "--json"]);
   assert.equal(started.code, 0, started.err);
   assert.deepEqual([started.json().mode, started.json().replaced], ["start", null]);
-  assert.deepEqual(plain(agentWords(s.calls().filter((c) => c[0] === "run")[1])), ["claude"]);
+  assert.deepEqual(freshClaude(plain(agentWords(s.calls().filter((c) => c[0] === "run")[1]))), ["claude"]);
   assert.deepEqual(s.calls().filter((c) => c[0] === "kill").map((c) => c[1]), ["t6"]);
 });
 
@@ -2032,7 +2056,7 @@ test("restart: the ledger's session row for the old pane stands in for a missing
   assert.equal(r2.code, 0, r2.err);
   assert.equal(r2.json().mode, "fresh");
   assert.equal(r2.json().note, `no Claude session id is known for t5, and Captain (t9) also runs Claude in ${s2.project}, so --continue could resume theirs instead of Genie's`);
-  assert.deepEqual(plain(agentWords(runCall(s2.calls()))), ["claude"], "no --continue");
+  assert.deepEqual(freshClaude(plain(agentWords(runCall(s2.calls())))), ["claude"], "no --continue");
   assert.doesNotMatch(r2.err, /No Claude session id was known/, "no --continue warning: it didn't continue");
 });
 
@@ -2072,12 +2096,12 @@ test("restart (#328): two bots on omp, then codex, in one folder: each resumes i
     const s = shareScene(t, agent, { labels: ["sess-tester", "sess-dev"] });
     const a = s.cli(["restart", "Genie", "--json"]);
     assert.equal(a.code, 0, a.err);
-    assert.deepEqual([a.json().mode, a.json().session], ["resume", "sess-tester"], agent);
+    assert.deepEqual([a.json().mode, a.json().session], ["resume", "***"], agent); // RFC 0021: masked
     assert.deepEqual(ownWords(runsOf(s)[0]), [agent, ...words("sess-tester")], agent);
     assert.ok(runsOf(s)[0].includes("agent.session=sess-tester"), "the new pane keeps its own id for the next restart");
     const b = s.cli(["restart", "Captain", "--json"]);
     assert.equal(b.code, 0, b.err);
-    assert.deepEqual([b.json().mode, b.json().session], ["resume", "sess-dev"], agent);
+    assert.deepEqual([b.json().mode, b.json().session], ["resume", "***"], agent); // RFC 0021: masked
     assert.deepEqual(ownWords(runsOf(s)[1]), [agent, ...words("sess-dev")], agent);
   }
   // No labels: the ledger's session rows, each naming its agent, feed the same ids.
@@ -2216,7 +2240,7 @@ test("restart (#328 review): a ledger session row from an earlier pane at a reus
   const st2 = own.hcState();
   st2.terminals.find((x) => x.address === "t5").created_ms = 5000;
   writeFileSync(join(own.root, "hc.json"), JSON.stringify(st2));
-  assert.equal(own.cli(["restart", "Genie", "--json"]).json().session, "old-pane");
+  assert.equal(own.cli(["restart", "Genie", "--json"]).json().session, "***"); // resumed; RFC 0021: masked
 });
 
 test("restart (#328): an agent with no resume starts fresh as before, a teammate beside it or not", (t) => {
@@ -2386,7 +2410,7 @@ test("restart #213/#597: an omp bot from a template, in a worktree, comes back o
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
   const again = s.cli(["restart", "Captain", "--force", "--json"]);
   assert.equal(again.code, 0, again.err);
-  assert.equal(again.json().session, SID2);
+  assert.equal(again.json().session, "***"); // RFC 0021: masked
   const next = runs(s)[1];
   assert.equal(next[next.indexOf("--cwd") + 1], wt);
   assert.deepEqual(agentWords(next), ["sh", "-c", `${cmd} "$@"`, "sh", `--resume=${SID2}`]);
@@ -2449,10 +2473,14 @@ test("restart #597: a hand-started codex bot comes back from its source, not its
   assert.deepEqual(plain(agentWords(run)), ["codex", "resume", SID], "the source's command, resumed by its session");
   assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*\)/);
   assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
-  assert.equal(r.json().session, SID);
+  assert.equal(r.json().session, "***"); // RFC 0021: masked
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
   assert.match(r.err, /t6's folder \/gone\/folder isn't there now, so t100 runs in .*; its conversation may not be found there\./);
-  assert.equal(ledgerOf(s).some((x) => x.event === "session"), false, "session rows stay Claude's");
+  // RFC 0021 (f) 5: a session id the restart carries, any harness, is a session row on the new
+  // launch (its agent, core and created_ms), the id itself only in the ledger.
+  const t100 = s.hcState().terminals.find((x) => x.address === "t100");
+  assert.deepEqual(ledgerOf(s).filter((x) => x.event === "session").map((x) => [x.terminal, x.session, x.agent, x.core, x.created_ms]),
+    [["t100", SID, "codex", "fakecore0000", t100.created_ms]]);
 });
 
 test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr/bin/env node) finds the node this PATH has", (t) => {
@@ -2562,7 +2590,7 @@ test("restart --tree: the helpers that end with the bot run again under its new 
   assert.equal(text.code, 0, text.err);
   const lines = text.err.split("\n");
   assert.ok(lines.includes(`automagik-herdr: Genie's helper fix-213-dev: t101 replaces t7, resuming its last conversation (--continue).`), text.err);
-  assert.ok(lines.includes(`automagik-herdr: Genie's helper rev-1: t102 replaces t8, resuming session ${SID2} (--resume=${SID2}).`), text.err);
+  assert.ok(lines.includes("automagik-herdr: Genie's helper rev-1: t102 replaces t8, resuming its session by id (--resume=***)."), text.err);
   assert.equal(text.code, 0);
 });
 
@@ -2784,7 +2812,7 @@ test("restart --tree: six codex helpers in one folder resume each its own sessio
   const { s, wt, cmd, names } = sixScene(t, (n) => ({ "revive.agent": "codex", "revive.session": idOf(n), "revive.cwd": "x" }));
   const r = s.cli(["restart", "Genie", "--tree", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json().helpers.map((h) => [h.name, h.session, h.mode, h.up]), names.map((name, n) => [name, idOf(n), "resume", true]));
+  assert.deepEqual(r.json().helpers.map((h) => [h.name, h.session, h.mode, h.up]), names.map((name) => [name, "***", "resume", true]));
   assert.deepEqual(runs(s).slice(1).map((w) => [w[w.indexOf("--cwd") + 1], ...agentWords(w).slice(-2)]), names.map((_, n) => [wt, "resume", idOf(n)]));
   assert.ok(runs(s).slice(1).every((w) => agentWords(w)[2] === `${cmd} "$@"`));
   onePanePerSession(s);
@@ -2994,7 +3022,7 @@ test("restart --cwd: a folder of the same Claude slug resumes the session by id 
   const run = runCall(s.calls());
   assert.equal(run[run.indexOf("--cwd") + 1], to);
   assert.deepEqual(plain(agentWords(run)), ["claude", "--resume", SID]);
-  assert.deepEqual([r.json().mode, r.json().session, r.json().replaced], ["resume", SID, "t5"]);
+  assert.deepEqual([r.json().mode, r.json().session, r.json().replaced], ["resume", "***", "t5"]);
   // Another slug: refused, nothing started or ended; --fresh starts a new conversation there.
   const s2 = restartScene(t);
   const st2 = s2.hcState();
@@ -3010,7 +3038,7 @@ test("restart --cwd: a folder of the same Claude slug resumes the session by id 
   assert.equal(fresh.code, 0, fresh.err);
   const run2 = runCall(s2.calls());
   assert.equal(run2[run2.indexOf("--cwd") + 1], other);
-  assert.deepEqual([plain(agentWords(run2)), fresh.json().mode], [["claude"], "fresh"]);
+  assert.deepEqual([freshClaude(plain(agentWords(run2))), fresh.json().mode], [["claude"], "fresh"]);
   // Not a folder: a usage mistake.
   assert.equal(s2.cli(["restart", "Genie", "--cwd", join(s2.root, "nope")]).code, 2);
   // --tree --cwd: the bot moves, its helpers run again in their own folders.
@@ -3520,4 +3548,181 @@ test("start #225/#223: the ledger lock stays fresh across a slow hc run, so two 
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1, both.map((r) => r.err).join("\n"));
   assert.deepEqual(both.map((r) => r.code), [0, 0], both.map((r) => r.err).join("\n"));
   assert.ok(both.some((r) => /Genie is already running in t100\./.test(r.out)), both.map((r) => r.out).join("\n"));
+});
+
+// ---- RFC 0021 delivery 3: the rows meter attribution needs (synthetic ids only) ----
+
+const rowsOf_ = (s, event) => ledgerOf(s).filter((x) => x.event === event);
+const seatRows = (s) => ledgerOf(s).filter((x) => x.event === "start" && x.kind === "seat");
+const modeOf = (path) => statSync(path).mode & 0o777;
+const createdOf = (s, address) => s.hcState().terminals.find((x) => x.address === address).created_ms;
+
+test("RFC 0021: a seat start row carries core, created_ms, role, lead and squad; the ledger is 0600, made or appended", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots.find((b) => b.id === ID.dev).rank = "dev";
+  s.seed(f);
+  // An existing ledger made under umask 002 (0664): the next append makes it the owner's alone.
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(ledgerPath(s.app), "");
+  chmodSync(ledgerPath(s.app), 0o664);
+  assert.equal(s.cli(["start", "Captain"]).code, 0);
+  assert.equal(modeOf(ledgerPath(s.app)), 0o600, "set to 0600 on append");
+  assert.equal(s.cli(["start", "Dev"]).code, 0);
+  const [cap, dev] = seatRows(s);
+  // Captain reports to the main bot and leads Dev: its own squad. Dev's squad is its captain's.
+  assert.deepEqual([cap.terminal, cap.core, cap.created_ms, cap.role, cap.lead, cap.squad], ["t100", "fakecore0000", createdOf(s, "t100"), "captain", ID.main, ID.cap]);
+  assert.deepEqual([dev.terminal, dev.core, dev.created_ms, dev.role, dev.lead, dev.squad], ["t101", "fakecore0000", createdOf(s, "t101"), "dev", ID.cap, ID.cap]);
+  assert.ok(Number.isSafeInteger(cap.created_ms));
+  // A new ledger: 0600 from the start.
+  const fresh = scene(t);
+  fresh.seed(team());
+  assert.equal(fresh.cli(["start", "Genie"]).code, 0);
+  assert.equal(modeOf(ledgerPath(fresh.app)), 0o600);
+  const main = seatRows(fresh)[0];
+  assert.deepEqual([main.role, main.lead, main.squad], ["main", null, null], "the main bot heads no squad");
+});
+
+test("RFC 0021: core comes from hc server status, created_ms from hc get", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const st = s.hcState();
+  st.core = { id: "core-synthetic-1", name: "fake" };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  const row = seatRows(s)[0];
+  assert.deepEqual([row.core, row.created_ms], ["core-synthetic-1", createdOf(s, "t100")]);
+  assert.ok(s.calls().some((c) => c[0] === "server" && c[1] === "status"), "asked hc server status");
+});
+
+test("RFC 0021: a fresh Claude launch gets a new id; restart resumes that id; --fresh gets another; each replaced launch gets its end row", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  const first = seatRows(s)[0];
+  assert.match(first.session, SID_SHAPE);
+  const label = (address) => s.hcState().terminals.find((x) => x.address === address).labels["agent.session"];
+  assert.equal(label("t100"), first.session, "labelled with the same id");
+  // A restart resumes it: --resume <that id>, never a new --session-id.
+  const r = s.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().mode, "resume");
+  const resumed = s.calls().filter((c) => c[0] === "run")[1];
+  assert.deepEqual(plain(agentWords(resumed)), ["claude", "--resume", first.session]);
+  assert.equal(resumed.includes("--session-id"), false);
+  assert.equal(r.out.includes(first.session), false, "--json shows no session id");
+  assert.equal(r.json().session, "***");
+  const second = seatRows(s)[1];
+  assert.deepEqual([second.terminal, second.session], ["t101", first.session]);
+  // The old launch ended only once its kill succeeded: its end row, keyed by core, terminal, created_ms.
+  assert.deepEqual(rowsOf_(s, "end").map((x) => [x.kind, x.terminal, x.core, x.created_ms, x.reason]),
+    [["seat", "t100", "fakecore0000", createdOf(s, "t100"), "replaced"]]);
+  // --fresh: a new id, not the old one.
+  const f = s.cli(["restart", "Genie", "--fresh", "--force", "--json"]);
+  assert.equal(f.code, 0, f.err);
+  const third = seatRows(s)[2];
+  assert.match(third.session, SID_SHAPE);
+  assert.notEqual(third.session, first.session);
+  const freshRun = s.calls().filter((c) => c[0] === "run")[2];
+  assert.deepEqual(plain(agentWords(freshRun)).slice(-2), ["--session-id", third.session]);
+  assert.equal(label("t102"), third.session);
+  assert.equal(f.out.includes(third.session), false);
+  assert.deepEqual(f.json().argv.slice(-2), ["--session-id", "***"]);
+  assert.deepEqual(rowsOf_(s, "end").map((x) => x.terminal), ["t100", "t101"]);
+});
+
+test("RFC 0021: a restart whose kill of the old pane fails writes no end row", (t) => {
+  const s = restartScene(t);
+  const st = s.hcState();
+  st.failKill = "t5";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["restart", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /t5 wasn't ended/);
+  assert.deepEqual(rowsOf_(s, "end"), []);
+  // The new seat row names the resumed session; the old pane's own id goes nowhere else.
+  assert.deepEqual(seatRows(s).map((x) => [x.terminal, x.session]), [["t100", SID]]);
+});
+
+test("RFC 0021: a command that picks its own session gets no --session-id", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const own = "11111111-2222-4333-8444-555555555555";
+  writeFileSync(join(s.app, "programs.json"), `${JSON.stringify({ programs: { claude: { run: [join(s.root, "bin", "claude"), "--session-id", own] } } })}\n`);
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  const run = runCall(s.calls());
+  assert.equal(run.filter((w) => w === "--session-id").length, 1, "the person's own, alone");
+  assert.equal(run[run.indexOf("--session-id") + 1], own);
+  assert.equal(run.some((w) => w.startsWith("agent.session=")), false);
+  assert.equal(seatRows(s)[0].session, null, "no id Herdr didn't choose");
+});
+
+test("RFC 0021: attach writes a seat row with role, lead, squad, core and created_ms", (t) => {
+  const pane = term("t7", { cwd: "/x", created: 4242 });
+  const s = scene(t, { terminals: [pane] });
+  s.seed(team());
+  const st = s.hcState();
+  st.terminals[0].cwd = s.project;
+  st.terminals[0].foreground.cwd = s.project;
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["attach", "Captain", "t7"]);
+  assert.equal(r.code, 0, r.err);
+  const row = seatRows(s)[0];
+  assert.deepEqual([row.terminal, row.core, row.created_ms, row.role, row.lead, row.squad], ["t7", "fakecore0000", 4242, "captain", ID.main, ID.cap]);
+});
+
+test("RFC 0021: restart --tree ends the replaced launches, keeps a worker's frozen squad, tags the seat", (t) => {
+  const { s } = treeScene(t);
+  // The worker's row froze its squad at launch; the registry has changed since (Genie heads none).
+  const rows = ledgerOf(s).map((x) => (x.terminal === "t7" ? { ...x, squad: ID.cap, core: "fakecore0000", created_ms: 1 } : x));
+  writeFileSync(ledgerPath(s.app), rows.map((x) => `${JSON.stringify(x)}\n`).join(""));
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const worker = ledgerOf(s).find((x) => x.event === "start" && x.terminal === "t101");
+  assert.deepEqual([worker.kind, worker.squad, worker.lead, worker.role, worker.core, worker.created_ms],
+    ["worker", ID.cap, ID.main, "dev", "fakecore0000", createdOf(s, "t101")], "copied, not recomputed");
+  const seat = seatRows(s).find((x) => x.terminal === "t100");
+  assert.deepEqual([seat.role, seat.lead, seat.squad, seat.session], ["main", null, null, SID]);
+  // The bot's old pane and the logged worker ended: end rows; the template helper has no row to end.
+  assert.deepEqual(rowsOf_(s, "end").map((x) => [x.kind, x.terminal, x.created_ms, x.reason]).sort(),
+    [["seat", "t5", 1, "replaced"], ["worker", "t7", 1, "replaced"]]);
+  assert.equal(r.out.includes(SID2), false, "a helper's session isn't printed");
+});
+
+/** A scene whose app home is inside the project (a project app home, `.herdr/app-home`). */
+function projectHomeScene(t, { ignore = null } = {}) {
+  const s = scene(t);
+  s.seed(team());
+  if (ignore !== null) { writeFileSync(join(s.project, ".gitignore"), ignore); git(s.project, "add", ".gitignore"); git(s.project, "commit", "-qm", "ignore"); }
+  const app = join(s.project, ".herdr/app-home");
+  mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
+  writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
+  return { s, app, exclude: join(s.project, ".git/info/exclude") };
+}
+
+test("RFC 0021: a project app home git doesn't ignore goes in the clone's exclude file once, with one warning", (t) => {
+  const { s, app, exclude } = projectHomeScene(t);
+  const before = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+  const r = s.cli(["start", "Genie"], { env: { HERDR_APP_HOME: app } });
+  assert.equal(r.code, 0, r.err);
+  const lines = readFileSync(exclude, "utf8").split("\n");
+  assert.equal(lines.filter((l) => l === "/.herdr/app-home/").length, 1);
+  assert.equal(r.err.split("\n").filter((l) => l.includes("didn't ignore it")).length, 1, r.err);
+  assert.equal(git(s.project, "check-ignore", "-q", "--no-index", ".herdr/app-home/automagik-herdr/workers.jsonl"), "");
+  assert.equal(readFileSync(exclude, "utf8").startsWith(before), true, "only added to");
+  // The next run: ignored now, nothing added, nothing said.
+  const again = s.cli(["start", "Captain"], { env: { HERDR_APP_HOME: app } });
+  assert.equal(again.code, 0, again.err);
+  assert.equal(readFileSync(exclude, "utf8").split("\n").filter((l) => l === "/.herdr/app-home/").length, 1);
+  assert.equal(again.err.includes("ignore"), false, again.err);
+  assert.equal(git(s.project, "status", "--porcelain", "--", ".gitignore"), "", "no tracked file touched");
+});
+
+test("RFC 0021: a project app home already ignored adds nothing to the exclude file", (t) => {
+  const { s, app, exclude } = projectHomeScene(t, { ignore: ".herdr/app-home/\n" });
+  const r = s.cli(["start", "Genie"], { env: { HERDR_APP_HOME: app } });
+  assert.equal(r.code, 0, r.err);
+  // (The briefing hook adds its own settings.local.json line there, as always; nothing for the app home.)
+  assert.equal((existsSync(exclude) ? readFileSync(exclude, "utf8") : "").includes(".herdr/app-home"), false);
+  assert.equal(r.err.includes("ignore"), false, r.err);
 });

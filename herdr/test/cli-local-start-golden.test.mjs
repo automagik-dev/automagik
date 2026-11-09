@@ -67,7 +67,9 @@ function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   assert.equal(r.status, 0, r.stderr);
   // The briefing file's name starts with a hash of the project's folder, a new temp folder each run.
   const norm = (text) => (text === null ? null : text.split(root).join("<root>").split(GUARD_DIR).join("<guard>")
-    .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-"));
+    .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-")
+    // RFC 0021: the session id a fresh Claude start runs on is random; only its place is pinned.
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<session-id>"));
   const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : null);
   const run = readJsonLines(logPath).find((c) => c[0] === "run");
   const file = run.find((w, i) => run[i - 1] === "--append-system-prompt-file") ?? null;

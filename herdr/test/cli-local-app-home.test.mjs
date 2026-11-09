@@ -81,7 +81,9 @@ const calls = (s) => readJsonLines(s.logPath);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** A scratch path as the fixture records it: the temp root, the guard folder, the briefing hash. */
 const norm = (root) => (word) => word.split(root).join("<root>").split(GUARD_DIR).join("<guard>")
-  .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-");
+  .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-")
+  // RFC 0021: a fresh Claude start's session id is random; only its place is pinned.
+  .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<session-id>");
 
 /** The env word a start emitted (`HERDR_APP_HOME=...`), or null. */
 const appHomeWord = (run) => afterDash(run).find((word) => word.startsWith("HERDR_APP_HOME=")) ?? null;
