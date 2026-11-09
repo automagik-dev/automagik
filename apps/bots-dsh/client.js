@@ -2357,7 +2357,13 @@ var AGENT_MODEL_PACK = Object.freeze({
   match: (provider) => provider !== void 0 && routeOf(provider).connectedBy === "acp",
   cells: Object.freeze({ model: "model" })
 });
-var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK];
+var MODEL_PACK = Object.freeze({
+  id: "model",
+  order: 1e3,
+  match: (_provider, target) => target?.ref !== void 0,
+  cells: Object.freeze({ model: "model" })
+});
+var BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK, MODEL_PACK];
 function stepsAside({ roster, sessionId, cell, key, env, packs }) {
   const target = targetOf(roster, sessionId);
   const pack = packFor(target, { env, ...packs ? { packs } : {} });
@@ -5050,14 +5056,14 @@ function packModelCell(env) {
     return (0, import_react12.createElement)(
       "span",
       { className: "bt-composer-model", "data-pack": pack.id },
-      (0, import_react12.createElement)(ModelMenu, { bot: target.bot, roster, actions, run: run2, chat: true })
+      (0, import_react12.createElement)(ModelMenu, { key: target.bot.id, bot: target.bot, roster, actions, run: run2, chat: true })
     );
   };
 }
 var COMPOSER_PACK_CSS = `
 .bt-composer-model{display:inline-flex;min-width:0}
 .bt-composer-model .bt-model-trigger{min-height:30px;padding:2px 6px 2px 8px;background:transparent}
-.bt-composer-model .bt-model-copy{display:var(--dsh-composer-model-text-display,flex)}
+[data-composer-card] [class*="_trailing"]:has(>[class*="_standardControls"]:not([hidden]) .bt-composer-model),[data-composer-card] [class*="_standardControls"]:has(.bt-composer-model){flex:0 1 auto!important;min-width:0!important}
 `;
 
 // src/client/task-card.js
@@ -26280,7 +26286,7 @@ function apply(ctx) {
     () => installPackCell("conversation.input.permission", "permission"),
     () => simpleOnly(() => shadow("conversation.input.plan", { priority: BOT_PRIORITY }, Nothing)),
     // The composer carries no run statistics, and DSH's model picker stays out: a Bot's
-    // model lives on the Bot. A pack that offers it draws Omni's own model menu here.
+    // model lives on the Bot. Omni's own model menu shows it here in every Bot's chat.
     () => shadow("conversation.input.model", { priority: BOT_PRIORITY, inject: face }, PackModelCell),
     () => simpleOnly(() => shadow("conversation.composer.dock", { id: "activity", order: 0, priority: BOT_PRIORITY }, Nothing)),
     () => simpleOnly(() => shadow("conversation.composer.dock", { id: "usage", order: 1, priority: BOT_PRIORITY }, Nothing)),

@@ -190,6 +190,29 @@ test('applying a Bot model leaves the DSH default as the user set it', async () 
   assert.equal(bot.appliedModel, 'deepseek/v4-flash')
 })
 
+// One conversation's model is its Bot's alone: a pick moves that Bot's own Sessions (its chat
+// and its seats in groups) and nothing of another Bot, nor the default a new Bot starts on.
+test('a model picked for one Bot never moves another Bot\'s model or level', async () => {
+  const levels = { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } }
+  const { rt, selected, current } = bench({ reasoning: { 'deepseek/v4-flash': levels } })
+  rt.groupSessionsOf = id => (id === 'b1' ? ['b1-in-room'] : [])
+  const first = { id: 'b1', model: 'stepfun/step-5' }
+  const second = { id: 'b2', model: 'stepfun/step-5' }
+  Object.assign(rt.state.bots, { b1: first, b2: second })
+  await rt.applyModel(first)
+  await rt.applyModel(second)
+  selected.length = 0
+  Object.assign(first, { model: 'deepseek/v4-flash', effort: 'low' })
+  await rt.applyModel(first)
+  assert.deepEqual(selected, ['b1:deepseek/v4-flash:low', 'b1-in-room:deepseek/v4-flash:low'])
+  assert.deepEqual(second, { id: 'b2', model: 'stepfun/step-5', appliedModel: 'stepfun/step-5' })
+  assert.deepEqual(current(), { provider: 'stepfun', model: 'step-5' })
+  // A later sync of the whole team re-selects nothing for the Bot that was not touched.
+  selected.length = 0
+  await rt.applyModel(second)
+  assert.deepEqual(selected, [])
+})
+
 test('a Bot model applies its thinking level, and only re-selects on a change', async () => {
   const { rt, selected } = bench({ reasoning: { 'deepseek/v4-flash': { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } } } })
   const bot = { id: 'b1', model: 'deepseek/v4-flash', effort: 'low' }
