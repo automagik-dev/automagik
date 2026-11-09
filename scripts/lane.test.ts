@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { AM, METER, METER_CONTRACT, addonPinsOnly, amPaths, globPattern, herdrShips, kindOf, LANE_ADDONS, manifest, meterHeld, meterPaths, meterShips, meterSince, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane, versionOnly } from './lane';
+import { cpSync, mkdirSync as mkdir, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { AM, METER, METER_CONTRACT, METER_KEYS, addonPinsOnly, contractHeld, keysHeld, meterHold, amPaths, globPattern, herdrShips, kindOf, LANE_ADDONS, manifest, meterHeld, meterPaths, meterShips, meterSince, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane, versionOnly } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -120,18 +119,18 @@ describe('the plugin lane', () => {
     expect(versionOnly('meter/usagemeter/src/main.rs', 'a', 'a')).toBe(false);
   });
 
-  test('the meter lane is held shut until RFC 0021 delivery 2 widens attribution.precision', () => {
+  test('the contract holds the meter lane until RFC 0021 delivery 2 widens attribution.precision', () => {
     const contract = readFileSync(join(import.meta.dir, '..', METER_CONTRACT), 'utf8');
     const precision = (values: unknown) => JSON.stringify({ properties: { rows: { items: { properties: { attribution: { properties: { precision: values } } } } } } });
     // Today's contract names branch_window alone: held, so the crate ships nothing yet.
     expect(contract).toContain('"enum": ["branch_window"]');
-    expect(meterHeld(contract)).toBe(true);
-    expect(meterHeld(contract.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
-    expect(meterHeld(precision({ enum: ['branch_window', 'task_interval'] }))).toBe(true);
-    expect(meterHeld(precision({ oneOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] }))).toBe(false);
+    expect(contractHeld(contract)).toBe(true);
+    expect(contractHeld(contract.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
+    expect(contractHeld(precision({ enum: ['branch_window', 'task_interval'] }))).toBe(true);
+    expect(contractHeld(precision({ oneOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] }))).toBe(false);
     // A $ref'd attribution, or a row picked by its precision (oneOf branches), opens it too.
-    expect(meterHeld(JSON.stringify({ $defs: { attribution: { properties: { precision: { enum: ['branch_window', 'actor_interval'] } } } }, properties: { attribution: { $ref: '#/$defs/attribution' } } }))).toBe(false);
-    expect(meterHeld(JSON.stringify({ properties: { attribution: { properties: { precision: { $ref: '#/$defs/p' } } } }, $defs: { p: { anyOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] } } }))).toBe(false);
+    expect(contractHeld(JSON.stringify({ $defs: { attribution: { properties: { precision: { enum: ['branch_window', 'actor_interval'] } } } }, properties: { attribution: { $ref: '#/$defs/attribution' } } }))).toBe(false);
+    expect(contractHeld(JSON.stringify({ properties: { attribution: { properties: { precision: { $ref: '#/$defs/p' } } } }, $defs: { p: { anyOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] } } }))).toBe(false);
     // Decoys keep it held: actor_interval in another field named precision, a mention, a field named
     // otherwise, a negation (not) or a condition (if) on attribution.precision.
     const decoys = [
@@ -142,37 +141,145 @@ describe('the plugin lane', () => {
       { not: { properties: { attribution: { properties: { precision: { const: 'actor_interval' } } } } } },
       { if: { properties: { attribution: { properties: { precision: { const: 'actor_interval' } } } } }, then: {} },
     ];
-    for (const decoy of decoys) expect(meterHeld(JSON.stringify(decoy))).toBe(true);
+    for (const decoy of decoys) expect(contractHeld(JSON.stringify(decoy))).toBe(true);
     // The real contract with a decoy precision elsewhere naming actor_interval: still held.
     const decoyed = JSON.parse(contract);
     decoyed.properties.decoy = { type: 'object', properties: { precision: { enum: ['actor_interval'] } } };
-    expect(meterHeld(JSON.stringify(decoyed))).toBe(true);
+    expect(contractHeld(JSON.stringify(decoyed))).toBe(true);
     // No contract, or one that does not parse, holds.
-    expect(meterHeld(undefined)).toBe(true);
-    expect(meterHeld('{')).toBe(true);
+    expect(contractHeld(undefined)).toBe(true);
+    expect(contractHeld('{')).toBe(true);
   });
 
-  test('lane.ts meter, as the release runs it, says no with the reason while the committed contract holds the lane', () => {
+  // The key comes first (Chat, 2026-11-09): the lane opens only when the contract allows
+  // actor_interval AND meter-keys.json lists a key. Frozen copies: dev's contract at v3.108.14 and
+  // RFC 0021 delivery 2's (PR 825 at 0daf5c6c).
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', 'meter-hold', name), 'utf8');
+  const DEV = fixture('contract-dev-v3.108.14.schema.json');
+  const RFC0021 = fixture('contract-rfc0021-825.schema.json');
+  const NO_KEY = '{\n  "keys": []\n}\n';
+  const ONE_KEY = JSON.stringify({ keys: [{ keyId: 'meter-test', publicKey: generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString() }] });
+  const meterOnly = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/Cargo.toml'];
+  const heldInert = (held: boolean) => (path: string) => held && METER.test(path);
+
+  test('the lane opens only with RFC 0021\'s contract AND a listed key', () => {
+    expect(contractHeld(DEV)).toBe(true);
+    expect(contractHeld(RFC0021)).toBe(false);
+    // (a) 825's contract, no key listed: held, and a meter-only change ships nothing.
+    expect(meterHold(RFC0021, NO_KEY)).toEqual([`${METER_KEYS} lists no key (the owner's, RFC 0017 delivery 5)`]);
+    expect(ships(meterOnly, heldInert(meterHeld(RFC0021, NO_KEY)))).toBe(false);
+    expect(meterShips(meterOnly, heldInert(meterHeld(RFC0021, NO_KEY)))).toBe(false);
+    // (b) 825's contract and a listed key: open, a meter patch that builds the meter.
+    expect(meterHold(RFC0021, ONE_KEY)).toEqual([]);
+    expect(ships(meterOnly, heldInert(meterHeld(RFC0021, ONE_KEY)))).toBe(true);
+    expect(meterShips(meterOnly, heldInert(meterHeld(RFC0021, ONE_KEY)))).toBe(true);
+    expect(kindOf(meterOnly, () => false, heldInert(meterHeld(RFC0021, ONE_KEY)), meterOnly)).toBe('meter');
+    // (c) a listed key but dev's contract: held.
+    expect(meterHold(DEV, ONE_KEY)).toEqual([`${METER_CONTRACT}'s attribution.precision names no actor_interval (RFC 0021 delivery 2)`]);
+    expect(meterShips(meterOnly, heldInert(meterHeld(DEV, ONE_KEY)))).toBe(false);
+    expect(meterHold(DEV, NO_KEY)).toHaveLength(2);
+    // What lists no key: an empty list, a missing or broken file, an entry with no id or a key that does not parse.
+    for (const keys of [NO_KEY, undefined, '{', '{}', '{"keys":{}}', '{"keys":[{"keyId":"x"}]}', '{"keys":[{"keyId":"","publicKey":"x"}]}', '{"keys":[{"keyId":"x","publicKey":"not a key"}]}']) expect(keysHeld(keys)).toBe(true);
+    expect(keysHeld(ONE_KEY)).toBe(false);
+    // The repository's own keys file lists none yet: the lane is held today, whatever the contract.
+    expect(keysHeld(readFileSync(join(import.meta.dir, '..', METER_KEYS), 'utf8'))).toBe(true);
+  });
+
+  // End to end, as release.yml runs lane.ts: a scratch repository with this lane.ts, a release tag,
+  // then a crate change on top of RFC 0021's contract. With no key listed, `ships` says no (no
+  // release at all from it) and `meter` says no (no meter jobs: no build, no attach, no SHA256SUMS,
+  // no meter-lane); `meter-since` gives '' and `meter ''` still says no. Listing a key opens it.
+  test('as the release runs it: 825\'s contract and no key listed cut no meter release; a listed key does', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'meter-hold-'));
     const root = join(import.meta.dir, '..');
-    const committed = spawnSync('git', ['show', `HEAD:${METER_CONTRACT}`], { cwd: root, encoding: 'utf8' });
-    const held = meterHeld(committed.status === 0 ? committed.stdout : undefined);
+    const put = (path: string, text: string) => { mkdir(dirname(join(repo, path)), { recursive: true }); writeFileSync(join(repo, path), text); };
+    const copy = (path: string) => { mkdir(dirname(join(repo, path)), { recursive: true }); cpSync(join(root, path), join(repo, path)); };
+    const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });
+    const lane = (...args: string[]) => spawnSync('bun', [join(repo, 'scripts', 'lane.ts'), ...args], { cwd: repo, encoding: 'utf8' });
+    try {
+      for (const path of ['scripts/lane.ts', 'scripts/version.ts', 'scripts/release-plugins.ts', 'am/part.json', 'meter/usagemeter/part.json',
+        'meter/usagemeter/Cargo.toml', 'meter/usagemeter/Cargo.lock', 'apps/acp-dsh/package.json', 'apps/bots-dsh/package.json',
+        'apps/locale-pt-br-dsh/package.json', 'apps/welcome-dsh/package.json']) copy(path);
+      put('meter/usagemeter/src/main.rs', 'fn main() {}\n');
+      put(METER_KEYS, NO_KEY);
+      put(METER_CONTRACT, DEV);
+      git('init', '-q');
+      git('add', '.');
+      git('commit', '-qm', 'base');
+      git('tag', 'v3.200.0');
+      // 822 and 825 merged, a crate change after them, no key listed.
+      put(METER_CONTRACT, RFC0021);
+      put('meter/usagemeter/src/main.rs', 'fn main() { println!("meter"); }\n');
+      git('commit', '-qam', 'feat(meter): a change');
+      expect(lane('ships', 'v3.200.0').stdout.trim()).toBe('no');
+      const meter = lane('meter', 'v3.200.0');
+      expect(meter.stdout.trim()).toBe('no');
+      expect(meter.stderr).toContain(`meter lane: held (${METER_KEYS} lists no key`);
+      expect(lane('meter-since', 'v3.200.0', '').stdout.trim()).toBe('');
+      expect(lane('meter', '').stdout.trim()).toBe('no');
+      // The owner lists a key (delivery 5): the lane opens, and that merge is the first meter release.
+      put(METER_KEYS, ONE_KEY);
+      git('commit', '-qam', 'chore(meter): the meter-lane key');
+      expect(lane('ships', 'v3.200.0').stdout.trim()).toBe('yes');
+      expect(lane('kind', 'v3.200.0', 'v3.200.0').stdout.trim()).toBe('meter');
+      expect(lane('meter', 'v3.200.0').stdout.trim()).toBe('yes');
+      // Held at the last tag, no lane posted: every change since counts, so nothing held is lost.
+      expect(lane('meter-since', 'v3.200.0', '').stdout.trim()).toBe('');
+      expect(lane('meter', '').stdout.trim()).toBe('yes');
+      // The first meter release was a prerelease: never the base, so the next stable one builds again.
+      git('tag', 'v3.200.1');
+      expect(lane('meter-since', 'v3.200.1', '', 'v3.200.1').stdout.trim()).toBe('');
+      expect(lane('meter-since', 'v3.200.1', '').stdout.trim()).toBe('v3.200.1');
+      // A key listed but the contract back to dev's: held again.
+      put(METER_CONTRACT, DEV);
+      git('commit', '-qam', 'revert the contract');
+      expect(lane('meter', 'v3.200.0').stdout.trim()).toBe('no');
+      expect(lane('ships', 'v3.200.0').stdout.trim()).toBe('no');
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('lane.ts meter, as the release runs it here: no, with the reasons, while this repository holds the lane', () => {
+    const root = join(import.meta.dir, '..');
+    const committed = (path: string) => { const run = spawnSync('git', ['show', `HEAD:${path}`], { cwd: root, encoding: 'utf8' }); return run.status === 0 ? run.stdout : undefined; };
+    const held = meterHeld(committed(METER_CONTRACT), committed(METER_KEYS));
     // '' is meter-since's "no release has carried the meter": build it, unless the lane is held.
     const run = spawnSync('bun', [join(import.meta.dir, 'lane.ts'), 'meter', ''], { cwd: root, encoding: 'utf8' });
     expect(run.status).toBe(0);
     expect(run.stdout.trim()).toBe(held ? 'no' : 'yes');
-    if (held) expect(run.stderr).toMatch(/meter lane: held until .*attribution\.precision names actor_interval \(RFC 0021 delivery 2\): no meter release/);
+    if (held) expect(run.stderr).toMatch(/^meter lane: held \(.*\): no meter release/);
   }, 30_000);
 
-  test('the meter is measured from the build meter-lane names, else the last release once one carried it', () => {
+  test('the meter is measured from the build meter-lane names, else the newest stable release once one carried it', () => {
     const tags = ['v3.109.0', 'v3.109.1', 'v3.109.2', 'v3.110.0'];
-    expect(meterSince('v3.110.0', '3.109.1', tags, false)).toBe('v3.109.1');
-    expect(meterSince('v3.110.0', '3.110.0', tags, false)).toBe('v3.110.0');
-    // No lane yet (keys not listed), unreadable, or naming no tag here: the last release.
-    for (const lane of [undefined, '', 'null', '0.3.0', '3.111.0']) expect(meterSince('v3.110.0', lane, tags, false)).toBe('v3.110.0');
-    // No release has carried the meter while the lane was held at the last release: build it ('').
-    expect(meterSince('v3.110.0', undefined, tags, true)).toBe('');
+    const open = () => false;
+    expect(meterSince('v3.110.0', '3.109.1', tags, open)).toBe('v3.109.1');
+    expect(meterSince('v3.110.0', '3.110.0', tags, open)).toBe('v3.110.0');
+    // No lane yet, unreadable, or naming no tag here: the newest stable release.
+    for (const lane of [undefined, '', 'null', '0.3.0', '3.111.0']) expect(meterSince('v3.110.0', lane, tags, open)).toBe('v3.110.0');
+    // No release has carried the meter while the lane was held at that release: build it ('').
+    expect(meterSince('v3.110.0', undefined, tags, () => true)).toBe('');
+    expect(meterSince('', undefined, [], open)).toBe('');
     // A posted lane wins over the hold: a release carried the meter, and the lane names it.
-    expect(meterSince('v3.110.0', '3.109.2', tags, true)).toBe('v3.109.2');
+    expect(meterSince('v3.110.0', '3.109.2', tags, () => true)).toBe('v3.109.2');
+  });
+
+  // The Reviewer's L2: a prerelease never moves meter-lane, so it is never the base either, lane or no
+  // lane: a meter change that shipped only in a prerelease is built again by the next stable release.
+  test('a prerelease that built the meter is never meter-since\'s base', () => {
+    const tags = ['v3.109.0', 'v3.110.0', 'v3.110.1', 'v3.110.2'];
+    const open = () => false;
+    expect(meterSince('v3.110.2', undefined, tags, open, ['v3.110.1', 'v3.110.2'])).toBe('v3.110.0');
+    expect(meterSince('v3.110.2', '', tags, open, ['v3.110.2'])).toBe('v3.110.1');
+    // Every release a prerelease: none carried the meter to machines, so build it.
+    expect(meterSince('v3.110.2', undefined, tags, open, tags)).toBe('');
+    // The hold is read at the stable base, not at the prerelease.
+    const heldAt: string[] = [];
+    expect(meterSince('v3.110.2', undefined, tags, tag => { heldAt.push(tag); return tag === 'v3.110.0'; }, ['v3.110.1', 'v3.110.2'])).toBe('');
+    expect(heldAt).toEqual(['v3.110.0']);
+    // Order is by number, not text; tags past `last` and other tags are ignored.
+    expect(meterSince('v3.10.0', undefined, ['v3.9.0', 'v3.10.0', 'v3.11.0', 'v3.9.5', 'pocket-lane'], open, ['v3.10.0'])).toBe('v3.9.5');
   });
 
   test('a .gitignore-only change cuts no release', () => {

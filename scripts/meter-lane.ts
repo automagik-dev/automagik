@@ -12,21 +12,27 @@
  * size; meter.json.sig is ed25519 over its exact bytes, detached, base64, made with the
  * METER_LANE_KEY Actions secret, the meter's own key (never PLUGIN_LANE_KEY, HERDR_PACK_KEY or
  * AM_LANE_KEY). The public keys are meter/usagemeter/meter-keys.json; it lists none until the owner
- * makes the key (RFC 0017 delivery 5), and installers keep the pack's pin until then.
+ * makes the key (RFC 0017 delivery 5). The key comes first (Chat, 2026-11-09): no release builds,
+ * attaches or signs the meter while it lists none (scripts/lane.ts meterHeld), so every meter build
+ * that reaches a release is signed; installers keep the pack's pin until then.
  *
  *   bun scripts/meter-lane.ts manifest <dir> <version> <commit> <issuedAt>   print meter.json for the
  *       four binaries and usagemeter.SHA256SUMS in <dir>, each checked against that list; its keyId
  *       the meter-keys.json entry whose public key is METER_LANE_KEY's
  *   bun scripts/meter-lane.ts sign <meter.json>        print its signature (METER_LANE_KEY, PEM)
  *   bun scripts/meter-lane.ts verify <meter.json> <sig>  check it against meter-keys.json
+ *   bun scripts/meter-lane.ts matches <meter.json> <dir>  check it names exactly the binaries in <dir>
+ *       (each one's sha256 and size, and usagemeter.SHA256SUMS there): the meter-lane job posts only
+ *       a pointer to the build its release holds
  *   bun scripts/meter-lane.ts posted <meter.json> <dir>  refuse to post it when <dir> holds the posted
  *       pointer (meter.json, meter.json.sig), it verifies, and its sequence is higher; or when <dir>
  *       holds a posted pointer that does not verify, unless METER_LANE_REPLACE_UNVERIFIED=true (the
  *       release's replace_unverified_meter_pointer input)
  *   bun scripts/meter-lane.ts check-key                before the tag, on a release that builds the
- *       meter: while meter-keys.json lists no key, or METER_LANE_KEY is unset, a ::warning:: and
- *       `sign=no` (the release attaches the meter but posts no meter-lane); a key that is set but is
- *       none of the listed ones fails; a listed one is `sign=yes`. `sign=` goes to $GITHUB_OUTPUT.
+ *       meter (so meter-keys.json lists a key, or the lane would be held): METER_LANE_KEY must be set
+ *       and be a listed key, `sign=yes` to $GITHUB_OUTPUT; anything else fails the run before the tag,
+ *       so no unsigned meter build is ever attached. There is no warn-only path: unlike am, which
+ *       every release carries, the meter is never built without its key.
  *   bun scripts/meter-lane.ts keygen [--repo <owner/repo>] [--key-id <id>]
  *       the owner's step, never CI's or a contributor's: an ed25519 pair generated in memory; the
  *       private key goes straight to `gh secret set` on its stdin (never printed, never written to
@@ -168,19 +174,28 @@ export function verify(bytes: Buffer, signature: string, keys: MeterKey[]): Mete
   return checkPointer(parsed);
 }
 
+/** Throws unless `p` names exactly the binaries in `dir` (their sha256 and size, and `dir`'s usagemeter.SHA256SUMS). */
+export function matches(p: MeterPointer, dir: string, artifacts = ARTIFACTS): void {
+  const fresh = pointer(dir, { version: p.version, commit: p.commit, issuedAt: p.issuedAt, keyId: p.keyId, artifacts });
+  for (const target of Object.keys(artifacts)) {
+    const [mine, theirs] = [p.assets[target], fresh.assets[target]];
+    if (mine?.sha256 !== theirs.sha256 || mine?.size !== theirs.size || mine?.url !== theirs.url) fail(`the pointer's ${theirs.name} is not the one v${p.version} holds`);
+  }
+}
+
 /**
- * What check-key decides: `sign` when METER_LANE_KEY is a key meter-keys.json lists; `skip` (with
- * the warning to show) while meter-keys.json lists no key or the secret is unset, since the key is
- * the owner's to add and a release never fails over its absence (nor in the window between keygen
- * and its meter-keys.json reaching dev); `fail` (with why) once keys are listed and the secret, set,
- * is none of them.
+ * What check-key decides: `sign` when METER_LANE_KEY is a key meter-keys.json lists; `fail` (with
+ * why) otherwise. It runs only on a release that builds the meter, which the lane allows only once a
+ * key is listed (scripts/lane.ts meterHeld): an empty list here means the hold was bypassed, and an
+ * unset secret means the release would attach an unsigned build. Both stop the run before the tag.
+ * keygen sets the secret before it writes the key, so a listed key with no secret is a mistake.
  */
-export function keyVerdict(privatePem: string | undefined, keys: MeterKey[]): { verdict: 'sign' | 'skip' | 'fail'; message: string } {
+export function keyVerdict(privatePem: string | undefined, keys: MeterKey[]): { verdict: 'sign' | 'fail'; message: string } {
   if (keys.length === 0) {
-    return { verdict: 'skip', message: 'meter/usagemeter/meter-keys.json lists no key yet: this release attaches the usagemeter binaries but posts no meter-lane pointer, so installers keep the pack\'s pin. The owner makes the key (bun scripts/meter-lane.ts keygen; RFC 0017 delivery 5)' };
+    return { verdict: 'fail', message: 'meter/usagemeter/meter-keys.json lists no key, so the meter lane is held (scripts/lane.ts meterHeld) and no release may build the meter. The owner makes the key (bun scripts/meter-lane.ts keygen; RFC 0017 delivery 5)' };
   }
   if (!privatePem) {
-    return { verdict: 'skip', message: 'METER_LANE_KEY is not set: this release attaches the usagemeter binaries but posts no meter-lane pointer, so installers do not update to it. Add the key (bun scripts/meter-lane.ts keygen; RFC 0017)' };
+    return { verdict: 'fail', message: 'METER_LANE_KEY is not set (the slot METER_LANE_SIGNER names): a meter build is never attached unsigned' };
   }
   try { publicOf(privatePem); } catch { return { verdict: 'fail', message: 'METER_LANE_KEY is not a private key (PEM)' }; }
   const keyId = keyIdOf(privatePem, keys);
@@ -234,6 +249,10 @@ if (import.meta.main) {
   } else if (command === 'verify' && args.length === 2) {
     const found = verify(readFileSync(args[0]), readFileSync(args[1], 'utf8'), readKeys());
     console.log(`meter lane ${found.version} (sequence ${found.sequence}) is signed by ${found.keyId}`);
+  } else if (command === 'matches' && args.length === 2) {
+    const found = checkPointer(JSON.parse(readFileSync(args[0], 'utf8')));
+    matches(found, args[1]);
+    console.log(`meter lane ${found.version}: the pointer names the binaries ${args[1]} holds`);
   } else if (command === 'posted' && args.length === 2) {
     const [file, dir] = args;
     const read = (name: string) => { try { return readFileSync(join(dir, name)); } catch { return null; } };
@@ -253,9 +272,9 @@ if (import.meta.main) {
     }
   } else if (command === 'check-key' && args.length === 0) {
     const { verdict, message } = keyVerdict(process.env.METER_LANE_KEY, readKeys());
-    if (verdict === 'fail') { console.error(`meter lane: ${message} (bun scripts/meter-lane.ts keygen makes it; RFC 0017)`); process.exit(1); }
-    console.log(verdict === 'skip' ? `::warning::meter lane: ${message}` : `meter lane: ${message}`);
-    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `sign=${verdict === 'sign' ? 'yes' : 'no'}\n`);
+    if (verdict === 'fail') { console.error(`::error::meter lane: ${message}`); process.exit(1); }
+    console.log(`meter lane: ${message}`);
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'sign=yes\n');
   } else if (command === 'keygen') {
     // The owner's step (RFC 0017 delivery 5): it writes a repository secret and the keys file.
     const repo = flag('--repo', 'automagik-dev/automagik');
@@ -273,7 +292,7 @@ if (import.meta.main) {
     console.log(`meter lane: ${slot} set on ${repo}; ${keyId} added to meter/usagemeter/meter-keys.json. Commit it.`);
     if (keys.length > 0) console.log(`Phase 2, only after a release has shipped this meter-keys.json and installers have taken it: gh variable set METER_LANE_SIGNER --body ${slot} --repo ${repo}`);
   } else {
-    console.error('usage: bun scripts/meter-lane.ts manifest <dir> <version> <commit> <issuedAt> | sign <meter.json> | verify <meter.json> <sig> | posted <meter.json> <dir> | check-key | keygen [--repo <owner/repo>] [--key-id <id>]');
+    console.error('usage: bun scripts/meter-lane.ts manifest <dir> <version> <commit> <issuedAt> | sign <meter.json> | verify <meter.json> <sig> | matches <meter.json> <dir> | posted <meter.json> <dir> | check-key | keygen [--repo <owner/repo>] [--key-id <id>]');
     process.exit(2);
   }
 }

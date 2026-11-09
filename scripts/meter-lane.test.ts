@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ARTIFACTS, KEY_ID, KEYS_FILE, SLOTS, SUMS, checkPointer, keyVerdict, parseSums, pointer, postedProblem, signPointer, slotFor, verify } from './meter-lane';
+import { ARTIFACTS, KEY_ID, KEYS_FILE, SLOTS, SUMS, checkPointer, keyVerdict, matches, parseSums, pointer, postedProblem, signPointer, slotFor, verify } from './meter-lane';
 
 // A throwaway key, made for this run only: no private key is ever committed.
 const pair = () => {
@@ -91,46 +91,53 @@ describe('the meter lane', () => {
     expect(() => verify(wrongSequence, signPointer(wrongSequence, key.priv), keys)).toThrow(/sequence 1 is not 3\.109\.1's/);
   });
 
-  test('check-key: no key listed or the secret unset is a warning and no signing; a listed key signs; another fails', () => {
+  test('matches: the posted pointer names exactly the binaries the release holds', () => {
+    const dir = release('3.109.1');
+    const p = pointer(dir, { version: '3.109.1', commit, issuedAt: 'x' });
+    expect(() => matches(p, dir)).not.toThrow();
+    // Another build of the same release (a re-run that replaced a binary), or one gone: refused.
+    expect(() => matches(p, release('3.109.1', { tamper: 'usagemeter-darwin-arm64' }))).toThrow(/does not match its line/);
+    const other = release('3.109.1');
+    writeFileSync(join(other, 'usagemeter-linux-x86_64'), 'rebuilt');
+    writeFileSync(join(other, SUMS), readFileSync(join(other, SUMS), 'utf8').replace(sha('usagemeter-linux-x86_64 3.109.1'), sha('rebuilt')));
+    expect(() => matches(p, other)).toThrow(/usagemeter-linux-x86_64 is not the one v3\.109\.1 holds/);
+    expect(() => matches(p, release('3.109.1', { drop: 'usagemeter-darwin-x86_64' }))).toThrow(/is missing/);
+  });
+
+  test('check-key: a listed key signs; no key listed, the secret unset, or another key fails before the tag', () => {
     const key = pair();
     const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
-    expect(keyVerdict(undefined, []).verdict).toBe('skip');
-    expect(keyVerdict(undefined, []).message).toMatch(/^meter\/usagemeter\/meter-keys\.json lists no key yet: this release attaches the usagemeter binaries but posts no meter-lane pointer/);
-    expect(keyVerdict(undefined, keys).verdict).toBe('skip');
-    expect(keyVerdict(undefined, keys).message).toMatch(/^METER_LANE_KEY is not set: this release attaches/);
     expect(keyVerdict(key.priv, keys)).toEqual({ verdict: 'sign', message: `METER_LANE_KEY is ${KEY_ID}, listed in meter/usagemeter/meter-keys.json` });
+    // The key comes first: no warn-only path, so no meter build is ever attached unsigned.
+    expect(keyVerdict(undefined, keys)).toEqual({ verdict: 'fail', message: 'METER_LANE_KEY is not set (the slot METER_LANE_SIGNER names): a meter build is never attached unsigned' });
+    expect(keyVerdict('', keys).verdict).toBe('fail');
     expect(keyVerdict(pair().priv, keys)).toEqual({ verdict: 'fail', message: 'METER_LANE_KEY\'s public key is not in meter/usagemeter/meter-keys.json' });
-    // keygen ran, its meter-keys.json not merged yet: skipped, never a failed release.
-    expect(keyVerdict(key.priv, []).verdict).toBe('skip');
-    expect(keyVerdict('not a key', []).verdict).toBe('skip');
     expect(keyVerdict('not a key', keys)).toEqual({ verdict: 'fail', message: 'METER_LANE_KEY is not a private key (PEM)' });
+    // No key listed: the lane is held, so this never runs in a release; run anyway, it fails.
+    for (const pem of [undefined, key.priv]) {
+      expect(keyVerdict(pem, []).verdict).toBe('fail');
+      expect(keyVerdict(pem, []).message).toMatch(/^meter\/usagemeter\/meter-keys\.json lists no key, so the meter lane is held/);
+    }
   });
 
   test('the keys file starts empty: the owner fills it (RFC 0017 delivery 5)', () => {
     expect(JSON.parse(readFileSync(KEYS_FILE, 'utf8'))).toEqual({ keys: [] });
   });
 
-  test('check-key as the release runs it: sign=no with a ::warning:: and exit 0 while no key is listed', () => {
+  test('check-key as the release runs it: no sign=yes and exit 1 while no key is listed, whatever the secret', () => {
     const dir = mkdtempSync(join(tmpdir(), 'meter-lane-out-'));
     const out = join(dir, 'github-output');
     writeFileSync(out, '');
     const env = { ...process.env, GITHUB_OUTPUT: out };
     delete (env as Record<string, string | undefined>).METER_LANE_KEY;
     const listed = JSON.parse(readFileSync(KEYS_FILE, 'utf8')).keys.length > 0;
-    const absent = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env });
-    expect(absent.status).toBe(0);
-    expect(absent.stdout).toMatch(listed ? /^::warning::meter lane: METER_LANE_KEY is not set/ : /^::warning::meter lane: meter\/usagemeter\/meter-keys\.json lists no key yet/);
-    expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
-    const other = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: { ...env, METER_LANE_KEY: pair().priv } });
-    if (listed) {
-      expect(other.status).toBe(1);
-      expect(other.stderr).toMatch(/METER_LANE_KEY's public key is not in meter\/usagemeter\/meter-keys\.json/);
-      expect(readFileSync(out, 'utf8')).toBe('sign=no\n');
-    } else {
-      expect(other.status).toBe(0);
-      expect(readFileSync(out, 'utf8')).toBe('sign=no\nsign=no\n');
+    for (const secret of [undefined, pair().priv]) {
+      const run = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: secret ? { ...env, METER_LANE_KEY: secret } : env });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toMatch(listed ? /^::error::meter lane: METER_LANE_KEY/ : /^::error::meter lane: meter\/usagemeter\/meter-keys\.json lists no key/);
     }
-  });
+    expect(readFileSync(out, 'utf8')).toBe('');
+  }, 30_000);
 
   test('keygen never writes the slot releases sign with: the first key to METER_LANE_KEY, a rotation to the other', () => {
     expect(SLOTS).toEqual(['METER_LANE_KEY', 'METER_LANE_KEY_NEXT']);

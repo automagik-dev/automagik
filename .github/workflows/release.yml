@@ -30,6 +30,7 @@ name: Release
 #   usagemeter-linux-x86_64              something since the build machines have (meter-since): the
 #   usagemeter-linux-aarch64             four binaries meter/usagemeter/part.json names, built on CI
 #   usagemeter.SHA256SUMS                from the tag (the meter jobs), and their sha256s
+#   meter.json, meter.json.sig           that build's signed pointer (scripts/meter-lane.ts)
 #
 #   automagik-pocket-<version>.apk       Pocket's phone app, when apps/pocket/ shipped something since
 #   latest.json                           the last release: the APK signed with the release key
@@ -49,16 +50,16 @@ name: Release
 # am, posts no am-lane and says so in a warning; once keys are listed, a secret that is none of
 # them stops the release before the tag (scripts/am-lane.ts check-key).
 #
-# and, when it built the meter on a release that is not a prerelease, it signs meter.json (the newest
-# meter: its release and, per target, each binary's URL and sha256; ed25519, the METER_LANE_KEY secret,
-# the meter's own key, the slot METER_LANE_SIGNER names; the public keys are
-# meter/usagemeter/meter-keys.json) and puts it with meter.json.sig on the rolling `meter-lane`
-# release, which holds nothing else, posted by a job of its own (meter-lane) so its refusals stop
-# nothing else. While meter-keys.json lists no key, or METER_LANE_KEY is not set, the release attaches
-# the meter, posts no meter-lane and says so in a warning; once keys are listed, a secret that is none
-# of them stops the release before the tag (scripts/meter-lane.ts check-key). The meter lane is held
-# shut while the query contract lacks RFC 0021's widened attribution.precision (scripts/lane.ts
-# meterHeld): until then the crate ships nothing.
+# and, when it built the meter, it signs meter.json (that build: its release and, per target, each
+# binary's URL and sha256; ed25519, the METER_LANE_KEY secret, the meter's own key, the slot
+# METER_LANE_SIGNER names; the public keys are meter/usagemeter/meter-keys.json) and attaches it and
+# meter.json.sig to vX.Y.Z with the binaries, so no meter build is public unsigned; on a release that
+# is not a prerelease it then puts them on the rolling `meter-lane` release, which holds nothing else,
+# posted by a job of its own (meter-lane) so its refusals stop nothing else. The key comes first: the
+# meter lane is held (no meter build, attach or post; the crate ships nothing) until meter-keys.json
+# lists a key AND the query contract carries RFC 0021's widened attribution.precision
+# (scripts/lane.ts meterHeld). Once open, a METER_LANE_KEY that is unset or none of the listed keys
+# stops the release before the tag (scripts/meter-lane.ts check-key).
 #
 # and, when it built Pocket on a release that is not a prerelease, it replaces latest.json on the
 # rolling `pocket-lane` release, which holds nothing else and is never Latest: installed phones read
@@ -248,11 +249,15 @@ jobs:
           pocket_since=$(bun scripts/lane.ts pocket-since "${last}" "${lane_version}")
           pocket=$(bun scripts/lane.ts pocket "${pocket_since}")
           # The meter is built when meter/usagemeter/ shipped something since the build machines have:
-          # the version meter-lane names (a prerelease never moves it), else the last release, or every
+          # the version meter-lane names, else the newest stable release (a prerelease never moves the
+          # lane and is never the base: its meter is built again by the next stable release), or every
           # change when no release has carried the meter yet (scripts/lane.ts meter-since). It answers
-          # no while the lane is held for RFC 0021's contract (scripts/lane.ts meterHeld).
+          # no while the lane is held: no key listed, or RFC 0021's contract not in (meterHeld). The
+          # prerelease list must be read: an error here stops the run rather than guess a base.
           meter_version=$(gh release download meter-lane --repo "${GITHUB_REPOSITORY}" -p meter.json -O - 2>/dev/null | jq -r '.version // empty' 2>/dev/null || true)
-          meter_since=$(bun scripts/lane.ts meter-since "${last}" "${meter_version}")
+          prerelease_tags=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 200 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease) | .tagName')
+          mapfile -t prereleases <<< "${prerelease_tags}"
+          meter_since=$(bun scripts/lane.ts meter-since "${last}" "${meter_version}" "${prereleases[@]}")
           meter=$(bun scripts/lane.ts meter "${meter_since}")
           { echo "kind=${kind}"; echo "herdr=${herdr}"; echo "pocket=${pocket}"; echo "pocket_since=${pocket_since}"; echo "meter=${meter}"; echo "base=${full#v}"; } >> "$GITHUB_OUTPUT"
           echo "since ${full:-the start}: ${kind} release; since ${last:-the start}, the herdr pack: ${herdr}; since ${pocket_since:-the start}, Pocket: ${pocket}; since ${meter_since:-the start}, the meter: ${meter}"
@@ -347,10 +352,10 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
 
-      # Before the cut, on a release that builds the meter: once meter-keys.json lists keys,
-      # METER_LANE_KEY (the slot METER_LANE_SIGNER names) must be one of them, or the run stops before
-      # it tags. While none is listed, or the secret is not set, the release warns, attaches the meter
-      # and posts no meter-lane (sign=no): the key is the owner's to add (RFC 0017 delivery 5).
+      # Before the cut, on a release that builds the meter (so meter-keys.json lists a key: the lane is
+      # held until it does): METER_LANE_KEY (the slot METER_LANE_SIGNER names) must be set and be one
+      # of the listed keys, or the run stops before it tags. No warn-only path: a meter build is never
+      # attached unsigned (sign=yes or a failed run).
       - name: The meter lane's signing key
         id: meterkey
         if: steps.new.outputs.release == 'true' && steps.lane.outputs.meter == 'yes'
@@ -501,7 +506,7 @@ jobs:
           [[ "${KIND}" == "meter" ]] && notes="usagemeter, the Automagik token meter, alone (no plugins, no desktop build)."
           [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           notes="${notes} am: \`automagik-am-${VERSION}.tgz\` (its sha256 in \`.sha256\`); \`am update\` takes it from the signed am-lane."
-          [[ "${METER}" == "yes" ]] && notes="${notes} usagemeter: \`usagemeter-darwin-arm64\`, \`usagemeter-darwin-x86_64\`, \`usagemeter-linux-x86_64\` and \`usagemeter-linux-aarch64\` follow (the meter jobs) with \`usagemeter.SHA256SUMS\`."
+          [[ "${METER}" == "yes" ]] && notes="${notes} usagemeter: \`usagemeter-darwin-arm64\`, \`usagemeter-darwin-x86_64\`, \`usagemeter-linux-x86_64\` and \`usagemeter-linux-aarch64\` follow (the meter jobs) with \`usagemeter.SHA256SUMS\` and their signed pointer, \`meter.json\` and \`meter.json.sig\`."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."
           # Flags add up: a dispatched prerelease stays a prerelease whatever its kind, and only a
           # full stable release is Latest. A plugin, herdr, pocket, am or meter patch is not Latest: the
@@ -788,7 +793,7 @@ jobs:
     # No concurrency group: every release that builds the meter gets its binaries.
     name: usagemeter ${{ matrix.asset }}
     needs: cut
-    if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes'
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes'
     strategy:
       fail-fast: true
       matrix:
@@ -857,25 +862,32 @@ jobs:
           retention-days: 7
 
   meter-attach:
-    # The four binaries and usagemeter.SHA256SUMS onto vX.Y.Z (named so, since a full release's
-    # desktop build writes its own SHA256SUMS there; desktop-build.yml's sweep spares them). Exactly
-    # the assets part.json names, or nothing: the binaries first and their sums after, so a reader
-    # never finds a usagemeter.SHA256SUMS whose binaries are missing.
+    # The four binaries, usagemeter.SHA256SUMS (named so, since a full release's desktop build writes
+    # its own SHA256SUMS there) and the build's signed pointer (meter.json, meter.json.sig) onto
+    # vX.Y.Z; desktop-build.yml's sweep spares them. Exactly the assets part.json names, signed with
+    # the meter's key before anything goes up, or nothing: no meter build is ever public unsigned, a
+    # prerelease's included. --clobber, so a re-run after a partial upload completes it.
     name: Attach usagemeter to v${{ needs.cut.outputs.version }}
     needs: [cut, meter]
-    if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes'
+    if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     env:
+      DO_NOT_TRACK: '1'
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.cut.outputs.version }}
+      SHA: ${{ needs.cut.outputs.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: v${{ needs.cut.outputs.version }}
           persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -883,9 +895,13 @@ jobs:
           merge-multiple: true
           path: meter-assets
 
-      - name: Attach the binaries and usagemeter.SHA256SUMS
+      - name: Attach the binaries, usagemeter.SHA256SUMS and the signed pointer
+        env:
+          METER_LANE_KEY: ${{ vars.METER_LANE_SIGNER == 'METER_LANE_KEY_NEXT' && secrets.METER_LANE_KEY_NEXT || secrets.METER_LANE_KEY }}
         run: |
           set -euo pipefail
+          # The tag's own key list: the lane is held while it lists none, so this never attaches unsigned.
+          (( $(jq '[.keys[]?] | length' meter/usagemeter/meter-keys.json) > 0 )) || { echo "::error::meter/usagemeter/meter-keys.json lists no key: the meter lane is held, nothing is attached"; exit 1; }
           mapfile -t assets < <(jq -r '.artifact[]' meter/usagemeter/part.json)
           (( ${#assets[@]} == 4 )) || { echo "::error::meter/usagemeter/part.json names ${#assets[@]} assets, not 4"; exit 1; }
           found=$(cd meter-assets && ls -1 | sort | paste -sd ' ' -)
@@ -893,17 +909,20 @@ jobs:
           [[ "${found}" == "${want}" ]] || { echo "::error::the meter jobs built ${found:-nothing}, not ${want}"; exit 1; }
           (cd meter-assets && sha256sum -- "${assets[@]}" > usagemeter.SHA256SUMS)
           cat meter-assets/usagemeter.SHA256SUMS
-          gh release upload "v${VERSION}" "${assets[@]/#/meter-assets/}" --repo "${GITHUB_REPOSITORY}"
-          gh release upload "v${VERSION}" meter-assets/usagemeter.SHA256SUMS --repo "${GITHUB_REPOSITORY}"
+          bun scripts/meter-lane.ts manifest meter-assets "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > meter-assets/meter.json
+          bun scripts/meter-lane.ts sign meter-assets/meter.json > meter-assets/meter.json.sig
+          bun scripts/meter-lane.ts verify meter-assets/meter.json meter-assets/meter.json.sig
+          gh release upload "v${VERSION}" "${assets[@]/#/meter-assets/}" meter-assets/usagemeter.SHA256SUMS meter-assets/meter.json.sig meter-assets/meter.json --clobber --repo "${GITHUB_REPOSITORY}"
 
   meter-lane:
-    # A release that built the meter and has its key (check-key said sign=yes), in a job of its own: a
-    # refusal here (an unreadable or unverifiable posted pointer, a lower sequence: it fails closed, as
-    # the am lane) fails this job alone, so the plugin lane, the app, Pocket, am-lane and the listing
-    # still go out. A prerelease never moves it, so a meter change in one is built again by the next
-    # release (scripts/lane.ts meter-since). It signs the binaries the release published, checked
-    # against their usagemeter.SHA256SUMS first. A posted pointer that does not verify is replaced
-    # only when the run was dispatched with replace_unverified_meter_pointer.
+    # The signed pointer meter-attach put on vX.Y.Z, posted on the rolling meter-lane release by a job
+    # of its own that holds no key: a refusal here (an unreadable or unverifiable posted pointer, a
+    # lower sequence: it fails closed, as the am lane) fails this job alone, so the plugin lane, the
+    # app, Pocket, am-lane and the listing still go out. A prerelease never moves it, and is never
+    # meter-since's base, so its meter is built again by the next stable release. It posts the
+    # pointer only after checking it against meter-keys.json and the binaries the release holds. A
+    # posted pointer that does not verify is replaced only when the run was dispatched with
+    # replace_unverified_meter_pointer.
     name: Post the signed meter lane
     needs: [cut, meter-attach]
     if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes' && inputs.prerelease != true
@@ -927,20 +946,18 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      - name: Sign and post the meter lane
+      - name: Post the meter lane
         env:
           VERSION: ${{ needs.cut.outputs.version }}
-          SHA: ${{ needs.cut.outputs.sha }}
-          METER_LANE_KEY: ${{ vars.METER_LANE_SIGNER == 'METER_LANE_KEY_NEXT' && secrets.METER_LANE_KEY_NEXT || secrets.METER_LANE_KEY }}
           METER_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_meter_pointer }}
         run: |
           set -euo pipefail
           mkdir -p release meter-lane
-          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p 'usagemeter-*' -p usagemeter.SHA256SUMS -D release
+          gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" -p 'usagemeter-*' -p usagemeter.SHA256SUMS -p meter.json -p meter.json.sig -D release
           (cd release && sha256sum -c usagemeter.SHA256SUMS)
-          bun scripts/meter-lane.ts manifest release "${VERSION}" "${SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > meter-lane/meter.json
-          bun scripts/meter-lane.ts sign meter-lane/meter.json > meter-lane/meter.json.sig
-          bun scripts/meter-lane.ts verify meter-lane/meter.json meter-lane/meter.json.sig
+          bun scripts/meter-lane.ts verify release/meter.json release/meter.json.sig
+          bun scripts/meter-lane.ts matches release/meter.json release
+          cp release/meter.json release/meter.json.sig meter-lane/
           if ! gh release view meter-lane --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create meter-lane --repo "${GITHUB_REPOSITORY}" --target dev --prerelease --latest=false \
               --title "Automagik meter lane" \
@@ -960,7 +977,6 @@ jobs:
           # --clobber replaces each asset in turn: a reader that sees a pointer and a signature that
           # do not match, or neither, refuses it (no update yet).
           gh release upload meter-lane meter-lane/meter.json.sig meter-lane/meter.json --clobber --repo "${GITHUB_REPOSITORY}"
-
 
   desktop:
     name: Desktop
