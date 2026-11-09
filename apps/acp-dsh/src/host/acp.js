@@ -33,6 +33,17 @@ export function contentText(content) {
   return ''
 }
 
+// The image blocks of ACP content: a content block, or a tool call's content items. An image is
+// `{ type: 'image', data, mimeType }`, inside a `content` wrapper or not. The block is returned
+// as the agent sent it, so its base64 data is never decoded and encoded again; a durable DSH
+// image block (`attachment`) is returned too, for a tool result that already carries one.
+export function contentImages(content) {
+  if (content == null) return []
+  if (Array.isArray(content)) return content.flatMap(contentImages)
+  if (content.type === 'content') return contentImages(content.content)
+  return content.type === 'image' ? [content] : []
+}
+
 export class AgentRun {
   /**
    * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string }} spec
