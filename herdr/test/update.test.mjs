@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  checkMods, markerOf, offDirOf, packOut, pickUpdate, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, moveHooks, offDirOf, packOut, pickUpdate, tightenLedgers, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
   autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { CHECK_FILE, RESTORE_FILE, formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
@@ -2265,4 +2265,100 @@ test("#494: a rollback whose swap stays in mods-disabled/ leaves an adopted fold
   assert.deepEqual(readdirSync(join(ext, "mods")), [], "nothing went into the linked mods/");
   assert.ok(existsSync(join(backup, "main.js")), "the adopted folder stays in backup/");
   assert.deepEqual(readMarker(mods).adopted, [{ mod: "am-status", path: "backup/am-status-old" }], "still recorded, so a later run can put it back");
+});
+
+// ---- #839: tighten existing Herdr ledgers to 0600 on install/update ----
+
+test("#839: applyUpdate and moveHooks tighten 0664/0644 workers.jsonl and attach.jsonl in appHome, knownProjects and ledgerFolders to 0600 once, keeping bytes and 0400/missing ledgers untouched", async (t) => {
+  const { home, mods } = appHome("0.1.0");
+  const root = mkdtempSync(join(tmpdir(), "ledgers-proj-"));
+  const tgz = tarball("0.2.0");
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(tgz.src, { recursive: true, force: true });
+  });
+  const projA = join(root, "proj-a");
+  const projB = join(root, "proj-b");
+  const worktreeB = join(projB, ".claude", "worktrees", "task-1");
+  mkdirSync(join(projA, ".herdr", "app-home", "automagik-herdr"), { recursive: true });
+  mkdirSync(join(projB, ".herdr", "app-home", "automagik-herdr"), { recursive: true });
+  mkdirSync(worktreeB, { recursive: true });
+  writeFileSync(join(home, "shared.json"), JSON.stringify({ "am.sidebar.projects": [{ key: projA }] }));
+
+  const globalWorkers = join(home, "automagik-herdr", "workers.jsonl");
+  const globalAttach = join(home, "automagik-herdr", "attach.jsonl");
+  const projAWorkers = join(projA, ".herdr", "app-home", "automagik-herdr", "workers.jsonl");
+  const projAAttach = join(projA, ".herdr", "app-home", "automagik-herdr", "attach.jsonl");
+  const projBAttach = join(projB, ".herdr", "app-home", "automagik-herdr", "attach.jsonl");
+  const projBWorkersMissing = join(projB, ".herdr", "app-home", "automagik-herdr", "workers.jsonl");
+
+  const globalWorkersText = `${JSON.stringify({ event: "start", worker: "w-1", worktree: worktreeB, session: "s-1" })}\n`;
+  const globalAttachText = `${JSON.stringify({ event: "attach", bot: "b-1", project: projA, session: "s-2" })}\n`;
+  writeFileSync(globalWorkers, globalWorkersText);
+  chmodSync(globalWorkers, 0o664);
+  writeFileSync(globalAttach, globalAttachText);
+  chmodSync(globalAttach, 0o644);
+  writeFileSync(projAWorkers, '{"event":"start","session":"s-a"}\n');
+  chmodSync(projAWorkers, 0o644);
+  writeFileSync(projAAttach, '{"event":"attach","session":"s-ro"}\n');
+  chmodSync(projAAttach, 0o400);
+  writeFileSync(projBAttach, '{"event":"attach","session":"s-b"}\n');
+  chmodSync(projBAttach, 0o664);
+
+  const logs = [];
+  await applyUpdate({ tgzPath: tgz.path, version: "0.2.0", modsDir: mods, log: (l) => logs.push(l) });
+
+  for (const f of [globalWorkers, globalAttach, projAWorkers, projBAttach]) {
+    assert.equal(lstatSync(f).mode & 0o777, 0o600, `${f} tightened to 0600`);
+  }
+  assert.equal(lstatSync(projAAttach).mode & 0o777, 0o400, "0400 ledger is never widened");
+  assert.equal(existsSync(projBWorkersMissing), false, "missing ledger is never created");
+  assert.equal(readFileSync(globalWorkers, "utf8"), globalWorkersText);
+  assert.equal(readFileSync(globalAttach, "utf8"), globalAttachText);
+  const summaryLines = logs.filter((l) => l.startsWith("tightened Herdr ledger(s) to 0600: "));
+  assert.equal(summaryLines.length, 1, `expected one summary line, got: ${logs.join("\n")}`);
+  for (const f of [globalWorkers, globalAttach, projAWorkers, projBAttach]) {
+    assert.ok(summaryLines[0].includes(f), `summary names ${f}: ${summaryLines[0]}`);
+  }
+
+  // Second run via moveHooks and tightenLedgers: idempotent, nothing changed or logged.
+  const logs2 = [];
+  moveHooks({ modsDir: mods, log: (l) => logs2.push(l) });
+  const second = tightenLedgers(home, { log: (l) => logs2.push(l) });
+  assert.deepEqual(second, { tightened: [], warnings: [] });
+  assert.equal(logs2.some((l) => l.includes("tightened Herdr ledger")), false, logs2.join("\n"));
+  chmodSync(projAAttach, 0o600);
+});
+
+test("#839: tightenLedgers refuses symlinks without changing the target and warns on unowned ledgers without chmod", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "ledgers-safe-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, "automagik-herdr"), { recursive: true });
+  const target = join(home, "outside-target.jsonl");
+  writeFileSync(target, '{"session":"keep"}\n');
+  chmodSync(target, 0o644);
+  const workersLink = join(home, "automagik-herdr", "workers.jsonl");
+  symlinkSync(target, workersLink);
+
+  const attachFile = join(home, "automagik-herdr", "attach.jsonl");
+  writeFileSync(attachFile, '{"session":"unowned"}\n');
+  chmodSync(attachFile, 0o644);
+
+  const logs = [];
+  const chmodCalls = [];
+  const r = tightenLedgers(home, {
+    getuid: () => 999999,
+    chmod: (p, m) => { chmodCalls.push([p, m]); chmodSync(p, m); },
+    log: (l) => logs.push(l),
+  });
+  assert.deepEqual(r.tightened, []);
+  assert.deepEqual(chmodCalls, [], "neither symlink nor unowned file is chmodded");
+  assert.equal(lstatSync(workersLink).isSymbolicLink(), true);
+  assert.equal(lstatSync(target).mode & 0o777, 0o644, "symlink target mode is untouched");
+  assert.equal(lstatSync(attachFile).mode & 0o777, 0o644, "unowned file mode is untouched");
+  assert.equal(r.warnings.length, 2);
+  assert.match(r.warnings[0], /workers\.jsonl is a symlink: left as it is/);
+  assert.match(r.warnings[1], /attach\.jsonl is owned by uid \d+, not 999999: left as it is/);
+  assert.equal(logs.filter((l) => l.startsWith("warning: ")).length, 2);
 });

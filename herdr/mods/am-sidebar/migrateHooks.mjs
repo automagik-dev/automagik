@@ -217,8 +217,10 @@ export function botPaneFolders(run = execFileSync) {
   return out;
 }
 
-/** The workers ledger (workers.js LEDGER_FILE), read here so the updater needs no more of the pack. */
+/** The Herdr ledgers (workers.js LEDGER_FILE and attach.js ATTACH_FILE), named here so the updater needs no more of the pack. */
 const LEDGER = join("automagik-herdr", "workers.jsonl");
+const ATTACH_LEDGER = join("automagik-herdr", "attach.jsonl");
+export const HERDR_LEDGERS = Object.freeze([LEDGER, ATTACH_LEDGER]);
 /** The folders the ledger's start rows name (each worker's worktree, each bot seat's folder). */
 export function ledgerFolders(appHome) {
   let text = "";
@@ -228,6 +230,100 @@ export function ledgerFolders(appHome) {
     try { const row = JSON.parse(line); if (row?.event === "start" && typeof row.worktree === "string") out.push(row.worktree); } catch { /* a torn line */ }
   }
   return out;
+}
+
+/** Project folders derived from `ledgerFolders(appHome)` and the ledgers' `project` rows. */
+function ledgerProjectFolders(appHome, git = runGit) {
+  const raw = [...ledgerFolders(appHome)];
+  for (const rel of HERDR_LEDGERS) {
+    let text = "";
+    try { text = readFileSync(join(appHome, rel), "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      try {
+        const row = JSON.parse(line);
+        if (typeof row?.project === "string") raw.push(row.project);
+        if (typeof row?.worktree === "string") raw.push(row.worktree);
+      } catch { /* a torn line */ }
+    }
+  }
+  const marker = `${sep}.claude${sep}worktrees${sep}`;
+  const out = [];
+  for (const f of raw) {
+    if (typeof f !== "string" || !isAbsolute(f) || resolve(f) === "/") continue;
+    out.push(f);
+    const at = f.indexOf(marker);
+    if (at > 0) out.push(f.slice(0, at));
+    if (usable(f)) out.push(keyOf(f, git));
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Tightens existing Herdr ledgers (`automagik-herdr/workers.jsonl` and `automagik-herdr/attach.jsonl`)
+ * to 0600 in `appHome` and in `<project>/.herdr/app-home` for every project in `knownProjects` and
+ * `ledgerFolders` (#839). Never follows symlinks, never creates missing files, never widens a
+ * stricter mode (0400/0000), and leaves unowned files alone with a warning.
+ */
+export function tightenLedgers(appHome, {
+  extra = [], git = runGit, getuid = process.getuid, stat = lstatSync, chmod = chmodSync,
+  log = () => {}, warn = true,
+} = {}) {
+  const homes = [resolve(appHome)];
+  const projects = [...knownProjects(appHome, extra), ...ledgerProjectFolders(appHome, git)];
+  for (const p of projects) {
+    if (typeof p !== "string" || !isAbsolute(p) || resolve(p) === "/") continue;
+    homes.push(join(p, ".herdr", "app-home"));
+    if (usable(p)) homes.push(join(keyOf(p, git), ".herdr", "app-home"));
+  }
+  const seenResolved = new Set();
+  const seenCanonical = new Set();
+  const tightened = [];
+  const warnings = [];
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const noteWarn = (w) => {
+    warnings.push(w);
+    if (warn) log(`warning: ${w}`);
+  };
+  for (const home of homes) {
+    for (const rel of HERDR_LEDGERS) {
+      const file = join(home, rel);
+      const abs = resolve(file);
+      if (seenResolved.has(abs)) continue;
+      seenResolved.add(abs);
+      let st;
+      try { st = stat(file); } catch (e) {
+        if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
+        noteWarn(`${file} could not be inspected (${e?.message ?? e})`);
+        continue;
+      }
+      if (!st) continue;
+      const realParent = realOf(dirname(file));
+      const canonical = realParent ? join(realParent, basename(file)) : abs;
+      if (seenCanonical.has(canonical)) continue;
+      seenCanonical.add(canonical);
+      if (st.isSymbolicLink() || !st.isFile()) {
+        const kind = st.isSymbolicLink() ? "a symlink" : "not a regular file";
+        noteWarn(`${file} is ${kind}: left as it is (Herdr ledgers must be plain files)`);
+        continue;
+      }
+      if (uid !== null && typeof st.uid === "number" && st.uid !== uid) {
+        noteWarn(`${file} is owned by uid ${st.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+        continue;
+      }
+      const mode = st.mode & 0o777;
+      if ((mode & 0o177) !== 0) {
+        const target = mode & 0o600;
+        try {
+          chmod(file, target);
+          tightened.push(file);
+        } catch (e) {
+          noteWarn(`${file} could not be tightened to 0600 (${e?.message ?? e})`);
+        }
+      }
+    }
+  }
+  if (tightened.length) log(`tightened Herdr ledger(s) to 0600: ${tightened.join(", ")}`);
+  return { tightened, warnings };
 }
 
 /** The key git gives a worktree root: its main checkout (model.js projectOf, for folders in git). */
@@ -572,8 +668,9 @@ export function placeEntry(appHome, sidebar) {
  * panes'); the ledger's start folders are always looked in. Throws on what stops it.
  * Returns `{ direction: "forward" | "back" | null, rewritten?, restored?, skipped }`.
  */
-export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit }) {
+export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit, warnLedgers = true }) {
   const appHome = dirname(resolve(modsDir));
+  tightenLedgers(appHome, { extra, git, log, warn: warnLedgers });
   const sidebar = sidebarOf(modsDir);
   if (!sidebar) return { direction: null, skipped: [] };
   const projects = knownProjects(appHome);

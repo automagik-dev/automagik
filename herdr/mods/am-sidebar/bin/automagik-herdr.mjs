@@ -5421,25 +5421,36 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
   if (!["install", "update", "uninstall", "doctor"].includes(verb)) throw new CliError(`dsh-tui needs install, update, uninstall or doctor${verb ? `, not "${verb}"` : ""}.`, 2);
   const env = io.env ?? process.env;
   if (verb === "doctor") {
-    const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
-    r.bots = [];
     let roster = [];
-    let projectKey = null;
+    let projectKey = typeof opts?.project === "string" ? resolve(opts.project) : null;
+    let rosterError = null;
     try {
       const project = io.project ?? await projectFor(opts);
       roster = project.file.bots;
       projectKey = project.key;
-      const approval = approvedProxyState({ project: project.key, bot: { id: "" }, env });
-      if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
-        detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
-      const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
-      const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
-      r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
-        bindings, env });
     } catch (e) {
+      rosterError = String(e?.message ?? e).replace(/\s+/g, " ");
+    }
+    const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots, project: projectKey, getuid: io.getuid });
+    r.bots = [];
+    if (rosterError !== null) {
       r.checks.push({ check: "roster", ok: false,
-        detail: String(e?.message ?? e).replace(/\s+/g, " "), fix: "repair the project roster" });
+        detail: rosterError, fix: "repair the project roster" });
       r.code = 1;
+    } else {
+      try {
+        const approval = approvedProxyState({ project: projectKey, bot: { id: "" }, env });
+        if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
+          detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
+        const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
+        const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
+        r.bots = await doctorBotProxies({ bots: roster, project: projectKey,
+          bindings, env });
+      } catch (e) {
+        r.checks.push({ check: "roster", ok: false,
+          detail: String(e?.message ?? e).replace(/\s+/g, " "), fix: "repair the project roster" });
+        r.code = 1;
+      }
     }
     const byId = new Map(roster.map((b) => [b.id, b]));
     // #823: whether agy's terminal sandbox, and so --mode, can work on this host, from local
