@@ -181,7 +181,7 @@ secondary-limit hits are not measured (gate G1).
 - GraphQL: 5,000 points an hour per user; an installation 5,000, up to 12,500; `GITHUB_TOKEN` 1,000
   points an hour per repository [4].
 - Secondary limits, shared by REST and GraphQL: 100 concurrent requests; 900 points a minute on
-  REST and 2,000 on GraphQL; 80 content-creating requests a minute and 500 an hour [3].
+  REST and 2,000 on GraphQL; 80 content-generating requests a minute and 500 an hour [3].
 - No GitHub programme for open-source projects that raises Actions or API limits was found in
   these docs (unverified as absent).
 
@@ -191,22 +191,25 @@ secondary-limit hits are not measured (gate G1).
 - GitLab for Open Source: Ultimate features and 50,000 compute minutes at a programme cost factor
   [6]. The page does not say the minutes are monthly (unverified). Public projects in the programme
   are charged at half rate [5]. Eligibility: every project in the namespace under an OSI-approved
-  licence (this repository is Apache-2.0), public, not-for-profit ("can't seek to make a profit"),
-  renewed every year, and no support [6]. Whether this organisation qualifies as not-for-profit was
-  not checked (unverified).
+  licence (this repository is Apache-2.0), public, and an organisation that may accept donations
+  but "can't seek to make a profit" by selling services or add-ons; membership is renewed every
+  year, with no support [6]. Whether this organisation qualifies was not checked (unverified).
 - API: today 2,000 authenticated requests a minute per user, 500 a minute per address
   unauthenticated. Proposed Free-tier limits, not yet in effect: 5,000 an hour per user and per
   top-level group [7].
 
 **GitLab, self-managed (Arca's instance)**
-- API rate limits are off by default, and the admin sets them [8]. No compute-minute quota applies
-  to our own runners unless the admin turns one on for instance runners [5].
+- API rate limits are off by default, and the admin sets them [8]. The compute-minutes page says
+  quotas cover instance runners, are off by default, and are enabled per group or namespace [5].
+  That no quota applies to our own runners unless the admin enables one is our reading of that
+  page, not its words.
 
 **Gitea, Forgejo and Codeberg**
 - Gitea Actions is built in since Gitea 1.19, and runners are run by the user ("Gitea doesn't run
   the jobs itself") [9]. Whether Gitea Cloud offers hosted runners is not stated (unverified).
 - Codeberg (Forgejo) provides hosted Actions "in limited fashion" [10]: fair use, runners of 1 to 4
-  CPUs with 2, 5 or 10 minute runtimes, public free-software projects only, and "no extensive
+  CPUs with 2, 5 or 10 minute runtimes, public projects under a "free/libre license" only, and "no
+  extensive
   pipelines to assist LLM-driven workflows" [11]. Users may connect their own runners, which need
   no public address [10]. Codeberg points hosted CI to Woodpecker CI [10]. The "limited open alpha"
   wording in the brief was not found (unverified).
@@ -348,16 +351,28 @@ holds and the platform legs tested (Decision 6). Today `release.yml` writes `dev
 of the version commit and its tag, then the market index commit) and `main` (the fast-forward), and
 `follow-omni.yml` writes its pin commit. Under the mirror:
 
-- **The cut** checks out the commit that started the run. It reads `v*` tags from GitHub, where
-  every one exists as soon as its release does. It makes the version commit on top and pushes
-  `dev` and the tag to GitLab atomically. If GitLab's `dev` has moved past that commit, the push is
-  refused, and the run exits "dev moved" with nothing written. The run the mirror starts for the
-  newer head releases both, as today's rule already does. After the GitLab push, the App pushes the
-  same tag object to GitHub, and only then does the GitHub release exist.
-- **Recovery: GitLab took the push, GitHub's tag push failed.** The next run's job without secrets
-  (Decision 4) checks whether the newest `v*` tag on GitLab is missing on GitHub. If it is, that
-  run pushes the tag to GitHub and publishes that release before it cuts anything new. A test
-  covers this.
+- **Tags are read from GitLab, the side the cut writes.** The cut pushes `dev` and its tag to GitLab
+  in one atomic push, so on GitLab a version commit never exists without its tag. On GitHub it can,
+  for up to a minute: the mirror may deliver `chore(release): v<v>` before the App's tag push lands.
+  A run started by that commit and reading GitHub's tags would see the previous tag and the merges
+  since it, ask for approval, and cut an empty duplicate `v<v+1>`. So the first job reads `v*` tags
+  through a read-only GitLab token (the `gitlab-read` Environment, Decision 4). The cut repeats the
+  same "anything new" check against GitLab's newest tag after approval and exits cleanly when
+  nothing is new. Until the switch the cut writes GitHub, and the same rule reads GitHub's tags; the
+  recovery below exists only after it.
+- **The cut** checks out the commit that started the run. It makes the version commit on top and
+  pushes `dev` and the tag to GitLab atomically. If GitLab's `dev` has moved past that commit, the
+  push is refused, and the run exits "dev moved" with nothing written. The run the mirror starts for
+  the newer head releases both, as today's rule already does. After the GitLab push, the App pushes
+  the same tag object to GitHub, and only then does the GitHub release exist.
+- **Recovery: GitLab took the push, GitHub's tag push failed.** The next run's first job compares
+  the newest `v*` tag on GitLab with GitHub's tags; it can read both. If the tag is missing on
+  GitHub, the run's recovery job does the rest. That is the cut itself in a mode that makes no new
+  commit: it takes the version commit and tag from GitLab, pushes the tag to GitHub through the
+  App, then does everything the cut does after its push (build, publish, sign and post the lanes).
+  It names `release-signing` and `gitlab-release`, so it waits for the bot's approval, given by the
+  same compare-view procedure from the previous `v*` tag to the recovered tag. It runs before
+  anything new is cut. A test covers this.
 - **The `list` job** pulls and rebases against GitLab's `dev`, and runs `main`'s ancestor check
   against GitLab's `main`.
 - **`follow-omni.yml`** reads `dev` (its checkout, and its `ls-remote` before the push) from the
@@ -394,8 +409,10 @@ of the version commit and its tag, then the market index commit) and `main` (the
     remote it writes;
   - the bot-commit skip and the concurrency key;
   - that runs started by the mirrored version, index and `main` fast-forward commits never reach a
-    job that names `release-signing`;
-  - the tag-push recovery;
+    job that names `release-signing`, unless a recovery is due;
+  - "`dev` mirrored before the tag": a run started by `chore(release): v<v>` while GitHub still
+    lacks `v<v>` decides there is nothing to release, because it reads GitLab's tags;
+  - the tag-push recovery, and the approval it waits for;
   - a staged lag case: a run started on GitHub for a commit that GitLab's `dev` has already moved
     past exits "dev moved", and the newer run releases both.
 
@@ -480,20 +497,32 @@ without naming any Environment. Required before the switch:
   off. Its deployment refs are `dev` plus named rehearsal refs. The organisation's owners and the
   repository's admins are listed in writing, privately, at G4. A bot login holds admin on the
   repository today. Every bot login drops admin before G4, not at the switch.
-- **Only runs that ship ask for approval.** A new first job runs with no secrets and no
-  Environment. It holds the "Anything new since the last release" step (now inside `cut`), the
-  `lane.ts ships` decision, the lane outputs, the gates the release stands on, and the tag-push
-  recovery check (Decision 2). Only jobs with `if: release == 'true'` name `release-signing`. A
-  docs, CI, version or index commit never waits for an approval and never holds the `release-cut`
-  queue.
+- **Only runs that ship ask for approval.** A new first job holds no signing secret. It names only
+  `gitlab-read`, an Environment with no reviewers, so it never pauses, whose read-only token reads
+  GitLab's tags. It holds:
+  - the "Anything new since the last release" step (now inside `cut`), against GitLab's tags;
+  - the `lane.ts ships` decision and the lane outputs;
+  - the gates the release stands on;
+  - the check for a due tag-push recovery (Decision 2).
+
+  Only jobs with `if: release == 'true'`, or the recovery job when a recovery is due, name
+  `release-signing`. A docs, CI, version or index commit never waits for an approval and never
+  holds the `release-cut` queue, unless a recovery is due.
 - **Each signing job pauses on its own.** GitHub holds every job that names the Environment when it
-  reaches it. One release can therefore ask several times: `cut` first, then `pocket`, `am-lane`
-  and the desktop signing legs, which start after the cut. The approver bot approves each paused
-  job of a run. A refusal rejects the deployment rather than leaving it pending. How many approvals
-  each kind of run really needs is measured, not assumed: delivery 5 runs for about a week while
-  GitHub is still canonical. It records the approvals per run kind (full, herdr, pocket, am, no-op)
-  and the wait from approval to cut. Then it either merges signing jobs or states the real cost
-  here.
+  reaches it. From today's job graph, a full release waits at most four times: `cut`; then
+  `pocket` and `am-lane`, side by side after the cut; then the desktop signing legs (the Mac leg,
+  and the Windows leg when it is on). That is up to five paused jobs, plus the recovery job when one
+  is due. A herdr, pocket or am patch waits once or twice, and a no-op never. The approver bot
+  approves each paused job of a run. A refusal rejects the deployment rather than leaving it
+  pending. Delivery 5 confirms the bound: it runs for about a week while GitHub is still canonical
+  and records the approvals per run kind (full, herdr, pocket, am, no-op) and the wait from
+  approval to cut. Then it either merges signing jobs or states the real cost here.
+- **`desktop-build.yml` splits its signing.** Its `build` job is one matrix, so naming the
+  Environment there would pause the Linux leg too. The Mac and Windows legs become a job of their
+  own that names `release-signing`, and the Linux leg stays without it. The `release` job today
+  checks `secrets.MAC_CSC_LINK` to decide whether the Mac zip and `latest-mac.yml` are required.
+  Once that secret moves, the check would quietly read false and drop them. The Mac leg instead
+  reports, as a job output, whether it signed, and `release` reads that output with no secret.
 - **The approver is the orchestrator bot role, on its own GitHub identity** (Decided 10). The
   Environment's required reviewers are that account and the owner. The account is used for nothing
   else, holds no admin, and is separate from:
@@ -552,6 +581,9 @@ without naming any Environment. Required before the switch:
   project, with the shortest workable expiry. Its bot user may push the protected `dev` and `main`
   and create `v*` tags. A leak is answered by revoking it in GitLab, after which the release stops
   at its push.
+  A second Environment, `gitlab-read`, also limited to `dev` and with no reviewers (so it never
+  pauses a job), holds a token with `read_repository` only, for the first job's reading of GitLab's
+  tags. Its jobs mask the bare hostname the same way.
 
 What this costs: each signing job of a release that ships waits for the bot's approval. That takes
 seconds to minutes while the bot runs, and longer when it is not running. A run that changes
@@ -568,10 +600,11 @@ real numbers. That is the price of a second path onto `dev`.
 | The tag App's private key (new) | `release-signing` | `cut`'s tag push and the release's creation, after approval |
 | The mirror's deploy key (new) | GitLab's push mirror setting; GitHub holds only its public half | GitLab itself; no CI job |
 | The approver's token (new) | the orchestrator bot role's own GitHub account, on the build host | no runner; it approves pending deployments only |
-| `GITLAB_RELEASE_TOKEN`, the remote's URL and hostname (new) | `gitlab-release`, limited to `dev` | the push steps of `cut` and `list`, and `follow-omni.yml`'s push step |
+| `GITLAB_RELEASE_TOKEN`, the remote's URL and hostname (new) | `gitlab-release`, limited to `dev` | the push steps of `cut`, the recovery job and `list`, and `follow-omni.yml`'s push step |
+| A read-only GitLab token (`read_repository`), the remote's URL and hostname (new) | `gitlab-read`, limited to `dev`, no reviewers | the first job, to read GitLab's tags; it can push nothing |
 
-- **No signing key goes to GitLab or to an Arca runner**, in any phase. GitLab CI runs gates only,
-  with no secret at all.
+- **No signing key goes to GitLab or to a self-hosted runner**, in any phase. GitLab CI runs gates
+  only, with no secret at all.
 
 ## Decision 5: the herdr.dev listing
 
@@ -708,7 +741,8 @@ requests, the bots move to `glab`, and bots lose GitHub write access.
   rehearsed once on the scratch projects, including the case of a `v*` tag ahead of `dev`.
 - **G8, the desktop feed** (Decided 11). The unsigned desktop update feed is closed. Either the
   signed desktop feed (question 7's delivery) has shipped, or Windows builds are signed with
-  `publisherName` and Linux updates are checked against something signed.
+  `publisherName` and Linux updates are checked against a feed signed with a lane key (ed25519,
+  like the plugin lane's) that names each build's sha512.
 
 After the switch, within seven days, a deliberate release rebuilds the pack, am, the desktop app
 and Pocket. Missing the window counts as a failure, and the switch is rolled back. In that window:
@@ -804,6 +838,7 @@ cut's atomic "both or neither" rule, and a merge landing meanwhile would leave a
   - the mirror's deploy key;
   - the tag App;
   - the `gitlab-release` Environment with `GITLAB_RELEASE_TOKEN`, the remote's URL and its hostname;
+  - the `gitlab-read` Environment with a read-only token, for reading GitLab's tags;
   - three GitHub rulesets ("only the mirror updates dev and main", the lane and
     `herdr-automations-v*` tags, no other branches) beside the two that exist;
   - GitLab protected branches and tags;
@@ -844,12 +879,13 @@ cut's atomic "both or neither" rule, and a merge landing meanwhile would leave a
   - the compare-view procedure;
   - the owner's yes for any run that changes `.github/`.
 
-  A leak is answered by removing the account from the Environment's reviewers, after which the
-  owner approves until a new identity exists. Its token lives on the build host with the instance,
-  so root on that host, or an agent there with root-equivalent groups, holds both halves: a path
-  onto `dev` and the approval. This is the one place the separation does not hold. The owner
-  accepts it in writing at G4 (Decided 10). Moving the token off that host, or onto a
-  hardware-backed key, would remove it.
+  A leak is answered by removing the account from the Environment's reviewers. Until a new identity
+  exists, the owner approves alone, and "prevent self-review" is relaxed for that interval so the
+  owner can approve runs the owner started. The change and its end are recorded. Its token lives on
+  the build host with the instance, so root on that host, or an agent there with root-equivalent
+  groups, holds both halves: a path onto `dev` and the approval. This is the one place the
+  separation does not hold. The owner accepts it in writing at G4 (Decided 10). Moving the token off
+  that host, or onto a hardware-backed key, would remove it.
 - **Admins.** An admin can bypass an Environment and switch off a ruleset. Admin bypass is off,
   admins are listed at G4, and no bot login holds admin.
 - **What needs no key.** Any job on `dev` may request a `GITHUB_TOKEN` with `contents: write` or
@@ -917,12 +953,13 @@ Each delivery is one merge request (one pull request before the switch), on no p
    Rollback: remove it.
 4. **Release remote and the sequencing rule** (phase 2). `release.yml` and `follow-omni.yml` read
    and push the remote that `gitlab-release` names (GitHub until the switch), and a run cuts only
-   the commit that started it. The cut reads `v*` tags from GitHub. The tag-push recovery is
-   tested. `follow-omni.yml` keeps its `workflow_call` release until the switch. `ci.yml` skips
-   bot-only pushes and keys its push concurrency by commit. `release-workflows.test.ts` covers
-   both remotes, the bot-commit runs and the staged lag case. Acceptance: the scratch dry run with
-   per-run test keys, with no host in any public log after successful and failed pushes. Rollback:
-   the Environment secret, or a revert.
+   the commit that started it. The first job and the cut read `v*` tags from GitLab, through
+   `gitlab-read`. The tag-push recovery is a gated job and is tested. The tests include "`dev`
+   mirrored before the tag". `follow-omni.yml` keeps its `workflow_call` release until the switch.
+   `ci.yml` skips bot-only pushes and keys its push concurrency by commit.
+   `release-workflows.test.ts` covers both remotes, the bot-commit runs and the staged lag case.
+   Acceptance: the scratch dry run with per-run test keys, with no host in any public log after
+   successful and failed pushes. Rollback: the Environment secret, or a revert.
 5. **Signing behind an Environment, and the platform legs before the tag** (phase 2, while GitHub
    is still canonical). Contents:
    - `release-signing`, with the bot and the owner as reviewers, admin bypass off and deployment
