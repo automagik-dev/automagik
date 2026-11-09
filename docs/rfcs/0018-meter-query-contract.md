@@ -73,7 +73,7 @@ scheduling this RFC:
 - genie keeps the opt-in capture switch and its ledger until M5 names their Rust owner.
 - A contract change is a pull request here that genie reviews.
 
-From RFC 0017 (#751, not merged yet): the crate is `meter/usagemeter/`, the doc's keeper is
+From RFC 0017 (#751, merged): the crate is `meter/usagemeter/`, the doc's keeper is
 `meter/schema/`, and cargo runs only on the build host, one build at a time, with
 `CARGO_BUILD_JOBS` capped.
 

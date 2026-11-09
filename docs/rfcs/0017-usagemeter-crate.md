@@ -172,7 +172,7 @@ Proposed `meter/usagemeter/part.json`:
 - How an Intel Mac gets the meter (decided, question 8): am runs on an Intel Mac for its meter
   verbs only (`am meter install`, `am meter status`, `am meter uninstall`), with every other part
   and the code set still refused there. Code gap: RFC 0012's am refuses an Intel Mac outright,
-  its bootstrap included.
+  its bootstrap included; delivery 7 says how am gets there.
 - `entry`: a binary has no folder to run from, so its entries are am's own `meter` verbs.
   Proposed: an entry whose first word is `am` runs the am that is installing. Code gaps: today
   `meter uninstall` takes no `--local`, and there is no `meter doctor`.
@@ -412,6 +412,10 @@ say. genie's reader moving to `meter.usage@1` is coordinated there too.
 - Unchanged for installs: `~/.local/bin/usagemeter`, `usagemeter --version`'s output, the
   never-downgrade rule, the state folder, `meter.db`, `meter.lock` and the `METER_*` variables.
 - `part.json`'s `artifact` may be an object per target (amends RFC 0012, proposed).
+- am on an Intel Mac, for its meter verbs only (`am meter install`, `am meter status`,
+  `am meter uninstall`), its bootstrap included; every other part and the code set stay refused
+  there (amends RFC 0012's "Operating systems" and its D28 targets for am; decided, question 8;
+  built in delivery 7).
 
 ## Threat model
 
@@ -431,6 +435,10 @@ say. genie's reader moving to `meter.usage@1` is coordinated there too.
 ## Deliveries
 
 Each is one pull request with an independent review.
+
+Order: 1 to 5 in turn; 6 after 4 (its pin step) and 5 (its pointer step); 7 after 6, because am
+installs the meter through what 6 moves (the pin, then the pointer `meterFleet.js` reads, which am
+takes through its copies); 8 when RFC 0018 says; 9 after 6 and 7.
 
 1. **This RFC** (docs; cuts nothing).
    *Check:* `bun scripts/lane.ts ships` on the merge says no.
@@ -468,9 +476,17 @@ Each is one pull request with an independent review.
    *Check:* on a temp home, with a `file://` pointer signed by a per-run key, `meter install`
    installs the pointer's build, refuses a lower sequence and leaves a newer binary alone.
    *Rollback:* revert the pack; it installs from the last pin.
-7. **The part in am** (am, RFC 0012 delivery 8). `am install automagik.usagemeter`, the object
-   `artifact`, `meter doctor`, and `meter uninstall --local`. On an Intel Mac, am runs for its
-   meter verbs only and refuses every other part and the code set.
+7. **The part in am** (am, RFC 0012 delivery 8; after 6). `am install automagik.usagemeter`, the
+   object `artifact`, `meter doctor`, and `meter uninstall --local`. On an Intel Mac, am runs for
+   its meter verbs only and refuses every other part and the code set.
+   How am gets onto an Intel Mac at all: am is plain JavaScript on Node, so the same am tarball
+   runs there, and what refuses it is RFC 0012's target check, in am and in its bootstrap
+   one-liner alike. This delivery amends both: the bootstrap installs am on an Intel Mac and says
+   that only the meter verbs work there, am's own update keeps it current there, and am's target
+   check lets `am meter install`, `am meter status` and `am meter uninstall` through while it
+   refuses every other part and the code set. An Intel Mac reached from another machine
+   (`am meter install --machine`) needs no am of its own: meterFleet's fixed far-side script
+   installs the binary there, as it does today.
    *Check:* `am doctor` lists the meter; install, rollback and uninstall on a temp home; with an
    Intel Mac `uname -sm`, `am meter install` works and `am install code` is refused.
 8. **Ports of genie's metering.** Waits for Open question 7's answer (RFC 0018, #764).
@@ -496,7 +512,8 @@ with other ids (deleted since); they are imported anyway, as question 2 decided.
 
 - RFCs: [0011](0011-monorepo-parts-and-releases.md) parts, lanes and the signed pointers;
   [0012](0012-am-cli-and-parts.md) `part.json`, "Sources and trust", Open question 5, delivery 8;
-  [0016](0016-windows-wslc.md) Windows via WSLC; 0018, the meter query contract (#764, open).
+  [0016](0016-windows-wslc.md) Windows via WSLC; [0018](0018-meter-query-contract.md), the meter
+  query contract (#764).
 - Closed draft automagik-dev/automagik#298 (usagemeter's import in RFC 0011).
 - Code: `scripts/lane.ts` (`NEVER_SHIPPED`, `kindOf`, `amPaths`), `scripts/herdr-lane.ts`,
   `scripts/am-lane.ts`, `am/part.json`, `herdr/mods/am-sidebar/meterFleet.js` and its copy in
