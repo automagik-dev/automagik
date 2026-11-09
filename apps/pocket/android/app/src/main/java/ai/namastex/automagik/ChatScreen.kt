@@ -28,6 +28,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * Prose spans as the text a Compose [Text] draws: every span's characters as they are, nothing parsed as markup.
@@ -50,11 +52,12 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 @Composable fun ChatPane(vm: PocketViewModel, ref: TerminalRef, onShowTerminal: (() -> Unit)?, onBack: () -> Unit, modifier: Modifier = Modifier) {
     DisposableEffect(ref) { vm.openChat(ref); onDispose { vm.closeChat(ref) } }
     val s = vm.chat.collectAsStateWithLifecycle().value?.takeIf { it.terminal == ref.address } ?: Chat.State(ref.address)
+    val bot = vm.botChats.collectAsStateWithLifecycle().value[ref.hostId]?.getOrNull()?.find { it.terminal == ref.address }?.title.orEmpty()
     val openLink = rememberLinkOpener()
     val list = rememberLazyListState()
     var draft by remember(ref) { mutableStateOf("") }
     var confirmDraft by remember(ref) { mutableStateOf<Chat.Message?>(null) }
-    val count = s.rows.size + s.screen.size + s.messages.size + (if (s.approval != null) 1 else 0) + (if (s.question != null) 1 else 0)
+    val count = s.rows.size + s.screen.size + s.messages.size + s.receipts.size + (if (s.approval != null) 1 else 0) + (if (s.question != null) 1 else 0)
     LaunchedEffect(count) { val items = list.layoutInfo.totalItemsCount; if (count > 0 && items > 0) list.animateScrollToItem(items - 1) }
     Column(modifier.background(Canvas)) {
         ChatBar(s, onBack, onShowTerminal?.takeIf { ChatActions.canShowTerminal(s) }, vm::chatInterrupt, vm::reconnectChat)
@@ -73,6 +76,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
             items(s.rows, key = { "r:" + it.id }) { ChatRowView(it, s, vm, openLink) }
             if (s.screen.isNotEmpty()) item("live") { Hint("Live from the screen") }
             items(s.screen, key = { "s:" + it.id }) { ChatRowView(it, s, vm, openLink) }
+            items(s.receipts, key = { "x:" + it.id }) { ReceiptCard(it, bot, vm::dismissReceipt) }
             s.question?.let { q -> item("q:" + q.id) { ChatRowView(q, s, vm, openLink) } }
             s.approval?.let { a -> item("a:" + a.id) { ChatRowView(a, s, vm, openLink) } }
             items(s.messages, key = { "m:" + it.id }) { m -> MessageView(m, s, onSendNow = { confirmDraft = it }, onCancel = vm::chatCancelHeld, onRetry = vm::chatRetry) }
@@ -195,6 +199,25 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                     else Button(onClick = { vm.chatAnswer(row, c) }) { Text(label, fontSize = 13.sp) }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A card that closed while the phone was away (#733): the Bot, the kind of card and when it closed, what it asked, and
+ * how it ended as bots-dsh's settled entry says, or [Chat.CLOSED_AWAY] with no outcome claimed. It stays until dismissed.
+ */
+@Composable private fun ReceiptCard(r: Chat.Receipt, bot: String, onDismiss: (String) -> Unit) {
+    val time = remember(r.at) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(r.at)) }
+    Surface(color = Surface, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Border), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f).padding(top = 2.dp)) {
+                Text(ChatText.clean(Chat.receiptHeading(r, bot, time)), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Muted)
+                if (r.label.isNotBlank() && r.label != Chat.ANSWER_ON_COMPUTER) { Spacer(Modifier.height(4.dp)); Text(ChatText.clean(r.label), fontSize = 13.sp, color = Ink) }
+                Spacer(Modifier.height(4.dp))
+                Text(ChatText.clean(Chat.receiptText(r)), fontSize = 12.sp, color = Ink)
+            }
+            IconButton(onClick = { onDismiss(r.id) }) { Icon(Icons.Outlined.Close, "Dismiss", Modifier.size(16.dp), tint = Muted) }
         }
     }
 }

@@ -44,3 +44,4 @@ itself and shows the same chat. Issue #731.
 ## Related
 
 - [Team bubbles](team-bubbles.md), RFC 0015 (writes amendment).
+- [A card that closed while the phone was away comes back as a receipt](chat-receipts-on-reconnect.md)

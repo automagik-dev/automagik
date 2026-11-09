@@ -46,6 +46,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0014](0014-shared-bot-registry.md) | Shared Bot registry | Accepted (delivery 1 merged: #260) | none (ships outside the five milestones) |
 | [0015](0015-live-chat-projection.md) | Live chat projection | Accepted (deliveries 1-3 merged: #267, #273, #280, #282; amended 2026-11-07: writes on DSH chats, global Bots included) | none (ships outside the five milestones) |
 | [0016](0016-windows-wslc.md) | Windows on a Linux sandbox (WSL containers) | Accepted (2026-11-04, by Felipe; answers: D38, D39, Q1-Q9) | not scheduled |
+| [0017](0017-usagemeter-crate.md) | usagemeter in the monorepo | Draft (answers: Q1-Q6 and Q8, 2026-11-08; question 7 open) | none (ships outside the five milestones) |
 | [0018](0018-meter-query-contract.md) | The meter query contract | Draft | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
@@ -58,8 +59,8 @@ Milestones, in the owner's order:
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
 Genie Publish, Platform, Desktop sandbox, `am` and parts, the work and code switch, the shared
-Bot registry and the live chat projection stay at the RFC stage until their questions are
-answered.
+Bot registry, the live chat projection and usagemeter's move stay at the RFC stage until their
+questions are answered.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC
