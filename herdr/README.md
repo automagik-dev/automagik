@@ -1159,20 +1159,19 @@ repository's own gates (`node --test`, `node --check`, `bun test`, `scripts/priv
 `scripts/am-copies.mjs`, the `version`/`entries`/`parts`/`catalog` checks, …). No release verb
 is offered to any launch: the fixed `gh release` deny wins over every one of them. A read-only
 seat (rank `reviewer`) or worker (role `review`) gets no `write_file`, no plain `git`/`node`,
-and none of `mkdir`, `chmod`, `rg`, `sort`, `uniq`, or `sed -n`; it keeps `hc`, the 24
-read-only shell tools, the test checks, the `gh` reads and a short list of git subcommands
-(`log`, `diff`, `show`, `status`, …). Reviewers keep `hc` because they inspect panes via
-`hc ls`/`hc get`/`hc read`/`hc wait` and report via `hc send`; `command(hc)` matches `hc run`
-by prefix, while `hcGuard` and `hcProxy` are the boundary that refuse `hc run` and `hc exec`
-inside a bot or worker pane. Those subcommands and shell tools are allowed with every argument
-they are given, so word-prefix rules do not stop program-running or file-writing forms (`git diff --output=file`,
-`sed -n` running a program via GNU `sed`'s `e` command or writing via its `w` command or `-i`,
-`rg --pre` running a program, `sort --compress-program` running a program and `sort -o` writing
-a file, `uniq IN OUT` writing a file, and `echo`/`printf` with a shell redirection writing if
-agy runs the line through a shell): like the whole list, this is a guardrail, not a boundary,
-which is why `rg`, `sort`, `uniq`, and `sed -n` stay on writing roles only alongside `mkdir`
-and `chmod` (where `node` is already allowed) and out of read-only roles. On pipelines and
-command lists, agy checks each command of a pipeline or list on its own (for example, a
+no bare `hc`, and none of `mkdir`, `chmod`, `rg`, `sort`, `uniq`, or `sed -n`; it lists only
+`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send` (never bare `hc`, so `hc run` and
+`hc exec` are not allowed on read-only roles), the 24 read-only shell tools, the test checks,
+the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …). Those
+subcommands and shell tools are allowed with every argument they are given, so word-prefix rules
+do not stop program-running or file-writing forms (`git diff --output=file`, `sed -n` running a
+program via GNU `sed`'s `e` command or writing via its `w` command or `-i`, `rg --pre` running a
+program, `sort --compress-program` running a program and `sort -o` writing a file, `uniq IN OUT`
+writing a file, and `echo`/`printf` with a shell redirection writing if agy runs the line
+through a shell): like the whole list, this is a guardrail, not a boundary, which is why `rg`,
+`sort`, `uniq`, and `sed -n` stay on writing roles only alongside `mkdir` and `chmod` (where
+`node` is already allowed) and out of read-only roles. On pipelines and command lists, agy
+checks each command of a pipeline or list on its own (for example, a
 `git show ... | sed -n ...` line asks for `sed` separately while `git` is allowed), so
 `cat x | sh` or `ls; sh` still needs `sh` to be allowed; this per-command check was observed on
 `agy 1.5.3`, not documented by agy. Shell launchers and wrappers that run arbitrary commands or

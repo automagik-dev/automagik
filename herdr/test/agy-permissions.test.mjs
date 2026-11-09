@@ -26,6 +26,9 @@ const SHELL_READ = Object.freeze([
 const WRITER_ONLY_SHELL = Object.freeze([
   "command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)",
 ]);
+const READ_HC_RULES = Object.freeze([
+  "command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)",
+]);
 const FORBIDDEN_SHELL = Object.freeze([
   "command(bash)", "command(sh)", "command(env)", "command(xargs)",
   "command(find)", "command(awk)", "command(tee)", "command(sed)",
@@ -86,7 +89,10 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
   const worker = agyPermissionPlan({ bot: BOT, scope: "worker", role: "review", folder: "/work/wt" });
   for (const plan of [seat, worker]) {
     assert.equal(plan.allow.some((r) => r.startsWith("write_file(")), false, "nothing writable");
-    assert.ok(plan.allow.includes("command(hc)"), "hc stays: it reads");
+    for (const rule of READ_HC_RULES) assert.ok(plan.allow.includes(rule), `read-only hc ${rule}`);
+    for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)"]) {
+      assert.equal(plan.allow.includes(rule), false, `read-only excludes ${rule}`);
+    }
     for (const tool of SHELL_READ) assert.ok(plan.allow.includes(`command(${tool})`), `read-only allow command(${tool})`);
     for (const bad of FORBIDDEN_SHELL) assert.equal(plan.allow.includes(bad), false, `read-only never allows ${bad}`);
     assert.ok(plan.allow.includes("command(git diff)"));
@@ -103,10 +109,11 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
     }
     assert.deepEqual(plan.deny, [...AGY_FIXED_DENY]);
   }
-  // The writer roles keep write_file and the writer-only shell tools; the review role doesn't.
+  // The writer roles keep write_file, bare command(hc), and the writer-only shell tools; the review role doesn't.
   for (const role of ["dev", "test", "fix"]) {
     const w = agyPermissionPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt" });
     assert.ok(w.allow.includes("write_file(/work/wt)"), role);
+    assert.ok(w.allow.includes("command(hc)"), `${role} gets command(hc)`);
     for (const rule of WRITER_ONLY_SHELL) assert.ok(w.allow.includes(rule), `${role} gets ${rule}`);
     for (const tool of SHELL_READ) assert.ok(w.allow.includes(`command(${tool})`), `${role} gets command(${tool})`);
     for (const bad of FORBIDDEN_SHELL) assert.equal(w.allow.includes(bad), false, `${role} excludes ${bad}`);
@@ -115,6 +122,11 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
 
 test("AGY_SHELL_READ (#840): 24 read-only shell tools in both default allow lists; writer-only tools and launchers excluded", () => {
   assert.deepEqual(AGY_SHELL_READ, SHELL_READ);
+  assert.ok(AGY_WRITE_ALLOW.includes("command(hc)"));
+  for (const rule of READ_HC_RULES) assert.ok(AGY_READ_ALLOW.includes(rule), `AGY_READ_ALLOW includes ${rule}`);
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)"]) {
+    assert.equal(AGY_READ_ALLOW.includes(rule), false, `AGY_READ_ALLOW excludes ${rule}`);
+  }
   for (const tool of SHELL_READ) {
     assert.ok(AGY_WRITE_ALLOW.includes(`command(${tool})`), `AGY_WRITE_ALLOW includes command(${tool})`);
     assert.ok(AGY_READ_ALLOW.includes(`command(${tool})`), `AGY_READ_ALLOW includes command(${tool})`);
@@ -129,7 +141,7 @@ test("AGY_SHELL_READ (#840): 24 read-only shell tools in both default allow list
   }
 });
 
-test("README (#840): Antigravity permission caveat documents writer-only tools, prefix caveats, pipeline checks on agy 1.5.3, and hcGuard/hcProxy", () => {
+test("README (#840): Antigravity permission caveat documents writer-only tools, prefix caveats, pipeline checks on agy 1.5.3, and read-only hc subcommands", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   assert.match(readme, /sed -n.*GNU `sed`'s `e` command.*`w` command.*`-i`/s);
   assert.match(readme, /`rg --pre`/);
@@ -138,8 +150,7 @@ test("README (#840): Antigravity permission caveat documents writer-only tools, 
   assert.match(readme, /`uniq IN OUT`/);
   assert.match(readme, /`echo`\/`printf` with a shell redirection/);
   assert.match(readme, /observed on\s+`agy 1\.5\.3`, not documented by agy/);
-  assert.match(readme, /`command\(hc\)` matches `hc run`/);
-  assert.match(readme, /`hcGuard` and `hcProxy`/);
+  assert.match(readme, /`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send`.*`hc run` and\s+`hc exec` are not allowed on read-only roles/s);
 });
 
 test("agySettingsPlan: a roster allow identical to a fixed deny never cancels the deny", () => {

@@ -517,17 +517,15 @@ export const AGY_SHELL_READ = Object.freeze([
 export const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", "mkdir", "chmod",
   "rg", "sort", "uniq", "sed -n", ...AGY_SHELL_READ, ...AGY_GH_READ, ...AGY_GH_WRITE,
   ...AGY_GATES].map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): hc, the 24 read-only shell tools,
-// the test checks and a short list of git subcommands and gh reads. A subcommand is allowed with
-// every argument it is given, so some can write (`git diff --output=file`): like the whole list,
-// this is a guardrail, not a boundary. A reviewer seat or review worker needs `hc` (`hc ls`,
-// `hc get`, `hc read`, `hc wait`, `hc send`) to inspect panes and report its verdict; as a
-// word-prefix rule `command(hc)` also matches `hc run`, while `hcGuard` and `hcProxy` are the
-// boundary that refuse `hc run` and `hc exec` inside a bot or worker pane.
-export const AGY_READ_ALLOW = Object.freeze(["hc", ...AGY_SHELL_READ, "git log", "git diff",
-  "git show", "git status", "git rev-parse", "git ls-files", "git blame", "git describe",
-  "git merge-base", "git rev-list", "git cat-file", ...AGY_GH_READ, "node --test", "node --check",
-  "bun test"].map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): the read/send hc subcommands (`hc ls`,
+// `hc get`, `hc read`, `hc wait`, `hc send` — never bare `hc`, so `hc run` and `hc exec` are not
+// allowed on read-only roles), the 24 read-only shell tools, the test checks and a short list of
+// git subcommands and gh reads. A subcommand is allowed with every argument it is given, so some
+// can write (`git diff --output=file`): like the whole list, this is a guardrail, not a boundary.
+export const AGY_READ_ALLOW = Object.freeze(["hc ls", "hc get", "hc read", "hc wait", "hc send",
+  ...AGY_SHELL_READ, "git log", "git diff", "git show", "git status", "git rev-parse",
+  "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
+  ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
 
 /**
  * The effective allow and deny rules of an Antigravity launch: the defaults its scope and role

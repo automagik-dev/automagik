@@ -346,10 +346,16 @@ test("Antigravity #840: default read-only shell tools in writer and read-only --
     }
   }
   for (const perms of [writerSeat, writerWorker]) {
+    assert.ok(perms.allow.includes("command(hc)"));
     for (const rule of writerOnly) assert.ok(perms.allow.includes(rule), `writer includes ${rule}`);
   }
   for (const perms of [reviewerSeat, reviewWorker]) {
-    for (const rule of writerOnly) assert.equal(perms.allow.includes(rule), false, `read-only excludes ${rule}`);
+    for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+      assert.ok(perms.allow.includes(rule), `read-only includes ${rule}`);
+    }
+    for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)", ...writerOnly]) {
+      assert.equal(perms.allow.includes(rule), false, `read-only excludes ${rule}`);
+    }
     assert.equal(perms.allow.some((r) => r.startsWith("write_file(")), false);
   }
 });

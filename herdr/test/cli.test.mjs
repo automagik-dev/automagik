@@ -830,6 +830,12 @@ test("Antigravity #823: start and restart write a private permission file and pa
   const revStarted = s.cli(["start", "Dev"]);
   assert.equal(revStarted.code, 0, revStarted.err);
   const revData = JSON.parse(readFileSync(agySettingsPath(s, ID.dev), "utf8"));
+  for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+    assert.ok(revData.permissions.allow.includes(rule), `reviewer seat allow ${rule}`);
+  }
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
   for (const tool of AGY_SHELL_READ) {
     assert.ok(revData.permissions.allow.includes(`command(${tool})`), `reviewer seat allow command(${tool})`);
   }
