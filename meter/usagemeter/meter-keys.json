@@ -1,3 +1,8 @@
 {
-  "keys": []
+  "keys": [
+    {
+      "keyId": "meter-2026-11",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAf2gfjEnFdw08xICy53pSDqo6uQxkoYOE+UvHQaZ0RPE=\n-----END PUBLIC KEY-----\n"
+    }
+  ]
 }
