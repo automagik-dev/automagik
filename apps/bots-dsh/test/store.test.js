@@ -73,6 +73,9 @@ const hashName = text => {
   const digest = createHash('sha256').update(text).digest('hex').slice(0, 16)
   return `state.json.broken-${digest}`
 }
+// chmod 000 hides a file from its owner, which Windows and root do not honour.
+const unreadableBackupUnsupported = (process.platform === 'win32' || process.getuid?.() === 0)
+  && 'needs POSIX file permissions and a non-root user'
 
 test('a failed state write rejects and leaves the saved file unchanged', async (t) => {
   const { rt, statePath } = runtime(t)
@@ -273,6 +276,92 @@ test('an incomplete earlier backup is not reused', async (t) => {
   await rt.save()
   assert.equal(fs.readFileSync(statePath, 'utf8'), original,
     'a read-only team does not overwrite it')
+})
+
+test('a torn earlier backup is logged as incomplete, not as a failed copy', async (t) => {
+  const original = '{"version":1,'
+  const { rt, home, warnings } = runtime(t, original)
+  const backup = join(home, hashName(original))
+  fs.writeFileSync(backup, '{"version":1,"revision":901}')
+  await rt.load()
+  const lines = warnings.map(args => args.map(String).join(' '))
+  assert.ok(lines.some(line => line.includes('the set-aside backup is incomplete')),
+    'the log names the torn copy')
+  assert.equal(lines.some(line => line.includes('backup failed')), false,
+    'no copy failure is reported for EEXIST')
+  assert.match(rt.readOnly(), /could not be read \(the set-aside backup is incomplete\)/)
+  assert.doesNotMatch(rt.readOnly(), /unreadable: /)
+  assert.equal(fs.readFileSync(backup, 'utf8'), '{"version":1,"revision":901}',
+    'the torn copy is kept for inspection')
+})
+
+test('an unreadable earlier backup is named with its read error', { skip: unreadableBackupUnsupported }, async (t) => {
+  const original = '{"version":1,'
+  const { rt, home, warnings } = runtime(t, original)
+  const backup = join(home, hashName(original))
+  fs.writeFileSync(backup, '{"version":1,"revision":901}')
+  fs.chmodSync(backup, 0o000)
+  try {
+    await rt.load()
+    const lines = warnings.map(args => args.map(String).join(' '))
+    assert.ok(lines.some(line => /the set-aside backup is unreadable: EACCES/.test(line)),
+      'the log names the unreadable backup and its code')
+    assert.equal(lines.join('\n').includes('incomplete'), false,
+      'the unreadable case is not called incomplete')
+    assert.match(rt.readOnly(), /the set-aside backup is unreadable: EACCES/)
+    assert.equal(rt.readOnly().includes('incomplete'), false,
+      'the read-only message is not the incomplete one')
+  } finally {
+    fs.chmodSync(backup, 0o600)
+  }
+})
+
+test('a complete earlier backup is reused and the team stays writable', async (t) => {
+  const original = '{"version":1,'
+  const { rt, home, warnings } = runtime(t, original)
+  const backup = join(home, hashName(original))
+  fs.writeFileSync(backup, original)
+  const kept = fs.statSync(backup)
+  await rt.load()
+  assert.equal(rt.readOnly(), undefined, 'the reused backup does not make the team read-only')
+  const lines = warnings.map(args => args.map(String).join(' '))
+  assert.ok(lines.some(line => line.includes('backed up as') && line.includes(backup)),
+    'the log reports the existing copy')
+  assert.equal(lines.some(line => line.includes('backup failed')), false)
+  const again = fs.statSync(backup)
+  assert.equal(again.ino, kept.ino, 'the copy is reused, not rewritten')
+  assert.equal(again.mtimeMs, kept.mtimeMs)
+  assert.equal(fs.readFileSync(backup, 'utf8'), original)
+})
+
+test('a torn earlier backup keeps the team read-only and the corrupt file byte for byte', async (t) => {
+  const original = '{"version":1,'
+  const { rt, home, statePath } = runtime(t, original)
+  fs.writeFileSync(join(home, hashName(original)), '{"version":1,"revision":901}')
+  const before = fs.readFileSync(statePath)
+  await rt.load()
+  assert.match(rt.readOnly(), /the set-aside backup is incomplete/)
+  rt.state.prefs.marker = 'not saved'
+  await rt.save()
+  assert.deepEqual(fs.readFileSync(statePath), before, 'the corrupt file is not rewritten')
+})
+
+test('an unreadable earlier backup keeps the team read-only and the corrupt file byte for byte', { skip: unreadableBackupUnsupported }, async (t) => {
+  const original = '{"version":1,'
+  const { rt, home, statePath } = runtime(t, original)
+  const backup = join(home, hashName(original))
+  fs.writeFileSync(backup, '{"version":1,"revision":901}')
+  fs.chmodSync(backup, 0o000)
+  const before = fs.readFileSync(statePath)
+  try {
+    await rt.load()
+    assert.match(rt.readOnly(), /the set-aside backup is unreadable: EACCES/)
+    rt.state.prefs.marker = 'not saved'
+    await rt.save()
+    assert.deepEqual(fs.readFileSync(statePath), before, 'the corrupt file is not rewritten')
+  } finally {
+    fs.chmodSync(backup, 0o600)
+  }
 })
 
 test('older timestamp backups are left untouched', async (t) => {
