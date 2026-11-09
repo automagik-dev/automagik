@@ -184,6 +184,20 @@ describe('the plugin lane', () => {
     // What lists no key: an empty list, a missing or broken file, an entry with no id or a key that does not parse.
     for (const keys of [NO_KEY, undefined, '{', '{}', '{"keys":{}}', '{"keys":[{"keyId":"x"}]}', '{"keys":[{"keyId":"","publicKey":"x"}]}', '{"keys":[{"keyId":"x","publicKey":"not a key"}]}']) expect(keysHeld(keys)).toBe(true);
     expect(keysHeld(ONE_KEY)).toBe(false);
+    // Only an ed25519 public key in SPKI PEM is listed (PR 834's review): a private key, which
+    // createPublicKey would take, another key type, a raw base64 key or a PEM with extra text holds it.
+    const pair = generateKeyPairSync('ed25519');
+    const spki = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const listing = (publicKey: string) => JSON.stringify({ keys: [{ keyId: 'meter-test', publicKey }] });
+    const held = [
+      pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+      `${spki}-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n`,
+      `junk\n${spki}`,
+    ];
+    for (const k of held) expect(keysHeld(listing(k))).toBe(true);
+    expect(keysHeld(listing(spki))).toBe(false);
     // The repository's own keys file lists the owner's key (RFC 0017 delivery 5), and its contract is
     // RFC 0021's: the committed state opens the lane.
     const keys = readFileSync(join(import.meta.dir, '..', METER_KEYS), 'utf8');

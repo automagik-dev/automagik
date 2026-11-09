@@ -208,8 +208,22 @@ export function contractHeld(contract: string | undefined): boolean {
 }
 
 /**
+ * Only an ed25519 public key in SPKI PEM counts as listed (PR 834's review): createPublicKey also
+ * takes a private key (it derives the public half), a certificate or a raw form, and listing any
+ * of those must hold the lane, never open it.
+ */
+export function isPublicSpki(pem: string): boolean {
+  if (!/^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----\r?\n?$/.test(pem)) return false;
+  try {
+    const key = createPublicKey({ key: pem, format: 'pem' });
+    return key.type === 'public' && key.asymmetricKeyType === 'ed25519';
+  } catch { return false; }
+}
+
+/**
  * Whether the keys file (its text, or undefined when there is none) holds the meter lane: true while
- * it lists no key, that is no entry with a keyId and a public key that parses, or does not parse.
+ * it lists no key, that is no entry with a keyId and an ed25519 public key in SPKI PEM
+ * (isPublicSpki), or does not parse.
  */
 export function keysHeld(keys: string | undefined): boolean {
   if (keys === undefined) return true;
@@ -218,7 +232,7 @@ export function keysHeld(keys: string | undefined): boolean {
   if (!Array.isArray(listed)) return true;
   return !listed.some((entry) => {
     if (!entry || typeof entry.keyId !== 'string' || entry.keyId === '' || typeof entry.publicKey !== 'string') return false;
-    try { createPublicKey(entry.publicKey); return true; } catch { return false; }
+    return isPublicSpki(entry.publicKey);
   });
 }
 
