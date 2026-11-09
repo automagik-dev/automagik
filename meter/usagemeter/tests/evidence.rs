@@ -859,18 +859,20 @@ fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // 16 TiB where the filesystem allows it, else 8 or 4 TiB (a CI runner's filesystem refuses a
-    // file of 16 TiB with EFBIG): any of them projects more growth than a runner has free.
+    // 1 TiB first (ext4 allows it, and its projection passes a CI runner's free space), larger
+    // only where the disk has more free: the smallest size the filesystem takes whose projected
+    // growth passes the free space.
     let sparse = env.claude("-work-app/s-sparse.jsonl");
+    let free = meter::paths::free_bytes(&env.state()).unwrap();
     let f = fs::File::create(&sparse).unwrap();
-    let len = [1u64 << 44, 1 << 43, 1 << 42]
+    let Some(_) = [1u64 << 40, 1 << 42, 1 << 43, 1 << 44]
         .into_iter()
-        .find(|&n| f.set_len(n).is_ok())
-        .expect("a sparse file of 4 TiB or more");
+        .find(|&n| n / meter::sync::GROWTH_PER_LOG_BYTE > free && f.set_len(n).is_ok())
+    else {
+        eprintln!("skipped: no sparse file this filesystem takes projects past {free} B free");
+        return;
+    };
     drop(f);
-    assert!(
-        len / meter::sync::GROWTH_PER_LOG_BYTE > meter::paths::free_bytes(&env.state()).unwrap()
-    );
     let before = folder(&env.state());
     let out = sync(&["sync", "--force", "--no-publish", "--backfill"]);
     let err = String::from_utf8_lossy(&out.stderr);
