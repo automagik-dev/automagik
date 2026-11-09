@@ -53,7 +53,8 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0021](0021-meter-attribution.md) | Meter attribution | Draft (answers: Q1-Q6, 2026-11-09) | none (ships outside the five milestones) |
 | [0022](0022-desktop-chat-view.md) | The desktop chat is a view of the main bot | Draft (answers: Q1-Q8, 2026-11-09; Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; no question open) | none (ships outside the five milestones) |
 | [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) | DSH upstream: agent context, a chat tail slot and a draft hook | Draft | none (a proposal to DSH; nothing ships here) |
-| [0024](0024-automagik-cloud.md) | Automagik Cloud: two identity models, workspaces and the rail | Draft (council 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09) | none (ships outside the five milestones) |
+| [0024](0024-automagik-cloud.md) | Automagik Cloud: two identity models, workspaces and the rail | Draft (council 2026-11-09: conditions; owner's answers: Q1 and Q9; amended by [0025](0025-cloud-economics.md): Q8, D14) | none (ships outside the five milestones) |
+| [0025](0025-cloud-economics.md) | Automagik Cloud economics: billing, managed tokens and agentic payments | Draft (council 2026-11-09: revise, conditions folded in; owner's decisions 2026-11-09; amends RFC 0024) | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 

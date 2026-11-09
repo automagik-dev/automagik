@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (council review 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amends RFC 0008) |
+| Status | Draft (Q1, Q9 answered; council conditions; amends 0008; amended by [RFC 0025][25]) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service outside this repository |
 | Created | 2026-11-09 |
@@ -118,6 +118,9 @@ From the owner's answers (2026-11-09, asked by the Automagik Orchestrator):
     (the owner, verbatim). Cloud uses Stripe Billing itself, a subscription per workspace, and
     Stripe's signed webhooks update Cloud's entitlements; no other billing app. Agentic payments
     are a direction, to be detailed by a follow-up RFC ((i)).
+    *Amended by [RFC 0025][25] (2026-11-09):* "being paid" is deferred; the inbound direction,
+    Bots paying Cloud for Cloud's own resources, comes first, and outbound payments to
+    third-party merchants wait for a legal review and their own RFC (0025, (j)).
 
 Carried, not new:
 
@@ -517,6 +520,9 @@ current instance stays as it is until Tactu moves.
 **Free**: the self-hosted product, complete, one instance, one human; a Cloud personal account
 with no workspace. **Paid**: hosted workspaces. Recommended: per workspace per month, seats
 included up to a limit, model usage on the workspace's own keys at first (open question 8).
+*Amended by [RFC 0025][25] (2026-11-09):* model access is free on the customer's own keys or
+plan sign-in; managed tokens are an opt-in through Cloud's gateway at a published margin;
+compute is metered from the host lifecycle (0025, (a) and (c)).
 
 **Entitlements are the Cloud service's; the app only reads them.** A plan sets an organisation's or
 a personal account's workspaces, seats and host size. The Cloud service refuses `+` and invitations
@@ -536,6 +542,9 @@ agent-payment features, within limits the human sets. A follow-up brainstorm on 
 Stripe secret key or a stored card; every limit (amount, merchant, period) is set by an owner and
 enforced by the Cloud service, never by the Bot; every payment is recorded with the Bot and the
 human who set its limit.
+*Amended by [RFC 0025][25] (2026-11-09):* inbound first; outbound to third-party merchants is
+deferred to phase E, after a legal review and its own RFC; the ledger, grants, caps and go-live
+gates are in 0025.
 
 ### (j) How the two meet
 
@@ -811,11 +820,17 @@ principals are keyed by `(issuer, sub)`.
 8. **What is paid.** Recommended: hosted workspaces, per workspace per month, seats up to a limit,
    model usage on the workspace's keys at first; personal accounts free; self-hosted free and
    complete for one instance ((i)).
+   *Amended by [RFC 0025][25] (2026-11-09):* BYO model access is free; managed tokens are an
+   opt-in through Cloud's gateway at a published margin; compute is metered from the host
+   lifecycle. The workspace subscription and seats stand; 0025's question 6 carries the included
+   seats and host shape.
 9. **The billing system.** *Decided by the owner, 2026-11-09 (Decided 14):* Stripe directly, Stripe
    Billing with a subscription per workspace and signed webhooks into Cloud's entitlements,
    "including support to agentic payments": Bots paying or being paid on a customer's behalf
    through Stripe's agent-payment features, within limits the human sets. To be detailed by a
    follow-up RFC, after the brainstorm on the economics ((i)).
+   *Amended by [RFC 0025][25] (2026-11-09):* 0025 is that follow-up; inbound first, "being paid"
+   deferred (0025, (j)).
 10. **Moving a self-hosted instance into Cloud.** Recommended: a separate, later decision; linking
     moves no data ((j)).
 11. **DSH's authentication hook.** Recommended: the gate now; propose a hook upstream (as RFC 0023
@@ -853,6 +868,8 @@ principals are keyed by `(issuer, sub)`.
   (Arca, masks); [0011](0011-monorepo-parts-and-releases.md) (lanes, key rotation);
   [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) (proposals to DSH);
   [0005](0005-workspace-and-genie-projects.md) (the repos base, a different "workspace").
+- Amended by: [RFC 0025][25], Automagik Cloud economics (2026-11-09): open question 8 and
+  Decided 14's "being paid".
 - Code: `server/` (`Dockerfile`, `entrypoint.mjs`, `README.md`),
   `.github/workflows/server-image.yml`; `apps/desktop/src/dsh.js` (the launch URL, loopback),
   `apps/desktop/src/deeplink.js`, `apps/desktop/src/identity.js`.
@@ -861,3 +878,5 @@ principals are keyed by `(issuer, sub)`.
   Billing and its agent-payment features (a direction, detailed later); the left-bar mockup v7
   (private); the council report on this split (private). Concrete addresses, client ids and group
   names are kept in a private note, not here.
+
+[25]: 0025-cloud-economics.md
