@@ -75,7 +75,11 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
   state dir (see [What it stores](#what-it-stores)). A second run while one holds it skips: it
   prints `another sync is running; nothing to do` and exits 0.
 - **Exit status of `sync`:** 0 when it ran or had nothing to do, 2 on an error, 3 when the state
-  move blocks it (files in the new dir must be resolved by hand; one stderr line says which).
+  move blocks it (files in the new dir must be resolved by hand; one stderr line says which), 4
+  when a migration needs more free space than there is (twice the store's size; nothing was
+  changed), 12 when the store was written by a newer meter (nothing was read or written).
+- **`query`:** genie's read-only, fork-and-exit answer, contract 1 under `meter.usage@1` (RFC
+  0018 in automagik, schema and examples in `meter/schema/query/v1/`). See [Query](#query).
 - **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
   `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64`, plus `SHA256SUMS` and `install.sh`.
 
@@ -202,10 +206,14 @@ is opened, and the folder itself stays.
   one before it takes its lock. The next `sync` removes it.
 - If the new dir is the old dir under another name (a symlink), nothing moves.
 - With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
-- `status` reads the new dir only, under its `meter.lock`, read-only: it never changes the
-  schema or checkpoints the WAL. Before the first `sync` after an upgrade it reports
-  `synced: false`. While a sync runs, or while a move into the new dir has not finished, it opens
-  nothing and exits 2 with one stderr line.
+- `status` and `query` open the store read-only (`SQLITE_OPEN_READ_ONLY`): they never take
+  `meter.lock`, change the schema, checkpoint the WAL or create anything (SQLite may add its own
+  empty `-wal` and `-shm` companions). They read the new dir, else the old dir before the first
+  `sync` after an upgrade, and say which (`location`). While a sync runs they still read. While a
+  move into the new dir has not finished they open nothing (`status` exits 2, `query` exits 1)
+  with the reason. An old dir that holds usage the new store never counts (an older meter wrote to
+  the kept copies, or a store of its own is there) is reported, never folded in: `status` says so
+  in `legacy_store`, and `query` lists a `legacy-store` source.
 - `prices.json` (below) is not moved; the run that moves the store says so on stderr. Copy an
   override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
 harness, model, machine, repo, branch, hour, precision); the row id (`idempotency_key`) hashes all
@@ -251,6 +259,28 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
 - When the budget runs out, progress so far is committed and the rest waits for the next run. A
   killed run loses at most the chunk it was on and never counts anything twice.
 - A missing `hc` is not an error: the summary is just not published.
+- A store a newer meter wrote is refused (exit 12) before anything is opened for writing.
+- Before a reset drops a store's rows (an outdated store rebuilt, or a widened re-import), `sync`
+  checks that twice the store's size is free (else exit 4, nothing changed), then keeps a
+  generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of the store made with
+  `VACUUM INTO`, reopened and checked table by table against the store's row counts. Only one is
+  kept; the next sync that succeeds on the rebuilt store removes it.
+
+## Query
+
+```sh
+usagemeter query --repo example.com/acme/widgets --branch feat/x --branch fix/y --json
+```
+
+One call per project: one `--repo` (`host/owner/repo` as the meter normalizes a remote), up to 500
+`--branch` names (64 KiB together, 255 bytes each), `--json` required. `--window d1|d7|d30`
+(default `d30`), `--contract 1`, `--stale-after SECONDS` (default 7200). It prints one envelope
+(`meter/schema/query/v1/envelope.schema.json`) on stdout for every exit: 0 answered, 1 error, 2
+bad request, 10 no store, 11 no consistent snapshot within 2 s, 12 store from a newer meter, 13
+store only `sync` can migrate, 14 contract not served, 15 the answer would pass 448 KiB (refused
+whole, with how many rows would fit; it never pages or truncates). Each branch named gets one row:
+`measured`, `zero` only when the meter can vouch for it, else `missing`, `stale` or `unsupported`
+with the reason. Unknown is never 0. The query never syncs: only `sync` refreshes the store.
 
 ## The summary doc
 
