@@ -1579,9 +1579,14 @@ var KEY_PROPS = /^(?:[&!][^\s"'`]*[ \t]+){0,2}/;
 var KEY_BLOCK = /^[>|][-+0-9]*[ \t]*(?:#[^\r\n]*)?$/;
 function explicitKeyName(text) {
   const tail = text.slice(KEY_PROPS.exec(text)[0].length);
-  if (tail[0] === '"' || tail[0] === "'") {
-    const close = tail.indexOf(tail[0], 1);
-    return close >= 0 ? tail.slice(1, close) : tail.slice(1);
+  const quote = tail[0];
+  if (quote === '"' || quote === "'") {
+    for (let i = 1; i < tail.length; i++) {
+      if (quote === '"' && tail[i] === "\\") i++;
+      else if (tail[i] === quote && quote === "'" && tail[i + 1] === "'") i++;
+      else if (tail[i] === quote) return tail.slice(1, i);
+    }
+    return tail.slice(1);
   }
   return /^\S*/.exec(tail)[0];
 }

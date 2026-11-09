@@ -184,3 +184,29 @@ test('#530: a matching closing quote with no separator is still served whole', (
   assert.equal(redactText(input), input)
   assert.deepEqual(secretsIn(input), [])
 })
+
+// 7. An escaped quote inside a quoted name: a `\"` in double quotes and a doubled `''` in single
+// quotes do not end the name, so the credential word after them still claims the value, in each
+// #507 shape.
+const ESCAPED = [
+  ['an escaped quote mid-name', `"pa\\"${PASS}"`],
+  ['escaped quotes around the word', `"my \\"${PASS}\\""`],
+  ['a doubled single quote', `'it''s ${PASS}'`],
+]
+for (const [what, name] of ESCAPED) {
+  const shapes = [
+    ['no colon line', `? ${name}\n  ${INDENTED}\n`, [INDENTED]],
+    ['a gap line', `? ${name}\n  ${INDENTED}\n: ${VALUE}\n`, [INDENTED, VALUE]],
+    ['a map child', `? ${name}\n  staging: ${VALUE}\n`, [VALUE]],
+  ]
+  for (const [shape, input, values] of shapes) {
+    test(`#507: an escaped quote in a quoted name still hides and remembers (${what}, ${shape})`, () => {
+      const served = redactText(input)
+      const kept = secretsIn(input)
+      for (const value of values) {
+        assert.ok(!served.includes(value), 'the value is hidden')
+        assert.ok(kept.includes(value), 'the value is remembered')
+      }
+    })
+  }
+}
