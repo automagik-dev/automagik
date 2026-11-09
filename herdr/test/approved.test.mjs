@@ -12,7 +12,7 @@ import { basename, join } from "node:path";
 import { approveProject, approvedProxyEnabled, approvedProxyState, approvedRootOf,
   projectKey, readApprovedRecord, recordFileOf,
   sha256Of } from "../mods/am-sidebar/approved.js";
-import { scratchRoot } from "./scratch-project.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const HARNESS = new URL("./cli-approve-harness.mjs", import.meta.url).pathname;
@@ -38,13 +38,13 @@ const team = () => ({
 /** A temp project, data home, app home and pane temp folder. */
 function scene(t) {
   const root = scratchRoot(t, "hb-approved-");
-  const project = join(root, "proj"), data = join(root, "data"), home = join(root, "home");
+  const project = scratchProject(root, "proj", { bots: team() });
+  const data = join(root, "data"), home = join(root, "home");
   const app = join(root, "app"), paneTmp = join(root, "pane-tmp"), runtime = join(root, "run");
-  for (const dir of [join(project, ".herdr"), data, home, app, paneTmp, runtime]) {
+  for (const dir of [data, home, app, paneTmp, runtime]) {
     mkdirSync(dir, { recursive: true });
   }
   const bots = join(project, ".herdr", "bots.json");
-  writeFileSync(bots, `${JSON.stringify(team(), null, 2)}\n`);
   const env = { ...process.env, HOME: home, XDG_DATA_HOME: data, HERDR_APP_HOME: app,
     TMPDIR: paneTmp,
     USER: "tester", XDG_RUNTIME_DIR: runtime, GIT_CEILING_DIRECTORIES: root };

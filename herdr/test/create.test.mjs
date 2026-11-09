@@ -53,14 +53,7 @@ function makeCx() {
 let root, project;
 beforeEach((t) => {
   root = scratchRoot(t, "hb-create-");
-  const prevCeiling = process.env.GIT_CEILING_DIRECTORIES;
-  process.env.GIT_CEILING_DIRECTORIES = root;
-  t.after?.(() => {
-    if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
-    else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
-  });
-  project = scratchProject(root, "proj", { isGit: false });
-  mkdirSync(join(project, ".herdr"), { recursive: true });
+  project = scratchProject(root, "proj");
   state.appHome = join(root, "app");
   state.notes = [];
   state.closed = [];
@@ -557,6 +550,7 @@ test("pick popup: a long bot name truncates, so Edit / Start / Restart stay in t
 // The owner's case: a folder outside git (child) under a folder holding another project's
 // bots.json (repos). `project` is the parent here, seeded with its main bot.
 function underParent() {
+  rmSync(join(project, ".git"), { recursive: true, force: true });
   const child = join(project, "child");
   mkdirSync(child);
   return child;

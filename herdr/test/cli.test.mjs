@@ -39,7 +39,7 @@ const freshClaude = (words) => {
 };
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 import { readJsonLines } from "./log-lines.mjs";
-import { assertSafeTmpdir, scratchProject, scratchRoot } from "./scratch-project.mjs";
+import { assertScratchProject, scratchProject, scratchRoot, warnTmpdir } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -1461,7 +1461,7 @@ test("start on a CLI-only host (no pack, the am part installed) writes am's entr
 test("attach refuses a Claude pane whose session runs outside the project, naming both folders; nothing written", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/elsewhere" })] });
   s.seed(team());
-  const outside = scratchRoot(t, "hb-out-");
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -1793,7 +1793,7 @@ test("attach: a terminal argument that looks like an option is refused; a claude
   const opt = s.cli(["attach", "Genie", "--", "--all"]);
   assert.equal(opt.code, 2);
   assert.match(opt.err, /"--all" isn't a terminal/);
-  const outside = scratchRoot(t, "hb-out-");
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -4068,7 +4068,7 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
   }
 });
 
-test("#858: scratch helpers refuse TMPDIR inside a git checkout or .herdr project and keep outer bots.json untouched", (t) => {
+test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr/bots.json, warn once, and fail loudly on an unisolated folder", (t) => {
   const box = scratchRoot(t, "hb-858-");
   const outer = join(box, "outer");
   const nestedTmp = join(outer, ".tmp");
@@ -4088,21 +4088,52 @@ test("#858: scratch helpers refuse TMPDIR inside a git checkout or .herdr projec
   const linkToNested = join(box, "linked-tmp");
   symlinkSync(nestedTmp, linkToNested);
 
-  for (const unsafeTmp of [nestedTmp, join(herdrOnly, "tmp"), linkToNested]) {
-    assert.throws(() => assertSafeTmpdir(unsafeTmp), /TMPDIR/);
-    assert.throws(() => scratchRoot(t, "hb-unsafe-", { tmp: unsafeTmp }), /TMPDIR/);
+  for (const [unsafeTmp, expectedOuter] of [[nestedTmp, outer], [join(herdrOnly, "tmp"), herdrOnly], [linkToNested, outer]]) {
+    const lines = [];
+    const line = warnTmpdir(unsafeTmp, { once: false, write: (s) => lines.push(s) });
+    assert.equal(lines.length, 1);
+    assert.equal(line.trim().split("\n").length, 1, "one-line warning");
+    assert.match(line, new RegExp(`TMPDIR .*inside project/git folder ${expectedOuter}`));
   }
 
   const prevTmp = process.env.TMPDIR;
   try {
     process.env.TMPDIR = nestedTmp;
-    assert.throws(() => scene(t, { isGit: false }), /TMPDIR/);
+    const s = scene(t);
+    assert.equal(s.project.startsWith(nestedTmp), true, "scratch project lives under nested TMPDIR");
+    const created = s.cli(["create", "--name", "Solo", "--agent", "claude", "--json"]);
+    assert.equal(created.code, 0, created.err);
+    assert.equal(created.json().project, s.project);
+    const edited = s.cli(["edit", "Solo", "--role", "Inner role", "--json"]);
+    assert.equal(edited.code, 0, edited.err);
+    assert.equal(s.bots().bots[0].role, "Inner role");
+
+    const sPlain = scene(t, { isGit: false });
+    assert.equal(sPlain.project.startsWith(nestedTmp), true);
+    const createdPlain = sPlain.cli(["create", "--name", "PlainSolo", "--agent", "claude", "--json"]);
+    assert.equal(createdPlain.code, 0, createdPlain.err);
+    assert.equal(createdPlain.json().project, sPlain.project);
   } finally {
     if (prevTmp === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = prevTmp;
   }
-  assert.equal(readFileSync(outerBotsPath, "utf8"), outerBefore);
-  assert.equal(readFileSync(join(herdrOnly, ".herdr/bots.json"), "utf8"), outerBefore);
+
+  const missedGit = join(nestedTmp, "missed-git");
+  mkdirSync(missedGit, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedGit, { env: {} }),
+    new RegExp(`^Error: Scratch project ${missedGit} resolved to outer project ${outer} instead of itself \\(#858\\)\\.$`),
+  );
+
+  const missedHerdr = join(herdrOnly, "tmp", "missed-herdr");
+  mkdirSync(missedHerdr, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedHerdr, { ceiling: join(herdrOnly, "tmp"), env: {} }),
+    new RegExp(`^Error: Scratch project ${missedHerdr} resolved to outer project ${herdrOnly} instead of itself \\(#858\\)\\.$`),
+  );
+
+  assert.equal(readFileSync(outerBotsPath, "utf8"), outerBefore, "outer .herdr/bots.json is byte-identical");
+  assert.equal(readFileSync(join(herdrOnly, ".herdr/bots.json"), "utf8"), outerBefore, "herdr-only .herdr/bots.json is byte-identical");
 });
 
 test("#858: non-git scratch folder stops at the scene ceiling and create --project reports a resolved parent project", (t) => {

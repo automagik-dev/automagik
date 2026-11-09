@@ -364,8 +364,7 @@ test("briefing.mjs: silent exits — no HC_TERMINAL_ID, no CLAUDE_PROJECT_DIR, n
 
 test("briefing.mjs: silent for a bot of a project with no bots.json, and for a planned bot's id", async (t) => {
   const { root, main, tree, brief } = await scratch(t);
-  const other = join(root, "elsewhere");
-  mkdirSync(other);
+  const other = scratchProject(root, "elsewhere");
   assert.equal((await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: other })).stdout, "");
   const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
   fx.terminals.t1.labels.bot = ID.plan;

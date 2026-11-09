@@ -103,6 +103,7 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
 
   const server = net.createServer((sock) => {
     sock.connId = ++connections;
+    sock.unref();
     sockets.add(sock);
     let buffer = Buffer.alloc(0);
     let chain = Promise.resolve();
@@ -118,12 +119,20 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
       }
     });
     sock.on("close", () => sockets.delete(sock));
-    sock.on("error", () => { /* the proxy may destroy it on a cap */ });
+    sock.on("error", () => {
+      sockets.delete(sock);
+      sock.destroy();
+    });
   });
+  server.unref();
   await new Promise((resolve, reject) => {
-    server.once("error", reject);
+    const onError = (err) => {
+      try { server.close(); } catch { /* not listening */ }
+      reject(err);
+    };
+    server.once("error", onError);
     server.listen(socket, () => {
-      server.off("error", reject);
+      server.off("error", onError);
       resolve();
     });
   });
@@ -136,6 +145,7 @@ export async function startFakeCore({ socket, version = "0.1.14", terminals = []
     clearLog: () => { log.length = 0; },
     close: async () => {
       for (const sock of sockets) sock.destroy();
+      sockets.clear();
       await new Promise((resolve) => server.close(() => resolve()));
       try { unlinkSync(socket); } catch { /* already gone */ }
     },
