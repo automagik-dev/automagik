@@ -10,9 +10,10 @@
 //! - A line longer than `max_line` is skipped and counted, never buffered whole.
 //! - A dsh-tui session is multi-frame zstd: its offset is in the compressed file and always on a
 //!   frame boundary. Only whole frames are decoded, so a frame still being written (or cut short)
-//!   waits for the next run, like an unfinished line. A whole frame that does not decode, or
-//!   decodes to more than `max_line`, is skipped and counted; so is the rest of a file that stops
-//!   looking like zstd.
+//!   waits for the next run, like an unfinished line. Frames are decoded line by line: a line
+//!   longer than `max_line` is skipped and counted, never the rest of its frame. Bytes that are not
+//!   a frame (corruption, or a frame over `max_line` compressed) are skipped, counted once, up to
+//!   the next frame start, so one bad frame never drops the rest of the file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -58,7 +59,9 @@ fn mtime_ms(m: &fs::Metadata) -> i64 {
 /// Whether `path` is one of `source`'s logs: a `*.jsonl`, or a dsh-tui session file.
 fn is_log(source: Source, path: &Path) -> bool {
     match source {
-        Source::DshTui => path.file_name().is_some_and(|n| n == dsh_tui::FILE_NAME),
+        Source::DshTui => path
+            .file_name()
+            .is_some_and(|n| dsh_tui::FILE_NAMES.iter().any(|f| n == *f)),
         _ => path.extension().is_some_and(|x| x == "jsonl"),
     }
 }
@@ -313,7 +316,7 @@ where
         }
     }
     f.seek(SeekFrom::Start(state.offset))?;
-    if source == Source::DshTui {
+    if source == Source::DshTui && state.path.ends_with(".zstd") {
         return read_frames(state, &mut f, size_now, source, limits, commit);
     }
     let mut out = ReadOutcome::default();
@@ -398,6 +401,9 @@ where
     Ok(out)
 }
 
+/// A zstd frame's first four bytes.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
 /// What starts at the front of a buffer of zstd data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Frame {
@@ -436,7 +442,7 @@ fn frame_at(b: &[u8]) -> Frame {
             Frame::Partial
         };
     }
-    if magic != 0xFD2F_B528 {
+    if magic != u32::from_le_bytes(ZSTD_MAGIC) {
         return Frame::Bad;
     }
     let Some(&fhd) = b.get(4) else {
@@ -476,7 +482,28 @@ fn frame_at(b: &[u8]) -> Frame {
     }
 }
 
-/// Decodes one whole frame and parses its lines.
+/// Parses one decoded line.
+fn count_line(
+    line: &[u8],
+    source: Source,
+    ctx: &mut FileCtx,
+    events: &mut Vec<UsageEvent>,
+    health: &mut Health,
+) {
+    if line.is_empty() {
+        return;
+    }
+    match source.parse_line(line, ctx, events) {
+        Line::Ignored => {}
+        Line::Usage => health.usage_lines += 1,
+        Line::Bad => health.skipped_lines += 1,
+    }
+}
+
+/// Decodes one whole frame and parses its lines as they come out, holding at most one line: a
+/// line longer than `max_line` is skipped and counted, as in a JSONL file, and the rest of the
+/// frame is still read. A frame that stops decoding is counted as one skipped line; the lines
+/// decoded before the error stay counted. Returns whether the frame decoded to its end.
 fn parse_frame(
     frame: &[u8],
     source: Source,
@@ -484,22 +511,51 @@ fn parse_frame(
     ctx: &mut FileCtx,
     events: &mut Vec<UsageEvent>,
     health: &mut Health,
-) {
-    let mut text = Vec::new();
-    let decoded = ruzstd::decoding::StreamingDecoder::new(frame)
-        .map_err(io::Error::other)
-        .and_then(|d| d.take(max_line as u64 + 1).read_to_end(&mut text));
-    if decoded.is_err() || text.len() > max_line {
+) -> bool {
+    let Ok(mut decoder) = ruzstd::decoding::StreamingDecoder::new(frame) else {
         health.skipped_lines += 1;
-        return;
-    }
-    for line in text.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-        match source.parse_line(line, ctx, events) {
-            Line::Ignored => {}
-            Line::Usage => health.usage_lines += 1,
-            Line::Bad => health.skipped_lines += 1,
+        return false;
+    };
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut line: Vec<u8> = Vec::new();
+    let mut too_long = false;
+    loop {
+        let n = match decoder.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => {
+                health.skipped_lines += 1;
+                return false;
+            }
+        };
+        for piece in chunk[..n].split_inclusive(|b| *b == b'\n') {
+            let ends = piece.last() == Some(&b'\n');
+            let body = if ends {
+                &piece[..piece.len() - 1]
+            } else {
+                piece
+            };
+            if !too_long && line.len() + body.len() > max_line {
+                health.skipped_lines += 1;
+                too_long = true;
+                line.clear();
+            }
+            if !too_long {
+                line.extend_from_slice(body);
+            }
+            if ends {
+                if !too_long {
+                    count_line(&line, source, ctx, events, health);
+                }
+                line.clear();
+                too_long = false;
+            }
         }
     }
+    if !too_long {
+        count_line(&line, source, ctx, events, health);
+    }
+    true
 }
 
 /// [`read_file`] for a multi-frame zstd file: the same chunks, commits and size rule, over whole
@@ -518,8 +574,9 @@ where
     let mut out = ReadOutcome::default();
     let mut buf: Vec<u8> = Vec::new();
     let mut file_pos = state.offset;
-    // The file stopped looking like zstd (or holds a frame too large to buffer): drop the rest.
-    let mut junk = false;
+    // Bytes that are not a frame (or a frame too large to hold) are being skipped, up to the next
+    // frame start; they count as one skipped line.
+    let mut resync = false;
     let mut eof = false;
     loop {
         if limits.exhausted() {
@@ -544,12 +601,12 @@ where
         let mut events = Vec::new();
         let mut consumed = 0usize;
         let mut ctx = std::mem::take(&mut state.ctx);
-        while !junk && consumed < buf.len() {
+        while consumed < buf.len() {
             match frame_at(&buf[consumed..]) {
                 Frame::Whole { len, skippable } => {
-                    if !skippable {
-                        let frame = &buf[consumed..consumed + len];
-                        parse_frame(
+                    let frame = &buf[consumed..consumed + len];
+                    let decoded = skippable
+                        || parse_frame(
                             frame,
                             source,
                             limits.max_line,
@@ -557,20 +614,36 @@ where
                             &mut events,
                             &mut health,
                         );
-                    }
-                    consumed += len;
+                    // A frame that does not decode may not end where its headers said (a torn
+                    // frame's last block runs into the next frame): go on at the next frame start
+                    // inside it, if there is one.
+                    consumed += match decoded {
+                        true => len,
+                        false => {
+                            memchr::memmem::find(&frame[1..], &ZSTD_MAGIC).map_or(len, |i| 1 + i)
+                        }
+                    };
+                    resync = false;
                 }
                 Frame::Partial if buf.len() - consumed < limits.max_line => break,
                 Frame::Partial | Frame::Bad => {
-                    health.skipped_lines += 1;
-                    junk = true;
+                    if !resync {
+                        health.skipped_lines += 1;
+                        resync = true;
+                    }
+                    match memchr::memmem::find(&buf[consumed + 1..], &ZSTD_MAGIC) {
+                        Some(i) => consumed += 1 + i,
+                        None => {
+                            // A frame start can straddle the next read: keep its first 3 bytes.
+                            let keep = if eof { 0 } else { 3 };
+                            consumed = consumed.max(buf.len().saturating_sub(keep));
+                            break;
+                        }
+                    }
                 }
             }
         }
         state.ctx = ctx;
-        if junk {
-            consumed = buf.len();
-        }
         if consumed > 0 {
             advance(state, &mut buf, consumed, &mut out);
             commit(state, events, health)?;
@@ -659,10 +732,35 @@ mod tests {
         // The hand-made frame decodes to what it holds.
         let mut ctx = FileCtx::default();
         let (mut ev, mut h) = (Vec::new(), Health::default());
-        parse_frame(&f, Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h);
+        assert!(parse_frame(
+            &f,
+            Source::DshTui,
+            1 << 20,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
         assert_eq!(h, Health::default());
-        // A frame that decodes to more than max_line is skipped and counted.
-        parse_frame(&f, Source::DshTui, 2, &mut ctx, &mut ev, &mut h);
+        // A line longer than max_line ("xxx" over 2) is skipped and counted; the frame still
+        // decodes to its end.
+        assert!(parse_frame(
+            &f,
+            Source::DshTui,
+            2,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
         assert_eq!(h.skipped_lines, 1);
+        // Bytes that are not a frame do not decode.
+        assert!(!parse_frame(
+            b"junk",
+            Source::DshTui,
+            1 << 20,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
+        assert_eq!(h.skipped_lines, 2);
     }
 }

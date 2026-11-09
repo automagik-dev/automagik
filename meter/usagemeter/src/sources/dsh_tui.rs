@@ -1,15 +1,24 @@
 //! dsh-tui sessions (DeepSeek Harness):
 //! `$DSH_HOME/sessions/<cwd key>/<session>/session.v4.jsonl.zstd`, `$DSH_HOME` being `~/.dsh`
-//! when unset.
+//! when unset. A profile with compression off writes the same rows to `session.v4.jsonl`.
 //!
-//! - The file is append-only zstd: each write adds one or more whole frames, and every frame ends
-//!   on a line end. [`crate::scan`] decodes complete frames only and keeps the file offset on a
+//! - The `.zstd` file is append-only: each write adds one or more whole frames, and every frame
+//!   ends on a line end. [`crate::scan`] decodes whole frames only and keeps the file offset on a
 //!   frame boundary, so a frame still being written is left for the next run.
+//! - Other format generations (`session.v<N>.jsonl[.zstd]`, N not 4) are not read: when one is the
+//!   newest in its session folder, the source reports `unsupported` ([`unread_generations`]).
 //! - The first line (`type: "session"`, the only line with no `seq`) carries the session `id` (also
-//!   the folder name), the `cwd` and, for a sub-agent, its `parentSession`. Every other line has a
-//!   `seq` that counts up by one from 0, and a `time` in epoch milliseconds. The highest `seq`
-//!   counted is kept in the file context: a line at or below it is never counted again, and the
-//!   dedupe key is `dsh-tui|<session>|<seq>`.
+//!   the folder name), the `cwd`, `isSeeded` and, for a sub-agent, its `parentSession`. Every other
+//!   line has a `seq` that counts up by one from 0, and a `time` in epoch milliseconds. The highest
+//!   `seq` counted is kept in the file context: a line at or below it is never counted again.
+//! - A call's identity is its own id, never its place in a file: `data.message.id` for a message,
+//!   `data.compactionId` for a compaction summary (UUIDs in every real row). A forked session
+//!   starts with a copy of its parent's rows, ids, usage and `seq` included, then a
+//!   `session/end-seed {inherited: true}` marker; the copies carry the parent's ids, so the store's
+//!   dedupe set counts each call once, whichever file is read first, and still once when the
+//!   parent's file is gone. A `session/end-seed {}` marks a resume inside the session's own log
+//!   and changes nothing. A usage line with no id falls back to `<session>|<seq>`; in a seeded
+//!   session such a line could be a copy, so it is skipped and counted, never guessed.
 //! - Two line types carry `data.usage` = {inputTokens, outputTokens, cacheReadTokens,
 //!   cacheWriteTokens, totalTokens}; `inputTokens` is already uncached (`totalTokens` is the sum of
 //!   the other four):
@@ -35,8 +44,66 @@ use super::{FileCtx, Line, clip, from_line};
 use crate::event::{Precision, Tokens, UsageEvent};
 
 pub const HARNESS: &str = "dsh-tui";
-/// The one session file name read.
-pub const FILE_NAME: &str = "session.v4.jsonl.zstd";
+/// The session file names read: the v4 format, compressed (the default) or plain.
+pub const FILE_NAMES: [&str; 2] = ["session.v4.jsonl.zstd", "session.v4.jsonl"];
+/// The format generation read.
+const GENERATION: u32 = 4;
+
+/// The format generation of a session file name: `session.v<N>.jsonl` or `….jsonl.zstd`.
+fn generation_of(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("session.v")?;
+    let n = rest
+        .strip_suffix(".jsonl.zstd")
+        .or_else(|| rest.strip_suffix(".jsonl"))?;
+    // DSH's own rule: no leading zero, no version 0 (neither names a committed generation).
+    if n.is_empty() || n.len() > 6 || n.starts_with('0') || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    n.parse().ok()
+}
+
+/// Why some sessions under `root` (`$DSH_HOME/sessions`) go uncounted, or None when none do: a
+/// session folder whose newest generation is not the one read. DSH writes a new generation next
+/// to the old file, so a v5 file means the v4 one stopped growing; an older generation next to a
+/// v4 file is the copy it was migrated from and is left alone.
+pub fn unread_generations(root: &std::path::Path) -> Option<String> {
+    let mut found: std::collections::BTreeMap<u32, usize> = Default::default();
+    for key in std::fs::read_dir(root).ok()?.flatten() {
+        if !key.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        for session in std::fs::read_dir(key.path())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if !session.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            let newest = std::fs::read_dir(session.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|f| f.file_type().is_ok_and(|t| t.is_file()))
+                .filter_map(|f| generation_of(f.file_name().to_str()?))
+                .max();
+            if let Some(n) = newest.filter(|n| *n != GENERATION) {
+                *found.entry(n).or_default() += 1;
+            }
+        }
+    }
+    if found.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = found
+        .iter()
+        .map(|(v, n)| format!("{n} in format v{v}"))
+        .collect();
+    Some(format!(
+        "sessions this meter cannot read (it reads format v{GENERATION} only): {}",
+        list.join(", ")
+    ))
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,18 +115,22 @@ struct Row {
     id: Option<String>,
     cwd: Option<String>,
     parent_session: Option<String>,
+    is_seeded: Option<bool>,
     data: Option<Data>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Data {
     usage: Option<Usage>,
     model: Option<String>,
     message: Option<Message>,
+    compaction_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct Message {
+    id: Option<String>,
     source: Option<MessageSource>,
 }
 
@@ -113,12 +184,19 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
             if let Some(p) = row.parent_session.as_deref() {
                 ctx.parent_session = Some(clip(p, 128));
             }
+            ctx.seeded = row.is_seeded == Some(true);
         }
         return Line::Ignored;
     };
-    let model = match row.ty.as_deref() {
-        Some("assistant/message") => data.message.and_then(|m| m.source).and_then(|s| s.model),
-        Some("compaction/summary") => data.model,
+    let (kind, id, model) = match row.ty.as_deref() {
+        Some("assistant/message") => {
+            let m = data.message.unwrap_or(Message {
+                id: None,
+                source: None,
+            });
+            ("msg", m.id, m.source.and_then(|s| s.model))
+        }
+        Some("compaction/summary") => ("compaction", data.compaction_id, data.model),
         _ => return Line::Ignored,
     };
     let Some(usage) = data.usage else {
@@ -133,6 +211,13 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
     let Some(ts_ms) = row.time.filter(|t| t.is_finite() && *t > 0.0) else {
         return Line::Bad;
     };
+    let session = ctx.session.clone();
+    let key = match id.as_deref().filter(|i| !i.is_empty()) {
+        Some(id) => format!("{HARNESS}|{kind}|{}", clip(id, 128)),
+        // No id in a seeded session: the line may be a copy of the parent's.
+        None if ctx.seeded => return Line::Bad,
+        None => format!("{HARNESS}|{}|{seq}", session.as_deref().unwrap_or("?")),
+    };
     ctx.seq = Some(seq);
     let split = Tokens {
         input_uncached: usage.input_tokens,
@@ -144,8 +229,6 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         unsplit: 0,
     };
     let rest = usage.total_tokens - split.split_total();
-    let session = ctx.session.clone();
-    let key = format!("{HARNESS}|{}|{seq}", session.as_deref().unwrap_or("?"));
     let base = UsageEvent {
         dedupe_key: key.clone(),
         ts_ms: ts_ms as i64,
@@ -220,7 +303,7 @@ mod tests {
             ]
         );
         assert_eq!(ev.len(), 2);
-        assert_eq!(ev[0].dedupe_key, "dsh-tui|sess-a|0");
+        assert_eq!(ev[0].dedupe_key, "dsh-tui|msg|m0");
         assert_eq!(ev[0].model, "model-d");
         assert_eq!(ev[0].cwd.as_deref(), Some("/work/app"));
         assert_eq!(ev[0].ts_ms, 1_767_261_660_000);
@@ -236,7 +319,7 @@ mod tests {
         assert_eq!(ev[0].reported_usd, None);
         assert_eq!(ev[0].branch, None);
         // The compaction call counts once, under its own model, apart from what it shadows.
-        assert_eq!(ev[1].dedupe_key, "dsh-tui|sess-a|1");
+        assert_eq!(ev[1].dedupe_key, "dsh-tui|compaction|c1");
         assert_eq!(ev[1].model, "model-e");
         assert_eq!(ev[1].tokens.total(), 450);
         assert_eq!(ctx.seq, Some(1));
@@ -254,7 +337,44 @@ mod tests {
         let (r, ev) = run(&[&msg(4, u), &msg(5, u), &msg(6, u)], &mut ctx);
         assert_eq!(r, [Line::Ignored, Line::Ignored, Line::Usage]);
         assert_eq!(ev.len(), 1);
-        assert_eq!(ev[0].dedupe_key, "dsh-tui|sess-a|6");
+        assert_eq!(ev[0].dedupe_key, "dsh-tui|msg|m6");
+    }
+
+    #[test]
+    fn a_call_is_known_by_its_own_id() {
+        let mut ctx = FileCtx::default();
+        run(&[HEADER], &mut ctx);
+        let no_id = r#"{"type":"assistant/message","seq":7,"time":1,"data":{"message":{"source":{"model":"model-d"}},"usage":{"inputTokens":1,"totalTokens":1}}}"#;
+        let (_, ev) = run(
+            &[&msg(3, r#"{"inputTokens":1,"totalTokens":1}"#), no_id],
+            &mut ctx,
+        );
+        assert_eq!(ev[0].dedupe_key, "dsh-tui|msg|m3");
+        // No id: the session and seq stand in.
+        assert_eq!(ev[1].dedupe_key, "dsh-tui|sess-a|7");
+        // In a seeded session a line with no id could be a copy of the parent's: skipped.
+        let seeded = HEADER.replace(r#""isSeeded":false"#, r#""isSeeded":true"#);
+        let mut ctx = FileCtx::default();
+        let (r, ev) = run(&[&seeded, no_id], &mut ctx);
+        assert!(ctx.seeded);
+        assert_eq!(r, [Line::Ignored, Line::Bad]);
+        assert!(ev.is_empty());
+    }
+
+    #[test]
+    fn generations_are_read_from_canonical_names_only() {
+        assert_eq!(generation_of("session.v4.jsonl.zstd"), Some(4));
+        assert_eq!(generation_of("session.v12.jsonl"), Some(12));
+        for name in [
+            "session.v04.jsonl.zstd",
+            "session.v0.jsonl",
+            "session.v.jsonl",
+            "session.v4.json",
+            "session.v4.jsonl.zstd.tmp",
+            "session.lock",
+        ] {
+            assert_eq!(generation_of(name), None, "{name}");
+        }
     }
 
     #[test]
@@ -294,7 +414,7 @@ mod tests {
         );
         assert_eq!(r, [Line::Usage]);
         assert_eq!(ev.len(), 2);
-        assert_eq!(ev[0].dedupe_key, "dsh-tui|sess-a|1|rest");
+        assert_eq!(ev[0].dedupe_key, "dsh-tui|msg|m1|rest");
         assert_eq!(ev[0].precision, Precision::TotalOnly);
         assert_eq!(ev[0].tokens.unsplit, 47);
         assert_eq!(ev[1].precision, Precision::Exact);

@@ -65,6 +65,9 @@ pub struct FileCtx {
     /// A dsh-tui session: the highest `seq` counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
+    /// A dsh-tui session seeded from another (a fork): its first rows are copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seeded: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

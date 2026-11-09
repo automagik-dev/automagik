@@ -42,17 +42,46 @@ fn usage(input: i64, output: i64, read: i64) -> String {
     )
 }
 
-fn msg(seq: i64, input: i64, output: i64, read: i64) -> String {
+/// An assistant message with this id (None: a row with no id).
+fn call(seq: i64, id: Option<&str>, input: i64, output: i64, read: i64) -> String {
+    let id = id.map(|i| format!(r#","id":"{i}""#)).unwrap_or_default();
     format!(
-        r#"{{"type":"assistant/message","seq":{seq},"time":{},"surfaceOp":"append","data":{{"turn":1,"step":{seq},"message":{{"role":"assistant","content":[{{"type":"text","text":"FAKE-ANSWER"}}],"source":{{"kind":"llm","provider":"example","model":"model-d"}},"id":"m-{seq}"}},"usage":{},"stream":[]}}}}"#,
+        r#"{{"type":"assistant/message","seq":{seq},"time":{},"surfaceOp":"append","data":{{"turn":1,"step":{seq},"message":{{"role":"assistant","content":[{{"type":"text","text":"FAKE-ANSWER"}}],"source":{{"kind":"llm","provider":"example","model":"model-d"}}{id}}},"usage":{},"stream":[]}}}}"#,
         at(),
         usage(input, output, read)
     )
 }
 
+fn msg(seq: i64, input: i64, output: i64, read: i64) -> String {
+    call(seq, Some(&format!("{SESSION}-m{seq}")), input, output, read)
+}
+
+fn header_of(session: &str, seeded: bool) -> String {
+    format!(
+        r#"{{"type":"session","version":4,"id":"{session}","createdAt":{},"cwd":"/work/app","isSeeded":{seeded},"delegationDepth":0}}"#,
+        at()
+    )
+}
+
+fn end_seed(seq: i64, inherited: bool) -> String {
+    let data = if inherited {
+        r#"{"inherited":true}"#
+    } else {
+        "{}"
+    };
+    format!(
+        r#"{{"type":"session/end-seed","seq":{seq},"time":{},"data":{data}}}"#,
+        at()
+    )
+}
+
+fn file_of(env: &Env, session: &str, name: &str) -> PathBuf {
+    env.dsh(&format!("-work-app/{session}/{name}"))
+}
+
 fn compaction(seq: i64, input: i64, output: i64) -> String {
     format!(
-        r#"{{"type":"compaction/summary","seq":{seq},"time":{},"data":{{"compactionId":"c-1","summary":[{{"text":"FAKE-SUMMARY"}}],"shadowedSeqs":[1,2],"shadowedTokenCount":999,"provider":"example","model":"model-e","maxTokens":100,"usage":{}}}}}"#,
+        r#"{{"type":"compaction/summary","seq":{seq},"time":{},"data":{{"compactionId":"c-{seq}","summary":[{{"text":"FAKE-SUMMARY"}}],"shadowedSeqs":[1,2],"shadowedTokenCount":999,"provider":"example","model":"model-e","maxTokens":100,"usage":{}}}}}"#,
         at(),
         usage(input, output, 0)
     )
@@ -249,20 +278,209 @@ fn unknown_or_missing_usage_is_never_guessed() {
 }
 
 #[test]
-fn a_file_that_stops_being_zstd_is_skipped_once() {
+fn a_bad_frame_skips_only_itself() {
     let env = Env::new();
     let p = session_file(&env);
     append(&p, &frame(&[header(), msg(0, 10, 20, 300)]));
+    // Not a frame, then a frame whose header is cut short (a torn write), then good frames.
     append(&p, b"not a zstd frame at all");
+    let torn = frame(&[msg(1, 99, 99, 99)]);
+    append(&p, &torn[..torn.len() / 2]);
+    append(&p, &frame(&[msg(2, 4, 5, 600)]));
+    append(&p, &frame(&[msg(3, 1, 2, 700)]));
     let r = env.run(&env.opts());
-    assert_eq!(r.health.events, 1);
-    assert_eq!(r.health.skipped_lines, 1);
-    append(&p, &frame(&[msg(1, 4, 5, 600)]));
-    // The offset moved past the junk: a frame appended after it is read, the junk is not again.
+    assert_eq!(r.health.events, 3);
+    // Two bad stretches (the junk, and the torn frame that ran into the next one), each once.
+    assert_eq!(r.health.skipped_lines, 2);
+    let mut want = tokens(10, 20, 300);
+    want.add(&tokens(4, 5, 600));
+    want.add(&tokens(1, 2, 700));
+    assert_eq!(dsh_totals(&env), want);
+    // Junk at the end is passed over; a frame appended after it is read, the junk not again.
+    append(&p, b"more junk");
     let r = env.run(&env.opts());
-    assert_eq!(r.health.skipped_lines, 0);
-    assert_eq!(r.health.events, 1);
+    assert_eq!((r.health.events, r.health.skipped_lines), (0, 1));
+    append(&p, &frame(&[msg(4, 7, 8, 900)]));
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.skipped_lines), (1, 0));
+    want.add(&tokens(7, 8, 900));
+    assert_eq!(dsh_totals(&env), want);
+}
+
+#[test]
+fn an_over_long_line_drops_only_itself() {
+    let env = Env::new();
+    let p = session_file(&env);
+    let long = format!(
+        r#"{{"type":"tool/result","seq":1,"time":{},"data":{{"pad":"{}"}}}}"#,
+        at(),
+        "x".repeat(5000)
+    );
+    append(
+        &p,
+        &frame(&[header(), msg(0, 10, 20, 300), long, msg(2, 4, 5, 600)]),
+    );
+    let mut o = env.opts();
+    o.max_line = 4096;
+    let r = env.run(&o);
+    assert_eq!((r.health.events, r.health.skipped_lines), (2, 1));
     let mut want = tokens(10, 20, 300);
     want.add(&tokens(4, 5, 600));
     assert_eq!(dsh_totals(&env), want);
+}
+
+/// A parent session and its fork: the child's file starts with a copy of the parent's rows (ids,
+/// usage and seq), then the inherited marker and the child's own call. Parent 100 + 200, child 7.
+fn fork_files(env: &Env) -> (PathBuf, Vec<u8>, PathBuf, Vec<u8>) {
+    let copied = [
+        call(0, Some("id-a"), 100, 0, 0),
+        step(1),
+        call(2, Some("id-b"), 200, 0, 0),
+    ];
+    let mut parent = vec![header_of("sess-parent", false)];
+    parent.extend(copied.iter().cloned());
+    let mut child = vec![header_of("sess-child", true)];
+    child.extend(copied.iter().cloned());
+    child.extend([end_seed(3, true), step(4), call(5, Some("id-c"), 7, 0, 0)]);
+    (
+        file_of(env, "sess-parent", "session.v4.jsonl.zstd"),
+        frame(&parent),
+        file_of(env, "sess-child", "session.v4.jsonl.zstd"),
+        frame(&child),
+    )
+}
+
+#[test]
+fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
+    let total = |env: &Env| dsh_totals(env).input_uncached;
+    // Parent read first, the child in a later run.
+    let env = Env::new();
+    let (pp, pb, cp, cb) = fork_files(&env);
+    append(&pp, &pb);
+    env.run(&env.opts());
+    append(&cp, &cb);
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (1, 2));
+    assert_eq!(total(&env), 307);
+    // The child first (its parent's file not there yet, or gone): the copies count once.
+    let env = Env::new();
+    let (pp, pb, cp, cb) = fork_files(&env);
+    append(&cp, &cb);
+    env.run(&env.opts());
+    assert_eq!(total(&env), 307);
+    append(&pp, &pb);
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (0, 2));
+    assert_eq!(total(&env), 307);
+    // Both in one run.
+    let env = Env::new();
+    let (pp, pb, cp, cb) = fork_files(&env);
+    append(&pp, &pb);
+    append(&cp, &cb);
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (3, 2));
+    assert_eq!(total(&env), 307);
+}
+
+#[test]
+fn two_sessions_with_the_same_seq_both_count() {
+    let env = Env::new();
+    for (session, id) in [("sess-one", "id-one"), ("sess-two", "id-two")] {
+        let p = file_of(&env, session, "session.v4.jsonl.zstd");
+        append(
+            &p,
+            &frame(&[header_of(session, false), call(0, Some(id), 10, 0, 0)]),
+        );
+    }
+    // Rows with no id fall back to session and seq: two sessions still never collide.
+    for session in ["sess-three", "sess-four"] {
+        let p = file_of(&env, session, "session.v4.jsonl.zstd");
+        append(
+            &p,
+            &frame(&[header_of(session, false), call(0, None, 1, 0, 0)]),
+        );
+    }
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.duplicates), (4, 0));
+    assert_eq!(dsh_totals(&env).input_uncached, 22);
+}
+
+#[test]
+fn a_row_with_no_id_in_a_seeded_session_is_skipped_not_guessed() {
+    let env = Env::new();
+    let p = file_of(&env, "sess-child", "session.v4.jsonl.zstd");
+    append(
+        &p,
+        &frame(&[
+            header_of("sess-child", true),
+            call(0, None, 100, 0, 0),
+            end_seed(1, true),
+            call(2, Some("id-own"), 7, 0, 0),
+        ]),
+    );
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.skipped_lines), (1, 1));
+    assert_eq!(dsh_totals(&env).input_uncached, 7);
+}
+
+#[test]
+fn a_resume_marker_changes_nothing() {
+    let env = Env::new();
+    let p = session_file(&env);
+    append(
+        &p,
+        &frame(&[
+            header(),
+            msg(0, 10, 0, 0),
+            end_seed(1, false),
+            msg(2, 4, 0, 0),
+        ]),
+    );
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 2);
+    assert_eq!(dsh_totals(&env).input_uncached, 14);
+}
+
+#[test]
+fn a_plain_v4_file_is_read_too() {
+    let env = Env::new();
+    let p = file_of(&env, SESSION, "session.v4.jsonl");
+    fs::write(&p, format!("{}\n{}\n", header(), msg(0, 10, 20, 300))).unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1);
+    assert_eq!(dsh_totals(&env), tokens(10, 20, 300));
+    assert_eq!(r.summary.unwrap()["sources"]["dsh-tui"]["status"], "ok");
+}
+
+#[test]
+fn a_session_in_another_format_makes_the_source_unsupported() {
+    let env = Env::new();
+    append(
+        &session_file(&env),
+        &frame(&[header(), msg(0, 10, 20, 300)]),
+    );
+    // An older generation next to a v4 file is what it was migrated from: still ok.
+    fs::write(file_of(&env, SESSION, "session.v3.jsonl.zstd"), b"old").unwrap();
+    let r = env.run(&env.opts());
+    let doc = r.summary.unwrap();
+    assert_eq!(doc["sources"]["dsh-tui"]["status"], "ok", "{doc}");
+    // A newer generation, or an older one with no v4 file: its usage is not read.
+    fs::write(file_of(&env, SESSION, "session.v5.jsonl.zstd"), b"new").unwrap();
+    fs::write(file_of(&env, "sess-old", "session.v2.jsonl"), b"old").unwrap();
+    let r = env.run(&env.opts());
+    let doc = r.summary.unwrap();
+    let src = &doc["sources"]["dsh-tui"];
+    assert_eq!(src["status"], "unsupported", "{doc}");
+    let reason = src["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("1 in format v2, 1 in format v5"),
+        "{reason}"
+    );
+    // The v4 usage is still counted.
+    assert_eq!(dsh_totals(&env), tokens(10, 20, 300));
+    // Once the newer file is gone, the source is ok again.
+    fs::remove_file(file_of(&env, SESSION, "session.v5.jsonl.zstd")).unwrap();
+    fs::remove_file(file_of(&env, "sess-old", "session.v2.jsonl")).unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!(r.summary.unwrap()["sources"]["dsh-tui"]["status"], "ok");
 }
