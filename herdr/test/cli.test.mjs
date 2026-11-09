@@ -28,6 +28,7 @@ const RUNTIME = process.env.AUTOMAGIK_HERDR_TEST_RUNTIME || process.execPath;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
 const FAKE_APP = new URL("./fake-herdr-app.mjs", import.meta.url).pathname;
 const FAKE_PGREP = new URL("./fake-pgrep.mjs", import.meta.url).pathname;
+const FAKE_AGY = new URL("./fake-agy.mjs", import.meta.url).pathname;
 const FAKE_GIT = new URL("./fake-git-trim.mjs", import.meta.url).pathname;
 const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
@@ -55,6 +56,10 @@ function scene(t, { terminals = [], briefing = true, window = { down: true }, tr
   if (trimsGit) exe(join(bin, "git"), `#!/bin/sh\nREAL_GIT="${REAL_GIT}" exec "${process.execPath}" "${FAKE_GIT}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
+  // A stand-in agy (#793): its model table comes from the 1.5.3 fixture, never the host's CLI.
+  exe(join(bin, "agy"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_AGY}" "$@"\n`);
+  const agyLog = join(root, "agy.log");
+  writeFileSync(agyLog, "");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "sonnet" }));
@@ -69,7 +74,7 @@ function scene(t, { terminals = [], briefing = true, window = { down: true }, tr
   writeFileSync(appState, JSON.stringify(window));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", AGY_FAKE_LOG: agyLog };
   delete env.HC_TERMINAL_ID;
   delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
@@ -80,13 +85,14 @@ function scene(t, { terminals = [], briefing = true, window = { down: true }, tr
     execFile(RUNTIME, [CLI, ...args], { cwd: project, env: { ...env, ...extra }, encoding: "utf8" }, (e, out, err) => resolve({ code: e ? e.code : 0, out, err }));
   });
   const calls = () => readJsonLines(logPath);
+  const agyCalls = () => readFileSync(agyLog, "utf8").split("\n").filter(Boolean);
   const hcState = () => JSON.parse(readFileSync(statePath, "utf8"));
   const appCalls = () => readJsonLines(appLog);
   const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, cliAsync, calls, hcState, appCalls, windowNow, bots, botsPath, seed };
+  return { root, project, app, home, cli, cliAsync, calls, agyCalls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -612,6 +618,79 @@ test("create: lead, category, planned, look, model pin from the agent's list onl
   assert.equal(p.agent, undefined);
   assert.equal(s.cli(["create", "--name", "Nobody"]).code, 2, "no agent and not planned");
   assert.deepEqual(checkBots(s.bots()), []);
+});
+
+test("Antigravity (#793): a pin comes from `agy models`, cached once; the settings label is refused", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const cache = join(s.app, "automagik-herdr/antigravity-models.json");
+  assert.equal(existsSync(cache), false);
+  const made = s.cli(["create", "--name", "Ag", "--agent", "antigravity", "--model", "gemini-4-argon-high", "--json"]);
+  assert.equal(made.code, 0, made.err);
+  assert.equal(s.bots().bots.find((b) => b.id === made.json().id).model, "gemini-4-argon-high");
+  assert.deepEqual(s.agyCalls(), ["models"], "one refresh wrote the cache");
+  const written = JSON.parse(readFileSync(cache, "utf8"));
+  assert.ok(written.models.some((m) => m.id === "claude-sonnet-5-5-high"), "the fixture table is cached");
+  assert.deepEqual(readdirSync(join(s.app, "automagik-herdr")).filter((n) => n.startsWith("antigravity-models.json")),
+    ["antigravity-models.json"], "the temp file was renamed into place");
+  // The cache is fresh: a second CLI run reads it and never runs agy.
+  const second = s.cli(["create", "--name", "Ag2", "--agent", "antigravity", "--model", "claude-opus-5-5-medium", "--json"]);
+  assert.equal(second.code, 0, second.err);
+  assert.deepEqual(s.agyCalls(), ["models"], "no second `agy models`");
+  // The settings.json label is not a --model value; the refusal lists the ids it may take.
+  const label = s.cli(["create", "--name", "Ag3", "--agent", "antigravity", "--model", "Gemini 4 Argon (High)"]);
+  assert.equal(label.code, 1);
+  assert.match(label.err, /isn't a known antigravity model\. Pick one of: .*gemini-4-argon-high/);
+  assert.match(label.err, /claude-opus-5-5-high/, "the Claude ids are offered too");
+  // Editing a bot onto antigravity keeps or replaces its pin only from that list.
+  const edit = s.cli(["edit", "Genie", "--agent", "antigravity"]);
+  assert.equal(edit.code, 0, edit.err);
+  assert.equal(s.bots().bots[0].agent, "antigravity");
+});
+
+test("Antigravity (#793): a pin already in the cache starts without running agy, even when the cache is old", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].model = "gemini-4-argon-high";
+  s.seed(f);
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s.app, "automagik-herdr/antigravity-models.json"), JSON.stringify({
+    version: 1, source: "agy models", at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    models: [{ id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" }],
+  }));
+  const r = s.cli(["start", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.agyCalls(), [], "a cached pin never refreshes, old cache and all");
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--model", "gemini-4-argon-high"]);
+  // The pin is not in the old cache: one refresh, then the refusal names the list it found.
+  const s2 = scene(t);
+  const f2 = team();
+  f2.bots[0].agent = "antigravity";
+  f2.bots[0].model = "gemini-9-nope";
+  s2.seed(f2);
+  mkdirSync(join(s2.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s2.app, "automagik-herdr/antigravity-models.json"), JSON.stringify({
+    version: 1, source: "agy models", at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    models: [{ id: "claude-opus-5-5-low", label: "Claude Opus 5.5 (Low)" }],
+  }));
+  const refused = s2.cli(["start", "Genie"]);
+  assert.equal(refused.code, 1);
+  assert.deepEqual(s2.agyCalls(), ["models"], "an unlisted pin refreshes once");
+  assert.match(refused.err, /pinned to "gemini-9-nope"/);
+});
+
+test("Antigravity (#793): agy missing means no list, a clear refusal, and nothing started or written", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  rmSync(join(s.root, "bin", "agy"));
+  const before = readFileSync(s.botsPath, "utf8");
+  const env = { PATH: `${join(s.root, "bin")}:/usr/bin:/bin` };
+  const r = s.cli(["create", "--name", "Ag", "--agent", "antigravity", "--model", "gemini-4-argon-high"], { env });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /There is no list of antigravity models to pin from \(agy models has listed none: agy may not be installed, signed in, or cached yet\)/);
+  assert.equal(existsSync(join(s.app, "automagik-herdr/antigravity-models.json")), false);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before, "nothing was written");
 });
 
 // ---- edit, rm, category ----

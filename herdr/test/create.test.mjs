@@ -5,13 +5,14 @@ import { registerHooks } from "node:module";
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./form-herdr-stub.mjs"), "fs/promises": here("./fs-stub.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
+const FAKE_AGY = new URL("./fake-agy.mjs", import.meta.url).pathname;
 const fromPack = (context) => context.parentURL?.includes("/mods/am-sidebar/");
 registerHooks({
   resolve: (specifier, context, next) => (stubs[specifier] && fromPack(context) ? { url: stubs[specifier], shortCircuit: true } : next(specifier, context)),
@@ -31,7 +32,10 @@ const AGENTS = [
   { key: "omp", name: "Oh My Pi", installed: true, icon: "icons/pi.svg", tint: true },
   { key: "kimi", name: "Kimi", installed: false, icon: "icons/kimi.svg", tint: false },
   { key: "amp", name: "Amp", installed: false, icon: "icons/amp.svg", tint: false },
+  { key: "antigravity", name: "Antigravity", installed: false, icon: null, tint: false },
 ];
+// The fixture with Antigravity's installed flag set, no duplicate entry.
+const withAntigravity = (installed) => AGENTS.map((a) => (a.key === "antigravity" ? { ...a, installed } : a));
 
 function makeCx() {
   const cx = {
@@ -68,6 +72,13 @@ beforeEach((t) => {
 });
 
 const seed = (bots, extra = {}) => writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots, ...extra }, null, 2)}\n`);
+// The pack's Antigravity model cache (modelCache.js) in the test app home: opening a form on
+// Antigravity then reads this list and never runs the host's agy. A test that deletes it and
+// puts a fake agy on PATH watches the one refresh.
+const seedAgModels = (models = [{ id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" }, { id: "claude-sonnet-5-5-high", label: "Claude Sonnet 5.5 (High)" }]) => {
+  mkdirSync(join(state.appHome, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(state.appHome, "automagik-herdr/antigravity-models.json"), JSON.stringify({ version: 1, source: "agy models", at: new Date().toISOString(), models }));
+};
 const stored = () => JSON.parse(readFileSync(join(project, ".herdr/bots.json"), "utf8"));
 async function open(props) {
   const cx = makeCx();
@@ -94,10 +105,10 @@ test("Runs on: installed agents only, plus the bot's own agent when it isn't ins
 });
 
 test("Runs on: gemini is never offered; a gemini bot opens on Antigravity", async () => {
-  state.agents = [...AGENTS,
-    { key: "gemini", name: "Gemini", installed: true, icon: "icons/gemini.svg", tint: false },
-    { key: "antigravity", name: "Antigravity", installed: false, icon: "icons/antigravity.svg", tint: false }];
+  state.agents = [...withAntigravity(false),
+    { key: "gemini", name: "Gemini", installed: true, icon: "icons/gemini.svg", tint: false }];
   const GEM = { ...KIMI, id: "b-gemaaaaaaa", name: "gem-bot", agent: "gemini" };
+  seedAgModels();
   seed([MAIN, GEM]);
   const { draw } = await open({ form: "create" });
   draw();
@@ -106,6 +117,93 @@ test("Runs on: gemini is never offered; a gemini bot opens on Antigravity", asyn
   e.draw();
   assert.ok(!nodes.has("bot-agent-gemini"));
   assert.ok(nodes.has("bot-agent-antigravity"), "the mapped agent is the bot's own");
+});
+
+test("Runs on: the pack's agents fill in what knownAgents misses (#793), installed or not", async () => {
+  seed([MAIN]);
+  const { form } = await open({ form: "create" });
+  form.programFile = async () => "/fake/bin/agy";
+  const merged = await form.withPackAgents([{ key: "claude", name: "Claude Code", installed: true, icon: "icons/claude.svg" }]);
+  assert.deepEqual(merged.find((a) => a.key === "antigravity"), { key: "antigravity", name: "Antigravity", installed: true, icon: null, tint: false });
+  assert.equal(merged.find((a) => a.key === "claude").icon, "icons/claude.svg", "Herdr's own entry is kept");
+  assert.deepEqual(merged.map((a) => a.key).sort(), ["antigravity", "claude"], "antigravity is the only pack agent added");
+  form.programFile = async () => null;
+  const dim = await form.withPackAgents([]);
+  assert.equal(dim.find((a) => a.key === "antigravity").installed, false, "not installed: shown dimmed when it is the bot's own");
+  assert.equal(new Set(dim.map((a) => a.key)).size, dim.length, "no duplicates");
+});
+
+test("Antigravity (#793): the pin list is the cached agy models, never the settings label", async () => {
+  state.agents = withAntigravity(true);
+  const AG = { ...MAIN, id: "b-agyaaaaaaa", name: "ag-bot", kind: "member", lead: MAIN.id, agent: "antigravity" };
+  seedAgModels();
+  seed([MAIN, AG]);
+  const { form, draw } = await open({ form: "edit", bot: AG.id });
+  draw();
+  assert.ok(nodes.has("bot-pin"));
+  form.pop = "models";
+  draw();
+  const labels = ["bot-pin-1", "bot-pin-2"].map((id) => nodes.get(id)?.calls.find(([call]) => call === "accessibility_label")?.[1]);
+  assert.deepEqual(labels, ["gemini-4-argon-high", "claude-sonnet-5-5-high"]);
+  assert.ok(!labels.includes("Gemini 4 Argon (High)"), "the settings label is the Default, never a pin");
+});
+
+test("Antigravity (#793): a missing model cache is refreshed once with `agy models`, then read from the app home", async (t) => {
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+  exe(join(bin, "agy"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_AGY}" "$@"\n`);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}:${before}`;
+  t.after(() => { process.env.PATH = before; });
+  state.agents = withAntigravity(true);
+  const AG = { ...MAIN, id: "b-agyaaaaaaa", name: "ag-bot", kind: "member", lead: MAIN.id, agent: "antigravity" };
+  seed([MAIN, AG]);
+  const { form } = await open({ form: "edit", bot: AG.id });
+  const info = form.modelInfo("antigravity");
+  assert.ok(info.models.includes("gemini-4-argon-high") && info.models.includes("claude-opus-5-5-high"));
+  const cache = JSON.parse(readFileSync(join(state.appHome, "automagik-herdr/antigravity-models.json"), "utf8"));
+  assert.ok(cache.models.some((m) => m.id === "claude-opus-5-5-high"), "the fixture list was written");
+  const call = state.calls.find((c) => c.kind === "exec" && c.args?.[0] === "models");
+  assert.ok(call, "agy models ran");
+  assert.equal(call.command, join(bin, "agy"), "the resolved absolute path, as the CLI resolves it");
+  // A second form in the same session reads the file: no second `agy models`.
+  const execs = () => state.calls.filter((c) => c.kind === "exec" && c.args?.[0] === "models").length;
+  assert.equal(execs(), 1);
+  await open({ form: "edit", bot: AG.id });
+  assert.equal(execs(), 1, "once per session");
+});
+
+test("Antigravity (#793): a field typed while a slow model refresh runs is still saved", async (t) => {
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const release = join(root, "agy-release");
+  const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+  // The fake agy waits for the test's release file: the refresh is held while the person types.
+  exe(join(bin, "agy"), `#!/bin/sh\ni=0\nwhile [ ! -e "${release}" ] && [ $i -lt 1500 ]; do sleep 0.02; i=$((i + 1)); done\nexec "${process.execPath}" "${FAKE_AGY}" "$@"\n`);
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}:${before}`;
+  t.after(() => {
+    try { writeFileSync(release, "go"); } catch { /* the temp root is gone: the fake's loop ends on its own */ }
+    process.env.PATH = before;
+  });
+  state.agents = withAntigravity(true);
+  const AG = { ...MAIN, id: "b-agyaaaaaaa", name: "ag-bot", kind: "member", lead: MAIN.id, agent: "antigravity" };
+  seed([MAIN, AG]);
+  const cx = makeCx();
+  const form = new BotForm({ overlay: "o9", project, form: "edit", bot: AG.id }, cx);
+  // load() fills the fields, snapshots the opened state, then awaits the cache refresh.
+  const started = Date.now();
+  while (!form.initial && Date.now() - started < 5000) await new Promise((go) => setTimeout(go, 10));
+  assert.ok(form.initial, "the form filled and snapshotted before the refresh");
+  form.inputs.name.type("typed-while-refreshing", cx);
+  writeFileSync(release, "go");
+  await cx.settle();
+  assert.ok(form.modelInfo("antigravity").models.includes("gemini-4-argon-high"), "the refreshed list is used");
+  index(form.render(cx));
+  nodes.get("bot-save").click(null, cx);
+  await cx.settle();
+  assert.equal(stored().bots.find((b) => b.id === AG.id).name, "typed-while-refreshing", "the typed name was not lost to the snapshot");
 });
 
 test("Runs on: a knownAgents() failure is shown, not swallowed", async () => {
