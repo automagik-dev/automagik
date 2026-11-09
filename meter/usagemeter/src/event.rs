@@ -83,6 +83,9 @@ pub struct UsageEvent {
     pub precision: Precision,
     /// $ the harness reported itself (omp's `cost.total`), never derived.
     pub reported_usd: Option<f64>,
+    /// A copy of another session's call (a dsh-tui fork's inherited rows): counted once, by the
+    /// dedupe set, and never attributed to the session it was read under.
+    pub copied: bool,
 }
 
 /// The attribution part of the rollup key, resolved after parsing.

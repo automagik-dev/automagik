@@ -163,6 +163,52 @@ fn head_skip(f: &mut File, source: Source) -> io::Result<Option<u64>> {
     Ok(memchr::memchr(b'\n', &buf[..n]).map(|i| i as u64 + 1))
 }
 
+/// What a dsh-tui session's header says about where it came from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DshHeader {
+    /// A fork: its first rows are copies of another session's.
+    pub seeded: bool,
+    /// `createdAt`, epoch ms.
+    pub created_at: Option<i64>,
+}
+
+/// The header of a dsh-tui session file, from its first line (in its first frame, for a `.zstd`
+/// file), reading at most 1 MiB. None when the file cannot be read or does not start with a whole
+/// header. Used only to order reads, so a parent session is read before its forks.
+pub fn dsh_header(path: &Path) -> Option<DshHeader> {
+    let mut f = open_nofollow(path).ok()?;
+    let mut buf = Vec::new();
+    f.by_ref().take(1 << 20).read_to_end(&mut buf).ok()?;
+    let mut ctx = FileCtx::default();
+    let mut events = Vec::new();
+    if path.to_string_lossy().ends_with(".zstd") {
+        let Frame::Whole {
+            len,
+            skippable: false,
+        } = frame_at(&buf)
+        else {
+            return None;
+        };
+        let mut health = Health::default();
+        parse_frame(
+            &buf[..len],
+            Source::DshTui,
+            64 * 1024,
+            &mut ctx,
+            &mut events,
+            &mut health,
+        );
+    } else {
+        let end = memchr::memchr(b'\n', &buf)?;
+        dsh_tui::parse_line(&buf[..end], &mut ctx, &mut events);
+    }
+    ctx.session.as_ref()?;
+    Some(DshHeader {
+        seeded: ctx.seeded,
+        created_at: ctx.created_at,
+    })
+}
+
 fn open_nofollow(p: &Path) -> io::Result<File> {
     let mut o = fs::OpenOptions::new();
     o.read(true);

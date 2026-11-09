@@ -134,6 +134,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         tokens,
         precision: Precision::Exact,
         reported_usd,
+        copied: false,
     });
     Line::Usage
 }

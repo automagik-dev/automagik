@@ -19,6 +19,13 @@
 //!   parent's file is gone. A `session/end-seed {}` marks a resume inside the session's own log
 //!   and changes nothing. A usage line with no id falls back to `<session>|<seq>`; in a seeded
 //!   session such a line could be a copy, so it is skipped and counted, never guessed.
+//! - A copied call belongs to the session it was copied from (RFC 0021, dsh-tui forks). DSH's
+//!   header does not name that session, so a copy is marked ([`UsageEvent::copied`]) and never
+//!   attributed from the fork: `sync` reads every fork after the sessions it may have been
+//!   copied from ([`crate::scan::dsh_header`]), so the parent's own read counts the call first,
+//!   under the parent's session. Read from a fork, a copy counts only when the parent's file is
+//!   gone or unreadable, and is then unlinked, never the fork's. A copy is a call before the
+//!   fork's first inherited `session/end-seed`, or at or before its `createdAt`.
 //! - Two line types carry `data.usage` = {inputTokens, outputTokens, cacheReadTokens,
 //!   cacheWriteTokens, totalTokens}; `inputTokens` is already uncached (`totalTokens` is the sum of
 //!   the other four):
@@ -118,6 +125,7 @@ struct Row {
     cwd: Option<String>,
     parent_session: Option<String>,
     is_seeded: Option<bool>,
+    created_at: Option<f64>,
     data: Option<Data>,
 }
 
@@ -128,6 +136,7 @@ struct Data {
     model: Option<String>,
     message: Option<Message>,
     compaction_id: Option<String>,
+    inherited: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -165,8 +174,33 @@ fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error
         .map(|x| x as i64))
 }
 
+/// Whether a call at `ts_ms` in this session is a copy of another session's: in a fork, every
+/// call before the first inherited `session/end-seed`, and every call at or before the fork's
+/// `createdAt`. The second rule matters for a fork of a fork, which inherits its parent's own
+/// marker and then its parent's own calls: they happened before the fork existed. A fork whose
+/// header has no `createdAt` treats calls after its first marker as its own.
+fn is_copy(ctx: &FileCtx, ts_ms: i64) -> bool {
+    ctx.seeded && (!ctx.seed_cut || ctx.created_at.is_some_and(|c| ts_ms <= c))
+}
+
 pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> Line {
     let is_session = memmem::find(line, b"\"type\":\"session\"").is_some();
+    if memmem::find(line, b"\"type\":\"session/end-seed\"").is_some() {
+        // The inherited cut: `{inherited: true}` in a fork. A `{}` marks a resume and changes
+        // nothing.
+        if let Some(Row {
+            data:
+                Some(Data {
+                    inherited: Some(true),
+                    ..
+                }),
+            ..
+        }) = from_line::<Row>(line)
+        {
+            ctx.seed_cut = true;
+        }
+        return Line::Ignored;
+    }
     if !is_session && memmem::find(line, b"\"usage\"").is_none() {
         return Line::Ignored;
     }
@@ -187,6 +221,10 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
                 ctx.parent_session = Some(clip(p, 128));
             }
             ctx.seeded = row.is_seeded == Some(true);
+            ctx.created_at = row
+                .created_at
+                .filter(|t| t.is_finite() && *t > 0.0)
+                .map(|t| t as i64);
         }
         return Line::Ignored;
     };
@@ -258,6 +296,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         tokens: split,
         precision: Precision::Exact,
         reported_usd: None,
+        copied: is_copy(ctx, ts_ms as i64),
     };
     if rest > 0 {
         out.push(UsageEvent {
@@ -411,6 +450,50 @@ mod tests {
             assert_eq!(r, [Line::Bad], "{usage}");
             assert!(ev.is_empty(), "{usage}");
         }
+    }
+
+    #[test]
+    fn a_forks_copies_are_marked_and_its_own_calls_are_not() {
+        let fork = |created: i64| {
+            format!(
+                r#"{{"type":"session","version":4,"id":"sess-fork","createdAt":{created},"cwd":"/work/app","isSeeded":true,"delegationDepth":0}}"#
+            )
+        };
+        let at = |seq: i64, time: i64| {
+            msg(seq, r#"{"inputTokens":1,"totalTokens":1}"#)
+                .replace("1767261660000", &time.to_string())
+        };
+        let marker = |seq: i64, data: &str| {
+            format!(r#"{{"type":"session/end-seed","seq":{seq},"time":1,"data":{data}}}"#)
+        };
+        // A fork of a fork: the grandparent's call, the parent's marker and own call (both
+        // before this fork existed), this fork's marker, then its own call.
+        let created = 2_000;
+        let mut ctx = FileCtx::default();
+        let (_, ev) = run(
+            &[
+                &fork(created),
+                &at(0, 1_000),
+                &marker(1, r#"{"inherited":true}"#),
+                &at(2, 1_500),
+                &marker(3, r#"{"inherited":true}"#),
+                &marker(4, "{}"),
+                &at(5, 2_500),
+            ],
+            &mut ctx,
+        );
+        let copied: Vec<bool> = ev.iter().map(|e| e.copied).collect();
+        assert_eq!(copied, [true, true, false]);
+        assert!(ctx.seed_cut);
+        assert_eq!(ctx.created_at, Some(created));
+        // Before its first marker every call is a copy, whatever its time; an unseeded session
+        // copies nothing.
+        let mut ctx = FileCtx::default();
+        let (_, ev) = run(&[&fork(created), &at(0, 9_000)], &mut ctx);
+        assert!(ev[0].copied);
+        let mut ctx = FileCtx::default();
+        let (_, ev) = run(&[HEADER, &at(0, 1_000), &marker(1, "{}")], &mut ctx);
+        assert!(!ev[0].copied && !ctx.seed_cut);
     }
 
     #[test]

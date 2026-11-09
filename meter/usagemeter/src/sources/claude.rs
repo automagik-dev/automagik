@@ -228,6 +228,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         ),
         precision: Precision::Exact,
         reported_usd: None,
+        copied: false,
     };
     for (i, it) in u.iterations.iter().flatten().enumerate() {
         if it.ty.as_deref() != Some("advisor_message") {

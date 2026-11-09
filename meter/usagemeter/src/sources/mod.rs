@@ -68,6 +68,13 @@ pub struct FileCtx {
     /// A dsh-tui session seeded from another (a fork): its first rows are copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub seeded: bool,
+    /// A dsh-tui session's `createdAt` (epoch ms): in a fork, a call at or before it is a copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    /// A dsh-tui fork's first `session/end-seed {inherited: true}` has been read: the rows before
+    /// it are all copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seed_cut: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::event::{Actor, Precision, RollupKey, Tokens, UsageEvent};
-use crate::hc::{Hc, LiveTerminal};
+use crate::hc::Hc;
+use crate::ledger::{Call, Resolution, Resolver};
 use crate::paths;
 use crate::prices::PriceTable;
 use crate::scan::{self, Candidate, Plan, ReadLimits, ReadOutcome};
@@ -64,6 +65,13 @@ pub struct Options {
     pub codex_home: PathBuf,
     /// `~/.dsh/sessions` (or `$DSH_HOME/sessions`).
     pub dsh_root: PathBuf,
+    /// Herdr's global app home (`$HERDR_APP_HOME`, else `~/.config/herdr-app`): its workers and
+    /// attach ledgers attribute usage. None reads neither.
+    pub app_home: Option<PathBuf>,
+    /// `$HERDR_WORKERS_LEDGER`, read beside the app home's ledgers when set.
+    pub workers_ledger: Option<PathBuf>,
+    /// Look for project app homes (`.herdr/app-home`) above each call's cwd.
+    pub project_ledgers: bool,
     pub state_dir: PathBuf,
     /// The old default state directory to move the meter's files out of, once, before the first
     /// run in `state_dir` (see [`paths::migrate`]). None when `METER_STATE_DIR` is set.
@@ -108,11 +116,21 @@ impl Options {
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".dsh"))
             .join("sessions");
+        let app_home = crate::ledger::app_home(
+            std::env::var_os(crate::ledger::APP_HOME_ENV),
+            Some(home.clone()),
+        );
+        let workers_ledger = std::env::var_os(crate::ledger::LEDGER_ENV)
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from);
         Options {
             omp_root: home.join(".omp/agent/sessions"),
             claude_root,
             codex_home,
             dsh_root,
+            app_home,
+            workers_ledger,
+            project_ledgers: true,
             state_dir,
             migrate_from: None,
             days: None,
@@ -198,10 +216,10 @@ impl From<rusqlite::Error> for Error {
     }
 }
 
-/// Attribution: machine, repo per cwd (cached), and labels from live hc terminals.
+/// Attribution: machine, repo per cwd (cached), and bot, role and squad from the resolver.
 struct Attributor {
     machine: String,
-    terminals: Vec<LiveTerminal>,
+    resolver: Resolver,
     repos: HashMap<String, Option<String>>,
     resolve: bool,
     now_ms: i64,
@@ -229,26 +247,24 @@ impl Attributor {
         Ok(r)
     }
 
-    /// bot/role/squad from the one live terminal running this harness in this cwd since before the
-    /// event. Ambiguous matches give nothing.
-    fn actor(&self, e: &UsageEvent) -> Actor {
-        let Some(cwd) = e.cwd.as_deref() else {
-            return Actor::default();
-        };
-        let mut found: BTreeSet<Actor> = BTreeSet::new();
-        for t in &self.terminals {
-            if t.harness == e.harness && t.cwd == cwd && e.ts_ms >= t.created_ms {
-                found.insert(Actor {
-                    bot: t.bot.clone(),
-                    role: t.role.clone(),
-                    squad: t.squad.clone(),
-                });
-            }
-        }
-        if found.len() == 1 {
-            found.pop_first().unwrap_or_default()
-        } else {
-            Actor::default()
+    /// bot, role and squad from the launch the resolver ties the call to (RFC 0021 (a)). An
+    /// ambiguous or unlinked call gives nothing: a bot is never guessed.
+    fn actor(&mut self, e: &UsageEvent) -> Actor {
+        let r = self.resolver.resolve(&Call {
+            harness: e.harness,
+            session: e.session.as_deref(),
+            parent_session: e.parent_session.as_deref(),
+            cwd: e.cwd.as_deref(),
+            at_ms: e.ts_ms,
+            copied: e.copied,
+        });
+        match r {
+            Resolution::Tag(tag, _) => Actor {
+                bot: Some(tag.bot),
+                role: tag.role,
+                squad: tag.squad,
+            },
+            Resolution::Ambiguous | Resolution::Unlinked => Actor::default(),
         }
     }
 
@@ -309,10 +325,10 @@ fn random_id() -> String {
 }
 
 /// The machine id: herdr-core's core id, else a random id generated once and kept in the store.
-fn machine_id(store: &Store, hc: Option<&mut Hc>) -> rusqlite::Result<String> {
-    if let Some(id) = hc.and_then(|h| h.core_id()) {
-        store.set_meta("machine", &id)?;
-        return Ok(id);
+fn machine_id(store: &Store, core: Option<&str>) -> rusqlite::Result<String> {
+    if let Some(id) = core {
+        store.set_meta("machine", id)?;
+        return Ok(id.to_owned());
     }
     if let Some(id) = store.meta("machine")? {
         return Ok(id);
@@ -629,11 +645,17 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     } else {
         None
     };
-    let machine = machine_id(&store, hc.as_mut())?;
-    let terminals = hc.as_mut().map(|h| h.terminals()).unwrap_or_default();
+    let core = hc.as_mut().and_then(|h| h.core_id());
+    let machine = machine_id(&store, core.as_deref())?;
+    let snapshot = hc.as_mut().map(|h| h.terminals()).unwrap_or_default();
+    // Rows of another core are skipped: with hc away, the core this store last saw stands in.
+    let core = match core {
+        Some(c) => Some(c),
+        None => store.meta("machine")?,
+    };
     let mut attr = Attributor {
         machine: machine.clone(),
-        terminals,
+        resolver: resolver(opts, core, snapshot),
         repos: HashMap::new(),
         resolve: opts.resolve_repos,
         now_ms: now,
@@ -678,6 +700,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             .cmp(&a.mtime_ms)
             .then_with(|| a.path.cmp(&b.path))
     });
+    forks_last(&store, &mut candidates)?;
 
     report.files_seen += candidates.len();
     let limits = ReadLimits {
@@ -759,6 +782,14 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
 
     trace.mark("read");
+    for p in attr.resolver.refused() {
+        eprintln!(
+            "meter: {} is group- or world-writable, so anyone could have written who plays which \
+             bot; it was not read. Check its rows, then make it the owner's alone: chmod 600 {}",
+            p.display(),
+            p.display()
+        );
+    }
     store.set_meta("last_run_ms", &now.to_string())?;
     store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
     store.set_meta("last_pending_files", &report.pending_files.to_string())?;
@@ -838,6 +869,52 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     report.summary = Some(doc);
     report.elapsed = started.elapsed();
     Ok(Outcome::Ran(Box::new(report)))
+}
+
+/// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, and the
+/// project app homes found above the cwds it is asked about.
+fn resolver(opts: &Options, core: Option<String>, snapshot: Vec<crate::hc::Terminal>) -> Resolver {
+    let mut r = Resolver::new(core, snapshot).walk(opts.project_ledgers);
+    if let Some(home) = &opts.app_home {
+        r.load_app_home(home);
+    }
+    if let Some(p) = &opts.workers_ledger {
+        r.load_workers(p);
+    }
+    r
+}
+
+/// Moves dsh-tui forks behind every other log, oldest fork first, keeping the rest in order: a
+/// fork's first rows are copies of calls from the session it was seeded from (DSH does not record
+/// which), so reading it after every session it could have copied, its own parent forks included,
+/// lets each copied call be counted from its own session's read first. The header is read once
+/// per file: after a first read, the file context holds it.
+fn forks_last(store: &Store, candidates: &mut Vec<Candidate>) -> rusqlite::Result<()> {
+    let mut forks: Vec<(i64, Candidate)> = Vec::new();
+    let mut rest: Vec<Candidate> = Vec::with_capacity(candidates.len());
+    for c in candidates.drain(..) {
+        if c.source != Source::DshTui {
+            rest.push(c);
+            continue;
+        }
+        let prev = store.file(&c.path.to_string_lossy())?;
+        let header = match prev.as_ref().map(|p| &p.ctx) {
+            Some(ctx) if ctx.session.is_some() && !ctx.seeded => None,
+            Some(ctx) if ctx.seeded && ctx.created_at.is_some() => Some(scan::DshHeader {
+                seeded: true,
+                created_at: ctx.created_at,
+            }),
+            _ => scan::dsh_header(&c.path),
+        };
+        match header {
+            Some(h) if h.seeded => forks.push((h.created_at.unwrap_or(i64::MAX), c)),
+            _ => rest.push(c),
+        }
+    }
+    forks.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)));
+    rest.extend(forks.into_iter().map(|(_, c)| c));
+    *candidates = rest;
+    Ok(())
 }
 
 /// Reads one file from its saved state, committing each chunk (rows, offset and, for Codex, the

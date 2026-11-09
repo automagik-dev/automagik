@@ -1,91 +1,90 @@
-//! Read-only tagging from Herdr's worker ledger: which worker, bot and task a session belongs to.
+//! Attribution from Herdr's ledgers (RFC 0021 (a), delivery 4): which launch a call belongs to,
+//! and so its bot, role and squad. Read only: nothing here writes, and a missing or unreadable
+//! ledger means fewer answers, never an error.
 //!
-//! Herdr appends one JSON row per event to `workers.jsonl` (`$HERDR_WORKERS_LEDGER`, else
-//! `<app home>/automagik-herdr/workers.jsonl`, where the app home is `$HERDR_APP_HOME`, else
-//! `~/.config/herdr-app`, the way Herdr resolves it). Two events matter here:
+//! **What is read.** Herdr appends one JSON row per event to `workers.jsonl` and `attach.jsonl`
+//! under an app home's `automagik-herdr/` folder. The resolver reads the global app home's
+//! (`$HERDR_APP_HOME`, else `~/.config/herdr-app`), `$HERDR_WORKERS_LEDGER` when set, and each
+//! project app home (`<folder>/.herdr/app-home`) found by walking up from the cwd of a call it is
+//! asked about: only that ancestry, never a scan of the disk. A ledger that is group- or
+//! world-writable is not read (the rule `attach.js` applies) and is listed in
+//! [`Resolver::refused`]. Malformed lines are skipped, unknown fields ignored, and a field of the
+//! wrong type counts as missing. Paths inside rows are compared as strings, never opened.
 //!
-//! - `start`: a worker or seat was launched in a terminal, on a worktree, for a bot.
-//! - `session`: a Claude pane in a terminal opened a session id (Claude panes only).
+//! **Launches.** A launch is one agent Herdr started in one terminal, keyed by `(core, terminal,
+//! created_ms)` because hc reuses terminal ids. Its start rows give its fields; several start rows
+//! with one key are one launch. It is valid from its terminal's `created_ms` (a row written before
+//! RFC 0021 has none: its own `at`), to the first end the evidence shows: an `end` row, the attach
+//! ledger's `end` or `detach` for its key, a later launch on the same terminal, or the hc snapshot
+//! (a terminal that finished, or an address now held by a newer terminal). A terminal that is gone
+//! from the snapshot gives no end: without the last sync that saw it (delivery 5), it stays a
+//! claimant, so a call in that gap with another claimant stays ambiguous. Rows of another machine
+//! (a `core` other than this one's, an attach row with `machine` set) are skipped: their usage is
+//! in that machine's logs.
 //!
-//! The ledger is never written and never required: a missing or unreadable file means no tags,
-//! malformed lines are skipped, unknown fields are ignored and any field may be missing in older
-//! rows (a field of the wrong type counts as missing).
+//! **Finding the launch, per call**, strongest basis first:
 //!
-//! Resolution never guesses. Whenever more than one start row could claim a session the answer is
-//! [`Resolution::Unmatched`].
+//! - `session`: a start row's `session`, or a `session` row (any harness: `agent`, absent for
+//!   Claude's), ties the session to a launch. A session row with the launch's key names it
+//!   outright; an older one names the launch on its terminal that was valid at its `at`. A launch
+//!   counts from its `created_ms`, so a session row written before its start row still links,
+//!   whatever the file order. A start row's session holds from its launch's start (Herdr chose
+//!   the id at launch); a session row's from its own `at`. A later link elsewhere (a `/resume` in
+//!   another pane) closes the one before it.
+//! - `label`: an `agent.session` (or `revive.session`) label the hc snapshot shows on a terminal
+//!   ties the session to that terminal's launch. Labels are the second witness: when they and the
+//!   ledger name launches with different tags at one time, the call is ambiguous.
+//! - `worktree`: every worker launch of the call's harness whose worktree is the call's cwd and
+//!   that was valid at the call's time is a claimant. Seats are never found this way (their
+//!   folder is the project root, shared by every seat), but a seat there still competes, and so
+//!   does a live harness terminal the snapshot shows in that cwd with no start row (an unlogged
+//!   launch). This is new for Claude: a Claude worker that no row names falls back to it.
 //!
-//! The ledger has no end rows, so a launch is only known to be over once another start row names
-//! the same terminal: a terminal runs one launch at a time, so the later start replaced it. A
-//! launch with no later start on its terminal may still be running, whatever else started since.
+//! **Never a guess.** A call no recorded launch claims is [`Resolution::Unlinked`] (a lone seat
+//! found by its folder, or a lone unlogged terminal, names nothing). One whose claimants carry
+//! different tags, include a launch whose start row cannot be read or placed in time, or set a
+//! tag beside an unlogged launch, is [`Resolution::Ambiguous`]. Claimants whose attribution
+//! fields are equal (bot, kind, role, squad, task, project, branch) collapse to that tag, so a
+//! worker restarted on its own worktree keeps it; requested fields (agent, model, effort, lead)
+//! that differ are dropped from the answer.
 //!
-//! - Claude sessions resolve through their `session` row to the terminal, then to the launch that
-//!   occupied that terminal when the row was written: the latest start on it whose `at` is not
-//!   after the row's `at`. A start on that terminal between the row and the query time means the
-//!   launch was replaced after it reported the id, so the answer is Unmatched.
-//! - Codex, omp and dsh-tui sessions resolve by `cwd == worktree`. Every start on the worktree
-//!   that had begun by the query time, was not yet replaced on its terminal, and ran the same agent
-//!   (or an unrecorded one) is a claimant. A concurrent reviewer, or a second seat in the project
-//!   folder, is therefore a second claimant, and the session stays Unmatched.
+//! **"Never wrong" holds only for logged launches.** A launch with no start row (a hand-started
+//! `hc run`, a start whose ledger append failed, a ledger that is not read) is invisible here
+//! unless a sync sees its terminal live, when it is a claimant with no tag. An unlogged launch that
+//! ended before any sync saw it can still let the worktree path name the wrong worker; RFC 0021
+//! accepts that and every answer carries its [`Basis`], so `worktree` is never read as strongly
+//! as `session`.
 //!
-//! A start row too incomplete to build a [`Tag`] (no `bot`/`botId`, an unknown `kind`, no
-//! `terminal`) is still evidence: its terminal and `at` end the launch before it on that terminal,
-//! and its terminal and agent still count as a possible claimant. A session it could claim is
-//! [`Resolution::Unmatched`], never the tag of an earlier worker. A start row without a usable
-//! `at` cannot be placed in time, so it keeps every answer it could change Unmatched.
-//!
-//! A Claude session id can be reported by more than one terminal: `/resume` in a new pane keeps
-//! the id. The session then belongs to the terminal whose `session` row has the latest `at` not
-//! after the query time; rows without a usable `at` are not candidates, and when no row is a
-//! candidate (or two terminals tie on the latest `at`) the answer is [`Resolution::Unmatched`].
-//!
-//! The agent, model and effort on a start row are what the launch REQUESTED, not what ran: workers
-//! on the default model or on a template have them null, and a swap can change the model later.
-//! The [`Tag`] carries them as `requested_*`; the real model comes from the session transcript.
-//!
-//! Tasks are joined by [`TaskKey`] (project, task), never by the task id alone: two projects can
-//! both have a `gh-45`. Seats have no task.
+//! **Fields**, from the launch's start row, frozen at launch: `bot` (`bot`, else `botId`; for a
+//! seat, the attach ledger's binding for the launch at the call's time when there is one), `kind`,
+//! `role`, `squad`, `task` with `project` (workers only), `branch`, `lead` and what the launch
+//! requested (`agent`, `model`, `effort`). Labels never overwrite them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::sources::Source;
+use crate::hc::Terminal;
 
 pub const LEDGER_ENV: &str = "HERDR_WORKERS_LEDGER";
-/// Herdr's app home. Its writers put the ledger under it.
+/// Herdr's app home. Its writers put the ledgers under it.
 pub const APP_HOME_ENV: &str = "HERDR_APP_HOME";
 /// The app home when `HERDR_APP_HOME` is unset, relative to the user's home.
 const DEFAULT_APP_HOME: &str = ".config/herdr-app";
-/// The ledger, relative to the app home.
+/// The workers ledger, relative to an app home.
 const LEDGER_RELATIVE: &str = "automagik-herdr/workers.jsonl";
+/// The attach ledger, relative to an app home.
+const ATTACH_RELATIVE: &str = "automagik-herdr/attach.jsonl";
+/// A project's app home, relative to the project folder.
+pub const PROJECT_APP_HOME: &str = ".herdr/app-home";
 
 /// What launched the terminal: a worker on a task, or a long-lived seat (never a task).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Kind {
     Worker,
     Seat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Role {
-    Dev,
-    Test,
-    Review,
-    Fix,
-}
-
-impl Role {
-    fn parse(s: &str) -> Option<Role> {
-        match s {
-            "dev" => Some(Role::Dev),
-            "test" => Some(Role::Test),
-            "review" => Some(Role::Review),
-            "fix" => Some(Role::Fix),
-            _ => None,
-        }
-    }
 }
 
 /// The join key for a task: the same short id in two projects is two tasks.
@@ -95,19 +94,24 @@ pub struct TaskKey {
     pub task: String,
 }
 
-/// The worker a session belongs to, as its start row recorded it.
+/// The launch a call belongs to, as its start row recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tag {
-    /// `bot`, else `botId`.
+    /// `bot`, else `botId`; for a seat, the attach ledger's binding when it has one.
     pub bot: String,
     pub kind: Kind,
+    /// A worker's role (`dev`, `test`, `review`, `fix`), or a seat's pane role at launch (`main`,
+    /// `captain`, a rank). None when the row did not record one.
+    pub role: Option<String>,
+    /// The head of the launching bot's lead chain, frozen at launch; None for the main bot and
+    /// for rows written before RFC 0021.
+    pub squad: Option<String>,
     /// Short task id such as `gh-45`. Always None for seats, and for old rows whose `task` field
     /// held the branch.
     pub task: Option<String>,
     /// Absolute path of the main checkout. Missing in older rows.
     pub project: Option<String>,
     pub branch: Option<String>,
-    pub role: Option<Role>,
     pub lead: Option<String>,
     /// The harness the launch asked for (`agent`). Requested, not observed.
     pub requested_agent: Option<String>,
@@ -139,82 +143,98 @@ impl Tag {
     pub fn skip_for_model_eval(&self) -> bool {
         self.swap || self.override_
     }
+
+    /// The fields that must agree for two claimants to collapse into one tag.
+    fn same_attribution(&self, o: &Tag) -> bool {
+        self.bot == o.bot
+            && self.kind == o.kind
+            && self.role == o.role
+            && self.squad == o.squad
+            && self.task == o.task
+            && self.project == o.project
+            && self.branch == o.branch
+    }
+
+    /// Folds an equal claimant in: a requested field they disagree on is dropped, and either
+    /// one's swap or override marks the answer.
+    fn merge(&mut self, o: &Tag) {
+        for (mine, theirs) in [
+            (&mut self.lead, &o.lead),
+            (&mut self.requested_agent, &o.requested_agent),
+            (&mut self.requested_model, &o.requested_model),
+            (&mut self.requested_effort, &o.requested_effort),
+        ] {
+            if mine != theirs {
+                *mine = None;
+            }
+        }
+        self.swap |= o.swap;
+        self.override_ |= o.override_;
+    }
 }
 
+/// How a call was tied to its launch, strongest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Basis {
+    /// A Herdr row (a start row's `session`, or a `session` row) names the session.
+    Session,
+    /// A session label the hc snapshot showed on the launch's terminal names it.
+    Label,
+    /// The call's cwd is the worktree of the one worker that claims it.
+    Worktree,
+}
+
+impl Basis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Basis::Session => "session",
+            Basis::Label => "label",
+            Basis::Worktree => "worktree",
+        }
+    }
+}
+
+// One per call, consumed at once: boxing the tag would cost an allocation per call.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
-    Tag(Tag),
-    /// No start row claims the session.
-    Untagged,
-    /// More than one start row could claim it, the only one could not be confirmed, or a row
-    /// without a usable time could change the answer.
-    Unmatched,
+    Tag(Tag, Basis),
+    /// Claimants that differ, or one that cannot be read: never given a bot.
+    Ambiguous,
+    /// No claimant with a record.
+    Unlinked,
 }
 
-/// The session to resolve.
+/// One call to attribute.
 #[derive(Debug, Clone, Copy)]
-pub struct Query<'a> {
-    pub agent: Source,
-    pub session_id: &'a str,
+pub struct Call<'a> {
+    /// The event's harness (`claude-code`, `codex`, `omp`, `dsh-tui`).
+    pub harness: &'a str,
+    pub session: Option<&'a str>,
+    /// A sub-agent's parent session: it runs in its parent's terminal.
+    pub parent_session: Option<&'a str>,
     pub cwd: Option<&'a str>,
-    /// The time of the usage being attributed: the timestamp of one call (one transcript or log
-    /// event) of the session, in milliseconds since the Unix epoch, UTC. It is compared with the
-    /// ledger's `at` values, which Herdr writes with millisecond precision.
-    ///
-    /// Bounds, all against the same `at_ms`:
-    /// - a start row can claim the session from its own `at` on, inclusive (`at <= at_ms`);
-    /// - a later start on the same terminal ends that claim at its `at`, exclusive
-    ///   (`at_ms < end`), so a launch and its replacement never both own one instant;
-    /// - a Claude `session` row counts from its own `at` on, inclusive.
-    ///
-    /// Any instant at which the session was running gives an answer that is never wrong, because
-    /// the owner had started and was not yet replaced at that instant. A later instant can only
-    /// add claimants, so the same session may be a Tag for its first call and Unmatched for a call
-    /// after a concurrent worker started; a caller tagging a whole Codex or omp session at once may
-    /// pass its first call's time. Claude calls should pass their own time: a `/resume` moves
-    /// the session id to another terminal from that point on. Rows without a usable time cannot be
-    /// placed against `at_ms`, so they never lose to a timed row: they make it Unmatched.
+    /// The call's time, in milliseconds since the Unix epoch, UTC. A launch claims it when
+    /// `valid_from <= at_ms < valid_to`.
     pub at_ms: i64,
+    /// A dsh-tui fork's copy of its parent's call: its session is not the one it is read under,
+    /// so it is never attributed from here ([`crate::sources::dsh_tui`]).
+    pub copied: bool,
 }
 
-/// One `start` row. The boundary and claimant evidence (terminal, worktree, agent, at) is kept
-/// even when the row is too incomplete to build a [`Tag`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct Start {
-    terminal: Option<String>,
-    worktree: Option<String>,
-    agent: Option<String>,
-    at_ms: Option<i64>,
-    tag: Option<Tag>,
+/// The ledger's `agent` for a harness.
+pub fn agent_of(harness: &str) -> Option<&'static str> {
+    match harness {
+        "claude-code" | "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        "omp" => Some("omp"),
+        "dsh-tui" => Some("dsh-tui"),
+        _ => None,
+    }
 }
 
-/// What other start rows on the same terminal say about a start's end. Derived once after parsing.
-#[derive(Debug, Clone, Copy, Default)]
-struct Life {
-    /// The `at` of the first strictly later start on the same terminal: the launch was replaced
-    /// then. None while no later start names the terminal (or the start itself has no time).
-    replaced_at: Option<i64>,
-    /// Another start on the same terminal has no usable time: it may have replaced this one at
-    /// any moment, so this start can never be confirmed as an owner.
-    untimed_neighbour: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct Ledger {
-    starts: Vec<Start>,
-    /// Parallel to `starts`.
-    lives: Vec<Life>,
-    /// Normalized worktree to the indexes of the starts on it.
-    by_worktree: HashMap<String, Vec<usize>>,
-    /// Terminal to the indexes of the starts in it.
-    by_terminal: HashMap<String, Vec<usize>>,
-    /// Session id to the (terminal, at) rows that reported it (deduped).
-    sessions: HashMap<String, BTreeSet<(String, Option<i64>)>>,
-}
-
-/// Where the ledger is: `$HERDR_WORKERS_LEDGER` when set and non-empty, else
-/// `<app home>/automagik-herdr/workers.jsonl`. The app home is `$HERDR_APP_HOME` when set and
-/// non-empty, else `~/.config/herdr-app` under `home`, as Herdr resolves it.
+/// Where the global ledger is: `$HERDR_WORKERS_LEDGER` when set and non-empty, else
+/// `<app home>/automagik-herdr/workers.jsonl`.
 pub fn ledger_path(
     ledger_env: Option<OsString>,
     app_home_env: Option<OsString>,
@@ -223,247 +243,797 @@ pub fn ledger_path(
     if let Some(p) = ledger_env.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
     }
-    let app_home = match app_home_env.filter(|p| !p.is_empty()) {
-        Some(p) => PathBuf::from(p),
-        None => home?.join(DEFAULT_APP_HOME),
-    };
-    Some(app_home.join(LEDGER_RELATIVE))
+    Some(app_home(app_home_env, home)?.join(LEDGER_RELATIVE))
 }
 
-impl Ledger {
-    /// Loads the ledger from its usual place. Never fails: no file means no tags.
-    pub fn load() -> Ledger {
-        let path = ledger_path(
-            std::env::var_os(LEDGER_ENV),
-            std::env::var_os(APP_HOME_ENV),
-            crate::paths::home(),
-        );
-        match path {
-            Some(p) => Ledger::load_from(&p),
-            None => Ledger::default(),
+/// The global app home: `$HERDR_APP_HOME` when set and non-empty, else `~/.config/herdr-app`
+/// under `home`, as Herdr resolves it.
+pub fn app_home(app_home_env: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    match app_home_env.filter(|p| !p.is_empty()) {
+        Some(p) => Some(PathBuf::from(p)),
+        None => Some(home?.join(DEFAULT_APP_HOME)),
+    }
+}
+
+/// A launch's key: `(core, terminal, created_ms)`.
+type Key = (Option<String>, String, i64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct StartRow {
+    terminal: Option<String>,
+    core: Option<String>,
+    created_ms: Option<i64>,
+    at_ms: Option<i64>,
+    worktree: Option<String>,
+    agent: Option<String>,
+    kind: Option<Kind>,
+    session: Option<String>,
+    tag: Option<Tag>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SessionRow {
+    terminal: String,
+    session: String,
+    agent: String,
+    core: Option<String>,
+    created_ms: Option<i64>,
+    at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct EndRow {
+    key: Key,
+    at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AttachEvent {
+    Attach,
+    Detach,
+    End,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AttachRow {
+    event: AttachEvent,
+    bot: String,
+    key: Key,
+    at_ms: i64,
+}
+
+/// Every row read so far, deduplicated (a row may be in more than one ledger).
+#[derive(Debug, Default)]
+struct Rows {
+    starts: Vec<StartRow>,
+    sessions: Vec<SessionRow>,
+    ends: Vec<EndRow>,
+    /// In the order read: the attach fold is ordered.
+    attach: Vec<AttachRow>,
+    seen: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Launch {
+    key: Option<Key>,
+    terminal: Option<String>,
+    core: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    worktree: Option<String>,
+    agent: Option<String>,
+    kind: Option<Kind>,
+    tags: Vec<Tag>,
+    /// Every start row built a tag, and they agree on the launch's worktree and agent.
+    complete: bool,
+    /// Seen by the snapshot with no start row.
+    logged: bool,
+    /// A launch with no usable time shares its terminal: it may have replaced this one at any
+    /// moment.
+    unsure: bool,
+}
+
+impl Launch {
+    fn covers(&self, t: i64) -> bool {
+        self.from.is_none_or(|f| f <= t) && self.to.is_none_or(|e| t < e)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Link {
+    /// None: the row names a launch no start row records.
+    launch: Option<usize>,
+    /// When the row that made it was written (a start row's link: its launch's start).
+    at: Option<i64>,
+    from: Option<i64>,
+    to: Option<i64>,
+    basis: Basis,
+}
+
+impl Link {
+    fn covers(&self, t: i64) -> bool {
+        self.from.is_none_or(|f| f <= t) && self.to.is_none_or(|e| t < e)
+    }
+}
+
+/// A seat's bot per launch key, over `[from, to)`.
+type Bindings = HashMap<Key, Vec<(i64, Option<i64>, String)>>;
+
+#[derive(Debug, Default)]
+struct Index {
+    launches: Vec<Launch>,
+    by_worktree: HashMap<String, Vec<usize>>,
+    /// agent, then session, to the links that tie it to launches.
+    links: HashMap<String, HashMap<String, Vec<Link>>>,
+    bindings: Bindings,
+}
+
+/// What one claimant says about a call.
+enum Claim {
+    Tags(Vec<Tag>),
+    /// A launch with a record that cannot be read: no tag, no usable time, or a neighbour that
+    /// may have replaced it. Alone, it still makes the call ambiguous.
+    Unknown,
+    /// A launch no start row records (an unlogged terminal, a row naming a launch the ledgers do
+    /// not hold), or a seat found by its folder: it competes with a tag, but alone it names
+    /// nothing, so the call is unlinked.
+    Unrecorded,
+}
+
+/// The resolver: the ledgers read so far, this machine's core id and the hc snapshot of this
+/// sync. Ledgers are added with [`Resolver::load_app_home`] and [`Resolver::load_workers`], and
+/// project app homes are found on their own (when [`Resolver::walk`] is on) from the cwd of each
+/// call resolved.
+#[derive(Debug, Default)]
+pub struct Resolver {
+    core: Option<String>,
+    snapshot: Vec<Terminal>,
+    rows: Rows,
+    files: HashSet<PathBuf>,
+    checked: HashSet<PathBuf>,
+    refused: Vec<PathBuf>,
+    walk: bool,
+    index: Option<Index>,
+}
+
+impl Resolver {
+    /// `core`: this machine's hc core id, when known (rows of other cores are then skipped).
+    /// `snapshot`: the terminals hc listed at this sync; those of a linked machine (an address
+    /// with a `/`) are left out.
+    pub fn new(core: Option<String>, snapshot: Vec<Terminal>) -> Resolver {
+        Resolver {
+            core,
+            snapshot: snapshot
+                .into_iter()
+                .filter(|t| !t.terminal.contains('/'))
+                .collect(),
+            ..Resolver::default()
         }
     }
 
-    /// Missing or unreadable file gives an empty ledger.
-    pub fn load_from(path: &Path) -> Ledger {
-        std::fs::read(path)
-            .map(|b| Ledger::parse(&b))
-            .unwrap_or_default()
+    /// Whether project app homes are looked for above each call's cwd.
+    pub fn walk(mut self, on: bool) -> Resolver {
+        self.walk = on;
+        self
     }
 
-    pub fn parse(bytes: &[u8]) -> Ledger {
-        let mut ledger = Ledger::default();
-        let mut seen = HashSet::new();
+    /// Ledgers not read because anyone but their owner could write them.
+    pub fn refused(&self) -> &[PathBuf] {
+        &self.refused
+    }
+
+    /// Reads an app home's workers and attach ledgers, once each.
+    pub fn load_app_home(&mut self, app_home: &Path) {
+        self.load_workers(&app_home.join(LEDGER_RELATIVE));
+        if let Some(b) = self.read_file(&app_home.join(ATTACH_RELATIVE)) {
+            self.add_attach(&b);
+        }
+    }
+
+    /// Reads one workers ledger, once.
+    pub fn load_workers(&mut self, path: &Path) {
+        if let Some(b) = self.read_file(path) {
+            self.add_workers(&b);
+        }
+    }
+
+    fn read_file(&mut self, path: &Path) -> Option<Vec<u8>> {
+        if !self.files.insert(path.to_path_buf()) {
+            return None;
+        }
+        let meta = std::fs::metadata(path).ok()?;
+        if !meta.is_file() {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o022 != 0 {
+                self.refused.push(path.to_path_buf());
+                return None;
+            }
+        }
+        std::fs::read(path).ok()
+    }
+
+    /// Adds a workers ledger's rows (`start`, `session`, `end`).
+    pub fn add_workers(&mut self, bytes: &[u8]) {
         for line in bytes.split(|b| *b == b'\n') {
             let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(line) else {
                 continue;
             };
-            match str_field(&row, "event") {
-                Some("start") => {
-                    if let Some(s) = parse_start(&row)
-                        && seen.insert(s.clone())
-                    {
-                        ledger.starts.push(s);
-                    }
-                }
-                Some("session") => {
-                    if let (Some(t), Some(s)) =
-                        (str_field(&row, "terminal"), str_field(&row, "session"))
-                    {
-                        let at = str_field(&row, "at").and_then(crate::time::parse_rfc3339);
-                        ledger
-                            .sessions
-                            .entry(s.to_owned())
-                            .or_default()
-                            .insert((t.to_owned(), at));
-                    }
-                }
-                _ => {}
-            }
-        }
-        ledger.index();
-        ledger
-    }
-
-    /// Builds the worktree and terminal indexes and each start's [`Life`], in one sorted pass per
-    /// terminal, so a query only looks at the starts that share its worktree or terminal.
-    fn index(&mut self) {
-        for (i, s) in self.starts.iter().enumerate() {
-            if let Some(w) = &s.worktree {
-                self.by_worktree
-                    .entry(normalize(w).to_owned())
-                    .or_default()
-                    .push(i);
-            }
-            if let Some(t) = &s.terminal {
-                self.by_terminal.entry(t.clone()).or_default().push(i);
-            }
-        }
-        self.lives = vec![Life::default(); self.starts.len()];
-        for idx in self.by_terminal.values() {
-            let mut times: Vec<i64> = idx.iter().filter_map(|&i| self.starts[i].at_ms).collect();
-            times.sort_unstable();
-            let untimed = idx.len() - times.len();
-            for &i in idx {
-                let at = self.starts[i].at_ms;
-                let others_untimed = untimed - usize::from(at.is_none());
-                self.lives[i] = Life {
-                    replaced_at: at
-                        .and_then(|at| times.get(times.partition_point(|t| *t <= at)).copied()),
-                    untimed_neighbour: others_untimed > 0,
-                };
-            }
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.starts.is_empty()
-    }
-
-    pub fn resolve(&self, q: &Query) -> Resolution {
-        match q.agent {
-            Source::Claude => self.resolve_by_session(q.session_id, q.at_ms),
-            Source::Codex | Source::Omp | Source::DshTui => match q.cwd {
-                Some(cwd) => self.resolve_by_worktree(ledger_agent(q.agent), cwd, q.at_ms),
-                None => Resolution::Untagged,
-            },
-        }
-    }
-
-    fn resolve_by_session(&self, session_id: &str, at_ms: i64) -> Resolution {
-        let Some(rows) = self.sessions.get(session_id) else {
-            return Resolution::Untagged;
-        };
-        let terminals: BTreeSet<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
-        let terminal = if terminals.len() > 1 {
-            // Resumed in another pane: the latest report not after the query time owns it.
-            let Some(latest) = rows
-                .iter()
-                .filter_map(|(_, at)| *at)
-                .filter(|at| *at <= at_ms)
-                .max()
-            else {
-                return Resolution::Unmatched;
+            let parsed = match str_field(&row, "event") {
+                Some("start") => parse_start(&row).map(Parsed::Start),
+                Some("session") => parse_session(&row).map(Parsed::Session),
+                Some("end") => parse_end(&row).map(Parsed::End),
+                _ => None,
             };
-            let owners: BTreeSet<&str> = rows
-                .iter()
-                .filter(|(_, at)| *at == Some(latest))
-                .map(|(t, _)| t.as_str())
-                .collect();
-            let owner = match (owners.first(), owners.len()) {
-                (Some(t), 1) => *t,
-                _ => return Resolution::Unmatched,
-            };
-            // Another terminal reported the id at an unknown time: it may be the later resume.
-            if rows.iter().any(|(t, at)| at.is_none() && t != owner) {
-                return Resolution::Unmatched;
+            if let Some(p) = parsed {
+                self.add(p, line);
             }
-            owner
-        } else {
-            match terminals.first() {
-                Some(t) => *t,
-                None => return Resolution::Untagged,
-            }
-        };
-        // The report that ties the session to this launch: the latest timed one not after the
-        // query, else the first (the query predates every report), else the query time itself.
-        let reported = rows
-            .iter()
-            .filter(|(t, _)| t == terminal)
-            .filter_map(|(_, at)| *at);
-        let row_at = reported
-            .clone()
-            .filter(|at| *at <= at_ms)
-            .max()
-            .or_else(|| reported.min())
-            .unwrap_or(at_ms);
-        self.resolve_on_terminal(terminal, row_at, at_ms)
+        }
     }
 
-    /// The launch that occupied `terminal` when it reported the session at `row_at`, provided no
-    /// other launch replaced it between that report and the query time.
-    fn resolve_on_terminal(&self, terminal: &str, row_at: i64, at_ms: i64) -> Resolution {
-        let starts: Vec<&Start> = self
-            .by_terminal
-            .get(terminal)
-            .into_iter()
-            .flatten()
-            .map(|&i| &self.starts[i])
-            .collect();
-        if starts.is_empty() {
-            return Resolution::Untagged;
+    /// Adds an attach ledger's rows. A row of another machine (`machine` set) is skipped.
+    pub fn add_attach(&mut self, bytes: &[u8]) {
+        for line in bytes.split(|b| *b == b'\n') {
+            let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(line) else {
+                continue;
+            };
+            if let Some(r) = parse_attach(&row) {
+                self.add(Parsed::Attach(r), line);
+            }
         }
-        // A launch at an unknown time may be the one that held the terminal.
-        if starts.iter().any(|s| s.at_ms.is_none()) {
-            return Resolution::Unmatched;
-        }
-        // A launch between the report and the query: whichever side the session ran on is unknown.
-        let (lo, hi) = (row_at.min(at_ms), row_at.max(at_ms));
-        if starts
-            .iter()
-            .filter_map(|s| s.at_ms)
-            .any(|at| lo < at && at <= hi)
+    }
+
+    fn add(&mut self, p: Parsed, line: &[u8]) {
+        if !self
+            .rows
+            .seen
+            .insert(String::from_utf8_lossy(line).trim().to_owned())
         {
-            return Resolution::Unmatched;
+            return;
         }
-        let Some(latest) = starts
-            .iter()
-            .filter_map(|s| s.at_ms)
-            .filter(|at| *at <= row_at)
-            .max()
-        else {
-            // Every launch on the terminal came after the session: none of them opened it.
-            return Resolution::Untagged;
-        };
-        let mut owners = starts.iter().filter(|s| s.at_ms == Some(latest));
-        match (owners.next(), owners.next()) {
-            (Some(s), None) => s.tag.clone().map_or(Resolution::Unmatched, Resolution::Tag),
-            _ => Resolution::Unmatched,
+        match p {
+            Parsed::Start(r) => self.rows.starts.push(r),
+            Parsed::Session(r) => self.rows.sessions.push(r),
+            Parsed::End(r) => self.rows.ends.push(r),
+            Parsed::Attach(r) => self.rows.attach.push(r),
+        }
+        self.index = None;
+    }
+
+    /// Looks for project app homes in `cwd` and every folder above it, each folder once.
+    fn discover(&mut self, cwd: &str) {
+        let p = Path::new(cwd);
+        if !p.is_absolute() {
+            return;
+        }
+        for dir in p.ancestors() {
+            // Every folder above one already looked at was looked at with it.
+            if !self.checked.insert(dir.to_path_buf()) {
+                break;
+            }
+            let home = dir.join(PROJECT_APP_HOME);
+            if home.is_dir() {
+                self.load_app_home(&home);
+            }
         }
     }
 
-    fn resolve_by_worktree(&self, agent: &str, cwd: &str, at_ms: i64) -> Resolution {
-        let on_worktree = self.by_worktree.get(normalize(cwd)).into_iter().flatten();
-        let mut confirmed = Vec::new();
-        let mut unknown = 0usize;
-        for &i in on_worktree {
-            let (s, life) = (&self.starts[i], self.lives[i]);
-            // A launch of another harness never runs this session.
-            if s.agent.as_deref().is_some_and(|a| a != agent) {
-                continue;
-            }
-            // A start without a usable time could sit anywhere, so it may be the owner itself.
-            let Some(at) = s.at_ms else {
-                unknown += 1;
+    pub fn resolve(&mut self, call: &Call) -> Resolution {
+        if call.copied {
+            return Resolution::Unlinked;
+        }
+        if self.walk
+            && let Some(cwd) = call.cwd
+        {
+            self.discover(cwd);
+        }
+        if self.index.is_none() {
+            self.index = Some(build(&self.rows, self.core.as_deref(), &self.snapshot));
+        }
+        let Some(ix) = self.index.as_ref() else {
+            return Resolution::Unlinked;
+        };
+        ix.resolve(call)
+    }
+}
+
+// One per row, moved straight into its table.
+#[allow(clippy::large_enum_variant)]
+enum Parsed {
+    Start(StartRow),
+    Session(SessionRow),
+    End(EndRow),
+    Attach(AttachRow),
+}
+
+impl Index {
+    fn resolve(&self, call: &Call) -> Resolution {
+        let Some(agent) = agent_of(call.harness) else {
+            return Resolution::Unlinked;
+        };
+        let t = call.at_ms;
+        let by_session = self.links.get(agent);
+        for s in [call.session, call.parent_session].into_iter().flatten() {
+            let Some(links) = by_session.and_then(|m| m.get(s)) else {
                 continue;
             };
-            // Not begun yet, or already replaced on its terminal: it cannot be running the session.
-            if at > at_ms || life.replaced_at.is_some_and(|end| end <= at_ms) {
+            let covering: Vec<&Link> = links.iter().filter(|l| l.covers(t)).collect();
+            if covering.is_empty() {
                 continue;
             }
-            // A claimant that cannot be confirmed (no tag, no recorded agent, or a neighbour that
-            // may have replaced it at an unknown time) is uncertainty, not a miss.
-            match (&s.tag, &s.agent, life.untimed_neighbour) {
-                (Some(t), Some(_), false) => confirmed.push(t),
-                _ => unknown += 1,
+            let basis = if covering.iter().any(|l| l.basis == Basis::Session) {
+                Basis::Session
+            } else {
+                Basis::Label
+            };
+            let claims = covering.iter().map(|l| match (l.launch, l.from) {
+                (Some(i), Some(_)) => self.claim(i, t),
+                (Some(_), None) => Claim::Unknown,
+                (None, _) => Claim::Unrecorded,
+            });
+            return judge(claims, basis);
+        }
+        let Some(cwd) = call.cwd else {
+            return Resolution::Unlinked;
+        };
+        let Some(on) = self.by_worktree.get(normalize(cwd)) else {
+            return Resolution::Unlinked;
+        };
+        let claims = on.iter().filter_map(|&i| {
+            let l = &self.launches[i];
+            if l.agent.as_deref().is_some_and(|a| a != agent) || !l.covers(t) {
+                return None;
+            }
+            // A seat, or a terminal with no start row, competes but never names the call by its
+            // folder; a worker of an unrecorded harness may be this call's.
+            if l.kind != Some(Kind::Worker) || !l.logged {
+                return Some(Claim::Unrecorded);
+            }
+            if l.agent.is_none() {
+                return Some(Claim::Unknown);
+            }
+            Some(self.claim(i, t))
+        });
+        judge(claims, Basis::Worktree)
+    }
+
+    /// What launch `i` says about a call at `t`.
+    fn claim(&self, i: usize, t: i64) -> Claim {
+        let l = &self.launches[i];
+        if !l.logged {
+            return Claim::Unrecorded;
+        }
+        if !l.complete || l.unsure || l.from.is_none() || l.tags.is_empty() {
+            return Claim::Unknown;
+        }
+        let bound = l
+            .key
+            .as_ref()
+            .filter(|_| l.kind == Some(Kind::Seat))
+            .and_then(|k| self.bindings.get(k))
+            .and_then(|b| {
+                b.iter()
+                    .find(|(from, to, _)| *from <= t && to.is_none_or(|e| t < e))
+            })
+            .map(|(_, _, bot)| bot.clone());
+        Claim::Tags(
+            l.tags
+                .iter()
+                .map(|tag| match &bound {
+                    Some(bot) => Tag {
+                        bot: bot.clone(),
+                        ..tag.clone()
+                    },
+                    None => tag.clone(),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The answer from every claimant of a call: a record that cannot be read, a tag beside an
+/// unrecorded claimant, or tags that differ are Ambiguous; no record at all is Unlinked; else the
+/// collapsed tag.
+fn judge(claims: impl Iterator<Item = Claim>, basis: Basis) -> Resolution {
+    let mut tags: Vec<Tag> = Vec::new();
+    let (mut unknown, mut unrecorded) = (false, false);
+    for c in claims {
+        match c {
+            Claim::Tags(t) => tags.extend(t),
+            Claim::Unknown => unknown = true,
+            Claim::Unrecorded => unrecorded = true,
+        }
+    }
+    if unknown {
+        return Resolution::Ambiguous;
+    }
+    let Some(first) = tags.first() else {
+        return Resolution::Unlinked;
+    };
+    if unrecorded || tags.iter().any(|t| !t.same_attribution(first)) {
+        return Resolution::Ambiguous;
+    }
+    let mut out = first.clone();
+    for t in &tags[1..] {
+        out.merge(t);
+    }
+    Resolution::Tag(out, basis)
+}
+
+/// The launch keyed `(core, terminal, created)`, where a row with no `core` matches any core.
+fn find(
+    by_tc: &HashMap<(String, i64), Vec<usize>>,
+    launches: &[Launch],
+    core: Option<&str>,
+    terminal: &str,
+    created: i64,
+) -> Option<usize> {
+    by_tc
+        .get(&(terminal.to_owned(), created))?
+        .iter()
+        .copied()
+        .find(|&i| same_core(launches[i].core.as_deref(), core))
+}
+
+/// Whether two cores can be the same machine: equal, or either unknown.
+fn same_core(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
+    let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
+    let mut ix = Index::default();
+    // Launches: start rows grouped by key; a row with no key (written before RFC 0021) is its own.
+    let mut by_key: HashMap<Key, usize> = HashMap::new();
+    let mut members: Vec<Vec<&StartRow>> = Vec::new();
+    for s in &rows.starts {
+        if foreign(&s.core) {
+            continue;
+        }
+        let key = match (&s.terminal, s.created_ms) {
+            (Some(t), Some(c)) => Some((s.core.clone(), t.clone(), c)),
+            _ => None,
+        };
+        if let Some(&i) = key.as_ref().and_then(|k| by_key.get(k)) {
+            members[i].push(s);
+            continue;
+        }
+        if let Some(k) = key {
+            by_key.insert(k, members.len());
+        }
+        members.push(vec![s]);
+    }
+    for group in &members {
+        let first = group[0];
+        let key = match (&first.terminal, first.created_ms) {
+            (Some(t), Some(c)) => Some((first.core.clone(), t.clone(), c)),
+            _ => None,
+        };
+        let mut tags: Vec<Tag> = Vec::new();
+        let mut complete = true;
+        for s in group {
+            match &s.tag {
+                Some(t) if !tags.contains(t) => tags.push(t.clone()),
+                Some(_) => {}
+                None => complete = false,
+            }
+            complete &= s.worktree == first.worktree && s.agent == first.agent;
+            complete &= s.kind == first.kind;
+        }
+        let from = first
+            .created_ms
+            .or_else(|| group.iter().filter_map(|s| s.at_ms).min());
+        ix.launches.push(Launch {
+            key,
+            terminal: first.terminal.clone(),
+            core: first.core.clone(),
+            from,
+            to: None,
+            worktree: first.worktree.clone(),
+            agent: first.agent.clone(),
+            kind: first.kind,
+            tags,
+            complete,
+            logged: true,
+            unsure: false,
+        });
+    }
+    let mut by_tc: HashMap<(String, i64), Vec<usize>> = HashMap::new();
+    for (i, l) in ix.launches.iter().enumerate() {
+        if let Some((_, t, c)) = &l.key {
+            by_tc.entry((t.clone(), *c)).or_default().push(i);
+        }
+    }
+    // Terminals the snapshot shows running a harness, with no start row: unlogged launches. A
+    // start row with no key on that terminal inside the terminal's life may be its own, so it
+    // takes that place.
+    for t in snapshot {
+        let (Some(created), Some(harness)) = (t.created_ms, t.harness) else {
+            continue;
+        };
+        if core.is_none() || find(&by_tc, &ix.launches, core, &t.terminal, created).is_some() {
+            continue;
+        }
+        let key = (core.map(str::to_owned), t.terminal.clone(), created);
+        let keyless = ix.launches.iter().any(|l| {
+            l.key.is_none()
+                && l.terminal.as_deref() == Some(t.terminal.as_str())
+                && l.from
+                    .is_none_or(|f| f >= created && t.finished_ms.is_none_or(|e| f < e))
+        });
+        if keyless {
+            continue;
+        }
+        by_tc
+            .entry((t.terminal.clone(), created))
+            .or_default()
+            .push(ix.launches.len());
+        ix.launches.push(Launch {
+            key: Some(key),
+            terminal: Some(t.terminal.clone()),
+            core: core.map(str::to_owned),
+            from: Some(created),
+            to: t.finished_ms,
+            worktree: t.cwd.as_deref().map(|c| normalize(c).to_owned()),
+            agent: agent_of(harness).map(str::to_owned),
+            kind: None,
+            tags: Vec::new(),
+            complete: false,
+            logged: false,
+            unsure: false,
+        });
+    }
+    // Ends: end rows, and the attach ledger's end and detach rows.
+    let end_at = |key: &Key, at: i64, launches: &mut Vec<Launch>| {
+        if let Some(i) = find(&by_tc, launches, key.0.as_deref(), &key.1, key.2) {
+            let l = &mut launches[i];
+            l.to = Some(l.to.map_or(at, |e| e.min(at)));
+        }
+    };
+    for e in &rows.ends {
+        if !foreign(&e.key.0) {
+            end_at(&e.key, e.at_ms, &mut ix.launches);
+        }
+    }
+    for a in &rows.attach {
+        if !foreign(&a.key.0) && matches!(a.event, AttachEvent::Detach | AttachEvent::End) {
+            end_at(&a.key, a.at_ms, &mut ix.launches);
+        }
+    }
+    // The snapshot: a terminal that finished ends its launch; an address held by a newer
+    // terminal ends every older launch there (the replacement rule below does that once the newer
+    // one is a launch, logged or not).
+    for t in snapshot {
+        let (Some(created), Some(done)) = (t.created_ms, t.finished_ms) else {
+            continue;
+        };
+        if let Some(i) = find(&by_tc, &ix.launches, core, &t.terminal, created) {
+            let l = &mut ix.launches[i];
+            l.to = Some(l.to.map_or(done, |e| e.min(done)));
+        }
+    }
+    // A terminal runs one launch at a time: a later launch on it ended the one before.
+    let mut by_terminal: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, l) in ix.launches.iter().enumerate() {
+        if let Some(t) = &l.terminal {
+            by_terminal.entry(t.clone()).or_default().push(i);
+        }
+    }
+    let mut ends: Vec<(usize, Option<i64>, bool)> = Vec::new();
+    for idx in by_terminal.values() {
+        for &i in idx {
+            let l = &ix.launches[i];
+            let mut next: Option<i64> = None;
+            let mut unsure = false;
+            for &j in idx {
+                let m = &ix.launches[j];
+                if i == j || !same_core(l.core.as_deref(), m.core.as_deref()) {
+                    continue;
+                }
+                match (l.from, m.from) {
+                    (Some(a), Some(b)) if b > a => next = Some(next.map_or(b, |n| n.min(b))),
+                    (_, None) => unsure = true,
+                    _ => {}
+                }
+            }
+            ends.push((i, next, unsure));
+        }
+    }
+    for (i, next, unsure) in ends {
+        let l = &mut ix.launches[i];
+        if let Some(n) = next {
+            l.to = Some(l.to.map_or(n, |e| e.min(n)));
+        }
+        l.unsure |= unsure;
+    }
+    for (i, l) in ix.launches.iter().enumerate() {
+        if let Some(w) = &l.worktree {
+            ix.by_worktree
+                .entry(normalize(w).to_owned())
+                .or_default()
+                .push(i);
+        }
+    }
+    ix.bindings = fold_attach(rows.attach.iter().filter(|a| !foreign(&a.key.0)));
+    // Links, per agent and session.
+    let mut raw: HashMap<(String, String), Vec<Link>> = HashMap::new();
+    for (i, l) in ix.launches.iter().enumerate() {
+        if !l.logged {
+            continue;
+        }
+        for s in &members[i] {
+            if let Some(session) = &s.session {
+                let agent = s.agent.clone().unwrap_or_else(|| "claude".into());
+                raw.entry((agent, session.clone())).or_default().push(Link {
+                    launch: Some(i),
+                    at: l.from,
+                    from: None,
+                    to: None,
+                    basis: Basis::Session,
+                });
             }
         }
-        match (confirmed.as_slice(), unknown) {
-            ([], 0) => Resolution::Untagged,
-            ([t], 0) => Resolution::Tag((*t).clone()),
-            _ => Resolution::Unmatched,
+    }
+    for r in &rows.sessions {
+        if foreign(&r.core) {
+            continue;
+        }
+        let targets: Vec<Option<usize>> = match r.created_ms {
+            Some(c) => vec![find(
+                &by_tc,
+                &ix.launches,
+                r.core.as_deref(),
+                &r.terminal,
+                c,
+            )],
+            None => {
+                let on: Vec<Option<usize>> = by_terminal
+                    .get(r.terminal.as_str())
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|&i| {
+                        let l = &ix.launches[i];
+                        same_core(l.core.as_deref(), r.core.as_deref())
+                            && r.at_ms.is_some_and(|at| l.covers(at))
+                    })
+                    .map(Some)
+                    .collect();
+                if on.is_empty() { vec![None] } else { on }
+            }
+        };
+        for target in targets {
+            raw.entry((r.agent.clone(), r.session.clone()))
+                .or_default()
+                .push(Link {
+                    launch: target,
+                    at: r.at_ms,
+                    from: None,
+                    to: None,
+                    basis: Basis::Session,
+                });
+        }
+    }
+    for t in snapshot {
+        let (Some(created), Some(harness)) = (t.created_ms, t.harness) else {
+            continue;
+        };
+        let (Some(session), Some(agent)) = (t.labels.session_for(harness), agent_of(harness))
+        else {
+            continue;
+        };
+        let Some(i) = find(&by_tc, &ix.launches, core, &t.terminal, created) else {
+            continue;
+        };
+        raw.entry((agent.to_owned(), session.to_owned()))
+            .or_default()
+            .push(Link {
+                launch: Some(i),
+                at: Some(created),
+                from: None,
+                to: None,
+                basis: Basis::Label,
+            });
+    }
+    for ((agent, session), mut links) in raw {
+        place(&mut links, &ix.launches);
+        ix.links.entry(agent).or_default().insert(session, links);
+    }
+    ix
+}
+
+/// Sets each link's interval. A ledger link holds from its row's time (a start row's: its launch's
+/// start), never before its launch began, until its launch ends or the session's next ledger link
+/// elsewhere begins. A label link holds over its launch's life: it is a second witness,
+/// never closed by the ledger, so where the two disagree the call is ambiguous.
+fn place(links: &mut [Link], launches: &[Launch]) {
+    let launch_from = |l: &Link| l.launch.and_then(|i| launches[i].from);
+    links.sort_by_key(|l| (l.basis, l.at.or_else(|| launch_from(l)), l.launch));
+    let ledger = links.iter().filter(|l| l.basis == Basis::Session).count();
+    let (ledger_links, label_links) = links.split_at_mut(ledger);
+    for l in ledger_links.iter_mut() {
+        l.from = match (l.launch, launch_from(l), l.at) {
+            (Some(_), Some(s), Some(a)) => Some(s.max(a)),
+            (Some(_), _, _) => None,
+            (None, _, a) => a,
+        };
+    }
+    let ends: Vec<Option<i64>> = ledger_links
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let end = l.launch.and_then(|j| launches[j].to);
+            let next = ledger_links[i + 1..]
+                .iter()
+                .filter(|n| n.launch != l.launch)
+                .find_map(|n| n.from);
+            match (end, next) {
+                (Some(e), Some(n)) => Some(e.min(n)),
+                (e, n) => e.or(n),
+            }
+        })
+        .collect();
+    for (l, to) in ledger_links.iter_mut().zip(ends) {
+        l.to = to;
+    }
+    for l in label_links {
+        if let Some(j) = l.launch {
+            l.from = launches[j].from;
+            l.to = launches[j].to;
         }
     }
 }
 
-/// The `agent` value Herdr writes for each harness.
-fn ledger_agent(s: Source) -> &'static str {
-    match s {
-        Source::Claude => "claude",
-        Source::Codex => "codex",
-        Source::Omp => "omp",
-        Source::DshTui => "dsh-tui",
+/// The attach ledger's bindings per launch key, over time, by its fold (`attach.js`
+/// `foldAttach`): an attach ends the bot's binding elsewhere and the key's binding, then binds the
+/// key; a detach unbinds the key from that bot; an end unbinds the key.
+fn fold_attach<'a>(rows: impl Iterator<Item = &'a AttachRow>) -> Bindings {
+    let mut out: Bindings = HashMap::new();
+    let mut open: HashMap<Key, (i64, String)> = HashMap::new();
+    let mut held: HashMap<String, Key> = HashMap::new();
+    let mut close = |key: &Key, at: i64, open: &mut HashMap<Key, (i64, String)>| {
+        if let Some((from, bot)) = open.remove(key) {
+            out.entry(key.clone())
+                .or_default()
+                .push((from, Some(at), bot));
+        }
+    };
+    let mut ordered: Vec<&AttachRow> = rows.collect();
+    ordered.sort_by_key(|r| r.at_ms);
+    for r in ordered {
+        match r.event {
+            AttachEvent::Attach => {
+                if let Some(k) = held.remove(&r.bot) {
+                    close(&k, r.at_ms, &mut open);
+                }
+                close(&r.key, r.at_ms, &mut open);
+                open.insert(r.key.clone(), (r.at_ms, r.bot.clone()));
+                held.insert(r.bot.clone(), r.key.clone());
+            }
+            AttachEvent::Detach => {
+                if open.get(&r.key).is_some_and(|(_, b)| *b == r.bot) {
+                    close(&r.key, r.at_ms, &mut open);
+                    held.remove(&r.bot);
+                }
+            }
+            AttachEvent::End => {
+                if let Some((_, b)) = open.get(&r.key) {
+                    held.remove(b);
+                }
+                close(&r.key, r.at_ms, &mut open);
+            }
+        }
     }
+    for (key, (from, bot)) in open {
+        out.entry(key).or_default().push((from, None, bot));
+    }
+    out
 }
 
 fn normalize(p: &str) -> &str {
@@ -487,29 +1057,41 @@ fn flag(row: &Map<String, Value>, key: &str) -> bool {
     row.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// The evidence of a start row, with its tag when the row is complete enough for one. None only
-/// for a row with neither a terminal nor a worktree: it cannot claim or bound anything.
-fn parse_start(row: &Map<String, Value>) -> Option<Start> {
+fn at(row: &Map<String, Value>) -> Option<i64> {
+    str_field(row, "at").and_then(crate::time::parse_rfc3339)
+}
+
+fn created(row: &Map<String, Value>) -> Option<i64> {
+    row.get("created_ms").and_then(Value::as_i64)
+}
+
+/// A start row's evidence, with its tag when the row is complete enough for one. None only for a
+/// row with neither a terminal nor a worktree: it cannot claim or bound anything.
+fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
     let terminal = owned(row, "terminal");
-    let worktree = owned(row, "worktree");
+    let worktree = owned(row, "worktree").map(|w| normalize(&w).to_owned());
     if terminal.is_none() && worktree.is_none() {
         return None;
     }
-    Some(Start {
-        tag: parse_tag(row),
+    let kind = match str_field(row, "kind") {
+        Some("worker") => Some(Kind::Worker),
+        Some("seat") => Some(Kind::Seat),
+        _ => None,
+    };
+    Some(StartRow {
+        tag: kind.and_then(|k| parse_tag(row, k)),
         terminal,
+        core: owned(row, "core"),
+        created_ms: created(row),
+        at_ms: at(row),
         worktree,
         agent: owned(row, "agent"),
-        at_ms: str_field(row, "at").and_then(crate::time::parse_rfc3339),
+        kind,
+        session: owned(row, "session"),
     })
 }
 
-fn parse_tag(row: &Map<String, Value>) -> Option<Tag> {
-    let kind = match str_field(row, "kind")? {
-        "worker" => Kind::Worker,
-        "seat" => Kind::Seat,
-        _ => return None,
-    };
+fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
     str_field(row, "terminal")?;
     let bot = owned(row, "bot").or_else(|| owned(row, "botId"))?;
     // Rows written before `branch` existed carried the branch in `task`.
@@ -522,10 +1104,11 @@ fn parse_tag(row: &Map<String, Value>) -> Option<Tag> {
     Some(Tag {
         bot,
         kind,
+        role: owned(row, "role"),
+        squad: owned(row, "squad"),
         task,
         project: owned(row, "project"),
         branch,
-        role: str_field(row, "role").and_then(Role::parse),
         lead: owned(row, "lead"),
         requested_agent: owned(row, "agent"),
         requested_model: owned(row, "model"),
@@ -535,740 +1118,73 @@ fn parse_tag(row: &Map<String, Value>) -> Option<Tag> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
+fn parse_session(row: &Map<String, Value>) -> Option<SessionRow> {
+    Some(SessionRow {
+        terminal: owned(row, "terminal")?,
+        session: owned(row, "session")?,
+        // The briefing hook's rows name no agent: they are Claude's.
+        agent: owned(row, "agent").unwrap_or_else(|| "claude".into()),
+        core: owned(row, "core"),
+        created_ms: created(row),
+        at_ms: at(row),
+    })
+}
 
-    const PROJECT_A: &str = "/work/example-project";
-    const PROJECT_B: &str = "/work/other-project";
-    const WT_A: &str = "/work/example-project/.worktrees/gh-45";
-    const WT_B: &str = "/work/other-project/.worktrees/gh-45";
+fn parse_end(row: &Map<String, Value>) -> Option<EndRow> {
+    Some(EndRow {
+        key: (owned(row, "core"), owned(row, "terminal")?, created(row)?),
+        at_ms: at(row)?,
+    })
+}
 
-    fn ledger(rows: &[Value]) -> Ledger {
-        let text: Vec<String> = rows.iter().map(Value::to_string).collect();
-        Ledger::parse(text.join("\n").as_bytes())
+fn parse_attach(row: &Map<String, Value>) -> Option<AttachRow> {
+    if row.get("v").and_then(Value::as_i64) != Some(1) {
+        return None;
     }
-
-    fn start(terminal: &str, worktree: &str, agent: &str, at: &str) -> Value {
-        json!({
-            "event": "start", "kind": "worker", "terminal": terminal, "pid": 4242,
-            "bot": "b-example", "task": "gh-45", "branch": "feat/gh-45-example",
-            "project": PROJECT_A, "lead": "b-lead", "worktree": worktree, "base": "dev",
-            "created": true, "role": "dev", "swap": false, "override": false,
-            "agent": agent, "model": "example-model", "effort": "high", "at": at,
-            "someFutureField": {"ignored": true}
-        })
+    // Another machine's pane: its usage is in that machine's logs.
+    if row.get("machine").is_some_and(|m| !m.is_null()) {
+        return None;
     }
+    let event = match str_field(row, "event")? {
+        "attach" => AttachEvent::Attach,
+        "detach" => AttachEvent::Detach,
+        "end" => AttachEvent::End,
+        _ => return None,
+    };
+    Some(AttachRow {
+        event,
+        bot: owned(row, "bot")?,
+        key: (
+            Some(owned(row, "core")?),
+            owned(row, "terminal")?,
+            created(row)?,
+        ),
+        at_ms: at(row)?,
+    })
+}
 
-    fn session(terminal: &str, id: &str) -> Value {
-        session_at(terminal, id, "2026-01-01T09:00:01Z")
-    }
+/// Counts of one sync's answers, per harness (no ids, no names): what a reader of the meter's
+/// own diagnostics may see.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub by_basis: BTreeMap<&'static str, u64>,
+    pub ambiguous: u64,
+    pub unlinked: u64,
+}
 
-    fn session_at(terminal: &str, id: &str, at: &str) -> Value {
-        json!({"event": "session", "terminal": terminal, "session": id,
-               "transcript": "/work/transcripts/example.jsonl", "at": at})
-    }
-
-    /// A Claude call at 09:30, after the usual 09:00 start and 09:00:01 session report.
-    fn claude(id: &str) -> Query<'_> {
-        Query {
-            agent: Source::Claude,
-            session_id: id,
-            cwd: None,
-            at_ms: crate::time::parse_rfc3339("2026-01-01T09:30:00Z").unwrap(),
-        }
-    }
-
-    fn claude_at<'a>(id: &'a str, at: &str) -> Query<'a> {
-        Query {
-            at_ms: crate::time::parse_rfc3339(at).unwrap(),
-            ..claude(id)
-        }
-    }
-
-    fn by_cwd<'a>(agent: Source, cwd: &'a str, at: &str) -> Query<'a> {
-        Query {
-            agent,
-            session_id: "rollout-1",
-            cwd: Some(cwd),
-            at_ms: crate::time::parse_rfc3339(at).unwrap(),
-        }
-    }
-
-    fn tag(r: Resolution) -> Tag {
+impl Counts {
+    pub fn add(&mut self, r: &Resolution) {
         match r {
-            Resolution::Tag(t) => t,
-            other => panic!("expected a tag, got {other:?}"),
+            Resolution::Tag(_, b) => *self.by_basis.entry(b.as_str()).or_default() += 1,
+            Resolution::Ambiguous => self.ambiguous += 1,
+            Resolution::Unlinked => self.unlinked += 1,
         }
     }
 
-    #[test]
-    fn missing_or_unreadable_file_gives_no_tags() {
-        let dir = tempfile::tempdir().unwrap();
-        for path in [dir.path().join("absent.jsonl"), dir.path().to_path_buf()] {
-            let l = Ledger::load_from(&path);
-            assert!(l.is_empty());
-            assert_eq!(l.resolve(&claude("s-1")), Resolution::Untagged);
-            assert_eq!(
-                l.resolve(&by_cwd(Source::Codex, WT_A, "2026-01-01T10:00:00Z")),
-                Resolution::Untagged
-            );
-        }
-    }
-
-    #[test]
-    fn ledger_path_prefers_env_then_home() {
-        let home = Some(PathBuf::from("/work/home"));
-        let default = Some(PathBuf::from(
-            "/work/home/.config/herdr-app/automagik-herdr/workers.jsonl",
-        ));
-        assert_eq!(
-            ledger_path(Some("/work/ledger.jsonl".into()), None, home.clone()),
-            Some(PathBuf::from("/work/ledger.jsonl"))
-        );
-        assert_eq!(ledger_path(Some("".into()), None, home.clone()), default);
-        assert_eq!(ledger_path(None, Some("".into()), home.clone()), default);
-        assert_eq!(ledger_path(None, None, None), None);
-    }
-
-    #[test]
-    fn ledger_path_honours_the_herdr_app_home() {
-        let home = Some(PathBuf::from("/work/home"));
-        let in_app_home = Some(PathBuf::from(
-            "/work/app-home/automagik-herdr/workers.jsonl",
-        ));
-        assert_eq!(
-            ledger_path(None, Some("/work/app-home".into()), home.clone()),
-            in_app_home
-        );
-        // No user home is needed once the app home is known.
-        assert_eq!(
-            ledger_path(None, Some("/work/app-home".into()), None),
-            in_app_home
-        );
-        // An explicit ledger still wins over the app home.
-        assert_eq!(
-            ledger_path(
-                Some("/work/ledger.jsonl".into()),
-                Some("/work/app-home".into()),
-                home
-            ),
-            Some(PathBuf::from("/work/ledger.jsonl"))
-        );
-        // And the resolved path is the one loaded.
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("automagik-herdr/workers.jsonl");
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let rows = [
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            session("t1", "s-1"),
-        ];
-        let text: Vec<String> = rows.iter().map(Value::to_string).collect();
-        std::fs::write(&file, text.join("\n")).unwrap();
-        let path = ledger_path(None, Some(dir.path().into()), None).unwrap();
-        assert_eq!(path, file);
-        assert_eq!(
-            tag(Ledger::load_from(&path).resolve(&claude("s-1"))).bot,
-            "b-example"
-        );
-    }
-
-    #[test]
-    fn malformed_lines_are_skipped() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("workers.jsonl");
-        let mut text = Vec::new();
-        text.extend_from_slice(b"{not json\n[1,2,3]\n\"start\"\n\xff\xfe\n\n");
-        text.extend_from_slice(b"{\"event\":\"start\",\"kind\":\"worker\",\"bot\":\"b-x\"}\n");
-        text.extend_from_slice(
-            b"{\"event\":\"start\",\"kind\":\"robot\",\"terminal\":\"t9\",\"bot\":\"b-x\"}\n",
-        );
-        text.extend_from_slice(
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z")
-                .to_string()
-                .as_bytes(),
-        );
-        text.extend_from_slice(b"\n{\"event\":\"session\",\"terminal\":\"t1\"}\n");
-        text.extend_from_slice(session("t1", "s-1").to_string().as_bytes());
-        text.extend_from_slice(b"\n{\"event\":\"start\",\"kind\":\"worker\",\"terminal\":"); // truncated tail
-        std::fs::write(&path, &text).unwrap();
-        let l = Ledger::load_from(&path);
-        // The bot-only row has no terminal or worktree and is dropped; the unknown-kind row on t9
-        // stays as evidence but builds no tag.
-        assert_eq!(l.starts.len(), 2);
-        assert_eq!(l.starts.iter().filter(|s| s.tag.is_some()).count(), 1);
-        assert_eq!(tag(l.resolve(&claude("s-1"))).bot, "b-example");
-    }
-
-    #[test]
-    fn old_row_without_branch_uses_task_as_branch() {
-        let l = ledger(&[
-            json!({"event": "start", "kind": "worker", "terminal": "t1", "pid": 1,
-                   "botId": "b-old", "task": "feat/12-old-style", "agent": null, "model": null,
-                   "effort": null, "worktree": WT_A, "at": "2026-01-01T09:00:00Z"}),
-            session("t1", "s-old"),
-        ]);
-        let t = tag(l.resolve(&claude("s-old")));
-        assert_eq!(t.bot, "b-old");
-        assert_eq!(t.task, None);
-        assert_eq!(t.branch.as_deref(), Some("feat/12-old-style"));
-        assert_eq!((&t.project, t.role, &t.lead), (&None, None, &None));
-        // A default-model launch requested nothing: the requested fields stay empty.
-        assert_eq!(
-            (&t.requested_agent, &t.requested_model, &t.requested_effort),
-            (&None, &None, &None)
-        );
-        assert!(!t.skip_for_model_eval());
-        assert_eq!(t.task_key(), None);
-    }
-
-    #[test]
-    fn claude_session_matches_through_its_terminal() {
-        // Two terminals whose start rows differ in every tag field: picking the wrong terminal
-        // fails at least one assertion below.
-        let mut other = start("t2", WT_B, "claude", "2026-01-01T09:00:00Z");
-        other["bot"] = json!("b-other");
-        other["project"] = json!(PROJECT_B);
-        other["task"] = json!("gh-77");
-        other["branch"] = json!("feat/gh-77-other");
-        other["role"] = json!("review");
-        other["lead"] = json!("b-lead-other");
-        other["model"] = json!("other-model");
-        other["effort"] = json!("low");
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            other,
-            session("t1", "s-1"),
-            session("t2", "s-2"),
-        ]);
-        let a = tag(l.resolve(&claude("s-1")));
-        assert_eq!(a.bot, "b-example");
-        assert_eq!(a.kind, Kind::Worker);
-        assert_eq!(a.task.as_deref(), Some("gh-45"));
-        assert_eq!(a.branch.as_deref(), Some("feat/gh-45-example"));
-        assert_eq!(a.role, Some(Role::Dev));
-        assert_eq!(a.lead.as_deref(), Some("b-lead"));
-        assert_eq!(a.requested_agent.as_deref(), Some("claude"));
-        assert_eq!(a.requested_model.as_deref(), Some("example-model"));
-        assert_eq!(a.requested_effort.as_deref(), Some("high"));
-        assert_eq!(
-            a.task_key(),
-            Some(TaskKey {
-                project: PROJECT_A.into(),
-                task: "gh-45".into()
-            })
-        );
-        let b = tag(l.resolve(&claude("s-2")));
-        assert_eq!(b.bot, "b-other");
-        assert_eq!(b.task.as_deref(), Some("gh-77"));
-        assert_eq!(b.branch.as_deref(), Some("feat/gh-77-other"));
-        assert_eq!(b.role, Some(Role::Review));
-        assert_eq!(b.lead.as_deref(), Some("b-lead-other"));
-        assert_eq!(b.requested_model.as_deref(), Some("other-model"));
-        assert_eq!(b.requested_effort.as_deref(), Some("low"));
-        assert_eq!(
-            b.task_key(),
-            Some(TaskKey {
-                project: PROJECT_B.into(),
-                task: "gh-77".into()
-            })
-        );
-        assert_eq!(l.resolve(&claude("s-unknown")), Resolution::Untagged);
-        // A session row whose terminal has no start row tags nothing.
-        let orphan = ledger(&[session("t7", "s-7")]);
-        assert_eq!(orphan.resolve(&claude("s-7")), Resolution::Untagged);
-    }
-
-    #[test]
-    fn incomplete_start_closes_the_window_and_is_never_a_stale_tag() {
-        let codex = |l: &Ledger, at| l.resolve(&by_cwd(Source::Codex, WT_A, at));
-        // A later start with no bot and no agent: it may be the codex session's owner.
-        let mut blank = start("t2", WT_A, "codex", "2026-01-01T12:00:00Z");
-        blank["bot"] = Value::Null;
-        blank["agent"] = Value::Null;
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), blank]);
-        assert_eq!(tag(codex(&l, "2026-01-01T10:00:00Z")).bot, "b-example");
-        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
-        // Same agent but no bot: a claimant that cannot be tagged.
-        let mut botless = start("t2", WT_A, "codex", "2026-01-01T12:00:00Z");
-        botless.as_object_mut().unwrap().remove("bot");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), botless]);
-        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
-        // An unknown kind in the same terminal still ends the codex launch; it runs omp, so codex
-        // has no owner after it.
-        let mut robot = start("t1", WT_A, "omp", "2026-01-01T12:00:00Z");
-        robot["kind"] = json!("robot");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), robot]);
-        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Untagged);
-        // ... in another terminal it ends nothing, and an omp launch cannot claim codex.
-        let mut robot = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
-        robot["kind"] = json!("robot");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), robot]);
-        assert_eq!(tag(codex(&l, "2026-01-01T13:00:00Z")).bot, "b-example");
-        // A start row without a terminal replaces nothing, but a codex one may claim the session.
-        let mut headless = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
-        headless["terminal"] = Value::Null;
-        let l = ledger(&[
-            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
-            headless.clone(),
-        ]);
-        assert_eq!(tag(codex(&l, "2026-01-01T13:00:00Z")).bot, "b-example");
-        headless["agent"] = json!("codex");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), headless]);
-        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
-        // Claude: the only start on the session's terminal has no bot, so it cannot be confirmed.
-        let mut botless = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
-        botless["bot"] = Value::Null;
-        let l = ledger(&[botless.clone(), session("t1", "s-1")]);
-        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
-        // ... and a later relaunch on the terminal without a bot, with no new report, makes the
-        // calls after it ambiguous; the calls before it still belong to the first launch.
-        botless["at"] = json!("2026-01-01T11:00:00Z");
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            botless,
-            session("t1", "s-1"),
-        ]);
-        assert_eq!(tag(l.resolve(&claude("s-1"))).bot, "b-example");
-        assert_eq!(
-            l.resolve(&claude_at("s-1", "2026-01-01T11:30:00Z")),
-            Resolution::Unmatched
-        );
-    }
-
-    #[test]
-    fn resumed_claude_session_resolves_by_time() {
-        let mut other = start("t2", WT_B, "claude", "2026-01-01T10:30:00Z");
-        other["bot"] = json!("b-resumed");
-        let starts = [start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"), other];
-        let l = ledger(&[
-            starts[0].clone(),
-            starts[1].clone(),
-            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
-            session_at("t2", "s-1", "2026-01-01T11:00:00Z"),
-        ]);
-        let at = |when| l.resolve(&claude_at("s-1", when));
-        assert_eq!(tag(at("2026-01-01T10:00:00Z")).bot, "b-example");
-        assert_eq!(tag(at("2026-01-01T11:00:00Z")).bot, "b-resumed");
-        assert_eq!(tag(at("2026-01-01T12:00:00Z")).bot, "b-resumed");
-        // Before either pane reported the id: no row qualifies.
-        assert_eq!(at("2026-01-01T08:00:00Z"), Resolution::Unmatched);
-        // A competing terminal reported the id at an unknown time: it may own the session now.
-        let mut untimed = session("t2", "s-1");
-        untimed.as_object_mut().unwrap().remove("at");
-        let l = ledger(&[
-            starts[0].clone(),
-            starts[1].clone(),
-            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
-            untimed.clone(),
-        ]);
-        assert_eq!(
-            l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z")),
-            Resolution::Unmatched
-        );
-        // No row has a usable time: stay Unmatched.
-        let mut untimed_t1 = session("t1", "s-1");
-        untimed_t1["at"] = json!("not a time");
-        let l = ledger(&[starts[0].clone(), starts[1].clone(), untimed_t1, untimed]);
-        assert_eq!(
-            l.resolve(&claude_at("s-1", "2026-01-01T12:00:00Z")),
-            Resolution::Unmatched
-        );
-    }
-
-    #[test]
-    fn untimed_session_row_is_uncertainty_only_against_a_competitor() {
-        let mut other = start("t2", WT_B, "claude", "2026-01-01T10:30:00Z");
-        other["bot"] = json!("b-resumed");
-        let untimed = |terminal| {
-            let mut row = session(terminal, "s-1");
-            row.as_object_mut().unwrap().remove("at");
-            row
-        };
-        let at = |l: &Ledger, when| l.resolve(&claude_at("s-1", when));
-        // t2 reported the id at an unknown time: neither terminal can be picked at noon.
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            other.clone(),
-            session_at("t1", "s-1", "2026-01-01T09:00:00Z"),
-            untimed("t2"),
-        ]);
-        assert_eq!(at(&l, "2026-01-01T12:00:00Z"), Resolution::Unmatched);
-        // An untimed row on the owning terminal competes with nobody.
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            other.clone(),
-            session_at("t1", "s-1", "2026-01-01T09:00:00Z"),
-            untimed("t1"),
-            session_at("t2", "s-1", "2026-01-01T11:00:00Z"),
-        ]);
-        assert_eq!(tag(at(&l, "2026-01-01T10:00:00Z")).bot, "b-example");
-        // ... but once t2 owns it, t1's untimed report may be a later resume back into t1.
-        assert_eq!(at(&l, "2026-01-01T12:00:00Z"), Resolution::Unmatched);
-        // A single untimed row with no competitor still matches its terminal.
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            untimed("t1"),
-        ]);
-        assert_eq!(tag(at(&l, "2026-01-01T12:00:00Z")).bot, "b-example");
-    }
-
-    #[test]
-    fn untimed_start_keeps_its_worktree_uncertain() {
-        let codex = |l: &Ledger, cwd, at| l.resolve(&by_cwd(Source::Codex, cwd, at));
-        let untimed = |terminal, worktree, agent| {
-            let mut row = start(terminal, worktree, agent, "2026-01-01T12:00:00Z");
-            row.as_object_mut().unwrap().remove("at");
-            row
-        };
-        // A botless start with no time may have closed the 09:00 codex window before noon.
-        let mut botless = untimed("t2", WT_A, "codex");
-        botless.as_object_mut().unwrap().remove("bot");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), botless]);
-        assert_eq!(
-            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
-            Resolution::Unmatched
-        );
-        assert_eq!(
-            codex(&l, WT_A, "2026-01-01T09:30:00Z"),
-            Resolution::Unmatched
-        );
-        // A fully tagged omp start with an unparseable time in the codex terminal: it cannot
-        // claim a codex session, but it may have replaced the codex launch at any moment.
-        let mut omp = untimed("t1", WT_A, "omp");
-        omp["at"] = json!("not a time");
-        omp["bot"] = json!("b-omp");
-        let l = ledger(&[
-            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
-            omp.clone(),
-        ]);
-        assert_eq!(
-            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
-            Resolution::Unmatched
-        );
-        // ... in another terminal it replaces nothing and claims nothing.
-        omp["terminal"] = json!("t2");
-        let l2 = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), omp]);
-        assert_eq!(
-            tag(codex(&l2, WT_A, "2026-01-01T12:00:00Z")).bot,
-            "b-example"
-        );
-        // Nothing could claim codex there before 09:00, so that stays untagged, not uncertain.
-        assert_eq!(
-            codex(&l, WT_A, "2026-01-01T08:00:00Z"),
-            Resolution::Untagged
-        );
-        // A lone untimed codex start may be the owner, but its window cannot be placed.
-        let l = ledger(&[untimed("t1", WT_A, "codex")]);
-        assert_eq!(
-            codex(&l, WT_A, "2026-01-01T12:00:00Z"),
-            Resolution::Unmatched
-        );
-        // The uncertainty stays on its own worktree.
-        let l = ledger(&[
-            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
-            untimed("t2", WT_B, "codex"),
-        ]);
-        assert_eq!(
-            tag(codex(&l, WT_A, "2026-01-01T12:00:00Z")).bot,
-            "b-example"
-        );
-        assert_eq!(
-            codex(&l, WT_B, "2026-01-01T12:00:00Z"),
-            Resolution::Unmatched
-        );
-    }
-
-    #[test]
-    fn codex_and_omp_match_by_cwd_agent_and_time_window() {
-        let mut later = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
-        later["bot"] = json!("b-later");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), later]);
-        let codex = |cwd, at| l.resolve(&by_cwd(Source::Codex, cwd, at));
-        assert_eq!(tag(codex(WT_A, "2026-01-01T10:00:00Z")).bot, "b-example");
-        assert_eq!(
-            tag(codex(
-                "/work/example-project/.worktrees/gh-45/",
-                "2026-01-01T09:00:00Z"
-            ))
-            .bot,
-            "b-example"
-        );
-        assert_eq!(codex(WT_A, "2026-01-01T08:59:59Z"), Resolution::Untagged);
-        // An omp launch in another terminal neither ends the codex launch nor claims its session.
-        assert_eq!(tag(codex(WT_A, "2026-01-01T12:00:00Z")).bot, "b-example");
-        assert_eq!(codex(WT_B, "2026-01-01T10:00:00Z"), Resolution::Untagged);
-        assert_eq!(
-            tag(l.resolve(&by_cwd(Source::Omp, WT_A, "2026-01-02T00:00:00Z"))).bot,
-            "b-later"
-        );
-        assert_eq!(
-            l.resolve(&by_cwd(Source::Omp, WT_A, "2026-01-01T10:00:00Z")),
-            Resolution::Untagged
-        );
-        let no_cwd = Query {
-            cwd: None,
-            ..by_cwd(Source::Codex, WT_A, "2026-01-01T10:00:00Z")
-        };
-        assert_eq!(l.resolve(&no_cwd), Resolution::Untagged);
-    }
-
-    #[test]
-    fn concurrent_reviewer_on_the_writers_worktree_is_a_second_claimant() {
-        let codex = |l: &Ledger, at| l.resolve(&by_cwd(Source::Codex, WT_A, at));
-        let mut reviewer = start("t2", WT_A, "codex", "2026-01-01T10:00:00Z");
-        reviewer["bot"] = json!("b-reviewer");
-        reviewer["role"] = json!("review");
-        let l = ledger(&[
-            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
-            reviewer.clone(),
-        ]);
-        // Before the reviewer started, only the writer could run a codex session there.
-        let writer = tag(codex(&l, "2026-01-01T09:30:00Z"));
-        assert_eq!(
-            (writer.bot.as_str(), writer.role),
-            ("b-example", Some(Role::Dev))
-        );
-        // After it, the writer has no end row: either of them may own the session.
-        assert_eq!(codex(&l, "2026-01-01T10:30:00Z"), Resolution::Unmatched);
-        assert_eq!(codex(&l, "2026-01-02T00:00:00Z"), Resolution::Unmatched);
-        // A reviewer on another harness cannot take a codex session.
-        reviewer["agent"] = json!("claude");
-        let l = ledger(&[
-            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
-            reviewer.clone(),
-        ]);
-        assert_eq!(tag(codex(&l, "2026-01-01T10:30:00Z")).bot, "b-example");
-        // A codex reviewer launched into the writer's own terminal replaced the writer.
-        reviewer["agent"] = json!("codex");
-        reviewer["terminal"] = json!("t1");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), reviewer]);
-        assert_eq!(tag(codex(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
-        let r = tag(codex(&l, "2026-01-01T10:30:00Z"));
-        assert_eq!((r.bot.as_str(), r.role), ("b-reviewer", Some(Role::Review)));
-    }
-
-    #[test]
-    fn two_seats_in_the_project_folder_never_take_each_others_session() {
-        let seat = |terminal, bot, at| {
-            let mut row = start(terminal, PROJECT_A, "omp", at);
-            row["kind"] = json!("seat");
-            row["bot"] = json!(bot);
-            row["task"] = Value::Null;
-            row["branch"] = Value::Null;
-            row
-        };
-        let l = ledger(&[
-            seat("t1", "b-seat-one", "2026-01-01T09:00:00Z"),
-            seat("t2", "b-seat-two", "2026-01-01T09:05:00Z"),
-        ]);
-        let omp = |at| l.resolve(&by_cwd(Source::Omp, PROJECT_A, at));
-        let first = tag(omp("2026-01-01T09:02:00Z"));
-        assert_eq!((first.bot.as_str(), first.kind), ("b-seat-one", Kind::Seat));
-        // Both seats are live at 11:00: the session may be either's.
-        assert_eq!(omp("2026-01-01T11:00:00Z"), Resolution::Unmatched);
-        // The trailing slash a cwd may carry changes nothing.
-        assert_eq!(
-            l.resolve(&by_cwd(
-                Source::Omp,
-                "/work/example-project/",
-                "2026-01-01T11:00:00Z"
-            )),
-            Resolution::Unmatched
-        );
-    }
-
-    #[test]
-    fn query_time_bounds_are_inclusive_at_a_start_and_exclusive_at_its_replacement() {
-        let mut relaunch = start("t1", WT_A, "codex", "2026-01-01T10:00:00Z");
-        relaunch["bot"] = json!("b-relaunch");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), relaunch]);
-        let ms = |at| crate::time::parse_rfc3339(at).unwrap();
-        let codex_ms = |at_ms| {
-            l.resolve(&Query {
-                agent: Source::Codex,
-                session_id: "rollout-1",
-                cwd: Some(WT_A),
-                at_ms,
-            })
-        };
-        let nine = ms("2026-01-01T09:00:00Z");
-        let ten = ms("2026-01-01T10:00:00Z");
-        // `at_ms` is in milliseconds: one millisecond either side of a boundary moves the answer.
-        assert_eq!(codex_ms(nine - 1), Resolution::Untagged);
-        assert_eq!(tag(codex_ms(nine)).bot, "b-example");
-        assert_eq!(tag(codex_ms(ten - 1)).bot, "b-example");
-        assert_eq!(tag(codex_ms(ten)).bot, "b-relaunch");
-        // A Claude session row counts from its own millisecond on.
-        let mut resumed = start("t2", WT_B, "claude", "2026-01-01T10:00:00Z");
-        resumed["bot"] = json!("b-resumed");
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            resumed,
-            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
-            session_at("t2", "s-1", "2026-01-01T10:30:00.250Z"),
-        ]);
-        let resume = ms("2026-01-01T10:30:00.250Z");
-        let claude_ms = |at_ms| {
-            l.resolve(&Query {
-                at_ms,
-                ..claude("s-1")
-            })
-        };
-        assert_eq!(tag(claude_ms(resume - 1)).bot, "b-example");
-        assert_eq!(tag(claude_ms(resume)).bot, "b-resumed");
-    }
-
-    #[test]
-    fn reused_claude_terminal_tags_the_launch_that_held_it_when_the_session_opened() {
-        let mut second = start("t1", WT_B, "claude", "2026-01-01T10:00:00Z");
-        second["bot"] = json!("b-second");
-        let first = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
-        let at = |l: &Ledger, when| l.resolve(&claude_at("s-1", when));
-        // The session opened under the second launch: the first one never had it.
-        let l = ledger(&[
-            first.clone(),
-            second.clone(),
-            session_at("t1", "s-1", "2026-01-01T10:00:05Z"),
-        ]);
-        assert_eq!(tag(at(&l, "2026-01-01T10:30:00Z")).bot, "b-second");
-        // It opened under the first launch, and the calls ran before the terminal was reused.
-        let l = ledger(&[
-            first.clone(),
-            second.clone(),
-            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
-        ]);
-        assert_eq!(tag(at(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
-        // A call after the reuse with no new report: the session cannot be placed.
-        assert_eq!(at(&l, "2026-01-01T10:30:00Z"), Resolution::Unmatched);
-        // The reviewer's probe: the only start on the terminal came after the session opened.
-        let l = ledger(&[
-            first.clone(),
-            session_at("t2", "s-2", "2026-01-01T08:00:00Z"),
-            {
-                let mut late = start("t2", WT_B, "claude", "2026-01-01T09:00:00Z");
-                late["bot"] = json!("b-late");
-                late
-            },
-        ]);
-        assert_eq!(
-            l.resolve(&claude_at("s-2", "2026-01-01T08:30:00Z")),
-            Resolution::Untagged
-        );
-        // A seat re-attached to another bot on the same terminal resolves by time too.
-        let mut reseat = second;
-        reseat["kind"] = json!("seat");
-        reseat["bot"] = json!("b-reseat");
-        let l = ledger(&[
-            first,
-            reseat,
-            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
-            session_at("t1", "s-3", "2026-01-01T10:00:05Z"),
-        ]);
-        assert_eq!(tag(at(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
-        assert_eq!(
-            tag(l.resolve(&claude_at("s-3", "2026-01-01T10:30:00Z"))).bot,
-            "b-reseat"
-        );
-        // A launch on the terminal at an unknown time may be the one that held it.
-        let mut untimed = start("t1", WT_B, "claude", "2026-01-01T10:00:00Z");
-        untimed.as_object_mut().unwrap().remove("at");
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            untimed,
-            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
-        ]);
-        assert_eq!(at(&l, "2026-01-01T09:30:00Z"), Resolution::Unmatched);
-    }
-
-    #[test]
-    fn same_task_id_in_two_projects_never_cross_matches() {
-        let mut b = start("t2", WT_B, "codex", "2026-01-01T09:00:00Z");
-        b["project"] = json!(PROJECT_B);
-        b["bot"] = json!("b-other");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), b]);
-        let at = "2026-01-01T10:00:00Z";
-        let a = tag(l.resolve(&by_cwd(Source::Codex, WT_A, at)));
-        let b = tag(l.resolve(&by_cwd(Source::Codex, WT_B, at)));
-        assert_eq!((a.bot.as_str(), b.bot.as_str()), ("b-example", "b-other"));
-        assert_eq!(a.task, b.task);
-        let (ka, kb) = (a.task_key().unwrap(), b.task_key().unwrap());
-        assert_ne!(ka, kb);
-        assert_eq!(kb.project, PROJECT_B);
-    }
-
-    #[test]
-    fn seat_is_never_a_task() {
-        let mut seat = start("t1", PROJECT_A, "codex", "2026-01-01T09:00:00Z");
-        seat["kind"] = json!("seat");
-        let l = ledger(&[seat]);
-        let t = tag(l.resolve(&by_cwd(Source::Codex, PROJECT_A, "2026-01-01T10:00:00Z")));
-        assert_eq!(t.kind, Kind::Seat);
-        assert_eq!(t.task, None);
-        assert_eq!(t.task_key(), None);
-    }
-
-    #[test]
-    fn ambiguous_claims_are_unmatched() {
-        let at = "2026-01-01T10:00:00Z";
-        // Two codex workers started on the same worktree at the same instant.
-        let mut twin = start("t2", WT_A, "codex", "2026-01-01T09:00:00Z");
-        twin["bot"] = json!("b-twin");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), twin]);
-        assert_eq!(
-            l.resolve(&by_cwd(Source::Codex, WT_A, at)),
-            Resolution::Unmatched
-        );
-        // A row with no recorded agent could be the one: do not pick the codex row.
-        let mut unknown = start("t2", WT_A, "codex", "2026-01-01T09:00:00Z");
-        unknown["agent"] = Value::Null;
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), unknown]);
-        assert_eq!(
-            l.resolve(&by_cwd(Source::Codex, WT_A, at)),
-            Resolution::Unmatched
-        );
-        // One Claude session id reported by two terminals at the same instant.
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            start("t2", WT_B, "claude", "2026-01-01T09:00:00Z"),
-            session("t1", "s-1"),
-            session("t2", "s-1"),
-        ]);
-        assert_eq!(
-            l.resolve(&claude_at("s-1", "2026-01-01T10:00:00Z")),
-            Resolution::Unmatched
-        );
-        // One terminal with two start rows at the same instant.
-        let mut twin = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
-        twin["bot"] = json!("b-twin");
-        let l = ledger(&[
-            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            twin,
-            session("t1", "s-1"),
-        ]);
-        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
-    }
-
-    #[test]
-    fn duplicate_rows_are_deduped() {
-        let row = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
-        let l = ledger(&[row.clone(), row, session("t1", "s-1"), session("t1", "s-1")]);
-        assert_eq!(l.sessions["s-1"].len(), 1);
-        assert_eq!(tag(l.resolve(&claude("s-1"))).bot, "b-example");
-    }
-
-    #[test]
-    fn swap_and_override_rows_are_flagged() {
-        let mut swapped = start("t1", WT_A, "codex", "2026-01-01T09:00:00Z");
-        swapped["swap"] = json!(true);
-        let mut overridden = start("t2", WT_B, "codex", "2026-01-01T09:00:00Z");
-        overridden["override"] = json!(true);
-        let l = ledger(&[swapped, overridden]);
-        let at = "2026-01-01T10:00:00Z";
-        let s = tag(l.resolve(&by_cwd(Source::Codex, WT_A, at)));
-        let o = tag(l.resolve(&by_cwd(Source::Codex, WT_B, at)));
-        assert!(s.swap && !s.override_ && s.skip_for_model_eval());
-        assert!(o.override_ && !o.swap && o.skip_for_model_eval());
+    pub fn tagged(&self) -> u64 {
+        self.by_basis.values().sum()
     }
 }
+
+#[cfg(test)]
+mod tests;

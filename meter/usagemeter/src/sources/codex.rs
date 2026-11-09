@@ -221,6 +221,7 @@ pub fn event(c: &CodexCtx, ts_ms: i64, tokens: Tokens, precision: Precision) -> 
         tokens,
         precision,
         reported_usd: None,
+        copied: false,
     }
 }
 

@@ -237,8 +237,15 @@ per-turn rows are stored, and no $ except omp's reported cost.
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
 - `branch` is the session's `gitBranch` (Claude Code); null for omp and dsh-tui.
-- `bot`, `role`, `squad` come from the `bot=`, `role=`, `squad=` labels of a live hc terminal
-  running the same harness in the same cwd. Usually null today.
+- `bot`, `role`, `squad` come from the start row of the Herdr launch the call belongs to (RFC
+  0021, `src/ledger.rs`): read from the global app home's `workers.jsonl` and `attach.jsonl`,
+  `$HERDR_WORKERS_LEDGER`, and each project's `.herdr/app-home` above the call's cwd. The launch
+  is found by a Herdr row naming the session, else an `agent.session` or `revive.session` label
+  hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A call
+  with no claimant, or claimants that differ, stays null: a bot is never guessed. That holds
+  only for logged launches: a terminal started by hand that ended before any sync saw it is
+  invisible to the ledgers, so the worktree path could still name the worker beside it. A
+  ledger anyone but its owner can write is not read, and the sync says so on stderr.
 - `machine` is herdr-core's core id, or a random id kept in the store when hc is absent.
 
 ## Run

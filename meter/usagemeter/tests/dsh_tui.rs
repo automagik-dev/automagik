@@ -407,6 +407,207 @@ fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
     assert!(seen.iter().all(|s| *s == seen[0]), "{seen:#?}");
 }
 
+/// A seat's start row and the session row Herdr writes for a dsh-tui session it carries (RFC
+/// 0021 (f) 5), so each session links to its own bot.
+fn seat_rows(terminal: &str, bot: &str, created_ms: i64, session: &str) -> String {
+    let iso = meter::time::format_rfc3339(created_ms + 5_000);
+    format!(
+        concat!(
+            r#"{{"event":"start","kind":"seat","terminal":"{t}","botId":"{bot}","task":null,"#,
+            r#""worktree":"/work/app","agent":"dsh-tui","role":"captain","branch":null,"#,
+            r#""project":"/work/app","lead":null,"core":"core-synthetic","created_ms":{c},"#,
+            r#""squad":"{bot}","session":null,"at":"{iso}"}}"#,
+            "\n",
+            r#"{{"event":"session","terminal":"{t}","session":"{s}","transcript":null,"#,
+            r#""agent":"dsh-tui","core":"core-synthetic","created_ms":{c},"at":"{iso}"}}"#,
+            "\n"
+        ),
+        t = terminal,
+        bot = bot,
+        c = created_ms,
+        iso = iso,
+        s = session,
+    )
+}
+
+/// A fork two hours old: the parent's calls (100 + 200) an hour before it, copied into the fork
+/// with the parent's times, then the fork's own call (7) after it was created. The parent's seat
+/// and the fork's seat are two bots.
+fn attributed_fork(env: &Env) -> (PathBuf, Vec<u8>, PathBuf, Vec<u8>) {
+    let (parent_at, fork_at) = (at() - 3_600_000, at());
+    let line = |seq: i64, id: &str, input: i64, time: i64| {
+        call(seq, Some(id), input, 0, 0)
+            .replace(&format!(r#""time":{}"#, at()), &format!(r#""time":{time}"#))
+    };
+    let header = |id: &str, seeded: bool, created: i64| {
+        header_of(id, seeded).replace(
+            &format!(r#""createdAt":{}"#, at()),
+            &format!(r#""createdAt":{created}"#),
+        )
+    };
+    let copied = [
+        line(0, "id-a", 100, parent_at),
+        line(1, "id-b", 200, parent_at + 60_000),
+    ];
+    let mut parent = vec![header("sess-parent", false, parent_at - 60_000)];
+    parent.extend(copied.iter().cloned());
+    let mut child = vec![header("sess-child", true, fork_at)];
+    child.extend(copied.iter().cloned());
+    child.extend([end_seed(2, true), line(3, "id-c", 7, fork_at + 60_000)]);
+    let ledger = env
+        .home()
+        .join(".config/herdr-app/automagik-herdr/workers.jsonl");
+    fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    let rows = seat_rows("t1", "b-parentseat", parent_at - 120_000, "sess-parent")
+        + &seat_rows("t2", "b-forkseat0", fork_at - 120_000, "sess-child");
+    fs::write(&ledger, rows).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    (
+        file_of(env, "sess-parent", "session.v4.jsonl.zstd"),
+        frame(&parent),
+        file_of(env, "sess-child", "session.v4.jsonl.zstd"),
+        frame(&child),
+    )
+}
+
+/// Input tokens per bot (None: unattributed).
+fn by_bot(env: &Env) -> std::collections::BTreeMap<Option<String>, i64> {
+    let mut m = std::collections::BTreeMap::new();
+    for r in env.store().rows_since(i64::MIN).unwrap() {
+        *m.entry(r.key.bot.clone()).or_default() += r.tokens.input_uncached;
+    }
+    m
+}
+
+fn set_mtime(p: &PathBuf, ms: i64) {
+    let t = std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64);
+    fs::File::options()
+        .write(true)
+        .open(p)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+// Check (RFC 0021 delivery 4): a fork's copied call is the parent's, whichever file is read first.
+#[test]
+fn a_forks_copied_calls_are_the_parents_in_any_read_order() {
+    let want = |copies: Option<&str>| {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(copies.map(str::to_owned), 300);
+        *m.entry(Some("b-forkseat0".to_owned())).or_default() += 7;
+        m
+    };
+    // Both files new in one run, the fork's written last (newest first would read it first),
+    // then the parent's written last.
+    for fork_newer in [true, false] {
+        let env = Env::new();
+        let (pp, pb, cp, cb) = attributed_fork(&env);
+        append(&pp, &pb);
+        append(&cp, &cb);
+        let (older, newer) = if fork_newer { (&pp, &cp) } else { (&cp, &pp) };
+        set_mtime(older, now() - 7_200_000);
+        set_mtime(newer, now() - 60_000);
+        let r = env.run(&env.opts());
+        assert_eq!((r.health.events, r.health.duplicates), (3, 2));
+        assert_eq!(
+            by_bot(&env),
+            want(Some("b-parentseat")),
+            "fork newer: {fork_newer}"
+        );
+    }
+    // The parent read in an earlier run, the fork in a later one.
+    let env = Env::new();
+    let (pp, pb, cp, cb) = attributed_fork(&env);
+    append(&pp, &pb);
+    env.run(&env.opts());
+    append(&cp, &cb);
+    env.run(&env.opts());
+    assert_eq!(by_bot(&env), want(Some("b-parentseat")));
+    // The parent's file gone: the copies still count once, unattributed, never the fork's.
+    let env = Env::new();
+    let (_, _, cp, cb) = attributed_fork(&env);
+    append(&cp, &cb);
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 3);
+    assert_eq!(by_bot(&env), want(None));
+}
+
+/// An `hc` that answers `server.status` with a synthetic core id and `terminal.list` with
+/// `terminals` (a JSON array), and refuses anything else.
+fn fake_hc(env: &Env, terminals: &str) -> PathBuf {
+    let p = env.dir.path().join("fake-hc");
+    let script = format!(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *server.status*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"core":{{"id":"core-synthetic"}}}}}}\n' "$id" ;;
+    *terminal.list*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"terminals":%s}}}}\n' "$id" '{terminals}' ;;
+    *) printf '{{"jsonrpc":"2.0","id":%s,"error":{{"message":"refused"}}}}\n' "$id" ;;
+  esac
+done
+"#
+    );
+    fs::write(&p, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    p
+}
+
+// The case the copy mark is for: the parent's file is gone, and the fork's own terminal, older
+// than the copied calls, carries the fork's session label. Its label link covers the copies'
+// times, yet they stay unlinked: a copy is never the fork's.
+#[test]
+fn a_forks_copies_never_go_to_the_fork_even_through_its_label() {
+    let env = Env::new();
+    let (_, _, cp, cb) = attributed_fork(&env);
+    append(&cp, &cb);
+    // The fork's seat terminal was created before the parent's calls, and the sync sees it live
+    // with the fork's session on it.
+    // No row ties the fork's session to a launch: only the label does.
+    let created = at() - 3 * 3_600_000;
+    let ledger = env
+        .home()
+        .join(".config/herdr-app/automagik-herdr/workers.jsonl");
+    let start = seat_rows("t9", "b-forklabel", created, "unused");
+    let start = start.lines().next().unwrap();
+    fs::write(&ledger, format!("{start}\n")).unwrap();
+    let terminals = format!(
+        r#"[{{"address":"t9","created_ms":{created},"cwd":"/work/app","argv":["dsh-tui"],"labels":{{"agent.session":"sess-child"}}}}]"#
+    );
+    let hc = fake_hc(&env, &terminals);
+    let _serial = common::serial();
+    let out = env
+        .command()
+        .env("METER_HC", &hc)
+        // The binary runs on the real clock: --backfill reaches the fixtures' fixed date.
+        .args(["sync", "--force", "--no-publish", "--backfill"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let store = meter::store::Store::open(&env.home().join(".automagik/meter/meter.db")).unwrap();
+    let mut m = std::collections::BTreeMap::new();
+    for r in store.rows_since(i64::MIN).unwrap() {
+        *m.entry(r.key.bot.clone()).or_insert(0) += r.tokens.input_uncached;
+    }
+    let mut want = std::collections::BTreeMap::new();
+    want.insert(None, 300);
+    want.insert(Some("b-forklabel".to_owned()), 7);
+    assert_eq!(m, want);
+}
+
 #[test]
 fn two_sessions_with_the_same_seq_both_count() {
     let env = Env::new();
