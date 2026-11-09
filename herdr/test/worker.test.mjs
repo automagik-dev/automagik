@@ -488,6 +488,35 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
+test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when set, one clear line for an unknown one", (t) => {
+  const auto = team();
+  auto.bots[2].worker = { agent: "antigravity" };
+  const s = scene(t, { file: auto });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "-i", "fix the login form"]);
+  assert.equal(r.json().agyMode, "auto");
+  assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("worker.agyMode=")), false, "the default isn't a label");
+
+  const chosen = team();
+  chosen.bots[2].worker = { agent: "antigravity", agyMode: "plan" };
+  const s2 = scene(t, { file: chosen });
+  const r2 = s2.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
+  assert.equal(r2.code, 0, r2.err);
+  assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "-i", "fix the login form"]);
+  assert.equal(r2.json().agyMode, "plan");
+  assert.ok(labelsOf(s2.runs()[0]).includes("worker.agyMode=plan"));
+
+  const bad = team();
+  bad.bots[2].worker = { agent: "antigravity", agyMode: "yolo" };
+  const s3 = scene(t, { file: bad });
+  const r3 = s3.cli(["worker", "fix the login form", "--branch", "feat/agy"]);
+  assert.equal(r3.code, 2);
+  assert.match(r3.err, /Dev's workers: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
+  assert.match(r3.err, /--worker-agy-mode <accept-edits\|auto\|plan>/);
+  assert.equal(s3.runs().length, 0, "nothing started");
+});
+
 test("worker: a bot's space label the window no longer has is left out; a moved bot pane's space is used", (t) => {
   // The bot's pane is labelled sp-gone, a space the window doesn't have, and isn't shown: no space label.
   const s = scene(t);
@@ -768,6 +797,14 @@ test("create and edit --worker-agent/--worker-model/--worker-effort write the fi
   assert.equal(s.cli(["edit", "Tester", "--worker-template", "-x"], { from: null }).code, 2);
   assert.equal(s.cli(["edit", "Tester", "--worker-template="], { from: null }).code, 0);
   assert.deepEqual(s.bots().bots.find((b) => b.name === "Tester").worker, { agent: "codex", model: "gpt-5.5" });
+  // --worker-agy-mode: a chosen Antigravity mode is stored; auto, the default, clears it.
+  assert.equal(s.cli(["edit", "Tester", "--worker-agy-mode", "plan"], { from: null }).code, 0);
+  assert.equal(s.bots().bots.find((b) => b.name === "Tester").worker.agyMode, "plan");
+  const badMode = s.cli(["edit", "Tester", "--worker-agy-mode", "yolo"], { from: null });
+  assert.equal(badMode.code, 2);
+  assert.match(badMode.err, /--worker-agy-mode: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
+  assert.equal(s.cli(["edit", "Tester", "--worker-agy-mode", "auto"], { from: null }).code, 0);
+  assert.equal(s.bots().bots.find((b) => b.name === "Tester").worker.agyMode, undefined);
 });
 
 // ---- the pure parts ----
@@ -786,11 +823,21 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.deepEqual(plan.argv, ["grok"]);
   assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
   const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "max" } });
-  assert.deepEqual(agy.argv, ["agy", "--model", "gemini-4-argon-high", "--effort", "max"]);
+  assert.deepEqual(agy.argv, ["agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "max"]);
+  assert.equal(agy.agyMode, "auto", "the default mode is always passed");
   assert.deepEqual(agy.warnings, []);
+  const chosen = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
+  assert.deepEqual([chosen.agyMode, chosen.argv], ["plan", ["agy", "--mode", "plan"]]);
+  const unknown = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "yolo" } });
+  assert.equal(unknown.error, 'A\'s workers: Antigravity mode "yolo" isn\'t one of accept-edits, auto, plan. '
+    + `Fix it with automagik-herdr edit ${ID.dev} --worker-agy-mode <accept-edits|auto|plan>.`);
+  assert.equal(unknown.error.includes("\n"), false, "one clear line");
+  // Another agent's worker defaults never add mode words: its argv stays as it was.
+  const claude = workerPlan({ id: ID.dev, name: "A", agent: "claude", worker: { agyMode: "plan" } });
+  assert.deepEqual([claude.agyMode, claude.argv], [null, ["claude"]]);
   const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
   assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
-  assert.deepEqual(legacy.argv, ["agy", "--effort", "low"]);
+  assert.deepEqual(legacy.argv, ["agy", "--mode", "auto", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });
@@ -868,10 +915,17 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   // agy takes its first prompt only through -i; a bare trailing task is an error to it.
   const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "high" } });
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", agent: agyPlan.agent,
-    model: agyPlan.model, effort: agyPlan.effort, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
+    model: agyPlan.model, effort: agyPlan.effort, agyMode: agyPlan.agyMode, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
   ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
     "--label", "worker.model=gemini-4-argon-high", "--label", "worker.effort=high", "--parent", "t1", "--",
-    "/usr/bin/env", "PATH=/x/bin", "agy", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
+    "/usr/bin/env", "PATH=/x/bin", "agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
+  // A chosen mode is kept in the label, so Restart --tree runs the worker with the same --mode.
+  const plan = workerPlan({ name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
+  assert.ok(labelsOf(workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: plan.agent,
+    agyMode: plan.agyMode, argv: plan.argv, task: "t", path: "/x/bin" })).includes("worker.agyMode=plan"));
+  assert.ok(!labelsOf(workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: "antigravity",
+    agyMode: "auto", argv: ["agy", "--mode", "auto"], task: "t", path: "/x/bin" })).some((l) => l.startsWith("worker.agyMode=")),
+  "the default isn't a label");
   assert.deepEqual(promptArgs("antigravity", "t"), ["-i", "t"]);
   assert.deepEqual(promptArgs("claude", "t"), ["t"]);
   assert.deepEqual(promptArgs(undefined, "t"), ["t"], "no agent named: the bare task, as before");

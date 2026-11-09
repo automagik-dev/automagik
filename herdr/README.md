@@ -456,7 +456,8 @@ automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
-       [--planned-wave N [--planned-note T]] [--worker-agent A] [--worker-model M] [--worker-effort E]
+       [--agy-mode auto|accept-edits|plan] [--planned-wave N [--planned-note T]]
+       [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
 automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
 automagik-herdr rm <bot>
@@ -749,7 +750,8 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   default model belongs to the default worker agent, so a task that picks another agent
   runs that agent's own default model. Effort goes to `claude --effort`, codex
   `-c model_reasoning_effort`, and pi or omp `--thinking`; other agents get none, with a
-  warning.
+  warning. An Antigravity worker always gets `--mode` (the bot's `worker.agyMode`, auto when
+  absent); any other agent's launch line is unchanged.
 - **Templates:** `--template T` runs the hc template `T` (`hc templates` lists them)
   instead of an agent, for seats whose command sets more than a model: a custom model
   provider, keys, flags. A template owns its command, so `--template` with `--agent`,
@@ -762,7 +764,8 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   whose command runs `claude` gets the session hook; when
   the command names no agent Herdr knows, the hook is skipped with a warning.
 - **Spawn:** `hc run --bg --parent <bot pane> --cwd <worktree>`, labelled `worker.of=<bot id>`,
-  `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`;
+  `branch=<branch>`, `worker.role=<role>` (a template too), `worker.model` and `worker.effort`
+  (`worker.agyMode` too, when it isn't auto);
   with `--task`, also `task=<id>`, `task.project=<main checkout>` and `task.lead=<lead>`
   (without it, no `task` label at all). When the bot's pane is in a Herdr space, also
   `herdr.space=<that space>` and no `herdr.tab`, so the worker opens in a tab of its own there
@@ -1077,17 +1080,25 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
+- `agyMode` is optional: the Antigravity execution mode Start and Restart pass as
+  `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
+  other value is refused at launch with one line and never passed to agy. It applies only to
+  an Antigravity seat: the pack never passes `--dangerously-skip-permissions` and never writes
+  agy's own settings, so its trust list and saved settings stay the person's.
+  `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
+  offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
+  `show`, `ls` and `dsh-tui doctor` print it.
 - `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `fixer`, `integrator`,
   `pm`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
   to the briefing. An unknown rank is ignored with a warning. The form offers ranks as chips
   for team members; `automagik-herdr create|edit --rank R` sets one (`--rank=` clears it).
-- `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high" }` or
+- `worker` is optional: `{ "agent": "codex", "model": "gpt-5.5", "effort": "high", "agyMode": "plan" }` or
   `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
   [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
   template name: letters, digits, `.`, `_`, `-`, no dash first) wins over `agent`, `model`
-  and `effort`.
-  `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template` set them
+  and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
+  `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
   with a warning.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label

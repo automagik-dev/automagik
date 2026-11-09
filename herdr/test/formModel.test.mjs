@@ -194,6 +194,23 @@ test("entryOf: an untouched edit writes the bot back as stored", () => {
   assert.equal(entryOf(s, raw).entry.lead, "b-planaaaaaa");
 });
 
+test("agyMode: the form defaults to auto, opens a stored mode, writes only a chosen one and its CLI line sets/clears it", () => {
+  assert.equal(formFrom({ mode: "create", file: FILE, id: "b-newaaaaaaa", agent: "antigravity" }).agyMode, "auto");
+  const stored = { ...FILE.bots[0], agent: "antigravity", agyMode: "plan" };
+  const initial = formFrom({ mode: "edit", bot: stored });
+  assert.equal(initial.agyMode, "plan");
+  const file = { ...FILE, bots: [stored, ...FILE.bots.slice(1)] };
+  assert.equal(entryOf(initial, file).entry.agyMode, "plan");
+  assert.equal(entryOf({ ...initial, agyMode: "auto" }, file).entry.agyMode, undefined, "auto is the default, never stored");
+  assert.match(commandOf(create({ agent: "antigravity", agyMode: "plan" }), { key: KEY, file: FILE }), /--agy-mode=plan/);
+  assert.doesNotMatch(commandOf(create({ agent: "antigravity" }), { key: KEY, file: FILE }), /--agy-mode/);
+  assert.match(commandOf({ ...initial, agyMode: "auto" }, { key: KEY, file, initial }), /--agy-mode=auto/);
+  assert.match(problemOf(create({ agent: "antigravity", agyMode: "yolo" }), { key: KEY, file: FILE }),
+    /Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
+  assert.equal(editChanged({ ...initial, agyMode: "auto" }, initial), true);
+  assert.equal(editChanged(initial, initial), false);
+});
+
 test("shellQuote: a leading = is quoted (zsh expands a bare =word)", () => {
   assert.equal(shellQuote("=ls"), "'=ls'");
   assert.equal(shellQuote("a=b"), "a=b");

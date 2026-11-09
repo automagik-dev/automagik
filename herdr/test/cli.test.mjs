@@ -693,6 +693,61 @@ test("Antigravity (#793): agy missing means no list, a clear refusal, and nothin
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "nothing was written");
 });
 
+test("Antigravity #812: start and restart pass --mode auto by default and the chosen agyMode; an unknown mode is refused in one line", (t) => {
+  const auto = scene(t);
+  const plainBot = team();
+  plainBot.bots[0].agent = "antigravity";
+  auto.seed(plainBot);
+  const started = auto.cli(["start", "Genie"]);
+  assert.equal(started.code, 0, started.err);
+  assert.deepEqual(plain(agentWords(runCall(auto.calls()))), ["agy", "--mode", "auto"]);
+
+  const s = scene(t);
+  const chosen = team();
+  chosen.bots[0].agent = "antigravity";
+  chosen.bots[0].agyMode = "plan";
+  s.seed(chosen);
+  assert.equal(s.cli(["start", "Genie"]).code, 0);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--mode", "plan"]);
+  const restarted = s.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(restarted.code, 0, restarted.err);
+  const second = s.calls().filter((c) => c[0] === "run")[1];
+  assert.deepEqual(plain(agentWords(second)), ["agy", "--mode", "plan", "--continue"]);
+  assert.deepEqual([restarted.json().mode, restarted.json().note], ["resume", null]);
+
+  const bad = scene(t);
+  const broken = team();
+  broken.bots[0].agent = "antigravity";
+  broken.bots[0].agyMode = "yolo";
+  bad.seed(broken);
+  const refused = bad.cli(["start", "Genie"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /Genie: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\. Fix it with automagik-herdr edit /);
+  assert.equal(refused.err.split("\n").filter((line) => line.includes('Antigravity mode "yolo"')).length, 1, "one clear line");
+  assert.equal(bad.calls().filter((c) => c[0] === "run").length, 0, "nothing started");
+});
+
+test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doctor print it; a bad one is refused", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const made = s.cli(["create", "--name", "Ag", "--agent", "antigravity", "--agy-mode", "plan", "--json"]);
+  assert.equal(made.code, 0, made.err);
+  assert.equal(made.json().bot.agyMode, "plan");
+  const saved = s.bots().bots.find((b) => b.name === "Ag");
+  assert.equal(saved.agyMode, "plan");
+  assert.match(s.cli(["show", "Ag"]).out, /agy mode     plan/);
+  assert.match(s.cli(["ls"]).out, /agy-mode plan/);
+  const bad = s.cli(["create", "--name", "Nope", "--agent", "antigravity", "--agy-mode", "yolo"]);
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /--agy-mode: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
+  assert.equal(s.cli(["edit", "Ag", "--agy-mode", "auto"]).code, 0);
+  assert.equal(s.bots().bots.find((b) => b.name === "Ag").agyMode, undefined, "auto is the default, so it clears");
+  assert.match(s.cli(["show", "Ag"]).out, /agy mode     auto/);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
+  const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${saved.id}`);
+  assert.match(row.detail, /Ag: agy mode auto; hcProxy /);
+});
+
 // ---- edit, rm, category ----
 
 test("#730 local save: two planned leads warn without blocking an unrelated edit", (t) => {
