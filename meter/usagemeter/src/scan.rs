@@ -16,7 +16,7 @@
 //!   the next frame start, so one bad frame never drops the rest of the file.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -125,6 +125,36 @@ pub fn candidate_of(path: &Path) -> Option<Candidate> {
         size: meta.len(),
         mtime_ms: mtime_ms(&meta),
     })
+}
+
+/// The first cwd recorded in the parent transcript of the sub-agent transcript at `path`
+/// (`…/<session>/subagents/<agent>.jsonl` → `…/<session>.jsonl`), reading at most 4 MiB of it.
+/// None when it cannot be read or records none.
+pub fn claude_first_cwd(path: &Path) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        cwd: Option<String>,
+    }
+    let session_dir = path.parent()?.parent()?;
+    let parent =
+        session_dir.with_file_name(format!("{}.jsonl", session_dir.file_name()?.to_str()?));
+    let f = open_nofollow(&parent).ok()?;
+    let mut r = io::BufReader::new(f.take(4 << 20));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line).ok()? == 0 {
+            return None;
+        }
+        if memchr::memmem::find(&line, b"\"cwd\"").is_none() {
+            continue;
+        }
+        if let Ok(Row { cwd: Some(cwd) }) = serde_json::from_slice::<Row>(&line)
+            && !cwd.is_empty()
+        {
+            return Some(cwd.chars().take(1024).collect());
+        }
+    }
 }
 
 /// `…/<session>/subagents/<agent>.jsonl` belongs to `<session>`.
@@ -260,6 +290,7 @@ pub fn plan(c: &Candidate, prev: Option<FileState>) -> io::Result<Plan> {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| s.chars().take(128).collect()),
+                parent_cwd: claude_first_cwd(&c.path),
                 parent_session: Some(parent),
                 ..FileCtx::default()
             },

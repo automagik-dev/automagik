@@ -214,7 +214,12 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         session,
         parent_session: ctx.parent_session.clone(),
         cwd,
-        session_cwd: ctx.cwd.clone(),
+        // Where the session started: its first recorded cwd, or for a sub-agent its parent's.
+        session_cwd: if ctx.parent_session.is_some() {
+            ctx.parent_cwd.clone()
+        } else {
+            ctx.cwd.clone()
+        },
         branch,
         repo: None,
         tokens: tokens(

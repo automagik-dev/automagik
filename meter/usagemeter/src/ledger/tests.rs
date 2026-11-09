@@ -286,11 +286,13 @@ fn a_seat_working_in_a_workers_worktree_is_never_taken_for_the_worker() {
         worker("t1", 0, WT, "claude", "b-dev", "dev"),
         seat("t2", 0, "claude", "b-captain", "captain"),
     ];
-    // The seat's session started in the project root and now calls from the worktree; the sync
-    // sees both terminals live there, or sees nothing.
-    let mut seen = live("t2", 0, "claude-code", WT);
-    seen.labels = Labels::default();
-    for snapshot in [vec![], vec![live("t1", 0, "claude-code", WT), seen]] {
+    // The seat's session started in the project root and now calls from the worktree (its
+    // process stays where it was started); the sync sees both terminals live, or sees nothing.
+    let seen = vec![
+        live("t1", 0, "claude-code", WT),
+        live("t2", 0, "claude-code", PROJECT),
+    ];
+    for snapshot in [vec![], seen] {
         let mut r = resolver_seen(&rows, snapshot);
         let moved = Call {
             session_cwd: Some(PROJECT),
@@ -305,6 +307,46 @@ fn a_seat_working_in_a_workers_worktree_is_never_taken_for_the_worker() {
         };
         assert_eq!(tag(r.resolve(&away)).0.bot, "b-dev");
     }
+}
+
+// Reviewer delta on #835 (the Fixer's L1): an agent relaunched by hand in a seat's pane, inside a
+// worker's worktree, starts its session there; hc shows that logged terminal away from its
+// recorded folder, so it competes and the call is ambiguous, never the worker's.
+#[test]
+fn a_seat_relaunched_by_hand_in_a_workers_worktree_makes_the_call_ambiguous() {
+    let rows = [
+        worker("t1", 0, WT, "claude", "b-dev", "dev"),
+        seat("t2", 0, "claude", "b-captain", "captain"),
+    ];
+    let relaunched = call("claude-code", "s-relaunched", WT, t(40));
+    let mut r = resolver_seen(
+        &rows,
+        vec![
+            live("t1", 0, "claude-code", WT),
+            live("t2", 0, "claude-code", WT),
+        ],
+    );
+    assert_eq!(r.resolve(&relaunched), Resolution::Ambiguous);
+    // The seat in its own folder competes nowhere else.
+    let mut r = resolver_seen(
+        &rows,
+        vec![
+            live("t1", 0, "claude-code", WT),
+            live("t2", 0, "claude-code", PROJECT),
+        ],
+    );
+    assert_eq!(tag(r.resolve(&relaunched)).0.bot, "b-dev");
+}
+
+// Reviewer delta on #835: a session whose start folder is unknown is never named by a worktree.
+#[test]
+fn an_unknown_start_folder_is_unlinked_never_the_worktrees_owner() {
+    let mut r = resolver(&[worker("t1", 0, WT, "claude", "b-dev", "dev")]);
+    let unknown = Call {
+        session_cwd: None,
+        ..call("claude-code", "agent-sub", WT, t(40))
+    };
+    assert_eq!(r.resolve(&unknown), Resolution::Unlinked);
 }
 
 // Reviewer M1 on #835: an address now held by a newer terminal, even a shell, ends the old launch.

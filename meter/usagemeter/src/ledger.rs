@@ -37,7 +37,10 @@
 //! - `worktree`: every worker launch of the call's harness whose worktree is the folder the
 //!   call's session started in, and that was valid at the call's time, is a claimant. The start
 //!   folder, not the call's own cwd: a seat session that later works in a worker's worktree
-//!   started in the project root, so it is never taken for that worker. Seats are never found this way (their
+//!   started in the project root, so it is never taken for that worker, and a Claude sub-agent's
+//!   start folder is its parent session's. A session whose start folder is unknown is never
+//!   named this way. A logged launch hc shows running in a folder other than its recorded
+//!   worktree (an agent relaunched by hand in a seat's pane) competes there. Seats are never found this way (their
 //!   folder is the project root, shared by every seat), but a seat there still competes, and so
 //!   does a live harness terminal the snapshot shows in that cwd with no start row (an unlogged
 //!   launch). This is new for Claude: a Claude worker that no row names falls back to it.
@@ -369,6 +372,9 @@ type Bindings = HashMap<Key, Vec<(i64, Option<i64>, String)>>;
 struct Index {
     launches: Vec<Launch>,
     by_worktree: HashMap<String, Vec<usize>>,
+    /// The folder hc shows a logged launch running in, when it is not the worktree its start row
+    /// recorded, to the launches there.
+    away: HashMap<String, Vec<usize>>,
     /// agent, then session, to the links that tie it to launches.
     links: HashMap<String, HashMap<String, Vec<Link>>>,
     bindings: Bindings,
@@ -589,13 +595,20 @@ impl Index {
             });
             return judge(claims, basis);
         }
-        let Some(cwd) = call.session_cwd.or(call.cwd) else {
+        // Where the session started; with no start known, no worktree can be said to own it.
+        let Some(cwd) = call.session_cwd else {
             return Resolution::Unlinked;
         };
-        let Some(on) = self.by_worktree.get(normalize(cwd)) else {
-            return Resolution::Unlinked;
-        };
-        let claims = on.iter().filter_map(|&i| {
+        let cwd = normalize(cwd);
+        let on = self.by_worktree.get(cwd).into_iter().flatten();
+        // A logged launch hc shows running here, away from the folder its start row recorded (an
+        // agent relaunched by hand in a seat's pane): it competes, so the call is ambiguous.
+        let away = self.away.get(cwd).into_iter().flatten().filter_map(|&i| {
+            let l = &self.launches[i];
+            (l.covers(t) && l.agent.as_deref().is_none_or(|a| a == agent))
+                .then_some(Claim::Unrecorded)
+        });
+        let claims = on.filter_map(|&i| {
             let l = &self.launches[i];
             if l.agent.as_deref().is_some_and(|a| a != agent) || !l.covers(t) {
                 return None;
@@ -610,7 +623,7 @@ impl Index {
             }
             Some(self.claim(i, t))
         });
-        judge(claims, Basis::Worktree)
+        judge(claims.chain(away), Basis::Worktree)
     }
 
     /// What launch `i` says about a call at `t`.
@@ -883,6 +896,23 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
                 .entry(normalize(w).to_owned())
                 .or_default()
                 .push(i);
+        }
+    }
+    for t in snapshot {
+        let (Some(created), Some(cwd), true) = (t.created_ms, t.cwd.as_deref(), t.live()) else {
+            continue;
+        };
+        if t.harness.is_none() {
+            continue;
+        }
+        if let Some(i) = find(&by_tc, &ix.launches, core, &t.terminal, created) {
+            let l = &ix.launches[i];
+            if l.logged && l.worktree.as_deref() != Some(normalize(cwd)) {
+                ix.away
+                    .entry(normalize(cwd).to_owned())
+                    .or_default()
+                    .push(i);
+            }
         }
     }
     ix.bindings = fold_attach(rows.attach.iter().filter(|a| !foreign(&a.key.0)));

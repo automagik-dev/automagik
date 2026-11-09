@@ -218,6 +218,52 @@ fn a_refused_ledger_is_kept_as_every_sources_reason() {
     }
 }
 
+// Reviewer delta on #835: through a real sync, a Claude session that started in the project root
+// and later calls from a worker's worktree, and a sub-agent it spawned there, stay untagged; the
+// worker's own session, started in its worktree, is the worker's.
+#[test]
+fn a_seat_session_and_its_sub_agent_in_a_workers_worktree_stay_untagged() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let root = project.to_string_lossy().into_owned();
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    write_ledger(
+        &project.join(".herdr/app-home/automagik-herdr/workers.jsonl"),
+        &[worker("t1", "b-devsynth1", "dev", &wt, None)],
+    );
+    // The seat's session: its first call in the project root, the next ones from the worktree.
+    write_lines(
+        &env.claude("-project/s-seat.jsonl"),
+        &[
+            line("m1", "s-seat", &root),
+            line("m2", "s-seat", &wt),
+            line("m3", "s-seat", &wt),
+        ],
+    );
+    // A sub-agent it spawned there: its own transcript starts in the worktree.
+    write_lines(
+        &env.claude("-project/s-seat/subagents/agent-1.jsonl"),
+        &[line("m4", "s-seat", &wt), line("m5", "s-seat", &wt)],
+    );
+    // The worker's own session.
+    write_lines(
+        &env.claude("-project-wt/s-dev.jsonl"),
+        &[line("m6", "s-dev", &wt)],
+    );
+    env.run(&env.opts());
+    let mut by_bot: std::collections::BTreeMap<Option<String>, i64> = Default::default();
+    for r in env.store().rows_since(i64::MIN).unwrap() {
+        *by_bot.entry(r.key.bot).or_default() += r.events;
+    }
+    let mut want = std::collections::BTreeMap::new();
+    want.insert(None, 5);
+    want.insert(Some("b-devsynth1".to_owned()), 1);
+    assert_eq!(by_bot, want);
+}
+
 // Reviewer L2 and the genie note on #835: the harness's own reason first, then the refused-ledger
 // note, both within the envelope's 200-character reason.
 #[test]

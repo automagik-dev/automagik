@@ -244,8 +244,10 @@ per-turn rows are stored, and no $ except omp's reported cost.
   hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A call
   with no claimant, or claimants that differ, stays null: a bot is never guessed. That holds
   only for logged launches: a terminal started by hand that ended before any sync saw it is
-  invisible to the ledgers, so the worktree path could still name the worker beside it. A
-  ledger anyone but its owner can write is not read, and the sync says so on stderr.
+  invisible to the ledgers, so the worktree path could still name the worker beside it. The
+  worktree names only a session that started there (a Claude sub-agent: where its parent
+  started). A ledger anyone but its owner can write is not read: the sync says so on stderr and
+  in every counting source's reason, and usage synced meanwhile stays untagged.
 - `machine` is herdr-core's core id, or a random id kept in the store when hc is absent.
 
 ## Run

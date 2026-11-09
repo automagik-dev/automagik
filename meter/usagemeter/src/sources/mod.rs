@@ -59,6 +59,11 @@ pub struct FileCtx {
     pub parent_session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// A Claude sub-agent transcript: the folder its parent session started in (the parent
+    /// transcript's first cwd), None when that transcript could not be read. A sub-agent belongs
+    /// to its parent's launch, so this, not its own first cwd, is where its session started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_cwd: Option<String>,
     /// A Codex rollout: the thread it belongs to and its running total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<codex::CodexCtx>,
