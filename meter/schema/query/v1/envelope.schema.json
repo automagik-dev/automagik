@@ -372,7 +372,7 @@
       "additionalProperties": false,
       "required": [
         "state", "usd", "usd_reported", "usd_estimated", "tokens_priced", "tokens_reported",
-        "tokens_unpriced", "unpriced_models"
+        "tokens_unpriced", "unpriced_models", "unpriced_models_omitted"
       ],
       "properties": {
         "state": { "enum": ["priced", "partial", "unpriced", "zero"] },
@@ -391,7 +391,7 @@
         "unpriced_models_omitted": {
           "type": "integer",
           "minimum": 0,
-          "description": "How many models with no price unpriced_models leaves out past its 8: none is dropped silently."
+          "description": "How many models with no price unpriced_models leaves out past its 8: none is dropped silently. Always present, 0 when none is left out; above 0, unpriced_models holds all 8."
         }
       },
       "allOf": [
@@ -407,6 +407,13 @@
         {
           "if": { "properties": { "state": { "enum": ["priced", "partial", "zero"] } } },
           "then": { "properties": { "usd": { "type": "number" }, "usd_reported": { "type": "number" }, "usd_estimated": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "required": ["unpriced_models_omitted"],
+            "properties": { "unpriced_models_omitted": { "type": "integer", "minimum": 1 } }
+          },
+          "then": { "properties": { "unpriced_models": { "type": "array", "minItems": 8 } } }
         },
         {
           "if": { "properties": { "state": { "const": "priced" } } },

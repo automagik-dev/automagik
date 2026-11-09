@@ -122,7 +122,7 @@ never has to tell a v1 refusal from an old meter's error by stderr text. The sch
 | `machine` | `id` (herdr-core's core id, or the store's stored id) and `scope`, always `local` in v1 |
 | `store` | the store's `schema_version`, and `location`: `current`, `legacy` (the state folder before automagik-dev/usagemeter#7) or `override` (`METER_STATE_DIR`). Never the path. |
 | `ingestion` | `watermark` (when the last successful sync finished; null while a reset's re-import has not finished a run), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`; each null when unknown, and then `complete` is false), `stale` and the `stale_after_s` used (proposed default 7200) |
-| `window` | `name`, `requested_start`, the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark), `clipped` |
+| `window` | `name`, `requested_start` (`end` less the window's days), the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark; while the watermark is null, the end of the hour holding `generated_at`), `clipped` |
 | `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`; `absent` when the harness's log folder is not on this machine), `reason`, `last_success`, `stale`. dsh-tui is `degraded` when a usage line or frame could not be read (a call with no readable total, a frame whose checksum does not match) or when bytes at the end of a session that stopped growing are not a whole frame, and `unsupported` while a session is in a format the meter does not read. Then, when the folder before the state move holds usage this store never counts (an older meter wrote there after the move, or a store of its own is there), one more entry, `legacy-store`, `degraded`, with the reason: that usage is reported, never folded in |
 | `unattributed` | usage in this repo and window with no recorded branch: `tokens_total` and `harnesses` (today only OMP's). Zero when there is none. |
 | `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
@@ -145,7 +145,7 @@ A row:
 | `state` | `measured`, `zero`, `missing`, `stale` or `unsupported` (next table) |
 | `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `branch_unattributed`, `ingestion_stale`, `source_unsupported` |
 | `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added; null when a harness that counted toward the row logs no reasoning split, dsh-tui today), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
-| `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models`, and `unpriced_models_omitted`, how many the list leaves out past its 8 |
+| `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models`, and `unpriced_models_omitted`, how many the list leaves out past its 8 (always present, 0 when none is left out; above 0, the list holds all 8) |
 | `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
 | `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero |
 | `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
@@ -158,7 +158,7 @@ A row:
 | `measured` | usage found in the window | tokens and cost | the numbers, with `cost.state`; "at least" when `coverage` is `partial` |
 | `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, the repo has usage somewhere in this store, and none of the repo's usage in the window lacks a branch | all zero, `cost.state: zero` | a real 0 |
 | `missing` | nothing found, but one of those conditions fails (`reason` says which; `branch_unattributed` for the last) | null | unknown |
-| `stale` | ingestion is older than `stale_after_s` | the last known numbers | unknown, or the numbers labelled with their age |
+| `stale` | ingestion is older than `stale_after_s`, or has no watermark (a reset's re-import has not finished a run); this state comes before every other | what the store holds for the branch: the numbers as of the last sync, which are a lower bound while `ingestion.complete` is false (a re-import in progress); `tokens`, `cost`, `token_precision` and `activity` all null when it holds nothing for the branch | unknown, or the numbers labelled with their age ("at least" while `complete` is false) |
 | `unsupported` | nothing found while a source on this machine is `unsupported` | null | unknown ("update needed") |
 
 Cost: `priced` when no token is unpriced; `partial` when some are, and `usd` is then a lower
@@ -196,7 +196,7 @@ with a remote) belongs to no `--repo` and is not counted here.
 | 13 | `outdated_store` | the store needs a migration only `sync` runs | no | nothing |
 | 14 | `unsupported_contract` | `--contract` names a version this meter does not serve; `error.supported_contracts` | no | nothing |
 | 15 | `too_large` | the full answer would pass the output cap; `error.limit_bytes`, `error.needed_bytes`, and `error.rows_fit` (how many rows, in request order, would have fit) | read, not returned | nothing |
-| 1 | `error` | anything else: an unreadable or corrupt store, an I/O error | no | nothing |
+| 1 | `error` | anything else: an unreadable or corrupt store, an I/O error, or a state folder the meter cannot read without writing (`error.code` `read_only_folder`, below) | no | nothing |
 
 A meter older than v1 has no `query` verb. Today's binary prints `meter: unknown command` on
 stderr, nothing on stdout, and exits 2. A reader that gets no envelope on stdout treats the meter
@@ -278,7 +278,8 @@ timer. What the reader tells the person, by outcome:
 | exit 13 | run `usagemeter sync`, which migrates and keeps a generation first |
 | exit 14 | update whichever side is older |
 | exit 15 | split the branches over smaller calls, within `error.rows_fit` |
-| exit 1 or 2 | report it: genie sent a bad request, or the store is damaged |
+| exit 1, `error.code` `read_only_folder` | make the state folder writable, or read where its `-wal` and `-shm` already exist (a reader that could write leaves them) |
+| exit 1 with any other code, or exit 2 | report it: genie sent a bad request, or the store is damaged |
 
 #### The caller's side (genie-rs)
 
@@ -602,6 +603,7 @@ genie's side of the boundary, built in genie and named here only so the order is
 | `unsupported-contract.json` | `--contract 2` asked of a meter that serves 1 | 14 |
 | `too-large.json` | an answer past the output cap: refused whole, with `rows_fit` and a capped echo | 15 |
 | `error.json` | a damaged store | 1 |
+| `read-only-folder.json` | a state folder the reader cannot write, and no `-wal` or `-shm` beside the store: `read_only_folder`, `store` null | 1 |
 
 The data is synthetic: `example.com` repos, made-up branches, no session ids. Who reads them:
 
@@ -622,6 +624,13 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 - **Breaking changes make contract 2.** These are a removed or renamed field, a changed meaning
   or unit, a new row `state`, or a new `cost.state`. Readers learn it first; a reader that meets
   a version it does not know shows "update needed", never a guess.
+- **Widening a type is breaking once contract 1 ships.** Until a release carries contract 1, its
+  types may still change in place, as M1 widened `tokens.reasoning` and `ingestion.backlog`'s
+  `bytes` and `files` from integer to integer or null, and as its follow-up made
+  `unpriced_models_omitted` required. After that release, widening a field's type (a new `null`,
+  a number where an integer was, a string where an enum was) is a changed meaning and makes
+  contract 2: a reader written against the narrower type may fail on it. A new `reason` or
+  source stays additive, as above.
 - **The capability.** A breaking change that a `meter.usage@1` reader cannot read also bumps the
   capability's major, as RFC 0017 says for the doc.
 
