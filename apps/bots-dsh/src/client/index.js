@@ -1054,7 +1054,7 @@ export function apply(ctx) {
     () => installPackCell('conversation.input.permission', 'permission'),
     () => simpleOnly(() => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing)),
     // The composer carries no run statistics, and DSH's model picker stays out: a Bot's
-    // model lives on the Bot. A pack that offers it draws Omni's own model menu here.
+    // model lives on the Bot. Omni's own model menu shows it here in every Bot's chat.
     () => shadow('conversation.input.model', { priority: BOT_PRIORITY, inject: face }, PackModelCell),
     () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'activity', order: 0, priority: BOT_PRIORITY }, Nothing)),
     () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: BOT_PRIORITY }, Nothing)),
