@@ -183,8 +183,8 @@ and unapproved templates or agents are refused with one `hc-proxy:` line explain
 For templates the proxy reads metadata from the core, and `templates.list` returns only the
 approved name, preserving that entry's metadata. A missing template cannot become a program.
 
-Only dsh-tui workers take the helper wrapper and mask. An approved template or other agent
-worker keeps its existing plain launch, outside the dsh-tui sandbox, as the owner's choice.
+Only dsh-tui workers take the helper wrapper and mask. Approved template workers and workers
+using other agents run unsandboxed by the owner's choice and keep their existing plain launch.
 The single generated env exception is the default Claude login wrapper,
 `/usr/bin/env -u CLAUDE_CONFIG_DIR`: trusted code rebuilds it from the approved plan and core
 template text. The caller cannot add or change an unset or assignment. Separately, the real
@@ -192,6 +192,13 @@ worker CLI wire carries `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VE
 those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,64}`. All other
 keys and bad values refuse. Only `caller` is overwritten with the verified pane's identity.
 A forged `parent` or `worker.of` is refused before forwarding; neither is overwritten.
+
+The proxy refuses these starts:
+
+- Every worker start after re-approval until the pane restarts, including helper workers.
+- A template or agent name absent from the approved snapshot.
+- An env override outside the four bounded terminal variables or the exact generated login wrapper.
+- Any argv that differs from the command rebuilt from the approved snapshot and core template text.
 
 The CLI skips the PATH guard only when the actual transport answers the proxy's local
 `proxy.workerTransport` request for this pane. That single reply supplies both the verified
