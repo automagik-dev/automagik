@@ -838,6 +838,10 @@ fn each_example_is_what_the_meter_answers() {
             eprintln!("{name}: skipped, a folder's mode does not bind root");
             continue;
         }
+        if SCHEMA_ONLY.contains(&name.as_str()) {
+            eprintln!("{name}: schema-only until RFC 0021 delivery 6, no meter answer to compare");
+            continue;
+        }
         let want = example(&name);
         let (code, raw) = scenario_raw(&name);
         let got: Value = serde_json::from_str(&raw).unwrap();
@@ -904,7 +908,14 @@ fn check_refusal_nulls(name: &str, v: &Value) {
     if status == "ok" {
         return;
     }
-    for k in ["as_of", "ingestion", "window", "unattributed", "pricing"] {
+    for k in [
+        "as_of",
+        "ingestion",
+        "window",
+        "unattributed",
+        "actor_unattributed",
+        "pricing",
+    ] {
         assert!(v[k].is_null(), "{name}: {k} on a refusal");
     }
     for k in ["rows", "sources"] {
@@ -1208,6 +1219,493 @@ fn every_measured_row_keeps_three_questions_apart() {
     let (_, v) = fx.query(&args(&["feat/none"]));
     assert_eq!(v["unattributed"]["tokens_total"], 300);
     assert_eq!(rows_of(&v)[0]["state"], "missing");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The attribution contract (RFC 0021 delivery 2).
+
+/// RFC 0021 delivery 2's examples. The meter writes none of their fields until RFC 0021 delivery
+/// 6 (the query), so until then they are schema-only: they validate against the schema and pass
+/// the sum checks below, but no store is built for them and no meter answer is compared with
+/// them. Delivery 6 empties this list and adds a scenario for each.
+const SCHEMA_ONLY: [&str; 7] = [
+    "actor-ambiguous",
+    "actor-ledger-branch",
+    "actor-no-evidence",
+    "actor-straddling-evidence",
+    "by-bot",
+    "by-bot-lower-bound",
+    "by-bot-no-evidence",
+];
+
+/// Whether an answer carries any field of the attribution contract.
+fn reports_actors(v: &Value) -> bool {
+    v.get("actor_unattributed").is_some()
+        || v["query"].get("by").is_some()
+        || v["rows"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|r| r["attribution"].get("actor").is_some()))
+}
+
+#[test]
+fn schema_only_examples_are_exactly_the_attribution_ones() {
+    // No attribution example is compared with a meter that cannot write it, and no example the
+    // meter answers today can hide behind the list.
+    let names = example_names();
+    for n in SCHEMA_ONLY {
+        assert!(names.iter().any(|x| x == n), "{n} is not an example");
+    }
+    for n in &names {
+        assert_eq!(
+            reports_actors(&example(n)),
+            SCHEMA_ONLY.contains(&n.as_str()),
+            "{n}"
+        );
+    }
+}
+
+/// RFC 0021 delivery 2's order item: contract 1 carries the attribution contract before any
+/// release ships the meter (RFC 0017 delivery 4). This fails on a schema whose
+/// `attribution.precision` lacks `actor_interval`, or that drops `--by bot` or
+/// `actor_unattributed`, so the contract cannot be dropped from contract 1 unnoticed.
+#[test]
+fn contract_1_carries_the_attribution_contract() {
+    let text = fs::read_to_string(v1().join("envelope.schema.json")).unwrap();
+    let s: Value = serde_json::from_str(&text).unwrap();
+    let precision = s["$defs"]["attribution"]["properties"]["precision"]["enum"]
+        .as_array()
+        .expect("attribution.precision is an enum");
+    for p in ["branch_window", "task_interval", "actor_interval"] {
+        assert!(precision.contains(&json!(p)), "precision lacks {p}");
+    }
+    assert_eq!(
+        s["properties"]["query"]["oneOf"][1]["properties"]["by"]["enum"],
+        json!(["bot"])
+    );
+    assert!(s["$defs"]["botRow"].is_object());
+    assert!(s["properties"]["actor_unattributed"].is_object());
+}
+
+fn int(v: &Value) -> i64 {
+    v.as_i64().unwrap_or_else(|| panic!("not an integer: {v}"))
+}
+
+/// The reasons of `actor_unattributed`, in the schema's order.
+fn actor_reasons() -> Vec<String> {
+    let text = fs::read_to_string(v1().join("envelope.schema.json")).unwrap();
+    let s: Value = serde_json::from_str(&text).unwrap();
+    s["$defs"]["actorUnattributed"]["properties"]["parts"]["items"]["properties"]["reason"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap().to_string())
+        .collect()
+}
+
+/// The rules of RFC 0021 (d) a schema cannot check, since it cannot add: every violation in `v`.
+/// - On a row, the four counts add up to `tokens.total`, `tokens_by_basis` to
+///   `tokens_attributed`, and `tokens_by_branch_basis` to `tokens.total`.
+/// - `tokens_before_evidence` is all of the tokens while `evidence_from` is null or the window
+///   ends by it, and 0 when the window starts at or after it.
+/// - In `actor_unattributed`, the three counts add up to `tokens_total`, the parts come one per
+///   reason in the schema's order, and add up, by state, to the count of that name; branch rows,
+///   which never overlap, hold no more of each than the repo does.
+/// - A bot row's activity names its own harness alone.
+fn actor_errors(v: &Value) -> Vec<String> {
+    let mut e = Vec::new();
+    let evidence = v["ingestion"]["evidence_from"].as_str();
+    let (start, end) = (v["window"]["start"].as_str(), v["window"]["end"].as_str());
+    // RFC 3339 UTC times of one shape compare as strings.
+    let fixed_before = |total: i64| -> Option<i64> {
+        if !v["ingestion"].is_object() {
+            return None;
+        }
+        match (evidence, start, end) {
+            (None, _, _) => Some(total),
+            (Some(ev), Some(s), _) if s >= ev => Some(0),
+            (Some(ev), _, Some(en)) if en <= ev => Some(total),
+            _ => None,
+        }
+    };
+    let mut in_rows = [0i64; 3];
+    let rows = v["rows"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    for (i, r) in rows.iter().enumerate() {
+        if let Some(h) = r.get("harness")
+            && r["activity"]["harnesses"] != json!([h])
+        {
+            e.push(format!(
+                "rows[{i}]: a bot row on {h} with activity on others"
+            ));
+        }
+        let Some(a) = r["attribution"].get("actor") else {
+            continue;
+        };
+        let total = int(&r["tokens"]["total"]);
+        let c = [
+            "tokens_attributed",
+            "tokens_ambiguous",
+            "tokens_unlinked",
+            "tokens_before_evidence",
+        ]
+        .map(|k| int(&a[k]));
+        if c.iter().sum::<i64>() != total {
+            e.push(format!(
+                "rows[{i}]: the counts {c:?} do not add up to {total}"
+            ));
+        }
+        let basis: i64 = ["session", "label", "worktree"]
+            .iter()
+            .map(|k| int(&a["tokens_by_basis"][k]))
+            .sum();
+        if basis != c[0] {
+            e.push(format!(
+                "rows[{i}]: tokens_by_basis adds up to {basis}, not {}",
+                c[0]
+            ));
+        }
+        let branch: i64 = ["log", "ledger", "none"]
+            .iter()
+            .map(|k| int(&a["tokens_by_branch_basis"][k]))
+            .sum();
+        if branch != total {
+            e.push(format!(
+                "rows[{i}]: tokens_by_branch_basis adds up to {branch}, not {total}"
+            ));
+        }
+        if let Some(want) = fixed_before(total)
+            && c[3] != want
+        {
+            e.push(format!(
+                "rows[{i}]: {} before evidence where the window fixes {want}",
+                c[3]
+            ));
+        }
+        if r.get("branch").is_some() {
+            for k in 0..3 {
+                in_rows[k] += c[k + 1];
+            }
+        }
+    }
+    let u = &v["actor_unattributed"];
+    if !u.is_object() {
+        return e;
+    }
+    let total = int(&u["tokens_total"]);
+    let c = [
+        "tokens_ambiguous",
+        "tokens_unlinked",
+        "tokens_before_evidence",
+    ]
+    .map(|k| int(&u[k]));
+    if c.iter().sum::<i64>() != total {
+        e.push(format!(
+            "actor_unattributed: {c:?} does not add up to {total}"
+        ));
+    }
+    if let Some(want) = fixed_before(total)
+        && c[2] != want
+    {
+        e.push(format!(
+            "actor_unattributed: {} before evidence, not {want}",
+            c[2]
+        ));
+    }
+    let reasons = actor_reasons();
+    let mut last = None;
+    let mut by_state = [0i64; 3];
+    for (i, p) in u["parts"].as_array().unwrap().iter().enumerate() {
+        let at = reasons.iter().position(|r| p["reason"] == r.as_str());
+        if at.is_none() || at <= last {
+            e.push(format!(
+                "actor_unattributed.parts[{i}]: repeated, unknown or out of order"
+            ));
+        }
+        last = at;
+        let s = ["ambiguous", "unlinked", "before_evidence"]
+            .iter()
+            .position(|s| p["state"] == *s)
+            .unwrap_or_else(|| panic!("a part's state: {p}"));
+        by_state[s] += int(&p["tokens_total"]);
+    }
+    if by_state != c {
+        e.push(format!(
+            "actor_unattributed: the parts add up to {by_state:?}, not {c:?}"
+        ));
+    }
+    for k in 0..3 {
+        if in_rows[k] > c[k] {
+            e.push(format!(
+                "branch rows hold {} of count {k}, the repo {}",
+                in_rows[k], c[k]
+            ));
+        }
+    }
+    e
+}
+
+#[test]
+fn actor_counts_add_up_on_every_example() {
+    let mut checked = 0;
+    for n in example_names() {
+        let v = example(&n);
+        let e = actor_errors(&v);
+        assert!(e.is_empty(), "{n}: {e:#?}");
+        checked += usize::from(reports_actors(&v));
+    }
+    assert_eq!(checked, SCHEMA_ONLY.len());
+}
+
+#[test]
+fn the_sum_check_refuses_counts_that_do_not_add_up() {
+    // Each of these passes the schema, so only the sum check stands between it and a reader.
+    let s = schema();
+    let mut bad: Vec<(&str, Value)> = Vec::new();
+    let mut v = example("actor-straddling-evidence");
+    v["rows"][0]["attribution"]["actor"]["tokens_before_evidence"] = json!(940001);
+    bad.push(("four counts past tokens.total", v));
+    let mut v = example("actor-ambiguous");
+    v["rows"][0]["attribution"]["actor"]["tokens_by_basis"]["session"] = json!(699999);
+    bad.push(("tokens_by_basis short of tokens_attributed", v));
+    let mut v = example("actor-ledger-branch");
+    v["rows"][0]["attribution"]["actor"]["tokens_by_branch_basis"]["ledger"] = json!(1640000);
+    bad.push(("tokens_by_branch_basis short of tokens.total", v));
+    let mut v = example("actor-ambiguous");
+    let a = &mut v["rows"][1]["attribution"]["actor"];
+    a["tokens_attributed"] = json!(359000);
+    a["tokens_by_basis"]["session"] = json!(359000);
+    a["tokens_before_evidence"] = json!(1000);
+    bad.push(("usage before evidence in a window after evidence_from", v));
+    let mut v = example("actor-no-evidence");
+    v["actor_unattributed"]["tokens_total"] = json!(1641001);
+    bad.push(("actor_unattributed past its counts", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][1]["tokens_total"] = json!(52001);
+    bad.push(("parts past their count", v));
+    let mut v = example("by-bot-lower-bound");
+    let first = v["actor_unattributed"]["parts"][0].clone();
+    v["actor_unattributed"]["parts"][1] = first;
+    v["actor_unattributed"]["tokens_total"] = json!(439000);
+    v["actor_unattributed"]["tokens_ambiguous"] = json!(168000);
+    v["actor_unattributed"]["tokens_unlinked"] = json!(271000);
+    bad.push(("a reason given twice", v));
+    let mut v = example("actor-ambiguous");
+    let u = &mut v["actor_unattributed"];
+    u["tokens_total"] = json!(1000);
+    u["tokens_ambiguous"] = json!(1000);
+    u["parts"][0]["tokens_total"] = json!(1000);
+    bad.push(("branch rows holding more ambiguous usage than the repo", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["activity"]["harnesses"] = json!(["codex", "omp"]);
+    bad.push(("a bot row with activity on another harness", v));
+    for (what, v) in bad {
+        assert!(s.valid(&v), "{what}: {:#?}", s.errors(&v));
+        assert!(!actor_errors(&v).is_empty(), "the sum check accepts {what}");
+    }
+}
+
+#[test]
+fn request_sha256_covers_by_on_every_example() {
+    // A branch request hashes as before by existed; a bot request adds the line `by bot`, which
+    // no branch can be, after the window.
+    use sha2::Digest;
+    let mut by = 0;
+    for n in example_names() {
+        let v = example(&n);
+        let q = &v["query"];
+        if !q.is_object() || q["branches_complete"] != true || q.get("repo_complete").is_some() {
+            continue;
+        }
+        let mut lines = vec![
+            q["repo"].as_str().unwrap().to_string(),
+            q["window"].as_str().unwrap().to_string(),
+        ];
+        if let Some(b) = q.get("by") {
+            lines.push(format!("by {}", b.as_str().unwrap()));
+            by += 1;
+        }
+        for b in q["branches"].as_array().unwrap() {
+            lines.push(b.as_str().unwrap().to_string());
+        }
+        let mut h = sha2::Sha256::new();
+        for l in &lines {
+            h.update(l.as_bytes());
+            h.update(b"\n");
+        }
+        assert_eq!(q["request_sha256"], meter::event::hex(&h.finalize()), "{n}");
+    }
+    assert_eq!(by, 3, "the bot examples");
+}
+
+#[test]
+fn the_schema_refuses_what_the_attribution_contract_forbids() {
+    let s = schema();
+    let mut bad: Vec<(&str, Value)> = Vec::new();
+    let remove = |v: &mut Value, k: &str| {
+        v.as_object_mut().unwrap().remove(k);
+    };
+
+    // D1 and D2: a row's kind is its precision, and an answer holds one kind of row.
+    let mut v = example("actor-ambiguous");
+    v["rows"][0]["attribution"]["precision"] = json!("actor_interval");
+    bad.push(("a branch row at actor_interval", v));
+    let mut v = example("actor-ambiguous");
+    v["rows"][0]["attribution"]["precision"] = json!("task_interval");
+    bad.push(("a branch row at task_interval", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["attribution"]["precision"] = json!("branch_window");
+    bad.push(("a bot row at branch_window", v));
+    let mut v = example("actor-ambiguous");
+    v["rows"][1] = example("by-bot")["rows"][0].clone();
+    bad.push(("a bot row in a branch answer", v));
+    let mut v = example("by-bot");
+    v["rows"][1] = example("actor-ambiguous")["rows"][0].clone();
+    bad.push(("a branch row in a bot answer", v));
+    let mut v = example("priced");
+    v["query"]["branches"] = json!([]);
+    bad.push(("a branch answer that names no branch", v));
+    let mut v = example("by-bot");
+    v["query"]["by"] = json!("branch");
+    bad.push(("by branch echoed", v));
+
+    // A bot row holds attributed usage only, keyed in full.
+    for k in [
+        "tokens_ambiguous",
+        "tokens_unlinked",
+        "tokens_before_evidence",
+    ] {
+        let mut v = example("by-bot");
+        v["rows"][0]["attribution"]["actor"][k] = json!(1);
+        bad.push(("a bot row holding usage no bot is given", v));
+    }
+    let mut v = example("by-bot");
+    remove(&mut v["rows"][0]["attribution"], "actor");
+    bad.push(("a bot row without actor", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["attribution"]["shared"] = json!(true);
+    bad.push(("a shared bot row", v));
+    let mut v = example("by-bot-lower-bound");
+    v["rows"][0]["attribution"]["actor"]["tokens_by_branch_basis"]["none"] = json!(5);
+    bad.push((
+        "a bot row filtered by branch holding usage with no branch",
+        v,
+    ));
+    let mut v = example("actor-ambiguous");
+    v["rows"][0]["attribution"]["actor"]["tokens_by_branch_basis"]["none"] = json!(5);
+    bad.push(("a branch row holding usage with no branch", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["role"] = json!(null);
+    bad.push(("a recorded role that is null", v));
+    let mut v = example("by-bot-lower-bound");
+    v["rows"][0]["squad"] = json!("lark");
+    bad.push(("an unrecorded squad with a value", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["unrecorded"] = json!(["squad", "role"]);
+    bad.push(("unrecorded out of order", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["kind"] = json!("lead");
+    bad.push(("a bot row of an unknown kind", v));
+    let mut v = example("by-bot");
+    remove(&mut v["rows"][0], "squad");
+    bad.push(("a bot row without squad", v));
+    let mut v = example("by-bot");
+    v["rows"][0]["state"] = json!("zero");
+    bad.push(("a zero bot row", v));
+
+    // actor_unattributed: present with actors, on every row with tokens, and nowhere else.
+    let mut v = example("by-bot");
+    remove(&mut v, "actor_unattributed");
+    bad.push(("a bot answer without actor_unattributed", v));
+    // With no bot row, actor_unattributed is all that says why: an empty answer is not 0.
+    let mut v = example("by-bot-no-evidence");
+    remove(&mut v, "actor_unattributed");
+    bad.push(("a bot answer with no row and no actor_unattributed", v));
+    let mut v = example("actor-ambiguous");
+    remove(&mut v, "actor_unattributed");
+    bad.push(("actor on rows without actor_unattributed", v));
+    let mut v = example("actor-ambiguous");
+    remove(&mut v["rows"][1]["attribution"], "actor");
+    bad.push((
+        "a row with tokens and no actor beside actor_unattributed",
+        v,
+    ));
+    let mut v = example("actor-ambiguous");
+    for (k, x) in [
+        ("state", json!("missing")),
+        ("reason", json!("backlog")),
+        ("tokens", json!(null)),
+        ("cost", json!(null)),
+        ("token_precision", json!(null)),
+        ("activity", json!(null)),
+    ] {
+        v["rows"][1][k] = x;
+    }
+    bad.push(("a row with no tokens carrying actor", v));
+    let mut v = example("locked");
+    v["actor_unattributed"] = example("by-bot")["actor_unattributed"].clone();
+    bad.push(("actor_unattributed on a refusal", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][0]["state"] = json!("unlinked");
+    bad.push(("claimants_differ counted as unlinked", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][2]["state"] = json!("ambiguous");
+    bad.push(("dsh_tui_seat counted as ambiguous", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][3]["state"] = json!("before_evidence");
+    bad.push(("other_machine counted as before evidence", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][1]["reason"] = json!("guessed");
+    bad.push(("an unknown reason", v));
+    let mut v = example("by-bot");
+    v["actor_unattributed"]["parts"] =
+        example("by-bot-lower-bound")["actor_unattributed"]["parts"].clone();
+    bad.push(("parts beside a zero total", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"] = json!([]);
+    bad.push(("a total above zero with no parts", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][1]["harnesses"] = json!([]);
+    bad.push(("a part on no harness", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["parts"][1]["tokens_total"] = json!(0);
+    bad.push(("an empty part", v));
+
+    // While evidence_from is null, every token is before evidence (RFC 0021 (d)).
+    for k in ["tokens_attributed", "tokens_ambiguous", "tokens_unlinked"] {
+        let mut v = example("actor-no-evidence");
+        let a = &mut v["rows"][0]["attribution"]["actor"];
+        a[k] = json!(1281000);
+        a["tokens_before_evidence"] = json!(0);
+        if k == "tokens_attributed" {
+            a["tokens_by_basis"]["session"] = json!(1281000);
+        }
+        bad.push((
+            "a row with evidence-backed counts while evidence_from is null",
+            v,
+        ));
+    }
+    let mut v = example("by-bot");
+    v["ingestion"]["evidence_from"] = json!(null);
+    bad.push(("bot rows while evidence_from is null", v));
+    for (state, reason) in [("unlinked", "no_record"), ("ambiguous", "claimants_differ")] {
+        let mut v = example("by-bot-no-evidence");
+        let u = &mut v["actor_unattributed"];
+        u[format!("tokens_{state}")] = json!(1641000);
+        u["tokens_before_evidence"] = json!(0);
+        u["parts"][0]["state"] = json!(state);
+        u["parts"][0]["reason"] = json!(reason);
+        bad.push((
+            "evidence-backed unattributed usage while evidence_from is null",
+            v,
+        ));
+    }
+
+    for (what, v) in bad {
+        assert!(!s.valid(&v), "the schema accepts {what}");
+    }
+
+    // The fields stay optional: an answer without them is the meter's answer today.
+    assert!(s.valid(&example("priced")));
+    assert!(!reports_actors(&example("priced")));
 }
 
 // ---------------------------------------------------------------------------------------------

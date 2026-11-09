@@ -1,0 +1,171 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "ok",
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": "2026-11-08T19:52:41Z",
+  "machine": {
+    "id": "machine-a1b2c3",
+    "scope": "local"
+  },
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "ingestion": {
+    "watermark": "2026-11-08T19:52:41Z",
+    "counted_from": "2026-09-10T00:00:00Z",
+    "evidence_from": "2026-10-25T00:00:00Z",
+    "complete": true,
+    "backlog": {
+      "bytes": 0,
+      "files": 0
+    },
+    "stale": false,
+    "stale_after_s": 7200
+  },
+  "window": {
+    "name": "d30",
+    "requested_start": "2026-10-09T20:00:00Z",
+    "start": "2026-10-09T20:00:00Z",
+    "end": "2026-11-08T20:00:00Z",
+    "clipped": false
+  },
+  "sources": [
+    {
+      "harness": "claude-code",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "codex",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "dsh-tui",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "omp",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    }
+  ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
+  "actor_unattributed": {
+    "tokens_total": 1090000,
+    "tokens_ambiguous": 0,
+    "tokens_unlinked": 0,
+    "tokens_before_evidence": 1090000,
+    "parts": [
+      {
+        "state": "before_evidence",
+        "reason": "before_evidence",
+        "tokens_total": 1090000,
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ]
+      }
+    ]
+  },
+  "pricing": {
+    "table": {
+      "origin": "bundled",
+      "date": "2026-10-06",
+      "source": "usagemeter bundled list prices",
+      "label": "list prices, an estimate",
+      "sha256": null
+    },
+    "reported_wins": true,
+    "long_prompt_tiers": false
+  },
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "branch_count": 1,
+    "branches": [
+      "feat/gn-12-cache"
+    ],
+    "branches_complete": true,
+    "request_sha256": "72c8db08c4bb77d16c2b64c03d871ffaa73ff85f194a12c03282957522931d3c"
+  },
+  "rows": [
+    {
+      "branch": "feat/gn-12-cache",
+      "requested": 1,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 140000,
+        "cache_read": 2250000,
+        "cache_write_5m": 150000,
+        "cache_write_1h": 0,
+        "output": 78000,
+        "reasoning": 19000,
+        "unsplit": 0,
+        "total": 2618000
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 2.8198,
+        "usd_reported": 0,
+        "usd_estimated": 2.8198,
+        "tokens_priced": 2618000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "branch_window",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 1678000,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 940000,
+          "tokens_by_basis": {
+            "session": 1500000,
+            "label": 0,
+            "worktree": 178000
+          },
+          "tokens_by_branch_basis": {
+            "log": 2618000,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-10-12T09:00:00Z",
+        "last_hour": "2026-11-08T18:00:00Z",
+        "hours": 27,
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ]
+      },
+      "incomplete_sources": []
+    }
+  ]
+}
