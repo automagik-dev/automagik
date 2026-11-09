@@ -614,7 +614,12 @@ export class Backchannel {
           return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
         }
         const text = `Error: ${cause?.message ?? cause}`
-        return settle([{ type: 'text', text }], true, { name: cause?.name ?? 'Error', code: cause?.code })
+        // The info lands in the tool/result row, which must be plain JSON: an Error with no
+        // string code (or a non-string name) would leave an undefined field, the row would be
+        // refused, and the call would stay unresolved in the session log.
+        const info = { name: typeof cause?.name === 'string' ? cause.name : 'Error' }
+        if (typeof cause?.code === 'string') info.code = cause.code
+        return settle([{ type: 'text', text }], true, info)
       }
       // A revocation, a timeout or a level change during the review wins over its result: the
       // body must not be reported as executed under a level or credential that no longer holds.

@@ -20,7 +20,7 @@ const TOOLS = [
   { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
 ]
 
-function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3 } = {}) {
+function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3, fail } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn })
   session.append('step/start', { turn, step: 1 })
@@ -39,6 +39,7 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
           executable: toolName => definitions.find(definition => definition.name === toolName),
           execute: async ({ calls }) => {
             executed.push({ name: calls[0].name, arguments: calls[0].arguments })
+            if (fail !== undefined) throw fail
             return { results: [{ callId: calls[0].id, result: { content: [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }
           },
         }
@@ -915,4 +916,34 @@ test('drift is a plugin record that replay can carry: plugin:acp-dsh/toolset-dri
 test('the turn position for the bridge\'s rows comes from the log the Session already committed', () => {
   const h = host()
   assert.deepEqual(positionOf(h.ctx, h.session), { turn: 3, step: 1 })
+})
+
+test('a tool that throws an Error with no code settles a JSON result row, and the session loads', async () => {
+  const h = host({ sandbox: 'danger-full-access', policy: 'never', turn: 1, fail: new Error('boom') })
+  await h.backchannel.listen()
+  const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+  h.backchannel.announce(record)
+  try {
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'bridge-throws' }),
+    })
+    const body = await response.json()
+    assert.equal(body.isError, true)
+    assert.deepEqual(body.error, { name: 'Error' })
+    assert.equal(h.executed.length, 1)
+    h.session.append('step/end', { turn: 1, step: 1 })
+    h.session.append('turn/end', { turn: 1, reason: 'stop' })
+
+    const results = h.session.snapshotEvents().filter(event => event.type === 'tool/result')
+    assert.equal(results.length, 1, 'the throwing call has its result row')
+    assert.equal(results[0].data.message.toolCallId, 'bridge-throws')
+    assert.equal(results[0].data.message.isError, true)
+    assert.match(JSON.stringify(results[0].data.message.content), /Error: boom/)
+    assert.deepEqual(results[0].data.error, { name: 'Error' }, 'no undefined code key')
+    assert.doesNotThrow(() => assertLoadable(h.session), 'the finished session loads')
+  } finally {
+    h.backchannel.dispose()
+  }
 })
