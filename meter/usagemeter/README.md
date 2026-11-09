@@ -207,11 +207,14 @@ is opened, and the folder itself stays.
 - If the new dir is the old dir under another name (a symlink), nothing moves.
 - With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
 - `status` and `query` open the store read-only (`SQLITE_OPEN_READ_ONLY`): they never take
-  `meter.lock`, change the schema, checkpoint the WAL or create anything (SQLite may add its own
-  empty `-wal` and `-shm` companions). They read the new dir, else the old dir before the first
-  `sync` after an upgrade, and say which (`location`). While a sync runs they still read. While a
-  move into the new dir has not finished they open nothing (`status` exits 2, `query` exits 1)
-  with the reason. An old dir that holds usage the new store never counts (an older meter wrote to
+  `meter.lock`, change the schema or checkpoint the WAL, and the database's content never changes.
+  SQLite itself may add the store's `-wal` and `-shm` companions, so the folder is not always
+  byte-identical afterwards; no other file is made. In a folder they cannot write, they read the
+  store only when those companions already exist, and otherwise refuse by name
+  (`read_only_folder`: `query` exits 1, `status` exits 2). They read the new dir, else the old dir
+  before the first `sync` after an upgrade, and say which (`location`). While a sync runs they
+  still read. While a move into the new dir has not finished they open nothing (`status` exits 2,
+  `query` exits 1) with the reason. An old dir that holds usage the new store never counts (an older meter wrote to
   the kept copies, or a store of its own is there) is reported, never folded in: `status` says so
   in `legacy_store`, and `query` lists a `legacy-store` source.
 - `prices.json` (below) is not moved; the run that moves the store says so on stderr. Copy an
@@ -260,9 +263,9 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
   killed run loses at most the chunk it was on and never counts anything twice.
 - A missing `hc` is not an error: the summary is just not published.
 - A store a newer meter wrote is refused (exit 12) before anything is opened for writing.
-- Before a reset drops a store's rows (an outdated store rebuilt, or a widened re-import), `sync`
-  checks that twice the store's size is free (else exit 4, nothing changed), then keeps a
-  generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of the store made with
+- A write to an existing store's schema (a reset, or the query's index on an older store) needs
+  twice the store's size free (else exit 4, nothing changed). Before a reset drops a store's rows
+  (an outdated store rebuilt, or a widened re-import), `sync` also keeps a generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of the store made with
   `VACUUM INTO`, reopened and checked table by table against the store's row counts. Only one is
   kept; the next sync that succeeds on the rebuilt store removes it.
 
@@ -280,7 +283,9 @@ bad request, 10 no store, 11 no consistent snapshot within 2 s, 12 store from a 
 store only `sync` can migrate, 14 contract not served, 15 the answer would pass 448 KiB (refused
 whole, with how many rows would fit; it never pages or truncates). Each branch named gets one row:
 `measured`, `zero` only when the meter can vouch for it, else `missing`, `stale` or `unsupported`
-with the reason. Unknown is never 0. The query never syncs: only `sync` refreshes the store.
+with the reason. Unknown is never 0: an unpriced amount, the reasoning of a harness that logs
+none (dsh-tui) and the backlog while a reset's re-import is unfinished are null. The query never
+syncs: only `sync` refreshes the store.
 `sync` keeps an index on (repo, branch, hour), made by its first run after an upgrade (no row
 changes, no new `schema_version`), so a query reads only the rows of the branches it names.
 

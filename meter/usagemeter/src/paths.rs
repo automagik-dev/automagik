@@ -1134,9 +1134,9 @@ mod tests {
         assert!(!exists(&new.join(MOVED)) && !exists(&old.join("meter.lock")));
     }
 
-    /// t1dc's Low L3 on upstream PR 7: the old copies go sidecars first and `meter.db` last, so
-    /// an older meter that opens the old folder mid-removal never finds a database beside
-    /// another generation's wal.
+    /// The Reviewer's Low L3 on upstream PR 7: the old copies go sidecars first and `meter.db`
+    /// last, so an older meter that opens the old folder mid-removal never finds a database
+    /// beside another generation's wal.
     #[test]
     fn the_old_copies_go_sidecars_first_and_the_database_last() {
         let t = tempfile::tempdir().unwrap();

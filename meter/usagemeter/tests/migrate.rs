@@ -1040,9 +1040,9 @@ fn status_reads_the_store_without_checkpointing_it() {
     assert_eq!(fs::read(dir.join("meter.db-wal")).unwrap(), wal);
 }
 
-/// t1dc's Low L2 on upstream PR 7: the old copies go only after a sync that succeeded with its
-/// backlog caught up. One that stops at its time budget leaves them, and the next complete one
-/// removes them.
+/// The Reviewer's Low L2 on upstream PR 7: the old copies go only after a sync that succeeded
+/// with its backlog caught up. One that stops at its time budget leaves them, and the next
+/// complete one removes them.
 #[test]
 fn a_sync_stopped_by_its_budget_keeps_the_old_copies() {
     let _serial = serial();

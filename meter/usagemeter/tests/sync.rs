@@ -658,9 +658,9 @@ fn a_chunk_commits_its_rows_keys_and_offset_together() {
     assert_eq!(store.rows_since(i64::MIN).unwrap()[0].tokens, U1.tokens());
 }
 
-/// t1dc's Low L4 on upstream PR 7: a child a sibling test spawns shares every open file of this
-/// process, the sync lock included, from its fork until its exec (close-on-exec acts only at
-/// the exec). A lock dropped in that window still looks held, and the next sync reports Locked.
+/// The Reviewer's Low L4 on upstream PR 7: a child a sibling test spawns shares every open file
+/// of this process, the sync lock included, from its fork until its exec (close-on-exec acts only
+/// at the exec). A lock dropped in that window still looks held, and the next sync reports Locked.
 /// Every spawn and every lock a test takes in one binary runs under `serial()`, so no child is
 /// between its fork and its exec while a lock is dropped and taken again. Here a child is held
 /// in that window for 300 ms, right after the lock is taken.
