@@ -8380,7 +8380,6 @@ html body [data-slot="main.conversation"]>[class*="_root"]{margin:8px;height:cal
 html body [class*="_sidebarCol"]{border:0!important}
 html body [class*="_rightbarCol"]{background:var(--bt-main)!important;border:0!important}
 html body [class*="_rightbarCol"] section[class*="_tabHost"][class*="_pane"]{margin:8px 8px 8px 0;height:calc(100% - 16px);border:0;border-radius:var(--clay-r-lg);overflow:hidden;${slab("var(--bt-sidebar)")}}
-html body header[class*="_header"]:has(.bt-head)::before{display:none}
 html body [data-composer-card]{${important(recessed("var(--clay-niche)"))};border:0!important;border-radius:var(--clay-r)!important}
 html body [data-composer-card]:hover{border:0!important}
 html body [data-composer-card]:focus-within{border:0!important;box-shadow:inset 3px 4px 6px color-mix(in srgb,var(--clay-niche) var(--clay-lo),var(--clay-umber)),inset -2px -2px 3px color-mix(in srgb,var(--clay-niche) var(--clay-hi),var(--clay-shine)),0 0 0 1.5px color-mix(in srgb,var(--clay-ring) 40%,transparent)!important}
@@ -8540,8 +8539,8 @@ html body [class*="_sidebarCol"]>[data-slot=sidebar]>[class*="_root"]{margin:12p
 html body [data-slot="main.conversation"]>[class*="_root"]{background:var(--bt-main)!important;box-shadow:none;border:0}
 html body [class*="_rightbarCol"]{background:var(--bt-main)!important;border:0!important;border-left:1px solid var(--st-line)!important}
 html body [class*="_rightbarCol"] section[class*="_tabHost"][class*="_pane"]{background:var(--bt-main);border:0;box-shadow:none}
-html body header[class*="_header"]:has(.bt-head)::before{display:none}
 html body .bt-head{min-height:64px;padding:18px 24px 12px}
+html body header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{padding-top:18px;padding-bottom:12px}
 html body .bt-head :is(.bt-head-title,.bt-head-name){font:700 20px/26px var(--bt-head-font);letter-spacing:-.01em}
 `;
 var STAGE = `
@@ -10687,7 +10686,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-head-details:hover,.bt-head-details[aria-expanded=true]{color:var(--bt-ink);background:color-mix(in srgb,var(--bt-main),var(--bt-ink) 6%)}
 .bt-head-details svg{width:18px;height:18px}
 .bt-head-details:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px}
-.bt-pill{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;height:40px;padding:7.5px 13.5px 7.5px 7.5px;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;cursor:pointer;max-width:70%;box-sizing:border-box;transition:background-color .12s ease,transform ${SPRING_TAP.duration}ms ${SPRING_TAP.easing}}
+.bt-pill{pointer-events:auto;display:inline-flex;min-width:0;align-items:center;gap:8px;height:40px;padding:7.5px 13.5px 7.5px 7.5px;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;cursor:pointer;max-width:70%;box-sizing:border-box;transition:background-color .12s ease,transform ${SPRING_TAP.duration}ms ${SPRING_TAP.easing}}
 .bt-pill:hover{background:color-mix(in srgb,var(--bt-main),#777 9%)}
 .bt-pill:active{transform:scale(.965)}
 .bt-pill-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
@@ -11476,11 +11475,18 @@ body:not([data-bt-advanced]) [data-step-process]>[data-step-process-body]{displa
 body:not([data-bt-advanced]) :is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
 [class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty){display:none!important}
 [class*="_header"]:has(.bt-head){border-bottom-color:transparent!important;box-shadow:none!important}
-/* The transcript runs under a floating header pill. */
-header[class*="_header"]:has(.bt-head){position:absolute!important;top:0;left:0;right:0;z-index:8;display:flex!important;padding:10px 0 0!important;background:transparent!important;pointer-events:none;justify-content:center}
-header[class*="_header"]:has(.bt-head)::before{content:"";position:absolute;inset:0 0 auto;height:calc(60px + env(safe-area-inset-top,0px));background:linear-gradient(to bottom,var(--bt-main),color-mix(in srgb,var(--bt-main) 0%,transparent));pointer-events:none;z-index:-1}
-header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{position:absolute;left:12px;top:10px;pointer-events:auto}
-header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
+/* The header is a band of its own above the transcript, never a layer over it: floating,
+   the transcript scrolled under its buttons, and once the column met the button row on a
+   narrower window, bubbles and timestamps sat under "Live" and the arrow. */
+/* Its start clears the window chrome DSH seats over the pane's top-left corner (the
+   drawer's sidebar and New chat buttons, macOS's traffic lights), as DSH's own title row
+   does, and the header's leading controls take their place in the row: the pill, which
+   grows leftwards, shrinks before it reaches either. */
+header[class*="_header"]:has(.bt-head){position:relative!important;flex:none;z-index:8;display:flex!important;padding:calc(10px + env(safe-area-inset-top,0px)) 0 0 max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 16px))!important;background:var(--bt-main)!important;pointer-events:none;justify-content:center}
+header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{position:static;flex:none;align-self:stretch;pointer-events:auto}
+header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]:empty{display:none}
+header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]:not(:empty){padding-left:12px}
+header[class*="_header"] .bt-head{flex:1 1 auto;width:100%;min-width:0}
 [class*="_body"]:has(> [class*="_scrollBody"]){--dsh-chat-content-width:min(960px,100%)}
 /* The shell writes the column's width on the conversation root at every resize, only to
    derive the content width that the rule above replaces. Inherited, each write restyled
@@ -11500,7 +11506,7 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 [data-content-phase=hero] [class*="_composerHero"]>[class$="_root"],[data-content-phase=hero] [class*="_heroWorkspaceRow"]{display:none!important}
 [data-content-phase=hero] [class*="_composerHero"] [class*="_input"]{min-height:0!important}
 /* The right sides give back the scrollbar gutter so both edges sit 16px from the column. */
-[class*="_scroll"]:has(> [class*="_column"]){padding:calc(60px + env(safe-area-inset-top,0px)) calc(11px + env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))!important}
+[class*="_scroll"]:has(> [class*="_column"]){padding:16px calc(11px + env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))!important}
 /* The shell's running status only hosts the activity row (.bt-typing). */
 [data-chat-running]{display:block!important;width:100%;min-height:0!important;margin:0!important;padding:0!important}
 [data-chat-running]>span:not([role=status]){display:none!important}
