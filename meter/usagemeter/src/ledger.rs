@@ -22,10 +22,10 @@
 //!   occupied that terminal when the row was written: the latest start on it whose `at` is not
 //!   after the row's `at`. A start on that terminal between the row and the query time means the
 //!   launch was replaced after it reported the id, so the answer is Unmatched.
-//! - Codex and omp sessions resolve by `cwd == worktree`. Every start on the worktree that had
-//!   begun by the query time, was not yet replaced on its terminal, and ran the same agent (or an
-//!   unrecorded one) is a claimant. A concurrent reviewer, or a second seat in the project folder,
-//!   is therefore a second claimant, and the session stays Unmatched.
+//! - Codex, omp and dsh-tui sessions resolve by `cwd == worktree`. Every start on the worktree
+//!   that had begun by the query time, was not yet replaced on its terminal, and ran the same agent
+//!   (or an unrecorded one) is a claimant. A concurrent reviewer, or a second seat in the project
+//!   folder, is therefore a second claimant, and the session stays Unmatched.
 //!
 //! A start row too incomplete to build a [`Tag`] (no `bot`/`botId`, an unknown `kind`, no
 //! `terminal`) is still evidence: its terminal and `at` end the launch before it on that terminal,
@@ -323,7 +323,7 @@ impl Ledger {
     pub fn resolve(&self, q: &Query) -> Resolution {
         match q.agent {
             Source::Claude => self.resolve_by_session(q.session_id, q.at_ms),
-            Source::Codex | Source::Omp => match q.cwd {
+            Source::Codex | Source::Omp | Source::DshTui => match q.cwd {
                 Some(cwd) => self.resolve_by_worktree(ledger_agent(q.agent), cwd, q.at_ms),
                 None => Resolution::Untagged,
             },
@@ -462,6 +462,7 @@ fn ledger_agent(s: Source) -> &'static str {
         Source::Claude => "claude",
         Source::Codex => "codex",
         Source::Omp => "omp",
+        Source::DshTui => "dsh-tui",
     }
 }
 

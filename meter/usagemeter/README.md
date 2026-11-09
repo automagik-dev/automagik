@@ -1,7 +1,7 @@
 # usagemeter
 
-`usagemeter` counts the tokens coding agents use on one machine (Claude Code, Codex and omp) and
-publishes a small summary to that machine's herdr-core. It is shared by two Automagik products:
+`usagemeter` counts the tokens coding agents use on one machine (Claude Code, Codex, omp and
+dsh-tui) and publishes a small summary to that machine's herdr-core. It is shared by two Automagik products:
 Automagik Herdr on the desktop, and the Automagik Pocket phone app through its Pocket Link mod,
 which install it with `install.sh` and run it on the machines they
 reach. Rows follow `ae/1` (agent event envelope, revision 3, owned by automagik-herdr). Design:
@@ -85,7 +85,7 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
 |---|---|---|
 | omp | `~/.omp/agent/sessions/**/*.jsonl` | Assistant messages and side calls (`model_usage`). omp's own `cost.total` is kept as reported $. No branch is recorded. |
 | Claude Code | `~/.claude/projects/**/*.jsonl` (or `$CLAUDE_CONFIG_DIR/projects`) | Includes `<session>/subagents/*.jsonl`, rolled up to the parent session. Repeated lines are deduplicated by `message.id` + `requestId`. Advisor calls (`usage.iterations[]`, `type: advisor_message`) count under the advisor's model. 5-minute and 1-hour cache writes are kept apart. |
-
+| dsh-tui | `~/.dsh/sessions/<cwd key>/<session>/session.v4.jsonl.zstd` (or `$DSH_HOME/sessions`) | Append-only, multi-frame zstd; only whole frames are read, so a frame still being written waits for the next run. Assistant messages (`assistant/message`) and compaction summaries (`compaction/summary`, a call of its own, counted once and never against the messages it summarises), deduplicated by session and `seq`. No cost, no reasoning split (reasoning is unknown, never 0) and no branch are recorded. |
 | Codex | `~/.codex/state_<N>.sqlite` (highest N) and the rollouts it names under `~/.codex/sessions` or `~/.codex/archived_sessions` (or `$CODEX_HOME`) | See below. |
 
 Codex:
@@ -225,7 +225,7 @@ per-turn rows are stored, and no $ except omp's reported cost.
 
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
-- `branch` is the session's `gitBranch` (Claude Code); null for omp.
+- `branch` is the session's `gitBranch` (Claude Code); null for omp and dsh-tui.
 - `bot`, `role`, `squad` come from the `bot=`, `role=`, `squad=` labels of a live hc terminal
   running the same harness in the same cwd. Usually null today.
 - `machine` is herdr-core's core id, or a random id kept in the store when hc is absent.
@@ -345,7 +345,7 @@ Top-level fields:
 | `counted_from` | Start of what the store holds. A window that starts before it is cut to it. |
 | `complete`, `pending` | `false` while a first import is still running; bytes and files left. |
 | `prices` | Date and source of the price table that produced every `usd`. |
-| `sources` | Per harness (`omp`, `claude-code`, `codex`): `status` is `ok`, `degraded` (some usage could not be split or read; `reason` says why), `unsupported` (the harness's format is not one the meter knows; nothing from it is counted), or `absent` (not installed). A non-`ok` status is shown, never hidden behind zeros. `unknown_models` are models with no price. `codex.threads` counts threads by precision. |
+| `sources` | Per harness (`omp`, `claude-code`, `codex`, `dsh-tui`): `status` is `ok`, `degraded` (some usage could not be split or read; `reason` says why), `unsupported` (the harness's format is not one the meter knows; nothing from it is counted), or `absent` (not installed). A non-`ok` status is shown, never hidden behind zeros. `unknown_models` are models with no price. `codex.threads` counts threads by precision. |
 | `windows` | Start of each rolling window, ending at `generatedAt`'s hour: `d1` = the last 24 hours, `d7` = the last 7 days, `d30` = the last 30 days (never before `counted_from`). |
 | `models` | Every (harness, model) with usage in `d30`, never cut. `priced: false` when the model has no price. |
 | `projects` | One entry per repo, biggest `d30` $ first (then tokens). `repo` is `host/owner/repo` from the git remote, without credentials or port; `null` is work outside any repo (or a repo without a remote). |
@@ -377,7 +377,7 @@ Projects and tasks:
 
 | Key | Meaning |
 |---|---|
-| `branch` | The git branch the agent recorded. omp records none. |
+| `branch` | The git branch the agent recorded. omp and dsh-tui record none. |
 | task | A (repo, branch) whose branch is not `main`, `master`, `dev`, `develop`, `trunk`, `HEAD` or missing. Work on those goes to the project's `untasked` bucket instead. |
 | `untasked` | The project's untasked work over the `d30` window. |
 | `tasks` (on a project) | Number of tasks with usage in `d30`. |

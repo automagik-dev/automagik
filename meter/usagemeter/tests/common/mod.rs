@@ -47,10 +47,17 @@ impl Env {
         p
     }
 
+    pub fn dsh(&self, rel: &str) -> PathBuf {
+        let p = self.home().join(".dsh/sessions").join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        p
+    }
+
     pub fn opts(&self) -> Options {
         let mut o = Options::new(self.home(), self.state(), now());
         o.claude_root = self.home().join(".claude/projects");
         o.codex_home = self.home().join(".codex");
+        o.dsh_root = self.home().join(".dsh/sessions");
         o.use_hc = false;
         o.resolve_repos = false;
         o.publish = false;

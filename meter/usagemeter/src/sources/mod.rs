@@ -3,6 +3,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod dsh_tui;
 pub mod omp;
 
 use serde::{Deserialize, Serialize};
@@ -14,17 +15,25 @@ pub enum Source {
     Claude,
     Omp,
     Codex,
+    DshTui,
 }
 
 impl Source {
-    pub const ALL: [Source; 3] = [Source::Omp, Source::Claude, Source::Codex];
+    pub const ALL: [Source; 4] = [Source::Omp, Source::Claude, Source::Codex, Source::DshTui];
 
     pub fn harness(self) -> &'static str {
         match self {
             Source::Claude => "claude-code",
             Source::Omp => "omp",
             Source::Codex => "codex",
+            Source::DshTui => dsh_tui::HARNESS,
         }
+    }
+
+    /// Whether the harness logs how much of `output` was reasoning. When it does not (dsh-tui),
+    /// a row's `reasoning` of 0 means unknown, and a reader reports it as unknown, never as 0.
+    pub fn logs_reasoning(self) -> bool {
+        self != Source::DshTui
     }
 
     pub fn from_harness(s: &str) -> Option<Source> {
@@ -36,6 +45,7 @@ impl Source {
             Source::Claude => claude::parse_line(line, ctx, out),
             Source::Omp => omp::parse_line(line, ctx, out),
             Source::Codex => codex::parse_line(line, ctx, out),
+            Source::DshTui => dsh_tui::parse_line(line, ctx, out),
         }
     }
 }
@@ -52,6 +62,9 @@ pub struct FileCtx {
     /// A Codex rollout: the thread it belongs to and its running total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<codex::CodexCtx>,
+    /// A dsh-tui session: the highest `seq` counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
