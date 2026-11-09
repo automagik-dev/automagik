@@ -127,9 +127,9 @@ What the numbers mean:
   own once the input line is empty. A message the phone never heard back about shows **Maybe not
   sent** with **Retry**, which never types it twice.
 - **Interrupt** stops the agent's turn, once, as Esc or Ctrl+C would.
-- **Bot chats** (Settings → Machines, on a connected computer) lists the Automagik Bots' chats. They are read
-  only on the phone: approvals and questions say "Answer on the computer", and there is no message box
-  or Interrupt.
+- **Bot chats** (Settings → Machines, on a connected computer) lists the Automagik Bots' chats and
+  says what the phone can do there: **Writable** when the bridge advertises phone writes (send,
+  answer approvals and questions, interrupt), **Read only** with the reason when it does not.
 - Chat text is plain text: HTML shows as the characters it is, nothing loads by itself, and a link
   opens only when you tap it and confirm. Rows stay in memory and are dropped when you leave the chat.
 

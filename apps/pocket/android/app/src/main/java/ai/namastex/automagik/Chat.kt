@@ -470,6 +470,33 @@ object ChatActions {
     const val READ_ONLY = "Read only on the phone: Pocket Link or Automagik on this computer takes no phone writes. " +
         "Update both, or ${Chat.ANSWER_ON_COMPUTER}."
 
+    /** The Bot chats dialog's line for a machine whose last listing said its bridge takes phone writes. */
+    const val BOT_CHATS_WRITABLE = "Writable: you can send messages, answer approvals and questions, " +
+        "and interrupt the agent from the phone."
+
+    /** The Bot chats dialog's line for a machine whose listing advertised no phone writes: why, and where to answer. */
+    const val BOT_CHATS_READ_ONLY = "Read only: Pocket Link or Automagik on this computer advertises no phone writes, " +
+        "so send and answer happen on the computer."
+
+    /**
+     * The Bot chats dialog's capability line, from the machine's last listing (`dshWrite`): true says what the phone
+     * can do there, false says read only and why a send would be refused; null (no listing yet, still loading) makes
+     * neither claim.
+     */
+    fun botChatsLine(writable: Boolean?): String? = when (writable) {
+        true -> BOT_CHATS_WRITABLE
+        false -> BOT_CHATS_READ_ONLY
+        null -> null
+    }
+
+    /**
+     * The write state the Bot chats dialog may claim: the machine's last-known `dshWrite` only once this load's
+     * listing has arrived. While it loads ([result] null) or after it failed, the dialog claims neither state, so a
+     * value an earlier poll recorded never sits beside the spinner or the error.
+     */
+    fun botChatsWritable(result: Result<*>?, lastKnown: Boolean?): Boolean? =
+        if (result?.isSuccess == true) lastKnown else null
+
     /**
      * What the chat's bottom line says when there is no message box, so a chat that cannot send always says why and
      * never drops a message silently: ended, offline, reconnecting, not connected, or read only. Null: the box shows
