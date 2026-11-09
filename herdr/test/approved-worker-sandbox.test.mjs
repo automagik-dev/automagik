@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { approveProject, readApprovedRecord } from "../mods/am-sidebar/approved.js";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const wrapper = fileURLToPath(new URL("../mods/am-sidebar/bin/hc-socket-mask.mjs", import.meta.url));
 
@@ -20,10 +21,9 @@ test("approved snapshot write and rename are refused inside the sandbox wrapper"
     return t.skip(`bwrap namespaces unavailable: ${(capability.stderr || capability.error?.message)
       .replace(/\s+/g, " ").trim()}`);
   }
-  const root = mkdtempSync(join(tmpdir(), "approved-worker-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "approved-worker-");
   const home = join(root, "home"), project = join(root, "project");
-  const env = { PATH: "/usr/bin:/bin", HOME: home, XDG_DATA_HOME: join(root, "data") };
+  const env = { PATH: "/usr/bin:/bin", HOME: home, XDG_DATA_HOME: join(root, "data"), GIT_CEILING_DIRECTORIES: root };
   const packRoot = join(env.XDG_DATA_HOME, "automagik-herdr", "dsh-sandbox");
   const proxy = join(root, "automagik-hc-proxy", "t1", "fixture.sock");
   const real = join(root, "fixture-runtime", "fixture.sock");

@@ -2,8 +2,9 @@
 // The installed CLI accepts no flag or environment switch to bypass its root checks.
 import { join } from "node:path";
 import { main } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { assertSafeTmpdir } from "./scratch-project.mjs";
 
-const root = process.cwd();
+const root = assertSafeTmpdir(process.cwd());
 const forbiddenRoots = [
   ["the project", join(root, "proj")],
   ["the app home", join(root, "app")],

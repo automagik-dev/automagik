@@ -21,6 +21,7 @@ import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 import { fixturePaneEdit } from "./fixture-pane-edit.mjs";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -46,14 +47,8 @@ const term = (address, { bot: b, cwd }) => ({ address, name: address, cwd, state
 
 /** A scratch world: a git project on main with its bots, a fake hc whose t1..t3 are panes in it. */
 function scene(t, { file = team(), branch = "main", briefing = true, templates = TEMPLATES } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-worker-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj");
-  mkdirSync(project);
-  git(project, "init", "-q", "-b", branch);
-  git(project, "commit", "-q", "--allow-empty", "-m", "start");
-  mkdirSync(join(project, ".herdr"));
-  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+  const root = scratchRoot(t, "hb-worker-");
+  const project = scratchProject(root, "proj", { branch, commit: true, bots: file });
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -80,7 +75,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   writeFileSync(appState, JSON.stringify({ down: true }));
   writeFileSync(appLog, "");
   const env = { ...process.env, XDG_DATA_HOME: join(root, "data"), PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", GIT_CEILING_DIRECTORIES: root };
   // Worker transport discovery must never inherit a host socket into a fixture scene.
   env.HC_SOCKET = join(root, "unproxied.sock");
   env.HC_TERMINAL_SOCKET = env.HC_SOCKET;
@@ -1501,8 +1496,7 @@ test("bots.json worker.swap: validated like the worker's agent, model and effort
 
 test("worker lock: named by realpathSync.native, so a folder's case can't split it", async (t) => {
   const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-case-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-case-");
   mkdirSync(join(root, "Task-Tree"));
   const lock = (p) => worktreeLock("/L", p);
   assert.equal(lock(join(root, "Task-Tree")), `/L/worktree-${createHashOf(realpathSync.native(join(root, "Task-Tree")))}.lock`);
@@ -1515,12 +1509,7 @@ test("worker lock: named by realpathSync.native, so a folder's case can't split 
 
 /** A second git project beside the scene's, with its own bots file. */
 function otherProject(s, name, file) {
-  const dir = join(s.root, name);
-  mkdirSync(join(dir, ".herdr"), { recursive: true });
-  git(dir, "init", "-q", "-b", "main");
-  git(dir, "commit", "-q", "--allow-empty", "-m", "start");
-  writeFileSync(join(dir, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
-  return dir;
+  return scratchProject(s.root, name, { branch: "main", commit: true, bots: file });
 }
 /** Moves a scene terminal: its foreground now works in `cwd` (its launch cwd stays). */
 function moveForeground(s, address, cwd, labels = {}) {

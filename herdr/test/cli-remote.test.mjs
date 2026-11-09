@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { checkBots, PROJECTS_FILE } from "../mods/am-sidebar/model.js";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -18,8 +19,7 @@ const MAIN = "b-aaaaaaaaaa", DEV = "b-cccccccccc";
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 
 function scene(t, { state = "connected" } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-remote-cli-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-remote-cli-");
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm");
   for (const d of [bin, home, app, vm]) mkdirSync(d, { recursive: true });
   writeFileSync(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -28,16 +28,13 @@ function scene(t, { state = "connected" } = {}) {
   writeFileSync(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
   chmodSync(join(bin, "herdr-app"), 0o755);
   // The project there: a git repository in vm's home, and this computer's own folder elsewhere.
-  const project = join(vm, "hedgefund");
-  mkdirSync(project);
-  git(project, "init", "-q");
-  git(project, "commit", "-q", "--allow-empty", "-m", "start");
+  const project = scratchProject(vm, "hedgefund", { commit: true });
   const local = join(root, "here");
   mkdirSync(local);
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: [], next: 100, machines: [{ name: "vm", state, uname: "Linux x86_64", home: vm }] }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   const cli = (args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: local, env, encoding: "utf8" });
@@ -235,8 +232,7 @@ test("--machine: an edit that landed there but lost its answer is reported saved
 
 test("--machine: a project folder with spaces and a quote goes through as it is", (t) => {
   const s = scene(t);
-  const odd = join(s.root, "vm", "hedge fund's \"desk\"");
-  mkdirSync(odd);
+  const odd = scratchProject(join(s.root, "vm"), "hedge fund's \"desk\"");
   const r = s.cli(["create", "--machine", "vm", "--project", odd, "--name", "Hedge", "--agent", "claude", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json().project, odd);

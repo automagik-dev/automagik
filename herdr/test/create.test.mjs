@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./form-herdr-stub.mjs"), "fs/promises": here("./fs-stub.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
@@ -51,9 +52,14 @@ function makeCx() {
 
 let root, project;
 beforeEach((t) => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "hb-create-")));
-  t.after?.(() => rmSync(root, { recursive: true, force: true }));
-  project = join(root, "proj");
+  root = scratchRoot(t, "hb-create-");
+  const prevCeiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = root;
+  t.after?.(() => {
+    if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+    else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
+  });
+  project = scratchProject(root, "proj", { isGit: false });
   mkdirSync(join(project, ".herdr"), { recursive: true });
   state.appHome = join(root, "app");
   state.notes = [];

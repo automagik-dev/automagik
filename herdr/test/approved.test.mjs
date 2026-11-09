@@ -12,6 +12,7 @@ import { basename, join } from "node:path";
 import { approveProject, approvedProxyEnabled, approvedProxyState, approvedRootOf,
   projectKey, readApprovedRecord, recordFileOf,
   sha256Of } from "../mods/am-sidebar/approved.js";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const HARNESS = new URL("./cli-approve-harness.mjs", import.meta.url).pathname;
@@ -36,8 +37,7 @@ const team = () => ({
 
 /** A temp project, data home, app home and pane temp folder. */
 function scene(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-approved-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-approved-");
   const project = join(root, "proj"), data = join(root, "data"), home = join(root, "home");
   const app = join(root, "app"), paneTmp = join(root, "pane-tmp"), runtime = join(root, "run");
   for (const dir of [join(project, ".herdr"), data, home, app, paneTmp, runtime]) {
