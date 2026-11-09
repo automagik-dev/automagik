@@ -996,7 +996,7 @@ fn status_opens_nothing_while_a_move_is_unfinished() {
         let err = stderr(&out);
         assert_eq!(out.status.code(), Some(2), "{err}");
         assert!(
-            err.contains("has not finished, so status opens nothing"),
+            err.contains("has not finished, so nothing there is opened"),
             "{err}"
         );
         assert!(out.stdout.is_empty());
@@ -1016,7 +1016,8 @@ fn status_opens_nothing_while_a_move_is_unfinished() {
 
 /// Round 3, finding 2: `status` reads a store without writing it. A row committed only to the wal
 /// is counted, and the database and the wal keep their bytes (no checkpoint on close). It waits
-/// for nobody: while a sync holds the lock it says so and opens nothing.
+/// for nobody and takes no lock (RFC 0018 M1: the query's read-only open): while a sync holds the
+/// lock it still reads, and still writes nothing.
 #[test]
 fn status_reads_the_store_without_checkpointing_it() {
     let _serial = serial();
@@ -1042,11 +1043,52 @@ fn status_reads_the_store_without_checkpointing_it() {
     );
 
     let _held = meter::paths::try_lock(&dir).unwrap().unwrap();
-    let out = h.output(&["status"], Some(&dir));
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        stderr(&out).contains("another sync is running"),
-        "{}",
-        stderr(&out)
+    assert_eq!(h.rows(&dir), rows + 1, "read while a sync holds the lock");
+    assert_eq!(fs::read(dir.join("meter.db")).unwrap(), db);
+    assert_eq!(fs::read(dir.join("meter.db-wal")).unwrap(), wal);
+}
+
+/// t1dc's Low L2 on upstream PR 7: the old copies go only after a sync that succeeded with its
+/// backlog caught up. One that stops at its time budget leaves them, and the next complete one
+/// removes them.
+#[test]
+fn a_sync_stopped_by_its_budget_keeps_the_old_copies() {
+    let _serial = serial();
+    let h = Home::new();
+    h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    let old_db = fs::read(old.join("meter.db")).unwrap();
+    h.sync(None);
+    assert!(new.join(".meter-moved").is_file());
+    let ts = meter::time::format_rfc3339(meter::time::now_ms() - 1_800_000);
+    for i in 0..3 {
+        let f = h.env.claude(&format!("-work-app/later-{i}.jsonl"));
+        let (m, r) = (format!("msg_l{i}"), format!("req_l{i}"));
+        write_lines(&f, &[claude_line(&m, &r, &ts, "model-a", &U2, 0)]);
+    }
+    let mut o = meter::sync::Options::new(h.home(), new.clone(), meter::time::now_ms());
+    o.migrate_from = Some(old.clone());
+    o.claude_root = h.home().join(".claude/projects");
+    o.codex_home = h.home().join(".codex");
+    o.use_hc = false;
+    o.resolve_repos = false;
+    o.publish = false;
+    o.force = true;
+    o.chunk_limit = Some(1);
+    let r = h.env.run(&o);
+    assert!(r.pending_bytes > 0, "the run stopped at its budget");
+    assert_eq!(
+        fs::read(old.join("meter.db")).unwrap(),
+        old_db,
+        "kept after a sync that left a backlog"
     );
+    assert!(new.join(".meter-moved").is_file());
+    o.chunk_limit = None;
+    let r = h.env.run(&o);
+    assert_eq!(r.pending_bytes, 0);
+    assert!(
+        !old.join("meter.db").exists(),
+        "removed once a sync caught up"
+    );
+    assert!(!new.join(".meter-moved").exists());
 }

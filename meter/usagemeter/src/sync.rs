@@ -85,6 +85,9 @@ pub struct Options {
     /// Stop after this many chunks, as the time budget would (tests).
     #[doc(hidden)]
     pub chunk_limit: Option<usize>,
+    /// The free bytes the migration check sees, instead of asking the filesystem (tests).
+    #[doc(hidden)]
+    pub free_bytes: Option<u64>,
 }
 
 impl Options {
@@ -118,6 +121,7 @@ impl Options {
             summary_cap: summary::DEFAULT_CAP_BYTES,
             now_ms,
             chunk_limit: None,
+            free_bytes: None,
         }
     }
 }
@@ -140,6 +144,10 @@ pub struct Report {
     pub summary: Option<serde_json::Value>,
     /// None: not attempted. Some(Ok(version)) or Some(Err(reason)).
     pub published: Option<Result<u64, String>>,
+    /// The generation this run kept before it reset the store.
+    pub generation: Option<crate::store::Generation>,
+    /// Generations removed because this run succeeded on the migrated store.
+    pub generations_removed: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -152,6 +160,17 @@ pub enum Outcome {
     /// The last complete sync is younger than the staleness window.
     Fresh {
         age_ms: i64,
+    },
+    /// The store was written by a newer meter (its `schema_version` is above this binary's):
+    /// nothing was read, written or created.
+    NewerSchema {
+        store: i64,
+    },
+    /// A destructive migration needs at least twice the store's size free and the filesystem
+    /// has less: the store was left as it was, and nothing else changed.
+    NoSpace {
+        free: u64,
+        needed: u64,
     },
     Ran(Box<Report>),
 }
@@ -324,11 +343,10 @@ pub fn source_health(store: &Store) -> rusqlite::Result<Vec<SourceHealth>> {
             harness: s.harness().into(),
             ..Default::default()
         });
-        h.status = "ok".into();
+        h.status = store
+            .meta(&format!("{}_status", s.harness()))?
+            .unwrap_or_else(|| "ok".into());
         if s == Source::Codex {
-            if let Some(st) = store.meta("codex_status")? {
-                h.status = st;
-            }
             h.reason = store.meta("codex_reason")?.filter(|r| !r.is_empty());
             h.threads = Some(store.codex_thread_counts()?);
         }
@@ -347,6 +365,21 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         ))
     };
     paths::ensure_dir(&opts.state_dir).map_err(mkdir_err)?;
+    let db_path = opts.state_dir.join("meter.db");
+    let newer = |p: &std::path::Path| -> Result<Option<i64>, Error> {
+        Ok(crate::store::peek(p)?
+            .map(|k| k.version)
+            .filter(|v| *v > SCHEMA_VERSION))
+    };
+    // A store from a newer meter is refused before anything is made, the lock file included:
+    // without a lock file no sync is writing, so the store can be read as it lies. Not while a
+    // move is unfinished: its files may be two generations, and only the move opens them.
+    if !opts.state_dir.join("meter.lock").exists()
+        && !paths::move_unfinished(&opts.state_dir)
+        && let Some(v) = newer(&db_path)?
+    {
+        return Ok(Outcome::NewerSchema { store: v });
+    }
     let Some(_lock) = paths::try_lock(&opts.state_dir).map_err(|e| {
         Error(format!(
             "cannot take the lock in {}: {e}",
@@ -359,6 +392,12 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     // The move runs under the lock and before `prepare`, which creates an empty database.
     let mut old_generation = None;
     if let Some(old) = &opts.migrate_from {
+        // Nor is a newer store moved in from the old directory.
+        if !db_path.exists()
+            && let Some(v) = newer(&old.join("meter.db"))?
+        {
+            return Ok(Outcome::NewerSchema { store: v });
+        }
         let m = paths::migrate(old, &opts.state_dir).map_err(|e| {
             Error(format!(
                 "cannot move the state from {} to {}: {e}; files already moved are in {}, the rest are still in {}",
@@ -380,17 +419,20 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         // this sync succeeds, never in the run that copied them.
         old_generation = m.old_generation.then_some(old);
     }
-    let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
-    let trace = Trace::new();
-    let mut store = Store::open(&db)?;
-    let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;
+    // Read before anything writes: the version decides whether this run may open the store at
+    // all, and whether it must keep a generation first.
+    let peek = crate::store::peek(&db_path)?;
+    if let Some(p) = &peek
+        && p.version > SCHEMA_VERSION
+    {
+        return Ok(Outcome::NewerSchema { store: p.version });
+    }
     let now = opts.now_ms;
-
     // The import window. Widening it (or --backfill) re-imports: rows are a projection.
-    let stored = store.meta_i64("counted_from_ms")?;
+    let stored = peek.as_ref().and_then(|p| p.counted_from_ms);
     // A store of an older version (row ids without precision) is rebuilt once over its window.
     // The reset drops every old row in the same transaction, so no doc counts a token twice.
-    let outdated = store.meta_i64("schema_version")?.unwrap_or(0) < SCHEMA_VERSION;
+    let outdated = peek.as_ref().is_some_and(|p| p.version < SCHEMA_VERSION);
     // A store that holds less than the default window (one filled when the default was 14 days)
     // widens once on its own: the installed trigger runs a plain `sync`.
     let wanted = if opts.backfill {
@@ -399,19 +441,62 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         let days = opts.days.unwrap_or(DEFAULT_DAYS).max(1);
         day_start(now - days * DAY_MS + DAY_MS)
     };
-    let mut reimported = false;
-    let counted_from = match stored {
-        None => {
-            store.reset(wanted)?;
-            wanted
+    let reset_from = match stored {
+        None => Some(wanted),
+        Some(s) if wanted < s || outdated => Some(wanted.min(s)),
+        Some(_) => None,
+    };
+    let reimported = stored.is_some() && reset_from.is_some();
+    // Before a reset drops a store's rows: at least twice its size free, then a generation that
+    // holds every row, checked by count. Without both, nothing changes.
+    let mut generation = None;
+    if let (Some(p), true) = (&peek, reimported) {
+        let size: u64 = ["meter.db", "meter.db-wal"]
+            .iter()
+            .filter_map(|f| opts.state_dir.join(f).metadata().ok())
+            .map(|m| m.len())
+            .sum();
+        let needed = size.saturating_mul(2);
+        let free = match opts.free_bytes {
+            Some(f) => f,
+            None => paths::free_bytes(&opts.state_dir).map_err(|e| {
+                Error(format!(
+                    "cannot tell how much space is free in {}, so the store is not migrated: {e}",
+                    opts.state_dir.display()
+                ))
+            })?,
+        };
+        if free < needed {
+            return Ok(Outcome::NoSpace { free, needed });
         }
-        Some(s) if wanted < s || outdated => {
-            let from = wanted.min(s);
+        let g = crate::store::write_generation(&db_path, p.version, now).map_err(|e| {
+            Error(format!(
+                "the store was not migrated: its generation could not be kept ({e})"
+            ))
+        })?;
+        // One generation is kept: the newest, now that it is verified.
+        for old in crate::store::generations(&opts.state_dir) {
+            if old != g.path {
+                std::fs::remove_file(&old).map_err(|e| {
+                    Error(format!(
+                        "cannot remove the older generation {}: {e}",
+                        old.display()
+                    ))
+                })?;
+            }
+        }
+        generation = Some(g);
+    }
+    let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
+    let trace = Trace::new();
+    let mut store = Store::open(&db)?;
+    let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;
+    let counted_from = match reset_from {
+        Some(from) => {
             store.reset(from)?;
-            reimported = true;
             from
         }
-        Some(s) => s,
+        None => stored.unwrap_or(wanted),
     };
 
     if !opts.force && !reimported {
@@ -447,6 +532,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         counted_from_ms: counted_from,
         reimported,
         machine,
+        generation,
         ..Report::default()
     };
     let mut pending_sources: BTreeSet<Source> = BTreeSet::new();
@@ -561,13 +647,40 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     store.set_meta("last_run_ms", &now.to_string())?;
     store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
     store.set_meta("last_pending_files", &report.pending_files.to_string())?;
+    // A harness whose log folder does not exist is absent on this machine: nothing to count, and
+    // no success to stamp. (Codex records its own status in `codex_pass`.)
+    for (s, root) in [
+        (Source::Omp, &opts.omp_root),
+        (Source::Claude, &opts.claude_root),
+    ] {
+        let status = if root.is_dir() { "ok" } else { "absent" };
+        store.set_meta(&format!("{}_status", s.harness()), status)?;
+    }
     for s in Source::ALL {
-        if !pending_sources.contains(&s) && (s != Source::Codex || codex_read) {
+        let absent = match s {
+            Source::Omp => !opts.omp_root.is_dir(),
+            Source::Claude => !opts.claude_root.is_dir(),
+            Source::Codex => !codex_read,
+        };
+        if !pending_sources.contains(&s) && !absent {
             store.mark_success(s.harness(), now)?;
         }
     }
     if report.pending_bytes == 0 {
         store.set_meta("last_success_ms", &now.to_string())?;
+        // A later sync that succeeded on the migrated store: its generation has done its job.
+        if !reimported {
+            for g in crate::store::generations(&opts.state_dir) {
+                match std::fs::remove_file(&g) {
+                    Ok(()) => report.generations_removed.push(g),
+                    Err(e) => eprintln!(
+                        "meter: the generation {} was not removed: {e}; the next successful \
+                         sync tries again",
+                        g.display()
+                    ),
+                }
+            }
+        }
         if let Some(old) = old_generation
             && let Err(e) = paths::drop_old_generation(old, &opts.state_dir)
         {

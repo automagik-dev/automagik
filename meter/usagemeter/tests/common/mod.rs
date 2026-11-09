@@ -1,6 +1,8 @@
 //! Synthetic fixtures only: every id, path, model and number here is made up.
 #![allow(dead_code)]
 
+pub mod schema;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -11,6 +13,35 @@ use meter::store::Store;
 use meter::sync::{self, Options, Outcome, Report};
 
 pub const NOW: &str = "2026-01-15T12:00:00Z";
+
+/// One test at a time past this point, within one test binary. Hold it around every process a
+/// test spawns and around every sync or lock a test takes ([`Env::run`] takes it itself): std
+/// opens files close-on-exec, but a child between its fork and its exec still shares the
+/// parent's open lock, so a lock a test dropped can look held to the next sync (see
+/// `meter::paths::try_lock`). A thread that already holds it takes it again for free.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HELD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+pub struct Serial(Option<std::sync::MutexGuard<'static, ()>>);
+
+impl Drop for Serial {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(h.get() - 1));
+    }
+}
+
+pub fn serial() -> Serial {
+    let guard = if HELD.with(|h| h.get()) > 0 {
+        None
+    } else {
+        Some(SERIAL.lock().unwrap_or_else(|e| e.into_inner()))
+    };
+    HELD.with(|h| h.set(h.get() + 1));
+    Serial(guard)
+}
 
 pub fn now() -> i64 {
     meter::time::parse_rfc3339(NOW).unwrap()
@@ -59,6 +90,7 @@ impl Env {
     }
 
     pub fn run(&self, o: &Options) -> Report {
+        let _serial = serial();
         match sync::run(o).unwrap() {
             Outcome::Ran(r) => *r,
             other => panic!("expected a run, got {other:?}"),

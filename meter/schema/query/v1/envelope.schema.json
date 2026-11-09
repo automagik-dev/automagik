@@ -38,7 +38,9 @@
             "limit_bytes": { "type": "integer", "minimum": 1 },
             "needed_bytes": { "type": "integer", "minimum": 1 },
             "rows_fit": { "type": "integer", "minimum": 0, "description": "How many rows, in request order, would have fit beside the full echo." }
-          }
+          },
+          "if": { "properties": { "code": { "const": "request_too_large" } } },
+          "then": { "required": ["code", "message", "limit_bytes", "needed_bytes"] }
         }
       ]
     },
@@ -121,6 +123,7 @@
     },
     "sources": {
       "type": "array",
+      "description": "One entry per harness, then, when the folder before the state move holds usage this store never counts (an older meter wrote there after the move, or a store of its own is there), an entry with harness legacy-store and status degraded: its usage is not folded in, so no row is zero beside it and every row lists it in incomplete_sources.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -228,10 +231,27 @@
       "else": {
         "properties": {
           "error": { "type": "object" },
+          "as_of": { "type": "null" },
+          "ingestion": { "type": "null" },
+          "window": { "type": "null" },
+          "sources": { "type": "array", "maxItems": 0 },
           "unattributed": { "type": "null" },
+          "pricing": { "type": "null" },
           "rows": { "type": "array", "maxItems": 0 }
         }
       }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["usage", "absent_store", "locked", "unsupported_contract"] } } },
+      "then": { "properties": { "store": { "type": "null" }, "machine": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["newer_schema", "outdated_store", "error"] } } },
+      "then": { "properties": { "machine": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["absent_store", "locked", "newer_schema", "outdated_store", "unsupported_contract", "too_large", "error"] } } },
+      "then": { "properties": { "query": { "type": "object" } } }
     },
     {
       "if": {
@@ -286,7 +306,13 @@
     },
     {
       "if": { "properties": { "status": { "const": "too_large" } } },
-      "then": { "properties": { "error": { "type": "object", "required": ["code", "message", "limit_bytes", "needed_bytes", "rows_fit"] } } }
+      "then": {
+        "properties": {
+          "store": { "type": "object" },
+          "machine": { "type": "object" },
+          "error": { "type": "object", "required": ["code", "message", "limit_bytes", "needed_bytes", "rows_fit"] }
+        }
+      }
     }
   ],
   "$defs": {
@@ -340,7 +366,12 @@
         "tokens_priced": { "type": "integer", "minimum": 0 },
         "tokens_reported": { "type": "integer", "minimum": 0 },
         "tokens_unpriced": { "type": "integer", "minimum": 0 },
-        "unpriced_models": { "type": "array", "items": { "type": "string" } }
+        "unpriced_models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "At most 8: the models with no price and the most unpriced tokens, ties by name, each name cut to at most 40 bytes as JSON and ended with an ellipsis when cut. tokens_unpriced counts every unpriced token, listed or not.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
       },
       "allOf": [
         {
@@ -363,8 +394,9 @@
           "if": { "properties": { "state": { "const": "zero" } } },
           "then": {
             "properties": {
-              "usd": { "const": 0 }, "tokens_priced": { "const": 0 }, "tokens_reported": { "const": 0 },
-              "tokens_unpriced": { "const": 0 }
+              "usd": { "const": 0 }, "usd_reported": { "const": 0 }, "usd_estimated": { "const": 0 },
+              "tokens_priced": { "const": 0 }, "tokens_reported": { "const": 0 },
+              "tokens_unpriced": { "const": 0 }, "unpriced_models": { "type": "array", "maxItems": 0 }
             }
           }
         }

@@ -95,7 +95,7 @@ pub struct UsageRow {
     pub events: i64,
 }
 
-const SCHEMA: &str = "
+const TABLES: &str = "
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS usage (
   id TEXT PRIMARY KEY,
@@ -141,8 +141,10 @@ CREATE TABLE IF NOT EXISTS health (
 CREATE TABLE IF NOT EXISTS codex_threads (
   id TEXT PRIMARY KEY, path TEXT, cum TEXT NOT NULL, counted INTEGER NOT NULL
 );
-DROP VIEW IF EXISTS ae_usage;
-CREATE VIEW ae_usage AS SELECT id, json_object(
+";
+
+/// Compared with the stored definition on open, and recreated only when it differs.
+const VIEW: &str = "CREATE VIEW ae_usage AS SELECT id, json_object(
   'schema', 'ae/1', 'id', id, 'type', 'agent.usage',
   'ts', strftime('%Y-%m-%dT%H:%M:%SZ', hour_ms / 1000, 'unixepoch'),
   'actor', json_object('bot', bot, 'role', role, 'squad', squad, 'harness', harness,
@@ -155,10 +157,12 @@ CREATE VIEW ae_usage AS SELECT id, json_object(
                      'cache_write_5m', cache_write_5m, 'cache_write_1h', cache_write_1h,
                      'output', output, 'reasoning', reasoning, 'precision', precision,
                      'reported_usd', reported_usd) END,
-  'idempotency_key', id) AS envelope FROM usage;
-";
+  'idempotency_key', id) AS envelope FROM usage";
 
 impl Store {
+    /// Opens the store for `sync`, creating it on first use. A store already at this version is
+    /// opened without a write: no DDL, no `meta` row, no journal-mode change. Read paths
+    /// (`query`, `status`) never call this; they use [`Store::open_read_only`].
     pub fn open(path: &Path) -> rusqlite::Result<Store> {
         let conn = Connection::open(path)?;
         Store::init(conn)
@@ -167,15 +171,7 @@ impl Store {
     /// Opens an existing store only to read it: no schema setup, no journal-mode change, and no
     /// checkpoint on close, so the database and its wal keep exactly the bytes they had.
     pub fn open_read_only(path: &Path) -> rusqlite::Result<Store> {
-        let conn = Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        conn.set_db_config(
-            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
-            true,
-        )?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        let conn = crate::query::open_read_only(path, std::time::Duration::from_secs(5))?;
         Ok(Store { conn })
     }
 
@@ -185,40 +181,40 @@ impl Store {
 
     fn init(conn: Connection) -> rusqlite::Result<Store> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        // Stores made before `unsplit` existed: add the column before the view that names it.
-        let has_usage: bool = conn.query_row(
-            "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'usage'",
-            [],
-            |r| r.get(0),
-        )?;
-        if has_usage {
-            let has_unsplit: bool = conn.query_row(
-                "SELECT count(*) > 0 FROM pragma_table_info('usage') WHERE name = 'unsplit'",
-                [],
-                |r| r.get(0),
-            )?;
-            if !has_unsplit {
-                conn.execute_batch(
-                    "ALTER TABLE usage ADD COLUMN unsplit INTEGER NOT NULL DEFAULT 0",
-                )?;
-            }
+        let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+        if !mode.eq_ignore_ascii_case("wal") && !mode.eq_ignore_ascii_case("memory") {
+            conn.pragma_update(None, "journal_mode", "WAL")?;
         }
-        conn.execute_batch(SCHEMA)?;
+        // Per connection, never stored in the file.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        let fresh = !table_exists(&conn, "usage")?;
+        // Stores made before `unsplit` existed: add the column before the view that names it.
+        if !fresh && !column_exists(&conn, "usage", "unsplit")? {
+            conn.execute_batch("ALTER TABLE usage ADD COLUMN unsplit INTEGER NOT NULL DEFAULT 0")?;
+        }
+        if !schema_complete(&conn)? {
+            conn.execute_batch(TABLES)?;
+        }
         // Stores made before `head_skip` existed.
-        let has_skip: bool = conn.query_row(
-            "SELECT count(*) > 0 FROM pragma_table_info('files') WHERE name = 'head_skip'",
-            [],
-            |r| r.get(0),
-        )?;
-        if !has_skip {
+        if !column_exists(&conn, "files", "head_skip")? {
             conn.execute_batch(
                 "ALTER TABLE files ADD COLUMN head_skip INTEGER NOT NULL DEFAULT 0",
             )?;
         }
+        let view: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'ae_usage'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if view.as_deref() != Some(VIEW) {
+            conn.execute_batch(&format!("DROP VIEW IF EXISTS ae_usage; {VIEW};"))?;
+        }
         let s = Store { conn };
-        if s.meta("schema_version")?.is_none() {
+        // Only a store this call created is stamped: an older store without a version stays
+        // without one, so `sync` sees it is outdated and keeps a generation before it resets it.
+        if fresh && s.meta("schema_version")?.is_none() {
             s.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
         }
         Ok(s)
@@ -528,6 +524,214 @@ impl Store {
         };
         self.conn.query_row(sql, [], |r| r.get(0))
     }
+}
+
+/// Every table and index [`TABLES`] makes.
+const OBJECTS: [(&str, &str); 10] = [
+    ("table", "meta"),
+    ("table", "usage"),
+    ("index", "usage_hour"),
+    ("table", "files"),
+    ("table", "seen"),
+    ("index", "seen_seq"),
+    ("table", "sessions"),
+    ("table", "cwd_repo"),
+    ("table", "health"),
+    ("table", "codex_threads"),
+];
+
+fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |r| r.get(0),
+    )
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )
+}
+
+fn schema_complete(conn: &Connection) -> rusqlite::Result<bool> {
+    for (kind, name) in OBJECTS {
+        let n: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = ?1 AND name = ?2",
+            [kind, name],
+            |r| r.get(0),
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// What `sync` needs to know about a store before it opens it for writing, read read-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peek {
+    /// `schema_version`; 0 for a store with tables but no version (older than versioning).
+    pub version: i64,
+    /// The start of its window; None until its first sync reset it.
+    pub counted_from_ms: Option<i64>,
+}
+
+/// Reads a store's version and window without writing a byte. None when there is no store yet:
+/// no file, an empty file, or a database without tables.
+pub fn peek(path: &Path) -> rusqlite::Result<Option<Peek>> {
+    if !path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
+        return Ok(None);
+    }
+    let conn = open_peek(path)?;
+    let Some(version) = crate::query::schema_version(&conn)? else {
+        return Ok(None);
+    };
+    let counted_from_ms = if table_exists(&conn, "meta")? {
+        conn.query_row("SELECT v FROM meta WHERE k = 'counted_from_ms'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?
+        .and_then(|v| v.parse().ok())
+    } else {
+        None
+    };
+    Ok(Some(Peek {
+        version,
+        counted_from_ms,
+    }))
+}
+
+/// A read that makes no file at all. With no wal beside it the database file is the whole store,
+/// and `immutable` reads it with no lock and no `-wal` or `-shm` companion: safe because the
+/// caller holds the sync lock (or no lock file exists yet), so nothing writes while it reads. With
+/// a wal (a sync that stopped without closing), the companions already exist and a plain
+/// read-only open is the one that sees the wal's rows.
+fn open_peek(path: &Path) -> rusqlite::Result<Connection> {
+    let wal = path.with_file_name(format!(
+        "{}-wal",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    if wal.symlink_metadata().is_ok() {
+        return crate::query::open_read_only(path, std::time::Duration::from_secs(5));
+    }
+    let mut uri = String::from("file:");
+    for b in path.to_string_lossy().bytes() {
+        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri.push_str("?immutable=1");
+    Connection::open_with_flags(
+        uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+}
+
+/// Row counts of every table, by name.
+pub fn row_counts(conn: &Connection) -> rusqlite::Result<BTreeMap<String, i64>> {
+    let names: Vec<String> = {
+        let mut st = conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+             ORDER BY name",
+        )?;
+        st.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut out = BTreeMap::new();
+    for n in names {
+        let q = format!("SELECT count(*) FROM \"{}\"", n.replace('"', "\"\""));
+        out.insert(n, conn.query_row(&q, [], |r| r.get(0))?);
+    }
+    Ok(out)
+}
+
+/// A recoverable generation: a copy of the store kept before a destructive migration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generation {
+    pub path: std::path::PathBuf,
+    pub counts: BTreeMap<String, i64>,
+}
+
+/// The prefix of every generation's file name in the state directory.
+pub const GENERATION_PREFIX: &str = "meter.db.gen-";
+
+/// Writes `meter.db.gen-<schema>-<utc>` beside the store (mode 0600) as an online backup of one
+/// snapshot (`VACUUM INTO`, which reads the store and writes only the copy), fsyncs
+/// it, opens it and checks that every table holds as many rows as the store's. On any failure
+/// the copy is removed and the store is untouched.
+pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generation, String> {
+    let dir = db.parent().unwrap_or(Path::new("."));
+    let stamp: String = crate::time::format_rfc3339(now_ms)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let path = dir.join(format!("{GENERATION_PREFIX}{version}-{stamp}"));
+    let made = (|| -> Result<BTreeMap<String, i64>, String> {
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        drop(
+            o.open(&path)
+                .map_err(|e| format!("cannot create {}: {e}", path.display()))?,
+        );
+        let src = crate::query::open_read_only(db, std::time::Duration::from_secs(5))
+            .map_err(|e| format!("cannot open the store: {e}"))?;
+        // The caller holds the sync lock, so nothing writes between the count and the copy.
+        let want = row_counts(&src).map_err(|e| format!("cannot count the store's rows: {e}"))?;
+        src.execute("VACUUM INTO ?1", [path.to_string_lossy()])
+            .map_err(|e| format!("cannot copy the store: {e}"))?;
+        drop(src);
+        std::fs::File::open(&path)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("cannot fsync {}: {e}", path.display()))?;
+        std::fs::File::open(dir)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| format!("cannot fsync {}: {e}", dir.display()))?;
+        let copy = crate::query::open_read_only(&path, std::time::Duration::from_secs(5))
+            .map_err(|e| format!("cannot open the copy: {e}"))?;
+        let got = row_counts(&copy).map_err(|e| format!("cannot count the copy's rows: {e}"))?;
+        if got != want {
+            return Err(format!(
+                "the copy's row counts {got:?} differ from the store's {want:?}"
+            ));
+        }
+        Ok(got)
+    })();
+    match made {
+        Ok(counts) => Ok(Generation { path, counts }),
+        Err(e) => {
+            let _ = std::fs::remove_file(&path);
+            Err(e)
+        }
+    }
+}
+
+/// The generations in `dir`, by name.
+pub fn generations(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(GENERATION_PREFIX)
+        })
+        .map(|e| e.path())
+        .collect();
+    v.sort();
+    v
 }
 
 fn put_file(tx: &Transaction<'_>, f: &FileState) -> rusqlite::Result<()> {
