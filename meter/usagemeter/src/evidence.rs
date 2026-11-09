@@ -44,6 +44,13 @@ pub const EVIDENCE_BYTES: u64 = 1 << 30;
 pub const LINK_DAYS: i64 = 400;
 /// What a call of evidence is assumed to take when SQLite cannot measure the table.
 const BYTES_PER_CALL: u64 = 200;
+/// The first moment the day bound keeps evidence for: the start of the oldest whole day of the
+/// last [`EVIDENCE_DAYS`]. A call before it gets no evidence row at all, so a backfill never writes
+/// evidence the bound would drop at once (the Fixer's M2 on PR 849).
+pub fn retention_cut(now_ms: i64) -> i64 {
+    crate::time::day_start(now_ms) - (EVIDENCE_DAYS - 1) * crate::time::DAY_MS
+}
+
 /// The `meta` key of the store's session key (hex).
 pub const KEY_META: &str = "evidence_key";
 /// The `meta` key of the start of per-call evidence (ms).
@@ -154,22 +161,13 @@ impl SessionKey {
         Some(SessionKey(b.try_into().ok()?))
     }
 
-    pub fn random() -> SessionKey {
+    /// 32 bytes from the system's random source. Never a fallback: a key someone could predict
+    /// would let them test a guessed session id against the store's hashes.
+    pub fn random() -> std::io::Result<SessionKey> {
         use std::io::Read;
         let mut b = [0u8; 32];
-        if std::fs::File::open("/dev/urandom")
-            .and_then(|mut f| f.read_exact(&mut b))
-            .is_err()
-        {
-            let seed = format!(
-                "{}-{}-{:?}",
-                crate::time::now_ms(),
-                std::process::id(),
-                std::thread::current().id()
-            );
-            b.copy_from_slice(&Sha256::digest(seed.as_bytes()));
-        }
-        SessionKey(b)
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
+        Ok(SessionKey(b))
     }
 
     pub fn to_hex(&self) -> String {

@@ -2585,12 +2585,18 @@ fn a_migration_without_twice_the_store_free_refuses_and_changes_nothing() {
     let mut o = sync_opts(&fx, t(GENERATED));
     o.free_bytes = Some(2 * size - 1);
     let out = fx.env.sync(&o);
-    match out {
-        Outcome::NoSpace { free, needed } => {
-            assert_eq!((free, needed), (2 * size - 1, 2 * size));
+    // Twice the store, plus what the logs a reset re-imports are projected to add.
+    let growth = match out {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth,
+        } => {
+            assert_eq!((free, needed), (2 * size - 1, 2 * size + growth));
+            growth
         }
         other => panic!("expected a refusal, got {other:?}"),
-    }
+    };
     strictly_same_folder(&folder(&state), &before, "a refused migration");
     assert_eq!(
         Store::open_read_only(&fx.db())
@@ -2602,7 +2608,7 @@ fn a_migration_without_twice_the_store_free_refuses_and_changes_nothing() {
         "the old store keeps working as it was"
     );
 
-    o.free_bytes = Some(2 * size);
+    o.free_bytes = Some(2 * size + growth);
     let r = {
         let _g = serial();
         fx.env.run(&o)
@@ -3066,8 +3072,12 @@ fn a_real_free_space_refusal_reads_the_filesystem() {
     assert_eq!(o.free_bytes, None, "the real filesystem is asked");
     let out = fx.env.sync(&o);
     match out {
-        Outcome::NoSpace { free: f, needed } => {
-            assert_eq!(needed, 2 * len_before, "{f}");
+        Outcome::NoSpace {
+            free: f,
+            needed,
+            growth,
+        } => {
+            assert_eq!(needed, 2 * len_before + growth, "{f}");
             assert!(f < needed);
         }
         other => panic!("expected the real refusal, got {other:?}"),

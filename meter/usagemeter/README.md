@@ -156,7 +156,9 @@ is opened, and the folder itself stays.
   kept. No old name is removed before its new entry is fsynced, including an entry an interrupted
   run already made; a failed fsync before that point stops `sync` with an error and the old file
   stays. A copy that fails (a full disk, a source that changed) removes its temporary
-  `.<name>.part` file.
+  `.<name>.part` file. A copy is placed with a hard link inside the new dir, which fails rather
+  than replace a file there, so the new dir must be on a filesystem with hard links (APFS, ext4,
+  and the like); on one without, the move stops and nothing is replaced.
 - The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
   then all of them are copied into the new dir and fsynced, and the marker is renamed
@@ -307,7 +309,13 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
   counts. Only one is kept; the next sync that succeeds on the migrated store removes it, never
   the run that made it. The migration itself is one transaction that refuses to commit if any
   table would lose a row; `query` and `status` never migrate (a schema 2 store gives `query` exit
-  13 until `sync` runs).
+  13 until `sync` runs). For a reset, a backfill or the migration, the room needed also counts
+  what the logs still to import may add, so a disk that would fill mid-run refuses up front: their
+  bytes (every log in the window for a reset, else what lies past each log's stored offset)
+  divided by 8, far above the measured ratio (about 1/137). A run that still runs out of room part-way (or meets
+  a file-size limit) stops with exit 4: the generation it kept is put back (its wal and shm
+  removed first), or, with no rebuild under way, the store keeps every chunk it committed and
+  its old watermark. It is never reported as complete and fresh.
 
 ## Query
 

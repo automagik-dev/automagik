@@ -105,6 +105,9 @@ pub struct Options {
     /// The free bytes the migration check sees, instead of asking the filesystem (tests).
     #[doc(hidden)]
     pub free_bytes: Option<u64>,
+    /// Fail the store write after this many chunks, as a full disk would (tests).
+    #[doc(hidden)]
+    pub fail_writes_after: Option<usize>,
     /// What `hc terminal.list` would answer, when `use_hc` is off (tests): the snapshot the
     /// resolver and the launch table read, with the store's machine id as the core.
     #[doc(hidden)]
@@ -160,6 +163,7 @@ impl Options {
             now_ms,
             chunk_limit: None,
             free_bytes: None,
+            fail_writes_after: None,
             snapshot: None,
         }
     }
@@ -231,11 +235,19 @@ pub enum Outcome {
     NewerSchema {
         store: i64,
     },
-    /// A destructive migration needs at least twice the store's size free and the filesystem
-    /// has less: the store was left as it was, and nothing else changed.
+    /// A destructive migration needs at least twice the store's size, plus the growth the logs
+    /// still to import are projected to add ([`projected_growth`]), free and the filesystem has
+    /// less: the store was left as it was, and nothing else changed.
     NoSpace {
         free: u64,
         needed: u64,
+        /// The projected growth inside `needed`.
+        growth: u64,
+    },
+    /// The store ran out of room part-way, despite the check: the run stopped, and the store was
+    /// put back from its generation, or keeps the chunks it committed (`reason` says which).
+    RanOutOfRoom {
+        reason: String,
     },
     Ran(Box<Report>),
 }
@@ -249,9 +261,55 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// A failure to write the store while a log was read (a full disk, a file-size limit): never an
+/// unreadable log, always the end of the run.
+#[derive(Debug)]
+struct StoreWrite(rusqlite::Error);
+
+impl std::fmt::Display for StoreWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if no_room(&self.0) {
+            write!(f, "{NO_ROOM}: {}", self.0)
+        } else {
+            write!(f, "cannot write the store: {}", self.0)
+        }
+    }
+}
+
+/// How a run's error begins when the store could not be written for want of room.
+const NO_ROOM: &str = "no room to write the store";
+
+/// A write SQLite could not make for want of room: the disk is full (`SQLITE_FULL`), or a write
+/// failed outright (`SQLITE_IOERR_WRITE`, as a file-size limit's `EFBIG` gives).
+fn no_room(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ErrorCode::DiskFull
+                || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
+    )
+}
+
+impl std::error::Error for StoreWrite {}
+
+fn store_write(e: rusqlite::Error) -> io::Error {
+    io::Error::other(StoreWrite(e))
+}
+
+/// The run's error when reading a log failed because the store could not be written.
+fn store_failure(e: &io::Error) -> Option<Error> {
+    e.get_ref()
+        .and_then(|x| x.downcast_ref::<StoreWrite>())
+        .map(|w| Error(w.to_string()))
+}
+
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Error {
-        Error(format!("meter database: {e}"))
+        if no_room(&e) {
+            Error(format!("{NO_ROOM}: meter database: {e}"))
+        } else {
+            Error(format!("meter database: {e}"))
+        }
     }
 }
 
@@ -265,6 +323,8 @@ struct Attributor {
     resolve: bool,
     now_ms: i64,
     key: SessionKey,
+    /// Fail the store write after this many chunks, as a full disk would (tests).
+    fail_writes_after: Option<std::cell::Cell<usize>>,
 }
 
 impl Attributor {
@@ -379,6 +439,9 @@ impl Attributor {
                 precision: e.precision.as_str().into(),
             };
             let (key, _) = evidence::rollup_key(&dim, &actor, crate::time::hour_start(e.ts_ms));
+            // A call already past the evidence's day bound keeps its rollup, never an evidence
+            // row the same run would prune.
+            let kept = e.ts_ms >= evidence::retention_cut(self.now_ms);
             let request = (!e.dedupe_key.is_empty())
                 .then(|| self.key.hash(&format!("req:{}", e.harness), &e.dedupe_key));
             out.push(Attributed {
@@ -390,7 +453,7 @@ impl Attributor {
                 session: e.session,
                 parent_session: e.parent_session,
                 ts_ms: e.ts_ms,
-                evidence: Some(Evidence {
+                evidence: kept.then_some(Evidence {
                     dim,
                     actor,
                     session,
@@ -699,7 +762,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let destructive = (reset_from.is_some() || migrate) && holds_rows;
     let reimported = reset_from.is_some() && (stored.is_some() || holds_rows);
     // Writing to an existing store's schema (a reset, or the index an older store lacks) needs at
-    // least twice the store's size free; without it nothing changes.
+    // least twice the store's size free; without it nothing changes. A rebuild, a backfill or a
+    // migration also needs room for what the logs still to import will add, so a disk that
+    // would fill mid-run is refused up front.
     let needs_index = peek.as_ref().is_some_and(|p| !p.has_repo_index);
     if destructive || needs_index {
         let size: u64 = ["meter.db", "meter.db-wal"]
@@ -707,7 +772,20 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             .filter_map(|f| opts.state_dir.join(f).metadata().ok())
             .map(|m| m.len())
             .sum();
-        let needed = size.saturating_mul(2);
+        let growth = if destructive {
+            let offsets = match reset_from {
+                Some(_) => None,
+                None => Some(crate::store::imported_offsets(&db_path)?),
+            };
+            projected_growth(
+                opts,
+                reset_from.or(stored).unwrap_or(wanted),
+                offsets.as_ref(),
+            )
+        } else {
+            0
+        };
+        let needed = size.saturating_mul(2).saturating_add(growth);
         let free = match opts.free_bytes {
             Some(f) => f,
             None => paths::free_bytes(&opts.state_dir).map_err(|e| {
@@ -718,7 +796,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             })?,
         };
         if free < needed {
-            return Ok(Outcome::NoSpace { free, needed });
+            return Ok(Outcome::NoSpace {
+                free,
+                needed,
+                growth,
+            });
         }
     }
     // Before a reset drops a store's rows, a generation that holds every row, checked by count.
@@ -732,7 +814,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         // One generation is kept: the newest, now that it is verified.
         for old in crate::store::generations(&opts.state_dir) {
             if old != g.path {
-                std::fs::remove_file(&old).map_err(|e| {
+                crate::store::remove_generation(&old).map_err(|e| {
                     Error(format!(
                         "cannot remove the older generation {}: {e}",
                         old.display()
@@ -742,323 +824,435 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         }
         generation = Some(g);
     }
-    let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
-    let trace = Trace::new();
-    let mut store = Store::open(&db)?;
-    let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;
-    // One transaction: the schema 3 tables and columns, the branch_basis backfill and the new
-    // version, or (older than 2) the reset with them.
-    if migrate {
-        store
-            .migrate(now, reset_from.filter(|_| outdated))
-            .map_err(Error)?;
-    }
-    let counted_from = match reset_from {
-        Some(from) if migrate && outdated => from,
-        Some(from) => {
-            store.reset(from)?;
-            from
+    // Everything from here writes the store. A run that fails puts back the generation it kept
+    // (or the one kept beside a re-import still in progress), so a failed rebuild never leaves a
+    // store with fewer rows than before.
+    let made = generation
+        .as_ref()
+        .map(|g: &crate::store::Generation| g.path.clone());
+    let ran = (|| -> Result<Outcome, Error> {
+        let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
+        let trace = Trace::new();
+        let mut store = Store::open(&db)?;
+        let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;
+        // One transaction: the schema 3 tables and columns, the branch_basis backfill and the new
+        // version, or (older than 2) the reset with them.
+        if migrate {
+            store
+                .migrate(now, reset_from.filter(|_| outdated))
+                .map_err(Error)?;
         }
-        None => stored.unwrap_or(wanted),
-    };
-
-    if !opts.force && !reimported {
-        let last = store.meta_i64("last_success_ms")?;
-        let pending = store.meta_i64("last_pending_bytes")?.unwrap_or(0);
-        if let Some(last) = last
-            && pending == 0
-            && now - last < opts.stale_ms
-            && now >= last
-        {
-            return Ok(Outcome::Fresh { age_ms: now - last });
-        }
-    }
-
-    trace.mark("open");
-    let mut hc = if opts.use_hc {
-        Hc::connect(Duration::from_secs(3))
-    } else {
-        None
-    };
-    let core = hc.as_mut().and_then(|h| h.core_id());
-    let machine = machine_id(&store, core.as_deref())?;
-    // None when hc did not answer: then no launch is taken for gone.
-    let listed = match hc.as_mut() {
-        Some(h) => h.terminals_listed(),
-        None => opts.snapshot.clone(),
-    };
-    let answered = listed.is_some();
-    let snapshot = listed.unwrap_or_default();
-    // Rows of another core are skipped: with hc away, the core this store last saw stands in.
-    let core = match core {
-        Some(c) => Some(c),
-        None => store.meta("machine")?,
-    };
-    let key = store.session_key()?;
-    let snap = Snapshot::of(&store, core.as_deref(), &snapshot, answered, now)?;
-    let mut attr = Attributor {
-        machine: machine.clone(),
-        resolver: resolver(opts, core, snapshot, key.clone(), &snap, &store)?,
-        repos: HashMap::new(),
-        resolve: opts.resolve_repos,
-        now_ms: now,
-        key,
-    };
-
-    trace.mark("hc");
-    let mut report = Report {
-        counted_from_ms: counted_from,
-        reimported,
-        machine,
-        generation,
-        migrated: migrate,
-        ..Report::default()
-    };
-    let mut pending_sources: BTreeSet<Source> = BTreeSet::new();
-    // Codex first, with at most half the budget: once imported, a run reads a few small tails.
-    let codex_limits = ReadLimits {
-        chunk_bytes: opts.chunk_bytes,
-        max_line: opts.max_line,
-        deadline: started + opts.budget / 2,
-        chunks_left: opts.chunk_limit.map(std::cell::Cell::new),
-    };
-    let codex_read = codex_pass(
-        opts,
-        &mut store,
-        &mut attr,
-        counted_from,
-        &codex_limits,
-        &mut report,
-        &mut pending_sources,
-    )?;
-    trace.mark("codex");
-
-    let mut candidates: Vec<Candidate> = Vec::new();
-    scan::discover(&opts.omp_root, Source::Omp, &mut candidates);
-    scan::discover(&opts.claude_root, Source::Claude, &mut candidates);
-    scan::discover(&opts.dsh_root, Source::DshTui, &mut candidates);
-    let unread = crate::sources::dsh_tui::unread_generations(&opts.dsh_root);
-    store.set_meta("dsh_unread", unread.as_deref().unwrap_or(""))?;
-    // Newest first: recent usage is what people look at, and an old backlog can wait a run.
-    candidates.sort_by(|a, b| {
-        b.mtime_ms
-            .cmp(&a.mtime_ms)
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    forks_last(&store, &mut candidates)?;
-
-    report.files_seen += candidates.len();
-    let limits = ReadLimits {
-        chunk_bytes: opts.chunk_bytes,
-        max_line: opts.max_line,
-        deadline,
-        chunks_left: opts.chunk_limit.map(std::cell::Cell::new),
-    };
-    let mut stopped_at = candidates.len();
-
-    trace.mark("discover");
-    for (i, c) in candidates.iter().enumerate() {
-        if limits.exhausted() {
-            stopped_at = i;
-            break;
-        }
-        let path = c.path.to_string_lossy().into_owned();
-        let prev = store.file(&path)?;
-        if prev.is_none() && c.mtime_ms < counted_from {
-            continue; // older than the window and never read
-        }
-        let plan = match scan::plan(c, prev) {
-            Ok(p) => p,
-            Err(_) => {
-                report.unreadable += 1;
-                continue;
+        let counted_from = match reset_from {
+            Some(from) if migrate && outdated => from,
+            Some(from) => {
+                store.reset_at(from, evidence::retention_cut(now))?;
+                from
             }
+            None => stored.unwrap_or(wanted),
         };
-        let (mut state, rewritten) = match plan {
-            Plan::Unchanged => continue,
-            Plan::Read { state, rewritten } => (*state, rewritten),
-        };
-        // A fork an older meter read part of has no createdAt in its file context: read it from
-        // the header, so its own later calls are never taken for copies.
-        if c.source == Source::DshTui && state.ctx.seeded && state.ctx.created_at.is_none() {
-            state.ctx.created_at = scan::dsh_header(&c.path).and_then(|h| h.created_at);
+
+        // A run that migrated always goes on: it reports the migration and its generation.
+        if !opts.force && !reimported && !migrate {
+            let last = store.meta_i64("last_success_ms")?;
+            let pending = store.meta_i64("last_pending_bytes")?.unwrap_or(0);
+            if let Some(last) = last
+                && pending == 0
+                && now - last < opts.stale_ms
+                && now >= last
+            {
+                return Ok(Outcome::Fresh { age_ms: now - last });
+            }
         }
-        let res = read_into_store(
+
+        trace.mark("open");
+        let mut hc = if opts.use_hc {
+            Hc::connect(Duration::from_secs(3))
+        } else {
+            None
+        };
+        let core = hc.as_mut().and_then(|h| h.core_id());
+        let machine = machine_id(&store, core.as_deref())?;
+        // None when hc did not answer: then no launch is taken for gone.
+        let listed = match hc.as_mut() {
+            Some(h) => h.terminals_listed(),
+            None => opts.snapshot.clone(),
+        };
+        let answered = listed.is_some();
+        let snapshot = listed.unwrap_or_default();
+        // Rows of another core are skipped: with hc away, the core this store last saw stands in.
+        let core = match core {
+            Some(c) => Some(c),
+            None => store.meta("machine")?,
+        };
+        let key = store.session_key()?;
+        let snap = Snapshot::of(&store, core.as_deref(), &snapshot, answered, now)?;
+        let mut attr = Attributor {
+            machine: machine.clone(),
+            resolver: resolver(opts, core, snapshot, key.clone(), &snap, &store)?,
+            repos: HashMap::new(),
+            resolve: opts.resolve_repos,
+            now_ms: now,
+            key,
+            fail_writes_after: opts.fail_writes_after.map(std::cell::Cell::new),
+        };
+
+        trace.mark("hc");
+        let mut report = Report {
+            counted_from_ms: counted_from,
+            reimported,
+            machine,
+            generation,
+            migrated: migrate,
+            ..Report::default()
+        };
+        let mut pending_sources: BTreeSet<Source> = BTreeSet::new();
+        // Codex first, with at most half the budget: once imported, a run reads a few small tails.
+        let codex_limits = ReadLimits {
+            chunk_bytes: opts.chunk_bytes,
+            max_line: opts.max_line,
+            deadline: started + opts.budget / 2,
+            chunks_left: opts.chunk_limit.map(std::cell::Cell::new),
+        };
+        let codex_read = codex_pass(
+            opts,
             &mut store,
             &mut attr,
-            &mut state,
-            c.source,
-            rewritten,
-            &limits,
             counted_from,
-            now,
+            &codex_limits,
             &mut report,
-        );
-        match res {
-            Ok(outcome) => {
-                if outcome.stopped {
-                    report.stopped_by_budget = true;
-                    report.pending_bytes += c.size.saturating_sub(state.offset);
-                    report.pending_files += 1;
-                    pending_sources.insert(c.source);
-                    stopped_at = i + 1;
-                    break;
-                }
-            }
-            Err(_) => report.unreadable += 1,
-        }
-    }
-    for c in &candidates[stopped_at..] {
-        let prev = store.file(&c.path.to_string_lossy())?;
-        let offset = match &prev {
-            Some(p)
-                if p.dev == c.dev
-                    && p.ino == c.ino
-                    && p.size == c.size
-                    && p.mtime_ms == c.mtime_ms =>
-            {
-                continue;
-            }
-            Some(p) if p.dev == c.dev && p.ino == c.ino && c.size >= p.offset => p.offset,
-            None if c.mtime_ms < counted_from => continue,
-            _ => 0,
-        };
-        if c.size > offset {
-            report.stopped_by_budget = true;
-            report.pending_bytes += c.size - offset;
-            report.pending_files += 1;
-            pending_sources.insert(c.source);
-        }
-    }
+            &mut pending_sources,
+        )?;
+        trace.mark("codex");
 
-    trace.mark("read");
-    report.evidence_backfill =
-        evidence_backfill(opts, &mut store, &mut attr, counted_from, &limits, now)?;
-    trace.mark("evidence backfill");
-    // The launches and links this run derived, what the snapshot showed, and the calls whose
-    // attribution they change; then the recompute, under what is left of the budget.
-    let cwds = evidence::cwds(&store.conn)?;
-    attr.resolver.look_above(cwds.iter().map(String::as_str));
-    links_pass(&mut store, &mut attr, &snap, now, &mut report)?;
-    let (moved, left) = recompute(&mut store, &mut attr, deadline, now)?;
-    report.calls_moved = moved;
-    report.attribution_backlog = left;
-    if left > 0 {
-        eprintln!(
-            "meter: {left} sessions or folders still wait for their attribution to be \
-             recomputed; the next sync goes on"
-        );
-    }
-    {
-        let tx = store.conn.transaction()?;
-        let p = evidence::prune(&tx, now, evidence::EVIDENCE_DAYS, evidence::EVIDENCE_BYTES)?;
-        tx.commit()?;
-        report.evidence_pruned = p.evidence;
-    }
-    for p in attr.resolver.oversized() {
-        eprintln!(
-            "meter: {} is larger than {} MiB, so it was not read; the usage it would tag has no \
-             bot",
-            p.display(),
-            crate::ledger::LEDGER_CAP >> 20
-        );
-    }
-    report.bytes_read += attr.resolver.bytes_read();
-    trace.mark("attribution");
-    // Kept in the store, so status, the doc and the query can say why usage has no bot: the
-    // sidebar's background sync drops stderr. A run that resolved nothing and refused nothing
-    // looked for no project ledger, so it keeps the last run's count.
-    let refused = attr.resolver.refused().len();
-    if refused > 0 || attr.resolver.resolved() > 0 {
-        store.set_meta(LEDGERS_REFUSED, &refused.to_string())?;
-    }
-    for p in attr.resolver.refused() {
-        eprintln!(
-            "meter: {} is group- or world-writable, so anyone could have written who plays which \
-             bot; it was not read. Check its rows, then make it the owner's alone: chmod 600 {}",
-            p.display(),
-            p.display()
-        );
-    }
-    store.set_meta("last_run_ms", &now.to_string())?;
-    store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
-    store.set_meta("last_pending_files", &report.pending_files.to_string())?;
-    // A harness whose log folder does not exist is absent on this machine: nothing to count, and
-    // no success to stamp. (Codex records its own status in `codex_pass`.)
-    for (s, root) in [
-        (Source::Omp, &opts.omp_root),
-        (Source::Claude, &opts.claude_root),
-    ] {
-        let status = if root.is_dir() { "ok" } else { "absent" };
-        store.set_meta(&format!("{}_status", s.harness()), status)?;
-    }
-    dsh_tui_health(&store, &opts.dsh_root, now)?;
-    for s in Source::ALL {
-        let absent = match s {
-            Source::Omp => !opts.omp_root.is_dir(),
-            Source::Claude => !opts.claude_root.is_dir(),
-            Source::Codex => !codex_read,
-            Source::DshTui => !opts.dsh_root.is_dir(),
+        let mut candidates: Vec<Candidate> = Vec::new();
+        scan::discover(&opts.omp_root, Source::Omp, &mut candidates);
+        scan::discover(&opts.claude_root, Source::Claude, &mut candidates);
+        scan::discover(&opts.dsh_root, Source::DshTui, &mut candidates);
+        let unread = crate::sources::dsh_tui::unread_generations(&opts.dsh_root);
+        store.set_meta("dsh_unread", unread.as_deref().unwrap_or(""))?;
+        // Newest first: recent usage is what people look at, and an old backlog can wait a run.
+        candidates.sort_by(|a, b| {
+            b.mtime_ms
+                .cmp(&a.mtime_ms)
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        forks_last(&store, &mut candidates)?;
+
+        report.files_seen += candidates.len();
+        let limits = ReadLimits {
+            chunk_bytes: opts.chunk_bytes,
+            max_line: opts.max_line,
+            deadline,
+            chunks_left: opts.chunk_limit.map(std::cell::Cell::new),
         };
-        if !pending_sources.contains(&s) && !absent {
-            store.mark_success(s.harness(), now)?;
-        }
-    }
-    if report.pending_bytes == 0 {
-        store.set_meta("last_success_ms", &now.to_string())?;
-        // A later sync that succeeded on the migrated store: its generation has done its job.
-        if !reimported && !migrate {
-            for g in crate::store::generations(&opts.state_dir) {
-                match std::fs::remove_file(&g) {
-                    Ok(()) => report.generations_removed.push(g),
-                    Err(e) => eprintln!(
-                        "meter: the generation {} was not removed: {e}; the next successful \
-                         sync tries again",
-                        g.display()
-                    ),
+        let mut stopped_at = candidates.len();
+
+        trace.mark("discover");
+        for (i, c) in candidates.iter().enumerate() {
+            if limits.exhausted() {
+                stopped_at = i;
+                break;
+            }
+            let path = c.path.to_string_lossy().into_owned();
+            let prev = store.file(&path)?;
+            if prev.is_none() && c.mtime_ms < counted_from {
+                continue; // older than the window and never read
+            }
+            let plan = match scan::plan(c, prev) {
+                Ok(p) => p,
+                Err(_) => {
+                    report.unreadable += 1;
+                    continue;
                 }
+            };
+            let (mut state, rewritten) = match plan {
+                Plan::Unchanged => continue,
+                Plan::Read { state, rewritten } => (*state, rewritten),
+            };
+            // A fork an older meter read part of has no createdAt in its file context: read it from
+            // the header, so its own later calls are never taken for copies.
+            if c.source == Source::DshTui && state.ctx.seeded && state.ctx.created_at.is_none() {
+                state.ctx.created_at = scan::dsh_header(&c.path).and_then(|h| h.created_at);
+            }
+            let res = read_into_store(
+                &mut store,
+                &mut attr,
+                &mut state,
+                c.source,
+                rewritten,
+                &limits,
+                counted_from,
+                now,
+                &mut report,
+            );
+            match res {
+                Ok(outcome) => {
+                    if outcome.stopped {
+                        report.stopped_by_budget = true;
+                        report.pending_bytes += c.size.saturating_sub(state.offset);
+                        report.pending_files += 1;
+                        pending_sources.insert(c.source);
+                        stopped_at = i + 1;
+                        break;
+                    }
+                }
+                // A log that cannot be read is counted and skipped; a store that cannot be written
+                // ends the run (RFC 0018 (d): never a partial count reported as complete).
+                Err(e) => match store_failure(&e) {
+                    Some(err) => return Err(err),
+                    None => report.unreadable += 1,
+                },
             }
         }
-        if let Some(old) = old_generation
-            && let Err(e) = paths::drop_old_generation(old, &opts.state_dir)
-        {
+        for c in &candidates[stopped_at..] {
+            let prev = store.file(&c.path.to_string_lossy())?;
+            let offset = match &prev {
+                Some(p)
+                    if p.dev == c.dev
+                        && p.ino == c.ino
+                        && p.size == c.size
+                        && p.mtime_ms == c.mtime_ms =>
+                {
+                    continue;
+                }
+                Some(p) if p.dev == c.dev && p.ino == c.ino && c.size >= p.offset => p.offset,
+                None if c.mtime_ms < counted_from => continue,
+                _ => 0,
+            };
+            if c.size > offset {
+                report.stopped_by_budget = true;
+                report.pending_bytes += c.size - offset;
+                report.pending_files += 1;
+                pending_sources.insert(c.source);
+            }
+        }
+
+        trace.mark("read");
+        report.evidence_backfill =
+            evidence_backfill(opts, &mut store, &mut attr, counted_from, &limits, now)?;
+        trace.mark("evidence backfill");
+        // The launches and links this run derived, what the snapshot showed, and the calls whose
+        // attribution they change; then the recompute, under what is left of the budget.
+        let cwds = evidence::cwds(&store.conn)?;
+        attr.resolver.look_above(cwds.iter().map(String::as_str));
+        links_pass(&mut store, &mut attr, &snap, now, &mut report)?;
+        let (moved, left) = recompute(&mut store, &mut attr, deadline, now)?;
+        report.calls_moved = moved;
+        report.attribution_backlog = left;
+        if left > 0 {
             eprintln!(
-                "meter: the old copies in {} were not removed: {e}; the next successful sync \
-                 tries again",
-                old.display()
+                "meter: {left} sessions or folders still wait for their attribution to be \
+             recomputed; the next sync goes on"
             );
         }
-    }
+        {
+            let tx = store.conn.transaction()?;
+            let p = evidence::prune(&tx, now, evidence::EVIDENCE_DAYS, evidence::EVIDENCE_BYTES)?;
+            tx.commit()?;
+            report.evidence_pruned = p.evidence;
+        }
+        for p in attr.resolver.oversized() {
+            eprintln!(
+                "meter: {} is larger than {} MiB, so it was not read; the usage it would tag has no \
+             bot",
+                p.display(),
+                crate::ledger::LEDGER_CAP >> 20
+            );
+        }
+        report.bytes_read += attr.resolver.bytes_read();
+        trace.mark("attribution");
+        // Kept in the store, so status, the doc and the query can say why usage has no bot: the
+        // sidebar's background sync drops stderr. A run that resolved nothing and refused nothing
+        // looked for no project ledger, so it keeps the last run's count.
+        let refused = attr.resolver.refused().len();
+        if refused > 0 || attr.resolver.resolved() > 0 {
+            store.set_meta(LEDGERS_REFUSED, &refused.to_string())?;
+        }
+        for p in attr.resolver.refused() {
+            eprintln!(
+                "meter: {} is group- or world-writable, so anyone could have written who plays which \
+             bot; it was not read. Check its rows, then make it the owner's alone: chmod 600 {}",
+                p.display(),
+                p.display()
+            );
+        }
+        store.set_meta("last_run_ms", &now.to_string())?;
+        store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
+        store.set_meta("last_pending_files", &report.pending_files.to_string())?;
+        // A harness whose log folder does not exist is absent on this machine: nothing to count, and
+        // no success to stamp. (Codex records its own status in `codex_pass`.)
+        for (s, root) in [
+            (Source::Omp, &opts.omp_root),
+            (Source::Claude, &opts.claude_root),
+        ] {
+            let status = if root.is_dir() { "ok" } else { "absent" };
+            store.set_meta(&format!("{}_status", s.harness()), status)?;
+        }
+        dsh_tui_health(&store, &opts.dsh_root, now)?;
+        for s in Source::ALL {
+            let absent = match s {
+                Source::Omp => !opts.omp_root.is_dir(),
+                Source::Claude => !opts.claude_root.is_dir(),
+                Source::Codex => !codex_read,
+                Source::DshTui => !opts.dsh_root.is_dir(),
+            };
+            if !pending_sources.contains(&s) && !absent {
+                store.mark_success(s.harness(), now)?;
+            }
+        }
+        if report.pending_bytes == 0 {
+            store.set_meta("last_success_ms", &now.to_string())?;
+            // A later sync that succeeded on the migrated store: its generation has done its job.
+            if !reimported && !migrate {
+                for g in crate::store::generations(&opts.state_dir) {
+                    match crate::store::remove_generation(&g) {
+                        Ok(()) => report.generations_removed.push(g),
+                        Err(e) => eprintln!(
+                            "meter: the generation {} was not removed: {e}; the next successful \
+                         sync tries again",
+                            g.display()
+                        ),
+                    }
+                }
+            }
+            if let Some(old) = old_generation
+                && let Err(e) = paths::drop_old_generation(old, &opts.state_dir)
+            {
+                eprintln!(
+                    "meter: the old copies in {} were not removed: {e}; the next successful sync \
+                 tries again",
+                    old.display()
+                );
+            }
+        }
 
-    trace.mark("commit");
-    let rows = store.rows_since(counted_from)?;
-    let sources = source_health(&store)?;
-    let (doc, size) = summary::build(
-        &summary::Input {
-            rows: &rows,
-            prices: &prices,
-            now_ms: now,
-            machine: &report.machine,
-            meter_version: env!("CARGO_PKG_VERSION"),
-            counted_from_ms: counted_from,
-            pending_bytes: report.pending_bytes,
-            pending_files: report.pending_files,
-            sources: &sources,
-        },
-        opts.summary_cap,
-    );
-    trace.mark("summary");
-    report.summary_bytes = size;
-    if opts.publish {
-        report.published = Some(match hc.as_mut() {
-            Some(h) => h.doc_put(&opts.doc_name, &doc).map_err(|e| e.to_string()),
-            None => Err("hc is not available".into()),
-        });
+        trace.mark("commit");
+        let rows = store.rows_since(counted_from)?;
+        let sources = source_health(&store)?;
+        let (doc, size) = summary::build(
+            &summary::Input {
+                rows: &rows,
+                prices: &prices,
+                now_ms: now,
+                machine: &report.machine,
+                meter_version: env!("CARGO_PKG_VERSION"),
+                counted_from_ms: counted_from,
+                pending_bytes: report.pending_bytes,
+                pending_files: report.pending_files,
+                sources: &sources,
+            },
+            opts.summary_cap,
+        );
+        trace.mark("summary");
+        report.summary_bytes = size;
+        if opts.publish {
+            report.published = Some(match hc.as_mut() {
+                Some(h) => h.doc_put(&opts.doc_name, &doc).map_err(|e| e.to_string()),
+                None => Err("hc is not available".into()),
+            });
+        }
+        trace.mark("publish");
+        report.summary = Some(doc);
+        report.elapsed = started.elapsed();
+        Ok(Outcome::Ran(Box::new(report)))
+    })();
+    match ran {
+        Ok(o) => Ok(o),
+        Err(e) => {
+            let full = e.0.starts_with(NO_ROOM);
+            let e = rollback(&opts.state_dir, made.as_deref(), e);
+            if full {
+                Ok(Outcome::RanOutOfRoom { reason: e.0 })
+            } else {
+                Err(e)
+            }
+        }
     }
-    trace.mark("publish");
-    report.summary = Some(doc);
-    report.elapsed = started.elapsed();
-    Ok(Outcome::Ran(Box::new(report)))
+}
+
+/// After a failed run, the store as it was before it: the generation this run kept, else one kept
+/// beside a re-import that has not finished (a store with no watermark), replaces the store, its
+/// wal and shm removed first so no frame of the failed store is replayed onto it. Otherwise the
+/// store keeps every chunk it committed, each whole, and the next sync goes on.
+fn rollback(dir: &std::path::Path, made: Option<&std::path::Path>, e: Error) -> Error {
+    let db = dir.join("meter.db");
+    let reimporting = || {
+        crate::query::open_read_only(&db, Duration::from_secs(2))
+            .ok()
+            .and_then(|c| {
+                c.query_row(
+                    "SELECT count(*) = 0 FROM meta WHERE k = 'last_success_ms'",
+                    [],
+                    |r| r.get::<_, bool>(0),
+                )
+                .ok()
+            })
+            .unwrap_or(false)
+    };
+    let target = made.map(std::path::Path::to_path_buf).or_else(|| {
+        crate::store::generations(dir)
+            .pop()
+            .filter(|_| reimporting())
+    });
+    let Some(g) = target.filter(|g| g.exists()) else {
+        return Error(format!(
+            "{e}; the store keeps what earlier chunks committed, and the next sync goes on"
+        ));
+    };
+    let put_back = (|| -> io::Result<()> {
+        for f in ["meter.db-wal", "meter.db-shm"] {
+            match std::fs::remove_file(dir.join(f)) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        std::fs::rename(&g, &db)?;
+        std::fs::File::open(dir)?.sync_all()
+    })();
+    match put_back {
+        Ok(()) => Error(format!(
+            "{e}; the store was put back as it was before this rebuild or migration (its \
+             generation, every table's rows counted when it was kept)"
+        )),
+        Err(r) => Error(format!(
+            "{e}; the store could not be put back ({r}): its generation is {}",
+            g.display()
+        )),
+    }
+}
+
+/// What the store is assumed to grow by per byte of log still to import, evidence included: 1/8,
+/// far above what was measured (a full rebuild of 2.0 GB of logs made a 14.7 MB store, about
+/// 1/137), so a projection never falls short.
+pub const GROWTH_PER_LOG_BYTE: u64 = 8;
+
+/// The bytes a run that starts at `from_ms` may add to the store: the log bytes it still has to
+/// import, divided by [`GROWTH_PER_LOG_BYTE`]. With `offsets` (a run that keeps the store's rows),
+/// a log counts from the offset the store already read it to; without (a reset), every log in the
+/// window counts whole. Codex rollouts count by their files. Only file sizes are read.
+pub fn projected_growth(
+    opts: &Options,
+    from_ms: i64,
+    offsets: Option<&HashMap<String, u64>>,
+) -> u64 {
+    let mut logs = Vec::new();
+    scan::discover(&opts.omp_root, Source::Omp, &mut logs);
+    scan::discover(&opts.claude_root, Source::Claude, &mut logs);
+    scan::discover(&opts.dsh_root, Source::DshTui, &mut logs);
+    for d in ["sessions", "archived_sessions"] {
+        scan::discover(&opts.codex_home.join(d), Source::Codex, &mut logs);
+    }
+    let mut bytes: u64 = 0;
+    for c in &logs {
+        let read = offsets.and_then(|o| o.get(c.path.to_string_lossy().as_ref()).copied());
+        let left = match read {
+            Some(off) => c.size.saturating_sub(off),
+            None if c.mtime_ms < from_ms => 0,
+            None => c.size,
+        };
+        bytes = bytes.saturating_add(left);
+    }
+    bytes.div_ceil(GROWTH_PER_LOG_BYTE)
 }
 
 /// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, the project
@@ -1510,10 +1704,19 @@ fn read_into_store(
             first = false;
             let attributed = attr
                 .attribute(store, events, counted_from)
-                .map_err(io::Error::other)?;
+                .map_err(store_write)?;
+            if let Some(n) = &attr.fail_writes_after {
+                if n.get() == 0 {
+                    return Err(store_write(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
+                        Some("database or disk is full (simulated)".into()),
+                    )));
+                }
+                n.set(n.get() - 1);
+            }
             let applied = store
                 .apply_chunk(st, &attributed, health, now)
-                .map_err(io::Error::other)?;
+                .map_err(store_write)?;
             report.health.add(&applied);
             Ok(())
         },
@@ -1526,12 +1729,10 @@ fn read_into_store(
             rewrites: 1,
             ..Health::default()
         };
-        store
-            .apply_chunk(state, &[], h, now)
-            .map_err(io::Error::other)?;
+        store.apply_chunk(state, &[], h, now).map_err(store_write)?;
         report.health.add(&h);
     } else {
-        store.put_file(state).map_err(io::Error::other)?;
+        store.put_file(state).map_err(store_write)?;
     }
     Ok(outcome)
 }
@@ -1649,7 +1850,10 @@ fn codex_pass(
                                     complete = true;
                                 }
                             }
-                            Err(_) => unreadable += 1,
+                            Err(e) => match store_failure(&e) {
+                                Some(err) => return Err(err),
+                                None => unreadable += 1,
+                            },
                         }
                     }
                 }

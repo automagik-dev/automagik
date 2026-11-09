@@ -217,7 +217,9 @@ impl Store {
                     [
                         SCHEMA_VERSION.to_string(),
                         evidence::KEY_META.to_string(),
-                        evidence::SessionKey::random().to_hex(),
+                        evidence::SessionKey::random()
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                            .to_hex(),
                     ],
                 )?;
                 Ok(true)
@@ -254,7 +256,10 @@ impl Store {
             )
             .optional()?;
         if view.as_deref() != Some(VIEW) {
-            conn.execute_batch(&format!("DROP VIEW IF EXISTS ae_usage; {VIEW};"))?;
+            // One transaction: a second open racing this one waits, then replaces it whole.
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; DROP VIEW IF EXISTS ae_usage; {VIEW}; COMMIT;"
+            ))?;
         }
         // An older store without a version stays without one, so `sync` sees it is outdated and
         // keeps a generation before it resets it.
@@ -275,6 +280,7 @@ impl Store {
     /// hour: every rollup of an hour from then on is the evidence's. Before it commits, every table
     /// the store had holds as many rows as before (or none, on a reset); else nothing changes.
     pub fn migrate(&mut self, now_ms: i64, reset: Option<i64>) -> Result<(), String> {
+        let cut = evidence::retention_cut(now_ms);
         let tx = self
             .conn
             .transaction()
@@ -285,7 +291,7 @@ impl Store {
         let evidence_from = match reset {
             Some(from) => {
                 clear(&tx, from).map_err(db)?;
-                from
+                from.max(cut)
             }
             None => {
                 tx.execute(
@@ -313,7 +319,9 @@ impl Store {
             )
             .map_err(db)?;
         if !has_key {
-            put(evidence::KEY_META, &evidence::SessionKey::random().to_hex()).map_err(db)?;
+            let key = evidence::SessionKey::random()
+                .map_err(|e| format!("cannot make the store's hash key: {e}"))?;
+            put(evidence::KEY_META, &key.to_hex()).map_err(db)?;
         }
         put("schema_version", &SCHEMA_VERSION.to_string()).map_err(db)?;
         if reset.is_none() {
@@ -343,7 +351,8 @@ impl Store {
         {
             return Ok(k);
         }
-        let k = evidence::SessionKey::random();
+        let k = evidence::SessionKey::random()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         self.set_meta(evidence::KEY_META, &k.to_hex())?;
         Ok(k)
     }
@@ -373,6 +382,16 @@ impl Store {
     /// The evidence goes with the rows (the re-import writes it again) and starts at the new
     /// window; the `launch` and `link` tables stay: they hold what only past syncs saw.
     pub fn reset(&mut self, counted_from_ms: i64) -> rusqlite::Result<()> {
+        self.reset_at(counted_from_ms, counted_from_ms)
+    }
+
+    /// [`Store::reset`], with evidence starting at `evidence_from_ms` (never before the window):
+    /// a re-import writes no evidence a retention bound would drop at once.
+    pub fn reset_at(
+        &mut self,
+        counted_from_ms: i64,
+        evidence_from_ms: i64,
+    ) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
         clear(&tx, counted_from_ms)?;
         tx.execute(
@@ -381,7 +400,10 @@ impl Store {
         )?;
         tx.execute(
             "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
-            [evidence::FROM_META, &counted_from_ms.to_string()],
+            [
+                evidence::FROM_META,
+                &evidence_from_ms.max(counted_from_ms).to_string(),
+            ],
         )?;
         tx.commit()?;
         self.intern.clear();
@@ -857,6 +879,26 @@ fn open_peek(path: &Path) -> rusqlite::Result<Connection> {
     )
 }
 
+/// How far the store has read each log (`files.offset`), by path, read without writing a byte.
+/// Empty when the store has no `files` table.
+pub fn imported_offsets(path: &Path) -> rusqlite::Result<std::collections::HashMap<String, u64>> {
+    let mut out = std::collections::HashMap::new();
+    if !path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
+        return Ok(out);
+    }
+    let conn = open_peek(path)?;
+    if !table_exists(&conn, "files")? {
+        return Ok(out);
+    }
+    let mut st = conn.prepare("SELECT path, offset FROM files")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (p, o) = row?;
+        out.insert(p, o.max(0) as u64);
+    }
+    Ok(out)
+}
+
 /// Row counts of every table, by name.
 pub fn row_counts(conn: &Connection) -> rusqlite::Result<BTreeMap<String, i64>> {
     let names: Vec<String> = {
@@ -895,8 +937,15 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .collect();
-    let path = dir.join(format!("{GENERATION_PREFIX}{version}-{stamp}"));
-    let made = (|| -> Result<BTreeMap<String, i64>, String> {
+    let base = format!("{GENERATION_PREFIX}{version}-{stamp}");
+    // A name no file has: a generation from the same second (or a kill's leftover) is never
+    // replaced, and never removed by this call, which removes only the file it created.
+    let mut path = dir.join(&base);
+    let mut created = false;
+    for n in 0..100 {
+        if n > 0 {
+            path = dir.join(format!("{base}-{n}"));
+        }
         let mut o = std::fs::OpenOptions::new();
         o.write(true).create_new(true);
         #[cfg(unix)]
@@ -904,10 +953,19 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
             use std::os::unix::fs::OpenOptionsExt;
             o.mode(0o600);
         }
-        drop(
-            o.open(&path)
-                .map_err(|e| format!("cannot create {}: {e}", path.display()))?,
-        );
+        match o.open(&path) {
+            Ok(_) => {
+                created = true;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
+        }
+    }
+    if !created {
+        return Err(format!("no free name for a generation beside {base}"));
+    }
+    let made = (|| -> Result<BTreeMap<String, i64>, String> {
         let src = crate::query::open_read_only(db, std::time::Duration::from_secs(5))
             .map_err(|e| format!("cannot open the store: {e}"))?;
         // The caller holds the sync lock, so nothing writes between the count and the copy.
@@ -934,10 +992,23 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
     match made {
         Ok(counts) => Ok(Generation { path, counts }),
         Err(e) => {
-            let _ = std::fs::remove_file(&path);
+            let _ = remove_generation(&path);
             Err(e)
         }
     }
+}
+
+/// Removes a generation and the rollback journal a killed copy may have left beside it.
+pub fn remove_generation(path: &Path) -> std::io::Result<()> {
+    let journal = path.with_file_name(format!(
+        "{}-journal",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    match std::fs::remove_file(&journal) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::remove_file(path)
 }
 
 /// The generations in `dir`, by name.
@@ -947,9 +1018,10 @@ pub fn generations(dir: &Path) -> Vec<std::path::PathBuf> {
         .flatten()
         .flatten()
         .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(GENERATION_PREFIX)
+            let n = e.file_name().to_string_lossy().into_owned();
+            // A copy's own companions are not generations.
+            n.starts_with(GENERATION_PREFIX)
+                && !["-journal", "-wal", "-shm"].iter().any(|x| n.ends_with(x))
         })
         .map(|e| e.path())
         .collect();

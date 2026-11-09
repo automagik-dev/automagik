@@ -776,3 +776,335 @@ fn a_migration_that_would_lose_a_row_is_refused_and_changes_nothing() {
     assert_eq!(counts(&db), old);
     assert_eq!(meter::store::peek(&db).unwrap().unwrap().version, 2);
 }
+
+/// A store with rows, and `log_bytes` of Claude Code logs written after it (one real line, then
+/// filler lines the parser skips) that a backfill would import.
+fn store_with_logs(env: &Env, log_bytes: usize) -> u64 {
+    write_lines(
+        &env.claude("-work-app/s-grow.jsonl"),
+        &[line("m1", "s-grow", "/work/app", now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    drop(Store::open(&env.state().join("meter.db")).unwrap());
+    let filler = format!("{{\"type\":\"filler\",\"pad\":\"{}\"}}", "x".repeat(1000));
+    let n = log_bytes / (filler.len() + 1);
+    write_lines(&env.claude("-work-app/s-big.jsonl"), &vec![filler; n]);
+    ["meter.db", "meter.db-wal"]
+        .iter()
+        .filter_map(|f| env.state().join(f).metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+// The Meter Captain's ruling on PR 849 (2): a rebuild or backfill checks the free space against
+// the store's projected grown size, so a disk that would fill mid-rebuild refuses up front (exit 4,
+// nothing changed). Here the disk has room for twice the store, but not for the growth.
+#[test]
+fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
+    let env = Env::new();
+    let size = store_with_logs(&env, 4 << 20);
+    let before = folder(&env.state());
+    let mut o = env.opts();
+    o.backfill = true;
+    let growth = meter::sync::projected_growth(&env.hermetic(&o), 0, None);
+    assert!(
+        growth >= (4 << 20) / meter::sync::GROWTH_PER_LOG_BYTE - 4096,
+        "{growth}"
+    );
+    o.free_bytes = Some(2 * size + growth - 1);
+    match env.sync(&o) {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth: g,
+        } => assert_eq!(
+            (free, needed, g),
+            (2 * size + growth - 1, 2 * size + growth, growth)
+        ),
+        other => panic!("expected the up-front refusal, got {other:?}"),
+    }
+    assert_eq!(folder(&env.state()), before, "nothing changed");
+    // With room for the growth it runs.
+    o.free_bytes = Some(2 * size + growth);
+    let r = env.run(&o);
+    assert!(r.reimported && r.generation.is_some());
+    // A run that keeps the rows counts only what is past each log's offset.
+    let read = meter::store::imported_offsets(&env.state().join("meter.db")).unwrap();
+    assert_eq!(
+        meter::sync::projected_growth(&env.hermetic(&env.opts()), 0, Some(&read)),
+        0
+    );
+}
+
+// The Reviewer's M2 on PR 849, through the real statvfs and the binary: a widening backfill
+// whose logs still to import would grow the store past the free space refuses up front, exit 4,
+// before any rebuild starts: no generation, no reset, the folder byte for byte as it was. The log
+// is sparse (16 TiB that take no disk), so its projected growth passes any real free space.
+#[cfg(unix)]
+#[test]
+fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
+    let env = Env::new();
+    spread_logs(&env, meter::time::now_ms(), 3, 5);
+    let _serial = serial();
+    let sync = |args: &[&str]| {
+        env.command()
+            .env("METER_STATE_DIR", env.state())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = sync(&["sync", "--force", "--no-publish", "--days", "1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let sparse = env.claude("-work-app/s-sparse.jsonl");
+    fs::File::create(&sparse).unwrap().set_len(1 << 44).unwrap();
+    let before = folder(&env.state());
+    let out = sync(&["sync", "--force", "--no-publish", "--backfill"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{err}");
+    assert!(err.contains("the logs still to import may add"), "{err}");
+    assert_eq!(folder(&env.state()), before, "nothing changed");
+}
+
+/// Every table's rows, the totals and the watermark: what a failed run must leave as it was.
+fn snapshot_of(env: &Env) -> (BTreeMap<String, i64>, String, Option<String>) {
+    let db = env.state().join("meter.db");
+    let c = meter::query::open_read_only(&db, std::time::Duration::from_secs(2)).unwrap();
+    let ok: String = c
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ok, "ok");
+    let last = c
+        .query_row("SELECT v FROM meta WHERE k = 'last_success_ms'", [], |r| {
+            r.get(0)
+        })
+        .ok();
+    let counts = meter::store::row_counts(&c).unwrap();
+    drop(c);
+    (counts, format!("{:?}", env.totals()), last)
+}
+
+/// Claude Code calls spread over `days` days before `at`, `per_day` a day, in one log.
+fn spread_logs(env: &Env, at: i64, days: i64, per_day: i64) {
+    let lines: Vec<String> = (0..days * per_day)
+        .map(|i| {
+            let ts = at - (i / per_day) * meter::time::DAY_MS - (i % per_day) * 60_000 - 60_000;
+            line(&format!("m-{i}"), "s-spread", "/work/app", ts)
+        })
+        .collect();
+    write_lines(&env.claude("-work-app/s-spread.jsonl"), &lines);
+}
+
+// The Fixer's M3 on PR 849: a disk that fills mid-rebuild fails the run (an error, never an
+// unreadable log), and the store is put back from the generation the rebuild kept: every table
+// holds the rows it had, and the watermark is the old one, never a fresh claim over fewer rows.
+#[test]
+fn a_disk_full_mid_rebuild_fails_the_run_and_puts_the_store_back() {
+    let env = Env::new();
+    spread_logs(&env, now(), 20, 10);
+    let mut o = env.opts();
+    o.days = Some(5);
+    env.run(&o);
+    let before = snapshot_of(&env);
+    let mut o = env.opts();
+    o.backfill = true;
+    o.chunk_bytes = 4096;
+    o.fail_writes_after = Some(3);
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
+    };
+    assert!(reason.contains("disk is full"), "{reason}");
+    assert!(reason.contains("put back"), "{reason}");
+    assert_eq!(snapshot_of(&env), before, "the store is as it was");
+    assert!(meter::store::generations(&env.state()).is_empty());
+    // A run that keeps its rows fails too, and leaves the old watermark: never fresh and partial.
+    let mut o = env.opts();
+    o.days = Some(5);
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 0);
+    let mut extra = fs::read_to_string(env.claude("-work-app/s-spread.jsonl")).unwrap();
+    for i in 0..50 {
+        extra.push_str(&line(
+            &format!("x-{i}"),
+            "s-spread",
+            "/work/app",
+            now() - 1_000,
+        ));
+        extra.push('\n');
+    }
+    fs::write(env.claude("-work-app/s-spread.jsonl"), extra).unwrap();
+    let mut o = env.opts();
+    o.days = Some(5);
+    o.chunk_bytes = 4096;
+    o.fail_writes_after = Some(0);
+    let last = snapshot_of(&env).2;
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
+    };
+    assert!(reason.contains("next sync goes on"), "{reason}");
+    assert_eq!(snapshot_of(&env).2, last, "the watermark did not move");
+}
+
+// The same through a real write failure: a file-size limit (SIGXFSZ ignored, so the write gets
+// EFBIG as on a full disk) under a rebuild that grows the store past it.
+#[cfg(unix)]
+#[test]
+fn a_real_write_failure_mid_rebuild_puts_the_store_back() {
+    let env = Env::new();
+    spread_logs(&env, meter::time::now_ms(), 25, 60);
+    let _serial = serial();
+    let sync = |limit: Option<u64>, args: &[&str]| {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c")
+            .arg(match limit {
+                Some(b) => format!("trap '' XFSZ; ulimit -f {b}; exec \"$0\" \"$@\""),
+                None => "exec \"$0\" \"$@\"".to_string(),
+            })
+            .arg(env!("CARGO_BIN_EXE_usagemeter"))
+            .args(args)
+            .env_clear()
+            .env("HOME", env.home())
+            .env("METER_HC", env.dir.path().join("no-hc"))
+            .env("METER_STATE_DIR", env.state());
+        if let Some(p) = std::env::var_os("PATH") {
+            c.env("PATH", p);
+        }
+        c.output().unwrap()
+    };
+    let out = sync(None, &["sync", "--force", "--no-publish", "--days", "2"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let before = snapshot_of(&env);
+    let size = env.state().join("meter.db").metadata().unwrap().len();
+    // 512-byte blocks: room for the generation, not for the rebuilt store.
+    let blocks = (size + (64 << 10)) / 512;
+    let out = sync(
+        Some(blocks),
+        &["sync", "--force", "--no-publish", "--backfill"],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    // Exit 4, as for the up-front refusal (the Reviewer's M2 on PR 849).
+    assert_eq!(out.status.code(), Some(4), "{err}");
+    assert!(err.contains("no room to write the store"), "{err}");
+    assert!(err.contains("put back"), "{err}");
+    assert_eq!(snapshot_of(&env), before, "the store is as it was");
+}
+
+// The Fixer's M2 on PR 849: a backfill over logs past the evidence's day bound writes no evidence
+// for them, so the store does not grow by pages the same run frees (no evidence row, no freed
+// page); their rollups are kept.
+#[test]
+fn evidence_past_retention_is_never_written() {
+    let env = Env::new();
+    let old = now() - (evidence::EVIDENCE_DAYS + 30) * meter::time::DAY_MS;
+    spread_logs(&env, old, 10, 200);
+    let mut o = env.opts();
+    o.backfill = true;
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 2000);
+    let store = env.store();
+    assert_eq!(store.count("evidence").unwrap(), 0);
+    assert!(store.count("usage").unwrap() > 0, "the rollups are kept");
+    let free: i64 = store
+        .conn
+        .query_row("PRAGMA freelist_count", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        free <= 2,
+        "{free} pages freed by evidence written and pruned"
+    );
+    assert_eq!(evidence_from(&store), evidence::retention_cut(now()));
+}
+
+// The Fixer's M4 on PR 849: each store hashes ids with its own random key, kept in its meta, so
+// one session's hashes never match across two stores.
+#[test]
+fn two_stores_hash_one_session_with_their_own_keys() {
+    let hashes = |env: &Env| -> (String, Vec<u8>) {
+        write_lines(
+            &env.claude("-work-app/s-same.jsonl"),
+            &[line("m1", "s-same", "/work/app", now() - 3_600_000)],
+        );
+        env.run(&env.opts());
+        let store = env.store();
+        let key = store.meta(evidence::KEY_META).unwrap().unwrap();
+        assert_eq!(key.len(), 64);
+        let h: Vec<u8> = store
+            .conn
+            .query_row("SELECT session FROM evidence", [], |r| r.get(0))
+            .unwrap();
+        // The store's key, from its meta, is the one its hashes were made with.
+        let k = evidence::SessionKey::from_hex(&key).unwrap();
+        assert_eq!(h, k.hash("claude", "s-same").to_vec());
+        (key, h)
+    };
+    let (a, b) = (Env::new(), Env::new());
+    let (ka, ha) = hashes(&a);
+    let (kb, hb) = hashes(&b);
+    assert_ne!(ka, kb, "two stores, two keys");
+    assert_ne!(ha, hb, "one session's ids never match across stores");
+}
+
+// The Reviewer's L1 on PR 849: a plain sync (no --force) that migrates goes on, so it reports the
+// migration and its generation instead of stopping as "fresh".
+#[test]
+fn a_migration_is_never_cut_short_as_fresh() {
+    let env = Env::new();
+    let db = v2_store(&env);
+    let c = Connection::open(&db).unwrap();
+    for (k, v) in [
+        ("last_success_ms", (now() - 60_000).to_string()),
+        ("last_pending_bytes", "0".to_string()),
+    ] {
+        c.execute("INSERT INTO meta(k, v) VALUES(?1, ?2)", params![k, v])
+            .unwrap();
+    }
+    drop(c);
+    let mut o = env.opts();
+    o.force = false;
+    match env.sync(&o) {
+        Outcome::Ran(r) => assert!(r.migrated && r.generation.is_some()),
+        other => panic!("expected the migration to run, got {other:?}"),
+    }
+}
+
+// The Reviewer's L5 on PR 849: a generation from the same second (or a kill's leftover at that
+// name) is never replaced or removed, and a copy's stray journal is not taken for a generation.
+#[test]
+fn a_generation_never_takes_or_removes_another_files_name() {
+    let env = Env::new();
+    write_lines(
+        &env.claude("-work-app/s-1.jsonl"),
+        &[line("m1", "s-1", "/work/app", now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    let db = env.state().join("meter.db");
+    let first = meter::store::write_generation(&db, 3, now()).unwrap();
+    let theirs = fs::read(&first.path).unwrap();
+    let second = meter::store::write_generation(&db, 3, now()).unwrap();
+    assert_ne!(first.path, second.path);
+    assert_eq!(
+        fs::read(&first.path).unwrap(),
+        theirs,
+        "the first is untouched"
+    );
+    let journal = first.path.with_file_name(format!(
+        "{}-journal",
+        first.path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::write(&journal, b"left by a kill").unwrap();
+    assert_eq!(
+        meter::store::generations(&env.state()),
+        [first.path.clone(), second.path.clone()]
+    );
+    meter::store::remove_generation(&first.path).unwrap();
+    assert!(!journal.exists() && !first.path.exists());
+}
