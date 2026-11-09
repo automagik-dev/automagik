@@ -72,10 +72,11 @@ import {
   apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, revertedLayouts, strandedLayouts,
 } from "./migrateHome.mjs";
 import { change, removePath } from "./layoutSafe.mjs";
-import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks } from "./migrateHooks.mjs";
+import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
   noticeText, packOfPointer, parseSums, pickUpdate, sumsName, tarballName, updatesOff } from "./release.js";
+export { tightenLedgers } from "./migrateHooks.mjs";
 
 const run = promisify(execFile);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -680,6 +681,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
+      usagemeterSequence: before?.usagemeterSequence ?? null,
       usagemeterOn: { ...(before?.usagemeterOn ?? {}) }, usagemeterScope: before?.usagemeterScope ?? null,
       // When the pack was put in place (the mod manager's INSTALLED); a repair keeps the date.
       installed: (repair ? before?.installed : null) ?? new Date().toISOString(),
@@ -872,6 +874,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     for (const r of plan.repaired) log(`repaired mods/${r.mod}: reinstalled ${version}; the damaged copy is kept in ${r.backup}`);
     for (const m of repair ? plan.installed : []) log(`repaired mods/${m}: it was missing; installed ${version}`);
     for (const w of warnings) log(`warning: ${w}`);
+    tightenLedgers(dirname(resolve(modsDir)), { log });
     return { version, mods: record.mods, ...plan, prev: keep.length && !exists(next) ? prevSetOf(modsDir) : null, recorded, warnings };
   } finally {
     rmSync(staging, { recursive: true, force: true });
@@ -1136,10 +1139,10 @@ export const liveHome = (modsDir) => dirname(resolve(modsDir)) === join(homedir(
  * the hooks notice warns even when no settings file was rewritten.
  * Returns `{ hooks, link }` (hooks: syncHooks's result plus `crossed`, or null; link: the line logged or null).
  */
-export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false, crossed = false }) {
+export function moveHooks({ modsDir, log = () => {}, warnings = [], binDir = null, window = false, crossed = false, warnLedgers = true }) {
   let hooks = null;
   let link = null;
-  try { hooks = { ...syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log }), crossed }; } catch (error) {
+  try { hooks = { ...syncHooks({ modsDir, extra: window ? [...openSpaces(), ...botPaneFolders()] : [], log, warnLedgers }), crossed }; } catch (error) {
     warnings.push(`the briefing hooks were not moved (${error.message}); each rewritten settings.local.json has its backup beside it`);
   }
   if (binDir) {
@@ -1539,7 +1542,7 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, he
     } catch (error) { installed.warnings.push(`the automagik layout was not placed (${error.message})`); }
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     heldAfterMigration(modsDir, installed, log);
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before) });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, binDir, window, crossed: crossedRename(modsDir, before), warnLedgers: false });
     return { ...found, installed };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1579,7 +1582,7 @@ export async function repairInstall({ tgzPath, version, modsDir = defaultModsDir
     const migration = migrateRefs({ modsDir, log, warnings });
     const changed = Boolean(repaired) || layout === "added" || layout === "replaced" || Boolean(migration?.journal) || keysAdded > 0;
     // The hooks too, so a rerun moves those of a project opened (or listed) since the install.
-    const hooks = moveHooks({ modsDir, log, warnings, window });
+    const hooks = moveHooks({ modsDir, log, warnings, window, warnLedgers: !repaired });
     return { version, repaired: found.repair, layout, checkFailed, checked, changed, migration, hooks, warnings };
   } finally {
     rmSync(tgzDir, { recursive: true, force: true });
@@ -1689,7 +1692,7 @@ async function main(argv) {
   if (!opts.setup) {
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     heldAfterMigration(modsDir, installed, log);
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed(), warnLedgers: false });
     notice(installed.hooks?.hooks);
     done();
     return { installed };
@@ -1701,7 +1704,7 @@ async function main(argv) {
     // After setupHome: the pack's own layout is placed first, so only the person's are migrated.
     installed.migration = migrateRefs({ modsDir, log, warnings: installed.warnings });
     heldAfterMigration(modsDir, installed, log);
-    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed() });
+    installed.hooks = moveHooks({ modsDir, log, warnings: installed.warnings, window: host.window, crossed: crossed(), warnLedgers: false });
     notice(installed.hooks?.hooks);
     done();
     if (failed.length && !process.exitCode) process.exitCode = 3;

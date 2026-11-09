@@ -1,3 +1,5 @@
 # The runtime patches are applied line by line to files npm installs with LF endings
 # (apps/desktop/scripts/runtime-patches.mjs): a Windows checkout keeps them as they are.
-apps/desktop/runtime/patches/*.patch -text
+# A unified diff's context lines begin with a space before the source indentation;
+# that is not a whitespace error in a patch file.
+apps/desktop/runtime/patches/*.patch -text whitespace=-space-before-tab

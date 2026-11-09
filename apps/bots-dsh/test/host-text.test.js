@@ -24,3 +24,19 @@ test('a pack\'s entry for a host message words it in that language; anything els
   } finally { zh() }
   assert.equal(hostText('Unfold is not reachable from here right now'), 'Unfold is not reachable from here right now')
 })
+
+test('a model access refusal and a switch DSH turned down are worded with the values they carry', () => {
+  const words = {
+    'Sign in to {connection} before using this model.': 'Faça login em {connection} antes de usar este modelo.',
+    '{name} could not switch to {model}. It stays on {kept}.': '{name} não conseguiu mudar para {model}. Continua em {kept}.',
+  }
+  const fill = (key, params) => (words[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match)
+  const off = installLocale({ register: () => () => {}, bind: () => fill, getLocale: () => ({ active: 'pt' }) })
+  try {
+    assert.equal(hostText('Sign in to Codex (acp-codex) before using this model.'), 'Faça login em Codex (acp-codex) antes de usar este modelo.')
+    assert.equal(hostText('Omni could not switch to acp-codex/default. It stays on deepseek/v4.'), 'Omni não conseguiu mudar para acp-codex/default. Continua em deepseek/v4.')
+    assert.equal(hostText('Something else.'), 'Something else.')
+  } finally { off() }
+  // Without a language pack the message stays as sent.
+  assert.equal(hostText('Sign in to Codex (acp-codex) before using this model.'), 'Sign in to Codex (acp-codex) before using this model.')
+})

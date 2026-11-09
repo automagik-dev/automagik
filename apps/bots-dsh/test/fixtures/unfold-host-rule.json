@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "about": "RFC 0020 host rule: whether a DSH is Unfold's own instance, from AUTOMAGIK_HOST and AUTOMAGIK_PRELOAD. Either one names it when its value, trimmed and lowercased, is unfold; anything else, or nothing, does not. Read by apps/bots-dsh/test/unfold-host.test.js (inUnfoldInstance and the Unfold Bot stand-in's unfoldLeads) and apps/welcome-dsh/test/unfold.test.js (hostOf); each must answer every case. Unfold's own repository may test unfold-bot-dsh's unfoldLeads against this file at a pinned commit. A change to the rule is a pull request here first, and a breaking change for Unfold.",
+  "cases": [
+    { "name": "no host variables", "env": {}, "unfold": false },
+    { "name": "host kind unfold", "env": { "AUTOMAGIK_HOST": "unfold" }, "unfold": true },
+    { "name": "preload unfold", "env": { "AUTOMAGIK_PRELOAD": "unfold" }, "unfold": true },
+    { "name": "host kind and preload unfold", "env": { "AUTOMAGIK_HOST": "unfold", "AUTOMAGIK_PRELOAD": "unfold" }, "unfold": true },
+    { "name": "host kind with spaces and capitals", "env": { "AUTOMAGIK_HOST": " Unfold " }, "unfold": true },
+    { "name": "another preload", "env": { "AUTOMAGIK_PRELOAD": "genie" }, "unfold": false },
+    { "name": "another host kind and preload", "env": { "AUTOMAGIK_HOST": "desktop", "AUTOMAGIK_PRELOAD": "omni" }, "unfold": false }
+  ]
+}

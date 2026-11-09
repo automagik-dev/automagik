@@ -320,3 +320,27 @@ test('a browser error is noted once, repeats are counted, and clear empties the 
   clearClientErrors()
   assert.equal(clientErrors().length, 0)
 })
+
+test('an adopt refusal reaches the toast and the browser errors with its code and both sides', async () => {
+  const { clientErrors, clearClientErrors } = await import('../src/client/diagnostics.js')
+  const { teamActions } = await import('../src/client/team-actions.js')
+  clearClientErrors()
+  let state = { toast: null }
+  const actions = teamActions({
+    call: async () => {},
+    after: async value => value,
+    partFor: id => id,
+    roster: { getSnapshot: () => ({}) },
+    ui: { set: update => { state = update(state) } },
+    live: {}, cards: {}, heldCards: {}, turnClock: {},
+    openSession: () => {},
+    loginState: () => undefined,
+  })
+  const message = 'Session picked is neither blank nor a fork of the current part of Bot "Brain" (Session brain), so it cannot join it.'
+  actions.reportError(Object.assign(new Error(message), { code: 'bot/adopt-not-blank' }), 'bot-session-adopt')
+  assert.equal(state.toast.text, message)
+  assert.deepEqual(clientErrors().map(entry => [entry.code, entry.text]), [
+    ['bot/adopt-not-blank', `bot-session-adopt: ${message}`],
+  ])
+  clearClientErrors()
+})

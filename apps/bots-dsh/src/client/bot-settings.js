@@ -1,4 +1,4 @@
-import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { createElement as h, Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { paintCss } from './inks.js'
 import { CHARACTERS, PICKER_SHAPES, PICKER_COLUMNS, CHARACTER_COLORS, SHAPES, shapeOf, bodyOf, maskBox, holes, nextMarkSerial } from './characters.js'
 import { isMainOf } from './sources.js'
@@ -14,6 +14,7 @@ import { botSettings, useEntries } from './extend.js'
 import { useMemoryCount } from './memory-panel.js'
 import { SPRING_SHAPE, SPRING_TAP, spring } from './motion.js'
 import { t } from './i18n.js'
+import { cliProviderOf } from './cli-login-model.js'
 import { AdvancedSettings, ADVANCED_SETTINGS_CSS } from './advanced-settings.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
@@ -100,6 +101,8 @@ function MemoryCard({ bot, actions }) {
       h('span', { className: 'bt-mem-row-go' }, t('Manage'), h(ChevronRightIcon))))
 }
 
+const noSubscribe = () => () => {}
+
 // A Bot's settings as grouped cards: who it is (avatar, name, role), what it runs on
 // (model), what it does (instructions), its memory and tasks, its Main Bot role, its
 // sidebar place, and copies.
@@ -116,6 +119,16 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1
   const isTile = roster.mainBotId === bot.id
   const save = patch => run(actions.updateBot(bot.id, patch))
+  // A model whose agent is signed out: the refusal shows as usual, and Sign in opens the sign-in
+  // row in this Bot's chat (rule 2). The chat opens only on this click.
+  const [signIn, setSignIn] = useState(null)
+  useEffect(() => { setSignIn(null) }, [bot.id, bot.model])
+  const pickModel = ref => run(actions.updateBot(bot.id, { model: ref }).catch((error) => {
+    if (error?.code === 'bot/sign-in-required' && cliProviderOf(ref)) setSignIn(ref)
+    throw error
+  }))
+  // What the model really did (the host's model state, with every state answer).
+  const modelState = useSyncExternalStore(actions.subscribeWork ?? noSubscribe, () => actions.modelStateOf?.(bot.id))
   // Cards other Omni plugins add (extend.js), such as what the Bot may do on Omni.
   const extraCards = useEntries(botSettings)
   const duplicate = () => run(actions.duplicateBot(bot.id).then(copy => actions.openSession(copy.id)))
@@ -137,8 +150,11 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
       h(Row, { label: t('Role'), hint: t('A few words on what it does.') }, h(InlineText, { label: t('Role'), value: bot.role, placeholder: t('Research, admin…'), maxLength: 24, onSave: role => save({ role }) }))),
     h(Card, { title: t('Model') },
       h('div', { className: 'bt-set-row bt-bs-row' },
-        h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Model')), h('span', { className: 'bt-set-hint' }, modelHint(bot, roster))),
-        h(ModelMenu, { bot, roster, actions, run }))),
+        h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Model')), h('span', { className: 'bt-set-hint', role: modelState?.lastFailure?.kept ? 'status' : undefined }, modelHint(bot, roster, modelState))),
+        h(ModelMenu, { bot, roster, actions, run, onPick: ref => (ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : undefined) })),
+      signIn && actions.openCliLogin ? h('div', { className: 'bt-set-row bt-bs-row' },
+        h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-set-hint' }, t('This model needs a sign-in to its coding agent.'))),
+        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(signIn), signIn); setSignIn(null) } }, t('Sign in'))) : null),
     h(Card, { title: t('Working folder') },
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),

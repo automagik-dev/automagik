@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { install } from '../src/host/models.js'
+import { configured, install } from '../src/host/models.js'
 
 const PROVIDERS = {
   deepseek: [{ id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }, { id: 'deepseek-v4-pro' }],
@@ -188,6 +188,29 @@ test('applying a Bot model leaves the DSH default as the user set it', async () 
   assert.deepEqual(selected, ['b1:deepseek/v4-flash'])
   assert.deepEqual(current(), { provider: 'stepfun', model: 'step-5' })
   assert.equal(bot.appliedModel, 'deepseek/v4-flash')
+})
+
+// One conversation's model is its Bot's alone: a pick moves that Bot's own Sessions (its chat
+// and its seats in groups) and nothing of another Bot, nor the default a new Bot starts on.
+test('a model picked for one Bot never moves another Bot\'s model or level', async () => {
+  const levels = { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' } }
+  const { rt, selected, current } = bench({ reasoning: { 'deepseek/v4-flash': levels } })
+  rt.groupSessionsOf = id => (id === 'b1' ? ['b1-in-room'] : [])
+  const first = { id: 'b1', model: 'stepfun/step-5' }
+  const second = { id: 'b2', model: 'stepfun/step-5' }
+  Object.assign(rt.state.bots, { b1: first, b2: second })
+  await rt.applyModel(first)
+  await rt.applyModel(second)
+  selected.length = 0
+  Object.assign(first, { model: 'deepseek/v4-flash', effort: 'low' })
+  await rt.applyModel(first)
+  assert.deepEqual(selected, ['b1:deepseek/v4-flash:low', 'b1-in-room:deepseek/v4-flash:low'])
+  assert.deepEqual(second, { id: 'b2', model: 'stepfun/step-5', appliedModel: 'stepfun/step-5' })
+  assert.deepEqual(current(), { provider: 'stepfun', model: 'step-5' })
+  // A later sync of the whole team re-selects nothing for the Bot that was not touched.
+  selected.length = 0
+  await rt.applyModel(second)
+  assert.deepEqual(selected, [])
 })
 
 test('a Bot model applies its thinking level, and only re-selects on a change', async () => {
@@ -394,4 +417,185 @@ test('the background model is the team\'s pick, else DSH\'s default, never an AC
   assert.equal(rt.answersAside('acp-claude/default'), false)
   assert.equal(rt.answersAside('deepseek/deepseek-flash'), true)
   assert.equal(rt.answersAside(undefined), false)
+})
+
+// The model menu's connections (D-d): a brand and how it is connected, what cannot run marked,
+// and DSH's own ChatGPT or Claude sign-in covered by its CLI. Nothing here is a real sign-in:
+// the stored records, keys and the agents' status are fakes.
+function connections({ routes, agents, records = {}, keyless = [], selection, via = {} } = {}) {
+  const providers = {
+    deepseek: [{ id: 'deepseek-flash' }],
+    'openai-codex': [{ id: 'gpt-5.6-sol' }, { id: 'gpt-5.6-luna' }],
+    anthropic: [{ id: 'claude-opus-5-5' }],
+    openai: [{ id: 'gpt-5.6' }],
+    'acp-codex': [{ id: 'default', name: 'Codex' }, { id: 'gpt-5.6-sol' }],
+    'acp-claude': [{ id: 'default', name: 'Claude Code' }, { id: 'opus' }],
+    ...routes,
+  }
+  const names = { 'acp-codex': 'Codex (ACP)', 'acp-claude': 'Claude Code (ACP)', deepseek: 'DeepSeek' }
+  let statusReads = 0
+  const inspected = []
+  const acp = {
+    status: async () => { statusReads += 1; return { agents } },
+    inspect: async (id) => { inspected.push(id); return { id, signedIn: true } },
+  }
+  const auth = {
+    'openai-codex': records['openai-codex'] === true ? { via: 'signin' } : { via: 'signin', needsSignIn: true },
+    anthropic: { via: 'key' },
+    openai: { via: 'key' },
+    ...via,
+  }
+  const rt = {
+    ctx: {
+      llm: { listProviders: () => Object.keys(providers).map(id => ({ id, ...(names[id] ? { name: names[id] } : {}) })), listModels: async id => providers[id] },
+      get: name => (name === 'acpAgents' ? acp : name === 'agentDefaultModel' && selection ? { currentSelection: () => selection } : undefined),
+      on: () => {},
+    },
+    state: { bots: {} },
+    save: async () => {},
+    missingKeys: async () => new Set(keyless),
+    routeAuth: async ids => new Map(ids.filter(id => auth[id]).map(id => [id, auth[id]])),
+  }
+  install(rt)
+  return { rt, statusReads: () => statusReads, inspected }
+}
+
+const marks = entries => entries.map(entry => [entry.ref, entry.providerName, entry.via ?? null, entry.needsSignIn === true, entry.covered === true])
+
+test('the catalog names each connection by its brand and how it is connected', async () => {
+  const { rt } = connections({ agents: [{ id: 'acp-codex', signedIn: true }, { id: 'acp-claude', signedIn: false }], records: { 'openai-codex': true } })
+  assert.deepEqual(marks(await rt.catalog({ fresh: true })), [
+    ['deepseek/deepseek-flash', 'DeepSeek', null, false, false],
+    ['openai-codex/gpt-5.6-sol', 'ChatGPT', 'signin', false, true],
+    ['openai-codex/gpt-5.6-luna', 'ChatGPT', 'signin', false, true],
+    ['anthropic/claude-opus-5-5', 'Anthropic', 'key', false, false],
+    ['openai/gpt-5.6', 'OpenAI', 'key', false, false],
+    ['acp-codex/default', 'Codex', 'cli', false, false],
+    ['acp-codex/gpt-5.6-sol', 'Codex', 'cli', false, false],
+    ['acp-claude/default', 'Claude Code', 'cli', true, false],
+    ['acp-claude/opus', 'Claude Code', 'cli', true, false],
+  ])
+})
+
+test('an agent\'s own default names the model it runs on, when its catalog says', async () => {
+  const { rt } = connections({
+    agents: [{ id: 'acp-codex', signedIn: true }, { id: 'acp-claude', signedIn: true }],
+    routes: {
+      'acp-codex': [{ id: 'default', name: 'Codex', description: 'Its own setting: 6.1 Sol' }, { id: 'gpt-6.1-sol', name: '6.1 Sol' }],
+      // A stand-in list (no probe yet) says nothing about the default; another route's
+      // `default` is no agent's own setting.
+      'acp-claude': [{ id: 'default', name: 'Claude Code', description: 'Its own setting' }],
+      deepseek: [{ id: 'default', name: 'Default', description: 'Its own setting: DeepSeek Flash' }],
+    },
+  })
+  const entries = await rt.catalog({ fresh: true })
+  const of = ref => entries.find(entry => entry.ref === ref)
+  assert.equal(of('acp-codex/default').resolvesTo, '6.1 Sol')
+  assert.equal(of('acp-codex/gpt-6.1-sol').resolvesTo, undefined)
+  assert.equal(of('acp-claude/default').resolvesTo, undefined)
+  assert.equal(of('deepseek/default').resolvesTo, undefined)
+})
+
+test('DSH\'s ChatGPT sign-in is covered by Codex, signed in or not, and a missing one still needs a sign-in', async () => {
+  const { rt } = connections({ agents: [{ id: 'acp-codex', signedIn: false }, { id: 'acp-claude', signedIn: true }] })
+  const entries = await rt.catalog({ fresh: true })
+  const of = ref => entries.find(entry => entry.ref === ref)
+  assert.equal(of('openai-codex/gpt-5.6-sol').needsSignIn, true)
+  assert.equal(of('openai-codex/gpt-5.6-sol').covered, true)
+  assert.equal(of('anthropic/claude-opus-5-5').covered, undefined, 'a key-based Claude is a connection of its own')
+  assert.equal(of('acp-codex/gpt-5.6-sol').needsSignIn, true)
+  assert.equal(of('acp-claude/opus').needsSignIn, undefined)
+})
+
+test('the agents\' sign-in is read on a fresh catalog only, and an unknown one is checked once in the background', async () => {
+  const { rt, statusReads, inspected } = connections({ agents: [{ id: 'acp-codex', on: true, connector: { state: 'ready' } }, { id: 'acp-claude', signedIn: false }] })
+  await rt.catalog()
+  assert.equal(statusReads(), 0)
+  const first = await rt.catalog({ fresh: true })
+  assert.equal(statusReads(), 1)
+  // Unknown: shown, never marked, until the check answers.
+  assert.equal(first.find(entry => entry.ref === 'acp-codex/default').needsSignIn, undefined)
+  assert.equal(first.find(entry => entry.ref === 'acp-claude/default').needsSignIn, true)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await rt.catalog({ fresh: true })
+  await rt.catalog({ fresh: true })
+  assert.deepEqual(inspected, ['acp-codex'])
+})
+
+test('a status that never answers keeps the catalog moving', async () => {
+  const { rt } = connections({ agents: [] })
+  rt.ctx.get = name => (name === 'acpAgents' ? { status: () => new Promise(() => {}) } : undefined)
+  const started = Date.now()
+  const entries = await rt.catalog({ fresh: true })
+  assert.ok(Date.now() - started < 3000)
+  assert.equal(entries.find(entry => entry.ref === 'acp-codex/default').needsSignIn, undefined)
+})
+
+test('a new Bot\'s model skips a sign-in route its CLI covers and takes the CLI\'s copy; the background model keeps its own rule', async () => {
+  // DSH's default is a ChatGPT sign-in that is not stored: passed over for a Bot.
+  const { rt } = connections({
+    routes: { deepseek: [] },
+    agents: [{ id: 'acp-codex', signedIn: false }, { id: 'acp-claude', signedIn: false }],
+    selection: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+  })
+  await rt.catalog({ fresh: true })
+  assert.equal(await rt.defaultModel(), 'anthropic/claude-opus-5-5')
+  // The jobs beside the chats still read only the key (D-g: unchanged).
+  assert.equal(await rt.backgroundModel(), 'openai-codex/gpt-5.6-sol')
+  // DSH's default is a stored ChatGPT sign-in and Codex is signed in: the same model, on Codex.
+  const covered = connections({
+    routes: { deepseek: [], anthropic: [], openai: [] },
+    agents: [{ id: 'acp-codex', signedIn: true }, { id: 'acp-claude', signedIn: false }],
+    records: { 'openai-codex': true },
+    selection: { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+  })
+  await covered.rt.catalog({ fresh: true })
+  assert.equal(await covered.rt.defaultModel(), 'acp-codex/gpt-5.6-sol')
+  assert.equal(await covered.rt.backgroundModel(), 'openai-codex/gpt-5.6-sol', 'the jobs beside the chats keep the sign-in (D-g)')
+  // An id Codex does not list: Codex's own default.
+  const other = connections({
+    routes: { deepseek: [], anthropic: [], openai: [] },
+    agents: [{ id: 'acp-codex', signedIn: true }, { id: 'acp-claude', signedIn: false }],
+    records: { 'openai-codex': true },
+    selection: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
+  })
+  await other.rt.catalog({ fresh: true })
+  assert.equal(await other.rt.defaultModel(), 'acp-codex/default')
+})
+
+// Claude Code names its models by alias (its cached catalog: default, opus,
+// claude-fable-5-1[1m], sonnet, haiku), never pi-ai's versioned ids.
+test('DSH\'s Claude Pro/Max sign-in is covered by Claude Code, and its model maps to the same family', async () => {
+  const claude = selection => connections({
+    routes: {
+      deepseek: [], openai: [], 'openai-codex': [],
+      anthropic: [{ id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }, { id: 'claude-haiku-5-5' }, { id: 'claude-fable-5' }, { id: 'claude-unknown-1' }],
+      'acp-claude': [{ id: 'default', name: 'Default (recommended)' }, { id: 'opus' }, { id: 'claude-fable-5-1[1m]' }, { id: 'sonnet' }, { id: 'haiku' }],
+    },
+    agents: [{ id: 'acp-codex', signedIn: false }, { id: 'acp-claude', signedIn: true }],
+    via: { anthropic: { via: 'signin' } },
+    selection,
+  })
+  const { rt } = claude({ provider: 'anthropic', model: 'claude-opus-5-5' })
+  const entries = await rt.catalog({ fresh: true })
+  assert.deepEqual(entries.filter(entry => entry.provider === 'anthropic').map(entry => entry.covered), [true, true, true, true, true])
+  assert.deepEqual(entries.filter(configured).map(entry => entry.ref), ['acp-claude/default', 'acp-claude/opus', 'acp-claude/claude-fable-5-1[1m]', 'acp-claude/sonnet', 'acp-claude/haiku'])
+  assert.equal(await rt.defaultModel(), 'acp-claude/opus')
+  for (const [model, ref] of [['claude-sonnet-5-5', 'acp-claude/sonnet'], ['claude-haiku-5-5', 'acp-claude/haiku'], ['claude-fable-5', 'acp-claude/claude-fable-5-1[1m]'], ['claude-unknown-1', 'acp-claude/default']]) {
+    const other = claude({ provider: 'anthropic', model })
+    await other.rt.catalog({ fresh: true })
+    assert.equal(await other.rt.defaultModel(), ref, model)
+  }
+})
+
+// D-a, D-c: whoever picks the model (a tool, the API, Pocket), a Bot never goes back onto DSH's
+// own ChatGPT or Claude sign-in; only the model it is already on stays.
+test('a pick of a sign-in route a CLI covers lands on that CLI, or is refused with the CLI off', async () => {
+  const { rt } = connections({ agents: [{ id: 'acp-codex', signedIn: true }, { id: 'acp-claude', signedIn: true }], records: { 'openai-codex': true } })
+  assert.equal(await rt.resolveModel('openai-codex/gpt-5.6-sol', { checkAccess: true }), 'acp-codex/gpt-5.6-sol')
+  assert.equal(await rt.resolveModel('openai-codex/gpt-5.6-luna'), 'acp-codex/default')
+  assert.equal(await rt.resolveModel('openai-codex/gpt-5.6-sol', { keep: 'openai-codex/gpt-5.6-sol' }), 'openai-codex/gpt-5.6-sol', 'the Bot\'s own model is kept')
+  assert.equal(await rt.resolveModel('anthropic/claude-opus-5-5'), 'anthropic/claude-opus-5-5', 'a key-based Claude is never moved')
+  const off = connections({ routes: { 'acp-codex': [] }, agents: [], records: { 'openai-codex': true } })
+  await assert.rejects(off.rt.resolveModel('openai-codex/gpt-5.6-sol'), /ChatGPT plan runs Bots only through Codex/)
 })

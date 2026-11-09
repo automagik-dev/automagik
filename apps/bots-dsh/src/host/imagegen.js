@@ -1,11 +1,17 @@
-// Image generation for the Bots (the generate_image tool), through what the person connected:
-// their ChatGPT account (DSH's openai-codex sign-in), the way the Codex CLI makes images on a
-// ChatGPT plan, else an OpenAI API key. The welcome's companion step draws through the same two.
-// The sign-in is refreshed here when it has run out, inside the credential record's own lock,
-// as DSH refreshes it before a chat. A generation streams its partial images when the service
-// sends them (the Images API with an API key does; the ChatGPT backend may answer in one piece),
-// and the card in the chat (image-cell.js) polls them through `progress`. Images are kept in
-// the team workspace's images folder, named by an id the card loads them by.
+// Image generation for the Bots (the generate_image tool), through what the person connected,
+// in this order (owner decision D-g; the welcome's companion step draws through the same):
+// 1. an OpenAI API key (the Images API), exactly as before;
+// 2. the Codex CLI on its own ChatGPT sign-in, through acp-dsh's `acpAgents.generateImage` (a
+//    one-off read-only Codex session that uses Codex's built-in image tool). Nothing here reads
+//    or copies the CLI's sign-in: Codex holds it;
+// 3. last, a ChatGPT grant an earlier version stored through DSH's openai-codex sign-in, kept
+//    only so a person who signed in that way and not to Codex keeps drawing. Automagik no longer
+//    offers that sign-in (D-a); the grant is refreshed here when it has run out, inside the
+//    credential record's own lock, as DSH refreshes it before a chat.
+// A generation streams its partial images when the service sends them (the Images API with an
+// API key does; Codex and the ChatGPT backend answer in one piece), and the card in the chat
+// (image-cell.js) polls them through `progress`. Images are kept in the team workspace's images
+// folder, named by an id the card loads them by.
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -26,11 +32,11 @@ const JWT_CLAIM = 'https://api.openai.com/auth'
 const REFRESH_EARLY_MS = 60_000
 
 export const SIZES = Object.freeze(['auto', '1024x1024', '1536x1024', '1024x1536'])
-export const QUALITIES = Object.freeze(['auto', 'low', 'medium', 'high'])
-export const BACKGROUNDS = Object.freeze(['auto', 'opaque', 'transparent'])
-export const PARTIAL_IMAGES = 2
+const QUALITIES = Object.freeze(['auto', 'low', 'medium', 'high'])
+const BACKGROUNDS = Object.freeze(['auto', 'opaque', 'transparent'])
+const PARTIAL_IMAGES = 2
 export const MAX_IMAGE_BYTES = 12 * 1024 * 1024
-export const PROMPT_MAX = 4000
+const PROMPT_MAX = 4000
 // A finished generation's progress is kept a while for a card that polls late.
 const KEEP_MS = 5 * 60_000
 export const IMAGE_ID = /^img-[a-z0-9-]{8,64}$/
@@ -74,9 +80,9 @@ export async function* sseEvents(body) {
   }
 }
 
-// `credentials` answers DSH's credential service (the plugin does not require one: ctx.get), and
-// `folder` the team workspace.
-export function createImageGen({ credentials: credentialsOf, folder, fetch = globalThis.fetch, now = () => Date.now(), warn = () => {} }) {
+// `credentials` answers DSH's credential service (the plugin does not require one: ctx.get),
+// `codex` acp-dsh's acpAgents service (or undefined), and `folder` the team workspace.
+export function createImageGen({ credentials: credentialsOf, codex: codexOf = () => undefined, folder, fetch = globalThis.fetch, now = () => Date.now(), warn = () => {} }) {
   const progress = new Map()
   // Whether the ChatGPT backend took a streamed request; it is asked once per run.
   let chatgptStreams = true
@@ -105,26 +111,43 @@ export function createImageGen({ credentials: credentialsOf, folder, fetch = glo
     return record?.kind === 'grant' ? record.payload : undefined
   }
 
-  /** What draws images here: { kind: 'chatgpt' | 'openai', token, accountId? }, or undefined. */
+  const codexService = () => {
+    try {
+      const service = codexOf()
+      return typeof service?.generateImage === 'function' && typeof service?.imageAccess === 'function' ? service : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * What draws images here: { kind: 'openai', token }, { kind: 'codex', service }, or the
+   * earlier ChatGPT grant { kind: 'chatgpt', token, accountId? }; undefined when nothing does.
+   */
   async function source({ refresh = true } = {}) {
     const credentials = credentialsOf()
+    const record = await credentials?.readRecord?.(OPENAI_RECORD).catch(() => undefined)
+    if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return { kind: 'openai', token: record.key }
+    const env = await credentials?.resolve?.(OPENAI_ENV).catch(() => undefined)
+    if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', token: env.value }
+    const service = codexService()
+    if (service !== undefined && (await service.imageAccess().catch(() => undefined))?.ready === true) return { kind: 'codex', service }
     const grant = await credentials?.readRecord?.(CODEX_RECORD).catch(() => undefined)
     const payload = grant?.kind === 'grant' ? grant.payload : undefined
     if (payload && typeof payload.access === 'string') {
       const live = refresh ? await chatgptToken(payload) : payload
       if (live) return { kind: 'chatgpt', token: live.access, accountId: live.accountId ?? accountIdOf(live.access) }
     }
-    const record = await credentials?.readRecord?.(OPENAI_RECORD).catch(() => undefined)
-    if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return { kind: 'openai', token: record.key }
-    const env = await credentials?.resolve?.(OPENAI_ENV).catch(() => undefined)
-    if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', token: env.value }
     return undefined
   }
 
   /** For settings and the tool's refusal: how images are made here, never what is stored. */
   async function access() {
     const found = await source({ refresh: false })
-    return found ? { kind: found.kind, model: found.kind === 'chatgpt' ? CODEX_IMAGE_MODEL : OPENAI_IMAGE_MODEL } : null
+    if (!found) return null
+    // Codex chooses its own image model.
+    if (found.kind === 'codex') return { kind: 'codex' }
+    return { kind: found.kind, model: found.kind === 'chatgpt' ? CODEX_IMAGE_MODEL : OPENAI_IMAGE_MODEL }
   }
 
   const note = (callId, patch) => {
@@ -187,9 +210,10 @@ export function createImageGen({ credentials: credentialsOf, folder, fetch = glo
     const text = String(prompt ?? '').trim().slice(0, PROMPT_MAX)
     if (text === '') throw Object.assign(new Error('Say what to draw.'), { code: 'bot/invalid' })
     const found = await source()
-    if (!found) throw refused('No image service is connected. Ask the user to sign in to ChatGPT or add an OpenAI key in Settings → Models; then generate_image can draw.')
+    if (!found) throw refused('No image service is connected. Ask the user to sign in to Codex (from a Bot\'s chat or Connect AI) or add an OpenAI key in Settings → Models; then generate_image can draw.')
     const chatgpt = found.kind === 'chatgpt'
     note(callId, { phase: 'generating', via: found.kind, partials: [], started: now(), error: undefined })
+    if (found.kind === 'codex') return drawWithCodex(found.service, { text, size, quality, background, callId, signal })
     const base = {
       model: chatgpt ? CODEX_IMAGE_MODEL : OPENAI_IMAGE_MODEL,
       prompt: text,
@@ -218,22 +242,69 @@ export function createImageGen({ credentials: credentialsOf, folder, fetch = glo
       }
       if (!response.ok) throw await failure(response)
       const image = await imageOf(response, onPartial)
-      const bytes = Buffer.from(image.base64, 'base64')
-      if (bytes.length > MAX_IMAGE_BYTES) throw refused('The image is too large to keep. Try again.')
-      const dir = folder()
-      if (!dir) throw refused('The team has no workspace folder to keep the image in.')
-      const id = `img-${randomUUID()}`
-      await mkdir(join(dir, 'images'), { recursive: true })
-      const file = join(dir, 'images', `${id}.png`)
-      await writeFile(`${file}.tmp`, bytes)
-      await rename(`${file}.tmp`, file)
-      note(callId, { phase: 'done', id })
-      return { id, file, via: found.kind, bytes: bytes.length, size: image.size ?? base.size }
+      return await keep(image.base64, { callId, via: found.kind, size: image.size ?? base.size })
     } catch (error) {
       note(callId, { phase: 'failed', error: String(error?.message ?? error).slice(0, 300) })
       if (signal?.aborted) warn('ds-bot: an image generation was stopped')
       throw error
     }
+  }
+
+  // A finished image, kept in the team workspace.
+  async function keep(base64, { callId, via, size }) {
+    const bytes = Buffer.from(base64, 'base64')
+    if (bytes.length > MAX_IMAGE_BYTES) throw refused('The image is too large to keep. Try again.')
+    const dir = folder()
+    if (!dir) throw refused('The team has no workspace folder to keep the image in.')
+    const id = `img-${randomUUID()}`
+    await mkdir(join(dir, 'images'), { recursive: true })
+    const file = join(dir, 'images', `${id}.png`)
+    await writeFile(`${file}.tmp`, bytes)
+    await rename(`${file}.tmp`, file)
+    note(callId, { phase: 'done', id })
+    return { id, file, via, bytes: bytes.length, size }
+  }
+
+  // Codex draws in one piece: the card shows its drawing frame until the image is kept, with no
+  // partial images. Its refusals (signed out, usage limit, timeout) are shown as they are.
+  async function drawWithCodex(service, { text, size, quality, background, callId, signal }) {
+    try {
+      const made = await service.generateImage({
+        prompt: text,
+        size: SIZES.includes(size) ? size : 'auto',
+        quality: QUALITIES.includes(quality) ? quality : 'auto',
+        background: BACKGROUNDS.includes(background) ? background : 'auto',
+        signal,
+      }).catch((error) => { throw signal?.aborted ? error : refused(String(error?.message ?? error).slice(0, 300)) })
+      if (typeof made?.base64 !== 'string' || made.base64 === '') throw refused('Codex answered without an image. Try again.')
+      return await keep(made.base64, { callId, via: 'codex', size: SIZES.includes(size) ? size : 'auto' })
+    } catch (error) {
+      note(callId, { phase: 'failed', error: String(error?.message ?? error).slice(0, 300) })
+      if (signal?.aborted) warn('ds-bot: an image generation was stopped')
+      throw error
+    }
+  }
+
+  // An image an agent makes in a chat with its own tool (acp-dsh's mirror of Codex's image call):
+  // the card follows it like a generate_image call, by the call's id, and its PNG, taken from
+  // the agent's tool update by acp-dsh, is kept here like any other. acp-dsh never hands over a
+  // file the agent saved.
+  const agentImages = {
+    start({ callId } = {}) {
+      note(callId, { phase: 'generating', via: 'agent', partials: [], started: now(), error: undefined })
+    },
+    async keep({ callId, base64 } = {}) {
+      try {
+        if (typeof base64 !== 'string' || base64 === '') throw refused('The agent answered without an image.')
+        return await keep(base64, { callId, via: 'agent', size: 'auto' })
+      } catch (error) {
+        note(callId, { phase: 'failed', error: String(error?.message ?? error).slice(0, 300) })
+        throw error
+      }
+    },
+    fail({ callId, error } = {}) {
+      note(callId, { phase: 'failed', error: String(error ?? 'The image was not made.').slice(0, 300) })
+    },
   }
 
   /** A kept image's bytes for the card, by its id; undefined for any other name. */
@@ -243,7 +314,7 @@ export function createImageGen({ credentials: credentialsOf, folder, fetch = glo
     return readFile(join(dir, 'images', `${id}.png`)).catch(() => undefined)
   }
 
-  return { access, generate, progress: progressOf, imageFile, source }
+  return { access, generate, progress: progressOf, imageFile, source, agentImages }
 }
 
 // The generate_image tool, for every Bot (Genie and Omni among them), and `rt.images` for the
@@ -252,13 +323,22 @@ export function install(rt) {
   const { ctx } = rt
   const images = createImageGen({
     credentials: () => { try { return ctx.get?.('credentials') } catch { return undefined } },
+    codex: () => { try { return ctx.get?.('acpAgents') } catch { return undefined } },
     folder: () => rt.teamFolder?.(),
     warn: (...args) => rt.warn?.(...args),
   })
   rt.images = images
+  // acp-dsh keeps an agent's own images (a Bot on Codex asked for a picture) through this keeper,
+  // so they show in the chat's image card and stay in the team workspace like generate_image's.
+  const attachKeeper = (sub) => {
+    const off = sub.acpAgents?.keepImages?.(images.agentImages)
+    if (typeof off === 'function') sub.effect(() => off, 'ds-bot: agent images')
+  }
+  if (typeof ctx.inject === 'function') ctx.inject(['acpAgents'], attachKeeper)
+  else if (ctx.get?.('acpAgents') !== undefined) attachKeeper({ acpAgents: ctx.get('acpAgents'), effect: (execute, label) => ctx.effect(execute, label) })
   ctx.tools.register(defineTool({
     name: 'generate_image',
-    description: 'Draw a new image from a description, with the image model of the user\'s ChatGPT account or OpenAI key. The user watches it being drawn in the chat, and the finished image is saved in the team workspace (its path comes back). Write the prompt as a full visual brief: the subject, the composition, the style or medium, the colors and the light; put any words that must appear in the image in quotes. One image per call; it takes up to two minutes.',
+    description: 'Draw a new image from a description, with the user\'s OpenAI key or Codex on their ChatGPT plan. The user watches it being drawn in the chat, and the finished image is saved in the team workspace (its path comes back). Write the prompt as a full visual brief: the subject, the composition, the style or medium, the colors and the light; put any words that must appear in the image in quotes. One image per call; it takes up to two minutes.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'What to draw, as a full visual brief' },
       size: { type: 'string', enum: SIZES, description: 'Square 1024x1024, landscape 1536x1024, portrait 1024x1536, or auto (the default) to let the model choose' },
@@ -270,7 +350,7 @@ export function install(rt) {
     async execute(args, exec) {
       try {
         const made = await images.generate({ prompt: args.prompt, size: args.size, quality: args.quality, background: args.background, callId: exec.callId, signal: exec.signal })
-        const via = made.via === 'chatgpt' ? 'the user\'s ChatGPT account' : 'the user\'s OpenAI key'
+        const via = made.via === 'codex' ? 'Codex on the user\'s ChatGPT plan' : made.via === 'chatgpt' ? 'the user\'s ChatGPT account' : 'the user\'s OpenAI key'
         return `Drew the image with ${via} and saved it as ${made.file}. It is on screen in the chat, so do not describe it back; give its path to send or use it elsewhere.`
       } catch (error) {
         if (exec.signal?.aborted) return 'The image was stopped before it was finished.'

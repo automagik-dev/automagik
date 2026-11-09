@@ -75,10 +75,9 @@ export const LANE_RELEASE = 'plugin-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
 const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
-// The plugins this release lane ships and updates. None of Unfold's (apps/unfold-*-dsh, the
-// bridge included) is one: they are built and tested here until Unfold's own release carries
-// them, and this repository's releases attach no tarball of any and its lane names none
-// (Refs marketplace/unfold). They stay opt-in: whoever installs one keeps it.
+// The plugins this release lane ships and updates. None of Unfold's is one: they left this
+// repository for Unfold's own, whose release ships them (RFC 0020); this repository's releases
+// attach no tarball of any and its lane names none. Whoever installed one keeps it.
 const PLUGINS = ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'welcome-dsh'];
 const PROFILE = 'apps/desktop/profile/package.json';
 // The add-ons the desktop profile pins that the lane carries too, so a pin move is a patch: each
@@ -124,10 +123,10 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // (.github/workflows/server-image.yml); no release carries it as an asset, so a server-only
 // change cuts no release. It installs plugins from a pinned release, not from this checkout.
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
-// Every Unfold plugin ships from Unfold's own release, not from this lane: its folder stays here
-// (built and tested) but a change to any cuts no release and reaches no install from here
-// (Refs marketplace/unfold). None is preinstalled: the app's profile does not carry one, and the
-// desktop's publisher list names none.
+// The Unfold plugins left this repository for Unfold's own, whose release ships them (RFC 0020).
+// Their apps/unfold- entry stays for good, as a guard: the release measures every path changed since
+// the last release, deleted ones included, so without it the removal's deleted folders would count as
+// shipping and cut a full release; and an Unfold folder that came back by mistake still cuts none.
 // The server image (server/) ships from no release.
 // The sandbox runner (apps/dsh-sandbox/: the hc socket-mask wrapper, its profile row snippet and
 // the install/check helper) rides the herdr pack's release, copied byte-equal by the pack at

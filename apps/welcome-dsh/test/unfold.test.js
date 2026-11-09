@@ -80,14 +80,14 @@ test('unfold is a preload, and Unfold\'s instance (host kind or preload unfold) 
 })
 
 // The three packages that tell Unfold's instance apart install on their own, so each keeps the
-// rule; this holds the three copies to one answer.
-test('the Bot team, the Unfold Bot and the welcome tell Unfold\'s instance by one rule', async () => {
+// rule; the Unfold Bot lives in Unfold's own repository (RFC 0020), so the rule is a written case
+// table in the Bot team's tests, which holds the Bot team's copy and this one to one answer.
+test('the Bot team and the welcome tell Unfold\'s instance by the one rule of its case table', async () => {
   const { inUnfoldInstance } = await import('../../bots-dsh/src/host/constants.js')
-  const { unfoldLeads } = await import('../../unfold-bot-dsh/src/host/unfold.js')
-  const envs = [{}, { AUTOMAGIK_HOST: 'unfold' }, { AUTOMAGIK_PRELOAD: 'unfold' }, UNFOLD, { AUTOMAGIK_HOST: ' Unfold ' }, { AUTOMAGIK_PRELOAD: 'genie' }, { AUTOMAGIK_HOST: 'desktop', AUTOMAGIK_PRELOAD: 'omni' }]
-  for (const env of envs) {
-    const want = env === envs[0] || env === envs[5] || env === envs[6] ? false : true
-    assert.deepEqual([inUnfoldInstance(env), unfoldLeads(env), hostOf(env) === 'unfold'], [want, want, want], JSON.stringify(env))
+  const table = JSON.parse(readFileSync(new URL('../../bots-dsh/test/fixtures/unfold-host-rule.json', import.meta.url), 'utf8'))
+  assert.ok(table.cases.some(row => row.unfold) && table.cases.some(row => !row.unfold))
+  for (const { name, env, unfold } of table.cases) {
+    assert.deepEqual([inUnfoldInstance(env), hostOf(env) === 'unfold'], [unfold, unfold], name)
   }
 })
 
@@ -108,10 +108,14 @@ test('in Unfold\'s instance, the companion step is done (Unfold leads) and Omni 
   assert.equal(plain.teamOmni, true)
 })
 
+// Recorded from the Unfold Bot plugin at the hand-over commit d0453789c51def594451b911cb88571f3246c63e
+// (RFC 0020): its default plugins, in install order, and each manifest's bundle patch.
+const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/unfold-plugins.json', import.meta.url), 'utf8'))
+
 test('the Unfold type\'s plugins are the Bot type plugin\'s own defaults, then the plugin', () => {
-  const source = readFileSync(new URL('../../unfold-bot-dsh/src/host/unfold.js', import.meta.url), 'utf8')
-  const theirs = [...source.matchAll(/name: '(@automagik\/unfold-[\w-]+-dsh)'/g)].map(match => match[1])
-  assert.deepEqual(UNFOLD_PLUGINS.map(plugin => plugin.name), theirs)
+  const row = ({ name, dir }) => ({ name, dir })
+  assert.deepEqual(UNFOLD_PLUGINS.map(row), RECORDED.plugins.map(row))
+  assert.deepEqual(row(UNFOLD_PLUGIN), row(RECORDED.bot))
   assert.equal(UNFOLD_PLUGIN.name, '@automagik/unfold-bot-dsh')
   for (const plugin of [...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
     assert.deepEqual(installTargetOf(plugin, OWN_LINK), { spec: `link:/home/someone/automagik/apps/${plugin.dir}`, options: {} })
@@ -258,11 +262,12 @@ test('under AUTOMAGIK_HOST=unfold, a genie that never answers --version is not i
   assert.ok(performance.now() - t0 < 4000, `the card answered after ${Math.round(performance.now() - t0)} ms`)
 })
 
-test('in Unfold\'s instance, Claude signs in through DSH\'s own anthropic flow, with nothing to install', async () => {
-  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } }, services: { authorization: { describe: key => (key === 'llm-pi-ai/anthropic' ? { key } : undefined) } } })
+test('in Unfold\'s instance, Claude signs in through Claude Code like anywhere, with nothing else to install', async () => {
+  const agent = { id: 'acp-claude', key: 'claude', name: 'Claude Code', on: false, cli: { found: true, state: 'ready' }, connector: { state: 'off' }, signedIn: false, model: { listed: false }, restartNeeded: false }
+  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } }, services: { acpAgents: { status: async () => ({ agents: [agent] }) } } })
   const { handle } = install(fake.ctx, { env: UNFOLD })
   const claude = (await handle('ais')).value.rows.find(row => row.id === 'claude')
-  assert.deepEqual([claude.kind, claude.signIn, 'install' in claude, 'needs' in claude], ['signin', true, false, false])
+  assert.deepEqual([claude.kind, claude.signIn, claude.cli.id, 'install' in claude, 'needs' in claude], ['signin', true, 'acp-claude', false, false])
 })
 
 // Unfold's product overlay sets DSH's plugin-market.indexes to [] (installs reach the instance only
@@ -277,9 +282,11 @@ test('the overlay\'s empty plugin-market.indexes shows as no market source on th
 })
 
 test('Unfold installs bundles, leaving its carried SSE library out of the plugin manager', () => {
-  assert.ok(!UNFOLD_PLUGINS.some(plugin => plugin.name === '@automagik/unfold-sse-dsh'))
-  for (const plugin of [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]) {
-    const manifest = JSON.parse(readFileSync(new URL(`../../${plugin.dir}/package.json`, import.meta.url), 'utf8'))
-    assert.equal(typeof manifest.dsh?.bundle?.patch, 'string', `${plugin.name} must be installable by DSH installBundle`)
+  for (const name of RECORDED.notBundles) assert.ok(!UNFOLD_PLUGINS.some(plugin => plugin.name === name), name)
+  const team = JSON.parse(readFileSync(new URL(`../../${OMNI_PLUGINS[0].dir}/package.json`, import.meta.url), 'utf8'))
+  assert.equal(typeof team.dsh?.bundle?.patch, 'string', `${OMNI_PLUGINS[0].name} must be installable by DSH installBundle`)
+  // Unfold's own manifests, as recorded at the hand-over commit.
+  for (const plugin of [...RECORDED.plugins, RECORDED.bot]) {
+    assert.equal(typeof plugin.bundlePatch, 'string', `${plugin.name} must be installable by DSH installBundle`)
   }
 })

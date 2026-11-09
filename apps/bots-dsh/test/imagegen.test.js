@@ -7,7 +7,7 @@ import { runInNewContext } from 'node:vm'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { CODEX_IMAGES, CODEX_RECORD, OPENAI_IMAGES, OPENAI_RECORD, createImageGen, sseEvents } from '../src/host/imagegen.js'
+import { CODEX_IMAGES, CODEX_RECORD, OPENAI_IMAGES, OPENAI_RECORD, createImageGen, install, sseEvents } from '../src/host/imagegen.js'
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64')
 const PARTIAL = Buffer.from('partial-image').toString('base64')
@@ -118,22 +118,116 @@ test('with nothing connected, or a refusal, the tool says why and the card shows
   await assert.rejects(refusing.generate({ prompt: '   ', callId: 'e' }), /Say what to draw/)
 })
 
+// acp-dsh's acpAgents, as far as images use it: Codex's readiness and one drawing.
+const codexOf = ({ ready = true, made = { base64: PNG, mimeType: 'image/png' }, fail } = {}) => {
+  const calls = []
+  return {
+    calls,
+    imageAccess: async () => ({ ready }),
+    generateImage: async (request) => {
+      calls.push(request)
+      if (fail) throw Object.assign(new Error(fail), { code: 'acp/image-usage-limit' })
+      return made
+    },
+  }
+}
+
+test('with no OpenAI key, a signed-in Codex draws: in one piece, kept by its id, nothing stored read', async (t) => {
+  const dir = folderOf(t)
+  const codex = codexOf()
+  const grant = { [CODEX_RECORD]: { kind: 'grant', payload: { access: tokenFor('acct'), refresh: 'r', expires: 9e15 } } }
+  const images = createImageGen({ credentials: () => storeOf(grant), codex: () => codex, folder: () => dir, fetch: async () => { throw new Error('no request leaves for Codex') } })
+  assert.deepEqual(await images.access(), { kind: 'codex' })
+  const made = await images.generate({ prompt: 'A fox', size: '1536x1024', quality: 'high', background: 'transparent', callId: 'k' })
+  assert.equal(made.via, 'codex')
+  assert.deepEqual(codex.calls.map(({ signal, ...rest }) => rest), [{ prompt: 'A fox', size: '1536x1024', quality: 'high', background: 'transparent' }])
+  assert.equal(readFileSync(made.file).toString('base64'), PNG)
+  const progress = images.progress('k')
+  assert.equal(progress.phase, 'done')
+  assert.equal(progress.via, 'codex')
+  assert.equal(progress.count, 0, 'no partial images through Codex')
+})
+
+test('an OpenAI key still comes first, unchanged; a signed-out Codex falls to the earlier grant last', async (t) => {
+  const dir = folderOf(t)
+  const codex = codexOf()
+  const keyed = createImageGen({ credentials: () => storeOf({ [OPENAI_RECORD]: { kind: 'api-key', key: 'sk-test' } }), codex: () => codex, folder: () => dir })
+  assert.deepEqual(await keyed.access(), { kind: 'openai', model: 'gpt-image-1' })
+  const grant = { [CODEX_RECORD]: { kind: 'grant', payload: { access: tokenFor('acct'), refresh: 'r', expires: 9e15 } } }
+  const fallback = createImageGen({ credentials: () => storeOf(grant), codex: () => codexOf({ ready: false }), folder: () => dir })
+  assert.deepEqual(await fallback.access(), { kind: 'chatgpt', model: 'gpt-image-2' })
+  const nothing = createImageGen({ credentials: () => storeOf({}), codex: () => codexOf({ ready: false }), folder: () => dir })
+  assert.equal(await nothing.access(), null)
+  await assert.rejects(nothing.generate({ prompt: 'x', callId: 'n' }), /sign in to Codex/)
+  assert.deepEqual(codex.calls, [])
+})
+
+test('a Codex refusal is the tool\'s answer and the card shows it failed', async (t) => {
+  const dir = folderOf(t)
+  const images = createImageGen({ credentials: () => storeOf({}), codex: () => codexOf({ fail: 'Codex has reached its usage limit on this ChatGPT plan.' }), folder: () => dir })
+  await assert.rejects(images.generate({ prompt: 'A fox', callId: 'f' }), (error) => {
+    assert.equal(error.code, 'bot/unavailable')
+    assert.match(error.message, /usage limit/)
+    return true
+  })
+  assert.equal(images.progress('f').phase, 'failed')
+  assert.match(images.progress('f').error, /usage limit/)
+})
+
 // The card's own helpers, bundled with a stand-in React.
 const bundle = await build({
-  stdin: { contents: "export { imageIdOf, ratioOf, stageOf } from './src/client/image-cell.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
-  bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react'],
+  stdin: { contents: "export { imageIdOf, ratioOf, PAINT_FACES } from './src/client/image-cell.js'; export { FACES } from './src/client/clay-art.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
+  bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react', 'react-dom'],
 })
 const cell = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, { module: cell, exports: cell.exports, require: () => ({ createElement: () => null, useEffect: () => {}, useRef: () => ({}), useState: v => [v, () => {}] }) })
 
-test('the card finds the image the tool kept, frames it in the asked shape, and says how far it is', () => {
-  const { imageIdOf, ratioOf, stageOf } = cell.exports
+test('the card finds the image the tool kept, frames it in the asked shape, and paints with Omni\'s own faces', () => {
+  const { imageIdOf, ratioOf, PAINT_FACES, FACES } = cell.exports
   assert.equal(imageIdOf('Drew the image with the user\'s OpenAI key and saved it as /w/images/img-1234abcd-ef.png. It is on screen'), 'img-1234abcd-ef')
   assert.equal(imageIdOf('C:\\w\\images\\img-1234abcd-ef.png'), 'img-1234abcd-ef')
   assert.equal(imageIdOf('No image service is connected.'), undefined)
   assert.equal(ratioOf('1536x1024'), '3 / 2')
   assert.equal(ratioOf('auto'), '1 / 1')
-  assert.equal(stageOf(0), 'Reading the brief')
-  assert.equal(stageOf(20), 'Laying in the color')
-  assert.equal(stageOf(200), 'Almost there')
+  // The owner's "Omni paints" cycle: focused, pleased, focused, delighted, focused, curious.
+  assert.deepEqual([...PAINT_FACES].map(face => FACES.indexOf(face)), [3, 1, 3, 2, 3, 4])
+})
+
+// An image an agent makes with its own tool reaches the team workspace through acp-dsh's keeper
+// call, and the card's progress follows it like a generate_image call.
+test('an agent\'s image is kept by id in the images folder, and its card follows it', async (t) => {
+  const dir = folderOf(t)
+  const images = createImageGen({ credentials: () => storeOf({}), folder: () => dir })
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  images.agentImages.start({ callId: 'acp_1', sessionId: 's1', via: 'Codex' })
+  assert.equal(images.progress('acp_1').phase, 'generating')
+  const kept = await images.agentImages.keep({ callId: 'acp_1', sessionId: 's1', base64: png, mimeType: 'image/png', via: 'Codex' })
+  assert.match(kept.id, /^img-/)
+  assert.equal(kept.file, join(dir, 'images', `${kept.id}.png`))
+  assert.deepEqual(readFileSync(kept.file), Buffer.from(png, 'base64'))
+  assert.equal(images.progress('acp_1').phase, 'done')
+  assert.equal(images.progress('acp_1').id, kept.id)
+  assert.deepEqual(await images.imageFile(kept.id), Buffer.from(png, 'base64'))
+  images.agentImages.fail({ callId: 'acp_2', error: 'The image was stopped before it was finished.' })
+  assert.equal(images.progress('acp_2').phase, 'failed')
+  await assert.rejects(images.agentImages.keep({ callId: 'acp_3', base64: '' }), /without an image/)
+  assert.equal(images.progress('acp_3').phase, 'failed')
+})
+
+test('the plugin hands acp-dsh its image keeper once the agents service is there', () => {
+  const registered = []
+  let cleanup
+  const ctx = {
+    inject: (names, attach) => {
+      assert.deepEqual(names, ['acpAgents'])
+      attach({ acpAgents: { keepImages: (keeper) => { registered.push(keeper); return () => registered.pop() } }, effect: (execute) => { cleanup = execute() } })
+    },
+    tools: { register: () => () => {} },
+  }
+  const rt = { ctx, teamFolder: () => undefined }
+  install(rt)
+  assert.equal(registered.length, 1)
+  assert.equal(registered[0], rt.images.agentImages)
+  cleanup()
+  assert.equal(registered.length, 0)
 })

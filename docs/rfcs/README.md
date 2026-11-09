@@ -32,12 +32,12 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 |---|---|---|---|
 | [0001](0001-roadmap-and-milestones.md) | Roadmap and milestones | Accepted (delivery 3 merged: #190) | n/a (process) |
 | [0002](0002-browser-group-1-completion.md) | Browser Group 1 completion | Accepted | 1. Safe browser and everyday fixes |
-| [0003](0003-model-routes-and-acp.md) | Model routes and ACP | Accepted (deliveries 1-3 merged: #187, #189; amended 2026-11-06: DSH's tool set on ACP routes and live switching, deliveries 6-7; research: [ACP tools spike](../research/acp-dsh-tools-spike.md), [council note](../research/dsh-022-council.md)) | 2 (route descriptor), 3. Other agents in the same chat |
+| [0003](0003-model-routes-and-acp.md) | Model routes and ACP | Accepted (deliveries 1-4, 6 and 7 merged: #187, #189, #563, #537; 5 open; amended 2026-11-06: DSH's tool set on ACP routes and live switching; 2026-11-08: required desktop CLIs, replay independent of the bridge; 2026-11-09: Bots switching onto and off agents, sign-in from the Bot's chat, one sign-in per subscription and a menu of what is set up; research: [ACP tools spike](../research/acp-dsh-tools-spike.md), [council note](../research/dsh-022-council.md)) | 2 (route descriptor), 3. Other agents in the same chat |
 | [0004](0004-composer-chat-kinds.md) | Composer and chat kinds | Accepted | 2. One message box |
 | [0005](0005-workspace-and-genie-projects.md) | Workspace and Genie projects | Accepted | 4. Projects in one place (Publish not scheduled) |
 | [0006](0006-herdr-terminal-mode.md) | Herdr terminal mode | Superseded (D27: herdr-app as the code window, RFC 0013; its Workers section, a herdr subagents provider for DSH, is not replaced) | not scheduled |
 | [0007](0007-desktop-speed.md) | Desktop speed | Accepted (delivery 2 merged: #184; part of 4: #179) | 1 (marks, stable port), 5. The app opens fast |
-| [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft | not scheduled |
+| [0008](0008-platform-and-web-instances.md) | Platform and web instances | Draft (amended 2026-11-09 by 0024: web sign-in, the desktop client, questions 2, 6, 7 and the threat model) | not scheduled |
 | [0009](0009-personal-customization.md) | Personal customization | Draft | after 2 (proposed: Make it yours) |
 | [0010](0010-desktop-sandbox.md) | Desktop sandbox and supervision | Draft (answers: D19; question 2 open) | not scheduled |
 | [0011](0011-monorepo-parts-and-releases.md) | Monorepo parts and releases | Accepted (herdr import merged: #190; herdr lane: #210; Pocket import merged: #203) | n/a (process) |
@@ -52,6 +52,9 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0020](0020-unfold-plugins-leave.md) | Unfold plugins leave Automagik | Draft (answers: Q1-Q5, 2026-11-09; no question open) | none (ships outside the five milestones) |
 | [0021](0021-meter-attribution.md) | Meter attribution | Draft (answers: Q1-Q6, 2026-11-09) | none (ships outside the five milestones) |
 | [0022](0022-desktop-chat-view.md) | The desktop chat is a view of the main bot | Draft (answers: Q1-Q8, 2026-11-09; Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; no question open) | none (ships outside the five milestones) |
+| [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) | DSH upstream: agent context, a chat tail slot and a draft hook | Draft | none (a proposal to DSH; nothing ships here) |
+| [0024](0024-automagik-cloud.md) | Automagik Cloud: two identity models, workspaces and the rail | Draft (council 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amended by [0025](0025-cloud-economics.md): Q8, D14, (g)) | none (ships outside the five milestones) |
+| [0025](0025-cloud-economics.md) | Automagik Cloud economics: billing, managed tokens and agentic payments | Draft (council 2026-11-09: revise, conditions folded in; owner's decisions 2026-11-09; amends RFC 0024) | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 

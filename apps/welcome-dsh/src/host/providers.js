@@ -14,8 +14,11 @@
 //   signin-answer { provider, promptId, value }
 //   signin-cancel { provider }
 //
-// Claude is pi-ai's anthropic route: its Claude Pro/Max sign-in (pi-ai's OAuth, the flow
-// llm-pi-ai/anthropic) or an Anthropic API key (ANTHROPIC_API_KEY), one route either way.
+// Connect AI signs Claude and ChatGPT in only through their CLIs, Claude Code and Codex
+// (ais.js): DSH's own sign-ins to them (pi-ai's anthropic Pro/Max and openai-codex) are not
+// started here. A record an earlier version stored stays where it is (image generation still
+// reads openai-codex's). An Anthropic API key still goes on pi-ai's anthropic route
+// (ANTHROPIC_API_KEY).
 //
 // The browser never sees a key or a token: it sees the flow's notices and answers its
 // questions. A sign-in lives in this process; reloading the page leaves it running, and
@@ -37,18 +40,17 @@ export const KEY_PROVIDERS = {
   moonshotai: { label: 'Moonshot (Kimi API)' },
   xai: { label: 'xAI' },
 }
-// Providers a subscription sign-in can connect, by pi-ai's provider id.
+// Providers a subscription sign-in can connect, by pi-ai's provider id. Claude and ChatGPT
+// are not among them: their plans sign in through their CLIs.
 export const SIGNIN_PROVIDERS = {
-  anthropic: { label: 'Claude (Pro/Max)' },
-  'openai-codex': { label: 'ChatGPT (Codex)' },
   'kimi-coding': { label: 'Kimi Code' },
   'github-copilot': { label: 'GitHub Copilot' },
   xai: { label: 'Grok' },
 }
-// What a sign-in's route holds beyond its provider. A Claude plan at its limit answers with a
-// 429 (rate_limit_error), which DSH's default policy retries five times, about 16 s, before
-// the Bot team's fallback model gets the turn: here the plan's 429 is not retried, so the turn
-// moves on at once. The rest of DSH's default retry set stays.
+// What the route of DSH's own Claude sign-in held beyond its provider, as earlier versions
+// wrote it: a Claude plan at its limit answers with a 429 (rate_limit_error), which DSH's
+// default policy retries five times, about 16 s, before the Bot team's fallback model gets the
+// turn, so that plan's 429 was not retried. A key saved on such a route drops it (saveRoute).
 export const SIGNIN_ROUTES = {
   anthropic: { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } },
 }
@@ -238,18 +240,10 @@ export function createProviderActions(ctx) {
             attempt.status = 'cancelled'
             return
           }
-          // Only a finished sign-in gets a route. A sign-in sits beneath a key: a route with
-          // apiKeyEnv uses the key, so the route this adds names none, and a keyed one is left
-          // as it is. A route on the sign-in alone takes what the sign-in's route holds
-          // (SIGNIN_ROUTES) when it has none of it yet.
+          // Only a finished sign-in gets a route. A sign-in sits beneath a key: a route that is
+          // already there (with apiKeyEnv, the key's) is left as it is.
           const routes = piAiEntry(ctx)?.value?.providers ?? {}
-          const extra = SIGNIN_ROUTES[provider] ?? {}
-          if (!Object.hasOwn(routes, provider)) await saveRoute(ctx, provider, extra)
-          else {
-            const route = routes[provider] ?? {}
-            const missing = Object.fromEntries(Object.entries(extra).filter(([field]) => route[field] === undefined))
-            if (route.apiKeyEnv === undefined && Object.keys(missing).length > 0) await saveRoute(ctx, provider, missing)
-          }
+          if (!Object.hasOwn(routes, provider)) await saveRoute(ctx, provider, {})
           attempt.status = 'authorized'
         })
         .catch((error) => {

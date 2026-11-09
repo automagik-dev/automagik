@@ -1,5 +1,6 @@
-// Composer packs: the composer of a Bot's chat changes with the AI the Bot runs on. Swap
-// the Bot to a model with thinking levels and the composer offers those; a plugin that runs
+// Composer packs: the composer of a Bot's chat changes with the AI the Bot runs on. Every
+// Bot with a model shows it there, in Omni's model menu; swap the Bot to a model with
+// thinking levels and the menu offers those; a plugin that runs
 // an agent registers a pack of its own, so the composer offers that agent's controls (its
 // permission modes, say). Omni's own Bot pieces (+, voice, members, questions, @) stay in
 // every pack.
@@ -25,7 +26,7 @@
 // instead, with no provider: `host` is that menu.
 //
 // CellChoice, or a function `(target) => CellChoice`:
-//   'hidden'  Omni keeps the cell empty (its default for every cell);
+//   'hidden'  Omni keeps the cell empty (a pack's default for every cell);
 //   'host'    Omni steps aside, so the control DSH or another plugin put there shows;
 //   'model'   Omni's own model and thinking menu, which saves to the Bot.
 //
@@ -36,7 +37,8 @@ import { routeOf } from '../shared/routes.js'
 
 export const PACK_CELLS = ['permission', 'model']
 
-// The pack every Bot gets when none matches: today's composer, cell for cell.
+// The pack of a Session with no single AI (a group, a Bot still waiting for its model):
+// every cell empty.
 export const DEFAULT_PACK = Object.freeze({ id: 'omni', cells: Object.freeze({ permission: 'hidden', model: 'hidden' }) })
 
 // The provider a model ref names (`anthropic/claude-opus-5-5` → `anthropic`).
@@ -107,7 +109,17 @@ export const AGENT_MODEL_PACK = Object.freeze({
   cells: Object.freeze({ model: 'model' }),
 })
 
-export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK]
+// Any other Bot that has a model: the same menu, so its chat always says what answers there
+// and a click changes it for that Bot alone. It comes last, so every other pack that matches
+// decides first (a plugin's pack may still leave the cell empty).
+export const MODEL_PACK = Object.freeze({
+  id: 'model',
+  order: 1000,
+  match: (_provider, target) => target?.ref !== undefined,
+  cells: Object.freeze({ model: 'model' }),
+})
+
+export const BUILTIN_PACKS = [HOST_MODEL_PACK, THINKING_PACK, AGENT_MODEL_PACK, MODEL_PACK]
 
 // Whether Omni steps aside from a cell of the Session in the main view: its pack says
 // 'host', and the control the pack steps aside for is registered there.

@@ -1,4 +1,0 @@
-# Installs the host plugin; DSH discovers its browser half through dsh.client.
-- insert:
-    - id: unfold-events
-      name: '@automagik/unfold-events-dsh'

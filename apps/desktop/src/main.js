@@ -35,6 +35,9 @@ import { openLatest } from './herdr-update.js'
 import { tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
+import { appMenuTemplate } from './menu.js'
+import { sendPaneClose } from './pane-close.js'
+import { createQuitGuard, quitPrompt, requestQuit } from './quit-guard.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { CHECK_EVERY_MS, compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
@@ -92,6 +95,17 @@ const RESTART_NOTE = () => join(home, 'logs', 'restart.json')
 const started = steps('start', { write: startLog, since: Date.now() - process.uptime() * 1000 })
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
+// A quit while the welcome says a bot runs (busy.json) asks first; a missing file is an older
+// welcome or no dsh, and quits as it always has. The clean stop behind a confirmed quit is
+// stopAndQuit(), below.
+const quitGuard = createQuitGuard({
+  busy: () => readBusy(busyFileOf(home)),
+  prompt: ({ running, parent }) => dialog.showMessageBox(
+    parent ?? window ?? undefined,
+    quitPrompt({ product: PRODUCT, running }),
+  ),
+  log: line => startLog(`${new Date().toISOString()} ${line}\n`),
+})
 // dsh's origin, from the port it is started on; Bot pages never reach it.
 let dshOrigin
 // The corner radius of dsh's page (frame.js pageLayout), which the Bot views take too.
@@ -193,26 +207,23 @@ function fail(error) {
 }
 
 // macOS's app menu: the system's usual menus, with Check for Updates under the app's name.
+// The File menu's Cmd+W closes the focused pane/tab in dsh's page, never the window: the window
+// keeps its own close button, which asks while a bot runs (quitGuard).
 function appMenu() {
-  return Menu.buildFromTemplate([
-    { label: PRODUCT, submenu: [
-      { role: 'about' },
-      { label: 'Check for Updates…', click: () => void checkForUpdates() },
-      ...(dshTuiSupported() ? [{ label: DSH_TUI_LABEL, click: () => void openDshTuiSetup() }] : []),
-      { type: 'separator' },
-      { role: 'services' },
-      { type: 'separator' },
-      { role: 'hide' },
-      { role: 'hideOthers' },
-      { role: 'unhide' },
-      { type: 'separator' },
-      { role: 'quit' },
-    ] },
-    { role: 'fileMenu' },
-    { role: 'editMenu' },
-    { role: 'viewMenu' },
-    { role: 'windowMenu' },
-  ])
+  return Menu.buildFromTemplate(appMenuTemplate({
+    product: PRODUCT,
+    platform: process.platform,
+    dshTuiLabel: dshTuiSupported() ? DSH_TUI_LABEL : null,
+    onCheckForUpdates: () => void checkForUpdates(),
+    onDshTui: () => void openDshTuiSetup(),
+    onClosePane: () => closeFocusedPane(),
+  }))
+}
+
+// Cmd+W's path: the dsh page closes its focused pane/tab, or does nothing when there is none.
+// The window and the app are never touched here (pane-close.js).
+function closeFocusedPane() {
+  if (page) sendPaneClose(page.webContents)
 }
 
 async function launch() {
@@ -903,9 +914,16 @@ function openWindow() {
     started.mark('window shown')
     void fade(window, { to: 1, reduced: lessMotion() })
   })
-  // Closing fades the window out first; 'closed' and quitting follow.
+  // Closing fades the window out first; 'closed' and quitting follow. A running bot is asked
+  // about first (quitGuard): Cancel keeps the window and dsh exactly as they are.
   window.on('close', (event) => {
-    if (closing || quitting || process.platform === 'linux') return
+    if (closing || quitting) return
+    if (quitGuard.needs()) {
+      event.preventDefault()
+      void requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
+      return
+    }
+    if (process.platform === 'linux') return
     event.preventDefault()
     closing = true
     const out = leave('quit')
@@ -986,16 +1004,25 @@ function harden(origin) {
 
 app.on('window-all-closed', () => app.quit())
 app.once('will-quit', () => { botRelay.dispose(); botViews.dispose(); botCursor.dispose() })
+// Cmd+Q, the window's close button and window-all-closed all come through here: a running bot
+// is asked about first. The quit is held while the guard answers; Cancel leaves the app and dsh
+// running, and clean/Quit runs the clean stop (stopAndQuit). A busy file that is missing or
+// unreadable asks nothing, so an older welcome or a dsh that is not up quits as it always has.
 app.on('before-quit', (event) => {
+  if (quitting) return
+  event.preventDefault()
+  void requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
+})
+
+function stopAndQuit() {
   if (quitting) return
   // Nothing spawned yet: the quit goes on, and a dsh that spawns after it is stopped. The app is
   // quitting from here: a restart of DSH alone under way must not take the stop for its plugins'.
-  if (!dshProcess.child) { quitting = true; return void dshProcess.stop() }
+  if (!dshProcess.child) { quitting = true; return dshProcess.stop().finally(() => app.quit()) }
   quitting = true
-  event.preventDefault()
   const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
-  void fade(window, { to: 0, reduced: lessMotion() })
+  return fade(window, { to: 0, reduced: lessMotion() })
     .then(() => { out.mark('window gone'); return dshProcess.stop() })
     .finally(() => { out.mark('dsh stopped'); app.quit() })
-})
+}

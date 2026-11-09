@@ -1,4 +1,4 @@
-import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Component, createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { Lockup, OmniMark, Wordmark } from './logo.js'
 import { isMainOf } from './sources.js'
@@ -11,7 +11,7 @@ import { Shimmer, workPhrase } from './cells.js'
 import { springEasing, SPRING_SHAPE, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { showsDshRow } from './dsh-offer.js'
-import { badges, botChildren, nav, useEntries } from './extend.js'
+import { badges, botChildren, nav, sidebarTools, useEntries } from './extend.js'
 import { agentRowSessions, approvalFor, endLabel, runningTasksOf, taskState, waitsForUser } from './task-card.js'
 import { useApproval } from './approvals.js'
 import { WorkCodeSwitch } from './work-code-switch.js'
@@ -398,16 +398,19 @@ export function TeamSidebar(props) {
     event.preventDefault()
     actions.openPalette(event.key)
   }
+  const toolProps = { wide, roster, actions: rowActions, useRoster }
   return h('div', { className: wide ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     wide ? h('div', { className: 'bt-side-top' },
       h('span', { className: 'bt-brand' }, h(Lockup, { height: 27 })),
       h(WorkCodeSwitch, { roster, useSessions }),
       h(UpdateButton, { useUpdate: props.useUpdate, actions }),
+      h(SidebarTools, toolProps),
       h('button', { type: 'button', className: 'bt-round', 'aria-label': t('Search'), title: t('Search'), onClick: () => actions.openPalette() }, h(SearchIcon)),
       h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),
       h('button', { type: 'button', className: 'bt-round bt-side-collapse', 'aria-label': t('Collapse sidebar'), title: t('Collapse sidebar'), onClick: () => actions.toggleSidebar() }, h(SidebarIcon)))
       : h(Fragment, null,
           h(UpdateButton, { useUpdate: props.useUpdate, actions }),
+          h(SidebarTools, toolProps),
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
@@ -425,6 +428,27 @@ export function TeamSidebar(props) {
         : entry.kind === 'room'
           ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
           : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })))))
+}
+
+// Other plugins' buttons in the top row and the rail (extend.js sidebarTools). Each is drawn on
+// its own: one that throws draws nothing, and the row around it stays.
+let ToolBoundary = null
+const toolBoundary = () => (ToolBoundary ??= class SidebarTool extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { failed: false }
+  }
+
+  static getDerivedStateFromError() { return { failed: true } }
+
+  componentDidCatch(error) { console.warn('[ds-bot] sidebar tool', this.props.entry.id, error) }
+
+  render() { return this.state.failed ? null : h(this.props.entry.Component, this.props.tool) }
+})
+
+function SidebarTools(props) {
+  const entries = useEntries(sidebarTools)
+  return entries.map(entry => h(toolBoundary(), { key: entry.id, entry, tool: props }))
 }
 
 // The update button at the sidebar's top right: a cloud while a newer Omni —
@@ -812,9 +836,12 @@ html[data-automagik-desktop] .bt-side-top .bt-brand{display:none}
    (apps/desktop frame.js TRAFFIC_LIGHTS), which also moves the window. */
 html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) .bt-side-top{padding-left:64px}
 html[data-automagik-desktop=darwin] .bt-side-top{-webkit-app-region:drag}
-html[data-automagik-desktop=darwin] .bt-side-top>*{-webkit-app-region:no-drag}
+/* The row is the window's title bar: empty space moves the window, while every control in it
+   takes clicks. The list is the shell bar's, so a control a builder adds here is covered
+   without another rule; the brand is hidden in the app but kept sane. */
+html[data-automagik-desktop=darwin] .bt-side-top :is(.bt-brand,.bt-code-switch,a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
 html[data-automagik-desktop=darwin] header[class*="_header"]{-webkit-app-region:drag}
-html[data-automagik-desktop=darwin] header[class*="_header"] :is(button,a,input,textarea,select,[role=button],[tabindex]){-webkit-app-region:no-drag}
+html[data-automagik-desktop=darwin] header[class*="_header"] :is(a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
 /* The fixed details panel overlaps that header but is not its descendant. Native drag
    regions ignore DOM z-index/pointer-events: subtract the panel so its top actions click. */
 html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
@@ -890,6 +917,14 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update-go:disabled{opacity:.6;cursor:default}
 .bt-update-dsh:not(:first-child){margin-top:12px;padding-top:12px;border-top:.5px solid var(--bt-line-2)}
 @media (prefers-reduced-motion:reduce){.bt-round.bt-update,.bt-update-pop,.bt-update .bt-cloud-arrow{animation:none}}
+/* A sidebar tool (extend.js sidebarTools) wears these same pieces: .bt-round with the cloud's
+   .bt-update-dot, a card of .bt-update-* rows, and .bt-update-notes as a button. */
+.bt-side-tool{position:relative}
+.bt-update-pop button.bt-update-notes{padding:0;border:0;background:none;font-family:inherit;cursor:pointer}
+/* A card row may lead with its product's mark (BotMark), beside its name and status. */
+.bt-power-who{display:flex;align-items:center;gap:10px}
+.bt-power-who>.bt-mark{flex:none}
+.bt-power-what{min-width:0}
 
 /* A DSH bot's row and its expanding Session list. It wears DSH's own whale, the mark a
    Bot with no look of its own wears too. */

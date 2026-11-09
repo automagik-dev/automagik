@@ -90,8 +90,16 @@
       "to": "am/logins.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/meter-keys.json",
+      "to": "am/meter-keys.json"
+    },
+    {
       "from": "herdr/mods/am-sidebar/meterFleet.js",
       "to": "am/meterFleet.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/meterLane.mjs",
+      "to": "am/meterLane.mjs"
     },
     {
       "from": "herdr/mods/am-sidebar/migrate.js",

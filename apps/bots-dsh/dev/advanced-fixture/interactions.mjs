@@ -70,6 +70,17 @@ async function dismissNotices(page) {
   const notice = page.getByRole('dialog').getByRole('button', { name: 'Continue', exact: true, disabled: false })
   await page.addLocatorHandler(notice, () => notice.click())
 }
+// The model menu goes in steps (model-menu.js): a connection, then one of its models, then a
+// level when that model has levels. Picks the first of each.
+async function pickFirstModel(page) {
+  const step = page.locator('.bt-model-menu .bt-model-step')
+  await step.locator('[role="menuitem"][aria-haspopup="menu"]').first().click()
+  await step.locator('[role="menuitemradio"]').first().click()
+  // A levels step has its own heading; a model without levels has closed the menu instead.
+  const level = page.locator('.bt-model-menu:not([data-leaving]) .bt-model-step:has(.bt-model-group) [role="menuitemradio"]').first()
+  if (await level.waitFor({ timeout: 2_000 }).then(() => true, () => false)) await level.click()
+}
+
 async function closeDetails(page) {
   for (const label of ['Close settings', 'Close details']) {
     const close = page.getByRole('button', { name: label, exact: true }).first()
@@ -258,7 +269,7 @@ export async function checkBotInteractions({ page, api, check, until, probeStatu
   if (main.waiting) {
     await page.getByRole('button', { name: 'View conversation details', exact: true }).first().click()
     await page.locator('.bt-panel .bt-model-trigger').first().click()
-    await page.locator('.bt-model-menu button, .bt-model-menu [role="menuitem"]').first().click()
+    await pickFirstModel(page)
     await until('Main Bot local model selected', async () => !selectedBot(await api('state'), main.id)?.waiting)
     await closeDetails(page)
   }

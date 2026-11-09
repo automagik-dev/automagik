@@ -143,14 +143,6 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/catalog.mjs --check
 
-      # release.js and install.sh pin each usagemeter build by sha256: checked against the release.
-      # The public download URL is tried first; this token serves the API asset route when it fails.
-      - name: usagemeter pin
-        if: steps.changed.outputs.herdr == 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/usagemeter-pin.mjs
-
       # The Automations panel installs our scheduler release and pins its darwin sha256s
       # (mods/am-automations/scheduler.js): checked against that release's checksums.txt.
       - name: Scheduler pin
@@ -651,7 +643,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [acp-dsh, bots-dsh, locale-pt-br-dsh, unfold-bot-dsh, unfold-bridge-dsh, unfold-capabilities-dsh, unfold-events-dsh, unfold-mind-dsh, unfold-session-dsh, unfold-settings-dsh, unfold-sse-dsh, unfold-trajectory-dsh, welcome-dsh]
+        app: [acp-dsh, bots-dsh, locale-pt-br-dsh, welcome-dsh]
     defaults:
       run:
         working-directory: apps/${{ matrix.app }}

@@ -5,7 +5,10 @@
 // PATH, as am-quota's AUTH_SCRIPT and agentPath.mjs do: usagemeter finds hc on PATH, and without
 // hc no terminal, label or machine id reaches the meter. One run at a time, never more often than
 // usagemeter's own 10-minute freshness check: the start time is shared across sidebar copies,
-// and a copy never starts a run while its last one is still going. A missing binary is silent.
+// and a copy never starts a run while its last one is still going. A missing binary is silent (SYNC
+// exits 0), and so is any exit of the meter's: during its first sync after an upgrade from 0.3.0
+// it may skip (exit 0: another sync, or an older meter, holds a lock), stop at a move it cannot
+// prove (3) or at too little free space (4), each with nothing changed; the next run is due as usual.
 // Then the same on each connected linked machine (SYNC through exec's `on`), one at a
 // time: each machine's sync writes its own `herdr-meter` doc, which the phone reads there.
 // Pure: no `herdr` import (exec, the shared value and the clock are passed in), so `node --test`
@@ -27,9 +30,12 @@ export const METER_KEY = "am.sidebar.meter-started";
 
 /**
  * Run as `sh -c SYNC` on a linked machine (its own usagemeter sync; no binary there is silent),
- * and as `sh -c SYNC sh <bin>` here (Herdr's absolute path). ~/.local/bin goes on PATH, after what
- * is there and only when it is missing, so usagemeter finds hc (hc exec and Herdr started from the
- * Dock may run it without that folder).
+ * and as `sh -c SYNC sh <bin>` here: $1, Herdr's absolute path, is the binary run, never the
+ * default beside it. ~/.local/bin goes on PATH, after what is there and only when it is missing,
+ * so usagemeter finds hc (hc exec and Herdr started from the Dock may run it without that folder). After, never before: an hc the person's PATH names first
+ * stays first, the same order the CLI's realHcPath uses, so the sidebar's sync and `meter install`
+ * reach the same hc. Pocket Link's bridge puts ~/.local/bin first because a LaunchAgent starts it
+ * with a bare PATH, where nothing else would name hc.
  */
 export const SYNC = `case ":$PATH:" in
 *":$HOME/.local/bin:"*) ;;
@@ -54,7 +60,7 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
 
 /**
  * One due `usagemeter sync`: `exec("sh", ["-c", SYNC, "sh", bin])` (Herdr's exec: resolves
- * `{ code, stdout, stderr }`, rejects when the program can't start; no binary: exit 0), unless
+ * `{ code, stdout, stderr }`, rejects only when sh itself can't start; no binary: SYNC exits 0), unless
  * this copy's run is still going (`state.busy`) or a run started less than METER_EVERY_MS ago
  * (`get(METER_KEY)`, from any copy). The start is stored with `set(METER_KEY, now())` before the
  * run, so a second caller in the meantime finds it fresh. No timeout of its own: Herdr's exec
@@ -63,24 +69,26 @@ export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
  * `machines`: the connected linked machines to sync after this computer, one at a time, within the
  * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent), each
  * within METER_EXEC_LIMIT_MS when `sleep` (the caller's timer) is given.
- * Resolves `{ ran, why?, code?, on?, wait }`: wait is when to look again (ms); on: { machine: code,
- * null when it could not run, "timed out" past the limit }.
+ * Resolves `{ started, why?, code?, on?, wait }`: `started` says sh started here (whether a binary
+ * was there to sync is not known: SYNC exits 0 without one), `code` its exit; why "busy", "fresh" or
+ * "no-shell" (sh could not start) when it did not; wait is when to look again (ms); on: { machine:
+ * code, null when it could not run, "timed out" past the limit }.
  */
 export async function syncMeter({ exec, now = Date.now, bin, get = () => null, set = () => {}, state = {}, machines = [], sleep = null }) {
-  if (state.busy) return { ran: false, why: "busy", wait: METER_EVERY_MS };
+  if (state.busy) return { started: false, why: "busy", wait: METER_EVERY_MS };
   const at = now();
   const last = Number(get(METER_KEY));
   const age = at - last;
-  if (Number.isFinite(last) && last > 0 && age >= 0 && age < METER_EVERY_MS) return { ran: false, why: "fresh", wait: METER_EVERY_MS - age };
+  if (Number.isFinite(last) && last > 0 && age >= 0 && age < METER_EVERY_MS) return { started: false, why: "fresh", wait: METER_EVERY_MS - age };
   state.busy = true;
   try { set(METER_KEY, at); } catch {}
   try {
     let here;
     try {
       const result = await exec("sh", ["-c", SYNC, "sh", bin]);
-      here = { ran: true, code: result?.code ?? null, wait: METER_EVERY_MS };
+      here = { started: true, code: result?.code ?? null, wait: METER_EVERY_MS };
     } catch {
-      here = { ran: false, why: "missing", wait: METER_EVERY_MS };
+      here = { started: false, why: "no-shell", wait: METER_EVERY_MS };
     }
     if (!machines.length) return here;
     const on = {};

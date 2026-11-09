@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (deliveries 1-3 merged: #187, #189; 4-5 open; amended 2026-11-06) |
+| Status | Accepted (deliveries 1-4, 6 and 7 merged: #187, #189, #563, #537, with #558, #559, #585 and #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08 and 2026-11-09) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |
@@ -450,6 +450,138 @@ same knobs has no reviewer, so the bridge keeps its own approval. Flipping the s
 running agent sessions and revokes their bridges at once; the Session keeps its transcript. Codex is
 bridged only with an explicit `true`; absent or `false` means no bridge, and its built-ins stay its
 own tool set.
+
+**Replay independent of the bridge (2026-11-08).** The transcript replay no longer follows the
+bridge: absent or `true` replays to both agents, and only an explicit `false` (the kill switch)
+keeps the 2026-11-03 path, where an agent sees only its own session.
+
+| `dshTools` | Claude Code: tools | Claude Code: replay | Codex: tools | Codex: replay |
+|---|---|---|---|---|
+| absent | DSH bridge | yes | its own only | yes |
+| `true` | DSH bridge | yes | DSH bridge and its own | yes |
+| `false` | its own only | no | its own only | no |
+
+With the key absent, Codex therefore sees the chat but not the team's tools, which still need an
+explicit `true`. Beyond a move from another provider, three cases now replay, under the same
+redactor and 120,000-character cap: a new agent session in a chat that already has answers (a
+restart, or a session a crossing or a flip ended), with no boundary row since the chat did not
+change provider; a live session resumed after the chat answered elsewhere (a move off Codex keeps
+its session), which gets the turns it missed, from its own last answer on, and the move back writes
+its "Switching to X" row, so Codex → API → Codex loses nothing; and a Bot part's handoff package
+(the Bot team's relay marked `handoff`), which stays in the part's first prompt beside the
+person's words and is carried in the replay once the Bot team has answered that first turn itself.
+A move off Claude Code still ends its session (and bridge), and the new session on the way back
+gets the chat; the agent's own context beyond the replay cap is the accepted cost.
+
+## Amendment: Bots on Claude Code and Codex, switching and sign-in (2026-11-09)
+
+What the Bot team and acp-dsh do so a Bot can move onto and off an agent, say honestly what the
+switch did, and sign in to the agent's CLI from the Bot's chat. Plugin-only (acp-dsh, bots-dsh,
+welcome-dsh, locale-pt-br-dsh); the DSH pieces this works around are proposed upstream in
+[0023](0023-dsh-upstream-agent-context-and-chat-rows.md).
+
+**The switch guard on an agent route.** DSH's compaction engine (`compaction-basic`) prices every
+model switch with `compactPressure` on the destination's request header and needs that model's
+context window. An agent declares none (it keeps its own context), so every switch onto an agent in
+a Session that already had a request header failed with `MODEL_SWITCH_COMPACTION_FAILED`. acp-dsh
+now answers "no compaction needed" for an agent destination and leaves every other destination to
+the engine (`apps/acp-dsh/src/host/pressure.js`). acp-dsh is the method's only Automagik owner; the
+wrapper delegates to whatever is below it at call time and, on dispose, unwinds only when it is on
+top. The method is private to `compaction-basic`, so a guard test pins it. An agent gets the chat
+as the bounded, redacted replay above instead.
+
+**Off an agent, onto an API model (the Bot team).** Before DSH's guard runs, the Bot team measures
+the chat against the destination's own switch threshold, computed as `compaction-basic` does
+(`apps/bots-dsh/src/host/parts.js`). Below it nothing happens. Above it, the chat is condensed into
+a checkpoint only when the team chose a background model in Settings (`prefs.backgroundModel`) and
+the chat fits that model, which is the one charged; the automatic background pick never starts a
+paid call without that choice. Otherwise the Bot continues in a new part that carries the latest
+messages that fit, with no handoff note and no model call. The part it leaves is archived only
+after the new part's first answer from the chosen model; if that first call fails, the Bot goes back
+to it. A team with no model that answers beside its agents skips the steward, the note and the
+checkpoint (it says so once in the log) and, past the hard line, continues in a new part the same
+way. A switch between two agents needs none of this.
+
+**A switch that fails goes back.** The Bot keeps the last model that answered in its chat as
+`previousModel` (a model that only started a call is never recorded) until the new one answers. A
+new model is checked (an agent that is off, installing or signed out is refused, asked through
+acp-dsh's read-only `inspect`, whose confirmed sign-in stands for five minutes and is dropped by
+the agent's own `auth_required`), put on the Bot's Sessions, and only then saved; a refusal writes
+nothing. A first turn that fails with `MODEL_SWITCH_COMPACTION_FAILED`, `MODEL_ACCESS_REQUIRED` or
+pi-ai's "Provider is not configured", or a new part whose first call fails with nothing else to
+answer it (a failure the fallback model answers keeps the switch unless the fallback fails too),
+puts the Bot back on `previousModel`, Session selection included, and nothing runs again on its
+own. A signed-out agent
+(ACP's `auth_required`) fails the turn as `MODEL_ACCESS_REQUIRED`, never `ACP_AGENT`, so it never
+moves to the fallback model; the fallback never changes the Bot's model.
+
+**No row claims an answer.** The provider-boundary row (Live switching, above) is written before
+the reply, and the call can still fail after it, so it now reads "Switching to X (provider)",
+never "Now answered by X". Whether X answered is derived, never stored as a claim: from the next
+assistant message whose source is X. The Bot's settings show that state (switching and not answered
+yet, failed and back on the previous model, or in need of a sign-in).
+
+**Sign-in from the Bot's chat.** A signed-out agent is signed in to from a transient row at the end
+of the Bot's chat, shown only after an explicit entry (picking that agent's model in the chat's
+picker, the Sign in button in the Bot's settings, or the welcome's Sign in) and, in the Bot that
+opened it, to restore a live attempt. The CLI runs its own sign-in: a link to open on any device,
+then Codex's device code to type there, or Claude's code to paste back in the row's own field. The
+attempt lives in acp-dsh (`src/host/login.js`), one per agent, Claude Code and Codex independently;
+any view of the DSH owner reads it back and reading never cancels it. The Bot team's
+`cli-login-*` endpoints are on its owner-only route, so a share viewer or a shared remote access
+gets 403. The expiry is the provider's when its answer reports one, otherwise the app's ten minutes
+from the link shown. While an attempt starts or waits, the welcome's busy file counts it, so the
+app's automatic restarts wait. While Claude's code step shows, the native editor takes no edit and
+keeps its draft; acp-dsh keeps keyed hashes of the Claude states it showed for a day, and the Bot
+team refuses to send, deliver or step a message that carries one. When the CLI confirms, the row
+says so and goes by itself after about three seconds, leaving nothing; a model the explicit
+entry named is then applied to that Bot only, if it is still the latest choice. Nothing of the
+sign-in reaches a draft, storage or a model call, and the team's send endpoints, its deliveries,
+a group's running round and Pocket refuse a pasted code before anything records it. One residual
+risk stays: a message sent from DSH's own composer is admitted by DSH's session controller, which
+writes it to the Session's record (`agent/inbox/spliced`) before any plugin hook can look at it.
+The page refuses such a send only for a state that page showed; after a reload, or in a window
+that never showed the link, a pasted code reaches that record, and the Bot's step then drops it
+before any model call or transcript row. DSH 0.2.2 has no hook before a prompt is admitted; one
+is proposed upstream ([0023](0023-dsh-upstream-agent-context-and-chat-rows.md), section 3). This uses DSH's rendered chat
+attributes, since DSH 0.2.2 has no slot for a client row in the transcript: the risk is recorded,
+and the slot is proposed upstream (0023).
+
+## Amendment: one sign-in per subscription, and a menu of what is set up (2026-11-09)
+
+Owner decisions D-a to D-h of the CLI Bots round. Plugin-only (acp-dsh, bots-dsh, welcome-dsh,
+locale-pt-br-dsh).
+
+**Subscriptions through their CLIs.** A Claude Pro/Max or ChatGPT plan signs in only through the
+CLI Automagik installs, Claude Code or Codex, in the Bot chat's sign-in row (above). The welcome's
+Claude and ChatGPT rows are those CLIs: their **Sign in** opens the same row, their switch is
+acp-dsh's own `claude` or `codex` setting, so turning one off turns that agent off for every Bot
+(D-f). Connect AI has no Coding agents block of its own (Settings keeps one), and its sign-in
+endpoints refuse pi-ai's `anthropic` and `openai-codex`: nothing in Automagik starts DSH's own
+plan sign-in for them. API keys keep their routes and forms unchanged (D-b): an Anthropic key on
+pi-ai's `anthropic` route with `apiKeyEnv`, an OpenAI key on `openai`.
+
+**Moving plan Bots.** Once per team and route, a Bot on a plan through DSH (pi-ai's
+`openai-codex`, or `anthropic` with no `apiKeyEnv` on the Claude sign-in grant) moves to
+`acp-codex` or `acp-claude` on the closest model the agent lists (same id, else for Claude the
+same family, else `default`), keeping its Session and level (bots-dsh `subscription-move.js`).
+Key-based Bots never move, no credential is read or copied between programs, and a signed-out CLI
+asks for its sign-in in the chat. Only then does the welcome unset DSH's old plan route; the
+sign-in record is never deleted. dsh-subscriptions 0.7.21-omni.1 ships no `claude` or `codex`, so
+bots-dsh no longer counts those ids as plan routes (`SUBSCRIPTION_ROUTES`).
+
+**The model menu.** It lists only what is set up, as connection, model, then level: a provider
+with its key, an agent whose CLI is signed in, another provider's stored DSH sign-in. Connections
+read "DeepSeek", "Anthropic · API key", "OpenAI · API key", "Claude Code", "Codex"; two that would
+read the same add their route id. A covered plan route (`covered`), a missing key (`needsKey`) or
+a missing sign-in (`needsSignIn`) is never offered; a Bot's current model stays shown, marked
+unavailable, and a new Bot's default skips all three. The jobs beside the chats keep their own
+model rule (D-g).
+
+**Images through Codex.** `generate_image` and the companion's drawing use an OpenAI API key as
+before; without one, the Codex CLI on its own ChatGPT sign-in (acp-dsh `generateImage`, a one-off
+read-only session using Codex's image tool). A ChatGPT grant stored by an earlier version's DSH
+sign-in is read last. CLI auto-updates stay on (D-h).
 
 ## Amendment: required desktop CLIs (2026-11-08)
 

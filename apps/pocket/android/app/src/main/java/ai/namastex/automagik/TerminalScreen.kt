@@ -195,7 +195,8 @@ import kotlin.math.roundToInt
 /**
  * While the agent is blocked on a menu (a permission or a question), its answers as buttons under the terminal, so
  * answering never depends on hitting a line of the screen. A press goes through [PocketViewModel.choose], which reads
- * the screen again and sends the keys only if the same menu is still there. The row goes when the menu does.
+ * the screen again and sends the keys only if the same dialog text and menu are still there. The row goes when the
+ * menu does.
  */
 @Composable private fun PromptChoices(vm: PocketViewModel, ref: TerminalRef, terminal: CoreTerminal?, bottom: Boolean) {
     val kind = terminal?.kind.orEmpty()
@@ -219,7 +220,7 @@ import kotlin.math.roundToInt
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(if (kind == "permission") "Allow?" else "Answer", color = Muted, fontSize = 12.sp)
         choices.forEachIndexed { i, choice ->
-            Button(onClick = { sending = true; vm.answer(ref, msg, shown.options, choice) { sending = false; reread++ } },
+            Button(onClick = { sending = true; vm.answer(ref, msg, shown.dialog, shown.options, choice) { sending = false; reread++ } },
                 enabled = !sending, shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 modifier = Modifier.heightIn(min = 44.dp),
                 colors = if (i == 0) ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)

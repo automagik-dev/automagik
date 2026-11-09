@@ -50,6 +50,11 @@ export const badges = registry()
 export const botChildren = registry()
 // Header buttons: drawn in a Bot's chat header, `Component({ bot, roster, actions, useWork })`.
 export const headerButtons = registry()
+// Sidebar tools: buttons in the sidebar's top row, between the update cloud and Search, and in
+// the collapsed rail under the cloud, `{ id, order, Component }` drawn as `Component({ wide,
+// roster, actions, useRoster })`. They wear the row's own classes (.bt-round, and the update
+// card's .bt-update-* for a popover); one that throws is left out and the row stays.
+export const sidebarTools = registry()
 // Bot settings: cards of a Bot's settings page, after its capabilities,
 // `Component({ bot, roster, actions, run, Card, Row, SwitchRow })`.
 export const botSettings = registry()

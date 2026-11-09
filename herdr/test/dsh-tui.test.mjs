@@ -19,6 +19,7 @@ import {
   approvedDataRootProblem,
 } from "../mods/am-sidebar/dshTui.mjs";
 import { approveProject } from "../mods/am-sidebar/approved.js";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 /** The pinned release's publish time: an hour before this run, so the fresh path never depends on the wall clock. */
@@ -34,8 +35,7 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
  * `cfg.add.integrity`, `.pin`, `.installed`, `.workspace` and `.fail` change what it writes.
  */
 function scene(t, { dsh = true, config = {} } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dsh-tui-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "dsh-tui-");
   const home = join(root, "home"), bin = join(root, "bin"), log = join(root, "dsh.log");
   const paneTmp = join(root, "pane-tmp");
   mkdirSync(home);
@@ -151,6 +151,7 @@ exec "${process.execPath}" "${helper}" "$@"
     HOME: home, SHELL: process.env.DSH_TUI_TEST_SHELL || "/bin/sh", PATH: scenePath, TMPDIR: paneTmp,
     DSH_LOG: log, DSH_FAKE: cfgPath,
     AUTOMAGIK_HERDR_DSH_TUI_PUBLISHED: PUBLISHED,
+    GIT_CEILING_DIRECTORIES: dirname(root),
   };
   const pane = panePathOf({ env });
   assert.equal(pane.login, true, "the login shell answered");
@@ -651,7 +652,7 @@ test("the CLI command installs, reports doctor JSON and uninstalls", async (t) =
   assert.equal(installed.status, "installed", installed.detail);
   const report = await cmdDshTui({ json: true }, ["doctor"], io);
   assert.equal(report.code, 0);
-  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", ...(process.platform === "linux" ? ["dsh-hc-proxy"] : []), "dsh-sandbox"]);
+  assert.deepEqual(report.checks.map((c) => c.check), ["dsh", "dsh-tui-profile", "dsh-tui-shim", "dsh-tui-path", "dsh-tui-guide", ...(process.platform === "linux" ? ["dsh-hc-proxy"] : []), "dsh-sandbox", "herdr-ledgers"]);
   const removed = await cmdDshTui({ json: true }, ["uninstall"], io);
   assert.equal(removed.status, "removed");
   assert.equal(existsSync(join(s.home, ".local", "bin", SHIM)), false);
@@ -834,8 +835,7 @@ test(
 });
 
 test("LOW1 (j): a dangling final symlink at the checked path resolves and is refused", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-low1-");
   const project = join(root, "project"), parent = join(root, "data", "automagik-herdr");
   mkdirSync(project, { recursive: true });
   mkdirSync(parent, { recursive: true });
@@ -848,8 +848,7 @@ test("LOW1 (j): a dangling final symlink at the checked path resolves and is ref
 });
 
 test("LOW1 (k): a dangling final symlink at a forbidden root resolves and is refused", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-low1-");
   const project = join(root, "project"), link = join(root, "forbidden");
   mkdirSync(project, { recursive: true });
   symlinkSync(join(project, "missing-root"), link);
@@ -859,8 +858,7 @@ test("LOW1 (k): a dangling final symlink at a forbidden root resolves and is ref
 });
 
 test("LOW1 (l): a valid symlink still resolves to its target", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-low1-");
   const project = join(root, "project"), safe = join(root, "safe"), link = join(root, "link");
   mkdirSync(project, { recursive: true });
   mkdirSync(safe, { recursive: true });
@@ -873,8 +871,7 @@ test("LOW1 (l): a valid symlink still resolves to its target", (t) => {
 });
 
 test("LOW1 (m): a symlink loop is refused", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-low1-");
   const a = join(root, "a"), b = join(root, "b");
   symlinkSync(b, a);
   symlinkSync(a, b);
@@ -885,8 +882,7 @@ test("LOW1 (m): a symlink loop is refused", (t) => {
 });
 
 test("LOW1 (n): a chain over 32 symlinks is refused; exactly 32 still resolves", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-low1-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-low1-");
   const real = join(root, "real");
   mkdirSync(real);
   let at = real;
@@ -898,4 +894,73 @@ test("LOW1 (n): a chain over 32 symlinks is refused; exactly 32 still resolves",
   assert.equal(realOrAbs(at), real, "exactly 32 links resolve");
   symlinkSync(at, join(root, "over"));
   assert.throws(() => realOrAbs(join(root, "over")), /more than 32 symlinks/);
+});
+
+test("#839: doctorDshTui and cmdDshTui doctor report wide or unowned ledgers read-only with chmod 600 fix, and pass once 0600", async (t) => {
+  const s = scene(t);
+  const { cmdDshTui } = await import(CLI);
+  const project = join(s.root, "project");
+  const appHome = join(s.home, ".config", "herdr-app");
+  mkdirSync(join(appHome, "automagik-herdr"), { recursive: true });
+  mkdirSync(join(project, ".herdr", "app-home", "automagik-herdr"), { recursive: true });
+  const io = { env: s.env, forbiddenRoots: rootsOf(s), project: { key: project, file: { bots: [] } } };
+
+  await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
+
+  const globalWorkers = join(appHome, "automagik-herdr", "workers.jsonl");
+  const projAttach = join(project, ".herdr", "app-home", "automagik-herdr", "attach.jsonl");
+  writeFileSync(globalWorkers, '{"event":"start","session":"s-1"}\n');
+  chmodSync(globalWorkers, 0o644);
+  writeFileSync(projAttach, '{"event":"attach","session":"s-2"}\n');
+  chmodSync(projAttach, 0o664);
+
+  const report = await cmdDshTui({ json: true, project }, ["doctor"], io);
+  assert.equal(report.code, 1);
+  const ledgerCheck = report.checks.find((c) => c.check === "herdr-ledgers");
+  assert.equal(ledgerCheck.ok, false);
+  assert.match(ledgerCheck.detail, /workers\.jsonl is mode 0644, wider than 0600/);
+  assert.match(ledgerCheck.detail, /attach\.jsonl is mode 0664, wider than 0600/);
+  assert.equal(ledgerCheck.fix, `chmod 600 '${globalWorkers}' '${projAttach}'`);
+  assert.equal(lstatSync(globalWorkers).mode & 0o777, 0o644, "doctor is read-only");
+  assert.equal(lstatSync(projAttach).mode & 0o777, 0o664, "doctor is read-only");
+
+  const text = await cmdDshTui({}, ["doctor"], io);
+  assert.match(text, /FAIL herdr-ledgers: .* \(fix: chmod 600 /);
+
+  chmodSync(globalWorkers, 0o600);
+  chmodSync(projAttach, 0o600);
+
+  const unowned = await cmdDshTui({ json: true, project }, ["doctor"], { ...io, getuid: () => 999999 });
+  assert.equal(unowned.code, 1);
+  const unownedCheck = unowned.checks.find((c) => c.check === "herdr-ledgers");
+  assert.equal(unownedCheck.ok, false);
+  assert.match(unownedCheck.detail, /owned by uid \d+, not 999999/);
+  assert.equal(unownedCheck.fix, null, "never suggest chmod 600 for another user's file");
+
+  // Symlink and FIFO ledgers: doctor never hangs on a FIFO and never prints chmod 600 for symlinks or FIFOs.
+  unlinkSync(globalWorkers);
+  assert.equal(spawnSync("mkfifo", [globalWorkers]).status, 0);
+  unlinkSync(projAttach);
+  symlinkSync(join(s.root, "outside.jsonl"), projAttach);
+  const nonRegular = await cmdDshTui({ json: true, project }, ["doctor"], io);
+  assert.equal(nonRegular.code, 1);
+  const nonRegularCheck = nonRegular.checks.find((c) => c.check === "herdr-ledgers");
+  assert.equal(nonRegularCheck.ok, false);
+  assert.match(nonRegularCheck.detail, /workers\.jsonl is not a regular file/);
+  assert.match(nonRegularCheck.detail, /attach\.jsonl is a symlink/);
+  assert.equal(nonRegularCheck.fix, null, "never suggest chmod 600 for FIFO or symlink");
+
+  unlinkSync(globalWorkers);
+  unlinkSync(projAttach);
+  writeFileSync(globalWorkers, '{"event":"start","session":"s-1"}\n');
+  chmodSync(globalWorkers, 0o600);
+  writeFileSync(projAttach, '{"event":"attach","session":"s-2"}\n');
+  chmodSync(projAttach, 0o600);
+
+  const clean = await cmdDshTui({ json: true, project }, ["doctor"], io);
+  assert.equal(clean.code, 0, JSON.stringify(clean.checks));
+  const cleanCheck = clean.checks.find((c) => c.check === "herdr-ledgers");
+  assert.equal(cleanCheck.ok, true);
+  assert.equal(cleanCheck.fix, null);
+  assert.match(cleanCheck.detail, /2 ledger\(s\) mode 0600 and owned by current user/);
 });

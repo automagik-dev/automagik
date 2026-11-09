@@ -27,3 +27,14 @@ test('the suggested name skips taken names', () => {
   assert.equal(freshBotName(roster, 'Kimi'), 'Kimi 2')
   assert.equal(freshBotName(roster, 'Writer'), 'Writer')
 })
+
+test('a new Bot\'s form never starts on a model that is not set up or offered twice', () => {
+  const lineup = [
+    { ref: 'acp-claude/default', name: 'Claude Code', needsSignIn: true },
+    { ref: 'openai-codex/gpt-5.6-sol', name: '5.6 Sol', covered: true },
+    { ref: 'openai/gpt-5.6', name: 'GPT-5.6', needsKey: true },
+    { ref: 'acp-codex/gpt-5.6-sol', name: '5.6 Sol' },
+  ]
+  assert.equal(startModel({ models: lineup, defaultModel: 'acp-claude/default' }), 'acp-codex/gpt-5.6-sol')
+  assert.equal(startModel({ models: lineup.slice(0, 3), defaultModel: null }), '')
+})

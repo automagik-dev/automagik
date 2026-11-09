@@ -1,6 +1,6 @@
 {
   "name": "@automagik/welcome-dsh",
-  "version": "3.108.20",
+  "version": "3.113.1",
   "description": "Omni's welcome for DeepSeek Harness: the Omni octopus greets you and connects your AI through DSH's own sign-ins",
   "keywords": [
     "dsh-plugin",
@@ -53,7 +53,10 @@
   },
   "dsh": {
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "external": [
+        "@automagik/bots-dsh/client"
+      ]
     },
     "bundle": {
       "patch": "./cordis.patch.yml"

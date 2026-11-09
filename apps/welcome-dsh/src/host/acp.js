@@ -52,7 +52,18 @@ export function agentView(agent) {
     key: agent.key,
     name: agent.name,
     on: agent.on === true,
-    cli: { found: agent.cli?.found === true, ...(typeof agent.cli?.installUrl === 'string' && agent.cli.installUrl.startsWith('https://') ? { installUrl: agent.cli.installUrl } : {}) },
+    // The CLI as acp-dsh's own store has it (#749): installing, failed or ready, its version and
+    // an update under way, redacted like the connector's.
+    cli: {
+      found: agent.cli?.found === true,
+      ...(typeof agent.cli?.installUrl === 'string' && agent.cli.installUrl.startsWith('https://') ? { installUrl: agent.cli.installUrl } : {}),
+      ...(['missing', 'installing', 'failed', 'ready'].includes(agent.cli?.state) ? { state: agent.cli.state } : {}),
+      ...(typeof agent.cli?.version === 'string' ? { version: shownText(redactText(agent.cli.version)).slice(0, 80) } : {}),
+      ...(agent.cli?.updating === true ? { updating: true } : {}),
+      ...(typeof agent.cli?.error === 'string' ? { error: shownText(redactText(agent.cli.error)).slice(0, 300) } : {}),
+      ...(typeof agent.cli?.diagnostic === 'string' ? { diagnostic: shownText(redactText(agent.cli.diagnostic)).slice(0, 4000) } : {}),
+      ...(typeof agent.cli?.logPath === 'string' ? { logPath: shownText(redactText(agent.cli.logPath)) } : {}),
+    },
     connector: {
       state: ['off', 'no-cli', 'installing', 'failed', 'ready'].includes(agent.connector?.state) ? agent.connector.state : 'installing',
       ...(typeof agent.connector?.version === 'string' ? { version: agent.connector.version } : {}),
@@ -67,15 +78,46 @@ export function agentView(agent) {
   }
 }
 
-export function createAcpActions(ctx) {
-  const service = () => {
-    try {
-      const found = ctx.get?.(ACP_SERVICE)
-      return typeof found?.status === 'function' ? found : undefined
-    } catch {
-      return undefined
-    }
+// acp-dsh's service, or undefined without it (or with one that cannot say its status).
+export function acpService(ctx) {
+  try {
+    const found = ctx.get?.(ACP_SERVICE)
+    return typeof found?.status === 'function' ? found : undefined
+  } catch {
+    return undefined
   }
+}
+
+// Whether an agent can answer a turn now: its CLI found and not installing or updating, its
+// switch on, its connector ready, no restart pending, and the CLI signed in. The client's
+// stateOf (acp-agents.js) says 'ready' for exactly this.
+export function agentRunning(agent) {
+  if (agent === undefined || agent === null) return false
+  if (agent.cli?.found !== true || agent.cli.state === 'installing' || agent.cli.state === 'failed' || agent.cli.updating === true) return false
+  return agent.on === true && agent.connector?.state === 'ready' && agent.restartNeeded !== true && agent.signedIn === true
+}
+
+// Turns an agent on or off in acp-dsh's own settings (its `claude` or `codex` switch), the one
+// switch every Bot on that agent shares. Answers acp-dsh's service.
+export async function setAgent(ctx, id, on) {
+  const acp = acpService(ctx)
+  if (acp === undefined) throw refused('The ACP agents plugin is not running in this DSH.')
+  const agent = (await acp.status())?.agents?.find(row => row.id === id)
+  // The settings entry acp-dsh says is its own; an older acp-dsh does not say.
+  const ns = typeof acp.settingsEntry === 'string' && acp.settingsEntry !== '' ? acp.settingsEntry : ACP_ENTRY
+  const entry = ctx.settings.describe().find(row => row.ns === ns)
+  if (agent === undefined || entry === undefined) throw refused('This DSH cannot change the ACP agents\' settings.')
+  try {
+    await ctx.settings.update(ns, { [agent.key]: on }, entry.revision)
+  } catch (error) {
+    if (error?.code === 'SETTINGS_CONFLICT') throw refused('The ACP agents\' settings changed while saving. Try again.')
+    throw refused(`DSH did not save the switch: ${error?.message ?? error}`)
+  }
+  return acp
+}
+
+export function createAcpActions(ctx) {
+  const service = () => acpService(ctx)
   const view = async (ask) => {
     const acp = service()
     if (acp === undefined) return { available: false, agents: [] }
@@ -91,21 +133,9 @@ export function createAcpActions(ctx) {
     'acp-switch': async (payload) => {
       const asked = parse(SwitchPayload, payload)
       if (asked === undefined) throw invalid('Say which agent, and on or off.')
-      const acp = service()
-      if (acp === undefined) throw refused('The ACP agents plugin is not running in this DSH.')
-      const agent = (await acp.status()).agents.find(row => row.id === asked.id)
-      // The settings entry acp-dsh says is its own; an older acp-dsh does not say.
-      const ns = typeof acp.settingsEntry === 'string' && acp.settingsEntry !== '' ? acp.settingsEntry : ACP_ENTRY
-      const entry = ctx.settings.describe().find(row => row.ns === ns)
-      if (agent === undefined || entry === undefined) throw refused('This DSH cannot change the ACP agents\' settings.')
-      try {
-        await ctx.settings.update(ns, { [agent.key]: asked.on }, entry.revision)
-      } catch (error) {
-        if (error?.code === 'SETTINGS_CONFLICT') throw refused('The ACP agents\' settings changed while saving. Try again.')
-        throw refused(`DSH did not save the switch: ${error?.message ?? error}`)
-      }
+      const acp = await setAgent(ctx, asked.id, asked.on)
       // Turning one on looks for its CLI and its sign-in at once.
-      return view(next => (asked.on && typeof next.refresh === 'function' ? next.refresh() : next.status()))
+      return view(() => (asked.on && typeof acp.refresh === 'function' ? acp.refresh() : acp.status()))
     },
     'acp-retry': async (payload) => {
       const asked = parse(RetryPayload, payload)

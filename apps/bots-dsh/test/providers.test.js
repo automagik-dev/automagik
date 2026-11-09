@@ -222,3 +222,79 @@ test('a route\'s key reference follows DSH\'s own Models page', () => {
   assert.equal(keyRefFor('moonshotai'), 'MOONSHOTAI_API_KEY')
   assert.equal(keyRefFor('my-gateway2'), 'MY_GATEWAY2_API_KEY')
 })
+
+// How each pi-ai route is connected, for the model menu: only described, never read.
+test('a route names its connection: a key, a stored sign-in, or a sign-in still missing', async () => {
+  const records = new Map([['llm-pi-ai/anthropic', 'grant']])
+  const env = new Set(['XAI_API_KEY'])
+  const described = []
+  const services = {
+    settings: {
+      describe: () => [{ ns: 'llm-pi-ai', revision: 0, value: { providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' }, anthropic: {}, 'openai-codex': {}, xai: {}, ollama: { apiKeyEnv: 'OLLAMA_KEY' }, local: {} } }, user: {}, base: {} }],
+    },
+    credentials: {
+      describe: async (ref) => { described.push(ref); return { configured: env.has(ref) } },
+      describeRecord: async (key) => { described.push(key); return records.has(key) ? { configured: true, kind: records.get(key) } : { configured: false } },
+      readRecord: async () => { throw new Error('a record is never read') },
+    },
+  }
+  const entry = (provider, nativeAuth) => ({ provider, displayName: provider, settingsNs: 'llm-pi-ai', settingsPath: ['providers', provider], ...(nativeAuth ? { nativeAuth } : {}) })
+  const rt = {
+    ctx: {
+      get: name => services[name],
+      llm: {
+        listConfigurableProviders: () => [
+          { provider: 'deepseek', displayName: 'DeepSeek', settingsNs: 'llm-deepseek', settingsPath: [] },
+          entry('openai', { env: ['OPENAI_API_KEY'], oauth: false }),
+          entry('anthropic', { env: ['ANTHROPIC_API_KEY'], oauth: true }),
+          entry('openai-codex', { env: [], oauth: true }),
+          entry('xai', { env: ['XAI_API_KEY'], oauth: true }),
+          entry('ollama'),
+          entry('local', { env: [], oauth: false }),
+        ],
+      },
+    },
+    state: { bots: {} },
+  }
+  install(rt)
+  const auth = await rt.routeAuth(['deepseek', 'openai', 'anthropic', 'openai-codex', 'xai', 'ollama', 'local'])
+  assert.deepEqual(Object.fromEntries(auth), {
+    openai: { via: 'key' },
+    anthropic: { via: 'signin' },
+    'openai-codex': { via: 'signin', needsSignIn: true },
+    xai: { via: 'key' },
+    ollama: { via: 'key' },
+  })
+  assert.ok(!described.includes('OPENAI_API_KEY'), 'a named key is the route\'s own: the missing-key check covers it')
+  // Without DSH's settings or credentials, nothing is said.
+  const bare = { ctx: { get: () => undefined, llm: {} }, state: {} }
+  install(bare)
+  assert.equal((await bare.routeAuth(['openai'])).size, 0)
+})
+
+// The one rule (subscription-move.js runsOnSignIn): a route with no apiKeyEnv is a sign-in only
+// for a stored grant with no key found to win over it. pi-ai stores a pasted key as a record too.
+test('a route with no key named is a sign-in only for a stored grant and no key found', async () => {
+  const via = async (kind, envKey) => {
+    const rt = {
+      ctx: {
+        get: name => ({
+          settings: { describe: () => [{ ns: 'llm-pi-ai', revision: 0, value: { providers: { anthropic: {} } }, user: {}, base: {} }] },
+          credentials: {
+            describe: async ref => ({ configured: envKey && ref === 'ANTHROPIC_API_KEY' }),
+            describeRecord: async () => (kind === undefined ? { configured: false } : { configured: true, kind }),
+          },
+        })[name],
+        llm: { listConfigurableProviders: () => [{ provider: 'anthropic', displayName: 'Anthropic', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'anthropic'], nativeAuth: { env: ['ANTHROPIC_API_KEY'], oauth: true } }] },
+      },
+      state: { bots: {} },
+    }
+    install(rt)
+    return (await rt.routeAuth(['anthropic'])).get('anthropic')
+  }
+  assert.deepEqual(await via('api-key', false), { via: 'key' }, 'a pasted key stored as a record is a key route')
+  assert.deepEqual(await via('grant', true), { via: 'key' }, 'a key found wins over the grant, as for the move')
+  assert.deepEqual(await via('grant', false), { via: 'signin' })
+  assert.deepEqual(await via(undefined, true), { via: 'key' })
+  assert.deepEqual(await via(undefined, false), { via: 'signin', needsSignIn: true })
+})

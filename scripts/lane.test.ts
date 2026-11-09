@@ -361,11 +361,12 @@ describe('the plugin lane', () => {
     expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 
-  test('every Unfold plugin is built and tested here but ships from Unfold\'s own release', () => {
+  test('no Unfold folder ships: the removal\'s deleted folders, or one that came back, cut no release', () => {
     const none = () => false;
+    // The paths the removal (RFC 0020) deletes count as changed since the last release.
     const unfold = ['bot', 'bridge', 'capabilities', 'events', 'mind', 'session', 'settings', 'sse', 'trajectory']
       .map((name) => `apps/unfold-${name}-dsh/src/index.js`);
-    // Alone: no tarball, no lane entry, no release here (Refs marketplace/unfold).
+    // Alone: no tarball, no lane entry, no release here; Unfold's own release ships them.
     expect(ships(unfold, none)).toBe(false);
     // Beside a plugin: that plugin's patch, and the lane still names no Unfold plugin.
     expect(ships([...unfold, 'apps/bots-dsh/src/host/turns.js'], none)).toBe(true);

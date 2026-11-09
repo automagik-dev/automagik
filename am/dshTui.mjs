@@ -31,8 +31,8 @@
 // Apache-2.0.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync,
-  mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
+import { accessSync, chmodSync, closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, mkdirSync,
+  mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync,
   writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import net from "node:net";
@@ -40,7 +40,8 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
 import { approvedProxyState, approvedRootOf } from "./approved.js";
-import { dataRootOf, stableRootOf } from "./workers.js";
+import { PROJECTS_FILE, listedProjects } from "./model.js";
+import { LEDGER_FILE, dataRootOf, stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
 /** The one version this pack installs, and the npm registry's integrity for its tarball. */
@@ -963,12 +964,132 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
   }));
 }
 
+const ATTACH_LEDGER_FILE = "automagik-herdr/attach.jsonl";
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
+function readSafeLedgerForDoctor(path, uid) {
+  const flags = (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  let fd;
+  try { fd = openSync(path, flags); } catch { return ""; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.isSymbolicLink?.()) return "";
+    if (uid !== null && typeof st.uid === "number" && st.uid !== uid) return "";
+    return readFileSync(fd, "utf8");
+  } catch {
+    return "";
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Read-only inspection of Herdr ledgers (`automagik-herdr/workers.jsonl` and `attach.jsonl`)
+ * under the app home, the current project's `.herdr/app-home` (when `project` is given), and
+ * known project app homes (#839). Never mutates files.
+ */
+export function doctorLedgers({ env = process.env, project = null, getuid = process.getuid, stat = lstatSync } = {}) {
+  const appHome = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config", "herdr-app");
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const homes = [resolve(appHome)];
+  const projects = new Set();
+  if (typeof project === "string" && isAbsolute(project) && resolve(project) !== "/") projects.add(project);
+  try {
+    const shared = JSON.parse(readFileSync(join(appHome, "shared.json"), "utf8"));
+    for (const key of ["am.sidebar.projects", "spaces-agents.projects"]) {
+      const list = shared && typeof shared === "object" && Object.hasOwn(shared, key) ? shared[key] : null;
+      for (const p of Array.isArray(list) ? list : []) {
+        if (typeof p?.key === "string" && !p.machine) projects.add(p.key);
+      }
+    }
+  } catch { /* none */ }
+  for (const name of [PROJECTS_FILE, "spaces-agents-projects.json"]) {
+    try {
+      for (const k of listedProjects(readFileSync(join(appHome, name), "utf8"))) projects.add(k);
+    } catch { /* none */ }
+  }
+  for (const rel of [LEDGER_FILE, ATTACH_LEDGER_FILE]) {
+    const text = readSafeLedgerForDoctor(join(appHome, rel), uid);
+    if (!text) continue;
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); } catch { continue; }
+      if (typeof row?.project === "string") projects.add(row.project);
+      if (typeof row?.worktree === "string") {
+        projects.add(row.worktree);
+        const marker = "/.claude/worktrees/";
+        const at = row.worktree.indexOf(marker);
+        if (at > 0) projects.add(row.worktree.slice(0, at));
+      }
+    }
+  }
+  for (const p of projects) {
+    if (typeof p === "string" && isAbsolute(p) && resolve(p) !== "/") {
+      homes.push(join(p, ".herdr", "app-home"));
+    }
+  }
+  const seenResolved = new Set();
+  const seenCanonical = new Set();
+  const problems = [];
+  const chmodFiles = [];
+  let present = 0;
+  for (const home of homes) {
+    for (const rel of [LEDGER_FILE, ATTACH_LEDGER_FILE]) {
+      const file = join(home, rel);
+      const abs = resolve(file);
+      if (seenResolved.has(abs)) continue;
+      seenResolved.add(abs);
+      let st;
+      try { st = stat(file); } catch (e) {
+        if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
+        problems.push(`${file} could not be inspected (${e?.message ?? e})`);
+        continue;
+      }
+      if (!st) continue;
+      let realParent = null;
+      try { realParent = realpathSync(dirname(file)); } catch { realParent = null; }
+      const canonical = realParent ? join(realParent, basename(file)) : abs;
+      if (seenCanonical.has(canonical)) continue;
+      seenCanonical.add(canonical);
+      present += 1;
+      if (st.isSymbolicLink() || !st.isFile()) {
+        const kind = st.isSymbolicLink() ? "a symlink" : "not a regular file";
+        problems.push(`${file} is ${kind} (Herdr ledgers must be plain 0600 files)`);
+        continue;
+      }
+      const mode = st.mode & 0o777;
+      const oct = `0${mode.toString(8).padStart(3, "0")}`;
+      if (uid !== null && typeof st.uid === "number" && st.uid !== uid) {
+        problems.push(`${file} is owned by uid ${st.uid}, not ${uid} (mode ${oct})`);
+        continue;
+      }
+      if ((mode & 0o177) !== 0) {
+        problems.push(`${file} is mode ${oct}, wider than 0600`);
+        chmodFiles.push(file);
+      }
+    }
+  }
+  if (problems.length) {
+    return {
+      ok: false,
+      detail: problems.join("; "),
+      fix: chmodFiles.length ? `chmod 600 ${chmodFiles.map(shQuote).join(" ")}` : null,
+    };
+  }
+  return {
+    ok: true,
+    detail: present ? `${present} ledger(s) mode 0600 and owned by current user` : "no ledger files yet",
+    fix: null,
+  };
+}
+
 /**
  * `dsh-tui doctor`: whether dsh, the dsh-tui profile and the shim exist, and whether the profile is
  * the pinned one. Read-only. `{ code, checks }`: 0 healthy or installed, 1 broken, 2 not
  * installed or no dsh (not applicable).
  */
-export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = undefined } = {}) {
+export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = undefined, project = null, getuid = process.getuid, stat = lstatSync } = {}) {
   const checks = [];
   const add = (check, ok, detail, fix = null) => checks.push({ check, ok, detail, fix: ok ? null : fix });
   const shell = loginShellOf(env);
@@ -1042,6 +1163,9 @@ export function doctorDshTui({ env = process.env, panePath, forbiddenRoots = und
             : sandbox.row.ok ? `the sandbox wrapper ${sandbox.wrapper} differs from the pack's`
               : sandbox.row.message,
     installLine);
+
+  const ledgers = doctorLedgers({ env, project, getuid, stat });
+  add("herdr-ledgers", ledgers.ok, ledgers.detail, ledgers.fix);
 
   const broken = checks.some((check) => !check.ok);
   const healthy = pinned && ours && sandboxOk;

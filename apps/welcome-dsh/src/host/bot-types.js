@@ -302,7 +302,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
 
   // Ready: the Genie Bot is on the team, which the plugin makes once it runs here.
   async function genieStatus() {
-    const install = genieJob === null ? null : { ...genieJob }
+    const install = genieJob === null ? null : { ...genieJob, done: [...genieJob.done] }
     const rows = await bundles()
     const row = rows?.find(bundle => bundle.name === GENIE_PLUGIN.name)
     const rt = team()
@@ -331,20 +331,30 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
   // Omni install would take it (a peer pnpm could not find on npm otherwise).
   async function runGenieInstall() {
     // In Unfold's instance nothing comes from git, so git is not asked for.
+    // Each step as it runs ({ steps, current, done }), for the sidebar's "2 of 3".
+    const at = (id) => { genieJob.current = id }
+    const passed = (id) => { genieJob.done.push(id) }
     if (!bundled) {
+      at('git')
       say(step('Checking git'))
       const problem = await checkGit()
       if (problem !== null) throw new Error(problem)
       say(ok('git is here'))
+      passed('git')
     }
     const rows = await bundles() ?? []
     const ownSource = rows.find(bundle => bundle.name === PKG.name)?.source
     const [botTeam] = OMNI_PLUGINS
     const { requestId } = genieJob
     const [teamTarget] = await targetsOf([botTeam], rows, ownSource)
+    at('team')
     const teamStep = await ensure(botTeam, rows, { ...teamTarget, options: { ...teamTarget.options, requestId }, onStart: what => say(step(`${what === 'install' ? 'Installing' : 'Switching on'} the Bot team (${botTeam.name})`)) })
     if (teamStep.there) say(ok('The Bot team is here'))
+    passed('team')
+    at('genie')
     const genieStep = await ensure(GENIE_PLUGIN, rows, { spec: genieSpec(), options: { requestId }, onStart: what => say(step(what === 'install' ? `Installing Genie (${GENIE_PLUGIN.name} ${GENIE_RELEASE.version}, ${GENIE_RELEASE.repository.replace(/^https:\/\/github\.com\//, '')}@${GENIE_RELEASE.commit.slice(0, 7)})` : 'Switching Genie on')) })
+    passed('genie')
+    genieJob.current = null
     genieJob.restart = teamStep.restart || genieStep.restart
     say(ok(genieJob.restart ? 'Genie is installed: DSH starts it after a restart' : 'Genie is installed'))
     genieJob.phase = genieJob.restart ? 'restart' : 'done'
@@ -353,7 +363,7 @@ export function createBotTypeActions(ctx, { team, omniProjectOf, env = process.e
   function startGenieInstall() {
     if (genieJob?.phase === 'installing') return
     if (typeof manager()?.installBundle !== 'function') throw refused('This DSH has no plugin manager to install Genie with. Add @automagik/genie-dsh on its Plugins page, then come back.')
-    genieJob = { phase: 'installing', error: null, restart: false, requestId: `genie-${Date.now()}`, log: '' }
+    genieJob = { phase: 'installing', error: null, restart: false, requestId: `genie-${Date.now()}`, log: '', steps: bundled ? ['team', 'genie'] : ['git', 'team', 'genie'], current: null, done: [] }
     const running = genieJob
     void runGenieInstall().catch((error) => {
       ctx.logger?.warn?.('omni-ai: installing Genie failed: %s', error?.message ?? error)

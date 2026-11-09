@@ -17,7 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
+  chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -217,17 +217,186 @@ export function botPaneFolders(run = execFileSync) {
   return out;
 }
 
-/** The workers ledger (workers.js LEDGER_FILE), read here so the updater needs no more of the pack. */
+/** The Herdr ledgers (workers.js LEDGER_FILE and attach.js ATTACH_FILE), named here so the updater needs no more of the pack. */
 const LEDGER = join("automagik-herdr", "workers.jsonl");
+const ATTACH_LEDGER = join("automagik-herdr", "attach.jsonl");
+export const HERDR_LEDGERS = Object.freeze([LEDGER, ATTACH_LEDGER]);
+
+function readSafeLedgerText(path, uid = typeof process.getuid === "function" ? process.getuid() : null) {
+  const flags = (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  let fd;
+  try { fd = openSync(path, flags); } catch { return ""; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.isSymbolicLink?.()) return "";
+    if (uid !== null && typeof st.uid === "number" && st.uid !== uid) return "";
+    return readFileSync(fd, "utf8");
+  } catch {
+    return "";
+  } finally {
+    try { closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
 /** The folders the ledger's start rows name (each worker's worktree, each bot seat's folder). */
-export function ledgerFolders(appHome) {
-  let text = "";
-  try { text = readFileSync(join(appHome, LEDGER), "utf8"); } catch { return []; }
+export function ledgerFolders(appHome, uid = typeof process.getuid === "function" ? process.getuid() : null) {
+  const text = readSafeLedgerText(join(appHome, LEDGER), uid);
+  if (!text) return [];
   const out = [];
   for (const line of text.split("\n")) {
     try { const row = JSON.parse(line); if (row?.event === "start" && typeof row.worktree === "string") out.push(row.worktree); } catch { /* a torn line */ }
   }
   return out;
+}
+
+/** Project folders derived from `ledgerFolders(appHome)` and the ledgers' `project` rows. */
+function ledgerProjectFolders(appHome, git = runGit, uid = typeof process.getuid === "function" ? process.getuid() : null) {
+  const distinct = new Set();
+  for (const rel of HERDR_LEDGERS) {
+    const text = readSafeLedgerText(join(appHome, rel), uid);
+    if (!text) continue;
+    for (const line of text.split("\n")) {
+      try {
+        const row = JSON.parse(line);
+        if (typeof row?.project === "string" && isAbsolute(row.project) && resolve(row.project) !== "/") distinct.add(row.project);
+        if (typeof row?.worktree === "string" && isAbsolute(row.worktree) && resolve(row.worktree) !== "/") distinct.add(row.worktree);
+      } catch { /* a torn line */ }
+    }
+  }
+  const marker = `${sep}.claude${sep}worktrees${sep}`;
+  const out = new Set();
+  for (const f of distinct) {
+    out.add(f);
+    const at = f.indexOf(marker);
+    if (at > 0) out.add(f.slice(0, at));
+    if (usable(f)) out.add(keyOf(f, git));
+  }
+  return [...out];
+}
+
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
+/**
+ * Tightens existing Herdr ledgers (`automagik-herdr/workers.jsonl` and `automagik-herdr/attach.jsonl`)
+ * to 0600 (or 0400 when owner read-only) in `appHome` and in `<project>/.herdr/app-home` for every
+ * project in `knownProjects` and `ledgerFolders` (#839). Never follows symlinks, never creates
+ * missing files, never widens a stricter mode (0400/0000), and leaves unowned or owner-unreadable
+ * files alone with a warning.
+ */
+export function tightenLedgers(appHome, {
+  extra = [], git = runGit, getuid = process.getuid,
+  stat = lstatSync, open = openSync, fstat = fstatSync, fchmod = fchmodSync, close = closeSync,
+  log = () => {}, warn = true,
+} = {}) {
+  const uid = typeof getuid === "function" ? getuid() : null;
+  const homes = [resolve(appHome)];
+  const known = new Set(knownProjects(appHome, extra));
+  const projects = new Set([...known, ...ledgerProjectFolders(appHome, git, uid)]);
+  for (const k of known) {
+    if (typeof k === "string" && isAbsolute(k) && resolve(k) !== "/" && usable(k)) {
+      projects.add(keyOf(k, git));
+    }
+  }
+  for (const p of projects) {
+    if (typeof p !== "string" || !isAbsolute(p) || resolve(p) === "/") continue;
+    homes.push(join(p, ".herdr", "app-home"));
+  }
+  const seenResolved = new Set();
+  const seenCanonical = new Set();
+  const tightened = [];
+  const modes = new Set();
+  const warnings = [];
+  const noteWarn = (w) => {
+    warnings.push(w);
+    if (warn) log(`warning: ${w}`);
+  };
+  for (const home of homes) {
+    for (const rel of HERDR_LEDGERS) {
+      const file = join(home, rel);
+      const abs = resolve(file);
+      if (seenResolved.has(abs)) continue;
+      seenResolved.add(abs);
+      let st;
+      try { st = stat(file); } catch (e) {
+        if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
+        noteWarn(`${file} could not be inspected (${e?.message ?? e})`);
+        continue;
+      }
+      if (!st) continue;
+      const realParent = realOf(dirname(file));
+      const canonical = realParent ? join(realParent, basename(file)) : abs;
+      if (seenCanonical.has(canonical)) continue;
+      seenCanonical.add(canonical);
+      if (st.isSymbolicLink() || !st.isFile()) {
+        const kind = st.isSymbolicLink() ? "a symlink" : "not a regular file";
+        noteWarn(`${file} is ${kind}: left as it is (Herdr ledgers must be plain files)`);
+        continue;
+      }
+      if (uid !== null && typeof st.uid === "number" && st.uid !== uid) {
+        noteWarn(`${file} is owned by uid ${st.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+        continue;
+      }
+      const mode = st.mode & 0o777;
+      if ((mode & 0o177) !== 0) {
+        const oct = `0${mode.toString(8).padStart(3, "0")}`;
+        if ((mode & 0o400) === 0) {
+          noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+          continue;
+        }
+        try {
+          let fd = null;
+          try {
+            fd = open(file, (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+          } catch (e) {
+            if (e?.code === "ELOOP" || e?.code === "EFTYPE") {
+              noteWarn(`${file} became a symlink: left as it is (Herdr ledgers must be plain files)`);
+              continue;
+            }
+            if (e?.code === "EACCES" || e?.code === "EPERM") {
+              noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              continue;
+            }
+            throw e;
+          }
+          try {
+            const fst = fstat(fd);
+            if (!fst || fst.isSymbolicLink?.() || !fst.isFile()
+              || fst.dev !== st.dev || fst.ino !== st.ino) {
+              noteWarn(`${file} changed during inspection: left as it is (Herdr ledgers must be plain files)`);
+              continue;
+            }
+            if (uid !== null && typeof fst.uid === "number" && fst.uid !== uid) {
+              noteWarn(`${file} is owned by uid ${fst.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+              continue;
+            }
+            const fmode = fst.mode & 0o777;
+            if ((fmode & 0o400) === 0) {
+              const foct = `0${fmode.toString(8).padStart(3, "0")}`;
+              noteWarn(`${file} is not readable by its owner (mode ${foct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              continue;
+            }
+            if ((fmode & 0o177) !== 0) {
+              const target = fmode & 0o600;
+              fchmod(fd, target);
+              tightened.push(file);
+              modes.add(`0${target.toString(8).padStart(3, "0")}`);
+            }
+          } finally {
+            close(fd);
+          }
+        } catch (e) {
+          noteWarn(`${file} could not be tightened (${e?.message ?? e})`);
+        }
+      }
+    }
+  }
+  if (tightened.length) {
+    const onlyMode = modes.size === 1 ? [...modes][0] : null;
+    log(onlyMode
+      ? `tightened Herdr ledger(s) to ${onlyMode}: ${tightened.join(", ")}`
+      : `tightened Herdr ledger(s): ${tightened.join(", ")}`);
+  }
+  return { tightened, warnings };
 }
 
 /** The key git gives a worktree root: its main checkout (model.js projectOf, for folders in git). */
@@ -572,8 +741,9 @@ export function placeEntry(appHome, sidebar) {
  * panes'); the ledger's start folders are always looked in. Throws on what stops it.
  * Returns `{ direction: "forward" | "back" | null, rewritten?, restored?, skipped }`.
  */
-export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit }) {
+export function syncHooks({ modsDir, extra = [], log = () => {}, git = runGit, warnLedgers = true }) {
   const appHome = dirname(resolve(modsDir));
+  tightenLedgers(appHome, { extra, git, log, warn: warnLedgers });
   const sidebar = sidebarOf(modsDir);
   if (!sidebar) return { direction: null, skipped: [] };
   const projects = knownProjects(appHome);

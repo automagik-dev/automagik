@@ -6,6 +6,7 @@
 // approval service and hands the agent the answer.
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { contentText, isTerminal } from './acp.js'
+import { agentImageOf, isImageCall, isPng, KEPT_TEXT } from './agent-image.js'
 
 export const TOOL_NAME = 'acp_tool'
 const DSH_KINDS = new Set(['read', 'edit', 'delete', 'move', 'search', 'execute', 'fetch', 'other'])
@@ -32,6 +33,8 @@ export function callArguments(tool) {
     input: tool.rawInput ?? null,
     ...(tool.locations?.length ? { locations: tool.locations.map(at => ({ path: at.path, ...(at.line == null ? {} : { line: at.line }) })) } : {}),
     ...(diffs.length ? { diffs } : {}),
+    // An image being made: the chat draws its image card from the first sight of the call.
+    ...(isImageCall(tool) ? { image: true } : {}),
   }
 }
 
@@ -54,6 +57,36 @@ export function optionFor(outcome, options) {
   return chosen ? { outcome: { outcome: 'selected', optionId: chosen.optionId } } : { outcome: { outcome: 'cancelled' } }
 }
 
+// The answer of a call that makes an image: the PNG from the call's own update goes to the
+// chat's image keeper (agent-image.js), and the result names the kept file, never the agent's
+// own saved path or the image's bytes.
+async function imageResult(host, live, tool, exec) {
+  const keeper = host.images?.()
+  const callId = exec.callId
+  const sessionId = exec.agent?.session?.id
+  const base = { title: tool.title, kind: tool.kind, status: tool.status }
+  const failed = (text) => {
+    try { keeper?.fail?.({ callId, sessionId, error: text }) } catch {}
+    return { ...base, status: 'failed', text }
+  }
+  if (exec.signal?.aborted) return failed('The image was stopped before it was finished.')
+  const base64 = agentImageOf(tool)
+  if (base64 === undefined) {
+    return failed(tool.status === 'failed'
+      ? `${live.name} could not make this image. Try again, or describe it differently.`
+      : `${live.name} ended without an image. Try again.`)
+  }
+  if (!isPng(base64)) return failed(`${live.name} answered with something that is not a PNG image. Try again.`)
+  if (keeper === undefined || typeof keeper.keep !== 'function') return failed('The image was made, but this chat has no place to keep it.')
+  try {
+    const kept = await keeper.keep({ callId, sessionId, base64, mimeType: 'image/png', via: live.name })
+    if (typeof kept?.file !== 'string' || kept.file === '') return failed('The image could not be kept. Try again.')
+    return { ...base, status: 'completed', text: `${KEPT_TEXT} ${kept.file}. It is on screen in the chat, so do not describe it back.` }
+  } catch (error) {
+    return failed(`The image could not be kept: ${String(error?.message ?? error).slice(0, 200)}`)
+  }
+}
+
 const changed = (tool, signal) => new Promise((resolve) => {
   const done = () => {
     tool.listeners.delete(done)
@@ -65,7 +98,8 @@ const changed = (tool, signal) => new Promise((resolve) => {
 })
 
 /**
- * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any, permissionPresets?(): any }} host
+ * `images()` is the chat's image keeper (acpAgents.keepImages), or undefined.
+ * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any, permissionPresets?(): any, images?(): { start?(call: object): void, keep(image: object): Promise<{ file: string }>, fail?(call: object): void } | undefined }} host
  */
 export function mirrorTool(host) {
   return defineTool({
@@ -78,6 +112,7 @@ export function mirrorTool(host) {
       input: { type: 'json' },
       locations: { type: 'json' },
       diffs: { type: 'json' },
+      image: { type: 'boolean' },
     },
     output: {
       schema: {
@@ -98,6 +133,10 @@ export function mirrorTool(host) {
       const live = host.runOf(exec.agent?.session?.id)
       const tool = live?.run.tools.get(args.id)
       if (!tool) return { title: args.title, kind: args.kind, status: 'failed', text: 'The agent is no longer running this call.' }
+      // The card follows an image being made from its start (the keeper's progress).
+      if (isImageCall(tool)) {
+        try { host.images?.()?.start?.({ callId: exec.callId, sessionId: exec.agent?.session?.id, via: live.name }) } catch {}
+      }
       for (;;) {
         if (exec.signal?.aborted) {
           tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
@@ -113,6 +152,9 @@ export function mirrorTool(host) {
         if (isTerminal(tool) || !live.run.busy) break
         await changed(tool, exec.signal)
       }
+      // Only an image-generation call is answered as a kept image; any other call that answers
+      // with an image (a Read, a screenshot) keeps its own result.
+      if (isImageCall(tool)) return imageResult(host, live, tool, exec)
       return resultOf(tool)
     },
     presentCall(args) {

@@ -1,0 +1,3 @@
+# These fixtures are the exact bytes the carried patch and the activation test name; never normalize their EOL.
+persistence-jsonl.js -text
+workspace.js -text

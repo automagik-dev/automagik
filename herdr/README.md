@@ -100,21 +100,35 @@ older pack, through the installer itself, and it says which. If the updater stop
 more moves and the record stays: it says which folders are already in the kept set and which are
 still in place.
 
-It also installs [usagemeter](https://github.com/automagik-dev/usagemeter) 0.3.0, the token
-meter, to `~/.local/bin/usagemeter`: that release's build for your OS and architecture, checked against its
-`SHA256SUMS` and against the sha256 the pack pins for that build, written atomically. It skips the download when that version is already there and
-never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
+It also installs usagemeter, the token meter (`meter/usagemeter` in this repository), to
+`~/.local/bin/usagemeter`: the build for your OS and architecture that the signed `meter-lane`
+pointer names (`meter.json` and its ed25519 signature on this repository's rolling `meter-lane`
+release, checked against the meter's public keys the installer carries), checked against the
+sha256 that pointer names, written atomically. A pointer that does not verify, or one older than a
+pointer this install already took, installs nothing. Before the swap the new binary is run once
+(`--version`, with a minimal environment and a 10-second limit) and must answer exactly its
+version, or the old binary stays. The binary it replaces is kept as `~/.local/bin/usagemeter.prev`
+until the next swap, so if a new release misbehaves, one rename goes back:
+
+```sh
+mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter
+```
+
+(`automagik-herdr meter install` or an update would put the newer build back, so hold those until
+a fixed release.) It skips the download when that version is already there and never replaces a
+newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
 time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
-`0.3.0-dev` stays, and a file there that reports no version is left with a warning.
+`3.108.17-dev` stays, and a file there that reports no version is left with a warning.
 `--no-usagemeter` leaves the binary alone, on install and on `--uninstall`; a failed install is
 only a warning. `--uninstall` removes the binary only when this installer put it there, it is still
 that version and Pocket Link is not installed; usagemeter's data is kept.
 
 The phone reads each machine's own usage summary there (the `herdr-meter` document in that
 machine's herdr-core), so usagemeter runs on every linked machine too: the installer installs the
-same pinned build on each connected machine in `hc machine ls` (each machine downloads it and checks
-both hashes itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
+build the pointer names on each connected machine in `hc machine ls` (the pointer is checked once,
+on the computer running the command; each machine downloads its build and checks the pointer's
+sha256 itself; one that fails is a warning naming it), and the sidebar's 10-minute run syncs
 each connected machine after this computer, one at a time. `automagik-herdr meter install
 [--machine M]` does it again, for example for a machine linked later. `--usagemeter-local-only`
 keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
@@ -122,9 +136,9 @@ remembered.
 
 **Updating to this release from an earlier one:** the update is run by the earlier release's
 command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
-installs the pinned usagemeter on this computer and every connected linked machine, and records
-that you asked for it. From then on, `automagik-herdr update` keeps them on the pack's pin within
-what you chose. An earlier install's record is never read as a yes for the linked machines: if
+installs usagemeter on this computer and every connected linked machine, and records that you
+asked for it. From then on, `automagik-herdr update` keeps them on the build the meter lane names,
+within what you chose. An earlier install's record is never read as a yes for the linked machines: if
 that installer put usagemeter on this computer, `update` keeps it there only; if it recorded
 nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` installs nowhere and
 prints that command instead. Either way the sidebar syncs only this computer until you run it. `--uninstall` removes it
@@ -1148,16 +1162,34 @@ person's.
 The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
 time (agy replaces its saved list field by field). The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
-`bun`, the read-only `gh` verbs, the PR-writing `gh pr create`/`gh pr edit`/`gh pr comment` (a
-dev worker opens and updates its own PR), and the repository's own gates (`node --test`,
-`node --check`, `bun test`, `scripts/privacy-check.mjs`, `scripts/am-copies.mjs`, the
-`version`/`entries`/`parts`/`catalog` checks, …). No release verb is offered to any launch:
-the fixed `gh release` deny wins over every one of them. A read-only seat (rank `reviewer`) or
-worker (role `review`) gets no `write_file` and no plain `git`/`node`; it keeps `hc`, the test
-checks, the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …).
-Those subcommands are allowed with every argument they are given, so some can write
-(`git diff --output=file`): like the whole list, this is a guardrail, not a boundary.
-`gh pr merge` is out of both lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
+`bun`, the 24 read-only shell tools (`ls`, `cat`, `head`, `tail`, `grep`, `wc`, `diff`, `pwd`,
+`echo`, `cut`, `tr`, `jq`, `printf`, `basename`, `dirname`, `true`, `which`, `stat`, `realpath`,
+`readlink`, `date`, `nl`, `comm`, and `column`), the writer-only shell tools (`mkdir`, `chmod`,
+`rg`, `sort`, `uniq`, and `sed -n`), the read-only `gh` verbs, the PR-writing
+`gh pr create`/`gh pr edit`/`gh pr comment` (a dev worker opens and updates its own PR), and the
+repository's own gates (`node --test`, `node --check`, `bun test`, `scripts/privacy-check.mjs`,
+`scripts/am-copies.mjs`, the `version`/`entries`/`parts`/`catalog` checks, …). No release verb
+is offered to any launch: the fixed `gh release` deny wins over every one of them. A read-only
+seat (rank `reviewer`) or worker (role `review`) gets no `write_file`, no plain `git`/`node`,
+no bare `hc`, and none of `mkdir`, `chmod`, `rg`, `sort`, `uniq`, or `sed -n`; it lists only
+`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send` (never bare `hc`, so `hc run` and
+`hc exec` are not allowed on read-only roles), the 24 read-only shell tools, the test checks,
+the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …). Those
+subcommands and shell tools are allowed with every argument they are given, so word-prefix rules
+do not stop program-running or file-writing forms (`git diff --output=file`, `sed -n` running a
+program via GNU `sed`'s `e` command or writing via its `w` command or `-i`, `rg --pre` running a
+program, `sort --compress-program` running a program and `sort -o` writing a file, `uniq IN OUT`
+writing a file, and `echo`/`printf` with a shell redirection writing if agy runs the line
+through a shell): like the whole list, this is a guardrail, not a boundary, which is why `rg`,
+`sort`, `uniq`, and `sed -n` stay on writing roles only alongside `mkdir` and `chmod` (where
+`node` is already allowed) and out of read-only roles. On pipelines and command lists, agy
+checks each command of a pipeline or list on its own (for example, a
+`git show ... | sed -n ...` line asks for `sed` separately while `git` is allowed), so
+`cat x | sh` or `ls; sh` still needs `sh` to be allowed; this per-command check was observed on
+`agy 1.5.3`, not documented by agy. Shell launchers and wrappers that run arbitrary commands or
+write in place (`bash`, `sh`, `env`, `xargs`, `find` with its `-exec` and `-delete`, `awk` with
+its `system()`, `tee`, and plain `sed`) are left out of every default list. `gh pr merge` is
+out of both lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
 `git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
 `git push origin -f`, `git push --mirror`, `git push --delete`, `git reset --hard`,
 `git branch -D`, `git clean`, `git rebase`, `git stash`,
@@ -1379,7 +1411,11 @@ and import nothing from Herdr; so does the briefing's text (`briefingText.mjs`).
 Model detection lives in `models.js` (`test/models.test.mjs`). `test/briefing.test.mjs`
 runs `briefing.mjs` under node with a fake `hc` on `PATH`, and `test/cli.test.mjs` runs every
 `automagik-herdr` command against scratch git projects with a recording fake `hc`
-(`test/fake-hc.mjs`). `test/bots.test.mjs` runs `bots.js` against stand-ins for
+(`test/fake-hc.mjs`). `test/scratch-project.mjs` makes every scratch project its own isolated
+project (`git init` when `isGit`, its own `.herdr` folder, and `GIT_CEILING_DIRECTORIES`),
+asserts before any CLI call that `projectOf`/`projectKeyOf` resolves to the scratch folder
+itself (failing with one line naming the outer project if it does not), and prints a one-line
+warning at suite start when `TMPDIR` lies inside a folder holding `.herdr/bots.json` or `.git`. `test/bots.test.mjs` runs `bots.js` against stand-ins for
 Herdr's `herdr` and `fs/promises` modules (`test/herdr-stub.mjs`, `test/fs-stub.mjs`; the
 second has only the seven functions Herdr gives a mod). A pass there does not prove the pack
 works inside Herdr. Check that in Herdr itself.

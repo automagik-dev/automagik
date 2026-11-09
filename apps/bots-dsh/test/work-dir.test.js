@@ -8,7 +8,7 @@ import { dshHomeOf } from '../src/host/folders.js'
 import { escapeRegExp } from '../src/host/text.js'
 import { fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
-import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
+import { createUnfold } from './fake-unfold-bot.js'
 
 // A Main Bot and a Bot, with the Bot in the group Ops through its group Session 'gb'.
 const TEAM = {

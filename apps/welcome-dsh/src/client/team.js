@@ -5,6 +5,7 @@ import { CLAY_OMNI, LAMP, faceAt } from './vendor/clay-art.js'
 import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 import { InstallLog } from './terminal.js'
 import { t } from './i18n.js'
+import { WORKING, powerOf, powerSignal, runPower, showPower, stopPower, takeTeamIntent, usePowerState } from './power-store.js'
 
 // Step omni-team (order -270): who joins the companion's team. Each Bot type is a card with
 // what it starts with (its model, plugins, tools, skills, folder and permissions), read from
@@ -44,7 +45,7 @@ export const sleep = (ms, signal) => new Promise((resolve, reject) => {
  * ({ sandbox }), restart ({ plugins }) or failed ({ message }). Returns the last phase.
  * `signal` is the power going off; `quick` (reduced motion) skips the pauses.
  */
-export async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait = sleep, quick = reducedMotion() }) {
+export async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait = sleep, quick = reducedMotion(), resume = null }) {
   const check = () => { if (signal?.aborted) throw abortError() }
   const pause = ms => wait(quick ? 0 : ms, signal)
   const end = (phase, detail) => {
@@ -52,11 +53,16 @@ export async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi
     show(phase, detail)
     return phase
   }
-  show('waking')
-  await pause(WAKE_MS)
-  check()
-  let plugins = await omniAi('omni-plugins')
-  check()
+  // `resume` is an omni-plugins answer whose install is already running on the host (one
+  // started in another window, or before a reload): no wake, the poll picks it up.
+  let plugins = resume
+  if (plugins === null) {
+    show('waking')
+    await pause(WAKE_MS)
+    check()
+    plugins = await omniAi('omni-plugins')
+    check()
+  }
   if (!plugins.ready) {
     show('installing', { plugins })
     if (plugins.install?.phase !== 'installing') {
@@ -111,18 +117,22 @@ export const unfoldPowerOn = ({ unfoldAi = call, ...options }) => botPowerOn('un
 
 // A Bot type that is one plugin making its own Bot (Genie, Unfold): ready at once when the Bot
 // is there, else its install, a few polls while DSH starts it, then ready or a restart.
-async function botPowerOn(kind, { show, signal, ai, wait = sleep, quick = reducedMotion() }) {
+async function botPowerOn(kind, { show, signal, ai, wait = sleep, quick = reducedMotion(), resume = null }) {
   const check = () => { if (signal?.aborted) throw abortError() }
   const end = (phase, detail) => {
     check()
     show(phase, detail)
     return phase
   }
-  show('waking')
-  await wait(quick ? 0 : WAKE_MS, signal)
-  check()
-  let reply = await ai(`${kind}-plugin`)
-  check()
+  // `resume`: a running install's answer, picked up without a wake (as powerOn's).
+  let reply = resume
+  if (reply === null) {
+    show('waking')
+    await wait(quick ? 0 : WAKE_MS, signal)
+    check()
+    reply = await ai(`${kind}-plugin`)
+    check()
+  }
   if (reply.ready) return end('ready', { bot: reply.bot })
   show('installing', { [kind]: reply })
   if (reply.install?.phase !== 'installing') {
@@ -389,9 +399,10 @@ const GeniePet = ({ expression }) => h('div', { className: 'oai-genie-pet oai-cl
 // Unfold's face follows its box as Genie's does.
 const UnfoldPet = ({ expression }) => h('div', { className: 'oai-unfold-pet oai-clay oai-clay-unfold', 'data-face': expression, style: { '--oai-face-at': faceAt(expression) } })
 
-const PowerIcon = () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': true },
-  h('path', { d: 'M12 3v8', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }),
-  h('path', { d: 'M6.4 6.6a8 8 0 1 0 11.2 0', fill: 'none', stroke: 'currentColor', strokeWidth: 2.4, strokeLinecap: 'round' }))
+// The power symbol, on each card's box and (at the header's size) on the sidebar's shortcut.
+export const PowerIcon = ({ size = 18, stroke = 2.4 } = {}) => h('svg', { viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': true },
+  h('path', { d: 'M12 3v8', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' }),
+  h('path', { d: 'M6.4 6.6a8 8 0 1 0 11.2 0', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' }))
 
 const titleOf = (plugins, name) => rowText(plugins?.plugins?.find(row => row.name === name)?.title ?? 'Omni')
 
@@ -591,6 +602,23 @@ function Inside({ phase, detail, power, live }) {
   return null
 }
 
+// Whether a box's power button is held: while its plugins install or start, and, for Genie and
+// Unfold, once on the team, since their plugins made their Bots and they stay.
+export const powerLocked = (kind, phase) => phase === 'installing' || phase === 'starting' || (kind !== 'omni' && phase === 'ready')
+
+/**
+ * Powering a box off, from its button or the sidebar's shortcut: its run stops, a sign-in waiting
+ * on the phone is cancelled and Omni's installer gets Ctrl-C, and the box sleeps, not on the team.
+ * Nothing more: a linked Omni stays linked and no Bot is removed (only the team step's Continue,
+ * team-save, leaves Omni out of the team).
+ */
+export function powerOff(kind, { phase, detail } = powerOf(kind), omniUi = callOmniUi) {
+  stopPower(kind)
+  if (kind === 'omni' && phase === 'pairing') void omniUi('omni-pair-cancel').catch(() => {})
+  if (kind === 'omni' && phase === 'sandbox' && detail?.terminal) void omniUi('omni-terminal-write', { terminal: detail.terminal, data: '\x03' }).catch(() => {})
+  showPower(kind, 'asleep', { removed: true })
+}
+
 /**
  * The machine: one box of a fixed size, Omni inside it, a switch on its corner and three
  * lights. Asleep it is a powered-down screen; everything after happens inside, in place.
@@ -600,8 +628,7 @@ export function Machine({ kind = 'omni', phase, detail, power, live, onPower, ch
   const omni = kind === 'omni'
   const unfold = kind === 'unfold'
   const title = omni ? 'Omni' : unfold ? 'Unfold' : 'Genie'
-  // Genie and Unfold, once on the team, stay: their plugins made their Bots.
-  const locked = phase === 'installing' || phase === 'starting' || (!omni && phase === 'ready')
+  const locked = powerLocked(kind, phase)
   // An Omni being set up can still be stopped (its installer gets Ctrl-C).
   return h('div', { className: `oai-box oai-box-${kind} oai-is-${phase}`, 'data-phase': phase },
     h('div', { className: 'oai-box-top' },
@@ -703,71 +730,43 @@ const useGeniePower = () => useBotPower('genie', geniePowerOn)
 // Unfold's, the same way.
 const useUnfoldPower = () => useBotPower('unfold', unfoldPowerOn)
 function useBotPower(kind, powerOnOf) {
-  const [phase, setPhase] = useState('asleep')
-  const [detail, setDetail] = useState(null)
-  const run = useRef(null)
-  useEffect(() => () => run.current?.abort(), [])
-  const show = (next, value = null) => {
-    setPhase(next)
-    setDetail(value)
-  }
+  // The phase lives in the power store (power-store.js): an install keeps running, and shows,
+  // after this card closes, and the sidebar's shortcut reads the same one.
+  const { phase, detail } = usePowerState(kind)
   // The Bot may already be on the team (installed before a restart or an update, or made by
   // its plugin in Unfold's own instance): its card says so from the start, rather than asleep.
   useEffect(() => {
     let alive = true
     call(`${kind}-plugin`).then((reply) => {
-      if (alive && reply?.ready && run.current === null) show('ready', { bot: reply.bot })
+      if (alive && reply?.ready && !WORKING.has(powerOf(kind).phase)) showPower(kind, 'ready', { bot: reply.bot })
     }, () => {})
     return () => { alive = false }
   }, [])
-  const on = () => {
-    run.current?.abort()
-    const controller = new AbortController()
-    run.current = controller
-    powerOnOf({ show, signal: controller.signal }).catch((error) => {
-      if (error?.name !== 'AbortError') show('failed', { message: error.message })
-    })
-  }
-  const off = () => {
-    run.current?.abort()
-    show('asleep', { removed: true })
-  }
+  const on = () => { runPower(kind, powerOnOf) }
+  const off = () => powerOff(kind)
   return { phase, detail, toggle: () => (phase === 'asleep' ? on() : off()) }
 }
 
 // The power button's state, and the connecting a found Omni or a typed address does.
 function usePower() {
-  const [phase, setPhase] = useState('asleep')
-  const [detail, setDetail] = useState(null)
+  // Omni's phase lives in the power store, as Genie's does (useBotPower).
+  const { phase, detail } = usePowerState('omni')
   const [busy, setBusy] = useState(null)
   const [problem, setProblem] = useState(null)
   // An Omni nobody owns yet, { url, claimUrl? }: how to make it yours comes first.
   const [unowned, setUnowned] = useState(null)
-  const run = useRef(null)
   const back = useRef(null)
-  useEffect(() => () => run.current?.abort(), [])
 
-  const show = (next, value = null) => {
-    setPhase(next)
-    setDetail(value)
-  }
+  const show = (next, value = null) => showPower('omni', next, value)
   const on = () => {
-    run.current?.abort()
-    const controller = new AbortController()
-    run.current = controller
     setProblem(null)
-    powerOn({ show, signal: controller.signal }).catch((error) => {
-      if (error?.name !== 'AbortError') show('failed', { message: error.message })
-    })
+    runPower('omni', powerOn)
   }
   // Off is Remove: Omni sleeps again and does not join the team.
   const off = () => {
-    run.current?.abort()
-    if (phase === 'pairing') void callOmniUi('omni-pair-cancel').catch(() => {})
-    if (phase === 'sandbox' && detail?.terminal) void callOmniUi('omni-terminal-write', { terminal: detail.terminal, data: '\x03' }).catch(() => {})
     setProblem(null)
     setBusy(null)
-    show('asleep', { removed: true })
+    powerOff('omni', { phase, detail })
   }
 
   // Each connect answers `paired`, `pairing` (approve it on the phone) or a message.
@@ -776,7 +775,7 @@ function usePower() {
     setProblem(null)
     try {
       const reply = await callOmniUi(endpoint, payload)
-      if (run.current?.signal.aborted) return
+      if (powerSignal('omni')?.aborted) return
       if (reply.status === 'paired' || reply.pairing) setUnowned(null)
       if (reply.status === 'paired') show('linked', { origin: reply.origin ?? null })
       else if (reply.pairing) {
@@ -823,14 +822,9 @@ function usePower() {
     toggle: () => (phase === 'asleep' ? on() : off()),
     use: omni => connect(omni.id, 'omni-discover-use', { id: omni.id }),
     sandbox: () => {
-      run.current?.abort()
-      const controller = new AbortController()
-      run.current = controller
       setProblem(null)
       back.current = { phase, detail }
-      sandboxInstall({ show, signal: controller.signal }).catch((error) => {
-        if (error?.name !== 'AbortError') show('failed', { message: error.message })
-      })
+      runPower('omni', sandboxInstall)
     },
     remote: wanted => (wanted.kind === 'bad-link'
       ? setProblem(t('That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…'))
@@ -903,8 +897,15 @@ export const TeamLede = ({ name }) => h('p', { className: 'oai-lede' },
   t('{name} leads. Who comes along?', { name }), h('br'),
   h('span', { className: 'oai-lede-rule' }, t('Code work goes to a Bot with Computer.')))
 
+// Opened on purpose (DSH's `explicit`, or the sidebar shortcut's intent, power-store.js), the
+// step is a place to power Bots on: Continue only closes it. It saves no team, so it never puts
+// the companion's name back on the Main Bot (companion.js applyCompanion) nor skips Connect Omni.
+export const explicitOf = (props, intent) => props?.explicit === true || intent !== null
+
 export function TeamStep(props) {
-  const state = useGate(props)
+  const [intent] = useState(() => takeTeamIntent())
+  const explicit = explicitOf(props, intent)
+  const state = useGate(explicit ? { ...props, explicit: true } : props)
   const finish = useFinish(props)
   const [glitching, glitch] = useGlitch()
   const power = usePower()
@@ -933,7 +934,9 @@ export function TeamStep(props) {
   }, [phase, glitch])
   useEffect(() => { if (state) glitch() }, [state, glitch])
   useEffect(() => {
-    if (!state || !powersOnByItself(state.preload, power.phase, power.detail, autoPowered.current)) return
+    // The shortcut's "Choose where Omni lives" wakes Omni's card as a preload would.
+    const asked = intent?.power === 'omni' && !autoPowered.current && power.phase === 'asleep'
+    if (!state || !(asked || powersOnByItself(state.preload, power.phase, power.detail, autoPowered.current))) return
     autoPowered.current = true
     power.toggle()
   }, [state])
@@ -961,6 +964,10 @@ export function TeamStep(props) {
   const working = ['waking', 'installing', 'starting', 'looking', 'sandbox'].includes(phase)
 
   async function go({ omni: joined = omni } = {}) {
+    if (explicit) {
+      props.complete?.()
+      return
+    }
     setSaving(true)
     setProblem(null)
     try {
