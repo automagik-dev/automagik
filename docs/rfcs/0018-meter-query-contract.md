@@ -95,7 +95,9 @@ usagemeter query --repo <host/owner/repo> --branch <b> [--branch <b> ...] --json
 - **Fork and exit.** The process reads, prints one JSON document on stdout and exits. No daemon,
   no listener, no background child.
 - **Branches match exactly**, case-sensitive, against the branch the meter recorded from the log
-  or the Codex thread, never against today's checkout. `--repo` is the meter's normalized form of
+  or the Codex thread, or, for a harness that logs none (dsh-tui, OMP), from the start row of the
+  worker launch the call resolves to (`branch_basis: ledger`, amended by RFC 0021), never against
+  today's checkout. `--repo` is the meter's normalized form of
   a git remote: credential-free, host lower-cased, no port, no `.git`, path case kept.
   `repo-normalization.json` holds the shared cases. genie owns the mapping from an absolute
   checkout to that string. The meter never sees checkout paths in a query.
@@ -176,8 +178,9 @@ usage in the window (`unattributed.tokens_total` above zero):
 - every row's `attribution.coverage` is `partial`, so a measured row is a lower bound. A mixed
   Claude and OMP session shows its Claude subset, priced, marked partial;
 - the meter never assigns the usage to a branch: not from today's checkout, not from another
-  harness's session at the same hour. Only M3's validity intervals may attribute it later, from
-  durable evidence, at `task_interval` precision.
+  harness's session at the same hour. Only durable evidence may attribute it later: a worker
+  launch's start row, which fills the branch with `branch_basis: ledger` (RFC 0021), or M3's
+  validity intervals, at `task_interval` precision.
 
 Three questions stay apart on every row: is a source healthy (`incomplete_sources`), is every
 token priced (`cost.state`), and is all of the repo's usage attributed (`attribution.coverage`).
@@ -348,7 +351,8 @@ sync; it is never automatic past the default window. What stays unknown, for goo
 - calls whose logs were deleted or rotated (Claude Code removes old transcripts on its own
   schedule);
 - the split of Codex threads known only as totals;
-- OMP branches (OMP does not log one);
+- OMP branches (OMP does not log one), except where a worker launch's start row fills one (RFC
+  0021);
 - the task of any session before linking existed (S0), unless a link event names it: those
   calls stay unattributed, never guessed from a branch name;
 - anonymous OMP sessions with no unique proof;

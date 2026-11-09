@@ -50,6 +50,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0018](0018-meter-query-contract.md) | The meter query contract | Draft | none (ships outside the five milestones) |
 | [0019](0019-gitlab-mirror.md) | The GitLab mirror | Draft (answers: 1-11, 2026-11-09; GitLab canonical, the switch gated on G1-G8) | none (ships outside the five milestones) |
 | [0020](0020-unfold-plugins-leave.md) | Unfold plugins leave Automagik | Draft (answers: Q1-Q5, 2026-11-09; no question open) | none (ships outside the five milestones) |
+| [0021](0021-meter-attribution.md) | Meter attribution | Draft (answers: Q1-Q6, 2026-11-09) | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 
