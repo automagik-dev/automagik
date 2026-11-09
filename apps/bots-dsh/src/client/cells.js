@@ -1056,6 +1056,9 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
   const done = call.kind === 'tool-result'
   const { text: arg, value: argValue } = toolArgs(call)
   const self = roster.byId[sessionId]
+  // What the image viewer's field asks goes to this same chat (a Bot's, or a group's room); a
+  // window that can only view the team (roster.readOnly) has no field to offer.
+  const askHere = !roster.readOnly && typeof actions?.send === 'function' ? text => actions.send(sessionId, text) : undefined
   // A tool another Omni plugin registers draws its own card (extend.js): Omni's calls, canvases.
   const card = toolCards.renderer(tool)
   if (card !== undefined) return card({ call, tool, arg, argValue, done, content: done ? contentText(call.content) : '', sessionId, roster, actions })
@@ -1125,10 +1128,10 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
       return h(WidgetCell, { sessionId, callId: call.callId, args: { text: arg, value: argValue }, done, isError: call.isError, roster, actions, heldCards })
     case 'generate_image':
       // The chat's own Bot paints (image-cell.js painterOf); a group chat has none, so the mark does.
-      return h(ImageCell, { bot: self, callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError })
+      return h(ImageCell, { bot: self, callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError, onAsk: askHere })
     case 'acp_tool':
       return agentImage(call)
-        ? h(ImageCell, { bot: self, callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError })
+        ? h(ImageCell, { bot: self, callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError, onAsk: askHere })
         : null
     case 'request_secret':
       return h(SecretToolCell, { sessionId, callId: call.callId, name: arg('name'), done, content: call.content, roster, actions, heldCards })
