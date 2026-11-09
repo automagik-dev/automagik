@@ -1817,6 +1817,7 @@ ${REST_NOTE}`);
 // src/client/api.js
 var ROUTE = "api/omni-ui";
 var REFUSALS = /* @__PURE__ */ new Set(["bot/refused", "bot/sign-in-required", "bot/invalid", "bot/read-only", "bot/not-found", "bot/browser-off", "bot/login-ended", "bot/login-restarted"]);
+var isRefusal = (code) => REFUSALS.has(code) || code.startsWith("bot/adopt-");
 var call = async (endpoint, payload, signal) => {
   let response;
   try {
@@ -1842,7 +1843,7 @@ var call = async (endpoint, payload, signal) => {
     const code = result.error?.code ?? "bot/error";
     const message = hostText(result.error?.message ?? "Request failed");
     const error = Object.assign(new Error(code === "bot/internal" ? `${message} ${t("Settings → Feedback has the details.")}` : message), { code });
-    if (!REFUSALS.has(code)) {
+    if (!isRefusal(code)) {
       noteClientError(endpoint, Object.assign(new Error(result.error?.message ?? "Request failed"), { code }));
       markNoted(error);
     }
@@ -26246,10 +26247,8 @@ function apply(ctx) {
           return main;
         }).catch((error) => {
           console.warn("[ds-bot] bot-session-adopt", error);
-          if (mainView() === main) {
-            chosen = main;
-            actions.reportError(error, "bot-session-adopt");
-          }
+          if (mainView() === main) chosen = main;
+          actions.reportError(error, "bot-session-adopt");
           throw error;
         }).finally(() => {
           if (pendingBot.get(main) === operation) pendingBot.delete(main);
