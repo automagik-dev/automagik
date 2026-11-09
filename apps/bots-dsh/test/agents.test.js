@@ -223,10 +223,12 @@ test('a native association without a valid Session id is refused by name and cod
 
 test('an unknown Bot and a pending transition are refused by name and code without changing state', async t => {
   const bench = await nativeTransition(t)
+  const beforeUnknown = teamState(bench.rt)
   const unknown = await bench.call('bot-session-adopt', { botId: 'nope', sessionId: 'picked', sourceSessionId: 'nope' })
   assert.equal(unknown.ok, false)
   assert.equal(unknown.error.code, 'bot/adopt-unknown')
   assert.match(unknown.error.message, /Bot nope is not an adopted DSH Bot, so Session picked cannot join it/)
+  assert.deepEqual(teamState(bench.rt), beforeUnknown)
   const before = teamState(bench.rt)
   let release
   bench.presets.list = () => new Promise(resolve => { release = () => resolve([{ id: 'cordis' }]) })
