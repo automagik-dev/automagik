@@ -173,6 +173,10 @@ test('main.js source: the menu is built from appMenuTemplate and Cmd+W reaches c
   const handler = mainSource.slice(start, end)
   assert.doesNotMatch(handler, /window\.close/)
   assert.doesNotMatch(handler, /app\.quit/)
+  // Any close/quit/exit/destroy call, optional chaining and spacing included (window?.close(),
+  // app?.quit(), window.destroy(), app.exit(), close?.()). Case-sensitive, and \b needs a word
+  // start, so the handler's own sendPaneClose( (capital C, mid-word) does not match.
+  assert.doesNotMatch(handler, /\b(?:close|quit|exit|destroy)\s*(?:\?\.\s*)?\(/)
 })
 
 test('main.js source: the clean stop keeps fade -> dshProcess.stop -> app.quit', () => {

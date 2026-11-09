@@ -55,4 +55,8 @@ test('main.js builds that menu and routes Cmd+W to the focused pane, not the win
   const handler = main.slice(main.indexOf('function closeFocusedPane'), main.indexOf('async function launch'))
   assert.ok(handler.length > 0)
   assert.doesNotMatch(handler, /window\.close|app\.quit/)
+  // Any close/quit/exit/destroy call, optional chaining and spacing included (window?.close(),
+  // app?.quit(), window.destroy(), app.exit(), close?.()). Case-sensitive, and \b needs a word
+  // start, so the handler's own sendPaneClose( (capital C, mid-word) does not match.
+  assert.doesNotMatch(handler, /\b(?:close|quit|exit|destroy)\s*(?:\?\.\s*)?\(/)
 })
