@@ -472,7 +472,10 @@ And the cases across time:
 - It migrates only with at least twice the store's size free (proposed); otherwise it refuses
   (exit 4), says why, and keeps the old store working, changing nothing. The same rule covers
   every write to an existing store's schema, such as the index M1 adds for the query, and the
-  generation is guarded by whether the store holds any row, not by its recorded window.
+  generation is guarded by whether the store holds any row, not by its recorded window. A reset,
+  backfill or migration needs twice the store plus its projected growth: the log bytes still to
+  import (each log in the window whole for a reset, else past its stored offset) divided by 8
+  (Decided by Chat, 2026-11-09).
 - A reset commits on its own, and the re-import after it commits chunk by chunk: until a run over
   the new window ends, the store has no watermark and an unknown backlog. A reader then reports
   the answer incomplete and every row `stale`, never a partial count as complete and fresh.
