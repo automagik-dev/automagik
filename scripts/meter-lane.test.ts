@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ARTIFACTS, KEY_ID, KEYS_FILE, SLOTS, SUMS, checkPointer, keyVerdict, matches, parseSums, pointer, postedProblem, signPointer, slotFor, verify } from './meter-lane';
+import { ARTIFACTS, KEY_ID, KEYS_FILE, SLOTS, SUMS, checkPointer, keyVerdict, matches, parseSums, pointer, postedProblem, signPointer, slotFor, verify, type MeterKey } from './meter-lane';
 
 // A throwaway key, made for this run only: no private key is ever committed.
 const pair = () => {
@@ -120,21 +120,40 @@ describe('the meter lane', () => {
     }
   });
 
-  test('the keys file starts empty: the owner fills it (RFC 0017 delivery 5)', () => {
-    expect(JSON.parse(readFileSync(KEYS_FILE, 'utf8'))).toEqual({ keys: [] });
+  test('the committed keys file lists the owner\'s one public key, and no private key (RFC 0017 delivery 5)', () => {
+    const text = readFileSync(KEYS_FILE, 'utf8');
+    expect(text).not.toMatch(/PRIVATE/i);
+    const { keys } = JSON.parse(text) as { keys: MeterKey[] };
+    expect(keys).toHaveLength(1);
+    const [listed] = keys;
+    expect(Object.keys(listed).sort()).toEqual(['keyId', 'publicKey']);
+    expect(listed.keyId).toBe(KEY_ID);
+    expect(listed.publicKey).toMatch(/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----\n?$/);
+    const pub = createPublicKey(listed.publicKey);
+    expect(pub.asymmetricKeyType).toBe('ed25519');
+    // It round-trips as SPKI PEM, and is not a private key in disguise.
+    expect(pub.export({ type: 'spki', format: 'pem' }).toString().trim()).toBe(listed.publicKey.trim());
+    expect(() => createPrivateKey(listed.publicKey)).toThrow();
+    // check-key, with a key made for this run (never the real one): a key that is not the listed one
+    // fails; in the committed entry's place (same id, this run's public key), it signs as that id.
+    const key = pair();
+    expect(keyVerdict(key.priv, keys)).toEqual({ verdict: 'fail', message: 'METER_LANE_KEY\'s public key is not in meter/usagemeter/meter-keys.json' });
+    expect(keyVerdict(key.priv, [{ ...listed, publicKey: key.pub }])).toEqual({ verdict: 'sign', message: `METER_LANE_KEY is ${KEY_ID}, listed in meter/usagemeter/meter-keys.json` });
   });
 
-  test('check-key as the release runs it: no sign=yes and exit 1 while no key is listed, whatever the secret', () => {
+  test('check-key as the release runs it: no sign=yes and exit 1 when the secret is unset or not the listed key', () => {
     const dir = mkdtempSync(join(tmpdir(), 'meter-lane-out-'));
     const out = join(dir, 'github-output');
     writeFileSync(out, '');
     const env = { ...process.env, GITHUB_OUTPUT: out };
     delete (env as Record<string, string | undefined>).METER_LANE_KEY;
-    const listed = JSON.parse(readFileSync(KEYS_FILE, 'utf8')).keys.length > 0;
-    for (const secret of [undefined, pair().priv]) {
+    // The committed file lists the owner's key; this run's key is never it.
+    expect(JSON.parse(readFileSync(KEYS_FILE, 'utf8')).keys).toHaveLength(1);
+    const expected = [/^::error::meter lane: METER_LANE_KEY is not set/, /^::error::meter lane: METER_LANE_KEY's public key is not in/];
+    for (const [i, secret] of [undefined, pair().priv].entries()) {
       const run = spawnSync('bun', [SCRIPT, 'check-key'], { encoding: 'utf8', env: secret ? { ...env, METER_LANE_KEY: secret } : env });
       expect(run.status).toBe(1);
-      expect(run.stderr).toMatch(listed ? /^::error::meter lane: METER_LANE_KEY/ : /^::error::meter lane: meter\/usagemeter\/meter-keys\.json lists no key/);
+      expect(run.stderr).toMatch(expected[i]);
     }
     expect(readFileSync(out, 'utf8')).toBe('');
   }, 30_000);
@@ -189,8 +208,8 @@ describe('the meter lane', () => {
   });
 
   test('posted as the release runs it, with a per-run key: exit 1 on a lower sequence or an unverified pointer', () => {
-    // The CLI reads the repository's meter-keys.json, which lists no key yet: every posted pointer
-    // is then unverifiable, so the run refuses unless dispatched with replace_unverified.
+    // The CLI reads the repository's meter-keys.json, which lists only the owner's key, never this
+    // run's: a pointer this run signs is unverifiable, so the run refuses unless replace_unverified.
     const key = pair();
     const dir = mkdtempSync(join(tmpdir(), 'meter-lane-posted-'));
     const posted = join(dir, 'posted');

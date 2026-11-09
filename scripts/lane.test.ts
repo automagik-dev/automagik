@@ -184,8 +184,12 @@ describe('the plugin lane', () => {
     // What lists no key: an empty list, a missing or broken file, an entry with no id or a key that does not parse.
     for (const keys of [NO_KEY, undefined, '{', '{}', '{"keys":{}}', '{"keys":[{"keyId":"x"}]}', '{"keys":[{"keyId":"","publicKey":"x"}]}', '{"keys":[{"keyId":"x","publicKey":"not a key"}]}']) expect(keysHeld(keys)).toBe(true);
     expect(keysHeld(ONE_KEY)).toBe(false);
-    // The repository's own keys file lists none yet: the lane is held today, whatever the contract.
-    expect(keysHeld(readFileSync(join(import.meta.dir, '..', METER_KEYS), 'utf8'))).toBe(true);
+    // The repository's own keys file lists the owner's key (RFC 0017 delivery 5), and its contract is
+    // RFC 0021's: the committed state opens the lane.
+    const keys = readFileSync(join(import.meta.dir, '..', METER_KEYS), 'utf8');
+    const contract = readFileSync(join(import.meta.dir, '..', METER_CONTRACT), 'utf8');
+    expect(keysHeld(keys)).toBe(false);
+    expect(meterHold(contract, keys)).toEqual([]);
   });
 
   // End to end, as release.yml runs lane.ts: a scratch repository with this lane.ts, a release tag,
@@ -243,15 +247,17 @@ describe('the plugin lane', () => {
     }
   }, 60_000);
 
-  test('lane.ts meter, as the release runs it here: no, with the reasons, while this repository holds the lane', () => {
+  test('lane.ts meter, as the release runs it here: yes, now this repository opens the lane', () => {
     const root = join(import.meta.dir, '..');
     const committed = (path: string) => { const run = spawnSync('git', ['show', `HEAD:${path}`], { cwd: root, encoding: 'utf8' }); return run.status === 0 ? run.stdout : undefined; };
-    const held = meterHeld(committed(METER_CONTRACT), committed(METER_KEYS));
-    // '' is meter-since's "no release has carried the meter": build it, unless the lane is held.
+    // The committed contract allows actor_interval and meter-keys.json lists a key: open.
+    expect(meterHold(committed(METER_CONTRACT), committed(METER_KEYS))).toEqual([]);
+    expect(meterHeld(committed(METER_CONTRACT), committed(METER_KEYS))).toBe(false);
+    // '' is meter-since's "no release has carried the meter": build it.
     const run = spawnSync('bun', [join(import.meta.dir, 'lane.ts'), 'meter', ''], { cwd: root, encoding: 'utf8' });
     expect(run.status).toBe(0);
-    expect(run.stdout.trim()).toBe(held ? 'no' : 'yes');
-    if (held) expect(run.stderr).toMatch(/^meter lane: held \(.*\): no meter release/);
+    expect(run.stdout.trim()).toBe('yes');
+    expect(run.stderr).not.toContain('meter lane: held');
   }, 30_000);
 
   test('the meter is measured from the build meter-lane names, else the newest stable release once one carried it', () => {
