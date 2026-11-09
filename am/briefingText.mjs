@@ -281,6 +281,46 @@ export const runnerPath = (appHome, sidebar = PACK_NAME) => `${appHome.replace(/
 
 const shQuoted = (path) => `"${path.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
 
+// ---- the am part's own briefing (a CLI-only host: herdr-core and am, no pack) ----
+//
+// The am part installs a whole extract at <AM_HOME, else ~/.automagik>/parts/automagik.am/
+// <version>/, with `current` a link swapped by one rename on update (am/lib/self.mjs storeOf,
+// placeExtract). It carries bin/run.sh (the runtime finder), briefingEntry.mjs (the entry that
+// runs am's briefing.mjs, then a sidebar's) and briefing.mjs. A hook written here goes through
+// `current`, so an update needs no rewrite, and names the app home a sidebar copy would find
+// from its own place and the am home whose store the entry reads.
+
+/** The am part's folder in its store (am/lib/self.mjs storeOf's tail). */
+export const AM_PART_STORE = "parts/automagik.am";
+/** The am part's installed briefing entry point, in the store's `current`. */
+export const amPartEntryPath = (store) => `${store.replace(/\/+$/, "")}/current/briefingEntry.mjs`;
+/** The am part's installed runtime finder (bin/run.sh), beside its briefing. */
+export const amPartRunnerPath = (store) => `${store.replace(/\/+$/, "")}/current/bin/run.sh`;
+/** The store a path names when it is an am part's installed briefing entry, else null. */
+export const amStoreOfEntry = (entry) => {
+  const m = /^(.*)\/current\/briefingEntry\.mjs$/.exec(String(entry ?? ""));
+  return m && /(?:^|\/)parts\/automagik\.am$/.test(m[1]) ? m[1] : null;
+};
+/** Whether `path` is an am part's installed briefing entry (any am home). */
+export const isAmPartEntry = (path) => amStoreOfEntry(path) !== null;
+/** The am home a store path sits under: <am home>/parts/automagik.am → <am home>. */
+const amHomeOfStore = (store) => {
+  const s = String(store).replace(/\/+$/, "");
+  return s.endsWith(`/${AM_PART_STORE}`) ? s.slice(0, -(AM_PART_STORE.length + 1)) : s;
+};
+
+/**
+ * The hook command for a host with the am part and no pack: the am part's entry through its own
+ * run.sh, told the app home a sidebar copy reads from its own place and the am home its entry
+ * looks under. Both the runner and the entry are guarded: one missing exits 0 and prints nothing,
+ * as the pack's forms do (`sh <missing file>` exits 2, which blocks a Claude prompt).
+ */
+export function amPartHookCommand(appHome, store) {
+  const runner = shQuoted(amPartRunnerPath(store));
+  const entry = shQuoted(amPartEntryPath(store));
+  return `[ ! -f ${runner} ] || [ ! -f ${entry} ] || HERDR_APP_HOME=${shQuoted(appHome)} AM_HOME=${shQuoted(amHomeOfStore(store))} sh ${runner} ${entry}`;
+}
+
 /**
  * The hook command for a script path, through one sidebar folder's run.sh: it finds a runtime
  * even where the agent's PATH has no `node`; finding none, it says so on stderr and exits 127,
@@ -313,7 +353,12 @@ export function hookCommand(appHome) {
 export const legacyHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome, OLD_PACK_NAME), OLD_PACK_NAME);
 /** The same shape, straight at this pack's folder: what a hook gets when the stable entry point can't be put in place. */
 export const directHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome));
-/** The script a command of the pack's shapes (hookCommand's, runnerCommandFor's, commandFor's) names, or null for any other. */
+/**
+ * The script a command of the shapes written here names (hookCommand's, runnerCommandFor's,
+ * commandFor's, amPartHookCommand's), or null for any other. The am part's form names its entry
+ * as the script, its store's run.sh twice and the two env words; the guards and the sh argument
+ * must line up, so a hand-edited command is not read as one of ours.
+ */
 export function scriptOf(command) {
   const text = String(command ?? "");
   const unq = (q) => q.replace(/\\(.)/g, "$1");
@@ -322,22 +367,41 @@ export function scriptOf(command) {
   if (viaEither) return unq(viaEither[3]);
   const viaRunner = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| sh ${q} ${q}$`).exec(text);
   if (viaRunner) return viaRunner[1] === viaRunner[2] ? unq(viaRunner[3]) : null;
+  const viaAmPart = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| \\[ ! -f ${q} \\] \\|\\| HERDR_APP_HOME=${q} AM_HOME=${q} sh ${q} ${q}$`).exec(text);
+  if (viaAmPart) return viaAmPart[1] === viaAmPart[5] && viaAmPart[2] === viaAmPart[6] ? unq(viaAmPart[6]) : null;
   const viaNode = /^command -v node >\/dev\/null && node "((?:[^"\\]|\\.)*)" \|\| true$/.exec(text);
   return viaNode ? unq(viaNode[1]) : null;
 }
 
 const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
-/** A command naming the pack's briefing: the stable entry, or either sidebar folder's own copy. */
-export const OURS = /\/(?:automagik-herdr|mods\/spaces-agents|mods\/am-sidebar)\/briefing\.mjs/;
+/** A command naming the pack's briefing (the stable entry or a sidebar folder's own copy) or am's entry. */
+export const OURS = /\/(?:automagik-herdr|mods\/spaces-agents|mods\/am-sidebar)\/briefing\.mjs|\/parts\/automagik\.am\/current\/briefingEntry\.mjs/;
+
+/**
+ * The briefing a project's hook command runs on this machine: `{ kind, script }`, kind
+ * "pack-stable" (the stable entry under `appHome`), "pack-direct" (a sidebar folder's own
+ * briefing) or "am-part" (am's installed entry, with its store and runner); null for a command
+ * of another shape or one naming another app home. For am self doctor and the pack's.
+ */
+export function hookTargetOf(command, { appHome = null } = {}) {
+  const script = scriptOf(command);
+  if (script === null) return null;
+  const home = typeof appHome === "string" ? appHome.replace(/\/+$/, "") : null;
+  if (home && script === stableBriefingPath(home)) return { kind: "pack-stable", script };
+  if (home && [PACK_NAME, OLD_PACK_NAME].some((m) => script === briefingPath(home, m))) return { kind: "pack-direct", script };
+  const store = amStoreOfEntry(script);
+  if (store !== null) return { kind: "am-part", script, store, runner: amPartRunnerPath(store) };
+  return null;
+}
 
 /**
  * Merges the briefing hook into a settings.local.json text (null: no file yet). Every other
- * key and hook is kept. The one entry naming the pack's briefing.mjs is ours: the same command
- * leaves the file alone, and any other (the older `command -v node … node "…" || true` form,
- * which loses the briefing where PATH has no node, or another app home) has its `command`
- * replaced in place, its other fields kept: never a second entry. A text that isn't a JSON
- * object, or whose `hooks` or `UserPromptSubmit` has another shape, is never rewritten:
- * `error` says why.
+ * key and hook is kept. The one entry naming the pack's briefing.mjs (or am's entry, on a
+ * CLI-only host) is ours: the same command leaves the file alone, and any other (the older
+ * `command -v node … node "…" || true` form, which loses the briefing where PATH has no node,
+ * or another app home) has its `command` replaced in place, its other fields kept: never a
+ * second entry. A text that isn't a JSON object, or whose `hooks` or `UserPromptSubmit` has
+ * another shape, is never rewritten: `error` says why.
  * Returns { text, changed } or { error }.
  */
 export function mergeHook(existing, command) {
@@ -440,9 +504,10 @@ export async function ensureExcluded(folder, io) {
 }
 
 /**
- * The command a hook gets: through the stable entry point, which is put in place from the pack's
- * ENTRY_SOURCE when it is missing (a pack the installer didn't place, or one an older updater
- * installed). When it can't be, the sidebar folder's own path, so the bot still gets its briefing.
+ * The command a hook gets on a host with the pack: through the stable entry point, which is put
+ * in place from the pack's ENTRY_SOURCE when it is missing (a pack the installer didn't place,
+ * or one an older updater installed). When it can't be, the sidebar folder's own path, so the
+ * bot still gets its briefing.
  */
 async function entryCommand(appHome, io) {
   const read = async (path) => { try { return await io.read(path); } catch { return null; } };
@@ -463,18 +528,27 @@ async function entryCommand(appHome, io) {
 /**
  * Merges the per-turn briefing hook, if absent, into `<folder>/.claude/settings.local.json`
  * (never the shared settings.json) and keeps that file out of git. The hook runs the stable
- * entry point (Group 6b). Writes nothing when the pack's briefing.mjs isn't under `appHome`. Never rejects: every problem is a warning.
+ * entry point (Group 6b) on a host with the pack installed under the app home; with no pack and
+ * the am part installed (`amStore`, the CLI's storeOf), it runs am's entry through am's runner
+ * instead (amPartHookCommand), so a CLI-only host gets the per-turn briefing too. Writes nothing
+ * when neither is installed. Never rejects: every problem is a warning.
  * Resolves { written, warnings } (`written`: the hook entry was added or updated).
  * `lost`: what a failure costs, for the warnings (default: the bot's briefing).
  */
-export async function installHook(botName, folder, appHome, io, { lost = null } = {}) {
+export async function installHook(botName, folder, appHome, io, { lost = null, amStore = null } = {}) {
   const warnings = [];
   const script = briefingPath(appHome);
   try {
-    if ((await io.read(script)) === null) {
+    // A pack installed under the app home keeps today's paths, even when a leftover stable entry
+    // is all an older install left: the pack's briefing.mjs is what the hook's runner needs.
+    const pack = (await io.read(script)) !== null;
+    const amEntry = pack ? null : amStore ? amPartEntryPath(amStore) : null;
+    const amThere = amEntry !== null && (await io.read(amEntry)) !== null;
+    if (!pack && !amThere) {
       warnings.push(`${lost ?? `${botName} gets no per-turn briefing`}: ${script} isn't there, so nothing was written. Herdr renames a mod folder `
         + `whose name is taken. The README's install step fixes it: move the old ${PACK_NAME} clone out of mods/, remove the `
-        + `renamed copy, and copy the pack in again as mods/${PACK_NAME}.`);
+        + `renamed copy, and copy the pack in again as mods/${PACK_NAME}.`
+        + (amStore === null ? "" : ` This host has am's entry at neither place: ${amEntry} isn't there either (am self install).`));
       return { written: false, warnings };
     }
     const path = `${folder}/.claude/settings.local.json`;
@@ -482,7 +556,7 @@ export async function installHook(botName, folder, appHome, io, { lost = null } 
     const excluded = await ensureExcluded(folder, io);
     if (excluded) warnings.push(excluded);
     const before = await io.read(path);
-    const merged = mergeHook(before, await entryCommand(appHome, io));
+    const merged = mergeHook(before, pack ? await entryCommand(appHome, io) : amPartHookCommand(appHome, amStore));
     if (merged.error) throw new Error(`${path} was left as it is: ${merged.error}.`);
     if (!merged.changed) return { written: false, warnings };
     if (before === null) await io.mkdir(`${folder}/.claude`);

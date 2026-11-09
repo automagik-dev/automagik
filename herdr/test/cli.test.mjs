@@ -13,7 +13,7 @@ import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
-import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
+import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
@@ -38,7 +38,7 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
 
 /** A scratch world: a git project, a fake hc, a fake home and app home. `trimsGit`: a git whose
  * stdout is trimmed, as a Herdr exec would answer the rule (#626, #665). */
-function scene(t, { terminals = [], briefing = true, window = { down: true }, trimsGit = false, isGit = true } = {}) {
+function scene(t, { terminals = [], briefing = true, amPart = false, window = { down: true }, trimsGit = false, isGit = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
@@ -63,6 +63,14 @@ function scene(t, { terminals = [], briefing = true, window = { down: true }, tr
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "sonnet" }));
+  // The am part's installed store (RFC 0012), for a CLI-only host: no pack under the app home.
+  if (amPart) {
+    const store = join(home, ".automagik", "parts", "automagik.am", "current");
+    mkdirSync(join(store, "bin"), { recursive: true });
+    writeFileSync(join(store, "bin", "run.sh"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(store, "briefingEntry.mjs"), "// am's entry\n");
+    writeFileSync(join(store, "briefing.mjs"), "// am's briefing\n");
+  }
   const app = join(root, "app");
   mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
   if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
@@ -1266,6 +1274,18 @@ test("start: the main bot not live gives --no-parent; planned and agentless bots
   assert.equal(planned.code, 1);
   assert.match(planned.err, /Studio is planned \(wave 3\)/);
   assert.equal(s.calls().filter((c) => c[0] === "run").length, 1);
+});
+
+test("start on a CLI-only host (no pack, the am part installed) writes am's entry hook, never the pack's", (t) => {
+  const s = scene(t, { briefing: false, amPart: true });
+  s.seed(team());
+  const r = s.cli(["start", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.err, /gets no per-turn briefing/, "the am part's briefing is there: no warning");
+  const settings = JSON.parse(readFileSync(join(s.project, ".claude/settings.local.json"), "utf8"));
+  const store = join(s.home, ".automagik", "parts", "automagik.am");
+  assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, amPartHookCommand(s.app, store));
+  assert.ok(!settings.hooks.UserPromptSubmit[0].hooks[0].command.includes(join(s.app, "mods")), "never a pack path");
 });
 
 // ---- attach, detach ----

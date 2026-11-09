@@ -32,7 +32,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { stableBriefingPath, ENTRY_SOURCE } from "./briefingText.mjs";
+import { stableBriefingPath, ENTRY_SOURCE, amPartEntryPath, amPartRunnerPath, hookTargetOf } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
@@ -65,11 +65,11 @@ export function runCommand(cmd, args, { env, cwd, timeout = 120_000 } = {}) {
  * a program (runCommand's shape); tests pass their own, and an app home of their own.
  */
 export function contextOf({ env = process.env, exec = runCommand, log = (line) => process.stderr.write(`${line}\n`), platform = process.platform,
-  node = process.execPath, nodeVersion = process.versions.node } = {}) {
+  node = process.execPath, nodeVersion = process.versions.node, project = process.cwd() } = {}) {
   const appHome = appHomeOf(env);
   const modsDir = join(appHome, "mods");
   return {
-    env, exec, log, platform, node, nodeVersion, appHome, modsDir, offDir: offDirOf(modsDir), binDir: binDirOf(env),
+    env, exec, log, platform, node, nodeVersion, appHome, modsDir, project, offDir: offDirOf(modsDir), binDir: binDirOf(env),
     version: /^\d+\.\d+\.\d+$/.test(env.AM_VERSION ?? "") ? env.AM_VERSION : null,
   };
 }
@@ -515,6 +515,31 @@ export function uninstall(ctx, part, { purge = false } = {}) {
 
 // ---- doctor ----
 
+/** The am part's own store (am/lib/self.mjs storeOf): the parts folder amStoreOf names, then automagik.am. */
+const amPartStoreOf = (env) => join(amStoreOf(env), "automagik.am");
+
+/**
+ * A project's briefing hook, read only (installHook writes it): { file, target, exists } where
+ * target is hookTargetOf's ({ kind, script, runner }), null when the file names no briefing hook
+ * (or isn't there, exists false); { file, error } when it can't be read or isn't JSON.
+ */
+function projectHook(project, appHome) {
+  const file = join(project, ".claude", "settings.local.json");
+  let text;
+  try { text = readFileSync(file, "utf8"); } catch (e) { return e.code === "ENOENT" ? { file, exists: false, target: null } : { file, error: `unreadable (${e.message})` }; }
+  let settings;
+  try { settings = JSON.parse(text); } catch (e) { return { file, exists: true, error: `not valid JSON (${e.message})` }; }
+  const list = settings?.hooks?.UserPromptSubmit;
+  for (const group of Array.isArray(list) ? list : []) {
+    for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
+      if (typeof h?.command !== "string") continue;
+      const target = hookTargetOf(h.command, { appHome });
+      if (target) return { file, exists: true, target };
+    }
+  }
+  return { file, exists: true, target: null };
+}
+
 /**
  * `doctor <id>`: reads only, in well under 30 s (no program runs, no network). Returns
  * `{ code, checks: [{ part, check, ok, detail, fix }] }`: code 0 healthy, 1 broken, 2 not
@@ -561,6 +586,23 @@ export function doctor(ctx, part) {
     const entry = stableBriefingPath(ctx.appHome);
     if (!isFile(entry)) add("briefing-entry", false, `${entry} is missing: the bots' briefing hook finds no briefing`, reinstall);
     else add("briefing-entry", true, packEntry(ctx) ? `${entry} (the pack's)` : `${entry} (not the pack's)`);
+    // Which briefing a project's hook runs (installHook writes it): the pack's stable or direct
+    // entry, am's own entry on a CLI-only host, or none, said plainly when neither is installed.
+    const store = amPartStoreOf(ctx.env);
+    const amEntry = amPartEntryPath(store), amRunner = amPartRunnerPath(store);
+    const amThere = isFile(amEntry) && isFile(amRunner);
+    const packThere = isFile(entry) || isFile(join(ctx.modsDir, PACK_NAME, "briefing.mjs"));
+    const hook = projectHook(ctx.project, ctx.appHome);
+    if (hook.error) add("briefing-hook", false, `${hook.file} is ${hook.error}`, null);
+    else if (!hook.target) {
+      const neither = packThere || amThere ? "" : `; neither the pack's entry (${entry}) nor am's entry (${amEntry}) is installed`;
+      note("briefing-hook", `none: ${hook.file} has no briefing hook${neither}`);
+    } else {
+      const kind = hook.target.kind === "am-part" ? "am's entry" : hook.target.kind === "pack-stable" ? "the pack's stable entry" : "the pack's direct entry";
+      const ok = hook.target.kind === "am-part" ? isFile(hook.target.script) && isFile(hook.target.runner) : isFile(hook.target.script);
+      add("briefing-hook", ok, ok ? `${kind} (${hook.target.script}) in ${hook.file}` : `${kind} (${hook.target.script}), named in ${hook.file}, is missing`,
+        hook.target.kind === "am-part" ? "am self install" : reinstall);
+    }
   }
 
   if (part.kind === "mod" && part.mod === "am-mods") {
