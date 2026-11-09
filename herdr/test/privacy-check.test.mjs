@@ -4,14 +4,14 @@
 // file passes the checker like any other.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import {
-  fileText, hashTerm, LIST_FILE, loadList, pendingFolders, repoRoot, scan, scanRepo,
+  fileText, hashTerm, LIST_FILE, loadList, pendingFolders, repoRoot, scan,
 } from "../scripts/privacy-check.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -53,6 +53,22 @@ function runCheck(script, cwd) {
   } catch (error) {
     return { status: error.status, output: `${error.stdout ?? ""}${error.stderr ?? ""}` };
   }
+}
+
+/**
+ * A clean copy of the tracked tree (HEAD) in a temp folder, with the checker and its list
+ * beside each other and its own git repository. It scans its own root, so a parallel test's
+ * untracked scratch folder at the real repository root can never reach it.
+ */
+function cleanTree(t) {
+  const root = repoRoot();
+  const copy = mkdtempSync(join(tmpdir(), "privacy-tree-"));
+  t.after(() => rmSync(copy, { recursive: true, force: true }));
+  const archive = execFileSync("git", ["archive", "--format=tar", "HEAD"], { cwd: root, maxBuffer: 1 << 29 });
+  execFileSync("tar", ["-x", "-C", copy], { input: archive });
+  execFileSync("git", ["init", "-q"], { cwd: copy });
+  execFileSync("git", ["add", "-A", "--force"], { cwd: copy });
+  return { copy, script: join(copy, relative(root, SCRIPT)) };
 }
 
 test("absolute home paths are hits unless the user is a placeholder", () => {
@@ -237,7 +253,20 @@ test("the pending entries are one folder each, with their issue", () => {
     /duplicate/);
 });
 
-test("the repository is clean, the checker and this test included", () => {
-  const hits = scanRepo(repoRoot());
-  assert.deepEqual(hits.map((h) => `${h.file}:${h.line}: ${h.rule}: ${h.match}`), []);
+test("a clean copy of the tracked tree is clean, the checker and this test included", (t) => {
+  const { copy, script } = cleanTree(t);
+  const run = runCheck(script, copy);
+  assert.equal(run.status, 0, run.output);
+  assert.match(run.output, /privacy-check: clean/);
+});
+
+test("an untracked scratch folder at the repository root, as parallel tests leave, cannot fail it", (t) => {
+  const root = repoRoot();
+  const scratch = mkdtempSync(join(root, "privacy-scratch-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  writeFileSync(join(scratch, "note.md"), `on ${MAC}scratchuser\n`);
+  const { copy, script } = cleanTree(t);
+  const run = runCheck(script, copy);
+  assert.equal(run.status, 0, run.output);
+  assert.match(run.output, /privacy-check: clean/);
 });
