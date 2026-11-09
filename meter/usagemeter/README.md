@@ -13,7 +13,7 @@ it talks to is the local `hc`.
 This project used to live in the `meter/` folder of
 [automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
 `automagik-meter`; it moved here with its history. Its store, summary doc and environment
-variables did not change, so an existing install keeps its data. Since 0.4.0 the store lives in
+variables did not change, so an existing install keeps its data. Since 0.5.0 the store lives in
 `~/.automagik/meter/` and the first `sync` moves it there (see [What it stores](#what-it-stores)).
 
 ## Privacy
@@ -131,10 +131,10 @@ One SQLite file (WAL) per machine, in the state dir:
 
 The directory is 0700 and the file 0600.
 
-Before 0.4.0 the state dir was `~/Library/Application Support/automagik/` on macOS and
+Before 0.5.0 the state dir was `~/Library/Application Support/automagik/` on macOS and
 `$XDG_STATE_HOME/automagik/` (else `~/.local/state/automagik/`) elsewhere. On a case-insensitive
 macOS volume that is the same folder as the Automagik desktop app's own data, so clearing the
-app's data deleted the store. The first `sync` of 0.4.0 or later moves the meter's own files out of
+app's data deleted the store. The first `sync` of 0.5.0 or later moves the meter's own files out of
 that old default, once: `meter.db` (with `meter.db-wal` and `meter.db-shm`),
 `meter.lock`, `claude-limits.jsonl` and `claude-limits.last.json`. Nothing else in the old folder
 is opened, and the folder itself stays.
@@ -393,7 +393,7 @@ window; each step is listed in `truncated`. Entries that stay always keep their 
 
 ### Schema history
 
-0.4.0 moved the state dir to `~/.automagik/meter/` (see [What it stores](#what-it-stores)). That is
+0.5.0 moved the state dir to `~/.automagik/meter/` (see [What it stores](#what-it-stores)). That is
 a path change, not a schema change: `schema_version` stays 2 and the `ae/1` rows are the same.
 
 - 2 — per-project, per-task and per-model windows (`d1`/`d7`/`d30`), hourly and daily series per

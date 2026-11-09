@@ -1,4 +1,4 @@
-//! The state directory default and the one-time move out of the pre-0.4.0 default. Spawns the
+//! The state directory default and the one-time move out of the pre-0.5.0 default. Spawns the
 //! binary with a synthetic HOME in a temp dir, so it runs in its own test binary (see
 //! process.rs). No real home path is read or written.
 
@@ -103,7 +103,7 @@ impl Home {
         v["rows"].as_i64().unwrap_or(0)
     }
 
-    /// A store made by syncing into the old directory, as a pre-0.4.0 meter would have.
+    /// A store made by syncing into the old directory, as a pre-0.5.0 meter would have.
     fn old_store(&self) -> i64 {
         self.log();
         self.sync(Some(&self.old_dir()));

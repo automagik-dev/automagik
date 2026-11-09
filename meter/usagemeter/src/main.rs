@@ -23,7 +23,7 @@ sync      Read new harness usage (omp, Claude Code, Codex) into the local store 
 status    Print the store's state as JSON.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
-The first sync moves the meter's files out of the pre-0.4.0 default directory.
+The first sync moves the meter's files out of the pre-0.5.0 default directory.
 
 Exit status: 0 done or nothing to do, 2 an error, 3 sync blocked by the state move (stderr
 says why).";

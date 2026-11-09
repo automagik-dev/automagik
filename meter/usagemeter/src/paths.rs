@@ -7,7 +7,7 @@
 //!
 //! The directory is created 0700 and the database 0600.
 //!
-//! Before 0.4.0 the default was `~/Library/Application Support/automagik/` on macOS and
+//! Before 0.5.0 the default was `~/Library/Application Support/automagik/` on macOS and
 //! `$XDG_STATE_HOME/automagik/` (else `~/.local/state/automagik/`) elsewhere. On a
 //! case-insensitive macOS volume that is the same folder as the Automagik desktop app's own data,
 //! so wiping the app's local data deleted the store. [`migrate`] moves the meter's own files out
@@ -58,7 +58,7 @@ pub fn state_dirs(var: impl Fn(&str) -> Option<OsString>) -> Option<StateDirs> {
     Some(StateDirs { dir, legacy })
 }
 
-/// The default state directory before 0.4.0.
+/// The default state directory before 0.5.0.
 pub fn legacy_state_dir(home: &Path, xdg_state_home: Option<PathBuf>) -> PathBuf {
     if cfg!(target_os = "macos") {
         return home.join("Library/Application Support/automagik");
