@@ -267,7 +267,14 @@ Every Bot has a browser of its own, on by default (`browserPlugin: false` turns 
   A deny entry always wins; when the allow list is not empty, only matching targets open.
   An entry is an IPv4 or IPv6 address, a CIDR range, or a hostname (`example.com` covers
   its subdomains; `*.example.com` is accepted). The same lists apply to `web_fetch`.
-  Clear both to allow everything.
+  Clear both to allow everything. A hostname rule matches the URL's hostname only and
+  performs no DNS lookup. An IP/CIDR rule can be defeated by DNS rebinding: the check
+  resolves the name, and the browser resolves it again when it connects, so a hostile
+  name can answer an allowed address at check time and a denied one at connect time.
+  If the check's DNS resolution fails, an IP deny rule cannot match, so the request is
+  allowed (fail-open) unless the allow list is non-empty and the target is not on it.
+  These lists are about the address a Bot opens, not a firewall for the page's
+  subresources.
 - **Files**: downloads go to the Bot's working folder or the team folder; uploads come only from those.
 - **Handing over**: for a sign-in, a payment or a check, the Bot calls `browser_handoff` and a card in its chat asks you to take over, skip, or say you are done. While you hold the browser, its tools refuse; the window is a normal browser window on your screen.
 - **The window**: on macOS and Windows, and on Linux with a display, the browser opens as a window you can watch. On Linux without a display it runs headless (`browserHeadless`).
