@@ -2384,3 +2384,39 @@ test("--no-dsh-tui leaves DSH alone even when dsh is on PATH", (t) => {
   assert.deepEqual(dsh.calls(), []);
   assert.equal(existsSync(join(s.home, ".local", "bin", "dsh-tui")), false);
 });
+
+test("#839: install.sh tightens existing 0644 and 0664 workers.jsonl and attach.jsonl in the app home and known project app homes to 0600", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const proj = join(s.root, "proj-ledgers");
+  mkdirSync(join(s.appHome, "automagik-herdr"), { recursive: true });
+  mkdirSync(join(proj, ".herdr", "app-home", "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s.appHome, "shared.json"), JSON.stringify({ "am.sidebar.projects": [{ key: proj }] }));
+
+  const files = [
+    [join(s.appHome, "automagik-herdr", "workers.jsonl"), 0o644, '{"event":"start","session":"s-1"}\n'],
+    [join(s.appHome, "automagik-herdr", "attach.jsonl"), 0o664, '{"event":"attach","session":"s-2"}\n'],
+    [join(proj, ".herdr", "app-home", "automagik-herdr", "workers.jsonl"), 0o664, '{"event":"start","session":"s-3"}\n'],
+    [join(proj, ".herdr", "app-home", "automagik-herdr", "attach.jsonl"), 0o644, '{"event":"attach","session":"s-4"}\n'],
+  ];
+  for (const [path, mode, body] of files) {
+    writeFileSync(path, body);
+    chmodSync(path, mode);
+  }
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /tightened Herdr ledger\(s\) to 0600:/);
+  for (const [path, , body] of files) {
+    assert.equal(lstatSync(path).mode & 0o777, 0o600, `${path} is 0600 after install`);
+    assert.equal(readFileSync(path, "utf8"), body);
+  }
+  // A same-version rerun also tightens any ledger widened since the install, then is silent when all are 0600.
+  chmodSync(files[0][0], 0o644);
+  const rerun = s.run("--yes", "--no-usagemeter");
+  assert.equal(rerun.code, 0, rerun.err);
+  assert.equal(lstatSync(files[0][0]).mode & 0o777, 0o600);
+  assert.match(rerun.out, /tightened Herdr ledger\(s\) to 0600:/);
+  const clean = s.run("--yes", "--no-usagemeter");
+  assert.equal(clean.code, 0, clean.err);
+  assert.doesNotMatch(clean.out, /tightened Herdr ledger/);
+});
