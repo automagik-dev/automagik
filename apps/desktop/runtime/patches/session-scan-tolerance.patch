@@ -1,18 +1,19 @@
 --- a/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
 +++ b/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
-@@ -2365,6 +2365,11 @@
+@@ -2365,6 +2365,12 @@
  		return outcome.value;
  	});
  }
 +/** Report one skipped session folder or file without aborting the whole listing (#861). */
 +function warnSkippedSession(kind, path, error) {
 +	const reason = (typeof error === "string" ? error : error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, " ");
-+	console.warn(`dsh-session: skipped ${kind} ${JSON.stringify(path)}: ${reason}`);
++	const hint = kind !== "session project" && /corrupt session log|duplicate session id|flat-file layout/.test(reason) ? " (session backups belong outside the sessions tree, in session-backups/)" : "";
++	console.warn(`dsh-session: skipped ${kind} ${JSON.stringify(path)}: ${reason}${hint}`);
 +}
  /** Whether a filesystem-owned failure should retain its original errno and path. */
  function isErrnoException(error) {
  	return typeof error?.code === "string";
-@@ -2414,6 +2419,8 @@
+@@ -2414,6 +2420,8 @@
  	*/
  	listLimit;
  	rootEncodingCheck;
@@ -21,7 +22,7 @@
  	generationFormat;
  	/**
  	* Bounded LRU of parsed, validated stored logs keyed by session id and
-@@ -3070,18 +3077,27 @@
+@@ -3070,18 +3078,27 @@
  	*/
  	async mapSessionDirectories(task, signal) {
  		const limit = this.listLimit;
@@ -56,7 +57,7 @@
  		return results;
  	}
  	/** Historical logical events depend on the corpus, including members with unreadable headers. */
-@@ -3107,6 +3123,13 @@
+@@ -3107,6 +3124,13 @@
  		signal?.throwIfAborted();
  		return hash.digest("hex");
  	}
@@ -70,7 +71,7 @@
  	async listArtifacts(signal) {
  		signal?.throwIfAborted();
  		await this.ensureRootEncoding();
-@@ -3120,21 +3143,35 @@
+@@ -3120,21 +3144,35 @@
  					metadata: await this.readGenerationHeader(selected, void 0, signal)
  				};
  			} catch (error) {
@@ -113,7 +114,7 @@
  			artifacts.push({
  				...metadata,
  				path: selected.sourcePath,
-@@ -3527,8 +3564,10 @@
+@@ -3527,8 +3565,10 @@
  		signal?.throwIfAborted();
  		const entries = await readdir(project, { withFileTypes: true });
  		signal?.throwIfAborted();

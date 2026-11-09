@@ -363,6 +363,7 @@ test('patches.json pins the real 0.2.2-rc.1 listing to the desktop runtime', () 
   assert.ok(text.includes('+\tskippedPaths = /* @__PURE__ */ new Set();'), 'the patch adds the per-instance skipped set')
   assert.ok(text.includes('+function warnSkippedSession(kind, path, error) {'), 'the patch adds the one-line reporter')
   assert.ok(text.includes('this.warnSkipped("session folder", dirname(selected.sourcePath), error);'), 'the header stage reports the skipped folder')
+  assert.ok(text.includes('session backups belong outside the sessions tree, in session-backups/'), 'the skip warning points backups outside the tree')
 })
 
 test('the carried patch applies to the real pinned bytes, and a re-run leaves them alone', (t) => {
@@ -393,6 +394,7 @@ test('a backup sibling aborts the unpatched listing; the patched one lists the v
   assert.match(warnings[0], /^dsh-session: skipped session folder /)
   assert.ok(warnings[0].includes(BACKUP), warnings[0])
   assert.match(warnings[0], /corrupt session log .*header id "valid-one"/)
+  assert.ok(warnings[0].endsWith('(session backups belong outside the sessions tree, in session-backups/)'), warnings[0])
   assert.deepEqual(snapshotTree(sessions), before, 'the scan must not rewrite the tree')
 })
 
@@ -414,6 +416,7 @@ test('a stray session file aborts the unpatched listing; the patched one reports
   assert.equal(warnings.length, 1, 'one line per stray file')
   assert.ok(warnings[0].includes(STRAY), warnings[0])
   assert.match(warnings[0], /flat-file layout/)
+  assert.ok(warnings[0].endsWith('(session backups belong outside the sessions tree, in session-backups/)'), warnings[0])
 })
 
 test('a duplicate session id aborts the unpatched listing; the patched one keeps the first valid entry and reports the other', async (t) => {
@@ -434,6 +437,7 @@ test('a duplicate session id aborts the unpatched listing; the patched one keeps
   assert.equal(warnings.length, 1, 'one line per skipped folder')
   assert.ok(warnings[0].includes(projectKey(cwd)) || warnings[0].includes(projectKey(copyCwd)), warnings[0])
   assert.match(warnings[0], /duplicate session id "same-id"/)
+  assert.ok(warnings[0].endsWith('(session backups belong outside the sessions tree, in session-backups/)'), warnings[0])
 })
 
 test('the real WorkspaceRegistry does not activate over the unpatched listing, and activates over the patched one', async (t) => {
@@ -475,6 +479,7 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
   assert.equal(warnings.length, 2, 'the backup folder and the stray file are reported')
   assert.ok(warnings.some(line => line.includes(BACKUP)), warnings.join('\n'))
   assert.ok(warnings.some(line => line.includes(STRAY)), warnings.join('\n'))
+  assert.ok(warnings.every(line => line.endsWith('(session backups belong outside the sessions tree, in session-backups/)')), warnings.join('\n'))
 })
 
 test('the root itself still fails closed when it is not a readable directory', async (t) => {
