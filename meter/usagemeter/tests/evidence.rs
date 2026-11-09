@@ -839,7 +839,7 @@ fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
 // The Reviewer's M2 on PR 849, through the real statvfs and the binary: a widening backfill
 // whose logs still to import would grow the store past the free space refuses up front, exit 4,
 // before any rebuild starts: no generation, no reset, the folder byte for byte as it was. The log
-// is sparse (16 TiB that take no disk), so its projected growth passes any real free space.
+// is sparse (up to 16 TiB that take no disk), so its projected growth passes any real free space.
 #[cfg(unix)]
 #[test]
 fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
@@ -859,8 +859,18 @@ fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // 16 TiB where the filesystem allows it, else 8 or 4 TiB (a CI runner's filesystem refuses a
+    // file of 16 TiB with EFBIG): any of them projects more growth than a runner has free.
     let sparse = env.claude("-work-app/s-sparse.jsonl");
-    fs::File::create(&sparse).unwrap().set_len(1 << 44).unwrap();
+    let f = fs::File::create(&sparse).unwrap();
+    let len = [1u64 << 44, 1 << 43, 1 << 42]
+        .into_iter()
+        .find(|&n| f.set_len(n).is_ok())
+        .expect("a sparse file of 4 TiB or more");
+    drop(f);
+    assert!(
+        len / meter::sync::GROWTH_PER_LOG_BYTE > meter::paths::free_bytes(&env.state()).unwrap()
+    );
     let before = folder(&env.state());
     let out = sync(&["sync", "--force", "--no-publish", "--backfill"]);
     let err = String::from_utf8_lossy(&out.stderr);
