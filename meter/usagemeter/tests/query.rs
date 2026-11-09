@@ -2683,9 +2683,10 @@ fn ceiling_store() {
             .prepare(
                 "INSERT INTO usage(id, hour_ms, harness, model, machine, repo, branch,
                    input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
-                   unsplit, precision, reported_usd, events, updated_ms)
+                   unsplit, precision, reported_usd, events, updated_ms, actor_state, bot, role,
+                   squad, kind, basis, branch_basis, reason)
                  VALUES(?1, ?2, ?3, ?4, 'machine-ceiling', ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, 0,
-                   'exact', NULL, 7, ?12)",
+                   'exact', NULL, 7, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             )
             .unwrap();
         let mut n = 0u64;
@@ -2705,6 +2706,9 @@ fn ceiling_store() {
                 } else {
                     Some(branch.as_str())
                 };
+                // Two calls in three tied to one of eight bots (RFC 0021), the rest unlinked.
+                let tied = r % 3 != 2;
+                let bot = tied.then(|| format!("bot-{}", (r + b as u64) % 8));
                 st.execute(params![
                     format!("c{n}"),
                     h,
@@ -2717,7 +2721,15 @@ fn ceiling_store() {
                     2_000,
                     3_000,
                     400,
-                    now
+                    now,
+                    if tied { "attributed" } else { "unlinked" },
+                    bot,
+                    tied.then_some("dev"),
+                    tied.then_some("bot-0"),
+                    tied.then_some("worker"),
+                    tied.then_some(["session", "label", "worktree"][(r % 3) as usize]),
+                    if branch.is_some() { "log" } else { "none" },
+                    (!tied).then_some("no_record")
                 ])
                 .unwrap();
             }
@@ -2742,6 +2754,7 @@ fn ceiling_store() {
     let counted_from = meter::time::day_start(now) - 89 * meter::time::DAY_MS;
     for (k, v) in [
         ("counted_from_ms", counted_from.to_string()),
+        (meter::evidence::FROM_META, counted_from.to_string()),
         ("last_run_ms", (now - 300_000).to_string()),
         ("last_success_ms", (now - 300_000).to_string()),
         ("last_pending_bytes", "0".into()),
