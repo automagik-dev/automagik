@@ -392,6 +392,9 @@ test('the no-drag exception is not Linux-only and the bar menu still reaches its
     const brand = bar.children.find(node => node.classes.has('brand'))
     assert.equal(appRegion(brand), 'no-drag', `${platform}: the brand is the bar menu's no-drag surface`)
   }
+  // The three custom buttons still show on Linux and stay out of macOS's way there.
+  assert.match(shellCss, /body\.linux \.controls\{[^}]*display:flex/)
+  assert.match(shellCss, /body\.darwin \.controls\{[^}]*display:none/)
   assert.match(shellJs, /querySelector\('\.bar'\)\.addEventListener\('contextmenu'/)
   assert.match(shellJs, /act\('menu'\)/)
   assert.match(shellJs, /querySelectorAll\('\.controls \[data-act\]'\)/)
