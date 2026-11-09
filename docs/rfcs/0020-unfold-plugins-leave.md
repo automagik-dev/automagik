@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft |
 | Milestone | none (ships outside the five milestones) |
-| Lanes | none: every step here touches only paths that never ship, so no step cuts a release (the pt-BR copy check rides a real pt-BR change; step 5) |
+| Lanes | none: every step here touches only paths that never ship, so no step cuts a release |
 | Created | 2026-11-09 |
 
 ## Summary
@@ -105,7 +105,7 @@ Verified in code, not assumed:
 | `scripts/lane.test.ts`, `release-plugins.test.ts`, `marketplace.test.ts`, `release-workflows.test.ts` | the Unfold cases go or say "no Unfold folder" |
 | `apps/bots-dsh/test/unfold-root-session.test.js`, `work-dir.test.js` | they import `unfold-bot-dsh` and `unfold-session-dsh`: rewritten on fakes, or the Unfold part moves to Unfold |
 | `apps/welcome-dsh/test/unfold.test.js`, `unfold-companion.test.js` | they import `unfold-bot-dsh`, and `unfold.test.js` also reads the eight Unfold bundles' `package.json` (each must declare `dsh.bundle.patch`): the list and the bundle check move to a recorded fixture (section 2) |
-| `apps/locale-pt-br-dsh/scripts/copy-check.mjs` | imports `unfold-session-dsh`'s strings (`OMNI_PLUGIN_STRINGS`): it reads their keys from a recorded list under `test/fixtures/` instead; the translations stay in `omni-ui.json`. This file ships (`apps/<plugin>/scripts/` is not `NEVER_SHIPPED`), so the change rides a real pt-BR change (step 5) |
+| `apps/locale-pt-br-dsh/scripts/copy-check.mjs` | imports `unfold-session-dsh`'s strings (`OMNI_PLUGIN_STRINGS`): it reads their keys from a recorded list under `test/fixtures/` instead; the translations stay in `omni-ui.json`. It is outside the plugin's `files`, so `lane.ts`'s `unpackedIn` treats it as inert and the change goes in the removal |
 | `AGENTS.md` | the interim rule (step 2), which the removal takes out again; it names no Unfold path today |
 
 Comments in shipped files (`apps/desktop/src/lane.js`, `apps/desktop/scripts/follow-dsh.mjs`,
@@ -148,9 +148,10 @@ Three smaller things cross the line the other way, from Unfold into plugins that
 
 The nine folders, their tests, and their nine `plugin` matrix jobs, with the three files in "What
 leaves" above. **Recommended:** one removal pull request that touches only paths that never ship
-(`apps/unfold-*`, `scripts/`, `.github/`, `test/`, `AGENTS.md`) and keeps the `apps/unfold-`
-entry in `NEVER_SHIPPED` (section 4), so `bun scripts/lane.ts ships` says no and the merge cuts no
-release.
+(`apps/unfold-*`, `scripts/`, `.github/`, `test/`, `AGENTS.md`, and
+`apps/locale-pt-br-dsh/scripts/`, which is outside that plugin's `files`) and keeps the
+`apps/unfold-` entry in `NEVER_SHIPPED` (section 4), so `bun scripts/lane.ts ships` says no and
+the merge cuts no release.
 
 ### 2. What stays, and where each copy's source lives
 
@@ -270,29 +271,23 @@ Each step says what it needs, and how it is undone.
    If a security fix to the copies must land here before Unfold confirms, it lands, and the
    hand-over point moves to that later merge commit; Unfold re-runs filter-repo.
    *Rollback:* Unfold's own; this repository is unchanged.
-5. **Before the removal: the pt-BR copy check.** `copy-check.mjs` stops importing
-   `unfold-session-dsh` and reads those keys from a recorded list in `test/fixtures/`. Its file
-   ships, so this goes in with the next real pt-BR change, as the comments do (step 7), not in a
-   pull request of its own. If no pt-BR change comes before the removal is ready, the removal
-   carries it and says so: the merge is then a `plugins` patch for `locale-pt-br-dsh` alone (one
-   tarball, the lane re-signed, no desktop build).
-   *Rollback:* revert; the copy check reads the Unfold folder again while it exists.
-6. **The removal** (one pull request; cuts nothing, unless it carries step 5). Everything in
-   "What leaves" and "What changes here", the host-rule case table and the welcome's recorded list
-   included. Its message names the hand-over sha and Unfold's release.
+5. **The removal** (one pull request; cuts nothing). Everything in "What leaves" and "What
+   changes here", the host-rule case table, the welcome's recorded list and the pt-BR copy check's
+   recorded keys included. Its message names the hand-over sha and Unfold's release.
    *Check:* `bun run check`, the four remaining plugin jobs, and `bun scripts/lane.ts ships` on the
    merge says no (with the `NEVER_SHIPPED` entry kept; section 4); `git grep -l 'apps/unfold-'`
-   lists only records under `docs/` and `.genie/` and the shipped files step 7 rewords later
-   (today `apps/welcome-dsh/src/host/bot-types.js` and `apps/locale-pt-br-dsh/README.md`).
+   lists only records under `docs/` and `.genie/`, the kept guard and its tests
+   (`scripts/lane.ts`, `scripts/lane.test.ts`), and the shipped files step 6 rewords later (today
+   `apps/welcome-dsh/src/host/bot-types.js` and `apps/locale-pt-br-dsh/README.md`).
    *Rollback:* revert the merge, then `bun scripts/version.ts set <the root version>` in the same
    pull request: the revert brings the nine manifests back at the hand-over version, and after any
    release since, `version.ts check` (and so `bun run check`) fails until they carry the root's
    version again. The revert cuts no release (the entry still holds), and no installed copy
    notices either way.
-7. **Comments in shipped files** are reworded with each file's next real change (no pull request of
+6. **Comments in shipped files** are reworded with each file's next real change (no pull request of
    their own).
 
-### 7. Interim rule (until step 6 merges)
+### 7. Interim rule (until step 5 merges)
 
 - No new Unfold features, settings or plugins here. A feature request goes to Unfold through Chat.
 - Security fixes to the carried copies still land: #780 (#507, #530), and #785 or any remaining
@@ -315,7 +310,7 @@ welcome's recorded Unfold plugin list (section 2).
 No new trust boundary: nothing installs from here before or after. Two notes:
 
 - The redaction parser is security code. Moving it moves its review to Unfold's repository; until
-  step 6 merges, this repository's review and `unfold-copies.test.ts` still guard every change.
+  step 5 merges, this repository's review and `unfold-copies.test.ts` still guard every change.
 - A stale git source pinned at an old commit here keeps whatever redaction that commit had. That
   is true today and unchanged by the move; Unfold's release is where such a profile updates.
 
