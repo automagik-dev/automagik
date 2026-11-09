@@ -72,6 +72,33 @@ test("a request no sidebar takes turns into 'couldn't check' after ANSWER_MS, th
   assert.deepEqual(clicks(l), [["0.8.0 · couldn't check", "check"]]);
   const old = statusLabel({ state: { kind: "current", at: NOW - 3_600_000 }, request: { ...request, at: NOW - 3 * 60_000 }, version: "0.8.0", now: NOW });
   assert.equal(text(old), "Automagik Herdr 0.8.0");
+  // No sidebar at all: checking just before ANSWER_MS, failed from it, never before.
+  const fresh = { id: "r2", what: "check", at: NOW };
+  const state = { kind: "current", at: NOW - 3_600_000 };
+  assert.equal(text(statusLabel({ state, request: fresh, version: "0.8.0", now: NOW + label.ANSWER_MS - 1 })),
+    "Automagik Herdr 0.8.0 · checking…");
+  assert.equal(text(statusLabel({ state, request: fresh, version: "0.8.0", now: NOW + label.ANSWER_MS })),
+    "0.8.0 · couldn't check");
+});
+
+test("a request queued behind a busy run waits (checking/updating), never 'couldn't check'", () => {
+  const request = { id: "r", what: "check", at: NOW - 15_000 };
+  const busy = { what: "apply", since: NOW - 40_000, id: "a", to: "0.8.1", from: "0.8.0" };
+  // The folders swapped (VERSION says 0.8.1) while the old build still holds the install's lock:
+  // the install branch is skipped, but the queued request is waiting for its answer.
+  const state = { kind: "update", busy, queued: { id: request.id, what: "check", at: request.at } };
+  assert.equal(text(statusLabel({ state, request, version: "0.8.1", now: NOW })), "Automagik Herdr 0.8.1 · checking…");
+  // The run's own lock says it waited too, acknowledged or not.
+  assert.equal(text(statusLabel({ state: { kind: "update", busy }, request, version: "0.8.1", now: NOW })),
+    "Automagik Herdr 0.8.1 · checking…");
+  // The acknowledgment alone, once the lock is gone, is not a failure either.
+  assert.equal(text(statusLabel({ state: { queued: state.queued }, request, version: "0.8.1", now: NOW })),
+    "Automagik Herdr 0.8.1 · checking…");
+  // An install asked for while the install ran is waiting for it, not failed.
+  const apply = { id: "a2", what: "apply", to: "0.8.1", at: NOW - 15_000 };
+  const l = statusLabel({ state, request: apply, version: "0.8.1", now: NOW });
+  assert.equal(text(l), "Automagik Herdr 0.8.1 · updating…");
+  assert.doesNotMatch(text(l), /couldn't/);
 });
 
 test("offline or an error: '0.8.0 · couldn't check', the reason in the tooltip, a click tries again", () => {

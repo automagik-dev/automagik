@@ -10,7 +10,8 @@ import { AUTO_FILE, CHECK_FILE, HELD_FILE, RESTORE_FILE, formatAuto, parseAuto }
 import {
   FIRST_CHECK_MS, LANDING_WAIT_MS, REQUEST_KEY, RELOAD_GRACE_MS, RETRY_MS, SHOWN_KEY, STATE_KEY, announce, applyNotice, applyPatch,
   applyRefusal, autoFailedNotice, autoFailure, autoPlan, busyOf, checkFrom, checkPatch, claim, coolingDown, finish, heldFrom, heldNotice, landedNotice,
-  landing, nextCheckIn, noReloadNotice, requestDue, restoreFrom, restoredNotice, restoreFailedNotice, runCheck, shownFrom, stateFrom,
+  landing, nextCheckIn, noReloadNotice, requestAnswer, requestDue, restoreFrom, restoredNotice, restoreFailedNotice, runCheck,
+  seenRequest, shownFrom, stateFrom,
 } from "./updateCheck.js";
 
 export class Updater {
@@ -30,8 +31,9 @@ export class Updater {
     this.checkFile = `${appHome}/automagik-herdr/${CHECK_FILE}`;
     this.version = `${appHome}/mods/am-sidebar/VERSION`;
     this.node = null;
-    // A request saved before this load was someone else's to answer.
-    this.seen = stateFrom(get(REQUEST_KEY)).id ?? null;
+    // A request saved before this load that something already has (an answer, or the run in
+    // flight) is its own; one still waiting is answered here, not dropped as someone else's.
+    this.seen = seenRequest(get(REQUEST_KEY), get(STATE_KEY));
   }
 
   state() { return stateFrom(this.get(STATE_KEY)); }
@@ -65,7 +67,7 @@ export class Updater {
       // The switch flipped while this check ran: its answer is older than the switch.
       const before = this.state();
       if (patch.auto && typeof before.auto?.at === "number" && before.auto.at >= started) patch.auto = before.auto;
-      try { finish(this.get, this.set, id, { ...patch, request, autoHeld: null }); } catch {}
+      try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(before, request), autoHeld: null }); } catch {}
       const plan = autoPlan(this.state(), this.now());
       if (plan?.apply && this.apply(null, plan.apply, { auto: true })) {
         // Announced by the install's own notice; SHOWN_KEY keeps a later check quiet about it.
@@ -104,7 +106,7 @@ export class Updater {
         // The bad release did not load and update.mjs put the kept set back (or could not). One
         // notice, from this build if it is still here; `announced` keeps the reloaded build quiet.
         const before = this.state();
-        try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed: null, autoHeld: null, announced: patch.current }); } catch {}
+        try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(before, request), autoFailed: null, landed: null, autoHeld: null, announced: patch.current }); } catch {}
         try { this.set(SHOWN_KEY, patch.kind === "restored" ? patch.restore?.failedVersion ?? patch.current : patch.current); } catch {}
         // The restored build may have read update.mjs's note and said it already.
         if (before.announced !== patch.current) {
@@ -116,7 +118,7 @@ export class Updater {
       if (patch.kind === "installed") {
         const landed = { version: patch.current, from: patch.from, restartBots: patch.restartBots === true, held: patch.heldMods ?? [],
           check: patch.check ?? null, at: this.now() };
-        try { finish(this.get, this.set, id, { ...patch, request, autoFailed: null, landed }); } catch {}
+        try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(this.state(), request), autoFailed: null, landed }); } catch {}
         // Herdr reloads the mods as the folders swap, and the new build announces it (arrive).
         // Still here after the grace: no reload happened, so say what to do.
         try { this.after(RELOAD_GRACE_MS, () => this.unreloaded(patch.current, patch.heldMods, patch.check)); } catch {}
@@ -125,18 +127,18 @@ export class Updater {
       if (auto && patch.refused) {
         // The latest moved on between the check and the install: not a failure, and nothing to
         // tell the person. The new release goes in at the next check.
-        try { finish(this.get, this.set, id, { ...patch, request, applyError: null, autoHeld: "a newer release came out; it installs at the next check" }); } catch {}
+        try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(this.state(), request), applyError: null, autoHeld: "a newer release came out; it installs at the next check" }); } catch {}
         return;
       }
       if (auto && patch.applyError) {
         // A failed install on its own: one notice per version, then backoffOf before the next try.
         const failed = autoFailure(this.state(), to, patch.applyError, this.now());
-        try { finish(this.get, this.set, id, { ...patch, request, ...failed }); } catch {}
+        try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(this.state(), request), ...failed }); } catch {}
         const note = autoFailedNotice(failed.autoFailed);
         if (note) try { this.notify(note); } catch {}
         return;
       }
-      try { finish(this.get, this.set, id, { ...patch, request }); } catch {}
+      try { finish(this.get, this.set, id, { ...patch, ...requestAnswer(this.state(), request) }); } catch {}
       const note = auto ? null : applyNotice(patch);
       if (note) try { this.notify(note); } catch {}
     });
@@ -162,8 +164,9 @@ export class Updater {
     let note = null;
     try { note = restoreFrom(await this.readText(this.restoreFile), version, this.now()); } catch {}
     if (note) {
-      // The update's claim died with the old build: free it here (a later check starts clean).
-      finish(this.get, this.set, state.busy?.id ?? null, { announced: version });
+      // The update's claim died with the old build: free it here (a later check starts clean), and
+      // answer a request that was queued behind it with the install's result.
+      finish(this.get, this.set, state.busy?.id ?? null, { announced: version, ...requestAnswer(this.state(), null) });
       try { this.set(SHOWN_KEY, note.error ? version : note.restore.failedVersion); } catch {}
       try { this.notify(note.error ? restoreFailedNotice(note.error, version) : restoredNotice(note.restore)); } catch {}
       return;
@@ -176,7 +179,7 @@ export class Updater {
       let unchecked = null;
       try { unchecked = checkFrom(await this.readText(this.checkFile), version, this.now()); } catch {}
       if (unchecked) {
-        finish(this.get, this.set, state.busy?.id ?? null, { announced: version });
+        finish(this.get, this.set, state.busy?.id ?? null, { announced: version, ...requestAnswer(this.state(), null) });
         try { this.set(SHOWN_KEY, version); } catch {}
         let held = [];
         try { held = heldFrom(await this.readText(this.heldFile), version); } catch {}
@@ -193,7 +196,7 @@ export class Updater {
     if (state.announced === version) return;
     if (!step.ready) {
       finish(this.get, this.set, step.id, { kind: "installed", from: step.from, current: version, latest: version, update: null,
-        why: null, applyError: null, at: this.now() });
+        why: null, applyError: null, at: this.now(), ...requestAnswer(state, null) });
     }
     this.patch({ announced: version });
     // The old build usually stopped before it could record what the install held: the file says.
@@ -218,10 +221,10 @@ export class Updater {
   }
 
   // On the 250 ms timer: a new request from the status bar. A look asked for while one runs is
-  // answered by it, and one within a minute of the last by that one (GitHub's hourly limit); an
-  // install asked for while one runs is that one, one for a version no longer offered is refused
-  // (the bar asks again), and one waits for a running look (fresh for REQUEST_FRESH_MS). The
-  // switch is written at once.
+  // queued and answered by that one's result, never a second look (GitHub's hourly limit), and one
+  // within a minute of the last is answered by that one; an install asked for while one runs is
+  // that one, one for a version no longer offered is refused (the bar asks again), and one waits
+  // for a running look (fresh for REQUEST_FRESH_MS). The switch is written at once.
   request() {
     const value = this.get(REQUEST_KEY);
     const now = this.now();
@@ -240,12 +243,22 @@ export class Updater {
     }
     if (what === "check") {
       this.seen = id;
-      if (busy) return;
+      if (busy) {
+        // Taken by the run in flight: queued, so its result answers this request (its answer or
+        // the install's), and the bar never shows it as unanswered.
+        this.patch({ queued: { id, what, at: value.at } });
+        return;
+      }
       if (coolingDown(state, now)) finish(this.get, this.set, null, { request: id });
       else this.check(false, id);
       return;
     }
-    if (busy?.what === "apply") { this.seen = id; return; }
+    if (busy?.what === "apply") {
+      // An install asked for while one runs is that one: its result answers this request too.
+      this.seen = id;
+      this.patch({ queued: { id, what, at: value.at } });
+      return;
+    }
     if (busy) return;
     const refused = applyRefusal(value, state);
     if (refused) {

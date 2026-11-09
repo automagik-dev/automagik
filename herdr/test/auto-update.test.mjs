@@ -9,13 +9,14 @@ import {
   FIRST_CHECK_MS, LANDING_MS, LANDING_WAIT_MS, RELOAD_GRACE_MS, REQUEST_KEY, STATE_KEY, autoPlan, backoffOf, busyOf,
 } from "../mods/am-sidebar/updateCheck.js";
 import { AUTO_FILE, CHECK_FILE, RESTORE_FILE, parseAuto } from "../mods/am-sidebar/release.js";
-import { autoLabel } from "../mods/am-status/label.js";
+import { autoLabel, statusLabel } from "../mods/am-status/label.js";
 
 const HOME = "/fake/herdr-app";
 const NOW = 1_800_000_000_000;
 const MANAGED = { on: true, skip: null, managed: true, why: null };
 const update = (version) => ({ version, page: `https://x/v${version}`, sequence: 1 });
 const line = (o) => ({ code: 0, stdout: `${JSON.stringify(o)}\n`, stderr: "" });
+const text = (l) => l.parts.map((p) => p.text).join("");
 
 /**
  * One Herdr with the pack at `version`: `answer(args)` is update.mjs's reply (the args after the
@@ -555,4 +556,69 @@ test("Herdr doesn't reload: the old build's notice says what it held, and the ne
   h.build().u.start();
   await h.tick(LANDING_WAIT_MS + 2_000);
   assert.equal(h.notes.length, 1, "the note doesn't repeat");
+});
+
+test("a check during an automatic apply waits: updating, then the install result, never couldn't check", async () => {
+  const h = herdr();
+  const old = h.build();
+  h.answer = (args) => (args[1] === "check" ? h.check() : new Promise(() => {})); // the install never answers
+  old.u.start();
+  await h.tick(FIRST_CHECK_MS);
+  assert.equal(h.applies().length, 1);
+  await h.tick(2_000); // after the check's own answer, so only the install can answer this request
+  const request = { id: "bar-check-1", what: "check", at: h.now };
+  h.shared.set(REQUEST_KEY, request);
+  old.u.request();
+  await h.flush();
+  assert.equal(h.state().queued?.id, request.id, "the sidebar takes the request behind the install");
+  const bar = () => statusLabel({ state: h.state(), request: h.shared.get(REQUEST_KEY), version: h.version, now: h.now });
+  assert.equal(text(bar()), "0.8.0 → 0.8.1 · updating…");
+  // The install outlives ANSWER_MS: still updating, never couldn't check.
+  await h.tick(15_000);
+  assert.equal(text(bar()), "0.8.0 → 0.8.1 · updating…");
+  assert.doesNotMatch(text(bar()), /couldn't/);
+  // The folders swap and Herdr reloads the mods; the old build's lock is still on the install, and
+  // VERSION already says the release it went for, so the install branch is skipped.
+  h.swap(old, "0.8.1");
+  const fresh = h.build();
+  fresh.u.start();
+  await h.tick(1);
+  fresh.u.request(); // the new build's 250 ms poll: it must not run a second look
+  assert.equal(h.execs.filter((args) => args[0] === "check").length, 1, "one check, the one that found the update");
+  assert.equal(h.state().busy?.what, "apply", "the new build waits for the old build's answer");
+  assert.equal(text(bar()), "Automagik Herdr 0.8.1 · checking…", "the queued check is waiting, not failed");
+  assert.doesNotMatch(text(bar()), /couldn't/);
+  // The old build never answers (the reload stopped it): the landing records the install and
+  // answers the queued check with its result.
+  await h.tick(LANDING_WAIT_MS + 2_000);
+  assert.equal(busyOf(h.state(), h.now), null);
+  assert.equal(h.state().kind, "installed");
+  assert.equal(h.state().request, request.id);
+  assert.equal(h.state().queued, null);
+  assert.equal(text(bar()), "Automagik Herdr 0.8.1");
+  assert.doesNotMatch(text(bar()), /couldn't/);
+});
+
+test("a check asked for while one runs is answered by it: one check, the later request gets its result", async () => {
+  const h = herdr({ auto: { ...MANAGED, on: false } });
+  let release;
+  const running = new Promise((done) => { release = done; });
+  h.answer = (args) => (args[1] === "check" ? running.then(() => h.check()) : h.apply(args[args.indexOf("--expect") + 1]));
+  const b = h.build();
+  b.u.start();
+  await h.tick(FIRST_CHECK_MS); // the check is in flight: its exec has not answered
+  const checks = () => h.execs.filter((args) => args[0] === "check").length;
+  assert.equal(checks(), 1);
+  const request = { id: "bar-check-2", what: "check", at: h.now };
+  h.shared.set(REQUEST_KEY, request);
+  b.u.request();
+  await h.flush();
+  assert.equal(h.state().queued?.id, request.id, "queued behind the running check");
+  assert.equal(text(statusLabel({ state: h.state(), request, version: h.version, now: h.now })), "Automagik Herdr 0.8.0 · checking…");
+  release();
+  await h.tick(1);
+  assert.equal(checks(), 1, "no second check");
+  assert.equal(h.state().request, request.id, "the running check's result answers the later request");
+  assert.equal(h.state().queued, null);
+  assert.equal(text(statusLabel({ state: h.state(), request, version: h.version, now: h.now })), "0.8.0 → 0.8.1 · update");
 });

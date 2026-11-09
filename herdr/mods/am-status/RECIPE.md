@@ -42,8 +42,11 @@ it couldn't (offline, GitHub refusing, no node, no sidebar answering).
 - **The layout follows**: the update places the release's `layouts/automagik.json` as install.sh
   does (D8: a layout you edited is kept), and `automagik-herdr update --rollback` puts the
   rolled-to pack's layout back, so a rollback never leaves the bar naming a missing `am-status`.
-- **Couldn't check**: the reason in the tooltip; click to try again. Never a notice, never a
-  dialog: a failed look is retried on the sidebar's own timer.
+- **Couldn't check**: no sidebar answered, or the look really failed (offline, GitHub refusing, no
+  node): the reason in the tooltip; click to try again. A request that only waited behind a busy
+  check or install says checking/updating, never couldn't check: that run answers it with its
+  result (an install also answers a check queued behind it). Never a notice, never a dialog: a
+  failed look is retried on the sidebar's own timer.
 - **Updates off** (`AUTOMAGIK_HERDR_NO_UPDATE` where the check runs): the version alone.
 
 ## How it works
@@ -54,10 +57,12 @@ minutes after a failure) and every install, one at a time across sidebar copies 
 shared value, freed when its holder goes quiet). Two shared values connect them:
 
 - `am.update.state` (the sidebar writes): the last answer (`kind`, `current`, `latest`, `update`,
-  `why`, `at`, `applyError`) and `busy` while a check or an install runs;
+  `why`, `at`, `applyError`), `busy` while a check or an install runs, and `queued`, the request
+  that arrived meanwhile, answered by that run's result;
 - `am.update.request` (this mod writes): `{ id, what: "check" | "apply", at }`. The sidebar
-  takes it on its 250 ms timer; a request older than 2 minutes is dropped, and one no sidebar
-  took within 10 s shows "couldn't check".
+  takes it on its 250 ms timer and queues it behind a run in flight (no second look or install);
+  a request older than 2 minutes is dropped, and one no sidebar took within 10 s shows "couldn't
+  check" unless it arrived while a run was busy: that run, or the install, answers it instead.
 
 `label.js` turns the state, the request and the installed `VERSION` (read from
 `<app home>/mods/am-sidebar/VERSION`) into the bar's text; it is pure and tested
