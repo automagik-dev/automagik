@@ -277,6 +277,23 @@ test('Genie\'s install keeps what it did and what pnpm printed, for the terminal
     'Progress: resolved 1, added 1 (genie)',
     '✓ Genie is installed',
   ])
+  // Its steps, for the sidebar's "Installing Genie · 2 of 3": all three done, none running.
+  assert.deepEqual([done.steps, done.current, done.done], [['git', 'team', 'genie'], null, ['git', 'team', 'genie']])
+})
+
+test('Genie\'s install says which of its steps runs now', async () => {
+  const manager = fakeManager()
+  const fake = host({ manager })
+  const install = manager.installBundle
+  const seen = []
+  manager.installBundle = async (spec, options) => {
+    const { install: now } = await value(fake, 'genie-plugin')
+    seen.push([now.current, now.done])
+    return install.call(manager, spec, options)
+  }
+  await value(fake, 'genie-plugin-install')
+  await settleGenie(fake)
+  assert.deepEqual(seen, [['team', ['git']], ['genie', ['git', 'team']]])
 })
 
 test('Genie is ready once its Bot is on the team; a team already here is left alone', async () => {
@@ -305,6 +322,7 @@ test('without git, Genie\'s install fails with what to run, before anything is i
   assert.equal(status.install.phase, 'failed')
   assert.match(status.install.error, /xcode-select --install/)
   assert.deepEqual(manager.calls, [])
+  assert.deepEqual([status.install.current, status.install.done], ['git', []])
   assert.match(status.install.log, /Checking git…\n.*✗.*xcode-select --install/s)
   assert.match(await gitProblem({ platform: 'linux', run: async () => false }), /needs git/)
   assert.equal(await gitProblem({ platform: 'darwin', run: async () => true }), null)

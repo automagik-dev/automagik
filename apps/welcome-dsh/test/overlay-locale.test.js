@@ -25,7 +25,8 @@ const bundle = await build({
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent',
-  external: ['react', 'react-dom'],
+  // The Bot team's client stays external, as in client.js (scripts/build-client.mjs).
+  external: ['react', 'react-dom', '@automagik/bots-dsh/client'],
   loader: { '.css': 'text' },
 })
 const module = { exports: {} }

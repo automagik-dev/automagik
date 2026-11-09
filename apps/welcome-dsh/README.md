@@ -79,6 +79,32 @@ and no other Bot is made. `state` reports it as `host`, and Omni and Genie come 
 instance: Omni's card offers no new Omni of its own, and Genie's names the command line the
 instance brought instead of the line that installs one.
 
+### The power shortcut in the Bot team's sidebar
+
+Where the Bot team runs, the welcome puts a power button in its sidebar, between the update
+cloud and Search (and in the collapsed rail), through the Bot team's `sidebarTools`
+registry: `@automagik/bots-dsh/client` is in `dsh.client.external` and in the build's
+`external`, and is looked up only when the plugin applies, so a DSH without the Bot team
+gets no button and no error. Its card has a row per product, in the team step's order
+(Unfold only in its own instance, read-only), each led by the Bot team's own mark for that
+product (its `BotMark`) and offering the one thing to do next: power it on or off, install
+it (with a line on what that does, then its step and place, "Installing Genie · 2 of 3 ·
+Bot team", from the host's install job), try again with the reason, add the Omni Bot back,
+open Plugins, or choose where Omni lives (the Bot itself sits in the sidebar, so a row does
+not open it). Powering off is the
+team step's own (`powerOff`): it stops a run and puts the box to sleep, and undoes nothing
+on the host (a linked Omni stays linked, no Bot is removed); Genie, once on the team, stays,
+as on its box. Powering on runs the team step's own steps in a shared store
+(`src/client/power-store.js`), so it keeps going when the card or the step closes. That store
+lives in the page, so the button reads the host's `omni-plugins` and `genie-plugin` when it
+mounts and each time the card opens: an install the host is running (its `install.phase` is
+`installing`) that this window does not follow, after a reload or from another window, is
+picked up where it is, without asking for a second install, and polled every `POLL_MS`
+(900 ms) as the team step polls it, to On or to the reason with Try again. Choosing where Omni
+lives, or "Open team setup", opens the team step on purpose: there Continue only closes it and
+saves nothing, so the Main Bot keeps its name. Both show only when the Bot team passes the
+shell's onboarding opener (`actions.openHarnessOnboarding`).
+
 The team step follows the DSH language. Its copy is the `welcome.team` namespace
 (`src/client/i18n.js`): the keys are the English text, registered in English and in Brazilian
 Portuguese (`pt-BR`), and the rows the host sends are read through it too. A language pack that
