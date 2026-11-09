@@ -7,12 +7,14 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { scan } from '../../herdr/scripts/privacy-check.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const html = readFileSync(resolve(root, 'index.html'), 'utf8')
 const css = readFileSync(resolve(root, 'styles.css'), 'utf8')
 const captures = readFileSync(resolve(root, 'assets/CAPTURES.md'), 'utf8')
 const manifest = JSON.parse(readFileSync(resolve(root, 'assets/screens/manifest.json'), 'utf8'))
+const privacyList = JSON.parse(readFileSync(resolve(root, '../../herdr/scripts/privacy-list.json'), 'utf8'))
 const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const images = [...html.matchAll(/<img\b[^>]*>/g)].map(match => match[0])
 const sources = [...html.matchAll(/(?:src|srcset)="([^"]+)"/g)].map(match => match[1])
@@ -92,8 +94,10 @@ test('claims stay inside what the captures show', () => {
 })
 
 test('no personal data, tracking or host paths', () => {
-  assert.doesNotMatch(html + css + captures, /\/Users\/|\/home\/[a-z]|feliperosa|(?:sk-|ghp_)[a-z\d]{15,}|analytics|gtag/i)
-  assert.doesNotMatch(html, /[\w.+-]+@[\w-]+\.[a-z]{2,}/i)
+  for (const [file, content] of [['index.html', html], ['styles.css', css], ['assets/CAPTURES.md', captures]]) {
+    assert.deepEqual(scan(file, content, privacyList), [], `${file} has privacy hits`)
+  }
+  assert.doesNotMatch(html + css + captures, /analytics|gtag/i)
 })
 
 test('responsive and keyboard basics', () => {
