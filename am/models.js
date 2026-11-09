@@ -416,10 +416,12 @@ export function agyModeArgs(agentKey, mode = null) {
  *
  * This list is a guardrail against accidents, not a security boundary. A deny rule matches the
  * words' prefix only, so a quoted or reordered command, an absolute path or an interpreter call
- * can go around it; a reset form that reaches `--hard` after other words (`git reset HEAD~1
- * --hard`) is not caught, only the leading-word form is. Allowing `node`, `bun` or `git` with any
- * arguments already lets a determined agent do anything. The real boundary is the sandbox
- * (hcProxy). The list covers the common ways a bot would lose work or land something it shouldn't.
+ * can go around it. Two forms are not caught at all: a force refspec whose `+` is attached to
+ * the ref (`git push origin +main`) and combined short flags (`git push -fu`). A reset form that
+ * reaches `--hard` after other words (`git reset HEAD~1 --hard`) is not caught either; only the
+ * leading-word form is. Allowing `node`, `bun` or `git` with any arguments already lets a
+ * determined agent do anything. The real boundary is the sandbox (hcProxy). The list covers the
+ * common ways a bot would lose work or land something it shouldn't.
  */
 export const AGY_FIXED_DENY = Object.freeze([
   "command(git push --force)",
@@ -427,7 +429,6 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(git push -f)",
   "command(git push origin --force)",
   "command(git push origin -f)",
-  "command(git push origin +)",
   "command(git push --mirror)",
   "command(git push --delete)",
   "command(git reset --hard)",
@@ -500,8 +501,10 @@ const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/priv
 // A seat or worker that writes: the shell tools the task needs, and the gates to prove it.
 const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES]
   .map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): reads and runs the test checks, writes
-// nothing. `hc` and the test runners stay: they read (and hc is how a worker reports).
+// A read-only seat (rank reviewer) or worker (role review): hc, the test checks and a short list
+// of git subcommands and gh reads. A subcommand is allowed with every argument it is given, so
+// some can write (`git diff --output=file`): like the whole list, this is a guardrail, not a
+// boundary. hc and the test runners stay because they read (and hc is how a worker reports).
 const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "git status", "git rev-parse",
   "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
   ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));

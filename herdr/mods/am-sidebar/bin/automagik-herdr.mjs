@@ -5479,8 +5479,10 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       ].filter(Boolean).join("; ");
       // The lists are a guardrail against accidents, never the boundary: say so wherever they print.
       const guardrail = perms ? "these lists are a guardrail against accidents, not a security boundary: "
-        + "a rule matches word prefixes only (a reset reaching --hard after other words isn't caught), "
-        + "and allowing node, bun or git with any arguments lets a determined agent do anything" : "";
+        + "a rule matches word prefixes only (a force refspec with + attached, combined short flags like -fu, "
+        + "and a reset reaching --hard after other words aren't caught); a review launch's git subcommands "
+        + "take every argument, so some write; allowing node, bun or git with any arguments lets a determined "
+        + "agent do anything" : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
         detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
         ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),

@@ -1138,20 +1138,24 @@ dev worker opens and updates its own PR), and the repository's own gates (`node 
 `node --check`, `bun test`, `scripts/privacy-check.mjs`, `scripts/am-copies.mjs`, the
 `version`/`entries`/`parts`/`catalog` checks, …). No release verb is offered to any launch:
 the fixed `gh release` deny wins over every one of them. A read-only seat (rank `reviewer`) or
-worker (role `review`) gets no `write_file`, no plain `git`/`node`, and only read verbs and
-the test checks; `hc` and the test runners stay, because they read. `gh pr merge` is out of both
-lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
+worker (role `review`) gets no `write_file` and no plain `git`/`node`; it keeps `hc`, the test
+checks, the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …).
+Those subcommands are allowed with every argument they are given, so some can write
+(`git diff --output=file`): like the whole list, this is a guardrail, not a boundary.
+`gh pr merge` is out of both lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
 `git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
-`git push origin -f`, `git push origin +`, `git push --mirror`, `git push --delete`,
-`git reset --hard`, `git branch -D`, `git clean`, `git rebase`, `git stash`,
+`git push origin -f`, `git push --mirror`, `git push --delete`, `git reset --hard`,
+`git branch -D`, `git clean`, `git rebase`, `git stash`,
 `git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`.
 
 These lists are a guardrail against accidents, not a security boundary. A deny rule matches the
 words' prefix only, so a quoted or reordered command, an absolute path or an interpreter can get
-past it; a reset form that reaches `--hard` after other words (`git reset HEAD~1 --hard`) is not
-caught, only the leading-word form is. Allowing `node`, `bun` or `git` with any arguments already
-lets a determined agent do anything. The boundary is the sandbox (the per-pane hc proxy), never
-this list. `dsh-tui doctor` prints the same reminder beside the lists.
+past it. Two forms are not caught at all: a force refspec whose `+` is attached to the ref
+(`git push origin +main`) and combined short flags (`git push -fu`). A reset form that reaches
+`--hard` after other words (`git reset HEAD~1 --hard`) is not caught either; only the
+leading-word form is. Allowing `node`, `bun` or `git` with any arguments already lets a
+determined agent do anything. The boundary is the sandbox (the per-pane hc proxy), never this
+list. `dsh-tui doctor` prints the same reminder beside the lists.
 
 The settings file's path is deterministic from the bot, the scope, the role and the worktree,
 so an approved-worker proxy plan and the argv it approves name the same file: the approved
