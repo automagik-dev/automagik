@@ -824,8 +824,16 @@ export function startDsh({
   node, bin, env, port, cwd, log, privacy, timeoutMs = READY_TIMEOUT_MS, onSpawn, urlFile,
 }) {
   // A file left by an earlier start must not sign this one in: dsh writes its own once it is
-  // ready, and this start falls back to it when dsh's output is unavailable.
-  if (urlFile) rmSync(urlFile, { force: true })
+  // ready, and this start falls back to it when dsh's output is unavailable. A removal that
+  // fails must not fail the start; dsh replaces the file once it is ready.
+  if (urlFile) {
+    try {
+      rmSync(urlFile, { force: true })
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      console.error(`automagik: could not remove the previous launch URL ${urlFile}: ${reason}`)
+    }
+  }
   const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   })

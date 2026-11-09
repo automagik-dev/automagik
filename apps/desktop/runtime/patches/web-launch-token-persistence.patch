@@ -8,7 +8,7 @@
 @@ -37,0 +40,2 @@
 +/** This process's launch URL, kept owner-only in DSH_HOME so a lost stdout can be recovered. */
 +const LAUNCH_URL_FILENAME = "launch-url";
-@@ -127,0 +132,37 @@
+@@ -127,0 +132,43 @@
 +/** The DSH home as dsh resolves it: $DSH_HOME (with ~ expanded), else ~/.dsh. */
 +function dshHome() {
 +	const configured = process.env.DSH_HOME?.trim();
@@ -25,8 +25,10 @@
 +}
 +/**
 +* Save the authenticated launch URL for a local client that lost the printed one: owner-only,
-+* replacing the previous start's file. A failure is reported, never fatal: the URL line still
-+* reaches stdout.
++* replacing the previous start's file without partial content. A momentary absence is possible
++* between removing the old file and renaming the new one; the launcher polls for it. A write
++* failure is reported, never fatal, even when cleaning up the temporary file also fails: the URL
++* line still reaches stdout.
 +* @param url - this process's authenticated launch URL.
 +* @returns the file written, or null when it could not be written.
 +*/
@@ -39,7 +41,11 @@
 +		rmSync(target, { force: true });
 +		renameSync(temporary, target);
 +	} catch (error) {
-+		rmSync(temporary, { force: true });
++		try {
++			rmSync(temporary, { force: true });
++		} catch {
++			// Best effort: cleanup must not hide the write failure being reported.
++		}
 +		const reason = error instanceof Error ? error.message : String(error);
 +		console.error(`web-app: could not save the launch URL in ${target}: ${reason}`);
 +		return null;

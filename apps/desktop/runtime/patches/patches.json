@@ -64,7 +64,7 @@
   },
   {
     "patch": "web-launch-token-persistence.patch",
-    "about": "Web: dsh web records its launch URL (token included) in $DSH_HOME/launch-url, mode 0600, replacing the previous start's file and removing it on shutdown, so --no-open with stdout lost is recoverable without a restart. The connection patch that owns its file names it in the 401, and the desktop launcher reads it when dsh's output is unavailable. It is a credential: never log or commit it. Delete it in the DSH release that persists the launch URL itself.",
+    "about": "Web: dsh web records its launch URL (token included) in $DSH_HOME/launch-url, mode 0600, replacing the previous start's file without partial content (a brief absence is possible while it is replaced) and removing it on shutdown, so --no-open with stdout lost is recoverable without a restart. A failed write is reported and returns null, so the launch URL line still prints, even when cleaning up the temporary file also fails. The connection patch that owns its file names it in the 401, and the desktop launcher reads it when dsh's output is unavailable. It is a credential: never log or commit it. Delete it in the DSH release that persists the launch URL itself.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -72,7 +72,7 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "6662ca712368c56fb8818efa53039ef92ce215a328a76b9cdd5e1bed624a0e84",
-        "after": "3b2b72c6b6c4397bbe935521e3a1de2d9e2f46d0d329c803c122263a02adddca"
+        "after": "2cb829414f5e66268d078f9d3771173518d1d51c072214384caf3e890ddf7693"
       }
     ]
   }
