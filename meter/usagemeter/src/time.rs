@@ -37,6 +37,16 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// Days in a month of the proleptic Gregorian calendar; `m` is 1 to 12.
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
 fn num(b: &[u8]) -> Option<i64> {
     if b.is_empty() || !b.iter().all(u8::is_ascii_digit) {
         return None;
@@ -55,7 +65,11 @@ pub fn parse_rfc3339(s: &str) -> Option<i64> {
     }
     let (y, mo, d) = (num(&b[0..4])?, num(&b[5..7])?, num(&b[8..10])?);
     let (h, mi, se) = (num(&b[11..13])?, num(&b[14..16])?, num(&b[17..19])?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+    if !(1..=12).contains(&mo) || h > 23 || mi > 59 || se > 60 {
+        return None;
+    }
+    // A day past the end of its month (`2026-02-31`) is invalid, not the next month's day.
+    if !(1..=days_in_month(y, mo)).contains(&d) {
         return None;
     }
     let mut i = 19;
@@ -138,5 +152,32 @@ mod tests {
         assert_eq!(parse_rfc3339("2026-13-01T00:00:00Z"), None);
         assert_eq!(parse_rfc3339("not a date at all!!"), None);
         assert_eq!(parse_rfc3339("2026-01-01T00:00:00"), None);
+    }
+
+    #[test]
+    fn rejects_days_past_the_end_of_their_month() {
+        for bad in [
+            "2026-02-29T09:00:00Z",
+            "2026-02-31T09:00:00Z",
+            "2026-04-31T09:00:00Z",
+            "2026-06-31T09:00:00Z",
+            "2026-09-31T09:00:00Z",
+            "2026-11-31T09:00:00Z",
+            "2026-01-32T09:00:00Z",
+            "2026-01-00T09:00:00Z",
+            "2100-02-29T09:00:00Z",
+        ] {
+            assert_eq!(parse_rfc3339(bad), None, "{bad}");
+        }
+        // Leap days: every fourth year, except centuries not divisible by 400.
+        for good in [
+            "2028-02-29T09:00:00Z",
+            "2000-02-29T09:00:00Z",
+            "2026-01-31T09:00:00Z",
+            "2026-12-31T23:59:59Z",
+        ] {
+            let t = parse_rfc3339(good).unwrap();
+            assert_eq!(format_rfc3339(t), good);
+        }
     }
 }
