@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (council 2026-11-09: revise; owner decisions 2026-11-09; amends 0024) |
+| Status | Draft (council 2026-11-09: revise; platform owner decisions 2026-11-09; amends 0024) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service outside |
 | Created | 2026-11-09 |
@@ -13,38 +13,45 @@ RFC 0024 fixed the free and paid split and chose Stripe, then left model usage a
 payments to a follow-up. This RFC is that follow-up. Customers keep their own model keys or
 plan sign-ins, free; managed tokens through a Cloud-run gateway are an opt-in at a published
 margin. Compute is metered from the host lifecycle. Bots pay Cloud for Cloud's own resources
-first, from the organisation's card or prepaid credit, inside grants an owner sets; payments to
+first, from the organisation's card or prepaid credit, inside grants an organisation Owner sets;
 third-party merchants wait for a legal review and their own RFC. One append-only ledger, outside
-the workspace, is the record; caps are hard and real-time; grants reserve, settle and release
-atomically; each phase opens only behind its own go-live gate. This RFC is docs only: it opens
-no checkout, starts no service and writes no billing code. It amends RFC 0024's open question 8
-and Decided 14's "being paid".
+the workspace, records each source event once and funds it one way; caps reserve a maximum or a
+lease before the work; grants check the authenticated gateway token, not a Bot name; quotes bind
+the tenant, workspace and Bot; every money approval is a passkey step-up in Cloud's page. Each
+phase opens only behind its own go-live gate. This RFC is docs only: it opens no checkout, starts
+no service and writes no billing code. It amends RFC 0024's open question 8, Decided 14's "being
+paid", and its (g) workspace credential.
 
 ## Motivation
 
 RFC 0024's (i) recommended "model usage on the workspace's own keys at first" (its open question
-8) and recorded the owner's answer on billing: Stripe directly, "including support to agentic
-payments" (its Decided 14), "Bots paying, or being paid, on a customer's behalf ... within limits
-the human sets", to be detailed by a follow-up RFC after a brainstorm on the economics. This is
-that follow-up, and the owner's decisions of 2026-11-09 (Decided 1 to 4) settle the direction.
+8) and recorded the platform owner's answer on billing: Stripe directly, "including support to
+agentic payments" (its Decided 14), "Bots paying, or being paid, on a customer's behalf ... within
+limits the human sets", to be detailed by a follow-up RFC after a brainstorm on the economics.
+This is that follow-up, and the platform owner's decisions of 2026-11-09 (Decided 1 to 4) settle
+the direction.
 
 The obvious implementation, bill from the workspace's own meter, fails on the evidence this
 repository already has:
 
-- **The meter is local evidence, not a bill.** usagemeter is a file on the machine (RFC 0017);
-  its doc is truncated to stay under its byte budget, so a missing row is not zero, and its
-  provenance rows are "not a bill" (RFC 0018, (c)). Its store has no tenant and no billing
-  identity, and RFC 0021 keeps session ids machine-local. A Bot with a shell can edit or delete
-  it. None of that is a basis for charging a customer.
+- **The meter is local evidence, and this RFC never treats it as a bill.** usagemeter is a file
+  on the machine (RFC 0017); RFC 0018 says its doc cannot be the source because it is truncated
+  to its byte budget, so a missing row is not zero, and its evidence is kept for attribution, not
+  for money (the one "not a bill" line in 0018 is about mikro's counters, not the meter's rows).
+  Its store has no tenant and no billing identity, and RFC 0021 keeps session ids machine-local.
+  A Bot with a shell can edit or delete it. None of that is a basis for charging a customer.
 - **Billing truth has to be outside the workspace VM.** The gateway that serves managed tokens
   sees every call it bills, and Arca's host lifecycle sees every VM start and stop. The workspace
   sees neither as an authority, so it cannot write, alter or suppress the record.
-- **A spend approval cannot be a terminal key.** RFC 0022's Decided 6 shows that a late key can
-  answer the next, unseen approval dialog. A payment approval typed into a Bot's terminal has the
-  same race. Money needs a passkey step-up in Cloud's own page, not a key.
+- **A spend approval cannot be a terminal key.** RFC 0022's Decided 6 stops the rendered chat
+  view from answering approval dialogs with keys until herdr-core#122 lands. That is a temporary
+  stopgap for the view, not a rule for money: the person still answers in Code mode, the real
+  terminal. The same late-key race, and the phone's (#852), is why money gets a stronger,
+  permanent rule: a chat message, an hc message, terminal keys, or a desktop or Pocket tap are
+  never an approval; the organisation Owner uses a passkey step-up in Cloud's own page.
 - **Stripe is outside the workspace.** RFC 0024 already says no app or workspace talks to Stripe,
-  a Bot holds no Stripe key or card, and every limit is the owner's and enforced by Cloud. The
-  adapter, the webhook path and the ledger are Cloud's control plane, not a tenant's.
+  a Bot holds no Stripe key or card, and every limit is an organisation Owner's and enforced by
+  Cloud. The adapter, the webhook path and the ledger are Cloud's control plane, not a tenant's.
 
 A council reviewed this direction on 2026-11-09 and returned a revise verdict: build the truth
 and the ledger before the money paths, phase every charge behind its own go-live gate, and make
@@ -56,47 +63,51 @@ values live in the Cloud service's private configuration.
 
 ## Decided
 
-From the owner (2026-11-09):
+From the platform owner (2026-11-09):
 
 1. **Model access is the customer's by default, at no charge.** A customer uses their own API
    keys or plan sign-ins. Managed tokens, through a Cloud-run gateway, are opt-in, per
    workspace, and sold at a published margin.
 2. **Agentic payments start inbound.** Bots pay Cloud for Cloud's own resources (managed
    tokens, compute, new workspaces) from the organisation's card or prepaid credit, within
-   grants an owner sets. Outbound payments to third-party merchants come later, after a legal
-   review, in their own RFC.
-3. **Billing-path changes need the owner's review before merge.** The ledger, the Stripe
-   adapter, grants, quote signing and margins are billing-path changes; they are excluded from
-   the normal merge rule.
+   grants an organisation Owner sets. Outbound payments to third-party merchants come later,
+   after a legal review, in their own RFC.
+3. **Billing-path changes need the platform owner's review before merge.** The ledger, the
+   Stripe adapter, grants, quote signing and margins are billing-path changes; they are excluded
+   from the normal merge rule.
 4. **The existing entity and plain Stripe Billing.** Billing starts with the existing entity, in
    its local currency, on plain Stripe Billing for phases A to D. The Stripe adapter is keyed by
-   `(Stripe account, customer)`, so a later second account can be added for USD and the agent
-   rails. No country, entity, Stripe account, Stripe id or price is written in this repository or
-   any other public text.
+   `(Stripe account, customer)`, so a later second account can be added for a second currency
+   and the agent rails. No country, entity, Stripe account, Stripe id or price is written in this
+   repository or any other public text.
 
 From the council review (2026-11-09; verdict revise; conditions folded in):
 
 5. **Six phases, each behind its own go-live gate.** A: entitlements and a per-workspace
    subscription with seats as quantities; B: compute metered from the host lifecycle; C: managed
    tokens through the gateway, opt-in; D: Bot spend grants, inbound; E: external agent rails;
-   F: outcome pricing. Earning money is a later owner decision; no phase charges before its gate
-   and the owner's written GO-LIVE record.
+   F: outcome pricing. Earning money is a later platform-owner decision; no phase charges before
+   its gate and the platform owner's written GO-LIVE record.
 6. **Billing truth comes only from outside the workspace VM**: the gateway for tokens, the host
    lifecycle for compute. The tenant is taken from the authenticated source, never from the
    payload. A test proves that a Bot with a shell cannot write, alter or suppress a billable
    event.
-7. **One append-only ledger in Cloud's control plane.** An idempotency key includes the tenant,
-   the tenant tuple, a price-version id, a server timestamp and the funding source. Each event
+7. **One append-only ledger in Cloud's control plane.** Each source event is keyed by
+   `(source, source event id)`: `(gateway, request id)` or `(host lifecycle, VM event id)`. That
+   pair is unique, and a funding-state column is set once to `metered` or `credited`; each event
    goes to the Stripe meter or is debited from credit, never both. Reconcile with Stripe every
    period, with recorded true-ups; an event is corrected by a compensating event, never edited.
 8. **Hard real-time caps per workspace and per paying account**, enforced by Cloud, not by
    Stripe, with alerts at set fractions.
-9. **Money grants.** Amounts plus currency; reserve, then settle, then release, atomic under
-   concurrency (a test with N parallel calls). Each grant is bound to one signed quote with a
-   single-use nonce. Only an organisation Owner, after a passkey step-up, creates or raises a
-   grant. Defaults: Never for payments and card entry; spend is Ask, or Pre-approve with a low
-   cap and a TTL of 24 h at most. One page lists grants with one-click revoke; every charge gets
-   a receipt.
+9. **Money grants.** Amounts plus currency; reserve, then settle, then release, each step atomic
+   under concurrency (a test with N parallel calls). Each grant is bound to one signed quote with
+   a single-use nonce; the quote names the tenant, workspace, Bot scope, merchant, amount,
+   currency and expiry. The Bot scope comes from the authenticated token, never a payload name.
+   Only an organisation Owner, after a passkey step-up on Cloud's page, creates or raises a
+   grant; a chat message, an hc message, terminal keys, or a desktop or Pocket tap are never an
+   approval. Defaults: Never for payments and card entry; spend is Ask,
+   or Pre-approve with a low cap and a TTL of 24 h at most. One page lists grants with one-click
+   revoke; every charge gets a receipt.
 10. **Tactu-style safeguards are acceptance tests**: one adapter file; webhook signatures
     verified; deduplication by event id; state re-fetched from Stripe; 503 without secrets; live
     keys refused until a GO-LIVE record exists; the outbox drained before deprovision. Test-clock
@@ -104,28 +115,35 @@ From the council review (2026-11-09; verdict revise; conditions folded in):
     webhooks, a reconciliation) comes before any live key.
 11. **Outcome pricing uses a verifier outside the workspace.** A workspace never certifies its
     own outcome.
-12. **The open-source image and an unlinked instance contain no billing call path.** Neither has
-    a Stripe client, a ledger writer, a billing route or a call to Cloud's billing or gateway
-    service.
-13. **RFC 0024 is amended explicitly**: its open question 8 on tokens, and Decided 14's "being
-    paid", which is deferred.
+12. **The open-source image and an unlinked instance contain no billing call path and no
+    gateway path.** The image carries no billing code and no built-in gateway address; Cloud
+    supplies only configuration, and managed tokens exist only in Cloud workspaces. The
+    open-source image never calls the gateway, and an unlinked instance has no gateway path. A
+    static scan of the image's dependencies and imports and the no-connection test prove it.
+13. **RFC 0024 is amended explicitly**: open question 8 on tokens, Decided 14's "being paid",
+    and (g)'s "the workspace holds no Cloud credential", which now admits a scoped, short-lived,
+    revocable gateway token. The amendments are listed below.
 
 Carried, not new:
 
 - From RFC 0024: the free and paid split; a subscription per workspace with seats as quantities;
   entitlements from signed, re-fetched Stripe state; owner-only billing (an admin never reaches
   it); card details stay on Stripe's pages; no workspace talks to Stripe; a Bot holds no Stripe
-  key or stored card; every limit is an owner's and enforced by Cloud; notice and a grace period
-  before a workspace is stopped, with its data kept for the retention window.
-- From RFC 0024's Decided 13 and (e): the identity service only authenticates; billing roles,
+  key or stored card; every limit is an organisation Owner's and enforced by Cloud; notice and a
+  grace period before a workspace is stopped, with its data kept for the retention window.
+- From RFC 0024's Decided 6 and (e): the identity service only authenticates; billing roles,
   grants and caps live in Cloud's database, keyed by the tenant, never in a group claim.
-- From RFC 0017: the meter is a part on its own lane and is never on a billing path; its local
-  store, doc and attribution are read-only evidence for display and reconciliation signals.
-- From RFC 0018: the doc cannot be the source; provenance rows are not a bill; a read never
-  writes; null or unknown is never shown as zero.
-- From RFC 0021: attribution stays machine-local and is never a billing identity.
-- From RFC 0022: approvals are shown, never answered by typing keys (Decided 6). A spend approval
-  is a passkey step-up in Cloud's page, never an approval key in a terminal.
+- From RFC 0017: the meter is a part on its own lane; this RFC adds that it is not on a billing
+  path. Its local store, doc and attribution are evidence for display and reconciliation
+  signals, not a bill.
+- From RFC 0018: the doc cannot be the source; its evidence is kept for attribution, not for
+  money; a read never writes; null or unknown is never shown as zero.
+- From RFC 0021: attribution stays machine-local; this RFC adds that it is not a billing
+  identity.
+- From RFC 0022: a rendered chat view never answers approval dialogs by typing keys until
+  herdr-core#122; that is a temporary view rule, and the person still answers in Code mode. This
+  RFC's money rule is permanent and wider: no chat message, hc message, terminal key, desktop
+  tap or Pocket tap is an approval (see #852 for the phone race).
 - From RFC 0011: two-slot key rotation for anything this RFC signs, and one version.
 
 Proposed here: everything else.
@@ -138,32 +156,47 @@ Proposed here: everything else.
   records in its ledger. A Stripe Billing subscription invoice is Stripe's object, not a ledger
   event; it is reconciled and receipted.
 - **Billing truth**: an event made from an authenticated source outside the workspace VM, with
-  the tenant from that source, a price version and one funding source.
+  the tenant from that source, a price version and one funding state.
+- **Platform owner**: the human who operates Cloud and may write or withdraw a GO-LIVE record;
+  not an organisation Owner.
+- **Organisation Owner**: the role in RFC 0024 that owns billing, grants and caps; an admin,
+  member or guest is not one. The individual of a personal account is owner-equivalent.
 - **Tenant**: the paying organisation or personal account. **Tenant tuple**: `(tenant, workspace,
-  bot)` where a Bot is the cause, else `(tenant, workspace, platform)`.
-- **Funding source**: `stripe_meter` or `credit`. A metered event has exactly one.
+  bot)`, where `bot` is self-reported attribution only, never authorisation; else
+  `(tenant, workspace, platform)`.
+- **Funding source**: `stripe_meter` or `credit`. **Funding state**: `metered` or `credited`, set
+  once per source event and never both.
+- **Source event id**: the gateway's request id or the host lifecycle's VM event id, unique per
+  source. The pair `(source, source event id)` is the ledger's dedup key.
 - **Managed tokens**: model tokens Cloud buys from a provider and serves through its gateway.
   **BYO**: the customer's own API key or plan sign-in, which Cloud never proxies or bills.
-- **The gateway**: Cloud's model proxy: it authenticates the workspace, checks caps and grants,
-  forwards the call with Cloud's provider credentials, counts what the provider reports, writes
-  the ledger event and returns the response. A workspace never sees a provider key.
+- **The gateway**: Cloud's model proxy and quote route: it authenticates the gateway token, checks
+  caps and the token's grant, reserves a maximum, forwards the call with Cloud's provider
+  credentials, counts what the provider reports, settles, writes the ledger event and returns
+  the response. A workspace never sees a provider key.
+- **Gateway token**: a scoped, short-lived, revocable credential minted by Cloud for a workspace,
+  or for one Bot in it, with the gateway as its only audience. It cannot call Stripe or Cloud's
+  control plane.
 - **Host lifecycle**: Arca's record of a workspace VM's start, stop, resize and delete. It is the
   compute truth, not the meter inside the VM.
 - **Price version**: an immutable id for a unit price, currency and margin. An event names one;
   a change makes a new version.
-- **Grant**: an owner's currency-denominated authorization for Bot spend, created from one
-  signed quote, drawn down by charges.
-- **Quote**: Cloud's signed offer of an amount, currency, scope, price version and expiry, with
-  a single-use nonce.
+- **Merchant (payee)**: Cloud for an inbound purchase of Cloud's resources; a third party only in
+  phase E.
+- **Grant**: an organisation Owner's currency-denominated authorization, created from one signed
+  quote, for charges inside the quote's authenticated scope.
+- **Quote**: Cloud's signed offer of the tenant, workspace, Bot scope, merchant, amount,
+  currency, price version and expiry, with a single-use nonce.
 - **Reserve, settle, release**: hold an amount against a grant, charge the actual, return the
-  remainder, all in one ledger transaction.
-- **Cap**: a hard limit per workspace and per paying account, enforced before the billable
-  action.
+  remainder. Each step is its own ledger transaction; reserve and release are atomic with the
+  grant state, and settle may arrive after the call.
+- **Cap**: a hard limit per workspace and per paying account, enforced by a reservation before
+  the billable action.
 - **GO-LIVE record**: Cloud's control-plane record that a phase may charge real money, naming
-  the owner's decision, the evidence, the Stripe mode and the rollback.
-- **Existing entity**, **later second account**: the billing entity and Stripe account in use
-  at the start, and an additive account for USD and the agent rails. Their names, ids and
-  country are not public.
+  the platform owner's decision, the evidence, the Stripe mode and the rollback.
+- **Existing entity**, **later second account**: the billing entity and Stripe account in use at
+  the start, and an additive account for a second currency and the agent rails. Their names, ids
+  and country are not public.
 - **Period**: the account's billing period, at least a month, closed for reconciliation.
 - **True-up**: a compensating ledger event that records a difference found in reconciliation.
 - **Receipt**: the immutable, human-readable record of one charge, its grant and quote, its
@@ -182,13 +215,14 @@ workspace opts in (C), and Bot spend on Cloud's resources inside grants (D). Pha
 agent rails) and phase F (outcome pricing) are later and are not built here.
 
 **Managed tokens are opt-in, not a trap.** They are off by default at the organisation and the
-workspace, the owner turns them on with a passkey step-up, the published margin is shown before
-the first call, and turning them off stops new managed calls at once. Usage already served
-settles. BYO resumes without a change to the workspace's data.
+workspace; an organisation Owner turns them on with a passkey step-up; the published margin is
+shown before the first call; turning them off stops new managed calls at once. Usage already
+served settles. BYO resumes without a change to the workspace's data.
 
-**Earning money is a later owner decision.** This RFC designs the paths and their gates; it
-turns none on. Each phase's GO-LIVE record is the owner's decision to charge for that phase.
-A phase may merge behind a flag and run in test mode before that record; it may not charge.
+**Earning money is a later platform-owner decision.** This RFC designs the paths and their
+gates; it turns none on. Each phase's GO-LIVE record is the platform owner's decision to charge
+for that phase. A phase may merge behind a flag and run in test mode before that record; it may
+not charge.
 
 ### (b) Phases and go-live gates
 
@@ -196,20 +230,22 @@ A phase may merge behind a flag and run in test mode before that record; it may 
 |---|---|---|
 | A | Entitlements; a workspace subscription with seats | A full test-clock month and GO-LIVE |
 | B | Compute metered from the host lifecycle | The shell test, a reconciled period, GO-LIVE |
-| C | Managed tokens through the gateway | The shell test, a margin, GO-LIVE |
-| D | Bot spend grants, inbound | Atomicity, step-up and receipt tests, GO-LIVE |
-| E | External agent rails, outbound | Its own RFC, a legal review, the owner's decision |
-| F | Outcome pricing | A verifier outside the workspace, the owner's decision |
+| C | Managed tokens through the gateway | The shell test, a margin, a reconciled period, GO-LIVE |
+| D | Bot spend grants, inbound | Atomicity, step-up, revocation, receipt, reconciliation, GO-LIVE |
+| E | External agent rails, outbound | Its own RFC, a legal review, the platform owner's decision |
+| F | Outcome pricing | A verifier outside the workspace, the platform owner's decision |
 
 **A GO-LIVE record is required, not implied.** It is written in Cloud's control plane and holds
-the phase, the scope, the owner's decision, links to the evidence, the Stripe mode, the date and
-the rollback. The adapter reads it. No record means no live key and no real charge; test keys and
-a test clock are allowed. A record can be withdrawn, which stops new charges at once.
+the phase, the scope, the platform owner's decision, links to the evidence, the Stripe mode, the
+date and the rollback. The adapter reads it. No record means no live key and no real charge;
+test keys and a test clock are allowed. Only the platform owner, after a passkey step-up, may
+write or withdraw a record, and every write or withdrawal is audited; no Bot and no operator
+account can. A record can be withdrawn, which stops new charges at once.
 
 **The order is a safety order, not a preference.** A and B give Cloud a correct bill for things
-it already does. C adds a new trust boundary (the gateway). D adds owner-authorized Bot spend.
-E and F add third-party and outcome risk and are not attempted until A to D have run a full
-period in reconciliation.
+it already does. C adds a new trust boundary (the gateway). D adds spend an organisation Owner
+authorized. E and F add third-party and outcome risk and are not attempted until A to D have run
+a full period in reconciliation.
 
 **Each phase is behind its own gate.** A later phase never turns on an earlier one, and a phase
 that fails its gate stays in test mode. A shared gate would let a strong phase hide a weak one.
@@ -219,11 +255,12 @@ that fails its gate stays in test mode. A shared gate would let a strong phase h
 Only these sources can make a billable event, and all are outside the workspace VM:
 
 1. **The gateway, for tokens.** It authenticates a short-lived gateway token minted from the
-   workspace session, with the gateway as its audience (RFC 0024's workspace token keeps its
-   one-workspace audience), reads the tenant and workspace from that token, and ignores any
-   tenant in the request body. A token for another workspace or audience is refused. The gateway
-   counts the provider-reported usage after the call; a stream that ends early is still counted
-   for what the provider reports. If the provider reports no usage, the gateway records an
+   workspace session or for a Bot seat, with the gateway as its audience (RFC 0024's workspace
+   token keeps its one-workspace audience), reads the tenant and workspace from that token, and
+   ignores any tenant or Bot in the request body. A token for another workspace, Bot or audience
+   is refused. The gateway counts the provider-reported usage after the call; a stream that ends
+   early is still counted for what the provider reports, and a cancelled stream is read to its
+   end for the provider's final usage. If the provider reports no usage, the gateway records an
    estimate, marks its precision, and the period's reconciliation may true it up. It never reads
    the workspace's meter.
 2. **The host lifecycle, for compute.** Arca emits VM start, stop, resize and delete events.
@@ -240,9 +277,16 @@ ignored. A mismatch between the authenticated mapping and a claimed tenant is re
 alerted. The Stripe customer is chosen from Cloud's `(tenant, Stripe account)` mapping, not from
 a value a workspace sends.
 
-**No write path from the workspace.** The workspace can call the gateway as a client and can ask
-Cloud for a quote, but it cannot insert a ledger row, change a price, stop a host lifecycle
-event, or mark a charge settled. The ledger's writer is the Cloud service. The gateway and the
+**The Bot field is attribution only, never authorisation.** The gateway token is minted for a
+workspace, or for one Bot in it. The token's scope, not a Bot name in a payload, decides which
+grant applies: a workspace grant covers the workspace's token; a per-Bot grant applies only to a
+token minted for that Bot. A payload's Bot name is recorded on the event as attribution and can
+never select, raise or bypass a grant. A call that omits the Bot still spends inside the
+workspace grant, and a call that names another Bot still spends on its own token's scope.
+
+**No write path from the workspace.** The workspace can call the gateway as a client, its quote
+route included, but it cannot insert a ledger row, change a price, stop a host lifecycle event,
+or mark a charge settled. The ledger's writer is the Cloud service. The gateway and the
 host lifecycle are separate services with their own credentials; neither trusts a workspace
 payload for identity.
 
@@ -255,50 +299,51 @@ billing code reads the meter's store or doc.
 
 **The meter is never billing truth.** RFC 0017, 0018 and 0021 keep the meter local, attributable
 and useful for display, capacity and as a reconciliation signal. It is editable by the same user
-and truncated by its byte budget. A billing decision that reads it is a defect, and a test
-pins that no billing path imports it.
+and truncated by its byte budget. A billing decision that reads it is a defect, and a test pins
+that no billing path imports it.
 
-### (d) One append-only ledger, one funding source
+### (d) One append-only ledger, one funding state
 
 Cloud's control plane keeps one ledger for every billable event it records: token usage, compute,
 one-off resource purchases, credit movements and true-ups. It is append-only. A correction is a
 new compensating event that names the one it corrects; no row is updated or deleted. The
-workspace has no writer and no reader beyond the owner's receipts and summaries.
+workspace has no writer and no reader beyond the tenant's receipts and summaries.
 
 | Field | Meaning |
 |---|---|
 | Event id | Immutable id of this event |
-| Idempotency key | Unique; a retry returns the first event |
+| Source and source event id | `gateway` or `host_lifecycle`, and its own id; unique together |
 | Tenant | The paying organisation or personal account |
-| Tenant tuple | `(tenant, workspace, bot)` or `(tenant, workspace, platform)` |
+| Tenant tuple | `(tenant, workspace, bot)`; `bot` is attribution only |
 | Kind | `tokens`, `compute`, `resource`, `credit`, `true_up` |
 | Resource | Model and unit, VM shape and unit, or the one-off resource |
 | Quantity and unit | What was consumed, in the price version's unit |
 | Amount and currency | The charge in the funding source's currency |
 | Price-version id | The immutable price and margin this event settles at |
-| Server timestamp | The source's time, assigned once and reused on retry |
+| Server timestamp | The source's time, a field, not a key |
 | Funding source | `stripe_meter` or `credit` |
-| Quote and grant | The authorizing quote id and nonce, and the grant id, when any |
+| Funding state | `pending`, `metered` or `credited`; set once and never both |
+| Quote and grant | The authorizing grant and its quote, when any |
 | Receipt id | The receipt issued when the event settles |
-| Source | `gateway`, `host_lifecycle`, `credit` or `reconciliation` |
-| Source event id | The source's own id, for replay and reconciliation |
 
-**Idempotency.** The key is a hash of the tenant, the tenant tuple, the price-version id, the
-source's server timestamp and the funding source. A retry carries the same timestamp and key;
-the insert is a no-op that returns the original event. A new event gets a new timestamp. The key
-is unique in the ledger, so a duplicated delivery, a replayed webhook or a retried gateway call
-cannot charge twice.
+**Idempotency by source event.** The ledger has one row per `(source, source event id)`, unique
+in the database: the gateway's request id or the host lifecycle's VM event id. A retry returns
+that row; a duplicate delivery cannot write a second row, and a second attempt to fund it from
+the other source is refused. A server timestamp and a price version are event fields, not the
+key, so two calls at the same timestamp are distinct. The gateway's request id is unique per
+call and is reused by a retry.
 
-**One funding source, never both.** Every event names `stripe_meter` or `credit`; a constraint
-and the same transaction that writes the event enforce one value. A metered event is sent to the
-Stripe meter **or** debited from credit, never both. A failed card path does not silently fall
-back to credit: it is retried on its own source, or the owner's decision creates a new event on
-credit with its own id, and the failed one is closed by a compensating event. A subscription
-invoice is Stripe Billing's and is never also debited from credit.
+**One funding state, never both.** Each source event has one row and one funding state,
+`metered` or `credited`, set once in the transaction that settles it. The only transitions are
+`pending` to `metered` or to `credited`; there is no transition between the two. A uniqueness
+rule on `(source, source event id)` and that one-way state transition enforce it; a second
+attempt from the other funding source is refused, not written. A test sends the same source
+event twice, and once through each funding path, and proves exactly one row and one state. A
+metered event is sent to the Stripe meter **or** debited from credit, never both.
 
 **Credit is funding, not a second usage event.** A credit purchase is a card charge that adds
-credit; it is not a usage event and never also posts to the meter as usage. A credit debit is the
-usage event's funding. They are separate ledger events, and neither is ever both.
+credit; it is not a usage event and never also posts to the meter as usage. A credit debit is
+the usage event's funding. They are separate ledger events, and neither is ever both.
 
 **Price versions.** An event settles at the price version it names, even after a later price or
 margin change. A change is a new immutable version with its own id; it applies only to events
@@ -306,80 +351,106 @@ that name it. A retroactive change is a true-up event, never an edit. A price or
 is a billing-path change (Decided 3).
 
 **Reconciliation every period.** At each period close, Cloud compares, per tenant, price version
-and funding source, the ledger's sum with the Stripe meter, the subscription invoices and the
+and funding state, the ledger's sum with the Stripe meter, the subscription invoices and the
 credit balance. A difference is written as a true-up event with the evidence and a reason, and
 the reconciliation report is kept. A true-up can be positive or negative; it is never an edit to
-an old event. The report is available to the owner and is part of the next phase's go-live
-evidence.
+an old event. The report is available to the organisation Owner and is part of the next phase's
+go-live evidence.
 
 **Outbox and deprovision.** The ledger event is the source; the Stripe meter post and the credit
-debit are an outbox that retries. Before a workspace is deprovisioned, the outbox is drained, so
-its last usage is billed or credited; if it cannot drain, deprovision waits and reports the
-reason. A late event after deprovision is a true-up, not a lost charge.
+debit are an outbox that retries. The outbox uses the ledger event id as the Stripe meter
+event's identifier or idempotency key, so a retried post is not counted twice at Stripe. Before a
+workspace is deprovisioned, the outbox is drained, so its last usage is billed or credited; if it
+cannot drain, deprovision waits and reports the reason. A late event after deprovision is a
+true-up, not a lost charge.
 
-### (e) Hard caps, enforced by Cloud
+### (e) Caps: reserve before the work
 
 Every paying account and every workspace has a cap per period. Both apply; the lower remaining
-amount wins. A cap is a currency amount in the account's currency.
+amount wins. A cap is a currency amount in the account's currency. Cloud reserves against it
+before the billable action, because the final cost is not known until afterwards.
 
-- **Real time, before the action.** The gateway checks the remaining cap before forwarding a
-  managed call; the host lifecycle checks it before a VM start or resize; a quote checks it
-  before a reserve. A request at or past the cap is refused with a reason; it is never admitted
-  and billed later.
-- **In flight.** Calls already admitted settle. A cap is not an estimate and not an overage
-  allowance; new work stops at the line.
-- **Cloud enforces it, not Stripe.** Stripe's meters and invoices are billing systems with their
-  own delays. The cap is checked in Cloud's control plane, where the action is admitted, so a
-  delayed Stripe update cannot let spend through.
-- **Alerts at set fractions.** The owner sets the fractions; recommended are one half, four
-  fifths and the cap. An alert goes to the organisation's owners (and the individual of a
-  personal account) once per fraction per period, with the remaining amount and the workspace
-  that crossed it.
+- **Tokens: a maximum reservation.** Every managed call declares its maximum output tokens; if
+  the request omits it, the gateway applies its own ceiling before forwarding. The gateway
+  computes a maximum charge (the maximum output times the output price, plus the input estimate
+  at the price version) and reserves it against both caps, and the grant when one applies,
+  before forwarding. On completion it settles the actual cost and releases the rest. If the
+  reserve does not fit, the call is refused before forwarding; no call runs unbounded. A provider
+  response that would exceed the reserved maximum is stopped, and its usage is still counted.
+- **Compute: a time lease.** The host lifecycle reserves compute in short time chunks (a lease)
+  against the cap before a start or a renewal. The VM runs only inside a leased chunk. Before the
+  lease ends, Cloud renews it if the cap remains; if it does not, the VM is paused (or suspended
+  where pause is unavailable) after a short grace, with a notice to the organisation Owner. It is
+  never deleted. Raising the cap or a new period resumes it. This is the cap path, separate from
+  RFC 0024's notice and grace before a plan ends; both keep the data.
+- **Cloud enforces it, not Stripe.** Stripe's meters and invoices have their own delays. The
+  reservation is checked in Cloud's control plane, where the action is admitted, so a delayed
+  Stripe update cannot let spend through.
+- **Alerts at set fractions.** The organisation Owner sets the fractions; recommended are one
+  half, four fifths and the cap. An alert goes to the organisation's owners (and the individual
+  of a personal account) once per fraction per period, with the remaining amount and the
+  workspace that crossed it.
 - **Safe defaults.** A new paying account starts with a low cap, and managed tokens start at
-  zero until an owner opts in and sets a cap. An owner can change a cap with a passkey step-up;
-  an admin cannot.
-- **A cap is not a grant.** A grant can only lower what a Bot may spend inside the cap. Revoking
-  a grant never raises a cap, and raising a cap never raises a grant.
+  zero until an organisation Owner opts in and sets a cap. An organisation Owner can change a
+  cap with a passkey step-up; an admin cannot.
+- **A cap is not a grant.** A grant can only lower what a token may spend inside the cap.
+  Revoking a grant never raises a cap, and raising a cap never raises a grant.
 
-**Test.** Concurrent requests at the cap admit exactly the remaining amount, the next one is
-refused, alerts are recorded once per fraction, and a delayed Stripe state changes none of it.
+**Test.** Concurrent calls at the cap reserve exactly the remaining amount, the next one is
+refused, a running VM at the cap pauses after the grace and is not deleted, alerts are recorded
+once per fraction, and a delayed Stripe state changes none of it.
 
 ### (f) Grants, quotes and approvals
 
 **A grant.** A grant holds an amount and a currency, a scope (`managed_tokens`, `compute` or
 `new_workspace`), a period, an expiry, a state (`active`, `exhausted`, `revoked`, `expired`) and
 its owner; its reservations carry `reserved`, `settled` or `released`. It is created from one
-signed quote; the quote fixes the amount, currency, scope, price-version id and expiry, and its
-nonce is single-use. A second grant from the same quote is refused. A quote may describe an
-envelope (for example, managed tokens up to the grant's amount in its period), so one grant can
-fund more than one charge; the quote itself is never reused to create a second grant. A charge
-draws on the grant only inside that quote's scope; a grant never spans scopes. A charge without
-a grant is refused for a Bot; a human's own use is bounded by the cap.
+signed quote; the quote fixes the tenant, workspace, Bot scope, merchant, amount, currency,
+price-version id and expiry, and its nonce is single-use. A second grant from the same quote is
+refused. A quote may describe an envelope (for example, managed tokens up to the grant's amount
+in its period), so one grant can fund more than one charge; the quote itself is never reused to
+create a second grant. A charge draws on the grant only inside the quote's authenticated scope;
+a grant never spans scopes.
+
+**Only the authenticated scope selects a grant.** The gateway token is minted for a workspace,
+or for one Bot in it; the grant must match that token's tenant, workspace and Bot scope. A Bot
+name in the payload is attribution only. A call from a workspace token cannot use a per-Bot
+grant; a call from a Bot token cannot use another Bot's grant. A charge without a matching grant
+is refused once phase D is on; before D, phase C is owner-only and the cap is the bound. The line
+between a human and a Bot is the token's minting scope, never a request field.
+
+**Holds live as events.** A reserve, settle or release appends a ledger event, and the mutable
+grant projection (available, reserved, settled) is rebuilt from those events. The projection is
+updated in the same transaction as the event; if it is lost, it is rebuilt, not trusted. Each
+hold has a time limit, and a sweeper releases an expired hold. A crash between reserve and
+settle leaves the hold, and the sweeper releases it; a settle that arrives after a release is
+recorded as a true-up.
 
 **Reserve, settle, release, atomically.** A charge begins with a reserve that checks the grant's
-available amount, the workspace cap and the paying account's cap, then holds the estimate in one
-ledger transaction. On completion, settle writes the actual and releases the remainder; on
+available amount, the workspace cap and the paying account's cap, then holds the estimate in its
+own ledger transaction. On completion, settle writes the actual and releases the remainder; on
 failure or expiry, release returns the hold. The three steps are atomic per grant under
 concurrency: a test issues N parallel reserves against a grant that can fund only K of them, and
 exactly K succeed, the available amount never goes negative, the sum of reserved and settled
 never exceeds the grant, and no reservation is orphaned. Concurrent settle and release calls are
-idempotent by key.
+idempotent by key, and a revoke while a reserve is in flight is tested.
 
 **Only an organisation Owner (or a personal account's individual), after a passkey step-up.**
 Creating or raising a grant needs a fresh WebAuthn assertion with user verification, valid for
 that one action and at most five minutes. A session cookie, an admin, a member, a guest or a Bot
-is refused. The step-up is Cloud's own page; RFC 0022's rule holds, so no approval or answer key
-in a terminal can create or raise a grant.
+is refused. The step-up is Cloud's own page. This RFC's money rule is permanent and wider than
+RFC 0022's view rule: a chat message, an hc message, terminal keys, or a desktop or Pocket tap
+are never an approval, even after herdr-core#122 lands; #852 tracks the phone's late-tap race.
 
 **Defaults.** For payments and card entry: **Never**. A Bot never enters card details and no
-payment is made by default. For spend: **Ask**, the owner answers each spend in Cloud's page.
-The owner may choose **Pre-approve**, with a low cap and a TTL of 24 h at most; after the TTL the
-grant expires and the remainder is released.
+payment is made by default. For spend: **Ask**, the organisation Owner answers each spend with a
+passkey step-up in Cloud's page. The organisation Owner may choose **Pre-approve**, with a low
+cap and a TTL of 24 h at most; after the TTL the grant expires and the remainder is released.
 
 **One page, one click.** One page lists every grant with its scope, amount, remaining, expiry,
-state and last charge, and revokes it in one click. Revoking stops new reserves at once,
-settles what is in flight and releases the remainder; it is audited. The page shows the cap next
-to the grant so an owner sees the outer bound.
+state and last charge, and revokes it in one click. Revoking stops new reserves at once, settles
+what is in flight and releases the remainder; it is audited. The page shows the cap next to the
+grant so an organisation Owner sees the outer bound.
 
 **Every charge gets a receipt.** A receipt names the amount and currency, the resource, the
 grant and quote, the funding source, the ledger event, the timestamp and the state. It is
@@ -409,8 +480,9 @@ check distinguishes "not configured" from "broken".
 
 **Live keys are refused until a GO-LIVE record exists.** The adapter reads the phase's record
 and refuses a live key at start and per call when the record is absent or names another phase or
-mode. Test keys and a test clock are allowed without it. A test proves no live charge can be
-made without the record, and that withdrawing the record stops new charges.
+mode. Test keys and a test clock are allowed without it. The check catches restricted live keys
+as well as secret live keys. A test proves no live charge can be made without the record, and
+that withdrawing the record stops new charges.
 
 **The outbox is drained before deprovision.** Deprovisioning a workspace waits for the outbox to
 post its last events to the Stripe meter or the credit ledger. If it cannot drain, deprovision
@@ -418,8 +490,9 @@ waits, alerts and keeps the data; it never deletes the only record of a charge.
 
 **Test-clock evidence before any live key.** On a Stripe test clock, Cloud runs a full month:
 sign-up, seats added and removed, a failed payment through notice, grace and hold, a recovery, a
-cancel, replayed webhooks, out-of-order webhooks and a reconciliation with a true-up. The
-evidence is linked from the GO-LIVE record. No live key is used until it passes.
+cancel, replayed webhooks, out-of-order webhooks and a reconciliation with a true-up. It first
+confirms that Billing Meters work on the test clock, because the month's evidence depends on
+them. The evidence is linked from the GO-LIVE record. No live key is used until it passes.
 
 **Grace and hold.** A failed payment gets a notice and a grace period in which the workspace
 runs; then the workspace is held (stopped, data kept for the retention window) and its
@@ -430,32 +503,52 @@ recovers before the hold restores the workspace without a new charge.
 No workspace and no Bot holds a Stripe key or calls Stripe. A Bot's inbound payment is a grant
 and a receipt, not a card charge it makes itself.
 
-### (h) The existing entity and a later second account
+**The signing keys stay in Cloud's control plane.** The quote-signing key, the gateway-token key
+and the phase F verifier key live only there, never on a workspace node or the build host, in two
+slots rotated as RFC 0011 rotates lane keys. A workspace holds only the gateway token, which can
+call only the gateway.
+
+### (h) The existing entity, a later second account and the review rule
 
 Phases A to D bill through the existing entity, in its local currency, on plain Stripe Billing:
 a subscription per workspace, seats as quantities, and Stripe's meters and invoices. No custom
 billing engine sits between the ledger and Stripe.
 
 The adapter's `(Stripe account, customer)` key is the seam for a later second account. Adding
-one for USD and the agent rails is additive: existing customers and subscriptions stay on the
-first account, new charges go to the second, and the ledger's amount plus currency keeps them
-apart without conversion. A tenant can hold a customer in each account.
+one for a second currency and the agent rails is additive: existing customers and subscriptions
+stay on the first account, new charges go to the second, and the ledger's amount plus currency
+keeps them apart without conversion. A tenant can hold a customer in each account.
 
 The names, ids, country, currency details and prices are private. Public text says "the existing
 entity" and "a later second account"; tests, fixtures and defaults use placeholders. No Stripe
 id, account name or price appears in a commit, a log, an example or this RFC.
 
-### (i) Managed tokens and the gateway
+**The review rule (Decided 3) has a named scope.** It covers every repository that carries a
+billing path: the Cloud service, wherever it lives, and any billing piece that lands in this
+repository. The platform owner is a required reviewer on a change to the ledger, the Stripe
+adapter, grants, quote signing or margins; the normal merge rule does not apply, and an automated
+merge cannot waive it.
+
+### (i) Managed tokens and the gateway token
 
 **Default: BYO.** The customer's own API keys or plan sign-ins, unchanged, with no Cloud charge.
 Cloud does not proxy or count that traffic, and no billing path is opened for it.
 
 **Opt-in: managed tokens.** An organisation Owner enables managed tokens for one workspace after
 a passkey step-up and sees the published margin first. The workspace then points its model
-client at Cloud's gateway, authenticated with a short-lived gateway token minted from the
-workspace session. The gateway checks the cap and any grant, forwards the call with Cloud's provider
-credentials, counts the provider-reported usage, writes the ledger event and returns the
-response. The workspace never sees a provider key.
+client at Cloud's gateway, authenticated with a gateway token. The gateway checks the cap and the
+token's grant, reserves a maximum, forwards the call with Cloud's provider credentials, counts
+the provider-reported usage, settles and writes the ledger event. The workspace never sees a
+provider key.
+
+**The gateway token is scoped, short-lived and revocable.** Cloud mints it for one workspace, or
+for one Bot in it, with the gateway as its only audience. It lives minutes, is renewed by the
+workspace's gate while the workspace is entitled and, after phase D, the grant stands, and is
+revoked at once on opt-out, removal, role loss or grant revoke. It cannot call Stripe or Cloud's
+control plane, and it cannot be exchanged for another workspace's token. If it is exfiltrated,
+its reach is one workspace or one Bot, its cap and, after phase D, its grant, until it expires
+or is revoked. A Bot's unattended run uses a token minted for that Bot's scope; it never holds a
+Cloud control credential.
 
 **The published margin.** The gateway's price is the provider cost plus a margin, published per
 model and unit in a price version before opt-in. The same margin applies to every customer on
@@ -465,30 +558,38 @@ retroactive, and it is a billing-path change.
 **Accounting and privacy.** The gateway stores no prompt or answer text beyond the transient
 proxy; it keeps metadata for billing and reconciliation only. Retries are idempotent by request
 id, so a retried call is counted once. A model's reported usage wins; an estimate is marked and
-can be trued up. The gateway is the only token truth; the local meter is not read.
+can be trued up. A caller that cancels a stream does not end the gateway's read: it keeps reading
+the provider's stream for the final usage count, then settles. The gateway is the only token
+truth; the local meter is not read.
 
 **Opting out.** Turning managed tokens off stops new gateway calls at once; calls already in
 flight settle; BYO resumes. A workspace never loses its data or its BYO configuration.
 
-**No billing call path outside Cloud.** The gateway and the ledger live in Cloud's control
-plane. The open-source image and an unlinked instance have no Stripe client, no ledger writer,
-no billing route and no call to Cloud's billing or gateway service; a test runs both and fails
-on any such call. The workspace's model client may point at the gateway only when a Cloud
-workspace has opted in.
+**No billing or gateway path outside Cloud.** The gateway and the ledger live in Cloud's control
+plane. The image carries no billing code and no built-in gateway address; Cloud supplies only
+configuration, and managed tokens exist only in Cloud workspaces. The open-source image never
+calls the gateway, and an unlinked instance has no gateway path. A static scan of the image's
+dependencies and imports (`server/secrecy.mjs` in `server-image.yml` is the natural home) proves
+no Stripe client, ledger writer, billing route or gateway default, and the no-connection test
+proves the open-source image and an unlinked instance make no such call.
 
 ### (j) Inbound now, outbound later
 
-**Inbound.** A Bot may ask Cloud for a quote for its own Cloud resources: managed tokens,
-compute, or a new workspace. The quote is signed and carries a single-use nonce. The owner's
-grant authorizes it; Cloud reserves, then settles by charging the card or debiting credit, then
-releases the remainder and issues a receipt. The Bot never holds a card or a Stripe key. Funding
-is the organisation's card (through Stripe) or its prepaid credit; every event has exactly one of
-the two.
+**Inbound.** A Bot may ask the gateway, through its quote route, for a quote for a purchase or an
+envelope of its own Cloud resources: managed tokens, compute, or a new workspace. The quote
+route spends nothing; it checks the token's scope and the cap and returns a signed quote. The
+quote names the tenant, workspace, Bot scope, merchant, amount, currency and expiry, and carries
+a single-use nonce. The organisation Owner's grant is created from that one quote; the
+grant funds the charge or charges inside the quote's scope. Cloud reserves, then settles by
+charging the card or debiting credit, then releases the remainder and issues a receipt. A charge
+names the grant and its quote; a quote is never reused for another grant, tenant or workspace.
+The Bot never holds a card or a Stripe key. Funding is the organisation's card (through Stripe)
+or its prepaid credit; every event has exactly one of the two.
 
-**Prepaid credit.** An owner buys credit through Stripe; the ledger credits the organisation's
-balance in the account's currency. A Bot charge debits that balance, with no per-event card
-charge. Credit is not transferable and is not a second card; a refund or an expiry is an owner
-decision recorded as a compensating event, never a silent edit.
+**Prepaid credit.** An organisation Owner buys credit through Stripe; the ledger credits the
+organisation's balance in the account's currency. A Bot charge debits that balance, with no
+per-event card charge. Credit is not transferable and is not a second card; a refund or an expiry
+is an organisation Owner decision recorded as a compensating event, never a silent edit.
 
 **Outbound is not built here.** Bots paying third-party merchants is phase E, after a legal
 review, in its own RFC. This RFC builds no merchant path, no merchant allowlist, no outbound
@@ -505,51 +606,66 @@ An outcome price charges for a verified result, not for tokens or hours. The ver
 outside the workspace VM, holds its own credentials and signs its result; Cloud writes the
 ledger event from that signed result and the workspace cannot certify its own outcome. A dispute
 is a compensating event, never an edit. Phase F is not built here: it waits for A to D to run a
-period in reconciliation, a verifier design, and the owner's decision to earn on outcomes.
+period in reconciliation, a verifier design, and the platform owner's decision to earn on
+outcomes.
 
 ## Amendments to RFC 0024
 
-This RFC amends RFC 0024 (Draft) in four places, each marked there:
+This RFC amends RFC 0024 (Draft) at each place marked there:
 
 - **Open question 8 (What is paid).** Was: model usage on the workspace's own keys at first.
   Now: BYO model access is free; managed tokens are an opt-in through Cloud's gateway at a
   published margin; compute is metered from the host lifecycle; the workspace subscription and
-  seats stay as recommended. The remaining shape is carried as open question 6 below.
+  seats stay as recommended. The remaining shape is carried below as RFC 0024's question 8.
 - **Decided 14 ("being paid").** Was: Bots paying, or being paid, on a customer's behalf. Now:
   inbound first; outbound to third-party merchants is deferred to phase E, after a legal review
   and its own RFC.
 - **Question 9 (the billing system).** It records the follow-up RFC; 0025 is that RFC, and
   "being paid" is deferred (0025, (j)).
-- **(i) Billing and entitlements.** Its sentence "Bots paying, or being paid" now reads with
-  that deferral; the rest of (i) stands.
+- **(i) Billing and entitlements, first paragraph.** Its model-usage sentence now reads as the
+  platform owner's decision 1: BYO free, managed tokens opt-in at a published margin, compute
+  metered.
+- **(i) Billing and entitlements, agentic-payments paragraph.** Its "Bots paying, or being paid"
+  sentence now reads with the deferral; the rest of (i) stands.
+- **(g) Hosting, the workspace credential and its network.** A Cloud workspace may hold a
+  scoped, short-lived, revocable gateway token, minted per workspace or per Bot, that can call
+  only the model gateway, never Stripe or the control plane. The gateway, including its quote
+  route, is reachable from the workspace; the image carries no billing code, and Cloud supplies
+  only configuration (0025, (i)).
 
 Nothing else in RFC 0024 changes: its identity models, workspaces, rail, entitlements, Stripe
 directly, no workspace talks to Stripe, owner-only billing and grace period stand.
 
 ## Contracts introduced
 
-- **The ledger event, version 1.** The fields in (d), append-only, one funding source. A new
-  field is additive; a changed field meaning is a change to this RFC.
+- **The ledger event, version 1.** The fields in (d), append-only, unique on
+  `(source, source event id)`, one funding state `metered` or `credited`. A new field is
+  additive; a changed field meaning is a change to this RFC.
 - **The price version, version 1.** An immutable id, unit, currency and margin, with a published
   date. Old events keep their version; a new version is additive.
-- **The gateway contract, version 1.** A short-lived gateway token minted from the workspace
-  session for the gateway's audience; a request that names no tenant as authority; a response
-  with the model output and the usage Cloud counted; errors for cap, grant and auth. No provider
-  key ever leaves the gateway.
+- **The gateway token, version 1.** Scoped to one workspace or one Bot, audience the gateway,
+  minutes long, renewable, revocable, and unable to call Stripe or the control plane.
+- **The gateway contract, version 1.** A short-lived gateway token; no tenant as authority; the
+  quote route; a maximum reservation before forwarding; a response with the model output and the
+  usage Cloud counted; errors for cap, grant and auth. No provider key ever leaves the gateway.
 - **The host lifecycle event, version 1.** VM id, workspace id (from Cloud's mapping), state,
   shape, start and stop times, and the source's own event id. A payload's tenant is ignored.
-- **The quote, version 1.** A signed amount, currency, scope, price-version id, expiry and
-  single-use nonce. A quote is used once, for one grant.
+- **The quote, version 1.** A signed tenant, workspace, Bot scope, merchant, amount, currency,
+  price-version id, expiry and single-use nonce. A quote is used once, for one grant.
 - **The grant, version 1.** Amount, currency, scope, period, expiry, state, quote id and nonce.
   A change of amount is a new grant or a raise, never an edit of a settled one.
 - **The cap document, version 1.** A per-workspace and per-account amount and currency, the
-  alert fractions and the period. Additive.
+  alert fractions, the period and the lease chunk. Additive.
 - **The receipt, version 1.** The charge's amount, currency, resource, grant, quote, funding
   source, ledger event, timestamp and state. Immutable.
-- **The GO-LIVE record, version 1.** Phase, scope, owner decision, evidence, Stripe mode, date
-  and rollback. The adapter reads it before a live key.
+- **The GO-LIVE record, version 1.** Phase, scope, platform owner decision, evidence, Stripe
+  mode, date and rollback. The platform owner writes it with a passkey step-up; the adapter reads
+  it before a live key.
 - **The Stripe adapter key.** `(Stripe account, customer)`, with the webhook endpoint and signing
-  secret in the Cloud service only. No value is written here.
+  secret in the Cloud service only; the outbox uses the ledger event id as the meter event's
+  identifier or idempotency key. No value is written here.
+- **The signing keys.** Quote signing, gateway tokens and phase F verification, in Cloud's
+  control plane only, in two slots; never on a workspace node or the build host.
 - **The entitlements document, additive.** New fields for managed tokens, compute and grants;
   older readers ignore them. A changed meaning is a change to this RFC.
 - **No new plugin id, route prefix or storage prefix in existing plugins.** A customer-facing
@@ -561,9 +677,11 @@ directly, no workspace talks to Stripe, owner-only billing and grace period stan
 
 - It can edit or delete the local meter. That changes no bill: the ledger reads the gateway and
   the host lifecycle, and a test pins that no billing path reads the meter.
-- It can forge a gateway request. The gateway trusts only the gateway token's tenant and
-  audience, checks the cap and grant, and counts the provider's usage; the forged request is
-  either refused or billed as its own call, not as another tenant's.
+- It can forge a gateway request. The gateway trusts only the gateway token's tenant, workspace,
+  Bot scope and audience, checks the cap and the token's grant, and counts the provider's usage;
+  the forged request is either refused or billed as its own call, not as another tenant's.
+- A Bot name in the payload is attribution only. It cannot select, raise or bypass a grant; the
+  token's scope does.
 - It can try to suppress compute. The host lifecycle is Arca's, outside the VM; a missed stop is
   reconciled from the VM's state. The shell test proves no write, alter or suppress succeeds.
 - It can call Cloud's public routes. It cannot write the ledger, sign a quote, create a grant or
@@ -571,8 +689,9 @@ directly, no workspace talks to Stripe, owner-only billing and grace period stan
 
 **Double charging.**
 
-- A retried event is one ledger row by idempotency key.
-- A metered event has one funding source; a card failure never silently becomes a credit debit.
+- A retried source event is one ledger row by `(source, source event id)`.
+- A source event has one funding state; a card failure never silently becomes a credit debit,
+  and a second funding attempt is refused.
 - A replayed webhook is deduplicated by event id and converges by re-fetch.
 - A period's reconciliation writes a true-up, not a second charge.
 
@@ -588,31 +707,40 @@ directly, no workspace talks to Stripe, owner-only billing and grace period stan
 - Stripe secrets live only in Cloud's control plane, never in a workspace, a Bot, a client or
   this repository.
 - One adapter holds them; a test fails any other import.
-- A live key is refused without a matching GO-LIVE record; withdrawing the record stops new
-  charges.
+- A live key, restricted or not, is refused without a matching GO-LIVE record; only the platform
+  owner can write or withdraw the record, with a passkey step-up and an audit trail.
 - A missing secret is a `503`, not a fake success.
+- Quote-signing, gateway-token and verifier keys stay in Cloud's control plane, in two slots.
 
 **Grants and approvals.**
 
-- A grant race is closed by the atomic reserve/settle/release and the N-parallel test.
-- A quote replay is refused by its single-use nonce.
+- A grant race is closed by the atomic reserve, settle and release and the N-parallel test.
+- A quote replay is refused by its single-use nonce; a quote from another tenant, workspace or
+  Bot is refused.
 - A grant is created or raised only by an organisation Owner after a passkey step-up; an admin,
   a member, a guest and a Bot are refused.
-- A spend approval is never a terminal key (RFC 0022); a late key cannot approve a charge.
-- A stolen session cannot raise a grant without a fresh step-up.
-- The default is Never for payments and card entry; spend is Ask or a low-cap, 24-hour
+- A spend approval is never a chat message, an hc message, a terminal key, or a desktop or
+  Pocket tap; even after herdr-core#122 lands, this RFC's permanent money rule holds (#852).
+- A stolen session cannot raise a grant or approve an Ask without a fresh step-up.
+- The default is Never for payments and card entry; spend is Ask, or a low-cap, 24-hour
   Pre-approve.
 
 **Caps.**
 
+- A token call reserves its maximum before forwarding; the actual settles and the rest releases.
+- Compute runs inside a leased chunk; at the cap it pauses after a short grace, is never deleted,
+  and the organisation Owner is notified.
 - Enforced in Cloud before the action; a delayed Stripe update cannot admit spend.
 - A cap is per workspace and per paying account, and the lower wins.
-- A cap change needs an owner's step-up; a grant never raises it.
+- A cap change needs an organisation Owner's step-up; a grant never raises it.
 
 **Managed tokens.**
 
 - The gateway holds the provider credentials; the workspace never sees them.
+- The gateway token is scoped to one workspace or one Bot, lives minutes, renews and is
+  revocable; exfiltration is bounded by its scope, its grant and the cap.
 - Prompt and answer text is not stored beyond the transient proxy; billing metadata is kept.
+- A cancelled stream is read to the end for the provider's usage, so cancellation is not free.
 - The published margin and its price version are visible before opt-in; a change is a new
   version, never retroactive.
 - Opting out stops new calls; served usage settles.
@@ -632,7 +760,15 @@ directly, no workspace talks to Stripe, owner-only billing and grace period stan
 - The outbox drains before deprovision; if it cannot, deprovision waits and the data stays.
 - A late event is a true-up, not a lost charge.
 - Deletion follows RFC 0024's retention window; the ledger's billing records are kept as long as
-  the law and the reconciliation require, and a receipt stays available to the owner.
+  the law and the reconciliation require, and a receipt stays available to the organisation Owner.
+
+**The open-source image and an unlinked instance.**
+
+- No Stripe client, ledger writer, billing route or gateway default; a static scan of the image's
+  dependencies and imports (`server/secrecy.mjs` in `server-image.yml`) fails on one.
+- No connection to Cloud's billing or gateway service; the no-connection test fails on one.
+- Managed tokens exist only in Cloud workspaces; a Cloud workspace's gateway token can call only
+  the gateway.
 
 **Undo.**
 
@@ -640,9 +776,9 @@ directly, no workspace talks to Stripe, owner-only billing and grace period stan
 - Cancel a subscription at Stripe; the entitlement follows the re-fetched state and the grace
   period.
 - Revoke a grant in one click; release the remainder.
-- Turn off managed tokens; the workspace returns to BYO.
+- Turn off managed tokens; the workspace returns to BYO, and its gateway token is revoked.
 - A bad charge is corrected by a true-up or a refund, never by editing the ledger.
-- No undo step reaches into a self-hosted instance; it never had a billing path.
+- No undo step reaches into a self-hosted instance; it never had a billing or gateway path.
 
 ## Deliveries
 
@@ -656,51 +792,62 @@ merge behind a flag and run in test mode before the gate, but it may not charge.
 - *What ships:* the per-workspace subscription with seats as quantities, on plain Stripe Billing
   through the existing entity in its local currency; entitlements from signed, re-fetched Stripe
   state; the owner-only billing page; notice, grace and hold.
-- *Go-live gate:* the owner's GO-LIVE record plus a full test-clock month: sign-up, seat changes,
-  a failed payment through notice, grace and hold, a recovery, a cancel, replayed and
+- *Go-live gate:* the platform owner's GO-LIVE record plus a full test-clock month: sign-up, seat
+  changes, a failed payment through notice, grace and hold, a recovery, a cancel, replayed and
   out-of-order webhooks, and a reconciliation.
-- *Check:* an admin cannot reach billing; a bad webhook signature changes nothing; a missing
-  secret is `503`; a live key is refused without the record; no workspace or Bot talks to Stripe;
-  no price or account value is in the repository.
+- *Check:* only the platform owner, after a passkey step-up and with an audit trail, can write or
+  withdraw a GO-LIVE record; no Bot or operator account can. An admin cannot reach billing; a bad
+  webhook signature changes nothing; a missing secret is `503`; a live key, restricted or not, is
+  refused without the record; no workspace or Bot talks to Stripe; no price or account value is
+  in the repository.
 - *Rollback:* stop new subscriptions and withdraw the record; existing entitlements run to the
   period end; data is kept.
 
 **Phase B: compute metered from the host lifecycle.**
 
 - *What ships:* Arca's VM lifecycle events into the ledger, mapped to the tenant in Cloud's
-  database; the workspace and account caps for compute; alerts; the period reconciliation.
+  database; the workspace and account caps for compute, with a time lease; alerts; the period
+  reconciliation.
 - *Go-live gate:* the shell test, a full period of compute events reconciled with recorded
-  true-ups, and the owner's GO-LIVE record.
+  true-ups, Billing Meters confirmed on the test clock, and the platform owner's GO-LIVE record.
 - *Check:* a Bot with a shell cannot write, alter or suppress a compute event; a missed stop is
-  reconciled from Arca's state; the cap refuses the next start; a delayed Stripe state admits no
-  extra compute.
+  reconciled from Arca's state; a running VM at the cap pauses after the grace and is not
+  deleted; the outbox posts with the ledger event id and a retry is not double-counted; a delayed
+  Stripe state admits no extra compute.
 - *Rollback:* stop metering compute and withdraw the record; the workspace keeps running on its
   plan; a true-up records the period's actual use.
 
 **Phase C: managed tokens through the gateway, opt-in.**
 
 - *What ships:* the gateway, the published margin and price version, the workspace opt-in, the
-  gateway audience token, the ledger path for tokens, and the cap and grant checks.
+  gateway token and its renewal, the ledger path for tokens, and the cap and grant checks.
 - *Go-live gate:* BYO is the default; the shell test; a full period of token events reconciled;
-  the margin published before opt-in; the owner's GO-LIVE record.
-- *Check:* a workspace with BYO makes no Cloud billing call; a gateway call without a valid
-  audience token is refused; a token for another tenant is refused; an edited local meter changes
-  no bill; opting out stops new calls; the open-source image and an unlinked instance have no
-  billing call path.
+  the margin published before opt-in; the platform owner's GO-LIVE record.
+- *Check:* a workspace with BYO makes no Cloud billing or gateway call; a gateway call without a
+  valid token is refused; a token for another tenant, workspace or Bot is refused; a revoked
+  token stops at once; a token expires and renews only while the workspace is entitled, and a
+  stolen one is bounded to its workspace or Bot and its cap; an edited local meter changes no
+  bill; a cancelled stream still settles the provider's usage; opting out stops new calls; the
+  open-source image has no billing code or gateway default, and an unlinked instance has no
+  gateway path, proven by the static scan and the no-connection test.
 - *Rollback:* turn managed tokens off and withdraw the record; workspaces return to BYO; served
-  usage settles.
+  usage settles; tokens are revoked.
 
 **Phase D: Bot spend grants, inbound.**
 
-- *What ships:* grants, quotes and the single-use nonce; reserve, settle and release; the owner's
-  passkey step-up; the defaults; the one-page grant list and revoke; receipts; card and prepaid
-  credit funding.
-- *Go-live gate:* the N-parallel atomicity test, the step-up and revocation tests, the receipt
-  test, a full period reconciled, and the owner's GO-LIVE record.
+- *What ships:* grants, quotes and the single-use nonce; holds as events with a sweeper;
+  reserve, settle and release; the organisation Owner's passkey step-up; the defaults; the
+  one-page grant list and revoke; receipts; card and prepaid credit funding.
+- *Go-live gate:* the N-parallel atomicity test, the step-up, revocation and receipt tests, a
+  crash between reserve and settle, a full period reconciled, and the platform owner's GO-LIVE
+  record.
 - *Check:* only an organisation Owner after a step-up can create or raise a grant; N parallel
-  reserves admit exactly K; a quote replay is refused; a revoke stops new reserves and releases
-  the remainder; every settled charge has a receipt; a Bot holds no card or Stripe key; the
-  default is Never for payments and card entry.
+  reserves admit exactly K; a quote replay, or a quote from another tenant, workspace or Bot, is
+  refused; a payload Bot name cannot select another grant, and a workspace token cannot use a
+  per-Bot grant; a revoke while a reserve is in flight is safe; a hold expires and the sweeper
+  releases it; a settle after release is a true-up; every settled charge has a receipt; a Bot
+  holds no card or Stripe key; the default is Never for payments and card entry; a chat message,
+  an hc message, a terminal key, or a desktop or Pocket tap is never an approval.
 - *Rollback:* revoke grants and withdraw the record; in-flight charges settle; the card and
   credit paths stop for new Bot spend.
 
@@ -708,7 +855,7 @@ merge behind a flag and run in test mode before the gate, but it may not charge.
 
 - *Not delivered here.* Its own RFC, after a legal review of merchant payments in the relevant
   jurisdictions, sets the merchant path, the limits, the receipts and the disputes.
-- *Go-live gate:* that RFC's gate, the legal review and the owner's decision; no merchant
+- *Go-live gate:* that RFC's gate, the legal review and the platform owner's decision; no merchant
   credential or outbound path exists before it.
 - *Check:* none in this RFC; the default is Never and there is no switch.
 - *Rollback:* nothing to roll back here; the phase does not exist.
@@ -716,88 +863,88 @@ merge behind a flag and run in test mode before the gate, but it may not charge.
 **Phase F: outcome pricing.**
 
 - *Not delivered here.* It waits for A to D to run a period in reconciliation, a verifier outside
-  the workspace, and the owner's decision to earn on outcomes.
-- *Go-live gate:* the verifier's acceptance, the owner's decision and the same test-clock and
-  reconciliation bar.
+  the workspace, and the platform owner's decision to earn on outcomes.
+- *Go-live gate:* the verifier's acceptance, the platform owner's decision and the same
+  test-clock and reconciliation bar.
 - *Check:* a workspace cannot certify its own outcome; a dispute is a compensating event.
 - *Rollback:* nothing to roll back here; the phase does not exist.
 
 **Every billing-path change.** A pull request touching the ledger, the Stripe adapter, grants,
-quote signing or margins needs the owner's review before merge and is excluded from the normal
-merge rule. The rule covers a schema, a migration, a webhook handler, a key, a grant state, a
-quote format and a price or margin. It is not waived by a phase's gate or by an automated merge.
+quote signing or margins needs the platform owner's review before merge and is excluded from the
+normal merge rule. The rule covers the Cloud service and any billing piece in this repository. It
+covers a schema, a migration, a webhook handler, a key, a grant state, a quote format and a price
+or margin. The platform owner is a required reviewer; a phase's gate and an automated merge
+cannot waive it.
 
 ## Open questions
 
 ### Carried from RFC 0024
 
-1. **RFC 0024, question 3: the isolation unit.** Recommended: one Incus VM per workspace; an
-   unprivileged container only for the operator's own workspaces; never a privileged one. Settled
-   at the isolation review gate, before any outside person joins.
-2. **RFC 0024, question 4: who may invite.** Recommended: owners and admins, and the individual
-   of a personal account; members and guests cannot.
-3. **RFC 0024, question 5: recovery.** Recommended: a second passkey at the claim, recovery codes
-   stored as slow hashes, and the host reset out of the Bots' reach; no email reset.
-4. **RFC 0024, question 6: session lifetimes.** Recommended: self-hosted sessions sliding with a
-   12-hour idle limit; Cloud workspace tokens 5 minutes; whether DSH's own multi-day cookie can
-   stay behind the gate unchanged is an evidence gap for RFC 0024's delivery 0.
-5. **RFC 0024, question 7: IP-only LAN installs.** Recommended: no passkeys there; an SSH tunnel
-   or pairing from a signed-in session; no TOTP fallback without its own review.
-6. **RFC 0024, question 8: what is paid (amended).** The owner's decision 1 settles model access:
-   BYO is free; managed tokens are opt-in at a published margin. Recommended for the rest: a
-   per-workspace subscription with seats as quantities, compute metered from the host lifecycle,
-   personal accounts free, and the self-hosted product free and complete for one instance. The
-   open part is the subscription's included seats and host shape, which the owner sets at each
-   phase's GO-LIVE.
-7. **RFC 0024, question 10: moving a self-hosted instance into Cloud.** Recommended: a separate,
-   later decision; linking moves no data.
-8. **RFC 0024, question 11: DSH's authentication hook.** Recommended: the gate now; propose a
-   hook upstream (as RFC 0023 does for its pieces) and move to it only once DSH ships one.
-9. **RFC 0024, question 12: Omni's sign-in.** Recommended: a defined boundary: Omni keeps its own
-   for outside Omnis; behind a gate it takes the gate's principal with its own sign-in off.
-10. **RFC 0024, question 13: an optional external OIDC provider for self-hosters.** Recommended:
-    not planned; the principal contract leaves room for it later.
-11. **RFC 0024, question 14: federation for company customers.** Recommended: RFC 0024's delivery
-    0 checks it; if it is missing, decide before the first company customer, since a later issuer
-    move re-binds every person.
-12. **RFC 0024, question 15: Pocket and Pocket Link with a claimed instance.** Recommended:
-    unchanged; Pocket pairs through Pocket Link's own keys, outside the gate; a phone sign-in to
-    a web instance is a passkey of the same owner.
-13. **RFC 0024, question 16: is the Cloud service open source?** Recommended: its contracts (the
-    principal, the workspace token, the entitlements document, the rail's API) are public here;
-    the service starts private.
-14. **RFC 0024, question 17: the desktop's Cloud credential and local Bots.** Recommended: build
-    a delivery-H-style mask per OS (the secret store, the session bus, the app's data folder) and
-    keep desktop Cloud sign-in off on an OS until it exists there; the alternative is the owner's
-    written acceptance of the risk for that OS.
-15. **RFC 0024, question 18: until the three safeguards hold.** Recommended: Cloud workspaces
-    stay owner-only. The narrower alternative, members and guests limited to Bots with no shell
-    or file tools, is not recommended: a Bot's tools change over time.
+The full question text stays in RFC 0024, and the platform owner's answer is recorded there.
+This list is the pointer and the recommendation, so the two RFCs do not drift into two homes.
+
+- **RFC 0024 Q3, the isolation unit.** Recommended: one Incus VM per workspace; an unprivileged
+  container only for the operator's own; never privileged; settled at the isolation gate.
+- **RFC 0024 Q4, who may invite.** Recommended: owners and admins, and the individual of a
+  personal account; members and guests cannot.
+- **RFC 0024 Q5, recovery.** Recommended: a second passkey at the claim, recovery codes as slow
+  hashes, and the host reset out of the Bots' reach; no email reset.
+- **RFC 0024 Q6, session lifetimes.** Recommended: self-hosted sessions slide with a 12-hour idle
+  limit; Cloud workspace tokens 5 minutes; DSH's multi-day cookie is the delivery 0 evidence gap.
+- **RFC 0024 Q7, IP-only LAN installs.** Recommended: no passkeys there; an SSH tunnel or pairing
+  from a signed-in session; no TOTP fallback without its own review.
+- **RFC 0024 Q8, what is paid (amended).** Recommended: BYO free; managed tokens opt-in at a
+  published margin; a per-workspace subscription with seats; compute metered; personal and
+  self-hosted free; included seats and host shape at GO-LIVE.
+- **RFC 0024 Q10, moving a self-hosted instance into Cloud.** Recommended: a separate, later
+  decision; linking moves no data.
+- **RFC 0024 Q11, DSH's authentication hook.** Recommended: the gate now; propose a hook
+  upstream (RFC 0023) and move to it only once DSH ships one.
+- **RFC 0024 Q12, Omni's sign-in.** Recommended: Omni keeps its own for outside Omnis; behind a
+  gate it takes the gate's principal with its own sign-in off.
+- **RFC 0024 Q13, an optional external OIDC provider.** Recommended: not planned; the principal
+  contract leaves room later.
+- **RFC 0024 Q14, federation for company customers.** Recommended: RFC 0024's delivery 0 checks
+  it; decide before the first company customer, since a later issuer move re-binds everyone.
+- **RFC 0024 Q15, Pocket and Pocket Link.** Recommended: unchanged; Pocket pairs through Pocket
+  Link's keys; a phone sign-in to a web instance is a passkey of the same owner.
+- **RFC 0024 Q16, is the Cloud service open source?** Recommended: its contracts (principal,
+  workspace token, entitlements, rail API) are public here; the service starts private.
+- **RFC 0024 Q17, the desktop's Cloud credential and local Bots.** Recommended: a
+  delivery-H-style mask per OS; keep desktop Cloud sign-in off until it exists; or the platform
+  owner's written acceptance.
+- **RFC 0024 Q18, until the three safeguards hold.** Recommended: Cloud workspaces stay
+  owner-only; the narrower no-shell-Bots alternative is not recommended.
 
 ### New here
 
-16. **The cap fractions and the starting cap.** Recommended: alerts at one half, four fifths and
-    the cap, and a new paying account starts with a low cap and managed tokens at zero until an
-    owner opts in and raises it. The owner sets the actual amounts at each GO-LIVE.
-17. **Prepaid credit terms.** Recommended: credit is bought in the account's currency, is not
-    transferable and earns no interest; a refund or an expiry is the owner's written decision and
-    a compensating ledger event, shown before a purchase.
-18. **The outbound legal review's scope (phase E).** Recommended: the later RFC names the
-    jurisdictions, tax, consumer protection, sanctions and dispute rules before any merchant
-    path is built; this RFC builds none of it.
+1. **The cap fractions and the starting cap.** Recommended: alerts at one half, four fifths and
+   the cap; a new paying account starts with a low cap and managed tokens at zero until an
+   organisation Owner opts in and raises it. The organisation Owner sets the actual amounts at
+   each GO-LIVE.
+2. **Prepaid credit terms.** Recommended: credit is bought in the account's currency, is not
+   transferable and earns no interest; a refund or an expiry is the organisation Owner's written
+   decision and a compensating ledger event, shown before a purchase.
+3. **The outbound legal review's scope (phase E).** Recommended: the later RFC names the
+   jurisdictions, tax, consumer protection, sanctions and dispute rules before any merchant
+   path is built; this RFC builds none of it.
+4. **Unattended spend beyond a day.** Recommended: keep the 24-hour maximum on Pre-approve; a
+   longer unattended run needs a fresh owner step-up or a separate design, not a longer TTL.
 
 ## Links
 
-- RFCs: [0024](0024-automagik-cloud.md) (amended here: open question 8 and Decided 14's "being
-  paid"); [0017](0017-usagemeter-crate.md) (the meter part, its lane and build rule);
-  [0018](0018-meter-query-contract.md) (the doc cannot be the source, provenance is not a bill);
-  [0021](0021-meter-attribution.md) (machine-local attribution, never a billing identity);
-  [0022](0022-desktop-chat-view.md) (Decided 6: approvals shown, never answered by keys);
-  [0011](0011-monorepo-parts-and-releases.md) (lanes, one version, two-slot key rotation);
-  [0010](0010-desktop-sandbox.md) (Arca, masks).
+- RFCs: [0024](0024-automagik-cloud.md) (amended here: open question 8, Decided 14's "being
+  paid", and (g)'s workspace credential); [0017](0017-usagemeter-crate.md) (the meter part and
+  its lane); [0018](0018-meter-query-contract.md) (the doc cannot be the source; evidence is
+  kept for attribution, not a bill); [0021](0021-meter-attribution.md) (machine-local
+  attribution; this RFC adds it is not a billing identity); [0022](0022-desktop-chat-view.md)
+  (Decided 6: the chat view does not type approval keys until herdr-core#122; this RFC's money
+  rule is permanent); [0011](0011-monorepo-parts-and-releases.md) (lanes, one version, two-slot
+  key rotation); [0010](0010-desktop-sandbox.md) (Arca, masks).
 - Code: none in this repository is on the billing path. The Cloud service, the gateway and the
-  host lifecycle are outside it; the meter (`meter/usagemeter/`) is evidence only.
+  host lifecycle are outside it; the meter (`meter/usagemeter/`) is evidence only. The image's
+  static scan lives in `server/secrecy.mjs`, run by `server-image.yml`.
 - Outside, read-only and summarised: Stripe Billing, Billing Meters, test clocks and webhook
   signatures (the adapter's references); the council review of this direction (private); the
-  owner's economic notes (private). Concrete entity, account, country and price values are kept
-  in a private note, not here.
+  platform owner's economic notes (private). Concrete entity, account, country and price values
+  are kept in a private note, not here.

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (Q1, Q9 answered; council conditions; amends 0008; amended by [RFC 0025][25]) |
+| Status | Draft (council review 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service outside this repository |
 | Created | 2026-11-09 |
@@ -480,6 +480,9 @@ it reviews:
   endpoints are reachable, the private network, the build host, Arca's control socket, the
   identity service's admin routes and other workspaces are not; reached only through the Cloud
   edge, on its own origin;
+  *Amended by [RFC 0025][25] (2026-11-09):* the model gateway, including its quote route, is
+  also reachable as a named Cloud route; the workspace's gateway token can call only that
+  gateway (0025, (i)).
 - its own secrets (model keys, Omni credentials, Bot secrets), valid nowhere else;
 - CPU, memory and disk limits from its plan.
 
@@ -490,6 +493,9 @@ service's published public keys, and sets its own session on its own origin. A t
 workspace is refused by every other; the workspace holds no Cloud credential. A rail tile hands the
 workspace a single-use code that the gate exchanges with the Cloud service on the server side,
 never a token in a URL.
+*Amended by [RFC 0025][25] (2026-11-09):* a Cloud workspace may also hold a scoped, short-lived,
+revocable gateway token, minted per workspace or per Bot, that can call only the model gateway,
+never Stripe or Cloud's control plane (0025, (i)).
 
 **Backups.** Per workspace: scheduled snapshots of the volume, an encrypted copy off the host
 under a per-workspace key the workspace never holds; a restore makes a new instance and keeps the
@@ -690,7 +696,7 @@ or the owner accepts the risk in writing for that OS.
   secret) is not ended by that: secrets are rotated and processes reviewed, or the workspace is
   restored.
 - **Payments.** Bots hold no Stripe key or card; limits are an owner's and enforced by the Cloud
-  service; details in the follow-up RFC ((i)).
+  service; details in [RFC 0025][25] ((i)).
 - **The Cloud service.** Holds the client secret and token keys, never on the build host, in two
   slots; any admin key of the identity service only in a narrow, audited backend job.
 
@@ -867,9 +873,9 @@ principals are keyed by `(issuer, sub)`.
   [0019](0019-gitlab-mirror.md) (Arca's GitLab, the build host); [0010](0010-desktop-sandbox.md)
   (Arca, masks); [0011](0011-monorepo-parts-and-releases.md) (lanes, key rotation);
   [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) (proposals to DSH);
-  [0005](0005-workspace-and-genie-projects.md) (the repos base, a different "workspace").
-- Amended by: [RFC 0025][25], Automagik Cloud economics (2026-11-09): open question 8 and
-  Decided 14's "being paid".
+  [0005](0005-workspace-and-genie-projects.md) (the repos base, a different "workspace");
+  [0025](0025-cloud-economics.md) (amends open question 8, Decided 14's "being paid", and the
+  workspace credential in (g)).
 - Code: `server/` (`Dockerfile`, `entrypoint.mjs`, `README.md`),
   `.github/workflows/server-image.yml`; `apps/desktop/src/dsh.js` (the launch URL, loopback),
   `apps/desktop/src/deeplink.js`, `apps/desktop/src/identity.js`.
