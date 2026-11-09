@@ -20,6 +20,10 @@
 // - Each listed chat keeps its `dsh:<sessionId>` terminal and Session id and carries the Bot's
 //   registry id beside them (`registryId`, a Herdr `b-...` or null), so Pocket can join the chat
 //   to the registry Bot (#672). Watch, send and the terminal ids are unchanged.
+// - The listing serves a watched Bot's status and, for a Bot no phone watches, reads its Session
+//   state while listing (in parallel, a short timeout; failures keep the idle row), so Home sees a
+//   question before anyone opens the chat (#752). With writes on, the open request's text is the
+//   row's line. State and open requests are memory only.
 // - No import of a DSH package. The Session API is DSH 0.2.2's Session Controller (`follow`,
 //   `events`, `state`, `observeState`; `prompt` and `cancel` for writes), reached through
 //   `ctx.sessionController`, behind a capability check and a lazy import of the adapter
@@ -102,6 +106,8 @@ export const PREVIEW_MAX = 8 * 1024
 export const STATE_POLL_MS = 2000
 /** Sessions followed at once. */
 export const MAX_FOLLOWED = 8
+/** One unwatched Bot's state read while listing: past it the row stays idle, so `list` never waits long. */
+export const LIST_STATE_MS = 1500
 
 const TERMINAL_PREFIX = 'dsh:'
 const realTimers = { setInterval, clearInterval }
@@ -234,13 +240,13 @@ const globalOnly = bot => bot?.project == null
  *   prompt?(sessionId: string, prompt: { requestId: string, text: string }, signal: AbortSignal): Promise<any>, cancel?(sessionId: string): any },
  *   bots: () => Promise<Array<{ id: string, name: string, sessionId: string, project?: string | null, machine?: string, placeUnknown?: true }>>,
  *   registryIdOf?: (bot: { id: string, name?: string, project?: string | null }) => string | null,
- *   timers?: typeof realTimers, pollMs?: number,
+ *   timers?: typeof realTimers, pollMs?: number, listMs?: number,
  *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
  *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
  */
 export class DshChatSource {
-  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now }) {
-    Object.assign(this, { adapter, bots, timers, pollMs, keep, maxFollowed, log, shown, registryIdOf, now })
+  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, listMs = LIST_STATE_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now }) {
+    Object.assign(this, { adapter, bots, timers, pollMs, listMs, keep, maxFollowed, log, shown, registryIdOf, now })
     /** Writes need the adapter's prompt and cancel, and the answerer listeners wired (install). */
     this.writable = writable === true && typeof adapter?.prompt === 'function' && typeof adapter?.cancel === 'function'
     this.chatOwner = chatOwner ?? (sessionId => [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.botId)
@@ -257,14 +263,65 @@ export class DshChatSource {
   /**
    * The Bots a phone can open, each as `dsh:<botId>`. The terminal keeps the Session id; the
    * registry id beside it lets Pocket join the chat to the registry Bot (#672).
+   *
+   * A chat some phone watches is what that watch knows. One nobody watches is read from its
+   * Session now, every Bot in parallel and each for at most `listMs`, so a question or an approval
+   * reaches Home before the chat is opened (#752). With writes on, the row's line is the open
+   * request's text (the question's prompt, the approval's summary). A read that fails or is too
+   * slow keeps the idle row it always had, and is logged. Nothing here is stored: Session state
+   * and the open requests are memory only.
    */
   async list() {
     const bots = await this.bots()
-    return bots.map(bot => ({
+    const statuses = await Promise.all(bots.map(bot => this.listedStatus(bot)))
+    return bots.map((bot, i) => ({
       terminal: terminalOf(bot.id), machine: null, agent: 'dsh', title: bot.name ?? '',
-      status: this.entries.get(bot.id)?.status ?? statusOf(null), chat: 'session', shown: this.shown(bot) === true,
+      status: statuses[i], chat: 'session', shown: this.shown(bot) === true,
       registryId: this.registryIdOf(bot) ?? null,
     }))
+  }
+
+  /** What the listing says of one Bot: its watched entry, else a read of its Session now (never a hang). */
+  async listedStatus(bot) {
+    const watched = this.entries.get(bot.id)
+    if (watched) return watched.status
+    const read = await this.readListed(bot)
+    // A phone may have opened the chat while this read ran: the watch is then the fresher word.
+    return this.entries.get(bot.id)?.status ?? read
+  }
+
+  /** Read one unwatched Bot's state for the listing, for at most `listMs`; on failure the old idle row. */
+  async readListed(bot) {
+    const controller = new AbortController()
+    let timer
+    try {
+      const state = await Promise.race([
+        this.adapter.state(bot.sessionId, controller.signal),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort(new Error('the listing waited too long'))
+            reject(new Error('the listing waited too long'))
+          }, this.listMs)
+          timer.unref?.()
+        }),
+      ])
+      const status = statusOf(state, 0, { writable: this.writable })
+      const text = status.state === 'blocked' ? this.openTextOf(bot.sessionId, status.kind) : ''
+      return text ? { ...status, msg: text } : status
+    } catch (error) {
+      this.log('pocket chat: could not read %s for the listing: %s', bot.id, error?.message ?? error)
+      return statusOf(null)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** The text of the request DSH waits on in this Session ([open]): a question's prompt, else an approval's summary. */
+  openTextOf(sessionId, kind) {
+    const requests = [...(this.open.get(sessionId)?.values() ?? [])].filter(record => !record.done)
+    const request = requests.find(record => record.row.kind === kind) ?? requests[0]
+    if (!request) return ''
+    return request.row.kind === 'question' ? String(request.row.prompt ?? '') : String(request.row.summary ?? '')
   }
 
   /**
