@@ -498,16 +498,29 @@ const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/priv
   "node scripts/version.mjs", "node scripts/entries.mjs", "node scripts/parts.mjs", "node scripts/catalog.mjs",
   "node scripts/lane.ts", "node scripts/test-guard.mjs", "node ../scripts/privacy-check.mjs", "node ../scripts/am-copies.mjs"];
 
-// A seat or worker that writes: the shell tools the task needs, and the gates to prove it.
-const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES]
-  .map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): hc, the test checks and a short list
-// of git subcommands and gh reads. A subcommand is allowed with every argument it is given, so
-// some can write (`git diff --output=file`): like the whole list, this is a guardrail, not a
-// boundary. hc and the test runners stay because they read (and hc is how a worker reports).
-const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "git status", "git rev-parse",
-  "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
-  ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
+// The plain read-only shell tools every Antigravity seat and worker gets by default (#840).
+// Plain `sed` stays out (it can edit files in place); only `sed -n` is here. Shell launchers
+// and wrappers that run arbitrary commands or write files (`bash`, `sh`, `env`, `xargs`, `find`,
+// `awk`, `tee`, plain `sed`) are never in any default list.
+export const AGY_SHELL_READ = Object.freeze([
+  "ls", "cat", "head", "tail", "grep", "rg", "wc", "diff", "pwd", "echo", "sort", "uniq", "cut",
+  "tr", "jq", "printf", "basename", "dirname", "true", "which", "stat", "realpath", "readlink",
+  "date", "nl", "comm", "column", "sed -n",
+]);
+
+// A seat or worker that writes: the shell tools the task needs (mkdir and chmod only when the
+// role writes), and the gates to prove it.
+export const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", "mkdir", "chmod",
+  ...AGY_SHELL_READ, ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES].map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): hc, the read-only shell tools, the
+// test checks and a short list of git subcommands and gh reads. A subcommand is allowed with
+// every argument it is given, so some can write (`git diff --output=file`): like the whole list,
+// this is a guardrail, not a boundary. hc and the test runners stay because they read (and hc is
+// how a worker reports).
+export const AGY_READ_ALLOW = Object.freeze(["hc", ...AGY_SHELL_READ, "git log", "git diff",
+  "git show", "git status", "git rev-parse", "git ls-files", "git blame", "git describe",
+  "git merge-base", "git rev-list", "git cat-file", ...AGY_GH_READ, "node --test", "node --check",
+  "bun test"].map((v) => `command(${v})`));
 
 /**
  * The effective allow and deny rules of an Antigravity launch: the defaults its scope and role

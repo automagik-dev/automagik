@@ -7,7 +7,12 @@ import { readFileSync } from "node:fs";
 
 import { agModelsCacheText, agModelsPath, parseAgModelsOutput } from "../mods/am-sidebar/models.js";
 
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom, modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
+import {
+  AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW, LEGACY_AGENTS,
+  agentArgv, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agySettingsDir, agySettingsPlan,
+  configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom,
+  modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides,
+} from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
   withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { launchChange, paneCommand, paneLaunch, restartPlan } from "../mods/am-sidebar/restart.js";
@@ -300,4 +305,50 @@ test("ownPromptIn, hermes: a value on the lines below the key counts; a key foll
   assert.equal(ownPromptIn("hermes", "display:\n  personality: pirate # arr\n"), true);
   assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt:\n  model: x\n"), false, "empty: null in YAML");
   assert.equal(ownPromptIn("hermes", "agent:\n  system_prompt:\n"), false);
+});
+
+test("Antigravity #840: default read-only shell tools in writer and read-only --settings plans; no shell launchers", () => {
+  const shellRead = [
+    "ls", "cat", "head", "tail", "grep", "rg", "wc", "diff", "pwd", "echo",
+    "sort", "uniq", "cut", "tr", "jq", "printf", "basename", "dirname", "true",
+    "which", "stat", "realpath", "readlink", "date", "nl", "comm", "column", "sed -n",
+  ];
+  const forbidden = [
+    "command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)",
+  ];
+  assert.deepEqual(AGY_SHELL_READ, shellRead);
+  for (const bad of forbidden) {
+    assert.equal(AGY_WRITE_ALLOW.includes(bad), false, `AGY_WRITE_ALLOW must not include ${bad}`);
+    assert.equal(AGY_READ_ALLOW.includes(bad), false, `AGY_READ_ALLOW must not include ${bad}`);
+  }
+  const bot = { id: "b-aaaaaaaaaa", name: "Genie", agent: "antigravity" };
+  const dir = agySettingsDir("/app");
+  const writerSeat = JSON.parse(agySettingsPlan({ bot, scope: "seat", folder: "/work/proj", settingsDir: dir }).text).permissions;
+  const reviewerSeat = JSON.parse(agySettingsPlan({
+    bot: { ...bot, rank: "reviewer" }, scope: "seat", folder: "/work/proj", settingsDir: dir,
+  }).text).permissions;
+  const writerWorker = JSON.parse(agySettingsPlan({
+    bot, scope: "worker", role: "dev", folder: "/work/wt", settingsDir: dir,
+  }).text).permissions;
+  const reviewWorker = JSON.parse(agySettingsPlan({
+    bot, scope: "worker", role: "review", folder: "/work/wt", settingsDir: dir,
+  }).text).permissions;
+  for (const perms of [writerSeat, reviewerSeat, writerWorker, reviewWorker]) {
+    for (const tool of shellRead) {
+      assert.ok(perms.allow.includes(`command(${tool})`), `missing command(${tool})`);
+    }
+    for (const bad of forbidden) {
+      assert.equal(perms.allow.includes(bad), false, `forbidden ${bad}`);
+    }
+  }
+  for (const perms of [writerSeat, writerWorker]) {
+    assert.ok(perms.allow.includes("command(mkdir)"));
+    assert.ok(perms.allow.includes("command(chmod)"));
+  }
+  for (const perms of [reviewerSeat, reviewWorker]) {
+    assert.equal(perms.allow.includes("command(mkdir)"), false);
+    assert.equal(perms.allow.includes("command(chmod)"), false);
+    assert.equal(perms.allow.some((r) => r.startsWith("write_file(")), false);
+  }
 });

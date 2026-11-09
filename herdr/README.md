@@ -1150,15 +1150,23 @@ person's.
 The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
 time (agy replaces its saved list field by field). The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
-`bun`, the read-only `gh` verbs, the PR-writing `gh pr create`/`gh pr edit`/`gh pr comment` (a
+`bun`, the read-only shell tools (`ls`, `cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`,
+`pwd`, `echo`, `sort`, `uniq`, `cut`, `tr`, `jq`, `printf`, `basename`, `dirname`, `true`,
+`which`, `stat`, `realpath`, `readlink`, `date`, `nl`, `comm`, `column`, and `sed -n`),
+the read-only `gh` verbs, the PR-writing `gh pr create`/`gh pr edit`/`gh pr comment` (a
 dev worker opens and updates its own PR), and the repository's own gates (`node --test`,
 `node --check`, `bun test`, `scripts/privacy-check.mjs`, `scripts/am-copies.mjs`, the
 `version`/`entries`/`parts`/`catalog` checks, …). No release verb is offered to any launch:
 the fixed `gh release` deny wins over every one of them. A read-only seat (rank `reviewer`) or
-worker (role `review`) gets no `write_file` and no plain `git`/`node`; it keeps `hc`, the test
-checks, the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …).
-Those subcommands are allowed with every argument they are given, so some can write
-(`git diff --output=file`): like the whole list, this is a guardrail, not a boundary.
+worker (role `review`) gets no `write_file` and no plain `git`/`node`; it keeps `hc`, the
+read-only shell tools, the test checks, the `gh` reads and a short list of git subcommands
+(`log`, `diff`, `show`, `status`, …). Those subcommands are allowed with every argument they
+are given, so some can write (`git diff --output=file`): like the whole list, this is a
+guardrail, not a boundary. Shell launchers and wrappers that run arbitrary commands or write
+in place (`bash`, `sh`, `env`, `xargs`, `find` with its `-exec` and `-delete`, `awk` with its
+`system()`, `tee`, and plain `sed`, which can edit files in place) are left out of every
+default list for the same reason; writing tools stay on writing roles (`write_file` for the
+bot's own worktree or project; `mkdir` and `chmod` only if the role writes).
 `gh pr merge` is out of both lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
 `git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
 `git push origin -f`, `git push --mirror`, `git push --delete`, `git reset --hard`,
