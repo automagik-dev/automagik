@@ -148,3 +148,87 @@ for (const [what, input, head] of E_ROWS) {
     assert.ok(later(`later note: ${TAIL}`, kept).includes(TAIL), 'a later bare name tail is served')
   })
 }
+
+// F. Escaped quotes inside a quoted name (the Reviewer's Medium on #507): the name used to end at
+// the first quote character, even an escaped one, so `? "pa\"password"` was read as `pa\`, not a
+// credential name, and the three #507 shapes served their values. A double-quoted name ends at its
+// real closing quote, a single-quoted one at its real doubled `''`, and with no real closing quote
+// on the line the rest of the line is the name, so the no-close rows still fail closed.
+const ESC_Q = ['\\', '"'].join('') // a backslash-escaped quote inside a double-quoted name
+const ESC_A = ['pa', ESC_Q, PASS].join('') // pa\"password
+const ESC_B = ['my ', ESC_Q, PASS, ESC_Q].join('') // my \"password\"
+const ESC_C = ["it''s ", PASS].join('') // it''s password
+const ESC_NAMES = [
+  ['a backslash-escaped quote inside a double-quoted name', `? "${ESC_A}"`],
+  ['the word between escaped quotes', `? "${ESC_B}"`],
+  ['a doubled quote inside a single-quoted name', `? '${ESC_C}'`],
+]
+const ESC_TWINS = [
+  ['a block indicator', ': |'],
+  ['an empty colon', ':'],
+]
+
+for (const [what, head] of ESC_NAMES) {
+  test(`#507(a): an escaped-quote name hides the indented scalar (${what})`, () => {
+    const { served } = withheld(`${head}\n  ${VALUE}\n`, VALUE)
+    assert.equal(served.split('\n')[0], head, 'the `?` line stays')
+    assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the indented scalar is hidden')
+  })
+
+  test(`#507(b): an escaped-quote name hides a gap line and its inline value (${what})`, () => {
+    const { served, kept } = withheld(`${head}\n  ${GAP}\n: ${VALUE}\n`, VALUE)
+    assert.ok(!served.includes(GAP), 'the gap line is hidden')
+    assert.ok(kept.includes(GAP), 'the gap line is remembered')
+    assert.ok(!later(`later note: ${GAP}`, kept).includes(GAP), 'a later bare gap line is masked')
+    assert.equal(served.split('\n')[0], head, 'the `?` line stays')
+    assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the gap line is hidden in place')
+    assert.equal(served.split('\n')[2], `: ${REDACTED}`, 'the inline value is hidden')
+  })
+
+  for (const [twin, colon] of ESC_TWINS) {
+    test(`#507(b): an escaped-quote name hides a value under ${twin} (${what})`, () => {
+      const { served, kept } = withheld(`${head}\n  ${GAP}\n${colon}\n  ${VALUE}\n`, VALUE)
+      assert.ok(!served.includes(GAP), 'the gap line is hidden')
+      assert.ok(kept.includes(GAP), 'the gap line is remembered')
+      assert.equal(served.split('\n')[0], head, 'the `?` line stays')
+      assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the gap line is hidden in place')
+      assert.equal(served.split('\n')[2], colon, `the ${twin} stays`)
+      assert.equal(served.split('\n')[3], `  ${REDACTED}`, 'the value under it is hidden')
+    })
+  }
+
+  test(`#507(c): an escaped-quote name hides a map child value (${what})`, () => {
+    const { served } = withheld(`${head}\n  ${GAP}: ${VALUE}\n`, VALUE)
+    assert.ok(!served.includes(`${GAP}:`), 'the child line is hidden')
+    assert.equal(served.split('\n')[0], head, 'the `?` line stays')
+    assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the child line is hidden in place')
+  })
+}
+
+// No real closing quote after the escaped one: the rest of the line is the name, so the indented
+// scalar and the value on the `:` line are still hidden and remembered (fail closed).
+const ESC_OPEN = `? "${ESC_A}`
+test('#507(a): an escaped name with no real closing quote hides the indented scalar', () => {
+  const { served } = withheld(`${ESC_OPEN}\n  ${VALUE}\n`, VALUE)
+  assert.equal(served.split('\n')[0], ESC_OPEN, 'the `?` line stays')
+  assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the indented scalar is hidden')
+})
+
+test('#507(b): an escaped name with no real closing quote hides the colon-line value', () => {
+  const { served, kept } = withheld(`${ESC_OPEN}\n  ${GAP}\n: ${VALUE}\n`, VALUE)
+  assert.ok(!served.includes(GAP), 'the gap line is hidden')
+  assert.ok(kept.includes(GAP), 'the gap line is remembered')
+  assert.equal(served.split('\n')[0], ESC_OPEN, 'the `?` line stays')
+  assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the gap line is hidden in place')
+  assert.equal(served.split('\n')[2], `: ${REDACTED}`, 'the colon-line value is hidden')
+})
+
+// G. L2 list-item memory pin: a list item under an explicit key is remembered as the item, not as
+// its `- ` mark. Hiding the line was never enough: a later bare occurrence has to be masked too.
+test('#507: a list item under an explicit key remembers the item, not its dash', () => {
+  const { served, kept } = withheld(`? ${PASS}\n  - ${VALUE}\n`, VALUE)
+  assert.ok(kept.includes(VALUE), 'the item is remembered as the item')
+  assert.ok(!kept.includes('-'), 'the dash is not the remembered value')
+  assert.equal(served.split('\n')[0], `? ${PASS}`, 'the `?` line stays')
+  assert.equal(served.split('\n')[1], `  ${REDACTED}`, 'the list item is hidden in place')
+})
