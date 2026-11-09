@@ -7,7 +7,7 @@
 export const STATE_KEY = "am.update.state";
 export const REQUEST_KEY = "am.update.request";
 /** A request the sidebar hasn't picked up after this long gets "couldn't check" (no sidebar), unless
- *  it arrived while a run was busy: that run's result answers it. */
+ *  it arrived while a run was busy and that run is still live: its result answers it. */
 export const ANSWER_MS = 10_000;
 /** A lock older than these is a run that was reloaded or closed (updateCheck.js's values). */
 export const CHECK_STALE_MS = 120_000;
@@ -31,8 +31,9 @@ export function ago(at, now) {
  * - up to date: "Automagik Herdr 0.8.0" (click: check now);
  * - update available: "0.8.0 → 0.8.1 · update" ("update" in accent; click: install);
  * - checking (a click, a timer): "Automagik Herdr 0.8.0 · checking…"; a request that waited behind a
- *   busy check or install says checking/updating too, never "couldn't check": that run answers it;
- * - failed, offline or no sidebar answering: "0.8.0 · couldn't check" (the reason in the tooltip;
+ *   live check or install says checking/updating too, never "couldn't check": that run answers it;
+ * - failed, offline, no sidebar answering, or a queued request whose run died before it answered
+ *   (the tooltip says the run did not finish): "0.8.0 · couldn't check" (the reason in the tooltip;
  *   click: try again); updates off: the version alone, nothing to click.
  * `version`: the installed VERSION file (null when unread); `request`: REQUEST_KEY's value.
  */
@@ -57,15 +58,20 @@ export function statusLabel({ state = null, request = null, version = null, now 
   // The bar's own request, not yet answered: checking, until the sidebar should have taken it.
   const answered = r && (s.request === r.id || str(busy?.request) === r.id || (typeof s.at === "number" && s.at >= r.at));
   // A request that arrived while a run was busy (the sidebar queued it, or the run's own lock shows
-  // it) waits for that run's result: updating/checking, never "couldn't check".
+  // it) waits for that run's result while the run is live: a stale or freed lock is not a wait, so
+  // a queued request whose run died falls back to "couldn't check" (the tooltip says why), and the
+  // 2-minute request window still forgets it. An install's landing answers within LANDING_WAIT_MS.
   const queued = obj(s.queued);
-  const waited = r && !answered && (queued?.id === r.id
-    || (running && typeof running.since === "number" && typeof r.at === "number" && running.since <= r.at));
+  const acknowledged = r && queued?.id === r.id;
+  const waited = r && !answered && running && (acknowledged
+    || (typeof running.since === "number" && typeof r.at === "number" && running.since <= r.at));
   if (r && typeof r.at === "number" && !answered && now - r.at >= 0) {
     if (now - r.at < ANSWER_MS || waited) return { parts: [dim(r.what === "apply" ? `${name} · updating…` : `${name} · checking…`)], tooltip: null };
     if (now - r.at < 2 * 60_000) {
       return { parts: [dim(`${current ?? "Automagik Herdr"} · couldn't ${r.what === "apply" ? "update" : "check"}`, "check")],
-        tooltip: "The Automagik sidebar runs update checks and installs and didn't answer: is it in this layout? Click to try again." };
+        tooltip: acknowledged
+          ? "The Automagik sidebar took this request, but its run did not finish (it was closed or reloaded): click to try again."
+          : "The Automagik sidebar runs update checks and installs and didn't answer: is it in this layout? Click to try again." };
     }
   }
 

@@ -622,3 +622,36 @@ test("a check asked for while one runs is answered by it: one check, the later r
   assert.equal(h.state().queued, null);
   assert.equal(text(statusLabel({ state: h.state(), request, version: h.version, now: h.now })), "0.8.0 → 0.8.1 · update");
 });
+
+test("a request still waiting at a mods reload is answered by the new build once; an answered one is not answered twice", async () => {
+  const h = herdr({ auto: { ...MANAGED, on: false } });
+  const checks = () => h.execs.filter((args) => args[0] === "check").length;
+  const old = h.build();
+  old.u.start();
+  // The click is saved, and Herdr reloads the mods before that build's 250 ms poll takes it.
+  const request = { id: "bar-check-3", what: "check", at: h.now };
+  h.shared.set(REQUEST_KEY, request);
+  old.reloaded = true;
+  const fresh = h.build();
+  fresh.u.start();
+  fresh.u.request(); // the reloaded build's poll: it answers the waiting request
+  await h.flush();
+  assert.equal(checks(), 1, "the waiting request runs once, in the new build");
+  assert.equal(h.state().request, request.id);
+  assert.equal(h.state().queued, null);
+  // Polling again is a no-op: the same request is not answered twice.
+  fresh.u.request();
+  await h.flush();
+  assert.equal(checks(), 1);
+  assert.equal(h.state().request, request.id);
+  // A later build over the shared state sees it answered: no second run, no second answer.
+  const at = h.state().at;
+  fresh.reloaded = true;
+  const newer = h.build();
+  newer.u.start();
+  newer.u.request();
+  await h.flush();
+  assert.equal(checks(), 1, "an answered request survives the reload without a second check");
+  assert.equal(h.state().at, at, "and without a second answer");
+  assert.equal(h.state().request, request.id);
+});
