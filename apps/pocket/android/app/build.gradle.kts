@@ -95,6 +95,23 @@ android {
         }
     }
 }
+// An exported-but-empty Android prefs name is an empty path to AGP, which makes the default debug
+// keystore a relative file: validateSigningDebug finds no parent to create, and packaging resolves
+// it against the project while the task resolves it against the daemon's working directory. On a
+// read-only home, pin the debug keystore (and the task's default location, so AGP still creates it)
+// to the stable folder settings.gradle.kts uses when no name is adopted. A named folder, a writable
+// home or the release key keeps AGP's own location.
+val stableDebugKeystore = File(gradle.gradleUserHomeDir, "android-user-home/debug.keystore")
+val emptyAndroidPrefsExport = listOf("ANDROID_USER_HOME", "ANDROID_SDK_HOME", "ANDROID_PREFS_ROOT")
+    .any { System.getenv(it)?.isEmpty() == true || System.getProperty(it)?.isEmpty() == true }
+if (emptyAndroidPrefsExport && !File(System.getProperty("user.home")).canWrite() && android.signingConfigs.findByName("pocket") == null) {
+    android.signingConfigs.getByName("debug").storeFile = stableDebugKeystore
+    tasks.withType(com.android.build.gradle.internal.tasks.ValidateSigningTask::class.java).configureEach {
+        val validateTask = this
+        // @Internal, read by the task action, so setting it here is not an input change.
+        doFirst { validateTask.defaultDebugKeystoreLocation.set(stableDebugKeystore) }
+    }
+}
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.core:core-ktx:1.16.0")
