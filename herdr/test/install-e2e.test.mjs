@@ -18,7 +18,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const INSTALL = join(ROOT, "install.sh");
 // The monorepo's release workflow: its "Pack the herdr pack" step builds the pack from herdr/.
 const RELEASE_YML = join(ROOT, "..", ".github", "workflows", "release.yml");
-const { OFF_BY_DEFAULT, PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, USAGEMETER, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
+const { OFF_BY_DEFAULT, PACK_MODS, PACK_KEYS, PACK_LAYOUT, CATALOG_URL, POCKET_LINK, V020_LAYOUT_SHA256, sumsName, tarballName } = await import("../mods/am-sidebar/release.js");
+const { meterKey, publishMeter } = await import("./meter-lane-fake.mjs");
+const METER_VERSION = "3.200.5";
 /** The pack mods a fresh install turns on; the rest (OFF_BY_DEFAULT) land in mods-disabled/. */
 const ON_MODS = PACK_MODS.filter((m) => !OFF_BY_DEFAULT.includes(m));
 const { hookCommand, legacyHookCommand } = await import("../mods/am-sidebar/briefingText.mjs");
@@ -196,17 +198,11 @@ fi
   const pointer = pointerBytes(RELEASE, { url: `file://${rel}/download/v${RELEASE}/${tarballName(RELEASE)}`, body });
   writeFileSync(join(lane, "pack.json"), pointer);
   writeFileSync(join(lane, "pack.json.sig"), `${signatureOf(pointer)}\n`);
-  // usagemeter's pinned release, which install.sh reads from <release>/usagemeter/ for file://:
-  // each build a script answering --version.
-  const meter = join(rel, "usagemeter", "download", `v${USAGEMETER.version}`);
-  mkdirSync(meter, { recursive: true });
-  writeFileSync(join(meter, "SHA256SUMS"), Object.values(USAGEMETER.assets).map((name) => {
-    exe(join(meter, name), `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${USAGEMETER.version}"\nexit 0\n`);
-    return `${sha(readFileSync(join(meter, name)))}  ${name}\n`;
-  }).join(""));
-  // The fakes are not the real builds: a file:// release's pin hook names theirs.
-  const meterPin = join(root, "meter-pin");
-  writeFileSync(meterPin, readFileSync(join(meter, "SHA256SUMS")));
+  // The meter lane in the same release folder: meter.json signed by a key made for this run (the
+  // installer trusts it through AUTOMAGIK_HERDR_METER_KEYS, a file:// release only) and the builds
+  // it names, each a script answering --version.
+  const meterKeys = meterKey();
+  publishMeter(rel, meterKeys, { version: METER_VERSION });
   // A fake hc with no linked machine: install.sh's `meter install --linked` never reaches a real one.
   const hcState = join(root, "hc.json"), hcLog = join(root, "hc.log");
   writeFileSync(hcState, JSON.stringify({ terminals: [], machines: [] }));
@@ -218,7 +214,7 @@ fi
     HOME: home, TMPDIR: root, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
     AUTOMAGIK_HERDR_RELEASE_URL: `file://${rel}`, AUTOMAGIK_HERDR_TTY: join(root, "no-tty"), AUTOMAGIK_HERDR_APPS: apps,
     AUTOMAGIK_HERDR_PACK_KEYS: JSON.stringify({ keys: TEST_KEYS }),
-    AUTOMAGIK_HERDR_METER_PIN: meterPin, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog,
+    AUTOMAGIK_HERDR_METER_KEYS: meterKeys.keys, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog,
   };
   return {
     launcher, root, home, appHome, mods: join(appHome, "mods"), state: join(appHome, "automagik-herdr"),
@@ -307,7 +303,7 @@ function assertFullPack(m, r) {
   assert.equal(readlinkSync(m.link), join(m.mods, "am-sidebar", "bin", entry));
   // usagemeter, the token meter the sidebar runs, in place beside it.
   const meter = spawnSync(join(m.home, ".local", "bin", "usagemeter"), ["--version"], { encoding: "utf8" });
-  assert.equal(meter.stdout, `usagemeter ${USAGEMETER.version}\n`, "usagemeter is installed");
+  assert.equal(meter.stdout, `usagemeter ${METER_VERSION}\n`, "usagemeter is installed");
   const v = m.cli("--version");
   assert.equal(v.code, 0, `automagik-herdr --version: ${v.out}${v.err}`);
   assert.equal(v.out, `automagik-herdr ${RELEASE}\n`);
