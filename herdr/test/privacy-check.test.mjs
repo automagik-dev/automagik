@@ -198,6 +198,28 @@ test("a pending folder is skipped until its issue cleans it, top-level or one pa
   assert.match(dirty.output, /apps\/other\/note\.md:1: private-name:/);
 });
 
+test("a pending folder skips only itself, not a sibling sharing its prefix", () => {
+  const { root, script } = fixtureRepo({
+    list: { ...FAKE_LIST, pending: [{ folder: "apps/pocket", issue: "#795" }] },
+    files: { "apps/pocket/note.md": `on ${FAKE}\n`, "apps/pocket-x/note.md": `on ${FAKE}\n` },
+  });
+  const run = runCheck(script, root);
+  assert.equal(run.status, 1, "the sibling is still scanned");
+  assert.match(run.output, /apps\/pocket-x\/note\.md:1: private-name:/);
+  assert.doesNotMatch(run.output, /apps\/pocket\/note\.md/);
+});
+
+test("a pending folder skips only its own path, not the same name nested elsewhere", () => {
+  const { root, script } = fixtureRepo({
+    list: { ...FAKE_LIST, pending: [{ folder: ".genie", issue: "#795" }] },
+    files: { ".genie/note.md": `on ${FAKE}\n`, "herdr/.genie/note.md": `on ${FAKE}\n` },
+  });
+  const run = runCheck(script, root);
+  assert.equal(run.status, 1, "the nested folder is still scanned");
+  assert.match(run.output, /herdr\/\.genie\/note\.md:1: private-name:/);
+  assert.doesNotMatch(run.output, /^\.genie\/note\.md/m);
+});
+
 test("the pending entries are one folder each, with their issue", () => {
   const pending = pendingFolders(loadList());
   const folders = new Set();
