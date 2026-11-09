@@ -10,8 +10,9 @@
 // meter moved it: ~/Library/Application Support/automagik on macOS, else $XDG_STATE_HOME/automagik
 // or ~/.local/state/automagik) is read once: a log and its last reading still there are moved into
 // the new folder (a hard link, then the old name removed; never over a file already there, the
-// meter's own rule), so the meter's first sync finds nothing of ours left to move. A link that
-// cannot be made (another filesystem) leaves the old file, which the status line still reads.
+// meter's own rule), so the meter's first sync finds nothing of ours left to move; a move cut short
+// after the link is finished. A link that cannot be made (another filesystem) leaves the old file,
+// which the status line still reads.
 // One line: {ts, account, plan, five_hour, seven_day, model, session}. `account` is the
 // first 16 hex of sha256(accountUuid): the same account on two machines matches, and the
 // raw id is never written. No prompt text, no tokens, no email.
@@ -60,16 +61,26 @@ function accountInfo() {
   } catch { return { account: null, plan: null }; }
 }
 
-/** Moves the log and its last reading out of the old folder, once; anything in the way leaves them. */
+/**
+ * Moves the log and its last reading out of the old folder, once; a file of its own already in the
+ * new folder leaves them. A move cut short between the link and the unlink (both names on one
+ * file) is finished: the old name goes.
+ */
 function adopt() {
   if (!oldDir || oldDir === stateDir) return;
   for (const name of NAMES) {
-    const from = join(oldDir, name);
+    const from = join(oldDir, name), to = join(stateDir, name);
     try {
-      if (!lstatSync(from).isFile()) continue;
-      mkdirSync(dirname(stateDir), { recursive: true });
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      linkSync(from, join(stateDir, name)); // never replaces: a file already there throws
+      const src = lstatSync(from);
+      if (!src.isFile()) continue;
+      let dst = null;
+      try { dst = lstatSync(to); } catch { /* not there yet */ }
+      if (dst && !(dst.dev === src.dev && dst.ino === src.ino)) continue; // never replaced
+      if (!dst) {
+        mkdirSync(dirname(stateDir), { recursive: true });
+        mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+        linkSync(from, to); // never replaces: a file there by now throws
+      }
       unlinkSync(from);
     } catch { /* absent, or left where it is */ }
   }

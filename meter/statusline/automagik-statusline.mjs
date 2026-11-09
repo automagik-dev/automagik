@@ -358,12 +358,20 @@ export function readLimitsTail(dir = stateDir()) {
 
 /**
  * The limits log's readings: the state folder's, after those of a log still left in the old folder
- * (legacyStateDir; the logger moves it on its next reading, the meter on its first sync). runOut
- * orders them by time. Never throws.
+ * (legacyStateDir; the logger moves it on its next reading, the meter on its first sync). An old
+ * name that is the new log itself (a move cut short after its link) is read once, as the new one.
+ * runOut orders them by time. Never throws.
  */
 export function readLimits(env = process.env) {
-  const old = legacyStateDir(env);
-  return [...(old ? readLimitsTail(old) : []), ...readLimitsTail(stateDir(env))];
+  const dir = stateDir(env), old = legacyStateDir(env);
+  const log = (d) => join(d, "claude-limits.jsonl");
+  const leftover = old && !sameFile(log(old), log(dir));
+  return [...(leftover ? readLimitsTail(old) : []), ...readLimitsTail(dir)];
+}
+
+/** Whether two paths name one file (the same device and inode, links followed as readLimitsTail follows them). */
+function sameFile(a, b) {
+  try { const x = statSync(a), y = statSync(b); return x.dev === y.dev && x.ino === y.ino; } catch { return false; }
 }
 
 /**

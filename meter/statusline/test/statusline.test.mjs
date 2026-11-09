@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -570,5 +570,30 @@ test("the old folder is left alone with METER_STATE_DIR, and a link there is nev
     assert.equal(lstatSync(join(stateDir({ HOME: dir }), "claude-limits.jsonl")).isFile(), true);
     assert.equal(lines(join(stateDir({ HOME: dir }), "claude-limits.jsonl")).length, 1);
     assert.deepEqual(lines(elsewhere), [{ ts: "elsewhere" }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a move cut short after its link (both names on one file): read once, finished by the next reading", () => {
+  const dir = temp();
+  try {
+    const env = { HOME: dir };
+    const old = legacyStateDir(env), now = stateDir(env);
+    mkdirSync(old, { recursive: true });
+    mkdirSync(now, { recursive: true, mode: 0o700 });
+    const before = [{ ts: iso(1_793_790_000), five_hour: { used_percentage: 10, resets_at: 1_793_810_000 } },
+      { ts: iso(1_793_791_000), five_hour: { used_percentage: 12, resets_at: 1_793_810_000 } }];
+    writeFileSync(join(now, "claude-limits.jsonl"), before.map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
+    writeFileSync(join(now, "claude-limits.last.json"), JSON.stringify({ key: "an older reading", at: 1 }), { mode: 0o600 });
+    // The half-done state: the logger (or the meter) linked both files and stopped before the unlink.
+    for (const name of ["claude-limits.jsonl", "claude-limits.last.json"]) linkSync(join(now, name), join(old, name));
+    writeFileSync(join(old, "meter.db"), "the meter's");
+
+    assert.deepEqual(readLimits(env), before, "each reading once, not once per name");
+    log(env, 15);
+    assert.deepEqual(readdirSync(old), ["meter.db"], "the next reading finished the move");
+    const rows = lines(join(now, "claude-limits.jsonl"));
+    assert.deepEqual(rows.slice(0, 2), before);
+    assert.equal(rows.length, 3);
+    assert.deepEqual(readLimits(env), rows);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
