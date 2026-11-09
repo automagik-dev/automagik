@@ -338,6 +338,35 @@ fn a_seat_relaunched_by_hand_in_a_workers_worktree_makes_the_call_ambiguous() {
     assert_eq!(tag(r.resolve(&relaunched)).0.bot, "b-dev");
 }
 
+// Reviewer Low on #835: the away check reads the harness hc shows running, never the start row's
+// agent. A codex seat relaunched by hand as claude inside a worker's worktree runs claude there, so
+// a claude call in that worktree is ambiguous; a codex call is not claimed by it.
+#[test]
+fn a_codex_seat_relaunched_as_claude_competes_by_its_live_harness() {
+    let rows = [
+        worker("t1", 0, WT, "claude", "b-dev", "dev"),
+        worker("t3", 0, WT, "codex", "b-codex-dev", "dev"),
+        seat("t2", 0, "codex", "b-captain", "captain"),
+    ];
+    let snapshot = vec![
+        live("t1", 0, "claude-code", WT),
+        live("t3", 0, "codex", WT),
+        live("t2", 0, "claude-code", WT),
+    ];
+    let mut r = resolver_seen(&rows, snapshot);
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-relaunched", WT, t(40))),
+        Resolution::Ambiguous
+    );
+    // The codex worker's own calls: the seat runs claude now, so it does not compete for them.
+    assert_eq!(
+        tag(r.resolve(&call("codex", "rollout-wt", WT, t(40))))
+            .0
+            .bot,
+        "b-codex-dev"
+    );
+}
+
 // Reviewer delta on #835: a session whose start folder is unknown is never named by a worktree.
 #[test]
 fn an_unknown_start_folder_is_unlinked_never_the_worktrees_owner() {

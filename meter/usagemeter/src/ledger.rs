@@ -373,8 +373,9 @@ struct Index {
     launches: Vec<Launch>,
     by_worktree: HashMap<String, Vec<usize>>,
     /// The folder hc shows a logged launch running in, when it is not the worktree its start row
-    /// recorded, to the launches there.
-    away: HashMap<String, Vec<usize>>,
+    /// recorded, to the launches there, each with the harness hc shows it running now: an agent
+    /// relaunched by hand may not be the one the start row recorded.
+    away: HashMap<String, Vec<(usize, &'static str)>>,
     /// agent, then session, to the links that tie it to launches.
     links: HashMap<String, HashMap<String, Vec<Link>>>,
     bindings: Bindings,
@@ -602,12 +603,17 @@ impl Index {
         let cwd = normalize(cwd);
         let on = self.by_worktree.get(cwd).into_iter().flatten();
         // A logged launch hc shows running here, away from the folder its start row recorded (an
-        // agent relaunched by hand in a seat's pane): it competes, so the call is ambiguous.
-        let away = self.away.get(cwd).into_iter().flatten().filter_map(|&i| {
-            let l = &self.launches[i];
-            (l.covers(t) && l.agent.as_deref().is_none_or(|a| a == agent))
-                .then_some(Claim::Unrecorded)
-        });
+        // agent relaunched by hand in a seat's pane): it competes, so the call is ambiguous. The
+        // harness is the one hc shows running now, never the start row's: a codex seat relaunched
+        // by hand as claude runs claude.
+        let away = self
+            .away
+            .get(cwd)
+            .into_iter()
+            .flatten()
+            .filter_map(|&(i, live)| {
+                (self.launches[i].covers(t) && live == agent).then_some(Claim::Unrecorded)
+            });
         let claims = on.filter_map(|&i| {
             let l = &self.launches[i];
             if l.agent.as_deref().is_some_and(|a| a != agent) || !l.covers(t) {
@@ -902,16 +908,16 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
         let (Some(created), Some(cwd), true) = (t.created_ms, t.cwd.as_deref(), t.live()) else {
             continue;
         };
-        if t.harness.is_none() {
+        let Some(live) = t.harness.and_then(agent_of) else {
             continue;
-        }
+        };
         if let Some(i) = find(&by_tc, &ix.launches, core, &t.terminal, created) {
             let l = &ix.launches[i];
             if l.logged && l.worktree.as_deref() != Some(normalize(cwd)) {
                 ix.away
                     .entry(normalize(cwd).to_owned())
                     .or_default()
-                    .push(i);
+                    .push((i, live));
             }
         }
     }
