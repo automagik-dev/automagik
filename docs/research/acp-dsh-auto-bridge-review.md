@@ -71,6 +71,14 @@ offered-tool check and before the `tool/call` row and `tools.execute`:
 Manual and Full access append no assistant block: their paths keep today's rows, so the chat and
 the dialog count do not change.
 
+> **Postscript (#842).** Every level now appends this block. The v4 Session loader requires an
+> `assistant/message` tool-call advertisement before every `tool/call` row, and a bridge call is
+> out of band; Manual and Full wrote that row without one, and the whole session could not load.
+> The block is still not a real assistant turn and is still replaced before any model request.
+> The fail-closed preflight below stays Auto-only; Manual and Full now refuse a call with no open
+> step (`BRIDGE_NO_STEP`) and a call whose advertisement cannot be written
+> (`BRIDGE_RECORD_FAILED`) instead of writing an unloadable row.
+
 **Reviewer-only, never provider history.** The block is removed from the Session surface as soon
 as the call settles: the bridge appends an empty `developer/message` replacement over exactly
 that surface node (`surfaceOp: { op: 'replace', startSeq, endSeq }`,
