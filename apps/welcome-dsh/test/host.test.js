@@ -2,15 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as plugin from '../index.js'
 import { KEY_REF, ROUTE, cleanBaseUrl, install, modelIdsOf } from '../src/host/endpoint.js'
+import { machineOf, osOf } from '../src/host/host.js'
 import { fakeContext, fakeGateway } from './fake-ctx.js'
 
 const KEY = 'sk-cliproxy-secret-0123456789'
 const MODELS = { object: 'list', data: [{ id: 'gpt-5' }, { id: 'claude-sonnet-4-5' }, { id: 'gpt-5' }, { id: '' }, { nope: 1 }] }
 const withPiAi = (providers = {}) => ({ 'omni-ai': {}, 'llm-pi-ai': { providers } })
 
-function host({ entries = withPiAi(), gateway = fakeGateway({ body: MODELS }), ...rest } = {}) {
+function host({ entries = withPiAi(), gateway = fakeGateway({ body: MODELS }), deps = {}, ...rest } = {}) {
   const fake = fakeContext({ entries, ...rest })
-  const { actions, handle } = install(fake.ctx, { fetch: gateway.fetch })
+  const { actions, handle } = install(fake.ctx, { fetch: gateway.fetch, ...deps })
   return { ...fake, actions, handle, gateway }
 }
 const everything = fake => JSON.stringify([fake.updates, [...fake.routes].map(route => route.path), fake.logs, fake.valueOf('llm-pi-ai'), fake.valueOf('omni-ai')])
@@ -166,10 +167,11 @@ test('done writes the step flag in the plugin entry', async () => {
 })
 
 test('state reports the flags and whether an AI is already connected', async () => {
-  const fresh = await host().handle('state')
+  const fresh = await host({ deps: { platform: 'linux', env: {} } }).handle('state')
   assert.deepEqual(JSON.parse(JSON.stringify(fresh.value)), {
     companionDone: false, teamDone: false, welcomeDone: false, connectAiDone: false, connectOmniSkipped: false,
     companionImage: false, teamOmni: true, teamGenie: false, deepseek: false, piAiRoutes: [], aiConnected: false, preload: null,
+    machine: { os: 'linux' },
   })
 
   const fake = host({ entries: { 'omni-ai': { welcomeDone: true, connectAiDone: true }, 'llm-pi-ai': { providers: { zai: { apiKeyEnv: 'ZAI_API_KEY' } } } }, credentials: { ZAI_API_KEY: 'x' } })
@@ -187,6 +189,22 @@ test('state reports the flags and whether an AI is already connected', async () 
 
   assert.equal((await host({ credentials: { DEEPSEEK_API_KEY: 'x' } }).handle('state')).value.deepseek, true)
   assert.equal((await host({ records: ['deepseek-account-platform/default'] }).handle('state')).value.deepseek, true)
+})
+
+test('the machine DSH runs on is its OS family, and a hint when DSH was launched over SSH', async () => {
+  assert.deepEqual(['darwin', 'linux', 'win32', 'freebsd', 'aix', undefined].map(osOf), ['macos', 'linux', 'windows', 'other', 'other', osOf(process.platform)])
+  assert.deepEqual(machineOf({ platform: 'darwin', env: {} }), { os: 'macos' })
+  assert.deepEqual(machineOf({ platform: 'linux', env: { SSH_CONNECTION: '10.0.0.2 51234 10.0.0.1 22' } }), { os: 'linux', remoteHint: true })
+  assert.deepEqual(machineOf({ platform: 'linux', env: { SSH_TTY: '/dev/pts/0' } }), { os: 'linux', remoteHint: true })
+  // DSH's own rule: an empty marker is no SSH.
+  assert.deepEqual(machineOf({ platform: 'win32', env: { SSH_CONNECTION: '', SSH_TTY: '' } }), { os: 'windows' })
+  assert.deepEqual(machineOf({ platform: 'linux', env: null }), { os: 'linux' })
+
+  const value = (await host({ deps: { platform: 'darwin', env: { SSH_TTY: '/dev/pts/3', HOSTNAME: 'secret-box', USER: 'someone', HOME: '/home/someone' } } }).handle('state')).value
+  assert.deepEqual(value.machine, { os: 'macos', remoteHint: true })
+  // Never the machine's name, its user or its home.
+  const sent = JSON.stringify(value)
+  for (const word of ['secret-box', 'someone', '/home/someone']) assert.ok(!sent.includes(word), word)
 })
 
 test('the route answers JSON for the browser, unknown endpoints included', async () => {

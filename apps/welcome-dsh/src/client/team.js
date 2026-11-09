@@ -6,6 +6,7 @@ import { Stage, reducedMotion, useFinish, useGate, useGlitch } from './stage.js'
 import { InstallLog } from './terminal.js'
 import { t } from './i18n.js'
 import { WORKING, powerOf, powerSignal, runPower, showPower, stopPower, takeTeamIntent, usePowerState } from './power-store.js'
+import { whereOf } from './where.js'
 
 // Step omni-team (order -270): who joins the companion's team. Each Bot type is a card with
 // what it starts with (its model, plugins, tools, skills, folder and permissions), read from
@@ -212,7 +213,31 @@ const around = (text, name, node) => {
 }
 // "Your Omni on this Mac" inside a sentence: "Use your Omni on this Mac".
 const titleIn = (omni, choice) => (omni.source === 'sandbox' ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title)
-const onMac = (scope = globalThis) => /Mac/i.test(scope.navigator?.platform ?? '') || /Mac OS X/.test(scope.navigator?.userAgent ?? '')
+// Without a where (a caller that does not know), the machine reads as "this computer".
+const HERE = { at: 'here', os: 'other' }
+
+/**
+ * The four sentences that name the machine DSH runs on, for a where from whereOf
+ * (src/client/where.js): an Omni of its own on it, an Omni found on it, the line under a found
+ * one, and the tile that sets a new one up. Whole sentences, so each language words them its own way.
+ */
+export function placeOf(where = HERE) {
+  const os = where?.os
+  if (where?.at === 'remote') {
+    switch (os) {
+      case 'linux': return { sandbox: t('Your Omni on your Linux server'), local: t('Omni on your Linux server'), already: t('Already on your Linux server'), run: t('Run Omni on your Linux server') }
+      case 'macos': return { sandbox: t('Your Omni on your Mac'), local: t('Omni on your Mac'), already: t('Already on your Mac'), run: t('Run Omni on your Mac') }
+      case 'windows': return { sandbox: t('Your Omni on your Windows PC'), local: t('Omni on your Windows PC'), already: t('Already on your Windows PC'), run: t('Run Omni on your Windows PC') }
+      default: return { sandbox: t('Your Omni on your server'), local: t('Omni on your server'), already: t('Already on your server'), run: t('Run Omni on your server') }
+    }
+  }
+  if (where?.at === 'unknown') return { sandbox: t('Your Omni on DSH\'s computer'), local: t('Omni on DSH\'s computer'), already: t('Already on DSH\'s computer'), run: t('Run Omni on DSH\'s computer') }
+  switch (os) {
+    case 'macos': return { sandbox: t('Your Omni on this Mac'), local: t('Omni on this Mac'), already: t('Already on this Mac'), run: t('Run Omni on this Mac') }
+    case 'windows': return { sandbox: t('Your Omni on this PC'), local: t('Omni on this PC'), already: t('Already on this PC'), run: t('Run Omni on this PC') }
+    default: return { sandbox: t('Your Omni on this computer'), local: t('Omni on this computer'), already: t('Already on this computer'), run: t('Run Omni on this computer') }
+  }
+}
 const hostOf = (url) => {
   try {
     return new URL(url).host
@@ -233,9 +258,9 @@ const portOf = (url) => {
  * (this computer has its key), `connect` (approve this device from the phone) — or none,
  * with a note on what the Connect Omni step can do for it instead.
  */
-export function foundChoice(omni, { mac = false } = {}) {
-  const title = omni.source === 'sandbox' ? (mac ? t('Your Omni on this Mac') : t('Your Omni on this computer'))
-    : omni.local ? (mac ? t('Omni on this Mac') : t('Omni on this computer')) : hostOf(omni.url)
+export function foundChoice(omni, { where = HERE } = {}) {
+  const place = placeOf(where)
+  const title = omni.source === 'sandbox' ? place.sandbox : omni.local ? place.local : hostOf(omni.url)
   const port = omni.local ? portOf(omni.url) : ''
   const sub = [omni.version ? `v${omni.version}` : null, port ? t('port {port}', { port }) : null, !omni.local ? t('saved in your Omni CLI') : null].filter(Boolean).join(' · ')
   const row = (action, note = null) => ({ id: omni.id, title, sub, action, note })
@@ -537,23 +562,24 @@ const Icon = ({ name }) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true 
  * this computer, or one somewhere else (only that one asks for an address). Found Omnis that
  * cannot be used yet stay listed, with why.
  */
-export function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
-  const rows = omnis.map(omni => ({ omni, choice: foundChoice(omni, { mac }) }))
+export function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
+  const place = placeOf(where)
+  const rows = omnis.map(omni => ({ omni, choice: foundChoice(omni, { where }) }))
   const tiles = rows.filter(row => row.choice.action).map(({ omni, choice }) => ({
     id: omni.id, icon: omni.local ? 'here' : 'remote', omni,
     title: choice.action === 'use' ? t('Use {omni}', { omni: titleIn(omni, choice) }) : t('Connect {omni}', { omni: titleIn(omni, choice) }),
-    sub: choice.sub || (omni.local ? (mac ? t('Already on this Mac') : t('Already on this computer')) : t('Saved in your Omni CLI')),
+    sub: choice.sub || (omni.local ? place.already : t('Saved in your Omni CLI')),
   }))
-  if (newOmni && !rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: mac ? t('Run Omni on this Mac') : t('Run Omni on this computer'), sub: t('A private Omni of its own, set up for you') })
+  if (newOmni && !rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: place.run, sub: t('A private Omni of its own, set up for you') })
   tiles.push({ id: 'remote', icon: 'remote', title: t('An Omni somewhere else'), sub: t('On a server, or the link Omni sent you') })
   return { tiles, waiting: rows.filter(row => !row.choice.action).map(row => row.choice) }
 }
 
-function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
+function Destiny({ omnis, machine, busy, onUse, onLocal, onRemote }) {
   const [remote, setRemote] = useState(false)
   if (remote) return h(Remote, { busy, onRemote, onBack: () => setRemote(false) })
   // Without a way to set one up (Unfold's own instance bundles its Omni), no new Omni is offered.
-  const { tiles, waiting } = destinyOf(omnis, { mac: onMac(), newOmni: typeof onLocal === 'function' })
+  const { tiles, waiting } = destinyOf(omnis, { where: whereOf({ machine }), newOmni: typeof onLocal === 'function' })
   const pick = tile => (tile.id === 'remote' ? setRemote(true) : tile.id === 'local' ? onLocal() : onUse(tile.omni))
   return h('div', { className: 'oai-destiny-box' },
     h('div', { className: 'oai-destiny', role: 'group', 'aria-label': t('Where your Omni is') }, tiles.map(tile => h('button', {
@@ -590,7 +616,7 @@ function Inside({ phase, detail, power, live }) {
   if (phase === 'sandbox') return h(InstallLog, { text: detail?.log ?? '', label: t('What Omni\'s installer printed') })
   if (phase === 'failed' && detail?.log) return h('div', null, h(InstallLog, { text: detail.log, label: t('What Omni\'s installer printed') }), h('p', { className: 'oai-inside-note oai-bad', title: detail.message }, t('What went wrong is above. Power Omni on to try again.')))
   if ((phase === 'none' || phase === 'found') && power.unowned) return h(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned })
-  if (phase === 'none' || phase === 'found') return h(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote })
+  if (phase === 'none' || phase === 'found') return h(Destiny, { omnis: detail?.omnis ?? [], machine: power.machine, busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote })
   // Once connected, its real channels, as they will sit in the menu.
   if (phase === 'linked' && channels.length > 0) {
     return h('div', { className: 'oai-menu' },
@@ -981,8 +1007,9 @@ export function TeamStep(props) {
       setSaving(false)
     }
   }
-  // Unfold's own instance bundles its Omni: no new Omni of its own is offered there.
-  const omniPower = { ...power, local: state.host === 'unfold' ? undefined : power.sandbox }
+  // Unfold's own instance bundles its Omni: no new Omni of its own is offered there. The machine
+  // DSH runs on rides along, for the choices that name it.
+  const omniPower = { ...power, local: state.host === 'unfold' ? undefined : power.sandbox, machine: state.machine }
   const speech = (lastPressed === 'genie' && genieSpeechOf(geniePower.phase)) || (lastPressed === 'unfold' && unfoldSpeechOf(unfoldPower.phase)) || speechOf(phase, name, power.detail?.origin)
 
   return h(Stage, {

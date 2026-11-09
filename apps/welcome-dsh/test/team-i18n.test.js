@@ -106,6 +106,57 @@ test('in English, the team step reads as before', () => {
   })
 })
 
+// Every place the choices can name DSH's machine: [where, found sandbox, found local, already, new tile],
+// in English and in pt-BR.
+const PLACES = [
+  [{ at: 'here', os: 'macos' }, ['Your Omni on this Mac', 'Omni on this Mac', 'Already on this Mac', 'Run Omni on this Mac'], ['Seu Omni neste Mac', 'Omni neste Mac', 'Já está neste Mac', 'Rodar o Omni neste Mac']],
+  [{ at: 'here', os: 'windows' }, ['Your Omni on this PC', 'Omni on this PC', 'Already on this PC', 'Run Omni on this PC'], ['Seu Omni neste PC', 'Omni neste PC', 'Já está neste PC', 'Rodar o Omni neste PC']],
+  [{ at: 'here', os: 'linux' }, ['Your Omni on this computer', 'Omni on this computer', 'Already on this computer', 'Run Omni on this computer'], ['Seu Omni neste computador', 'Omni neste computador', 'Já está neste computador', 'Rodar o Omni neste computador']],
+  [{ at: 'here', os: 'other' }, ['Your Omni on this computer', 'Omni on this computer', 'Already on this computer', 'Run Omni on this computer'], ['Seu Omni neste computador', 'Omni neste computador', 'Já está neste computador', 'Rodar o Omni neste computador']],
+  [{ at: 'remote', os: 'linux' }, ['Your Omni on your Linux server', 'Omni on your Linux server', 'Already on your Linux server', 'Run Omni on your Linux server'], ['Seu Omni no seu servidor Linux', 'Omni no seu servidor Linux', 'Já está no seu servidor Linux', 'Rodar o Omni no seu servidor Linux']],
+  [{ at: 'remote', os: 'macos' }, ['Your Omni on your Mac', 'Omni on your Mac', 'Already on your Mac', 'Run Omni on your Mac'], ['Seu Omni no seu Mac', 'Omni no seu Mac', 'Já está no seu Mac', 'Rodar o Omni no seu Mac']],
+  [{ at: 'remote', os: 'windows' }, ['Your Omni on your Windows PC', 'Omni on your Windows PC', 'Already on your Windows PC', 'Run Omni on your Windows PC'], ['Seu Omni no seu PC com Windows', 'Omni no seu PC com Windows', 'Já está no seu PC com Windows', 'Rodar o Omni no seu PC com Windows']],
+  [{ at: 'remote', os: 'other' }, ['Your Omni on your server', 'Omni on your server', 'Already on your server', 'Run Omni on your server'], ['Seu Omni no seu servidor', 'Omni no seu servidor', 'Já está no seu servidor', 'Rodar o Omni no seu servidor']],
+  [{ at: 'unknown' }, ['Your Omni on DSH\'s computer', 'Omni on DSH\'s computer', 'Already on DSH\'s computer', 'Run Omni on DSH\'s computer'], ['Seu Omni no computador do DSH', 'Omni no computador do DSH', 'Já está no computador do DSH', 'Rodar o Omni no computador do DSH']],
+]
+// What the choices show for one place: a found Omni of its own and a found local one (as their
+// titles, and inside "Use …"), the line under the local one, and the new tile.
+function choicesAt(where) {
+  const sandbox = { id: 'sandbox', source: 'sandbox', url: 'http://127.0.0.1:8882', local: true, hasKey: true }
+  const local = { id: 'local', url: 'http://127.0.0.1:8883', local: true, hasKey: true }
+  const { tiles } = team.destinyOf([sandbox, local], { where })
+  const bare = team.destinyOf([], { where }).tiles
+  return {
+    titles: [team.foundChoice(sandbox, { where }).title, team.foundChoice(local, { where }).title],
+    tiles: plain(tiles.map(tile => tile.title)),
+    already: team.destinyOf([{ ...local, url: 'http://127.0.0.1' }], { where }).tiles[0].sub,
+    run: bare[0].title,
+  }
+}
+
+test('the choices name DSH\'s machine by where it is and its OS, in English and in pt-BR', () => {
+  locale.addLanguage({ id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
+  for (const [where, en, ptBr] of PLACES) {
+    for (const [language, [sandbox, local, already, run]] of [['en', en], ['pt-BR', ptBr]]) {
+      locale.setLocale(language)
+      try {
+        const shown = choicesAt(where)
+        const use = language === 'en' ? 'Use' : 'Usar'
+        const lower = text => text.charAt(0).toLowerCase() + text.slice(1)
+        assert.deepEqual(shown.titles, [sandbox, local], `${language} ${JSON.stringify(where)}`)
+        // titleIn: the sandbox title inside "Use …" starts lower case; a local one keeps its own.
+        assert.deepEqual(shown.tiles.slice(0, 2), [`${use} ${lower(sandbox)}`, `${use} ${local}`])
+        assert.equal(shown.already, already)
+        assert.equal(shown.run, run)
+      } finally {
+        locale.setLocale('en')
+      }
+    }
+  }
+  // A caller that does not say where reads "this computer", as before.
+  assert.equal(team.destinyOf([]).tiles[0].title, 'Run Omni on this computer')
+})
+
 test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () => {
   locale.addLanguage({ id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
   locale.setLocale('pt-BR')
