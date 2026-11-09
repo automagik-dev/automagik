@@ -157,7 +157,7 @@ A row:
 
 | Row state | When | Numbers | A reader shows |
 |---|---|---|---|
-| `measured` | usage found in the window | tokens and cost | the numbers, with `cost.state`; "at least" when `coverage` is `partial` |
+| `measured` | usage found in the window | tokens and cost, a lower bound while `coverage` is `partial` or `ingestion.complete` is false (a budget-stopped backlog, even with a fresh watermark) | the numbers, with `cost.state`; "at least" when `coverage` is `partial` or `complete` is false |
 | `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, the repo has usage somewhere in this store, and none of the repo's usage in the window lacks a branch | all zero, `cost.state: zero` | a real 0 |
 | `missing` | nothing found, but one of those conditions fails (`reason` says which; `branch_unattributed` for the last) | null | unknown |
 | `stale` | ingestion is older than `stale_after_s`, or has no watermark (a reset's re-import has not finished a run); this state comes before every other | what the store holds for the branch: the numbers as of the last sync, which are a lower bound while `ingestion.complete` is false (a re-import in progress); `tokens`, `cost`, `token_precision` and `activity` all null when it holds nothing for the branch | unknown, or the numbers labelled with their age ("at least" while `complete` is false) |
@@ -628,10 +628,10 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 - **Breaking changes make contract 2.** These are a removed or renamed field, a changed meaning
   or unit, a new row `state`, or a new `cost.state`. Readers learn it first; a reader that meets
   a version it does not know shows "update needed", never a guess.
-- **Widening a type is breaking once contract 1 ships.** Until a release carries contract 1, its
-  types may still change in place, as M1 widened `tokens.reasoning` and `ingestion.backlog`'s
-  `bytes` and `files` from integer to integer or null, and as its follow-up made
-  `unpriced_models_omitted` required. After that release, widening a field's type (a new `null`,
+- **Widening a type is breaking once contract 1 ships.** Until a release that ships the meter
+  carries contract 1, its types may still change in place, as M1 widened `tokens.reasoning` and
+  `ingestion.backlog`'s `bytes` and `files` from integer to integer or null, and as its follow-up
+  made `unpriced_models_omitted` required. After that release, widening a field's type (a new `null`,
   a number where an integer was, a string where an enum was) is a changed meaning and makes
   contract 2: a reader written against the narrower type may fail on it. A new `reason` or
   source stays additive, as above.
