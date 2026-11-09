@@ -214,6 +214,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         session,
         parent_session: ctx.parent_session.clone(),
         cwd,
+        session_cwd: ctx.cwd.clone(),
         branch,
         repo: None,
         tokens: tokens(

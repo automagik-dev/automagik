@@ -216,6 +216,7 @@ pub fn event(c: &CodexCtx, ts_ms: i64, tokens: Tokens, precision: Precision) -> 
         session: Some(c.thread.clone()),
         parent_session: c.parent.clone(),
         cwd: c.cwd.clone(),
+        session_cwd: c.cwd.clone(),
         branch: c.branch.clone(),
         repo: c.repo.clone(),
         tokens,

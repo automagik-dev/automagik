@@ -87,6 +87,7 @@ fn call<'a>(harness: &'a str, session: &'a str, cwd: &'a str, at: i64) -> Call<'
         session: Some(session),
         parent_session: None,
         cwd: Some(cwd),
+        session_cwd: Some(cwd),
         at_ms: at,
         copied: false,
     }
@@ -275,6 +276,71 @@ fn an_unlogged_live_terminal_in_the_worktree_makes_the_call_ambiguous() {
     assert_eq!(
         tag(r.resolve(&call("codex", "rollout-1", WT, t(40)))).0.bot,
         "b-dev"
+    );
+}
+
+// Fixer H1 on #835: a seat session that moved into a worker's worktree is never that worker's.
+#[test]
+fn a_seat_working_in_a_workers_worktree_is_never_taken_for_the_worker() {
+    let rows = [
+        worker("t1", 0, WT, "claude", "b-dev", "dev"),
+        seat("t2", 0, "claude", "b-captain", "captain"),
+    ];
+    // The seat's session started in the project root and now calls from the worktree; the sync
+    // sees both terminals live there, or sees nothing.
+    let mut seen = live("t2", 0, "claude-code", WT);
+    seen.labels = Labels::default();
+    for snapshot in [vec![], vec![live("t1", 0, "claude-code", WT), seen]] {
+        let mut r = resolver_seen(&rows, snapshot);
+        let moved = Call {
+            session_cwd: Some(PROJECT),
+            ..call("claude-code", "s-seat-unlinked", WT, t(40))
+        };
+        assert_eq!(r.resolve(&moved), Resolution::Unlinked);
+        // The worker's own session, started in its worktree, is still the worker's, wherever it
+        // calls from later.
+        let away = Call {
+            session_cwd: Some(WT),
+            ..call("claude-code", "s-dev", "/work/elsewhere", t(40))
+        };
+        assert_eq!(tag(r.resolve(&away)).0.bot, "b-dev");
+    }
+}
+
+// Reviewer M1 on #835: an address now held by a newer terminal, even a shell, ends the old launch.
+#[test]
+fn a_newer_terminal_at_an_address_ends_the_old_launch_whatever_it_runs() {
+    // A seat with no end row (an hc restart reused its address); the hook's row, with no launch
+    // key, names a new session on that address later.
+    let rows = [
+        seat("t1", 0, "claude", "b-captain", "captain"),
+        hook_session("t1", "s-new", t(60)),
+    ];
+    let shell = Terminal {
+        harness: None,
+        ..live("t1", 50, "claude-code", PROJECT)
+    };
+    let mut r = resolver_seen(&rows, vec![shell]);
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-new", PROJECT, t(70))),
+        Resolution::Unlinked
+    );
+    // Before the newer terminal, the seat still held the address.
+    let mut r = resolver_seen(
+        &[
+            seat("t1", 0, "claude", "b-captain", "captain"),
+            hook_session("t1", "s-old", t(10)),
+        ],
+        vec![Terminal {
+            harness: None,
+            ..live("t1", 50, "claude-code", PROJECT)
+        }],
+    );
+    assert_eq!(
+        tag(r.resolve(&call("claude-code", "s-old", PROJECT, t(20))))
+            .0
+            .bot,
+        "b-captain"
     );
 }
 

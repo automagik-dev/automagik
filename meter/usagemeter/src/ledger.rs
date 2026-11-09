@@ -34,8 +34,10 @@
 //! - `label`: an `agent.session` (or `revive.session`) label the hc snapshot shows on a terminal
 //!   ties the session to that terminal's launch. Labels are the second witness: when they and the
 //!   ledger name launches with different tags at one time, the call is ambiguous.
-//! - `worktree`: every worker launch of the call's harness whose worktree is the call's cwd and
-//!   that was valid at the call's time is a claimant. Seats are never found this way (their
+//! - `worktree`: every worker launch of the call's harness whose worktree is the folder the
+//!   call's session started in, and that was valid at the call's time, is a claimant. The start
+//!   folder, not the call's own cwd: a seat session that later works in a worker's worktree
+//!   started in the project root, so it is never taken for that worker. Seats are never found this way (their
 //!   folder is the project root, shared by every seat), but a seat there still competes, and so
 //!   does a live harness terminal the snapshot shows in that cwd with no start row (an unlogged
 //!   launch). This is new for Claude: a Claude worker that no row names falls back to it.
@@ -214,6 +216,10 @@ pub struct Call<'a> {
     /// A sub-agent's parent session: it runs in its parent's terminal.
     pub parent_session: Option<&'a str>,
     pub cwd: Option<&'a str>,
+    /// The cwd the session started in. The worktree basis looks up this one, not the call's own
+    /// cwd: a session belongs to the worker whose worktree it started in, wherever it works later,
+    /// and a seat session that moved into a worker's worktree is never that worker's.
+    pub session_cwd: Option<&'a str>,
     /// The call's time, in milliseconds since the Unix epoch, UTC. A launch claims it when
     /// `valid_from <= at_ms < valid_to`.
     pub at_ms: i64,
@@ -525,10 +531,10 @@ impl Resolver {
         if call.copied {
             return Resolution::Unlinked;
         }
-        if self.walk
-            && let Some(cwd) = call.cwd
-        {
-            self.discover(cwd);
+        if self.walk {
+            for cwd in [call.session_cwd, call.cwd].into_iter().flatten() {
+                self.discover(cwd);
+            }
         }
         if self.index.is_none() {
             self.index = Some(build(&self.rows, self.core.as_deref(), &self.snapshot));
@@ -576,7 +582,7 @@ impl Index {
             });
             return judge(claims, basis);
         }
-        let Some(cwd) = call.cwd else {
+        let Some(cwd) = call.session_cwd.or(call.cwd) else {
             return Resolution::Unlinked;
         };
         let Some(on) = self.by_worktree.get(normalize(cwd)) else {
@@ -806,9 +812,8 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
             end_at(&a.key, a.at_ms, &mut ix.launches);
         }
     }
-    // The snapshot: a terminal that finished ends its launch; an address held by a newer
-    // terminal ends every older launch there (the replacement rule below does that once the newer
-    // one is a launch, logged or not).
+    // The snapshot: a terminal that finished ends its launch (a newer terminal at its address
+    // ends it too, below, whatever that terminal runs).
     for t in snapshot {
         let (Some(created), Some(done)) = (t.created_ms, t.finished_ms) else {
             continue;
@@ -851,6 +856,19 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
             l.to = Some(l.to.map_or(n, |e| e.min(n)));
         }
         l.unsure |= unsure;
+    }
+    // Whatever runs in it now, a newer terminal at an address ends every older launch of this
+    // machine there: hc reuses addresses, and a shell is no launch of its own.
+    for t in snapshot {
+        let Some(created) = t.created_ms else {
+            continue;
+        };
+        for &i in by_terminal.get(&t.terminal).into_iter().flatten() {
+            let l = &mut ix.launches[i];
+            if same_core(l.core.as_deref(), core) && l.from.is_some_and(|f| f < created) {
+                l.to = Some(l.to.map_or(created, |e| e.min(created)));
+            }
+        }
     }
     for (i, l) in ix.launches.iter().enumerate() {
         if let Some(w) = &l.worktree {

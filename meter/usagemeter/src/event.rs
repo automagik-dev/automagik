@@ -76,6 +76,10 @@ pub struct UsageEvent {
     /// Set on sub-agent transcripts: the usage belongs to this session.
     pub parent_session: Option<String>,
     pub cwd: Option<String>,
+    /// The cwd the session started in (the first its log recorded). A worktree ties a session to
+    /// a worker only when the session started there (RFC 0021 (a)): a seat that later works in a
+    /// worker's worktree is never taken for that worker.
+    pub session_cwd: Option<String>,
     pub branch: Option<String>,
     /// `host/owner/repo` when the harness recorded the remote itself (Codex); else from `cwd`.
     pub repo: Option<String>,

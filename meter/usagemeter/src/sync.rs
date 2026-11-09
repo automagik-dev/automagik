@@ -255,6 +255,7 @@ impl Attributor {
             session: e.session.as_deref(),
             parent_session: e.parent_session.as_deref(),
             cwd: e.cwd.as_deref(),
+            session_cwd: e.session_cwd.as_deref(),
             at_ms: e.ts_ms,
             copied: e.copied,
         });
