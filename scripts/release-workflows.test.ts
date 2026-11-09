@@ -1,13 +1,14 @@
 // The release workflows' shell, run as written with a fake gh: the desktop build keeps the cut's
 // signed lane on the release, the cut retries the lane's upload to its versioned release, the cut
-// publishes with flags that add up (a prerelease plugin or herdr patch stays a prerelease), and the
-// cut posts the herdr lane and the am lane blind only when nothing is posted yet, and every release
+// publishes with flags that add up (a prerelease plugin or herdr patch stays a prerelease), the
+// cut's decision to release at all is the diff's rather than the subjects' (#767), and the cut
+// posts the herdr lane and the am lane blind only when nothing is posted yet, and every release
 // packs am and checks am's key before it tags.
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pluginNames } from './release-plugins';
 
 const workflow = (name: string) => readFileSync(join(import.meta.dir, '..', '.github', 'workflows', name), 'utf8').split('\n');
@@ -678,6 +679,165 @@ describe('the meter lane (RFC 0017 delivery 4)', () => {
         expect(run.gh).toEqual([]);
       }
     });
+  });
+});
+
+describe("the cut's 'Anything new since the last release' step", () => {
+  const lines = workflow('release.yml');
+  const step = lines.findIndex(line => line.trim() === '- name: Anything new since the last release');
+  const runLine = lines.findIndex((line, i) => i > step && line.trim() === 'run: |');
+  const indent = runLine > -1 ? (/^ */.exec(lines[runLine])?.[0].length ?? 0) + 2 : 0;
+  const body: string[] = [];
+  for (let i = runLine + 1; step > -1 && runLine > -1 && i < lines.length; i++) {
+    if (lines[i].trim() !== '' && (/^ */.exec(lines[i])?.[0].length ?? 0) < indent) break;
+    body.push(lines[i].slice(indent));
+  }
+  const script = body.join('\n');
+
+  // scripts/lane.ts ships <last>, answered from the repository's real diff: yes when a changed path
+  // reaches an install; no for the never-shipped ones (docs, scripts, .github, tests, markdown) and
+  // a release's own version-only bump of the root package.json. Each call is logged for the tests.
+  const FAKE = `#!/usr/bin/env bash
+[[ "$1" == scripts/lane.ts && "$2" == ships ]] || { echo "unexpected lane.ts call: $*" >&2; exit 2; }
+printf '%s\\n' "$*" >> .lane-calls.log
+ships=no
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  case "$path" in
+    docs/*|scripts/*|.github/*|*/test/*|*.md) continue ;;
+    package.json)
+      if diff -q <(git show "$3:package.json" | grep -v '"version"') <(grep -v '"version"' package.json) > /dev/null; then continue; fi ;;
+  esac
+  ships=yes
+done <<< "$(git diff --name-only "$3"..HEAD)"
+printf '%s\\n' "$ships"
+`;
+
+  // A repository whose base is tagged v3.0.0; each commit writes its files and lands with its
+  // subject. The step runs as written against it with the fake bun on PATH, its `release=true` going
+  // to a temp GITHUB_OUTPUT.
+  function cut(commits: { subject: string; files?: Record<string, string> }[], options: { tag?: string | null; bun?: string } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'release-new-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const output = join(dir, 'github-output');
+    writeFileSync(output, '');
+    const git = (...args: string[]) => {
+      const done = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+      if (done.status !== 0) throw new Error(`git ${args.join(' ')}: ${done.stderr}`);
+      return done.stdout.trim();
+    };
+    try {
+      git('init', '-q', '-b', 'dev');
+      writeFileSync(join(dir, 'package.json'), '{"version":"3.0.0"}\n');
+      writeFileSync(join(dir, 'README.md'), '# base\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'chore: the base');
+      if (options.tag !== null) git('tag', options.tag ?? 'v3.0.0');
+      for (const { subject, files = {} } of commits) {
+        for (const [path, text] of Object.entries(files)) {
+          mkdirSync(dirname(join(dir, path)), { recursive: true });
+          writeFileSync(join(dir, path), text);
+        }
+        git('add', '-A');
+        git('commit', '-q', '-m', subject);
+      }
+      writeFileSync(join(bin, 'bun'), options.bun ?? FAKE);
+      chmodSync(join(bin, 'bun'), 0o755);
+      const done = spawnSync('bash', ['-c', script], { cwd: dir, encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_OUTPUT: output } });
+      let calls: string[] = [];
+      try { calls = readFileSync(join(dir, '.lane-calls.log'), 'utf8').trim().split('\n').filter(Boolean); } catch { /* never asked */ }
+      return { status: done.status, out: done.stdout, err: done.stderr, output: readFileSync(output, 'utf8'), calls };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const pocket = 'apps/pocket/android/app/src/main/java/ai/namastex/automagik/PocketViewModel.kt';
+  const pocketTest = 'apps/pocket/android/app/src/test/java/ai/namastex/automagik/PocketViewModelChatTest.kt';
+  const shipped = 'apps/bots-dsh/src/host/agents.js';
+
+  test('is found as the step writes it, with the ships decision before the subjects', () => {
+    expect(script).not.toBe('');
+    expect(script).toContain('bun scripts/lane.ts ships "${last}"');
+    expect(script).toContain('dev has nothing since ${last}: no release');
+    expect(script).toContain('nothing since ${last} reaches an install: no release');
+    // The path decision comes first: it alone may release.
+    expect(script.indexOf('ships=$(bun scripts/lane.ts ships')).toBeLessThan(script.indexOf('git log --no-merges'));
+  });
+
+  test('the #759 shape: a test(pocket) or a docs(...) subject whose diff ships Pocket source releases', () => {
+    for (const subject of ['test(pocket): unit-test the view-model chat wiring (#754) (#759)', 'docs(pocket): describe the view-model chat wiring']) {
+      const run = cut([{ subject, files: { [pocket]: 'package ai.namastex.automagik\n' } }]);
+      expect(run.status).toBe(0);
+      expect(run.calls).toEqual(['scripts/lane.ts ships v3.0.0']);
+      expect(run.output).toBe('release=true\n');
+      expect(run.out).toBe('');
+    }
+  });
+
+  test('a docs-only or a test-only diff under a never-shipped path is skipped', () => {
+    const cases = [
+      { subject: 'docs(pocket): explain the wiring', files: { 'docs/pocket/wiring.md': '# wiring\n' } },
+      { subject: 'test(pocket): cover the wiring', files: { [pocketTest]: 'class PocketViewModelChatTest\n' } },
+    ];
+    for (const commit of cases) {
+      const run = cut([commit]);
+      expect(run.status).toBe(0);
+      expect(run.calls).toEqual(['scripts/lane.ts ships v3.0.0']);
+      expect(run.output).toBe('');
+      expect(run.out).toContain('dev has nothing since v3.0.0: no release');
+    }
+  });
+
+  test('a chore(release) version-only commit is skipped', () => {
+    const run = cut([{ subject: 'chore(release): 3.0.1', files: { 'package.json': '{"version":"3.0.1"}\n' } }]);
+    expect(run.status).toBe(0);
+    expect(run.calls).toEqual(['scripts/lane.ts ships v3.0.0']);
+    expect(run.output).toBe('');
+    expect(run.out).toContain('dev has nothing since v3.0.0: no release');
+  });
+
+  test('a non-inert subject whose change reaches no install is still skipped by the path decision', () => {
+    const cases = [
+      { subject: 'feat(tooling): teach the release test to read subjects', files: { 'scripts/release-workflows.test.ts': '// test\n' } },
+      { subject: 'chore(ci): let the matrix name its runner', files: { '.github/workflows/ci.yml': 'name: CI\n' } },
+    ];
+    for (const commit of cases) {
+      const run = cut([commit]);
+      expect(run.status).toBe(0);
+      expect(run.calls).toEqual(['scripts/lane.ts ships v3.0.0']);
+      expect(run.output).toBe('');
+      expect(run.out).toContain('nothing since v3.0.0 reaches an install: no release');
+      expect(run.out).not.toContain('dev has nothing');
+    }
+  });
+
+  test('a normal subject with a shipped path releases', () => {
+    const run = cut([{ subject: 'fix(bots): stop dropping the first message', files: { [shipped]: 'export {};\n' } }]);
+    expect(run.status).toBe(0);
+    expect(run.calls).toEqual(['scripts/lane.ts ships v3.0.0']);
+    expect(run.output).toBe('release=true\n');
+  });
+
+  test('the first release, with no tag to measure from, releases without asking ships', () => {
+    const run = cut([{ subject: 'feat(bots): the first cut', files: { [shipped]: 'export {};\n' } }], { tag: null });
+    expect(run.status).toBe(0);
+    expect(run.calls).toEqual([]);
+    expect(run.output).toBe('release=true\n');
+  });
+
+  test('a failed ships call stops the run instead of reading as nothing to release', () => {
+    const run = cut([{ subject: 'test(pocket): cover the wiring', files: { [pocketTest]: 'class T\n' } }], { bun: '#!/usr/bin/env bash\nexit 3\n' });
+    expect(run.status).toBe(3);
+    expect(run.output).toBe('');
+    expect(run.out).toBe('');
+  });
+
+  test('an answer that is neither yes nor no stops the run', () => {
+    const run = cut([{ subject: 'fix(bots): stop dropping the first message', files: { [shipped]: 'export {};\n' } }], { bun: '#!/usr/bin/env bash\necho maybe\n' });
+    expect(run.status).toBe(1);
+    expect(run.output).toBe('');
+    expect(run.out).toContain("::error::scripts/lane.ts ships v3.0.0 printed 'maybe', not yes or no");
   });
 });
 
