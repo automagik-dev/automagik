@@ -31,9 +31,9 @@ dest=$dir/usagemeter
 want=${want#v}
 case $want in
   '') ;;
-  *[!0-9.]* | .* | *. | *..* ) die "not a version: $want (want 0.N.P)" ;;
+  *[!0-9.]* | .* | *. | *..* ) die "not a version: $want (want X.Y.Z, for example 3.108.3)" ;;
   *.*.*) ;;
-  *) die "not a version: $want (want 0.N.P)" ;;
+  *) die "not a version: $want (want X.Y.Z, for example 3.108.3)" ;;
 esac
 
 os=$(uname -s)

@@ -78,8 +78,12 @@ class PocketViewModelChatTest {
             .put("approval", approval?.let { JSONObject(it) } ?: JSONObject.NULL)
             .put("held", JSONArray()).toString()
 
-    /** One chat route's fake: [subscribe] records the bridge's callbacks, and [autoGone] answers a resubscribe with `gone`. */
-    private class FakeLink(private val rows: List<Chat.Terminal>, private val autoGone: Boolean) : ChatLink {
+    /**
+     * One chat route's fake: [subscribe] records the bridge's event callback and completes [subscribed]. The test then
+     * emits each event itself and drains it with `runCurrent()`, so no virtual Main step is left pending while the test
+     * waits on the background open.
+     */
+    private class FakeLink(private val rows: List<Chat.Terminal>) : ChatLink {
         override val dshWrite = true
         val subscribed = CompletableDeferred<Unit>()
         @Volatile var closed = false
@@ -90,13 +94,15 @@ class PocketViewModelChatTest {
         override suspend fun subscribe(terminal: String, after: String?, event: (JSONObject) -> Unit,
                                        closed: (String) -> Unit): Int {
             this.event = event
-            // The event goes first, so the test's runCurrent() can never run before it is queued.
-            if (autoGone) event(JSONObject().put("type", "gone").put("reason", "unavailable"))
+            // The VM's subscribe has returned and [event] is installed: an event posted after this cannot miss it.
             subscribed.complete(Unit)
             return 1
         }
 
-        fun emit(json: String) { event?.invoke(JSONObject(json)) }
+        fun emit(json: String) {
+            val callback = checkNotNull(event) { "emit before subscribe" }
+            callback(JSONObject(json))
+        }
 
         override suspend fun backfill(terminal: String, before: String, limit: Int) = JSONArray()
         override suspend fun send(terminal: String, text: String, id: String) = JSONObject()
@@ -110,9 +116,8 @@ class PocketViewModelChatTest {
     /** The fake bridge's route: every open is a fresh [FakeLink], listed with [rows]. */
     private class FakeBridge(@Volatile var rows: List<Chat.Terminal> = emptyList()) {
         val links = CopyOnWriteArrayList<FakeLink>()
-        @Volatile var autoGone = false
         val opener: suspend (String, CoroutineScope, (String) -> Unit) -> ChatLink = { _, _, _ ->
-            FakeLink(rows, autoGone).also { links += it }
+            FakeLink(rows).also { links += it }
         }
 
         suspend fun opened(index: Int): FakeLink = withContext(Dispatchers.IO) {
@@ -237,19 +242,20 @@ class PocketViewModelChatTest {
         assertEquals(Chat.RESUMING, vm.chat.value?.error)
         assertEquals(1, bridge.links.size)
 
-        // Every later connection answers `gone` as well, so the chat walks the whole RESUME_DELAYS_MS ladder.
-        bridge.autoGone = true
+        // Every later connection answers `gone` as well: the test emits it after that connection's subscribe latch,
+        // then drains the Main step it queues, so the chat walks the whole RESUME_DELAYS_MS ladder in order.
         var next = 1
         for (wait in Chat.RESUME_DELAYS_MS) {
             advanceTimeBy(wait)
             runCurrent()
-            bridge.subscribed(next)
+            val link = bridge.subscribed(next)
+            link.emit("""{"type":"gone","reason":"unavailable"}""")
+            runCurrent()
             assertEquals(ref("s1"), TerminalRef(host, vm.chat.value!!.terminal))
             if (next == 1) {
                 assertEquals(true, vm.chat.value?.resuming)
                 assertEquals(Chat.RESUMING, vm.chat.value?.error)
             }
-            runCurrent()
             next++
         }
         assertEquals(Chat.RESUME_DELAYS_MS.size + 1, bridge.links.size)

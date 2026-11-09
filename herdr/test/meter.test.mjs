@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { METER_EVERY_MS, METER_FIRST_MS, METER_KEY, meterBin, syncMeter } from "../mods/am-sidebar/meter.js";
+import { METER_EVERY_MS, METER_FIRST_MS, METER_KEY, SYNC, meterBin, syncMeter } from "../mods/am-sidebar/meter.js";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -25,11 +25,11 @@ const gatedExec = () => {
   return { calls, exec };
 };
 
-test("usagemeter sync: the shared binary's absolute path, with no argument beyond sync", async () => {
+test("usagemeter sync: SYNC with the shared binary's absolute path, no other argument", async () => {
   assert.equal(BIN, "/home/someone/.local/bin/usagemeter");
   const calls = [];
   const r = await syncMeter({ exec: async (cmd, args) => { calls.push([cmd, args]); return { code: 0 }; }, bin: BIN, now: () => 1e12 });
-  assert.deepEqual(calls, [[BIN, ["sync"]]]);
+  assert.deepEqual(calls, [["sh", ["-c", SYNC, "sh", BIN]]]);
   assert.deepEqual(r, { ran: true, code: 0, wait: METER_EVERY_MS });
 });
 
