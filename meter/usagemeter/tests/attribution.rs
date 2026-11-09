@@ -193,7 +193,7 @@ fn a_refused_ledger_is_kept_as_every_sources_reason() {
             assert_eq!(status, "ok", "{harness}: the usage is complete");
             let reason = reason.unwrap_or_default();
             assert!(
-                reason.starts_with("1 Herdr ledger(s) not read"),
+                reason.contains("1 Herdr ledger(s) not read"),
                 "{harness}: {reason}"
             );
         }
@@ -216,4 +216,40 @@ fn a_refused_ledger_is_kept_as_every_sources_reason() {
                 .all(|(_, _, r)| !r.as_deref().unwrap_or("").contains("not read"))
         );
     }
+}
+
+// Reviewer L2 and the genie note on #835: the harness's own reason first, then the refused-ledger
+// note, both within the envelope's 200-character reason.
+#[test]
+fn a_long_reason_keeps_its_start_and_the_ledger_note_within_the_bound() {
+    let own = format!("{} the end", "x".repeat(250));
+    let meta = |k: &str| match k {
+        "codex_status" => Some("degraded".to_owned()),
+        "codex_reason" => Some(own.clone()),
+        "ledgers_refused" => Some("1".to_owned()),
+        _ => None,
+    };
+    let (status, reason) = meter::sync::source_status(meta, meter::sources::Source::Codex);
+    let reason = reason.unwrap();
+    assert_eq!(status, "degraded");
+    assert!(reason.chars().count() <= 200, "{}", reason.len());
+    assert!(reason.starts_with("xxxx"), "{reason}");
+    assert!(
+        reason.ends_with("the usage they would tag has no bot"),
+        "{reason}"
+    );
+    // A short own reason is kept whole.
+    let meta = |k: &str| match k {
+        "codex_reason" => Some("3 rollouts could not be read".to_owned()),
+        "ledgers_refused" => Some("2".to_owned()),
+        _ => None,
+    };
+    let (_, reason) = meter::sync::source_status(meta, meter::sources::Source::Codex);
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "3 rollouts could not be read; 2 Herdr ledger(s) not read (group- or world-writable): \
+             the usage they would tag has no bot"
+        )
+    );
 }

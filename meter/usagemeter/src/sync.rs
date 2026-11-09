@@ -379,6 +379,9 @@ pub fn source_health(store: &Store) -> rusqlite::Result<Vec<SourceHealth>> {
     Ok(out)
 }
 
+/// The longest reason the query's envelope carries (`sources[].reason`).
+const REASON_CHARS: usize = crate::query::LABEL_CHARS;
+
 /// The `meta` key holding how many Herdr ledgers the last sync refused.
 pub const LEDGERS_REFUSED: &str = "ledgers_refused";
 
@@ -386,14 +389,14 @@ pub const LEDGERS_REFUSED: &str = "ledgers_refused";
 fn refused_reason(meta: &impl Fn(&str) -> Option<String>) -> Option<String> {
     let n: u64 = meta(LEDGERS_REFUSED)?.parse().ok().filter(|n| *n > 0)?;
     Some(format!(
-        "{n} Herdr ledger(s) not read (group- or world-writable): usage they would tag has no bot \
-         until chmod 600"
+        "{n} Herdr ledger(s) not read (group- or world-writable): the usage they would tag has \
+         no bot"
     ))
 }
 
 /// One source's status and reason, from the store's `meta`, as `status`, the summary doc and the
-/// query all report it: `<harness>_status` and `<harness>_reason`, which every sync writes, after
-/// the refused-ledger reason when the last sync refused one. A dsh-tui session in a format this
+/// query all report it: `<harness>_status` and `<harness>_reason`, which every sync writes, then
+/// the refused-ledger note when the last sync refused one. A dsh-tui session in a format this
 /// meter cannot read makes that source `unsupported`.
 pub fn source_status(meta: impl Fn(&str) -> Option<String>, s: Source) -> (String, Option<String>) {
     let h = s.harness();
@@ -406,14 +409,18 @@ pub fn source_status(meta: impl Fn(&str) -> Option<String>, s: Source) -> (Strin
         .filter(|v| matches!(v.as_str(), "ok" | "degraded" | "unsupported" | "absent"))
         .unwrap_or_else(|| "ok".into());
     let own = meta(&format!("{h}_reason")).filter(|r| !r.is_empty());
-    // A refused ledger leaves the usage complete but untagged: the status stays, and the reason
-    // comes first, so a reader that clips the reason still sees it.
+    // A refused ledger leaves the usage complete but untagged: the status stays. The harness's
+    // own reason comes first, cut short when needed so the note still fits the reason's bound.
     let refused = matches!(status.as_str(), "ok" | "degraded")
         .then(|| refused_reason(&meta))
         .flatten();
-    let reason = match (refused, own) {
-        (Some(r), Some(o)) => Some(format!("{r}; {o}")),
-        (r, o) => r.or(o),
+    let reason = match (own, refused) {
+        (Some(o), Some(r)) => {
+            let room = REASON_CHARS.saturating_sub(r.chars().count() + 2);
+            let o: String = o.chars().take(room).collect();
+            Some(format!("{o}; {r}"))
+        }
+        (o, r) => o.or(r),
     };
     (status, reason)
 }
