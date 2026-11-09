@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/am-sidebar/formModel.js";
-import { agModelsCacheText, parseAgModelsOutput } from "../mods/am-sidebar/modelCache.js";
+import { agModelsCacheText, parseAgModelsOutput } from "../mods/am-sidebar/models.js";
 const AGY_CACHE = agModelsCacheText(parseAgModelsOutput(readFileSync(new URL("./fixtures/agy/models-1.5.3.txt", import.meta.url), "utf8")), "2026-11-09T12:00:00Z");
 const AGY_TEXTS = { antigravitySettings: JSON.stringify({ model: "Gemini 4 Argon (High)" }), antigravityModels: AGY_CACHE };
 import { applyBotEdit, checkBots, parseBots } from "../mods/am-sidebar/model.js";

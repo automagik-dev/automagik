@@ -18,8 +18,8 @@ import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Bu
 import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify, exec } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, botsText, parseBots, newBotId, applyBotEdit } from "./model.js";
-import { AGENTS, LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
-import { agModelsPath, refreshAgModels } from "./modelCache.js";
+import { AGENTS, LEGACY_AGENTS, agModelsPath, configPaths, detectModel } from "./models.js";
+import { refreshAgModels } from "./modelCache.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
@@ -38,6 +38,9 @@ const PETS = "am-sidebar-pets";
 // The app homes whose Antigravity model cache was looked at this Herdr session: `agy models`
 // runs at most once per session (modelCache.js), never on a render or per opened form.
 const MODELS_LOOKED = new Set();
+// The one pack agent the form adds to Herdr's list (#793): every other agent the form offers
+// is exactly what knowAgents reports, and an existing bot's own agent still shows as it did.
+const PACK_FORM_AGENTS = new Set(["antigravity"]);
 const COLOUR_ORDER = Object.keys(INKS); // the mockup's swatch order
 const CLEAR = "#00000000";
 
@@ -149,13 +152,14 @@ export class BotForm {
     }
   }
 
-  // `listed` (knownAgents) with every pack agent Herdr didn't list added, its installed flag
-  // read from this computer's PATH and `~/.local/bin` (where agy installs), as knownAgents does.
+  // `listed` (knownAgents) with Antigravity added when Herdr doesn't list it (#793), its
+  // installed flag read from this computer's PATH and `~/.local/bin` (where agy installs), as
+  // knownAgents does. No other pack agent is added: their picker entries stay Herdr's.
   async withPackAgents(listed) {
     const out = (Array.isArray(listed) ? listed : []).map((a) => ({ ...a }));
     const have = new Set(out.map((a) => a.key));
     for (const [key, a] of Object.entries(AGENTS)) {
-      if (have.has(key)) continue;
+      if (have.has(key) || !PACK_FORM_AGENTS.has(key)) continue;
       out.push({ key, name: a.name, installed: await this.programInstalled(a.run?.[0]), icon: null, tint: false });
     }
     return out;

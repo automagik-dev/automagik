@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { agModelsCacheText, agModelsPath, parseAgModelsOutput } from "../mods/am-sidebar/modelCache.js";
+import { agModelsCacheText, agModelsPath, parseAgModelsOutput } from "../mods/am-sidebar/models.js";
 
 import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom, modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,

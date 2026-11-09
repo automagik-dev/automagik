@@ -4,69 +4,32 @@
 // service), so the pack keeps the last answer in its app home: the form and the CLI then read
 // one small local file per render or pin check, never a network call. Callers refresh at most
 // once a session, and a refresh that fails (agy isn't installed, isn't signed in, or printed no
-// table) keeps the last list even when it is old. Pure: no `fs` or `child_process`; the caller
-// injects `read`, `write` and `exec`. Apache-2.0.
+// table) keeps the last list even when it is old. The cache's path and format live in models.js,
+// where its list does; this file owns only the refresh, and models.js never imports it (the
+// desktop ships models.js without it).
+// Pure: no `fs` or `child_process`; the caller injects `read`, `write` and `exec`. Apache-2.0.
 
-/** Where the cache lives under an app home; the folder holds the pack's ledgers too. */
-export const AG_MODELS_FILE = "automagik-herdr/antigravity-models.json";
+import { agModelsCacheText, agModelsPath, parseAgModelsCache, parseAgModelsOutput } from "./models.js";
+
 /** A cache younger than this is used as it is: one `agy models` a day at most, and never per render. */
 export const AG_MODELS_TTL_MS = 24 * 60 * 60 * 1000;
 /** How long one `agy models` may take before the refresh is given up on (it starts a server). */
 export const AG_MODELS_TIMEOUT_MS = 30_000;
-// A list longer than this is not `agy models` (a corrupted file or a noisy program): refused.
-const MAX_MODELS = 200;
-// A model id the cache may keep: one word, never an option (it goes to --model).
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
-
-/** `~`-free path of the cache under `appHome` (a trailing slash is not doubled). */
-export const agModelsPath = (appHome) => `${String(appHome).replace(/\/+$/, "")}/${AG_MODELS_FILE}`;
 
 const oneLine = (text) => String(text ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
 
 /**
- * The models in `agy models`' stdout: one `id<TAB>label` line each (a run of spaces between the
- * two reads the same; a line with no separator, or an id that isn't one word, is skipped).
- * Duplicates keep the first; at most MAX_MODELS.
+ * A `spawnSync("agy", ["models"])` result as the refresh's `{ code, stdout, stderr }`: a process
+ * killed by a signal has status null and a signal, and is a failed refresh (code 1), never a
+ * silent exit 0; a spawn error (agy missing) is one too, its message on stderr.
  */
-export function parseAgModelsOutput(text) {
-  const out = [];
-  for (const line of String(text ?? "").split(/\r?\n/)) {
-    const m = /^(\S+)(?:\t+| {2,})(.+?)\s*$/.exec(line);
-    if (!m) continue;
-    const id = m[1];
-    if (!MODEL_ID.test(id) || out.some((x) => x.id === id)) continue;
-    out.push({ id, label: m[2].trim() });
-    if (out.length >= MAX_MODELS) break;
-  }
-  return out;
-}
-
-/** The cache text for `models` listed at `at` (a Date.now() number or an ISO string). */
-export function agModelsCacheText(models, at = Date.now()) {
-  const when = typeof at === "string" ? at : new Date(at).toISOString();
-  const kept = (Array.isArray(models) ? models : []).filter((m) => typeof m?.id === "string" && MODEL_ID.test(m.id))
-    .slice(0, MAX_MODELS).map((m) => ({ id: m.id, label: typeof m.label === "string" ? m.label : "" }));
-  return `${JSON.stringify({ version: 1, source: "agy models", at: when, models: kept }, null, 2)}\n`;
-}
-
-/**
- * A cache text as { at, models: [{ id, label }] }, or null when it isn't the pack's cache (not
- * JSON, no models, a model id that isn't one word). An older file with bare strings still reads.
- */
-export function parseAgModelsCache(text) {
-  let data = null;
-  try { data = typeof text === "string" && text ? JSON.parse(text) : null; } catch { return null; }
-  if (!data || typeof data !== "object" || !Array.isArray(data.models)) return null;
-  const models = [];
-  for (const m of data.models) {
-    const id = typeof m === "string" ? m : m?.id;
-    if (typeof id !== "string" || !MODEL_ID.test(id) || models.some((x) => x.id === id)) continue;
-    models.push({ id, label: typeof m?.label === "string" ? m.label : "" });
-    if (models.length >= MAX_MODELS) break;
-  }
-  if (!models.length) return null;
-  const at = typeof data.at === "string" && Number.isFinite(Date.parse(data.at)) ? data.at : null;
-  return { at, models };
+export function agModelsSpawnResult(r) {
+  const signal = r?.signal ?? null;
+  return {
+    code: typeof r?.status === "number" ? r.status : 1,
+    stdout: r?.stdout ?? "",
+    stderr: r?.stderr || (signal ? `agy models was killed by ${signal}` : r?.error ? String(r.error.message ?? r.error) : ""),
+  };
 }
 
 /** True when `cache` (parseAgModelsCache) was written less than AG_MODELS_TTL_MS before `now`. */

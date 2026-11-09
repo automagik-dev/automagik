@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
-  AG_MODELS_FILE, AG_MODELS_TTL_MS, agModelsCacheText, agModelsFresh, agModelsPath, parseAgModelsCache,
-  parseAgModelsOutput, refreshAgModels, refreshAgModelsSync,
-} from "../mods/am-sidebar/modelCache.js";
+  AG_MODELS_FILE, agModelsCacheText, agModelsPath, parseAgModelsCache, parseAgModelsOutput,
+} from "../mods/am-sidebar/models.js";
+import { AG_MODELS_TTL_MS, agModelsFresh, agModelsSpawnResult, refreshAgModels, refreshAgModelsSync } from "../mods/am-sidebar/modelCache.js";
 
 const MODELS = readFileSync(new URL("./fixtures/agy/models-1.5.3.txt", import.meta.url), "utf8");
 const IDS = MODELS.trim().split("\n").map((line) => line.split("\t")[0]);
@@ -106,6 +106,19 @@ test("refreshAgModels: agy missing or failing keeps the last list and says why; 
   });
   assert.equal(empty.why, "agy models listed no models");
   assert.equal(empty.text, null);
+});
+
+test("agModelsSpawnResult: a killed agy is a failed refresh, never a silent exit 0", () => {
+  assert.deepEqual(agModelsSpawnResult({ status: 0, stdout: "x", stderr: "" }), { code: 0, stdout: "x", stderr: "" });
+  assert.deepEqual(agModelsSpawnResult({ status: 2, stdout: "", stderr: "bad" }), { code: 2, stdout: "", stderr: "bad" });
+  // spawnSync: killed by a signal -> status null, signal set (no error).
+  assert.deepEqual(agModelsSpawnResult({ status: null, signal: "SIGKILL", stdout: "" }),
+    { code: 1, stdout: "", stderr: "agy models was killed by SIGKILL" });
+  const stale = agModelsCacheText(parseAgModelsOutput(MODELS), NOW - AG_MODELS_TTL_MS - 1);
+  const kept = refreshAgModelsSync({ appHome: "/app", read: () => stale, write: () => {}, now: NOW,
+    exec: () => agModelsSpawnResult({ status: null, signal: "SIGTERM" }) });
+  assert.deepEqual([kept.refreshed, kept.cache.models.length], [false, 13]);
+  assert.match(kept.why, /killed by SIGTERM/);
 });
 
 test("refreshAgModelsSync: the CLI's synchronous path reads fresh, refreshes old, keeps a failed list", () => {

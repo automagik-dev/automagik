@@ -5,7 +5,6 @@
 // `read(path) => string | null`, so `node --test` runs it and the CLI and the mod share it.
 // Apache-2.0.
 import { LEGACY_AGENTS } from "./retired.js";
-import { agModelsPath, parseAgModelsCache } from "./modelCache.js";
 
 /**
  * The agents people start, keyed as Herdr's shipped programs table keys them (the table in
@@ -233,11 +232,66 @@ export function defaultModel(agentKey, { home, read }) {
 // 'sonnet' or 'opus')") and the current model ids of the Claude 5 family (2026-11-01).
 const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
 
+/** Where the cache lives under an app home; the folder holds the pack's ledgers too. */
+export const AG_MODELS_FILE = "automagik-herdr/antigravity-models.json";
+// A list longer than this is not `agy models` (a corrupted file or a noisy program): refused.
+const MAX_MODELS = 200;
+// A model id the cache may keep: one word, never an option (it goes to --model).
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+
+/** `~`-free path of the cache under `appHome` (a trailing slash is not doubled). */
+export const agModelsPath = (appHome) => `${String(appHome).replace(/\/+$/, "")}/${AG_MODELS_FILE}`;
+
+/**
+ * The models in `agy models`' stdout: one `id<TAB>label` line each (a run of spaces between the
+ * two reads the same; a line with no separator, or an id that isn't one word, is skipped).
+ * Duplicates keep the first; at most MAX_MODELS.
+ */
+export function parseAgModelsOutput(text) {
+  const out = [];
+  for (const line of String(text ?? "").split(/\r?\n/)) {
+    const m = /^(\S+)(?:\t+| {2,})(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const id = m[1];
+    if (!MODEL_ID.test(id) || out.some((x) => x.id === id)) continue;
+    out.push({ id, label: m[2].trim() });
+    if (out.length >= MAX_MODELS) break;
+  }
+  return out;
+}
+
+/** The cache text for `models` listed at `at` (a Date.now() number or an ISO string). */
+export function agModelsCacheText(models, at = Date.now()) {
+  const when = typeof at === "string" ? at : new Date(at).toISOString();
+  const kept = (Array.isArray(models) ? models : []).filter((m) => typeof m?.id === "string" && MODEL_ID.test(m.id))
+    .slice(0, MAX_MODELS).map((m) => ({ id: m.id, label: typeof m.label === "string" ? m.label : "" }));
+  return `${JSON.stringify({ version: 1, source: "agy models", at: when, models: kept }, null, 2)}\n`;
+}
+
+/**
+ * A cache text as { at, models: [{ id, label }] }, or null when it isn't the pack's cache (not
+ * JSON, no models, a model id that isn't one word). An older file with bare strings still reads.
+ */
+export function parseAgModelsCache(text) {
+  const data = parseJson(text);
+  if (!data || typeof data !== "object" || !Array.isArray(data.models)) return null;
+  const models = [];
+  for (const m of data.models) {
+    const id = typeof m === "string" ? m : m?.id;
+    if (typeof id !== "string" || !MODEL_ID.test(id) || models.some((x) => x.id === id)) continue;
+    models.push({ id, label: typeof m?.label === "string" ? m.label : "" });
+    if (models.length >= MAX_MODELS) break;
+  }
+  if (!models.length) return null;
+  const at = typeof data.at === "string" && Number.isFinite(Date.parse(data.at)) ? data.at : null;
+  return { at, models };
+}
+
 /**
  * The models a bot running `agentKey` may be pinned to (A12: picked from a list, never
  * typed). Claude Code: CLAUDE_MODELS above. Codex: the slugs in its own model cache,
  * `~/.codex/models_cache.json` `.models[].slug`, which Codex refreshes itself. Antigravity:
- * the ids the pack's cache holds from `agy models` (modelCache.js; its settings keep a label
+ * the ids the pack's cache holds from `agy models` (the format above; its settings keep a label
  * `--model` may not take), plus that cache's labels for the picker. Any other agent: plus its
  * configured default (defaultModelFrom). Others: empty (no pin offered).
  * `texts` as for defaultModelFrom; Antigravity's `antigravityModels` text is the cache's.
@@ -257,8 +311,7 @@ export function knownModelsFrom(agentKey, texts = {}) {
 
 /**
  * knownModelsFrom over a synchronous `read(path)` under `home`, plus the pack's Antigravity
- * model cache under `appHome` (modelCache.js). No reader: the static list (Claude's), and no
- * Antigravity list.
+ * model cache under `appHome`. No reader: the static list (Claude's), and no Antigravity list.
  */
 export function knownModels(agentKey, { home, read, appHome } = {}) {
   const texts = read && home ? textsOf(home, read) : {};

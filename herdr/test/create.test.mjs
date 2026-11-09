@@ -124,6 +124,7 @@ test("Runs on: the pack's agents fill in what knownAgents misses (#793), install
   const merged = await form.withPackAgents([{ key: "claude", name: "Claude Code", installed: true, icon: "icons/claude.svg" }]);
   assert.deepEqual(merged.find((a) => a.key === "antigravity"), { key: "antigravity", name: "Antigravity", installed: true, icon: null, tint: false });
   assert.equal(merged.find((a) => a.key === "claude").icon, "icons/claude.svg", "Herdr's own entry is kept");
+  assert.deepEqual(merged.map((a) => a.key).sort(), ["antigravity", "claude"], "antigravity is the only pack agent added");
   form.programInstalled = async () => false;
   const dim = await form.withPackAgents([]);
   assert.equal(dim.find((a) => a.key === "antigravity").installed, false, "not installed: shown dimmed when it is the bot's own");

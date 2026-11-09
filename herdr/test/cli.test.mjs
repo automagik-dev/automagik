@@ -646,6 +646,38 @@ test("Antigravity (#793): a pin comes from `agy models`, cached once; the settin
   assert.equal(s.bots().bots[0].agent, "antigravity");
 });
 
+test("Antigravity (#793): a pin already in the cache starts without running agy, even when the cache is old", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].model = "gemini-4-argon-high";
+  s.seed(f);
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s.app, "automagik-herdr/antigravity-models.json"), JSON.stringify({
+    version: 1, source: "agy models", at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    models: [{ id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" }],
+  }));
+  const r = s.cli(["start", "Genie"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(s.agyCalls(), [], "a cached pin never refreshes, old cache and all");
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--model", "gemini-4-argon-high"]);
+  // The pin is not in the old cache: one refresh, then the refusal names the list it found.
+  const s2 = scene(t);
+  const f2 = team();
+  f2.bots[0].agent = "antigravity";
+  f2.bots[0].model = "gemini-9-nope";
+  s2.seed(f2);
+  mkdirSync(join(s2.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s2.app, "automagik-herdr/antigravity-models.json"), JSON.stringify({
+    version: 1, source: "agy models", at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    models: [{ id: "claude-opus-5-5-low", label: "Claude Opus 5.5 (Low)" }],
+  }));
+  const refused = s2.cli(["start", "Genie"]);
+  assert.equal(refused.code, 1);
+  assert.deepEqual(s2.agyCalls(), ["models"], "an unlisted pin refreshes once");
+  assert.match(refused.err, /pinned to "gemini-9-nope"/);
+});
+
 test("Antigravity (#793): agy missing means no list, a clear refusal, and nothing started or written", (t) => {
   const s = scene(t);
   s.seed(team());
