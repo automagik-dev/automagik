@@ -13,12 +13,12 @@ const PINNED = {
   'src/mind/moments.js': ['src/moments.js', '8cf3966723733950012457448fd9b8ce68f489236a949ee98d9d55c449d4f327'],
   'test/support/mind.js': ['src/mind.js', 'a15acae48af959eb62a8be2fd1b95b681ee11280090d80efe8c35b2ed00026f0'],
   'test/support/redact.js': [
-    'src/redact.js', 'e7f33716cf2510465ca23ee898bd7409215a7e77d0104f5309e960d3bfab32ed'],
+    'src/redact.js', 'a9d1b4f9833e091592a7f0504afeba62518911ef10b14af34943791088b98b4b'],
   'test/support/sentences.js': ['src/sentences.js', 'b327b65802d386f0f57104f59960173057628f60ea93edaf97d071767f810641'],
   'test/support/display.js': ['src/display.js', '41aa8e7d2def996f7a1ffa1e516c7ddf814379d83ee6138740cc1015abae5c13'],
   'test/support/catalog.js': ['test/support/catalog.js', 'c3e93d3df9136234fff3649243cd5157d5731e7663f1030ce9bc0c29cdd4912e'],
   'test/support/window.js': [
-    'test/support/window.js', '09c033cecee8a2089822d9221c86253ed1ac33d8829aaa34310cba6927c34f0b'],
+    'test/support/window.js', '1dc05a075a848c0ebb199324daa441197941baab87014a3738114e819d52ed5f'],
   'catalog/events.v3.json': ['catalog/events.v3.json', '74daa4ab1b2555f01006850318b9e5a0484c334392f5bda84b69701692d85621'],
 }
 const sha = (url) => createHash('sha256').update(readFileSync(url)).digest('hex')
