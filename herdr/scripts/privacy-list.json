@@ -60,9 +60,71 @@
   "emails": [],
   "lines": [
     {
-      "file": ".genie/wishes/herdr-bots/WISH.md",
+      "file": "herdr/.genie/wishes/herdr-bots/WISH.md",
       "text": "`wish/herdr-bots-g10`",
       "why": "a branch name: wish group 10, not a machine"
+    }
+  ],
+  "pending": [
+    {
+      "folder": ".genie",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/pocket",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/bots-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/desktop",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/unfold-trajectory-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/unfold-events-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/welcome-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/unfold-mind-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/landing",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/dsh-sandbox",
+      "issue": "#795"
+    },
+    {
+      "folder": "apps/acp-dsh",
+      "issue": "#795"
+    },
+    {
+      "folder": "docs",
+      "issue": "#795"
+    },
+    {
+      "folder": "meter",
+      "issue": "#795"
+    },
+    {
+      "folder": "scripts",
+      "issue": "#795"
+    },
+    {
+      "folder": "server",
+      "issue": "#795"
     }
   ]
 }

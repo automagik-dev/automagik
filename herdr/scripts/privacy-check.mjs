@@ -4,9 +4,16 @@
 // files, in text files and in image metadata (PNG text chunks, readable strings elsewhere).
 //
 //   node scripts/privacy-check.mjs              scan every tracked and untracked, not-ignored file
+//                                               of the repository whose git top level holds this script
 //   node scripts/privacy-check.mjs --hash TERM  print a deny entry for TERM (add it to the list)
 //
 // Prints `file:line: rule: match` per hit and exits 1 when there is any.
+//
+// The scan root is the repository's git top level (`git rev-parse --show-toplevel`, run in this
+// script's folder), not the folder holding the script: the pack's copy, at `scripts/` of the
+// pack, scans the pack; this monorepo's copy, at `herdr/scripts/`, scans the monorepo. The list
+// is the one beside this script, and its path inside the root is computed from the root, so its
+// own allowed text stays exempt in both layouts.
 //
 // The private names are never written in the tree: scripts/privacy-list.json keeps each one as
 // the sha256 of its normal form (lowercased, separators — space, tab, `.`, `-`, `_`, `=` —
@@ -20,15 +27,22 @@
 // The list is short and the names are short, so anyone can recover them by hashing guesses.
 //
 // The same file lists what is not personal data: placeholder user names (`users`), placeholder
-// emails (`emails`), and exact text allowed in one named file (`lines`); only that text is cut
-// out of the line, the rest of the line is still scanned. No file is exempt.
+// emails (`emails`), and exact text allowed in one named file (`lines`, whose `file` is relative
+// to the scan root); only that text is cut out of the line, the rest of the line is still
+// scanned. Folders still holding hits wait in `pending`, one entry per folder with the issue
+// that will clean it (a whole top-level folder, or one part of `apps/` for its own squad); they
+// are skipped until then, and the list only shrinks.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 
+/** The list beside this script: one list, for the pack and for the monorepo. */
+export const LIST_PATH = fileURLToPath(new URL("privacy-list.json", import.meta.url));
+/** The list's path when the pack itself is the repository (standalone use). */
 export const LIST_FILE = "scripts/privacy-list.json";
 
 const HOME = /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)([A-Za-z0-9._-]+)/g;
@@ -103,13 +117,14 @@ function cutAllowed(line, spans) {
   return line;
 }
 
-/** The hits in one file's text: `{ file, line, rule, match }`. Pure. */
-export function scan(file, text, list = {}, denied = denyMatcher(list.deny)) {
+/** The hits in one file's text: `{ file, line, rule, match }`. Pure. `listFile` is the list's
+ * own path from the scan root: its lines name allowed text that may appear in the list itself. */
+export function scan(file, text, list = {}, denied = denyMatcher(list.deny), listFile = LIST_FILE) {
   const hits = [];
   const users = new Set(list.users ?? []);
   const emails = new Set(list.emails ?? []);
   // An allowed text is allowed in the file it names, and in the list that names it.
-  const spans = (list.lines ?? []).filter((l) => l.file === file || file === LIST_FILE).map((l) => l.text);
+  const spans = (list.lines ?? []).filter((l) => l.file === file || file === listFile).map((l) => l.text);
   if (DB_FILE.test(file)) hits.push({ file, line: 0, rule: "db-file", match: file });
   text.split("\n").forEach((raw, i) => {
     const line = cutAllowed(raw, spans);
@@ -160,21 +175,72 @@ export function fileText(buf) {
   return buf.includes(0) ? strings(buf) : buf.toString("utf8");
 }
 
+/** A resolved path where the filesystem has one, so a symlinked temp folder keeps one identity. */
+const canonical = (path) => {
+  try { return realpathSync(path); } catch { return path; }
+};
+
+/** The repository's top level: the git top level of the folder holding this script. */
+export function repoRoot() {
+  const out = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: dirname(fileURLToPath(import.meta.url)),
+    encoding: "utf8",
+  });
+  return canonical(out.trim());
+}
+
+/** `path` as git names it from `root`: relative, with forward slashes. */
+export function repoPath(root, path = LIST_PATH) {
+  return relative(canonical(root), canonical(path)).split(sep).join("/");
+}
+
+/** The list's path from the scan root: `herdr/scripts/…` here, `scripts/…` in the pack. */
+export const listFileFor = (root) => repoPath(root, LIST_PATH);
+
+/** The list as data: the one beside the script unless another path is given. */
+export function loadList(file = LIST_PATH) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+/** The pending folders of a list, `{ folder, issue }`, one entry per folder. A folder is
+ * repo-relative and may be nested when one part belongs to its own squad (`apps/pocket`). */
+export function pendingFolders(list = {}) {
+  const entries = (list.pending ?? []).map((entry) => {
+    const folder = String(entry?.folder ?? "").replace(/\/+$/, "");
+    const issue = String(entry?.issue ?? "");
+    const segments = folder.split("/");
+    if (!folder || folder.startsWith("/") || segments.some((s) => !s || s === "." || s === "..")
+      || !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(folder) || !/^#\d+$/.test(issue)) {
+      throw new Error("privacy-list: each pending entry needs a folder path and an issue (#123)");
+    }
+    return { folder, issue };
+  });
+  const folders = new Set();
+  for (const { folder } of entries) {
+    if (folders.has(folder)) throw new Error(`privacy-list: duplicate pending folder: ${folder}`);
+    folders.add(folder);
+  }
+  return entries;
+}
+
 /** Tracked and untracked, not-ignored files of the repository at `root`. */
 export function repoFiles(root) {
   const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root });
   return out.toString("utf8").split("\0").filter(Boolean);
 }
 
-/** Scan the repository at `root`; files listed by git but gone from disk are skipped. */
-export function scanRepo(root) {
-  const list = JSON.parse(readFileSync(`${root}/${LIST_FILE}`, "utf8"));
+/** Scan the repository at `root`; files listed by git but gone from disk are skipped, and the
+ * list's pending folders are skipped until their issue cleans them. */
+export function scanRepo(root, list = loadList()) {
   const denied = denyMatcher(list.deny);
+  const listFile = listFileFor(root);
+  const pending = pendingFolders(list).map(({ folder }) => `${folder}/`);
   const hits = [];
   for (const file of repoFiles(root)) {
+    if (pending.some((prefix) => file.startsWith(prefix))) continue;
     let buf;
     try { buf = readFileSync(`${root}/${file}`); } catch { continue; }
-    hits.push(...scan(file, fileText(buf), list, denied));
+    hits.push(...scan(file, fileText(buf), list, denied, listFile));
   }
   return hits;
 }
@@ -187,13 +253,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(JSON.stringify({ sha256: hashTerm(term), kind: "machine" }));
     process.exit(0);
   }
-  const root = fileURLToPath(new URL("..", import.meta.url));
-  const hits = scanRepo(root);
+  const root = repoRoot();
+  const list = loadList();
+  const pending = pendingFolders(list);
+  const note = pending.length
+    ? `${pending.length} folder(s) pending ${[...new Set(pending.map((p) => p.issue))].join(", ")}:`
+      + ` ${pending.map((p) => p.folder).join(", ")}`
+    : "";
+  const hits = scanRepo(root, list);
   for (const h of hits) console.error(`${h.file}:${h.line}: ${h.rule}: ${h.match}`);
   if (hits.length) {
     console.error(`privacy-check: ${hits.length} hit(s). Replace with a placeholder (~/..., proxy.example.com),`
-      + ` or, if it is not personal data, add it to ${LIST_FILE}.`);
+      + ` or, if it is not personal data, add it to ${listFileFor(root)}.`);
+    if (note) console.error(`privacy-check: ${note}`);
     process.exit(1);
   }
-  console.log("privacy-check: clean");
+  console.log(note ? `privacy-check: clean (${note})` : "privacy-check: clean");
 }
