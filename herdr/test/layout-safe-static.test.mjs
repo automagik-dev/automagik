@@ -153,6 +153,8 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(path)", 1, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(tmp)", 1, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "renameSync(tmp, path)", 2, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them; and a bot's launch briefing file under <app home>/automagik-herdr/"],
+  ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "renameSync(from, to)", 1, "the Antigravity model cache's temp file under <app home>/automagik-herdr/ (antigravity-models.json.tmp-<time>) renamed onto its cache: never under mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/modelCache.js", "rename(tmp, path)", 2, "the injected rename of the Antigravity model cache's temp file under <app home>/automagik-herdr/ (antigravity-models.json.tmp-<time>) onto its cache: never under mods/ or layouts/; the caller supplies rename"],
   ["herdr/mods/am-sidebar/main.js", "fs.unlink(file)", 1, "a pasted image in <app home>/paste-tmp/"],
   ["herdr/mods/am-sidebar/spaceIcon.js", "fs.unlink(scratch)", 1, "a space icon the sidebar wrote under <app home>/space-icons/ (spaceIconModel.js leftover) or its scratch file"],
   ["herdr/mods/am-sidebar/spaceIcon.js", "fs.unlink(`${appHome()}/${drop}`)", 2, "a space icon the sidebar wrote under <app home>/space-icons/ (spaceIconModel.js leftover) or its scratch file"],
