@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft |
 | Milestone | none (ships outside the five milestones) |
-| Lanes | none: every step here touches only paths that never ship, so no step cuts a release |
+| Lanes | none: every step here touches only paths that never ship, so no step cuts a release (the pt-BR copy check rides a real pt-BR change; step 5) |
 | Created | 2026-11-09 |
 
 ## Summary
@@ -20,7 +20,7 @@ commit on `dev` after #780 merges.
 
 ## Motivation
 
-The owner's direction (Felipe, 2026-11-09, verbatim): "unfold plugins should be moved to unfold
+The owner's direction (2026-11-09, verbatim): "unfold plugins should be moved to unfold
 repo, to keep automagik`s lighter, unfold isnt part of automagik".
 
 Today the nine plugins are 332 files and 405 commits of `dev` (the first on 2026-10-26, #78). They
@@ -37,6 +37,26 @@ None of that reaches an Automagik user: the plugins come with Unfold's own insta
   prefixes and the team's home stay as they are (AGENTS.md calls them a public contract); no new
   Unfold features land here meanwhile; security fixes to the carried copies still land; Unfold's
   side of the move is the Unfold team's, reached through Chat.
+
+The owner's answers to this RFC's questions 1 to 5 (2026-11-09, on #790 at d0d9c1ea; the owner
+accepted every recommendation):
+
+1. The Unfold-aware parts of the plugins that stay do not leave in this move: the welcome's Unfold
+   Bot type and its plugin list, bots-dsh's Unfold pet and art, and the host-mode switches
+   (`inUnfoldInstance`: no update check, no browser, privacy left to Unfold). The host-mode
+   switches are how the Bot team behaves inside a host that runs it, and Unfold's instance depends
+   on them. The Unfold Bot type, pet and art are a later issue, under the rule AGENTS.md gives
+   Omni-specific code (it belongs in that product's plugins), once Unfold's release is live.
+2. The hand-over point is #780's merge commit on `dev`. It moves forward only for a later security
+   fix to the copies that lands before Unfold confirms step 4, and each move is sent through Chat.
+3. #785 is handed over to Unfold with the code, unless a reviewed fix pull request is open here
+   before Unfold confirms step 4.
+4. `unshipped()` (`scripts/release-plugins.ts`) and `unlisted()` (`scripts/marketplace.ts`) stay
+   after the removal, one line each, as guards against this repository ever offering a second
+   source for Unfold's package names.
+5. `scripts/test-guard.mjs` stays, with its reporter, flush and test (`scripts/test-guard.test.ts`),
+   as AGENTS.md's rule for any package whose tests need `--test-force-exit` (#422), even while no
+   package uses it.
 
 Proposed here: everything else. Where a sentence proposes rather than records, it says so.
 
@@ -78,14 +98,14 @@ Verified in code, not assumed:
 |---|---|
 | `.github/workflows/ci.yml` | the `plugin` matrix drops the nine (13 to 4) |
 | `.github/workflows/release.yml` | the gate loop drops the nine; the header's "Not attached" paragraph goes |
-| `scripts/lane.ts` | the `apps/unfold-` entry leaves `NEVER_SHIPPED`; its two comments go |
+| `scripts/lane.ts` | the `apps/unfold-` entry stays in `NEVER_SHIPPED` as a guard (section 4); its two comments say why |
 | `scripts/release-plugins.ts` | `unshipped()` stays as a name guard (section 4); its comment says why |
 | `scripts/marketplace.ts` | `unlisted()` stays as a name guard (section 4); its comments say why |
 | `scripts/version.ts` | the nine `apps/unfold-*/package.json` entries and "the Unfold bridge" in its header |
 | `scripts/lane.test.ts`, `release-plugins.test.ts`, `marketplace.test.ts`, `release-workflows.test.ts` | the Unfold cases go or say "no Unfold folder" |
 | `apps/bots-dsh/test/unfold-root-session.test.js`, `work-dir.test.js` | they import `unfold-bot-dsh` and `unfold-session-dsh`: rewritten on fakes, or the Unfold part moves to Unfold |
-| `apps/welcome-dsh/test/unfold.test.js`, `unfold-companion.test.js` | they import `unfold-bot-dsh`: compared against a recorded fixture instead (below) |
-| `apps/locale-pt-br-dsh/scripts/copy-check.mjs` | reads `unfold-session-dsh`'s strings: that row goes; the strings stay in `omni-ui.json` |
+| `apps/welcome-dsh/test/unfold.test.js`, `unfold-companion.test.js` | they import `unfold-bot-dsh`, and `unfold.test.js` also reads the eight Unfold bundles' `package.json` (each must declare `dsh.bundle.patch`): the list and the bundle check move to a recorded fixture (section 2) |
+| `apps/locale-pt-br-dsh/scripts/copy-check.mjs` | imports `unfold-session-dsh`'s strings (`OMNI_PLUGIN_STRINGS`): it reads their keys from a recorded list under `test/fixtures/` instead; the translations stay in `omni-ui.json`. This file ships (`apps/<plugin>/scripts/` is not `NEVER_SHIPPED`), so the change rides a real pt-BR change (step 5) |
 | `AGENTS.md` | the interim rule (step 2), which the removal takes out again; it names no Unfold path today |
 
 Comments in shipped files (`apps/desktop/src/lane.js`, `apps/desktop/scripts/follow-dsh.mjs`,
@@ -128,8 +148,9 @@ Three smaller things cross the line the other way, from Unfold into plugins that
 
 The nine folders, their tests, and their nine `plugin` matrix jobs, with the three files in "What
 leaves" above. **Recommended:** one removal pull request that touches only paths that never ship
-(`apps/unfold-*`, `scripts/`, `.github/`, `test/`, `AGENTS.md`), so `bun scripts/lane.ts ships`
-says no and the merge cuts no release.
+(`apps/unfold-*`, `scripts/`, `.github/`, `test/`, `AGENTS.md`) and keeps the `apps/unfold-`
+entry in `NEVER_SHIPPED` (section 4), so `bun scripts/lane.ts ships` says no and the merge cuts no
+release.
 
 ### 2. What stays, and where each copy's source lives
 
@@ -149,8 +170,11 @@ says no and the merge cuts no release.
   commit. A change to the rule is a pull request here first.
 - **The welcome's Unfold plugin list is pinned, not compared live.** Recommended: the test checks
   `UNFOLD_PLUGINS` against a fixture recorded from `unfold.js` at the hand-over commit, with that
-  commit in a comment. If Unfold changes its default set, it asks through Chat and the list and
-  the fixture move together here. No vendored file with a hash is needed for a seven-name list.
+  commit in a comment. The same fixture records that each of those bundles and `unfold-bot-dsh`
+  declares `dsh.bundle.patch` (installable by DSH's `installBundle`), which the test reads from the
+  eight `package.json` files today. If Unfold changes its default set, it asks through Chat and the
+  list and the fixture move together here. No vendored file with a hash is needed for so small a
+  record.
 
 No other copy crosses the line, so no cross-repository vendoring scheme is proposed.
 
@@ -172,10 +196,10 @@ owned across two repositories:
 
 - package names `@automagik/unfold-*-dsh`, their DSH row ids (`unfold-bot` and the others), their
   routes (`/api/unfold-*`), their storage (`<DSH_HOME>/unfold-workspace`, the bridge's
-  `unfold-bridge/endpoint.json` and `UNFOLD_BRIDGE_STATE_DIR`);
-- in the Bot team: the Bot kind `unfold`, the pinned Session id `unfold-root`, the `omniTeam`
-  service that `unfold-bot-dsh` injects, and the host variables `AUTOMAGIK_HOST=unfold` and
-  `AUTOMAGIK_PRELOAD=unfold`.
+  `unfold-bridge/endpoint.json` and `UNFOLD_BRIDGE_STATE_DIR`), and the root Session id
+  `unfold-root` (`unfold-session-dsh`'s `sessionId` default; the Bot team only names it in tests);
+- in the Bot team: the Bot kind `unfold`, the `omniTeam` service that `unfold-bot-dsh` injects,
+  and the host variables `AUTOMAGIK_HOST=unfold` and `AUTOMAGIK_PRELOAD=unfold`.
 
 Unfold's side keeps the first list; this repository keeps the second, and treats a change to it
 as a breaking change for Unfold, said in the pull request.
@@ -186,12 +210,21 @@ as a breaking change for Unfold, said in the pull request.
   and the market index name four; CI tests thirteen; the release's gate loop installs thirteen.
 - **During (hand-over to removal):** unchanged. The folders are frozen here except for security
   fixes (section 7).
-- **After:** CI tests four, the gate loop installs four, `version.ts` writes four plugin
-  manifests fewer, and `lane.ts` has no Unfold entry. Releases, `plugins.json`,
-  `PLUGINS.SHA256SUMS`, `lane.json` and the market index are byte for byte what they are now.
+- **After:** CI tests four, the gate loop installs four, `version.ts` writes nine plugin
+  manifests fewer, and `lane.ts` keeps only its `NEVER_SHIPPED` guard for `apps/unfold-`.
+  Releases, `plugins.json`, `PLUGINS.SHA256SUMS`, `lane.json` and the market index are byte for
+  byte what they are now.
 
-`lane.ts` gains no kind and loses none; the `apps/unfold-` entry in `NEVER_SHIPPED` goes with the
-folders. The two name guards stay, one line each: once Unfold publishes `@automagik/unfold-*`, a
+`lane.ts` gains no kind and loses none. The `apps/unfold-` entry stays in `NEVER_SHIPPED`, for
+good: the release runs the merge's own `lane.ts ships <last tag>` over every path changed since
+the last release, deleted paths included, so a removal that also dropped the entry would count
+the nine deleted folders as shipping and cut a full release (the Reviewer simulated it on #790:
+`ships: yes, kind: full` without the entry, `ships: no` with it). Kept after that release too, it
+costs one pattern and keeps any Unfold folder that came back from cutting a release. When it
+may go: only once a release tag is past the removal's merge, since the diff since the last release
+then no longer holds the deletions; this RFC keeps it anyway, and taking it out later is a
+`scripts/` change that cuts nothing. The two name
+guards stay as well, one line each: once Unfold publishes `@automagik/unfold-*`, a
 tarball or a lane entry from this repository (`unshipped()` in `release-plugins.ts`) or an entry in
 its index (`unlisted()` in `marketplace.ts`) would offer a second source for a package name Unfold
 owns. If an Unfold folder ever came back by mistake, the guards keep it out of every release and
@@ -237,59 +270,58 @@ Each step says what it needs, and how it is undone.
    If a security fix to the copies must land here before Unfold confirms, it lands, and the
    hand-over point moves to that later merge commit; Unfold re-runs filter-repo.
    *Rollback:* Unfold's own; this repository is unchanged.
-5. **The removal** (one pull request; cuts nothing). Everything in "What leaves" and "What
-   changes here", the host-rule case table and the welcome's recorded list included. Its message
-   names the hand-over sha and Unfold's release.
+5. **Before the removal: the pt-BR copy check.** `copy-check.mjs` stops importing
+   `unfold-session-dsh` and reads those keys from a recorded list in `test/fixtures/`. Its file
+   ships, so this goes in with the next real pt-BR change, as the comments do (step 7), not in a
+   pull request of its own. If no pt-BR change comes before the removal is ready, the removal
+   carries it and says so: the merge is then a `plugins` patch for `locale-pt-br-dsh` alone (one
+   tarball, the lane re-signed, no desktop build).
+   *Rollback:* revert; the copy check reads the Unfold folder again while it exists.
+6. **The removal** (one pull request; cuts nothing, unless it carries step 5). Everything in
+   "What leaves" and "What changes here", the host-rule case table and the welcome's recorded list
+   included. Its message names the hand-over sha and Unfold's release.
    *Check:* `bun run check`, the four remaining plugin jobs, and `bun scripts/lane.ts ships` on the
-   merge says no; `git grep -n 'apps/unfold-'` finds only records under `docs/` and `.genie/`.
-   *Rollback:* revert the merge; the folders come back exactly as they were at the hand-over sha,
-   and no installed copy notices either way.
-6. **Comments in shipped files** are reworded with each file's next real change (no pull request of
+   merge says no (with the `NEVER_SHIPPED` entry kept; section 4); `git grep -l 'apps/unfold-'`
+   lists only records under `docs/` and `.genie/` and the shipped files step 7 rewords later
+   (today `apps/welcome-dsh/src/host/bot-types.js` and `apps/locale-pt-br-dsh/README.md`).
+   *Rollback:* revert the merge, then `bun scripts/version.ts set <the root version>` in the same
+   pull request: the revert brings the nine manifests back at the hand-over version, and after any
+   release since, `version.ts check` (and so `bun run check`) fails until they carry the root's
+   version again. The revert cuts no release (the entry still holds), and no installed copy
+   notices either way.
+7. **Comments in shipped files** are reworded with each file's next real change (no pull request of
    their own).
 
-### 7. Interim rule (until step 5 merges)
+### 7. Interim rule (until step 6 merges)
 
 - No new Unfold features, settings or plugins here. A feature request goes to Unfold through Chat.
 - Security fixes to the carried copies still land: #780 (#507, #530), and #785 or any remaining
-  part of #530 if a fix is ready before step 4 confirms. After step 3, such a fix moves the
-  hand-over point; one that is not ready by step 4 goes to Unfold through Chat, with the issue.
+  part of #530 if a reviewed fix pull request is open before step 4 confirms. After step 3, such a
+  fix moves the hand-over point (Decided, 2); one that is not open by then goes to Unfold through
+  Chat with its issue (Decided, 3).
 - Fixes to shared code that stays (the Bot team's redactor, `test-guard.mjs`) land as usual.
 
 ## Contracts introduced
 
-None new. Kept, now across two repositories (section 3): the package names, row ids, routes and
-storage paths of the nine (Unfold's); the Bot kind `unfold`, the Session id `unfold-root`, the
-`omniTeam` service and the host variables (this repository's). Proposed new test fixture:
-`apps/bots-dsh/test/fixtures/unfold-host-rule.json`, readable by Unfold at a pinned commit.
+None new. Kept, now across two repositories (section 3): the package names, row ids, routes,
+storage paths and the root Session id `unfold-root` of the nine (Unfold's); the Bot kind `unfold`,
+the `omniTeam` service and the host variables (this repository's). Kept for good in `lane.ts`:
+the `NEVER_SHIPPED` entry for `apps/unfold-` (section 4). Proposed new test fixtures:
+`apps/bots-dsh/test/fixtures/unfold-host-rule.json`, readable by Unfold at a pinned commit, and the
+welcome's recorded Unfold plugin list (section 2).
 
 ## Threat model
 
 No new trust boundary: nothing installs from here before or after. Two notes:
 
 - The redaction parser is security code. Moving it moves its review to Unfold's repository; until
-  step 5 merges, this repository's review and `unfold-copies.test.ts` still guard every change.
+  step 6 merges, this repository's review and `unfold-copies.test.ts` still guard every change.
 - A stale git source pinned at an old commit here keeps whatever redaction that commit had. That
   is true today and unchanged by the move; Unfold's release is where such a profile updates.
 
 ## Open questions
 
-1. **Should the Unfold-aware parts of the plugins that stay leave too?** The welcome's Unfold Bot
-   type and its plugin list, bots-dsh's Unfold pet and art, and the host-mode switches
-   (`inUnfoldInstance`: no update check, no browser, privacy left to Unfold). *Recommended:* not in
-   this move. The host-mode switches are how the Bot team behaves inside a host that runs it, and
-   Unfold's instance depends on them. The Unfold Bot type, pet and art are a later issue, under
-   the same rule AGENTS.md gives Omni-specific code (it belongs in that product's plugins), once
-   Unfold's release is live.
-2. **Is the hand-over point exactly #780's merge commit?** *Recommended:* yes, moved forward only by
-   a security fix to the copies that lands before Unfold confirms step 4, each move sent through
-   Chat.
-3. **#785: fix here, or hand it over?** *Recommended:* hand it to Unfold with the code, unless a fix
-   pull request is open and reviewed before step 4 confirms.
-4. **Keep `unshipped()` and `unlisted()` after the removal?** *Recommended:* yes, one line each, as
-   guards against this repository ever offering a second source for Unfold's package names.
-5. **Keep `scripts/test-guard.mjs` with no package using it?** *Recommended:* yes; it is AGENTS.md's
-   rule for any package whose tests need `--test-force-exit` (#422), and its own test
-   (`scripts/test-guard.test.ts`) keeps it working until one does.
+None. Questions 1 to 5 were answered by the owner on 2026-11-09 and are in Decided.
 
 ## Links
 
