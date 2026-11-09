@@ -25,5 +25,6 @@ Write one from [`_Templates/decision.md`](../_Templates/decision.md).
 | [Team: one bubble per project, keyed by registry bot id](team-bubbles.md) | Implemented | automagik-dev/automagik#674 |
 | [A DSH chat reconnects by itself; the phone needs no dedupe flag](dsh-chat-resume.md) | Implemented | |
 | [Home counts the Bots' chats with the terminals](home-bot-chats.md) | Implemented | |
+| [A card that closed while the phone was away comes back as a receipt](chat-receipts-on-reconnect.md) | Implemented | |
 
 Back to the [docs home](../_index.md).
