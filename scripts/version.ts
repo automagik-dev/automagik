@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
  * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge, the desktop app and
- * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION) and am (am/VERSION, RFC 0012) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
+ * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION), am (am/VERSION, RFC 0012) and the meter
+ * crate (meter/usagemeter's Cargo.toml and Cargo.lock, RFC 0017) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
  * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
  * (2.YYMMDD.N, from automagik-dev/omni-desktop), so an installed app updates into this one.
  * Until the first release the repository carries 3.0.0, which is never released. The calendar
@@ -62,16 +63,62 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'am/VERSION', path: [] },
 ];
 
+/**
+ * The Rust crates that carry the version (RFC 0017, "Version"): `[package] version` in each one's
+ * Cargo.toml, and its own `[[package]]` entry in its Cargo.lock, which CI builds with --locked.
+ * Each is one line, rewritten in place; every other byte of both files stays as it is.
+ */
+export const CRATES: { dir: string; name: string }[] = [{ dir: 'meter/usagemeter', name: 'usagemeter' }];
+/** Every file a crate's version is in, for copies and listings. */
+export const crateFiles = () => CRATES.flatMap(({ dir }) => [`${dir}/Cargo.toml`, `${dir}/Cargo.lock`]);
+
+const CARGO_VERSION = /^version = "([^"]*)"$/;
+
+/**
+ * The index of the line holding a crate's version, or -1: in a Cargo.toml the first `version = "…"`
+ * of `[package]`; in a Cargo.lock the one of the `[[package]]` whose `name` is the crate's (the
+ * lock's own top-level `version = 4` sits in no table and never matches).
+ */
+export function cargoVersionLine(lines: string[], kind: 'toml' | 'lock', name: string): number {
+  let table = '';
+  let named = false;
+  for (const [index, line] of lines.entries()) {
+    if (/^\s*\[/.test(line)) {
+      table = line.trim();
+      named = false;
+      continue;
+    }
+    if (kind === 'lock' && table === '[[package]]' && line === `name = "${name}"`) named = true;
+    if (!CARGO_VERSION.test(line)) continue;
+    if (kind === 'toml' ? table === '[package]' : table === '[[package]]' && named) return index;
+  }
+  return -1;
+}
+
+/** Each crate's two version fields, as `file`, the line's `index` (-1 when missing) and its `value`. */
+function crateFields(root: string) {
+  return CRATES.flatMap(({ dir, name }) => (['toml', 'lock'] as const).map((kind) => {
+    const file = `${dir}/Cargo.${kind}`;
+    const lines = readFileSync(join(root, file), 'utf8').split('\n');
+    const index = cargoVersionLine(lines, kind, name);
+    const label = kind === 'toml' ? 'package.version' : `package[${name}].version`;
+    return { file, kind, name, lines, index, label, value: index < 0 ? undefined : CARGO_VERSION.exec(lines[index])?.[1] };
+  }));
+}
+
 const read = (root: string, file: string) => JSON.parse(readFileSync(join(root, file), 'utf8'));
 const at = (value: unknown, path: string[]) =>
   path.reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value);
 
 /** The fields that do not carry `version`, as `file:path = value`. */
 export function drift(version: string, root = ROOT): string[] {
-  return FIELDS.flatMap(({ file, path }) => {
-    const value = path.length === 0 ? readFileSync(join(root, file), 'utf8').trim() : at(read(root, file), path);
-    return value === version ? [] : [`${file}:${path.join('.') || '.'} = ${String(value)}`];
-  });
+  return [
+    ...FIELDS.flatMap(({ file, path }) => {
+      const value = path.length === 0 ? readFileSync(join(root, file), 'utf8').trim() : at(read(root, file), path);
+      return value === version ? [] : [`${file}:${path.join('.') || '.'} = ${String(value)}`];
+    }),
+    ...crateFields(root).flatMap(({ file, label, value }) => (value === version ? [] : [`${file}:${label} = ${String(value)}`])),
+  ];
 }
 
 /** Refuses a version whose minor or patch is over 999, which Pocket's versionCode can't tell apart. */
@@ -93,6 +140,10 @@ export function versionCode(version: string): number {
 export function setVersion(version: string, root = ROOT): void {
   guard(version);
   if (!VERSION.test(version)) throw new Error(`not a version: ${version} (want ${MAJOR}.N.P)`);
+  // Every crate's version line is found before any file is written, so a missing one changes nothing.
+  const crates = crateFields(root);
+  const missing = crates.find(({ index }) => index < 0);
+  if (missing) throw new Error(`version: no ${missing.label} line in ${missing.file}`);
   for (const file of new Set(FIELDS.map((field) => field.file))) {
     if (FIELDS.some((field) => field.file === file && field.path.length === 0)) {
       writeFileSync(join(root, file), `${version}\n`);
@@ -104,6 +155,10 @@ export function setVersion(version: string, root = ROOT): void {
       parent[field.path.at(-1) as string] = version;
     }
     writeFileSync(join(root, file), `${JSON.stringify(json, null, 2)}\n`);
+  }
+  for (const { file, lines, index } of crates) {
+    lines[index] = `version = "${version}"`;
+    writeFileSync(join(root, file), lines.join('\n'));
   }
 }
 
