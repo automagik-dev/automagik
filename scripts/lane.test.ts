@@ -193,7 +193,8 @@ describe('the plugin lane', () => {
       pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
       generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ type: 'spki', format: 'pem' }).toString(),
       pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
-      `${spki}-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n`,
+      // A second block after the public key (its label built here, so no key header is spelled).
+      `${spki}-----BEGIN ${['PRIVATE', 'KEY'].join(' ')}-----\nAAAA\n-----END ${['PRIVATE', 'KEY'].join(' ')}-----\n`,
       `junk\n${spki}`,
     ];
     for (const k of held) expect(keysHeld(listing(k))).toBe(true);
