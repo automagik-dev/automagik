@@ -23,7 +23,13 @@ sync      Read new harness usage (omp, Claude Code, Codex) into the local store 
 status    Print the store's state as JSON.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
-The first sync moves the meter's files out of the pre-0.4.0 default directory.";
+The first sync moves the meter's files out of the pre-0.4.0 default directory.
+
+Exit status: 0 done or nothing to do, 2 an error, 3 sync blocked by the state move (stderr
+says why).";
+
+/// `sync` did nothing because files in the state directory must be resolved by hand first.
+const EXIT_BLOCKED: u8 = 3;
 
 fn fail(msg: &str) -> ExitCode {
     eprintln!("meter: {msg}");
@@ -101,8 +107,9 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     }
     match sync::run(&opts).map_err(|e| e.0)? {
         Outcome::Locked => println!("meter: another sync is running; nothing to do"),
-        // The one stderr line from the move says why and what to do.
-        Outcome::Blocked => {}
+        // The one stderr line from the move says why and what to do. Not a success: a scheduled
+        // run must not report one while nothing syncs.
+        Outcome::Blocked => return Ok(ExitCode::from(EXIT_BLOCKED)),
         Outcome::Fresh { age_ms } => println!(
             "meter: last sync was {}s ago; nothing to do (use --force)",
             age_ms / 1000

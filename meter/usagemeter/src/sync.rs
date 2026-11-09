@@ -357,6 +357,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         return Ok(Outcome::Locked);
     };
     // The move runs under the lock and before `prepare`, which creates an empty database.
+    let mut old_generation = None;
     if let Some(old) = &opts.migrate_from {
         let m = paths::migrate(old, &opts.state_dir).map_err(|e| {
             Error(format!(
@@ -375,6 +376,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         if m.stop {
             return Ok(Outcome::Blocked);
         }
+        // An earlier run's move left the old copies as the recoverable generation: they go once
+        // this sync succeeds, never in the run that copied them.
+        old_generation = m.old_generation.then_some(old);
     }
     let db = paths::prepare(&opts.state_dir).map_err(mkdir_err)?;
     let trace = Trace::new();
@@ -564,6 +568,15 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
     if report.pending_bytes == 0 {
         store.set_meta("last_success_ms", &now.to_string())?;
+        if let Some(old) = old_generation
+            && let Err(e) = paths::drop_old_generation(old, &opts.state_dir)
+        {
+            eprintln!(
+                "meter: the old copies in {} were not removed: {e}; the next successful sync \
+                 tries again",
+                old.display()
+            );
+        }
     }
 
     trace.mark("commit");

@@ -7,8 +7,18 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::{Mutex, MutexGuard};
 
 use common::*;
+
+/// Every test here takes this first, so they run one at a time. A test that drops a lock and takes
+/// it again would otherwise find it still held: a sibling test's child shares every open file of
+/// this process between its fork and its exec (see `meter::paths::try_lock`).
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 struct Home {
     env: Env,
@@ -74,6 +84,19 @@ impl Home {
         self.run(&["sync", "--force", "--no-publish"], state_dir)
     }
 
+    /// A default sync the move blocks: exit 3, nothing on stdout, and its stderr.
+    fn blocked(&self) -> String {
+        let out = self.output(&["sync", "--force", "--no-publish"], None);
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(3), "{err}");
+        assert!(
+            out.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        err
+    }
+
     fn rows(&self, dir: &Path) -> i64 {
         let out = self.run(&["status"], Some(dir));
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -120,6 +143,7 @@ fn foreign(old: &Path) -> PathBuf {
 
 #[test]
 fn a_fresh_install_uses_home_automagik_meter() {
+    let _serial = serial();
     let h = Home::new();
     h.log();
     let out = h.sync(None);
@@ -138,6 +162,7 @@ fn a_fresh_install_uses_home_automagik_meter() {
 
 #[test]
 fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
+    let _serial = serial();
     let h = Home::new();
     let rows = h.old_store();
     let old = h.old_dir();
@@ -155,7 +180,11 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
     let out = h.sync(None);
     let err = stderr(&out);
     assert_eq!(err.lines().count(), 2, "{err}");
-    assert!(err.starts_with("meter: moved "), "{err}");
+    assert!(err.starts_with("meter: copied meter.db"), "{err}");
+    assert!(
+        err.contains("stay in") && err.contains("until the next successful sync"),
+        "{err}"
+    );
     assert!(
         err.lines()
             .nth(1)
@@ -164,7 +193,18 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
         "{err}"
     );
 
-    assert_eq!(names(&old), ["Local Storage", "Preferences", "prices.json"]);
+    // The old store stays as the recoverable generation until a later sync succeeds.
+    let not_unit = |v: Vec<String>| -> Vec<String> {
+        v.into_iter()
+            .filter(|n| !n.starts_with("meter.db"))
+            .collect()
+    };
+    assert!(old.join("meter.db").is_file());
+    assert_eq!(
+        not_unit(names(&old)),
+        ["Local Storage", "Preferences", "prices.json"]
+    );
+    assert_eq!(h.rows(&old), rows, "the old store still reads back");
     assert_eq!(fs::read(&app).unwrap(), b"FAKE-APP-DATA");
     let new = h.new_dir();
     for f in [
@@ -187,15 +227,113 @@ fn the_first_sync_moves_exactly_the_meter_files_and_keeps_the_store() {
     }
     assert_eq!(h.rows(&new), rows, "the moved store is the same store");
 
-    // Idempotent: a second run finds nothing to move and says nothing.
+    // The next successful sync removes the old copies, and says so.
+    let second = stderr(&h.sync(None));
+    assert_eq!(second.lines().count(), 1, "{second}");
+    assert!(
+        second.starts_with("meter: removed the old copies of meter.db"),
+        "{second}"
+    );
+    assert_eq!(names(&old), ["Local Storage", "Preferences", "prices.json"]);
+    assert!(!new.join(".meter-moved").exists());
+
+    // Idempotent: a third run finds nothing to move and says nothing.
     let again = h.sync(None);
     assert!(stderr(&again).is_empty(), "{}", stderr(&again));
     assert_eq!(names(&old), ["Local Storage", "Preferences", "prices.json"]);
     assert_eq!(h.rows(&new), rows);
 }
 
+/// RFC 0018 (d): the old folder keeps the recoverable generation until the next successful sync.
+/// A sync that fails, or one that finds the last sync recent and does nothing, leaves it.
+#[test]
+fn the_old_copies_stay_until_a_later_sync_succeeds() {
+    let _serial = serial();
+    let h = Home::new();
+    let rows = h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    let old_db = fs::read(old.join("meter.db")).unwrap();
+
+    h.sync(None);
+    assert_eq!(
+        fs::read(old.join("meter.db")).unwrap(),
+        old_db,
+        "kept after the move"
+    );
+    assert!(new.join(".meter-moved").is_file());
+    assert_eq!(h.rows(&new), rows);
+
+    // A sync that fails after it opened the new store.
+    fs::write(new.join("prices.json"), b"not json").unwrap();
+    let out = h.output(&["sync", "--force", "--no-publish"], None);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("price override"), "{}", stderr(&out));
+    assert_eq!(
+        fs::read(old.join("meter.db")).unwrap(),
+        old_db,
+        "kept after a failed sync"
+    );
+    assert!(new.join(".meter-moved").is_file());
+    fs::remove_file(new.join("prices.json")).unwrap();
+
+    // A sync that finds the last one recent syncs nothing.
+    let fresh = h.run(&["sync", "--no-publish"], None);
+    assert!(
+        String::from_utf8_lossy(&fresh.stdout).contains("nothing to do"),
+        "{}",
+        String::from_utf8_lossy(&fresh.stdout)
+    );
+    assert_eq!(
+        fs::read(old.join("meter.db")).unwrap(),
+        old_db,
+        "kept after a skipped sync"
+    );
+
+    let err = stderr(&h.sync(None));
+    assert!(err.starts_with("meter: removed the old copies"), "{err}");
+    assert!(
+        !old.join("meter.db").exists(),
+        "removed by the next successful sync"
+    );
+    assert!(!old.join("meter.lock").exists());
+    assert!(!new.join(".meter-moved").exists());
+    assert_eq!(h.rows(&new), rows);
+}
+
+/// An older meter that syncs into the old copies before they go makes them a store of its own:
+/// kept, never merged or deleted, and named on stderr from then on.
+#[test]
+fn old_copies_an_older_meter_wrote_to_are_kept_as_a_store() {
+    let _serial = serial();
+    let h = Home::new();
+    let rows = h.old_store();
+    let (old, new) = (h.old_dir(), h.new_dir());
+    h.sync(None);
+    {
+        let _held = meter::paths::try_lock(&old).unwrap().unwrap();
+        let c = rusqlite::Connection::open(old.join("meter.db")).unwrap();
+        insert_row(&c, "later");
+    }
+
+    let err = stderr(&h.sync(None));
+    assert_eq!(err.lines().count(), 1, "{err}");
+    assert!(err.contains("changed after its move"), "{err}");
+    assert!(err.contains("nothing was merged or deleted"), "{err}");
+    assert!(
+        later_row(&old.join("meter.db"), "later"),
+        "the later row is kept"
+    );
+    assert!(!new.join(".meter-moved").exists());
+    assert_eq!(h.rows(&new), rows, "the new store is the one in use");
+
+    let err = stderr(&h.sync(None));
+    assert!(err.contains("already has a meter.db"), "{err}");
+    assert!(later_row(&old.join("meter.db"), "later"));
+}
+
 #[test]
 fn an_existing_new_store_is_never_overwritten() {
+    let _serial = serial();
     let h = Home::new();
     h.old_store();
     let old = h.old_dir();
@@ -231,6 +369,7 @@ fn an_existing_new_store_is_never_overwritten() {
 
 #[test]
 fn meter_state_dir_turns_the_move_off() {
+    let _serial = serial();
     let h = Home::new();
     h.old_store();
     let before = names(&h.old_dir());
@@ -247,6 +386,7 @@ fn meter_state_dir_turns_the_move_off() {
 
 #[test]
 fn a_held_lock_skips_the_move_and_exits_0() {
+    let _serial = serial();
     let h = Home::new();
     h.old_store();
     let old = h.old_dir();
@@ -272,7 +412,7 @@ fn a_held_lock_skips_the_move_and_exits_0() {
 
     let out = h.sync(None);
     assert!(
-        stderr(&out).starts_with("meter: moved "),
+        stderr(&out).starts_with("meter: copied "),
         "{}",
         stderr(&out)
     );
@@ -281,6 +421,7 @@ fn a_held_lock_skips_the_move_and_exits_0() {
 
 #[test]
 fn migrate_moves_the_sidecars_with_the_database_and_nothing_else() {
+    let _serial = serial();
     let t = tempfile::tempdir().unwrap();
     let (old, new) = (t.path().join("old"), t.path().join("new"));
     fs::create_dir_all(&old).unwrap();
@@ -295,20 +436,43 @@ fn migrate_moves_the_sidecars_with_the_database_and_nothing_else() {
 
     let m = meter::paths::migrate(&old, &new).unwrap();
     assert!(!m.busy && m.kept.is_empty(), "{m:?}");
+    assert_eq!(m.copied, ["meter.db-wal", "meter.db-shm", "meter.db"]);
     let mut moved = m.moved.clone();
     moved.sort();
-    let mut want = meter::paths::MIGRATED_FILES.to_vec();
-    want.sort();
-    assert_eq!(moved, want);
     assert_eq!(
-        names(&old),
+        moved,
         [
-            "Local Storage",
-            "Preferences",
-            "meter.db.bak",
-            "prices.json"
+            "claude-limits.jsonl",
+            "claude-limits.last.json",
+            "meter.lock"
         ]
     );
+    let foreign_only = [
+        "Local Storage",
+        "Preferences",
+        "meter.db.bak",
+        "prices.json",
+    ];
+    let mut with_unit = foreign_only.to_vec();
+    with_unit.extend(["meter.db", "meter.db-shm", "meter.db-wal"]);
+    with_unit.sort();
+    assert_eq!(
+        names(&old),
+        with_unit,
+        "the old unit stays until a sync succeeds"
+    );
+
+    let again = meter::paths::migrate(&old, &new).unwrap();
+    assert_eq!(
+        again,
+        meter::paths::Migration {
+            old_generation: true,
+            ..Default::default()
+        },
+        "a second run only finds the old generation"
+    );
+    meter::paths::drop_old_generation(&old, &new).unwrap();
+    assert_eq!(names(&old), foreign_only);
     assert_eq!(fs::read(&app).unwrap(), b"FAKE-APP-DATA");
     for f in [
         "meter.db",
@@ -326,9 +490,10 @@ fn migrate_moves_the_sidecars_with_the_database_and_nothing_else() {
 }
 
 /// Finding 2: a `meter.db-wal` in the new dir that the move did not put there stops the whole
-/// sync before a store is created: exit 0, one stderr line, nothing created or deleted.
+/// sync before a store is created: exit 3, one stderr line, nothing created or deleted.
 #[test]
 fn a_foreign_wal_in_the_new_dir_stops_sync_before_a_store_is_made() {
+    let _serial = serial();
     let h = Home::new();
     let rows = h.old_store();
     let old = h.old_dir();
@@ -338,8 +503,7 @@ fn a_foreign_wal_in_the_new_dir_stops_sync_before_a_store_is_made() {
     fs::write(new.join("meter.db-wal"), b"another store").unwrap();
 
     for _ in 0..2 {
-        let out = h.sync(None);
-        let err = stderr(&out);
+        let err = h.blocked();
         assert_eq!(err.lines().count(), 1, "{err}");
         assert!(err.contains("sidecars of another store"), "{err}");
         assert!(err.contains("nothing was overwritten or deleted"), "{err}");
@@ -357,6 +521,7 @@ fn a_foreign_wal_in_the_new_dir_stops_sync_before_a_store_is_made() {
 /// not an interrupted move: the old files all stay.
 #[test]
 fn an_identical_store_without_the_marker_leaves_the_old_files_alone() {
+    let _serial = serial();
     let h = Home::new();
     let rows = h.old_store();
     let old = h.old_dir();
@@ -410,6 +575,7 @@ fn insert_row(c: &rusqlite::Connection, id: &str) {
 /// Run with the marker a pre-fix build wrote (empty) and with one that records the snapshot.
 #[test]
 fn a_source_changed_after_an_interrupted_move_is_never_deleted() {
+    let _serial = serial();
     for valid_marker in [false, true] {
         let h = Home::new();
         h.old_store();
@@ -464,8 +630,7 @@ fn a_source_changed_after_an_interrupted_move_is_never_deleted() {
         let old_db = fs::read(&db).unwrap();
 
         for _ in 0..2 {
-            let out = h.sync(None);
-            let err = stderr(&out);
+            let err = h.blocked();
             assert_eq!(err.lines().count(), 1, "marker valid={valid_marker}: {err}");
             assert!(
                 err.contains("nothing was overwritten or deleted"),
@@ -497,6 +662,7 @@ fn a_source_changed_after_an_interrupted_move_is_never_deleted() {
 #[cfg(unix)]
 #[test]
 fn a_failed_directory_fsync_keeps_the_source() {
+    let _serial = serial();
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     let (old, new) = (t.path().join("old"), t.path().join("new"));
@@ -537,6 +703,7 @@ fn marker_of(files: &[(&str, &[u8])]) -> Vec<u8> {
 #[cfg(unix)]
 #[test]
 fn a_resumed_move_fsyncs_what_it_adopts_before_removing_the_source() {
+    let _serial = serial();
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     let (old, new) = (t.path().join("old"), t.path().join("new"));
@@ -592,6 +759,7 @@ fn ids(db: &Path) -> Vec<String> {
 /// neither, and says so; all three rows survive every sync.
 #[test]
 fn two_stores_that_grew_apart_are_both_kept_and_neither_is_used() {
+    let _serial = serial();
     let h = Home::new();
     h.old_store();
     let (old, new) = (h.old_dir(), h.new_dir());
@@ -632,7 +800,7 @@ fn two_stores_that_grew_apart_are_both_kept_and_neither_is_used() {
     let old_db = fs::read(&db).unwrap();
 
     for _ in 0..2 {
-        let err = stderr(&h.sync(None));
+        let err = h.blocked();
         assert_eq!(err.lines().count(), 1, "{err}");
         for want in [
             "each may hold rows the other lacks",
@@ -722,7 +890,8 @@ fn integrity_ok(db: &Path) -> bool {
 #[cfg(unix)]
 #[test]
 fn the_database_unit_is_copied_so_an_older_meter_cannot_rewrite_the_new_copy() {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let _serial = serial();
+    use std::os::unix::fs::MetadataExt;
     let h = Home::new();
     h.old_store();
     let (old, new) = (h.old_dir(), h.new_dir());
@@ -732,17 +901,8 @@ fn the_database_unit_is_copied_so_an_older_meter_cannot_rewrite_the_new_copy() {
     let snap = wal_generation(&old);
     meter::paths::ensure_dir(&new).unwrap();
 
-    // The interruption: an old dir whose names cannot be removed stops the move right after it
-    // placed every unit file in the new dir.
-    fs::set_permissions(&old, fs::Permissions::from_mode(0o500)).unwrap();
-    if fs::File::create(old.join("probe")).is_ok() {
-        // Running as root: the mode does not stop the removal.
-        fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
-        return;
-    }
-    let r = meter::paths::migrate(&old, &new);
-    fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(r.is_err(), "{r:?}");
+    let m = meter::paths::migrate(&old, &new).unwrap();
+    assert_eq!(m.copied, ["meter.db-wal", "meter.db-shm", "meter.db"]);
     for (f, b) in &snap {
         let (o, n) = (old.join(f), new.join(f));
         assert_eq!(&fs::read(&n).unwrap(), b, "{f} was placed");
@@ -753,7 +913,10 @@ fn the_database_unit_is_copied_so_an_older_meter_cannot_rewrite_the_new_copy() {
         );
     }
 
-    // The crash came after the old sidecars went; an older meter then writes under the old lock.
+    // The interruption, as an earlier build could leave it: the move had not finished (its marker
+    // still says moving) and the old sidecars were gone. An older meter then writes under the old
+    // lock.
+    fs::rename(new.join(".meter-moved"), new.join(".meter-migrating")).unwrap();
     for (f, _) in &snap[1..] {
         fs::remove_file(old.join(f)).unwrap();
     }
@@ -762,7 +925,7 @@ fn the_database_unit_is_copied_so_an_older_meter_cannot_rewrite_the_new_copy() {
         later_rows(&db, 100)
     };
     for _ in 0..2 {
-        let err = stderr(&h.sync(None));
+        let err = h.blocked();
         assert!(err.contains("neither store is used"), "{err}");
         for (f, b) in &snap {
             assert_eq!(&fs::read(new.join(f)).unwrap(), b, "{f} stays as it was");
@@ -806,6 +969,7 @@ fn unit_bytes(dirs: &[&Path]) -> Vec<Option<Vec<u8>>> {
 /// the database file both directories share.
 #[test]
 fn status_opens_nothing_while_a_move_is_unfinished() {
+    let _serial = serial();
     let h = Home::new();
     h.old_store();
     let (old, new) = (h.old_dir(), h.new_dir());
@@ -855,6 +1019,7 @@ fn status_opens_nothing_while_a_move_is_unfinished() {
 /// for nobody: while a sync holds the lock it says so and opens nothing.
 #[test]
 fn status_reads_the_store_without_checkpointing_it() {
+    let _serial = serial();
     let h = Home::new();
     let rows = h.old_store();
     let dir = h.old_dir();
