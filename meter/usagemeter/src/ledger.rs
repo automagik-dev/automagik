@@ -400,6 +400,7 @@ pub struct Resolver {
     refused: Vec<PathBuf>,
     walk: bool,
     index: Option<Index>,
+    resolved: u64,
 }
 
 impl Resolver {
@@ -527,7 +528,13 @@ impl Resolver {
         }
     }
 
+    /// How many calls were resolved: 0 means no project app home was looked for.
+    pub fn resolved(&self) -> u64 {
+        self.resolved
+    }
+
     pub fn resolve(&mut self, call: &Call) -> Resolution {
+        self.resolved += 1;
         if call.copied {
             return Resolution::Unlinked;
         }

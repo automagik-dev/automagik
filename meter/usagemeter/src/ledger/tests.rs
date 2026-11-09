@@ -628,6 +628,15 @@ fn ledgers_are_read_from_the_app_home_and_each_project_above_a_call() {
         assert_eq!(r.resolve(&at), Resolution::Unlinked);
         assert_eq!(r.refused(), std::slice::from_ref(&ledger));
     }
+    // Group- or world-writable alone is enough to refuse; readable by others is not.
+    #[cfg(unix)]
+    for (m, refused) in [(0o602, true), (0o620, true), (0o644, false), (0o600, false)] {
+        mode(&ledger, m);
+        let mut r = Resolver::new(Some(CORE.into()), vec![]).walk(true);
+        let got = r.resolve(&at);
+        assert_eq!(r.refused().len(), usize::from(refused), "mode {m:o}");
+        assert_eq!(got == Resolution::Unlinked, refused, "mode {m:o}");
+    }
     // The global ledger and $HERDR_WORKERS_LEDGER both count; a row in both counts once.
     mode(&ledger, 0o600);
     let named = dir.path().join("named.jsonl");

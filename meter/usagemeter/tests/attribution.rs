@@ -155,3 +155,65 @@ fn no_session_id_reaches_the_doc_or_the_rows() {
     let rows = format!("{:?}", env.store().rows_since(i64::MIN).unwrap());
     assert!(!rows.contains("s-secret-session"), "{rows}");
 }
+
+// Fixer M2 on #835: a refused ledger is said where status, the doc and the query read it, not only
+// on stderr, and the usage itself stays complete.
+#[test]
+fn a_refused_ledger_is_kept_as_every_sources_reason() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    let ledger = project.join(".herdr/app-home/automagik-herdr/workers.jsonl");
+    write_ledger(&ledger, &[worker("t2", "b-devsynth2", "dev", &wt, None)]);
+    write_lines(
+        &env.claude("-project/s-other.jsonl"),
+        &[line("m2", "s-other", &wt)],
+    );
+    let reasons = |env: &Env| -> Vec<(String, String, Option<String>)> {
+        meter::sync::source_health(&env.store())
+            .unwrap()
+            .into_iter()
+            .map(|h| (h.harness, h.status, h.reason))
+            .collect()
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o664)).unwrap();
+        env.run(&env.opts());
+        assert_eq!(actors(&env), [(None, None, None)]);
+        for (harness, status, reason) in reasons(&env) {
+            if status == "absent" {
+                assert_eq!(reason, None, "{harness}");
+                continue;
+            }
+            assert_eq!(status, "ok", "{harness}: the usage is complete");
+            let reason = reason.unwrap_or_default();
+            assert!(
+                reason.starts_with("1 Herdr ledger(s) not read"),
+                "{harness}: {reason}"
+            );
+        }
+        // The summary doc carries it too (the query reads the same `source_status`).
+        let doc = env.run(&env.opts()).summary.unwrap();
+        assert!(
+            doc.to_string().contains("Herdr ledger(s) not read"),
+            "{doc}"
+        );
+        // Fixed: the next sync that reads it drops the reason and tags the usage.
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
+        write_lines(
+            &env.claude("-project/s-other.jsonl"),
+            &[line("m2", "s-other", &wt), line("m3", "s-other", &wt)],
+        );
+        env.run(&env.opts());
+        assert!(
+            reasons(&env)
+                .iter()
+                .all(|(_, _, r)| !r.as_deref().unwrap_or("").contains("not read"))
+        );
+    }
+}

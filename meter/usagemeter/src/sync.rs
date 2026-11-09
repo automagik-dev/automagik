@@ -379,9 +379,22 @@ pub fn source_health(store: &Store) -> rusqlite::Result<Vec<SourceHealth>> {
     Ok(out)
 }
 
+/// The `meta` key holding how many Herdr ledgers the last sync refused.
+pub const LEDGERS_REFUSED: &str = "ledgers_refused";
+
+/// Why attribution is missing on every source, when a ledger was refused; None otherwise.
+fn refused_reason(meta: &impl Fn(&str) -> Option<String>) -> Option<String> {
+    let n: u64 = meta(LEDGERS_REFUSED)?.parse().ok().filter(|n| *n > 0)?;
+    Some(format!(
+        "{n} Herdr ledger(s) not read (group- or world-writable): usage they would tag has no bot \
+         until chmod 600"
+    ))
+}
+
 /// One source's status and reason, from the store's `meta`, as `status`, the summary doc and the
-/// query all report it: `<harness>_status` and `<harness>_reason`, which every sync writes. A
-/// dsh-tui session in a format this meter cannot read makes that source `unsupported`.
+/// query all report it: `<harness>_status` and `<harness>_reason`, which every sync writes, after
+/// the refused-ledger reason when the last sync refused one. A dsh-tui session in a format this
+/// meter cannot read makes that source `unsupported`.
 pub fn source_status(meta: impl Fn(&str) -> Option<String>, s: Source) -> (String, Option<String>) {
     let h = s.harness();
     if s == Source::DshTui
@@ -392,10 +405,17 @@ pub fn source_status(meta: impl Fn(&str) -> Option<String>, s: Source) -> (Strin
     let status = meta(&format!("{h}_status"))
         .filter(|v| matches!(v.as_str(), "ok" | "degraded" | "unsupported" | "absent"))
         .unwrap_or_else(|| "ok".into());
-    (
-        status,
-        meta(&format!("{h}_reason")).filter(|r| !r.is_empty()),
-    )
+    let own = meta(&format!("{h}_reason")).filter(|r| !r.is_empty());
+    // A refused ledger leaves the usage complete but untagged: the status stays, and the reason
+    // comes first, so a reader that clips the reason still sees it.
+    let refused = matches!(status.as_str(), "ok" | "degraded")
+        .then(|| refused_reason(&meta))
+        .flatten();
+    let reason = match (refused, own) {
+        (Some(r), Some(o)) => Some(format!("{r}; {o}")),
+        (r, o) => r.or(o),
+    };
+    (status, reason)
 }
 
 /// How long a session file must have been left alone before bytes at its end that are not a whole
@@ -783,6 +803,13 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
 
     trace.mark("read");
+    // Kept in the store, so status, the doc and the query can say why usage has no bot: the
+    // sidebar's background sync drops stderr. A run that resolved nothing and refused nothing
+    // looked for no project ledger, so it keeps the last run's count.
+    let refused = attr.resolver.refused().len();
+    if refused > 0 || attr.resolver.resolved() > 0 {
+        store.set_meta(LEDGERS_REFUSED, &refused.to_string())?;
+    }
     for p in attr.resolver.refused() {
         eprintln!(
             "meter: {} is group- or world-writable, so anyone could have written who plays which \
