@@ -6,6 +6,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { install as installBtw } from './btw.js'
 import { createPrivacy } from './privacy.js'
 import { createPets } from './pets.js'
+import { CODE_REFUSED } from './cli-login.js'
 import { install as installSide } from './side.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
 import { defaultRelayLimit } from './groups.js'
@@ -61,7 +62,7 @@ export function install(rt) {
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision. So do the permission presets DSH offers and
   // the Bots and groups whose Auto runs as workspace-write (permissions.js).
-  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.cachedBackground?.() ?? ''}|${rt.permissionKey?.() ?? ''}`
+  const modelsKey = () => `${rt.cachedCatalog().map(entry => `${entry.ref}${entry.needsKey ? '!' : ''}${entry.needsSignIn ? '?' : ''}${entry.covered ? '=' : ''}${entry.via ? `@${entry.via}` : ''}${entry.reasoning ? `:${JSON.stringify(entry.reasoning)}` : ''}`).join(',')}|${rt.cachedDefault() ?? ''}|${rt.cachedBackground?.() ?? ''}|${rt.permissionKey?.() ?? ''}`
   const view = () => ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
@@ -128,7 +129,7 @@ export function install(rt) {
   // and per Session, when its running turn began.
   const live = () => ({
     activity: rt.activityView(),
-    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {}, steered: rt.steeredView?.() ?? {} },
+    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {}, steered: rt.steeredView?.() ?? {}, models: rt.modelStateView?.() ?? {} },
     memoryNews: rt.memoryNews(),
     memoryReviews: rt.memoryReviews(),
     connectors: rt.connectorsView(),
@@ -159,7 +160,17 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections'])
+  // Sign-in (cli-login.js): its replies are never cached by the browser.
+  const CLI_LOGIN = new Set(['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections'])
+  // The endpoints whose text reaches a Bot or a model: one that carries a Claude sign-in state
+  // acp-dsh showed is refused before anything is queued (cli-login.js, loginTextMatches).
+  const CODE_GUARDED = new Set(['send', 'side-ask', 'answer-question', 'view-reply', 'memory-ask'])
+  const textsOf = (value, depth = 0, out = []) => {
+    if (typeof value === 'string') out.push(value)
+    else if (depth < 4 && value !== null && typeof value === 'object') for (const item of Object.values(value).slice(0, 200)) textsOf(item, depth + 1, out)
+    return out
+  }
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -240,6 +251,8 @@ export function install(rt) {
       // An endpoint another Omni plugin serves (extend.js) says itself whether it only reads.
       const added = rt.extended.endpointOf(endpoint)
       if (readOnly !== undefined && !READS.has(endpoint) && added?.read !== true) return fail(readOnly, 'bot/read-only')
+      if (CODE_GUARDED.has(endpoint) && textsOf(body).some(text => rt.loginTextMatches?.(text) === true)) return fail(CODE_REFUSED, 'bot/refused')
+      if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
@@ -258,6 +271,13 @@ export function install(rt) {
           return ok({ modelsKey: modelsKey() })
         case 'efforts':
           return ok(await rt.reasoningOf(String(body.ref ?? '')) ?? { efforts: [] })
+        // What one Bot's model really did (model-state.js): the pick, the model it goes back
+        // to, the last call started, the last answer and failure, and whether it can run now.
+        case 'model-state': {
+          const view = await rt.modelStateOf(String(body.id ?? ''))
+          if (view === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/refused' })
+          return ok(view)
+        }
         // A Turn's exact thinking time, from the timed stream in its events; `ms`
         // omitted when the stream carries no reasoning records.
         case 'thinking': {
@@ -779,7 +799,7 @@ export function install(rt) {
       let body
       try { body = await request.json() } catch { body = {} }
       const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
-      return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
+      return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json', ...(CLI_LOGIN.has(body?.endpoint) ? { 'cache-control': 'no-store' } : {}) } })
     },
   }), 'ds-bot: api route')
 

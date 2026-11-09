@@ -212,6 +212,17 @@ const shot = async (name, { move = true } = {}) => {
   taken.push(name)
   console.log(`shot ${name}`)
 }
+// The model menu goes in steps (model-menu.js): a connection, then one of its models, then a
+// level when that model has levels. Picks the first of each.
+const pickFirstModel = async (page) => {
+  const step = page.locator('.bt-model-menu .bt-model-step')
+  await step.locator('[role="menuitem"][aria-haspopup="menu"]').first().click()
+  await step.locator('[role="menuitemradio"]').first().click()
+  // A levels step has its own heading; a model without levels has closed the menu instead.
+  const level = page.locator('.bt-model-menu:not([data-leaving]) .bt-model-step:has(.bt-model-group) [role="menuitemradio"]').first()
+  if (await level.waitFor({ timeout: 2_000 }).then(() => true, () => false)) await level.click()
+}
+
 const api = async (endpoint, payload) => {
   const result = await page.evaluate(([e, p]) => fetch('api/omni-ui', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: e, payload: p }) }).then(r => r.json()), [endpoint, payload])
   if (!result.ok) throw new Error(`${endpoint}: ${result.error?.message}`)
@@ -258,7 +269,7 @@ try {
     check(await waits(page.locator('.bt-model-menu'), 5_000), `${main.name}'s details panel offers the models`)
     await page.waitForTimeout(500)
     await shot('model-card', { move: false })
-    await page.locator('.bt-model-menu button, .bt-model-menu [role="menuitem"]').first().click()
+    await pickFirstModel(page)
   } else {
     console.log(`note: ${main.name} already had a model, so there is no model-card shot`)
   }

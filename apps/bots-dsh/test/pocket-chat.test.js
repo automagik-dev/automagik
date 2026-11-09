@@ -633,6 +633,20 @@ test('writes: send prompts the Bot\'s current chat Session, queued, with a pocke
   w.handle.close()
 })
 
+test('writes: a pasted sign-in code is refused before DSH\'s prompt, so the Session never records it', async () => {
+  const controller = fakeController(sessions())
+  const logged = []
+  const w = await watching(writableOf(controller, team(), { carriesSignInCode: text => text.includes('#shown-state'), log: (...args) => logged.push(args.join(' ')) }))
+  assert.deepEqual(await w.handle.send({ text: 'code-1234#shown-state', id: 'c1' }), { ok: false, state: 'refused', reason: 'invalid', id: 'c1', message: 'sign-in-code' })
+  assert.equal(controller.prompts.length, 0, 'nothing reaches the controller')
+  assert.ok(logged.every(line => !line.includes('shown-state')), 'the log names the kind only')
+  // A guard that fails lets the send through (acp-dsh's own check stays the authority).
+  const broken = await watching(writableOf(controller, team(), { carriesSignInCode: () => { throw new Error('down') } }))
+  assert.equal((await broken.handle.send({ text: 'plain text', id: 'c2' })).ok, true)
+  w.handle.close()
+  broken.handle.close()
+})
+
 test('writes: send cleans the text; empty after cleaning is refused empty, over 32 KiB too-long, a bad id invalid', async () => {
   const controller = fakeController(sessions())
   const w = await watching(writableOf(controller))

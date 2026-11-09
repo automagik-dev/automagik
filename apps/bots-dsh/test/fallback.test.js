@@ -77,3 +77,101 @@ test('what answers a failure first keeps its answer, and other Sessions, kept co
   const off = harness({ config: { fallback: false } })
   assert.equal(off.hooks.size, 0)
 })
+
+// An agent whose CLI is signed out (acp-dsh's MODEL_ACCESS_REQUIRED) is answered by a sign-in,
+// never by another model (plan D5). Any other agent failure (ACP_AGENT) falls back like any
+// model's, and only with its notice in the chat.
+test('a signed-out agent never moves to the fallback; any other agent failure moves with a notice', async () => {
+  assert.ok(KEEP_CODES.has('MODEL_ACCESS_REQUIRED'))
+  const signedOut = harness()
+  assert.equal(await signedOut.failed({ code: 'MODEL_ACCESS_REQUIRED', message: 'Codex is not signed in' }), undefined)
+  assert.deepEqual(signedOut.selected, [])
+  assert.deepEqual(signedOut.followed, [])
+  assert.deepEqual(signedOut.warnings, [])
+  const agentError = harness()
+  assert.equal(await agentError.failed({ code: 'ACP_AGENT', message: 'Codex: the agent exited' }), undefined)
+  assert.deepEqual(agentError.selected, [DEEPSEEK])
+  assert.equal(agentError.followed.length, 1, 'the move is said in the chat')
+  assert.equal(agentError.followed[0].source.form, 'notice')
+  assert.match(agentError.followed[0].content[0].text, /failed \(ACP_AGENT: Codex: the agent exited\)/)
+})
+
+// F1: DSH latches no wake for a followup sent while the failed turn still runs, so the notice
+// would only wait in the inbox. It is sent once the Agent is idle, and opens the fallback turn.
+function idleHarness() {
+  const h = harness()
+  let idle
+  h.agent.whenIdle = () => new Promise(resolve => { idle = resolve })
+  const event = (type, turn) => h.hooks.get('session/event').listener(h.agent.session, { type, data: { turn, ...(type === 'turn/end' ? { reason: { kind: 'stop' } } : {}) } })
+  return { ...h, idle: () => idle(), event }
+}
+const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('the fallback notice is sent once the failed turn has ended, so it opens the fallback turn', async () => {
+  const h = idleHarness()
+  await h.failed({ code: 'PI_AI_ERROR', message: 'Provider is not configured: openai-codex' })
+  await settle()
+  assert.deepEqual(h.followed, [], 'not while the failed turn still runs: DSH would leave it queued')
+  assert.deepEqual(h.selected, [DEEPSEEK], 'the fallback route is recorded at once')
+  h.turnEnd(3)
+  h.idle()
+  await settle()
+  assert.equal(h.followed.length, 1, 'idle: the notice wakes the fallback turn')
+  assert.match(h.followed[0].content[0].text, /model fallback: openai\/gpt-5\.4-mini failed \(PI_AI_ERROR/)
+})
+
+test('a turn that starts before the Agent is idle takes the notice\'s place', async () => {
+  const h = idleHarness()
+  await h.failed({ code: 'SERVER' })
+  h.turnEnd(3)
+  h.event('turn/start', 4)
+  h.idle()
+  await settle()
+  assert.deepEqual(h.followed, [], 'the person\'s turn already ran on the fallback')
+})
+
+test('rt.fallbackArmed holds until the fallback turn ends, and a selection made meanwhile is left alone', async () => {
+  const hooks = new Map()
+  const rt = { ctx: { on: (name, listener) => hooks.set(name, listener) }, config: {}, isBotSession: () => true, defaultModel: async () => 'deepseek-official/deepseek-flash', warn: () => {} }
+  install(rt)
+  let current = { ...OPENAI }
+  const selected = []
+  const agent = { id: 'bot-1', model: { current: () => current, select: (route) => { selected.push(route); current = route } }, followup: () => {}, session: { id: 'bot-1', requestHeader: () => ({ config: OPENAI }) } }
+  await hooks.get('agent/request-error')({ agent, turn: 3, failure: { code: 'SERVER' }, signal: { aborted: false } }, async () => undefined)
+  assert.equal(rt.fallbackArmed('bot-1'), true)
+  assert.equal(rt.fallbackArmed('other'), false)
+  hooks.get('session/event')(agent.session, { type: 'turn/end', data: { turn: 3 } })
+  assert.equal(rt.fallbackArmed('bot-1'), true, 'the failed turn\'s own end keeps it')
+  // The Bot went back to the model before a switch meanwhile (model-state.js): kept.
+  current = { provider: 'deepseek-official', model: 'deepseek-v4' }
+  hooks.get('session/event')(agent.session, { type: 'turn/end', data: { turn: 4 } })
+  assert.equal(rt.fallbackArmed('bot-1'), false)
+  assert.deepEqual(selected, [DEEPSEEK], 'only the fallback route is undone')
+})
+
+// A switch that cannot run goes back (model-state.js, parts.js) and nothing runs again on its
+// own: no fallback route, no notice. A Bot whose model is confirmed still falls back.
+test('a switch failure on a pending switch or a fresh part waiting for its answer wakes no fallback turn', async () => {
+  const run = async ({ bot, awaiting = false, failure = { code: 'PI_AI_ERROR', message: 'Provider is not configured: openai-codex' } }) => {
+    const hooks = new Map()
+    const followed = []
+    const selected = []
+    install({
+      ctx: { on: (name, listener) => hooks.set(name, listener) }, config: {}, isBotSession: () => true,
+      defaultModel: async () => 'deepseek-official/deepseek-flash', warn: () => {},
+      chatOwners: new Map([['bot-1', 'b1']]), botOf: () => bot, awaitingFirstAnswer: () => awaiting,
+    })
+    const agent = { id: 'bot-1', model: { current: () => ({ ...OPENAI }), select: route => selected.push(route) }, followup: message => followed.push(message), session: { id: 'bot-1', requestHeader: () => ({ config: OPENAI }) } }
+    await hooks.get('agent/request-error')({ agent, turn: 3, failure, signal: { aborted: false } }, async () => undefined)
+    return { followed, selected }
+  }
+  const pending = { name: 'Ops', model: 'openai-codex/gpt-5.4-mini', previousModel: 'deepseek-official/deepseek-flash' }
+  const confirmed = { name: 'Ops', model: 'openai-codex/gpt-5.4-mini', previousModel: 'openai-codex/gpt-5.4-mini' }
+  assert.deepEqual(await run({ bot: pending }), { followed: [], selected: [] }, 'the pending switch goes back instead')
+  assert.deepEqual(await run({ bot: confirmed, awaiting: true }), { followed: [], selected: [] }, 'the fresh part goes back instead')
+  const fellBack = await run({ bot: confirmed })
+  assert.deepEqual(fellBack.selected, [DEEPSEEK])
+  assert.equal(fellBack.followed.length, 1)
+  const other = await run({ bot: pending, failure: { code: 'SERVER' } })
+  assert.deepEqual(other.selected, [DEEPSEEK], 'a failure the fallback answers still falls back on a pending switch')
+})

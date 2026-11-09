@@ -49,15 +49,21 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
   plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
   (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
-  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block
-  for the reviewer, removes it from the surface once the call settles, and never replays it to
+  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block:
+  the advertisement the Session format requires before its tool/call row, which the reviewer
+  reads too, and which is removed from the surface once the call settles and never replayed to
   another provider; the reviewer sees the bridge tool, its redacted arguments and its schema
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
-  runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
-  dialog), Full access does not. A Session that moves between providers carries its transcript
+  runs. A Manual or Full call with no open step is `BRIDGE_NO_STEP`; one whose advertisement or
+  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. The reviewer
+  goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
+  access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
-  native provider — and each crossing writes a provider-boundary row the chat shows. The
+  native provider — and each crossing writes a provider-boundary row the chat shows,
+  "Switching to X": it is written before the reply and claims no answer, since the call can
+  still fail after it. An agent whose CLI is signed out (ACP's `auth_required`, when its session
+  opens or on a prompt) fails the turn as `MODEL_ACCESS_REQUIRED`, not `ACP_AGENT`. The
   reasoning effort the Session ran on crosses with it, both ways, when the target model offers
   that level (matched by id, else by name), replacing the target default DSH records on a model
   change; an effort DSH itself defaulted is not carried. The agents' levels are their own
@@ -78,6 +84,17 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   side request on an ACP route, a compaction summary included, is refused (`UNSUPPORTED`): it
   would carry the agent's whole chat to another provider, and the agent manages its own context.
   Sessions on any other route are left alone.
+- **A switch onto an agent passes DSH's compaction guard.** `compaction-basic` prices every model
+  switch on the destination's context window, which an agent does not declare, so a switch onto
+  an agent in a Session with a request header used to fail with `MODEL_SWITCH_COMPACTION_FAILED`.
+  This plugin wraps the engine's `compactPressure` (`src/host/pressure.js`, the method's only
+  Automagik owner): an agent destination needs no compaction, every other destination goes to the
+  engine unchanged. The wrapper is adopted when an agent is created and on its requests (a
+  reloaded compaction plugin is a new engine), delegates to whatever is below it at call time, and
+  on dispose unwinds only when it is on top. The method is private to `compaction-basic`; a guard
+  test pins it, and a DSH flag for it is proposed upstream (RFC 0023). A switch *off* an agent is
+  the destination's own business: for a Bot, the Bot team decides before the guard (its README,
+  "Long chats").
 - **Host only.** No browser half, so the plugin cannot stop the web UI from loading. With no
   agent CLI installed it registers no route. The welcome draws its setup from the `acpAgents`
   service below.
@@ -127,6 +144,27 @@ still hold, and the Bot team reverses at its next start (the route reads off or 
 moves Claude Bots once per team to `acp-claude` (the Bot team's README,
 "Claude on ACP"); the bridge probe in `bridge()` still gates the move.
 
+The transcript replay is independent of the bridge: only an explicit `false` turns it off.
+
+| `dshTools` | Claude Code: tools | Claude Code: replay | Codex: tools | Codex: replay |
+|---|---|---|---|---|
+| absent | DSH bridge, its own off | yes | its own only | yes |
+| `true` | DSH bridge | yes | DSH bridge and its own | yes |
+| `false` | its own only | no | its own only | no |
+
+So with `dshTools` absent Codex sees the chat but not the team's tools; those need an explicit
+`true` (two tool sets). A replay reaches an agent in each of these cases, redacted and capped at
+120,000 characters, the oldest messages dropped first with a marker: a move from another
+provider (with its "Switching to X" row); a new agent session in a chat that already has answers
+(after a restart, or a session a crossing or a flip ended), with no row since the chat stayed on
+that agent; and a live session resumed after the chat answered elsewhere (a move off Codex keeps
+its session), which gets only the turns it missed, from its own last answer on, with the row. A
+Bot part's handoff package (a relay marked `handoff`) is carried as the record it is: in the
+part's first turn it stays in the prompt beside the person's words, and once the Bot team has
+answered that turn itself, the next new session gets it in the replay. Both pass the redactor.
+With `false`, an agent sees only its own session, and a new one in a chat with answers writes the
+"does not see this chat's earlier messages" row instead.
+
 `sideModel` (`{ provider, model }`, default `deepseek-official/deepseek-flash`, live) is the
 model a side request tries after DSH's default model. An explicit value the person chose is tried
 before the configured non-agent routes (each in turn, its first model); the default DeepSeek
@@ -141,12 +179,63 @@ A settings page reads the agents through this host service; the plugin stays hos
 | Method | Does |
 |---|---|
 | `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
+| `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
+| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. |
+| `loginCurrent(id)` | The attempt at work for that agent, from any view, or undefined. Never starts or cancels one. |
+| `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
+| `loginTextMatches(text)` | Whether a text carries a Claude sign-in state shown in the last 24 hours. Only a boolean: the states are kept as keyed hashes in memory. |
+| `loginActive()` | How many attempts are starting or waiting. |
+| `imageAccess()` | `{ ready, signedIn? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once). Reads no credential and starts no sign-in. |
+| `generateImage({ prompt, size?, quality?, background?, signal?, timeoutMs? })` | Draws one image with the Codex CLI (`src/host/image.js`) and resolves `{ base64, mimeType: 'image/png' }`. Refusals carry an `acp/image-*` code (`signed-out`, `usage-limit`, `timeout`, `unavailable`, `failed`, `stopped`, `refused`) and a message to show as it is. |
+| `keepImages(keeper)` | Where an image an agent makes in a chat is kept, so the chat can show it (`src/host/agent-image.js`). `keeper` is `{ start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) -> Promise<{ file }>, fail?({ callId, sessionId, error }) }`; one at a time, and the call returns its disposer. The Bot team registers its images folder. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
+
+**Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
+built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working
+directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge. The image
+feature is turned on, and the person's own MCP servers replaced by none, for that process only,
+through codex-acp's `CODEX_CONFIG` override: the person's `config.toml` is never written and
+`CODEX_HOME` is never set. Every permission the agent asks is cancelled except the call titled
+"Image generation". Codex's `read-only` mode still runs a read command without asking, so the
+first call the agent reports that is not the image call (a command, a read, a tool) cancels the
+turn and refuses the draw (`refused`): no image from that turn comes back. The person's own
+Codex hooks and global instructions still load, as they do for any Codex run of theirs. The PNG is taken from that
+call's own content (an ACP image block) or its `rawOutput.result`; the file Codex saves under its
+home (`savedPath`) is never opened. The session is closed and the process ended when the image
+arrives, the turn ends, the caller stops it, or 120 seconds pass. Neither the prompt nor what the
+agent says is logged or kept.
+
+**Images an agent makes in a chat.** A chat on an agent can ask it for a picture, and Codex then
+uses its own image tool (an `other` call titled "Image generation"). The mirror call carries
+`image: true` from the call's first sight, so the chat draws its image card at once and the
+keeper's `start` lets that card count the wait. When the call ends, its PNG is taken from the
+call's own update (an ACP image block, or the image call's `rawOutput.result`; the same for any
+agent's call that answers with an image block, as Claude Code could) and handed to the keeper;
+the call's result names the kept file (`Image generated and saved as <file>.`) and never the
+agent's saved path or the image's bytes. The file under the agent's home is never opened. A call
+that fails, is stopped, answers with something that is not a PNG, or has no keeper ends with its
+reason, and the card says the image was not made. The agent's reply then links the image by the
+local path it saved it at; that link (a markdown image or link to a local path in a
+`generated_images` folder, or to a path the agent's image call reported) and any bare such path
+leave the text as it streams, before DSH writes it, so neither the chat, the stored reply nor a
+later replay carries it. Other links are left as the agent wrote them.
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).
+
+**Sign-in attempts.** One per agent, Claude Code and Codex independently, owned by this host; a
+page is only a view of one, and reading it (a second window, a reload, another Bot) never cancels
+it. Only an explicit cancel, the expiry, a failure or the plugin's disposal ends it. The expiry is
+the provider's when its answer reports one (at most an hour), otherwise ten minutes from the link
+shown; the CLI has 45 seconds to print its link. The CLI keeps its own credentials: no model,
+transcript, tool or credential store is involved, and no link, code or state is logged. A sign-in
+the CLI confirms is recorded only for the executable that confirmed it and announced as
+`acp-dsh/login-ready` (the Bot team applies the model the person chose); the number at work is
+announced as `acp-dsh/login-active` (the welcome's busy file adds it, so the app's automatic
+restarts wait). These methods are not tools and not listed by `status()`; the only caller is the
+Bot team's owner-only route (its README, "Signing in to Claude Code or Codex").
 
 ### Required desktop CLIs
 

@@ -258,11 +258,12 @@ test('under AUTOMAGIK_HOST=unfold, a genie that never answers --version is not i
   assert.ok(performance.now() - t0 < 4000, `the card answered after ${Math.round(performance.now() - t0)} ms`)
 })
 
-test('in Unfold\'s instance, Claude signs in through DSH\'s own anthropic flow, with nothing to install', async () => {
-  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } }, services: { authorization: { describe: key => (key === 'llm-pi-ai/anthropic' ? { key } : undefined) } } })
+test('in Unfold\'s instance, Claude signs in through Claude Code like anywhere, with nothing else to install', async () => {
+  const agent = { id: 'acp-claude', key: 'claude', name: 'Claude Code', on: false, cli: { found: true, state: 'ready' }, connector: { state: 'off' }, signedIn: false, model: { listed: false }, restartNeeded: false }
+  const fake = fakeContext({ entries: { 'omni-ai': {}, 'llm-pi-ai': { providers: {} } }, services: { acpAgents: { status: async () => ({ agents: [agent] }) } } })
   const { handle } = install(fake.ctx, { env: UNFOLD })
   const claude = (await handle('ais')).value.rows.find(row => row.id === 'claude')
-  assert.deepEqual([claude.kind, claude.signIn, 'install' in claude, 'needs' in claude], ['signin', true, false, false])
+  assert.deepEqual([claude.kind, claude.signIn, claude.cli.id, 'install' in claude, 'needs' in claude], ['signin', true, 'acp-claude', false, false])
 })
 
 // Unfold's product overlay sets DSH's plugin-market.indexes to [] (installs reach the instance only

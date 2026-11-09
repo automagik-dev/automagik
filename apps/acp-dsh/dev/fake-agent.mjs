@@ -3,7 +3,8 @@
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
 // calls; one that says "hang" waits until it is cancelled; one that says "bridge <tool>" calls
 // that tool on the `dsh` MCP server it was given and reports what it answered; one that says
-// "drift" announces a built-in tool call (a call `tools: []` should have removed) and waits.
+// "drift" announces a built-in tool call (a call `tools: []` should have removed) and waits;
+// one that says "image-call" makes an image the way Codex's image tool reports it.
 //
 // It connects every `mcpServers` entry of `session/new` itself, as both real adapters do, so the
 // plugin's bridge is exercised over real stdio. With FAKE_ACP_SKIP_MCP=1 it connects none, as
@@ -14,7 +15,8 @@
 // model), and each turn's thoughts start with the model and effort it runs on. With
 // FAKE_ACP_NO_OPTIONS=1 in its environment it offers none, as an older agent would. Its effort
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
-// out, as Codex's does.
+// out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
+// prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -28,6 +30,7 @@ const MODELS = [
 const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
 const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
 const SKIP_MCP = process.env.FAKE_ACP_SKIP_MCP === '1'
+const AUTH = process.env.FAKE_ACP_AUTH
 // A test can read what the client asked for (its servers, a fork, a close) from this file.
 const TRACE = process.env.FAKE_ACP_TRACE
 const trace = (entry) => {
@@ -104,6 +107,9 @@ async function attach(session, servers, sessionId) {
   }
 }
 
+// A 1x1 PNG, for the image calls.
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
 const sessions = new Map()
 let created = 0
@@ -119,6 +125,7 @@ const implementation = {
     return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: false }, authMethods: [] }
   },
   async newSession(params) {
+    if (AUTH === 'session') throw RequestError.authRequired(undefined, 'run the CLI\'s login first')
     const sessionId = `fake-${++created}`
     trace({ event: 'new-session', sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
     const session = newSession(sessionId, params.cwd)
@@ -183,6 +190,7 @@ const implementation = {
     }
   },
   async prompt({ sessionId, prompt }) {
+    if (AUTH === 'prompt') throw RequestError.authRequired()
     const session = sessions.get(sessionId)
     session.cancelled = false
     session.turns++
@@ -276,6 +284,37 @@ const implementation = {
       await update({ sessionUpdate: 'tool_call_update', toolCallId, status: session.cancelled ? 'failed' : 'completed', content: [{ type: 'content', content: { type: 'text', text } }] })
       await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` The bridge said: ${text} (permit ${permitted})` } })
       return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
+    }
+    // Codex's built-in image tool as codex-acp reports it: an `other` call titled "Image
+    // generation" whose finished update carries the PNG (an ACP image block and rawOutput.result)
+    // and a saved path under a Codex home that must never be opened; then a reply that links that
+    // path, split across chunks. "image-call-fail" fails the call; "image-call-other" is a call
+    // that makes no image but answers with one (a Read of a JPEG on disk).
+    const imaged = /image-call(-fail|-other)?/.exec(said)
+    if (imaged !== null) {
+      const toolCallId = `image-${session.turns}`
+      const other = imaged[1] === '-other'
+      const title = other ? 'Read photo.jpg' : 'Image generation'
+      await update({ sessionUpdate: 'tool_call', toolCallId, title, kind: other ? 'read' : 'other', status: 'in_progress', rawInput: { id: toolCallId } })
+      if (imaged[1] === '-fail') {
+        await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed', rawOutput: { status: 'failed' } })
+        await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' It did not work.' } })
+        return { stopReason: 'end_turn' }
+      }
+      const savedPath = '/fake-codex-home/generated_images/never-open-me.png'
+      await update({
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'completed',
+        content: other
+          ? [{ type: 'content', content: { type: 'text', text: 'Read photo.jpg' } }, { type: 'content', content: { type: 'image', data: '/9j/4AAQSkZJRgABAQ==', mimeType: 'image/jpeg', uri: '/work/photo.jpg' } }]
+          : [{ type: 'content', content: { type: 'text', text: 'Revised prompt: a fox' } }, { type: 'content', content: { type: 'image', data: PNG, mimeType: 'image/png', uri: savedPath } }],
+        ...(other ? {} : { rawOutput: { status: 'completed', revisedPrompt: 'a fox', result: PNG, savedPath } }),
+      })
+      for (const text of [' Here it is: ![a fox](/fake-codex-', 'home/generated_images/never-open-me.png)', ' Also at `/fake-codex-home/generated_', 'images/never-open-me.png`.']) {
+        await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+      }
+      return { stopReason: 'end_turn' }
     }
     const calls = /twice/.test(said) ? 2 : 1
     for (let n = 1; n <= calls; n++) {

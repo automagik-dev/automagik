@@ -97,10 +97,13 @@ test('Continue needs one AI really on; Skip always finishes', async () => {
   assert.equal(onCount([{ on: false }, { on: true }]), 1)
 })
 
-test('every row that signs in names its own provider; Claude is pi-ai\'s anthropic route, offered once', async () => {
-  const { PROVIDER_OF, LOGOS } = await load('connect-ai.js')
+test('every row that signs in names its own provider; Claude\'s key is pi-ai\'s anthropic route, offered once', async () => {
+  const { PROVIDER_OF, LOGOS, CLI_ROWS } = await load('connect-ai.js')
   const providers = plain(PROVIDER_OF)
-  assert.deepEqual([providers.claude, providers.chatgpt, providers.kimi, providers.copilot, providers.grok], ['anthropic', 'openai-codex', 'kimi-coding', 'github-copilot', 'xai'])
+  assert.deepEqual([providers.claude, providers.kimi, providers.copilot, providers.grok], ['anthropic', 'kimi-coding', 'github-copilot', 'xai'])
+  // ChatGPT signs in only through Codex, Claude through Claude Code (or its key): no DSH sign-in.
+  assert.equal(providers.chatgpt, undefined)
+  assert.deepEqual(plain(CLI_ROWS), { claude: 'acp-claude', chatgpt: 'acp-codex' })
   assert.equal(Object.values(providers).filter(provider => provider === 'anthropic').length, 1)
   assert.ok(!Object.values(providers).includes('claude'))
   assert.equal(typeof plain(LOGOS).claude, 'string')
