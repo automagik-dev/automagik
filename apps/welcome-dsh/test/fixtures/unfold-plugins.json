@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "about": "RFC 0020: the Unfold Bot type's plugins, recorded from unfold-bot-dsh's src/host/unfold.js (UNFOLD_PLUGINS, in install order) and from each package's package.json at the hand-over commit below, when the Unfold plugins left this repository for Unfold's own. bundlePatch is each manifest's dsh.bundle.patch: declared, so DSH's installBundle can install it. notBundles is carried by Unfold but never installed as a bundle. Read by apps/welcome-dsh/test/unfold.test.js against src/host/bot-types.js (UNFOLD_PLUGINS, UNFOLD_PLUGIN). If Unfold changes its default set, it asks here first, and the list and this file move together.",
+  "handOver": "d0453789c51def594451b911cb88571f3246c63e",
+  "plugins": [
+    {
+      "name": "@automagik/unfold-bridge-dsh",
+      "dir": "unfold-bridge-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-events-dsh",
+      "dir": "unfold-events-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-capabilities-dsh",
+      "dir": "unfold-capabilities-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-settings-dsh",
+      "dir": "unfold-settings-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-mind-dsh",
+      "dir": "unfold-mind-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-trajectory-dsh",
+      "dir": "unfold-trajectory-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    },
+    {
+      "name": "@automagik/unfold-session-dsh",
+      "dir": "unfold-session-dsh",
+      "bundlePatch": "./cordis.patch.yml"
+    }
+  ],
+  "bot": {
+    "name": "@automagik/unfold-bot-dsh",
+    "dir": "unfold-bot-dsh",
+    "bundlePatch": "./cordis.patch.yml"
+  },
+  "notBundles": [
+    "@automagik/unfold-sse-dsh"
+  ]
+}

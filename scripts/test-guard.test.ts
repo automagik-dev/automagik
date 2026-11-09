@@ -147,7 +147,8 @@ describe('the packages', () => {
         }
       })
       .filter((script) => script.includes('--test-force-exit'));
-    expect(scripts.length).toBeGreaterThan(0);
+    // None today: the Unfold plugins that ran through the guard left (RFC 0020). The guard and this
+    // rule stay for the next package that needs --test-force-exit (#422).
     expect(scripts.filter((script) => !script.startsWith('node ../../scripts/test-guard.mjs '))).toEqual([]);
   });
 });

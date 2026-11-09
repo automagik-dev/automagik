@@ -692,7 +692,7 @@ describe("the release's plugin set", () => {
     const packed = match![1].trim().split(/\s+/).sort();
     const named = pluginNames().map((name) => `${name.replace('@automagik/', '').replace(/-dsh$/, '')}-dsh`).sort();
     expect(packed).toEqual(named);
-    // Unfold's nine are built and tested here; no release asset names one.
+    // No release asset names an Unfold plugin (they left with RFC 0020).
     expect(packed.filter((name) => name.startsWith('unfold-'))).toEqual([]);
   });
 });

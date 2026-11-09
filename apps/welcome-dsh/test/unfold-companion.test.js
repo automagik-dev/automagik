@@ -1,13 +1,14 @@
 // The Unfold card in a plain DSH: the person makes a companion, then powers Unfold on, which
 // installs the Bot team and @automagik/unfold-bot-dsh. After the restart the team has no Main Bot
 // yet. The companion must still become the Main Bot, with Unfold beside it; only Unfold's own
-// instance hands Unfold the lead.
+// instance hands Unfold the lead. The Unfold Bot lives in Unfold's own repository (RFC 0020): here
+// it is the Bot team's stand-in for what it does to the team.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
+import { createUnfold } from '../../bots-dsh/test/fake-unfold-bot.js'
 import { createCompanionActions } from '../src/host/companion.js'
 
 // A team as bots-dsh keeps it (roster.js bootstrap): the first Main Bot comes from the Main Bot

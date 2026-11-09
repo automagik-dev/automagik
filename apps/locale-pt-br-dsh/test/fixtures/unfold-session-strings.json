@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "about": "RFC 0020: the omni-ui keys Unfold's session plugin (@automagik/unfold-session-dsh) adds to the Bot team's namespace through its addStrings, recorded from its src/client/strings.js (ANSWER_WITH_ZH) at the hand-over commit below, when the Unfold plugins left this repository for Unfold's own. Read by scripts/copy-check.mjs (OMNI_PLUGIN_STRINGS); the pt-BR texts stay in src/client/locales/pt-BR/omni-ui.json. If Unfold changes these words, the keys here and their translations move together.",
+  "handOver": "d0453789c51def594451b911cb88571f3246c63e",
+  "keys": [
+    "Unfold is not reachable from here right now",
+    "Unfold's model list could not be read right now",
+    "Unfold does not offer that model or level now",
+    "Unfold needs your confirmation before it sends your messages there",
+    "The pick may not have reached Unfold; open the menu again to see"
+  ]
+}

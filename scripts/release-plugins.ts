@@ -47,9 +47,10 @@ export function releasePlugins(version: string, commit: string, dir: string, nam
 }
 
 /**
- * Whether a package is one of Unfold's. Every one stays here to be built and tested until
- * Unfold's own release carries it (Refs marketplace/unfold): no release here packs one, names it
- * in plugins.json, lists it in PLUGINS.SHA256SUMS or carries it in the plugin lane's manifest.
+ * Whether a package is one of Unfold's. They left this repository for Unfold's own, which ships
+ * those names (RFC 0020). A name guard, so this repository never offers a second source for one:
+ * even if an Unfold folder came back by mistake, no release here packs it, names it in
+ * plugins.json, lists it in PLUGINS.SHA256SUMS or carries it in the plugin lane's manifest.
  */
 export const unshipped = (name: string) => name.startsWith('@automagik/unfold-');
 

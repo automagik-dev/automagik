@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Automagik's one version: the repository, the Bot team, the welcome, the Unfold bridge, the desktop app and
+ * Automagik's one version: the repository, the Bot team, the welcome, the desktop app and
  * the herdr pack (herdr/package.json and the pack's own mods/am-sidebar/VERSION), am (am/VERSION, RFC 0012) and the meter
  * crate (meter/usagemeter's Cargo.toml and Cargo.lock, RFC 0017) all carry it. Each release is 3.N (semver 3.N.0, tagged v3.N.0), N one above the highest release
  * tag, numbers compared as numbers, as Tactu numbers its v1.N: above every Omni desktop build
@@ -43,17 +43,8 @@ export const FIELDS: { file: string; path: string[] }[] = [
   { file: 'package.json', path: ['version'] },
   { file: 'apps/bots-dsh/package.json', path: ['version'] },
   { file: 'apps/welcome-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-bridge-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-mind-dsh/package.json', path: ['version'] },
   { file: 'apps/locale-pt-br-dsh/package.json', path: ['version'] },
   { file: 'apps/acp-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-bot-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-capabilities-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-settings-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-events-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-sse-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-trajectory-dsh/package.json', path: ['version'] },
-  { file: 'apps/unfold-session-dsh/package.json', path: ['version'] },
   { file: 'apps/automagik-pets/package.json', path: ['version'] },
   { file: 'apps/desktop/package.json', path: ['version'] },
   { file: 'apps/desktop/package-lock.json', path: ['version'] },

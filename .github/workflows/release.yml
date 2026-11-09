@@ -12,10 +12,6 @@ name: Release
 #   <add-on>-<its version>.tgz            the add-ons the lane carries, at the profile's pins
 #   addons.json                           (scripts/lane.ts LANE_ADDONS), and what each one is
 #
-# Not attached: any automagik-unfold-<name>-dsh-<version>.tgz, every one of apps/unfold-*-dsh
-# (the bridge included). They are built and tested here, but Unfold's own release ships them
-# (Refs marketplace/unfold): no tarball here, no entry in the plugin lane, and none is
-# preinstalled (the desktop profile does not carry one; they are opt-in).
 #   automagik-herdr-pack-<version>.tgz    the herdr pack, when herdr/ shipped something since the
 #   automagik-herdr-pack-<version>.tgz.sha256  last release: every PACK_MODS folder of the tag's
 #                                         herdr/mods/ (never pocket-link) plus
@@ -228,7 +224,7 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           bun run check
-          for app in acp-dsh bots-dsh locale-pt-br-dsh unfold-bot-dsh unfold-bridge-dsh unfold-capabilities-dsh unfold-events-dsh unfold-mind-dsh unfold-session-dsh unfold-settings-dsh unfold-sse-dsh unfold-trajectory-dsh welcome-dsh; do
+          for app in acp-dsh bots-dsh locale-pt-br-dsh welcome-dsh; do
             (cd "apps/${app}" && bun install --frozen-lockfile --ignore-scripts && { [ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check; })
           done
 
