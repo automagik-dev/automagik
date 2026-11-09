@@ -10,10 +10,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/am-sidebar/workers.js";
-import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath } from "../mods/am-sidebar/briefingText.mjs";
+import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath,
+  amPartEntryPath, amPartHookCommand, scriptOf } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
-  toStable,
+  toStable, ownHook,
 } from "../mods/am-sidebar/migrateHooks.mjs";
 
 // git here must not read this host's global config.
@@ -69,6 +70,18 @@ test("OURS knows the entry point and both sidebar folders; mergeHook never adds 
   }
   assert.doesNotMatch("node /h/mods/pocket-link/briefing.mjs", OURS);
   assert.doesNotMatch("node /h/briefing.mjs", OURS);
+});
+
+test("an am-part hook is ours: classified, never doubled, and moved onto the stable entry once a pack is installed", () => {
+  const app = "/h", store = "/am/parts/automagik.am";
+  const command = amPartHookCommand(app, store);
+  assert.match(command, OURS);
+  assert.equal(scriptOf(command), amPartEntryPath(store));
+  const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command, timeout: 10 }] }] } });
+  assert.deepEqual(mergeHook(text, command), { text, changed: false }, "the stored command is left alone, not doubled");
+  assert.deepEqual(JSON.parse(mergeHook(text, hookCommand(app)).text).hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand(app), timeout: 10 }] }]);
+  assert.equal(toStable(app)(command), hookCommand(app), "a pack install moves it to the stable entry, which runs am's briefing first");
+  assert.equal(ownHook(app)(command), false, "the pack's uninstall leaves am's hook alone");
 });
 
 test("retargetHooks: only the pack's command shape moves, every other byte stays; odd shapes and bad JSON are reported", () => {

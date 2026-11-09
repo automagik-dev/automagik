@@ -23,7 +23,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { ENTRY_SOURCE, OURS, directHookCommand, hookCommand, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
+import { ENTRY_SOURCE, OURS, directHookCommand, hookCommand, isAmPartEntry, legacyHookCommand, scriptOf, stableBriefingPath } from "./briefingText.mjs";
 import { PATH_RENAMES, SHARED_RENAMES, renamedFrom } from "./migrate.js";
 import { PROJECTS_FILE, listedProjects } from "./model.js";
 import { removePath } from "./layoutSafe.mjs";
@@ -107,8 +107,9 @@ function inPlace(text, edits) {
 
 /**
  * Forward: a command of the pack's shape (the run.sh form, or the older `node` one) naming this app
- * home's own sidebar script, or its stable one in the older form → this app home's stable one
- * through run.sh. Another app home's hook (or a checkout's) is not this run's to move: left.
+ * home's own sidebar script, or its stable one in the older form, or am's own entry (a CLI-only
+ * host) → this app home's stable one through run.sh, which runs am's briefing first. Another app
+ * home's hook (or a checkout's) is not this run's to move: left.
  */
 export function toStable(appHome) {
   const home = appHome.replace(/\/+$/, "");
@@ -118,7 +119,7 @@ export function toStable(appHome) {
     if (!OURS.test(command) || command === target) return null;
     const script = scriptOf(command);
     if (script === null) return false;
-    return mine.has(script) ? target : null;
+    return mine.has(script) || isAmPartEntry(script) ? target : null;
   };
 }
 

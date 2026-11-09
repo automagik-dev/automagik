@@ -18,6 +18,7 @@ import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
   botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
+  amPartEntryPath, amPartHookCommand, amPartRunnerPath, hookTargetOf, installHook, isAmPartEntry, scriptOf,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
@@ -1136,4 +1137,97 @@ test("hook, a launched --continue pane: once for the conversation it resumed, no
     { input: (n) => JSON.stringify({ session_id: n < 3 ? "s-1" : "s-2" }) });
   assert.equal(count([await sc.turn(1), await sc.turn(2)]), 1, "the resumed one, recorded before the file");
   assert.equal(count([await sc.turn(3), await sc.turn(4)]), 0, "/clear: a new conversation, its prompt has the file");
+});
+
+// ---- a CLI-only host: no pack under the app home, the am part installed ----
+
+/** installHook's io over this test's real temp files; git is absent (null), so nothing is excluded. */
+function hookIo() {
+  return {
+    git: async () => null,
+    read: async (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } },
+    write: async (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); },
+    mkdir: async (dir) => { mkdirSync(dir, { recursive: true }); },
+  };
+}
+
+test("CLI-only host: the hook runs am's entry through am's runner; a pack there keeps the pack hook", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const app = join(root, "app"); // no mods/: no pack
+  const store = join(root, "home", ".automagik", "parts", "automagik.am");
+  const current = join(store, "current");
+  mkdirSync(join(current, "bin"), { recursive: true });
+  writeFileSync(join(current, "bin", "run.sh"), '#!/bin/sh\nexec node "$@"\n');
+  writeFileSync(join(current, "briefingEntry.mjs"), "// am's entry\n");
+  writeFileSync(join(current, "briefing.mjs"), "// am's briefing\n");
+  const project = join(root, "proj");
+  mkdirSync(project, { recursive: true });
+  const io = hookIo();
+  const settings = join(project, ".claude", "settings.local.json");
+  const command = () => JSON.parse(readFileSync(settings, "utf8")).hooks.UserPromptSubmit[0].hooks[0].command;
+  const first = await installHook("Genie", project, app, io, { amStore: store });
+  assert.equal(first.written, true, first.warnings.join(" "));
+  assert.deepEqual(first.warnings, []);
+  assert.equal(command(), amPartHookCommand(app, store));
+  assert.ok(command().includes(`[ ! -f "${amPartRunnerPath(store)}" ]`), "the runner is guarded");
+  assert.ok(command().includes(`[ ! -f "${amPartEntryPath(store)}" ]`), "the entry is guarded");
+  assert.equal(scriptOf(command()), amPartEntryPath(store));
+  assert.deepEqual(hookTargetOf(command(), { appHome: app }),
+    { kind: "am-part", script: amPartEntryPath(store), store, runner: amPartRunnerPath(store) });
+  assert.equal(isAmPartEntry(amPartEntryPath(store)), true);
+  assert.equal(isAmPartEntry(join(app, "automagik-herdr", "briefing.mjs")), false);
+  // A second run adds nothing: one hook, not two.
+  assert.equal((await installHook("Genie", project, app, io, { amStore: store })).written, false);
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.UserPromptSubmit.length, 1);
+  // A pack arrives under the app home: today's stable hook replaces the am one in place.
+  mkdirSync(join(app, "mods", "am-sidebar"), { recursive: true });
+  writeFileSync(join(app, "mods", "am-sidebar", "briefing.mjs"), "// pack briefing\n");
+  writeFileSync(join(app, "mods", "am-sidebar", "briefingEntry.mjs"), "// pack entry\n");
+  const pack = await installHook("Genie", project, app, io, { amStore: store });
+  assert.equal(pack.written, true);
+  assert.equal(command(), hookCommand(app), "the pack hook, byte for byte");
+  assert.equal(JSON.parse(readFileSync(settings, "utf8")).hooks.UserPromptSubmit.length, 1, "updated, not doubled");
+  // A pack host keeps today's hook even with the am part installed too.
+  const other = join(root, "proj2");
+  mkdirSync(other, { recursive: true });
+  assert.equal((await installHook("Genie", other, app, io, { amStore: store })).written, true);
+  assert.equal(JSON.parse(readFileSync(join(other, ".claude", "settings.local.json"), "utf8")).hooks.UserPromptSubmit[0].hooks[0].command,
+    hookCommand(app));
+});
+
+test("the CLI-only hook command: 0 and silent with its runner or entry missing, the entry runs when both are there", (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-run-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const app = join(root, "app");
+  const store = join(root, "home", ".automagik", "parts", "automagik.am");
+  const current = join(store, "current");
+  mkdirSync(join(current, "bin"), { recursive: true });
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(current, "bin", "run.sh"), '#!/bin/sh\necho "ran $1"\nexit 0\n');
+  writeFileSync(join(current, "briefingEntry.mjs"), "// entry\n");
+  const command = amPartHookCommand(app, store);
+  const hook = () => spawnSync("/bin/sh", ["-c", command], { cwd: root, input: "{}", encoding: "utf8", env: { HOME: root, PATH: "/usr/bin:/bin" } });
+  const ran = hook();
+  assert.deepEqual([ran.status, ran.stdout], [0, `ran ${amPartEntryPath(store)}\n`]);
+  rmSync(amPartEntryPath(store));
+  const noEntry = hook();
+  assert.deepEqual([noEntry.status, noEntry.stdout, noEntry.stderr], [0, "", ""], "no entry: exit 0 and nothing");
+  rmSync(amPartRunnerPath(store));
+  const noRunner = hook();
+  assert.deepEqual([noRunner.status, noRunner.stdout, noRunner.stderr], [0, "", ""], "no runner either: exit 0 and nothing");
+});
+
+test("installHook with neither the pack nor the am part writes nothing and says plainly that neither is there", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-none-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const app = join(root, "app");
+  const store = join(root, "home", ".automagik", "parts", "automagik.am");
+  const project = join(root, "proj");
+  mkdirSync(project, { recursive: true });
+  const r = await installHook("Genie", project, app, hookIo(), { amStore: store });
+  assert.equal(r.written, false);
+  assert.equal(existsSync(join(project, ".claude", "settings.local.json")), false);
+  assert.match(r.warnings.join("\n"), /gets no per-turn briefing: .*briefing\.mjs isn't there/);
+  assert.match(r.warnings.join("\n"), new RegExp(`am's entry at neither place: ${amPartEntryPath(store).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} isn't there either`));
 });
