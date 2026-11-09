@@ -26,15 +26,15 @@
 // Apache-2.0.
 
 import net from "node:net";
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { readApprovedRecord, sha256Of } from "./approved.js";
+import { approvedSettingsDir, readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { AGY_MODE_DEFAULT, choosesSession, sessionIdArgs } from "./models.js";
+import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsPlan, choosesSession, sessionIdArgs } from "./models.js";
 import { commandArgv, sessionId } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
@@ -268,6 +268,16 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
   if (typeof task !== "string" || /^\s*-/.test(task) || task.includes("\0")) {
     return "approved worker task must be one text word that is not an option";
   }
+  const labels = p.labels;
+  const role = labels["worker.role"] ?? "dev";
+  // H1 (#823 review): the permission list of an approved worker is written by the proxy itself,
+  // from the approved snapshot, in the data root the sandbox binds read-only. The pane names the
+  // path, but it can neither plant nor edit the file: a working-roster edit never reaches an
+  // approved start. The path is deterministic from the approved data (the bot, its role and the
+  // worktree), so the plan and the argv name the same file.
+  let agySettings = null;
+  const agySettingsFor = () => agySettingsPlan({ bot, scope: "worker", role, folder: p.cwd,
+    settingsDir: approvedSettingsDir(snapshot.approvalEnv ?? process.env) });
   let templateArgv = null;
   let login = [];
   if (plan.template) {
@@ -275,15 +285,21 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     if (!template || typeof template.command !== "string" || !template.command.trim()) {
       return `approved worker template ${plan.template} is not available from the core`;
     }
-    if (templateAgent(template.command) === "claude") {
+    const runs = templateAgent(template.command);
+    if (runs === "claude") {
       templateArgv = commandArgv({ shell: template.command }, [task]);
       if (!templateArgv) return `approved worker template ${plan.template} cannot take a task`;
       login = ["-u", "CLAUDE_CONFIG_DIR"];
+    } else if (runs === "antigravity") {
+      agySettings = agySettingsFor();
+      templateArgv = commandArgv({ shell: template.command }, [...agySettingsArgs("antigravity", agySettings?.path), task]);
+      if (!templateArgv) return `approved worker template ${plan.template} cannot take a task and its permission list`;
     }
   } else if (plan.agent === "claude") {
     login = ["-u", "CLAUDE_CONFIG_DIR"];
+  } else if (plan.agent === "antigravity") {
+    agySettings = agySettingsFor();
   }
-  const labels = p.labels;
   // A chosen Antigravity mode is a worker label; auto is the default, so it has none (workers.js
   // workerArgs writes the label only when it isn't auto), and the label must name the approved mode.
   const agyModeLabel = plan.agyMode && plan.agyMode !== AGY_MODE_DEFAULT ? plan.agyMode : null;
@@ -304,7 +320,7 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     argv: session ? [...plan.argv, ...sessionIdArgs(plan.agent, session)] : plan.argv, session,
     task, template: plan.template, templateArgv, login, path: snapshot.path,
     taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
-    space: labels["herdr.space"] });
+    space: labels["herdr.space"], agySettingsPath: agySettings?.path ?? null });
   const expected = plan.template && !templateArgv ? args.slice(-2)
     : args.slice(args.indexOf("--") + 1);
   if (!Array.isArray(p.argv) || p.argv.length !== expected.length
@@ -312,7 +328,41 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     const named = plan.template ? `template ${plan.template}` : `agent ${plan.agent}`;
     return `approved worker argv refused: does not match approved ${named} exactly`;
   }
+  // The argv matched the approved plan: now the proxy writes the file it promised, from the
+  // approved roster, fail closed (an approved worker never starts without its list).
+  if (agySettings) {
+    try { writeApprovedAgySettings(agySettings); }
+    catch (e) {
+      return `approved worker: its Antigravity permission list couldn't be written `
+        + `(${agySettings.path}: ${oneLine(e?.message ?? e)})`;
+    }
+  }
   return null;
+}
+
+/** The proxy's own write of an approved worker's permission file: 0600 in a 0700 folder under
+ * the data root (read-only to the sandbox), atomically, from the approved snapshot's entry. */
+function writeApprovedAgySettings(plan) {
+  const dir = dirname(plan.path);
+  // Never follow a symlinked folder or file: this file decides what the approved worker's agy
+  // may do. A temp in the real folder (created O_EXCL) renamed onto the path replaces a link,
+  // never its target.
+  let st = null;
+  try { st = lstatSync(dir); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+  if (st) {
+    if (st.isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+    if (!st.isDirectory()) throw new Error(`${dir} is not a folder`);
+  } else {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (lstatSync(dir).isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+  }
+  try { if (lstatSync(plan.path).isSymbolicLink()) throw new Error(`${plan.path} is a symlink`); }
+  catch (e) { if (e?.code !== "ENOENT") throw e; }
+  const tmp = `${plan.path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, plan.text, { mode: 0o600, flag: "wx" });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, plan.path);
+  chmodSync(plan.path, 0o600);
 }
 
 /**

@@ -8,7 +8,7 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
-  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
+  appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync,
   rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,10 +16,11 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
-import { approveProject, recordFileOf, sha256Of } from "../mods/am-sidebar/approved.js";
+import { approveProject, approvedSettingsDir, recordFileOf, sha256Of } from "../mods/am-sidebar/approved.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
 import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { commandArgv } from "../mods/am-sidebar/restart.js";
+import { agySettingsArgs, agySettingsFile } from "../mods/am-sidebar/models.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1203,17 +1204,19 @@ test(
 });
 
 // Refs #631: approved template/agent workers, with every saved switch left off.
-async function approvedWorkerScene(t, worker) {
+async function approvedWorkerScene(t, worker, botExtra = {}) {
   const result = await sceneWithCore(t, { proxy: false });
   const { s, fake, start } = result;
   const file = team();
   file.bots.find((row) => row.id === ID.dev).worker = worker;
+  Object.assign(file.bots.find((row) => row.id === ID.dev), botExtra);
   writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(file));
   approveProject({ project: s.project, env: s.env, approvedBy: "test",
     approvedAt: "2026-11-02T00:00:00.000Z" });
   fake.state.templates = [
     { name: "dev-sol", command: "codex --model chosen", description: "Approved", body: "Work" },
     { name: "review-sol", command: "claude --model chosen", description: "Other", body: "Review" },
+    { name: "agy-sol", command: "agy --mode auto", description: "Antigravity", body: "Ag" },
   ];
   const proxy = await start("t100", { caller: { bot: ID.dev, project: s.project }, bound: true });
   const client = await clientFor(proxy.socket);
@@ -1224,13 +1227,17 @@ async function approvedWorkerScene(t, worker) {
 function approvedParams(s, worker, templateCommand = null) {
   const plan = workerPlan({ agent: "dsh-tui", worker });
   const task = "do the task";
-  const claude = plan.agent === "claude"
-    || (templateCommand && templateAgent(templateCommand) === "claude");
+  const runs = plan.agent ?? (templateCommand ? templateAgent(templateCommand) : null);
+  const claude = runs === "claude";
+  // #823: the deterministic permission file an approved Antigravity worker's argv names.
+  const agySettingsPath = runs === "antigravity" ? agySettingsFile(approvedSettingsDir(s.env), ID.dev, "worker", "dev", s.worktree) : null;
   const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one",
     cwd: s.worktree, parent: "t100", ...plan, task, path: s.env.PATH,
     project: s.project, taskId: "gn-1", lead: ID.dev,
-    login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [],
-    templateArgv: plan.template && claude ? commandArgv({ shell: templateCommand }, [task]) : null });
+    login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [], agySettingsPath,
+    templateArgv: plan.template && runs === "claude" ? commandArgv({ shell: templateCommand }, [task])
+      : plan.template && runs === "antigravity" ? commandArgv({ shell: templateCommand }, [...agySettingsArgs("antigravity", agySettingsPath), task])
+        : null });
   const labels = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--label") {
@@ -1238,17 +1245,18 @@ function approvedParams(s, worker, templateCommand = null) {
       labels[key] = value.join("=");
     }
   }
-  return runParams(s, { argv: plan.template && !claude ? args.slice(-2)
+  return runParams(s, { argv: plan.template && !claude && !agySettingsPath ? args.slice(-2)
     : args.slice(args.indexOf("--") + 1), labels, env: {} });
 }
 
 for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
-  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" },
+  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }, { template: "agy-sol" },
   { agent: "antigravity", agyMode: "auto" }, { agent: "antigravity", agyMode: "accept-edits" },
   { agent: "antigravity", agyMode: "plan" }]) {
   test(`approved worker allows named ${worker.template ?? `${worker.agent} (${worker.agyMode ?? "default"})`} with today's identity`, async (t) => {
     const { s, client, fake } = await approvedWorkerScene(t, worker);
-    const params = approvedParams(s, worker, fake.state.templates[0].command);
+    const template = worker.template ? fake.state.templates.find((row) => row.name === worker.template).command : null;
+    const params = approvedParams(s, worker, template);
     const answer = await client.call("terminal.run", params);
     assert.ok(answer.result, JSON.stringify(answer));
     const forwarded = fake.calls("terminal.run").at(-1).params;
@@ -1265,6 +1273,19 @@ for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
   });
 }
 
+test("approved Antigravity worker names the deterministic permission file; a forged path is refused", async (t) => {
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const { s, client } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  const at = params.argv.indexOf("--settings");
+  assert.ok(at > 0, JSON.stringify(params.argv));
+  assert.equal(params.argv[at + 1], agySettingsFile(approvedSettingsDir(s.env), ID.dev, "worker", "dev", s.worktree));
+  const forged = { ...params, argv: params.argv.map((word, i) => (i === at + 1 ? join(s.root, "other.json") : word)) };
+  const answer = await client.call("terminal.run", forged);
+  assert.ok(answer.error, "another settings file is not the approved plan");
+  assert.match(answer.error.message, /approved worker argv refused: does not match approved agent antigravity exactly/);
+});
+
 test("approved Antigravity worker refuses a worker.agyMode label that does not match the approved mode", async (t) => {
   for (const [approved, wrong] of [["plan", "accept-edits"], ["accept-edits", "plan"], ["auto", "plan"]]) {
     const worker = { agent: "antigravity", agyMode: approved };
@@ -1276,6 +1297,79 @@ test("approved Antigravity worker refuses a worker.agyMode label that does not m
     assert.equal(answer.error.message.includes("\n"), false);
     assert.equal(fake.calls("terminal.run").length, 0, "nothing forwarded");
   }
+});
+
+test("approved Antigravity worker: the proxy writes the permission file itself, and a file planted on that path is replaced", async (t) => {
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const { s, client } = await approvedWorkerScene(t, worker);
+  // A file planted where the proxy will write: the proxy writes its own right before forwarding.
+  const path = agySettingsFile(approvedSettingsDir(s.env), ID.dev, "worker", "dev", s.worktree);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify({ permissions: { allow: ["command(rm -rf /)"], deny: [] } }), { mode: 0o600 });
+  // And one planted in the app home an unproxied worker names: it must never be the proxied plan's path.
+  const appHomePath = join(s.app, "automagik-herdr", "agy-settings", "planted.json");
+  mkdirSync(dirname(appHomePath), { recursive: true, mode: 0o700 });
+  writeFileSync(appHomePath, JSON.stringify({ permissions: { allow: ["command(rm -rf /)"], deny: [] } }), { mode: 0o600 });
+  const params = approvedParams(s, worker);
+  const answer = await client.call("terminal.run", params);
+  assert.ok(answer.result, JSON.stringify(answer));
+  const at = params.argv.indexOf("--settings");
+  assert.equal(params.argv[at + 1], path, "the argv names the proxy's folder under the data root");
+  assert.equal(path.startsWith(`${s.app}/`), false, "never the app home");
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  const written = JSON.parse(readFileSync(path, "utf8"));
+  assert.equal(written.permissions.allow.some((rule) => rule.includes("rm -rf")), false, "the planted list is gone");
+  assert.ok(written.permissions.allow.includes("command(gh pr create)"), "the approved defaults");
+  assert.ok(written.permissions.allow.includes(`write_file(${s.worktree})`), "the approved worker's worktree");
+  assert.ok(written.permissions.deny.includes("command(git push --force)"), "the fixed denies");
+});
+
+test("approved Antigravity worker: a symlinked permission folder or file is refused, never followed", async (t) => {
+  // A symlinked folder where the proxy writes: the request fails closed, nothing lands through it.
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const dir = approvedSettingsDir(s.env);
+  const elsewhere = join(s.root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  mkdirSync(dirname(dir), { recursive: true, mode: 0o700 });
+  symlinkSync(elsewhere, dir);
+  const folder = await client.call("terminal.run", approvedParams(s, worker));
+  assert.ok(folder.error, "the proxy fails closed");
+  assert.match(folder.error.message, /is a symlink/);
+  assert.deepEqual(readdirSync(elsewhere), [], "nothing written through the link");
+  assert.equal(fake.calls("terminal.run").length, 0, "nothing forwarded");
+  // A symlinked file at the file's own path: refused too, target untouched.
+  const other = await approvedWorkerScene(t, worker);
+  const file = agySettingsFile(approvedSettingsDir(other.s.env), ID.dev, "worker", "dev", other.s.worktree);
+  const target = join(other.s.root, "target.json");
+  writeFileSync(target, "{}\n");
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  symlinkSync(target, file);
+  const linked = await other.client.call("terminal.run", approvedParams(other.s, worker));
+  assert.ok(linked.error, "a symlinked file fails closed");
+  assert.match(linked.error.message, /is a symlink/);
+  assert.equal(readFileSync(target, "utf8"), "{}\n", "the link's target is untouched");
+  assert.equal(other.fake.calls("terminal.run").length, 0, "nothing forwarded");
+});
+
+test("approved Antigravity worker: its permission file is the approved snapshot's, not the working roster's", async (t) => {
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const approvedRule = "command(npm publish)";
+  const { s, client } = await approvedWorkerScene(t, worker, { agyPermissions: { allow: [approvedRule], deny: ["command(git stash)"] } });
+  // A working-roster edit after approval adds a rule the proxy must not read.
+  const path = join(s.project, ".herdr/bots.json");
+  const working = JSON.parse(readFileSync(path, "utf8"));
+  const dev = working.bots.find((row) => row.id === ID.dev);
+  dev.agyPermissions = { allow: ["command(npm publish)", "command(rm -rf /tmp/x)"], deny: [] };
+  writeFileSync(path, JSON.stringify(working));
+  const params = approvedParams(s, worker);
+  const answer = await client.call("terminal.run", params);
+  assert.ok(answer.result, JSON.stringify(answer));
+  const file = params.argv[params.argv.indexOf("--settings") + 1];
+  const written = JSON.parse(readFileSync(file, "utf8"));
+  assert.ok(written.permissions.allow.includes(approvedRule), "the approved roster's rule reaches it");
+  assert.ok(written.permissions.deny.includes("command(git stash)"), "the approved roster's deny too");
+  assert.equal(written.permissions.allow.includes("command(rm -rf /tmp/x)"), false, "an unapproved working rule never reaches it");
 });
 
 test("approved worker template listing is filtered and a live edit widens neither list nor start", async (t) => {
