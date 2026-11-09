@@ -50,6 +50,13 @@
       "stale": true
     },
     {
+      "harness": "dsh-tui",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    },
+    {
       "harness": "omp",
       "status": "absent",
       "reason": null,
@@ -75,12 +82,13 @@
   "query": {
     "repo": "example.com/acme/widgets",
     "window": "d30",
-    "branch_count": 1,
+    "branch_count": 2,
     "branches": [
-      "feat/gn-55-sync"
+      "feat/gn-55-sync",
+      "fix/gn-56-idle"
     ],
     "branches_complete": true,
-    "request_sha256": "d9ca373427957b8a0357c2d1b7f01297cce92221c04470e2674058de9be96433"
+    "request_sha256": "e8b520fa50f310bf1f0eb023e70b58cef5e1e09458aa36a001d4022fed59aa02"
   },
   "rows": [
     {
@@ -106,7 +114,8 @@
         "tokens_priced": 567000,
         "tokens_reported": 0,
         "tokens_unpriced": 0,
-        "unpriced_models": []
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
       },
       "token_precision": "exact",
       "attribution": {
@@ -123,6 +132,25 @@
           "claude-code"
         ]
       },
+      "incomplete_sources": [
+        "codex"
+      ]
+    },
+    {
+      "branch": "fix/gn-56-idle",
+      "requested": 1,
+      "state": "stale",
+      "reason": "ingestion_stale",
+      "tokens": null,
+      "cost": null,
+      "token_precision": null,
+      "attribution": {
+        "precision": "branch_window",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete"
+      },
+      "activity": null,
       "incomplete_sources": [
         "codex"
       ]

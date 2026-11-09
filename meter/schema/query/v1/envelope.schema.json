@@ -93,14 +93,22 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["bytes", "files"],
+              "description": "What the last sync left unread. null is unknown (a reset's re-import has not finished a run yet), never 0, and then complete is false.",
               "properties": {
-                "bytes": { "type": "integer", "minimum": 0 },
-                "files": { "type": "integer", "minimum": 0 }
+                "bytes": { "type": ["integer", "null"], "minimum": 0 },
+                "files": { "type": ["integer", "null"], "minimum": 0 }
               }
             },
             "stale": { "type": "boolean" },
             "stale_after_s": { "type": "integer", "minimum": 60 }
-          }
+          },
+          "if": {
+            "anyOf": [
+              { "properties": { "backlog": { "properties": { "bytes": { "type": "null" } } } } },
+              { "properties": { "backlog": { "properties": { "files": { "type": "null" } } } } }
+            ]
+          },
+          "then": { "properties": { "complete": { "const": false } } }
         }
       ]
     },
@@ -187,6 +195,10 @@
           "required": ["repo", "window", "branch_count", "branches", "branches_complete", "request_sha256"],
           "properties": {
             "repo": { "$ref": "#/$defs/repo" },
+            "repo_complete": {
+              "const": false,
+              "description": "Present only when repo was cut to fit its 512-byte bound (a request_too_large refusal): repo is then the request's repo cut at a whole character, and request_sha256 still covers the whole request."
+            },
             "window": { "enum": ["d1", "d7", "d30"] },
             "branch_count": { "type": "integer", "minimum": 0, "description": "Branches named, duplicates counted." },
             "branches": {
@@ -346,7 +358,11 @@
         "cache_write_5m": { "type": "integer", "minimum": 0 },
         "cache_write_1h": { "type": "integer", "minimum": 0 },
         "output": { "type": "integer", "minimum": 0 },
-        "reasoning": { "type": "integer", "minimum": 0, "description": "Inside output, never added to total." },
+        "reasoning": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Inside output, never added to total. null when a harness that counted toward the row logs no reasoning split (dsh-tui): unknown, never 0."
+        },
         "unsplit": { "type": "integer", "minimum": 0, "description": "Known only as a total (precision total_only)." },
         "total": { "type": "integer", "minimum": 0, "description": "input + cache_read + cache_write_5m + cache_write_1h + output + unsplit." }
       }
@@ -369,14 +385,24 @@
         "unpriced_models": {
           "type": "array",
           "maxItems": 8,
-          "description": "At most 8: the models with no price and the most unpriced tokens, ties by name, each name cut to at most 40 bytes as JSON and ended with an ellipsis when cut. tokens_unpriced counts every unpriced token, listed or not.",
+          "description": "At most 8: the models with no price and the most unpriced tokens, ties by name. A name takes at most 40 bytes as JSON, its two quotes and any escapes included; a cut name ends with the 3-byte ellipsis, inside those 40. tokens_unpriced counts every unpriced token, listed or not, and unpriced_models_omitted says how many models the list leaves out.",
           "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "unpriced_models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many models with no price unpriced_models leaves out past its 8: none is dropped silently."
         }
       },
       "allOf": [
         {
           "if": { "properties": { "state": { "const": "unpriced" } } },
-          "then": { "properties": { "usd": { "type": "null" }, "tokens_priced": { "const": 0 }, "tokens_reported": { "const": 0 } } }
+          "then": {
+            "properties": {
+              "usd": { "type": "null" }, "usd_reported": { "type": "null" }, "usd_estimated": { "type": "null" },
+              "tokens_priced": { "const": 0 }, "tokens_reported": { "const": 0 }
+            }
+          }
         },
         {
           "if": { "properties": { "state": { "enum": ["priced", "partial", "zero"] } } },
@@ -396,7 +422,8 @@
             "properties": {
               "usd": { "const": 0 }, "usd_reported": { "const": 0 }, "usd_estimated": { "const": 0 },
               "tokens_priced": { "const": 0 }, "tokens_reported": { "const": 0 },
-              "tokens_unpriced": { "const": 0 }, "unpriced_models": { "type": "array", "maxItems": 0 }
+              "tokens_unpriced": { "const": 0 }, "unpriced_models": { "type": "array", "maxItems": 0 },
+              "unpriced_models_omitted": { "const": 0 }
             }
           }
         }

@@ -477,7 +477,8 @@ fn scenario_raw(name: &str) -> (u8, String) {
                 [25000, 500000, 30000, 0, 12000, 2000],
             );
             fx.sync("2026-11-07T14:10:00Z", 59);
-            fx.query_raw(&args(&["feat/gn-55-sync"]))
+            // A stale row with nothing found carries no number at all.
+            fx.query_raw(&args(&["feat/gn-55-sync", "fix/gn-56-idle"]))
         }
         "ambiguous-branch" => {
             let mut fx = Fx::new(SYNCED);
@@ -563,6 +564,20 @@ fn scenario_raw(name: &str) -> (u8, String) {
             fx.omp(t("2026-11-07T11:00:00Z"), 12000, 20000, 380000);
             fx.sync(SYNCED, d);
             fx.query_raw(&args(&["feat/gn-12-cache", "docs/gn-90-readme"]))
+        }
+        "unpriced-cost" => {
+            // The row's only model has no price: its amount is unknown, never 0.
+            let mut fx = Fx::new(SYNCED);
+            healthy(&fx);
+            let h = hours("2026-11-06T10:00:00Z", "2026-11-08T14:00:00Z", 5);
+            fx.claude_spread(
+                "feat/gn-70-local",
+                "acme-local-7b",
+                &h,
+                [40000, 600000, 25000, 0, 18000, 3000],
+            );
+            fx.sync(SYNCED, d);
+            fx.query_raw(&args(&["feat/gn-70-local"]))
         }
         "legacy-store" => {
             // The store before the move stays in the old folder, written by an older meter: its
@@ -932,10 +947,25 @@ fn the_schema_refuses_what_the_contract_forbids() {
     v["rows"][0]["cost"]["unpriced_models"] = json!(["m".repeat(65)]);
     bad.push(("an unpriced model name past 64 characters", v));
 
-    // Unknown is never 0: an unpriced row has no amount, a missing row no numbers.
+    // Unknown is never 0: an unpriced row has no amount at all (genie's L1), a missing row no
+    // numbers, an unknown backlog is not a complete one, and a zero row's reasoning is a real 0.
     let mut v = example("priced");
     v["rows"][0]["cost"]["state"] = json!("unpriced");
     bad.push(("unpriced row with usd", v));
+    for k in ["usd_reported", "usd_estimated"] {
+        let mut v = example("unpriced-cost");
+        v["rows"][0]["cost"][k] = json!(0);
+        bad.push(("unpriced row with a 0 part", v));
+    }
+    let mut v = example("priced");
+    v["ingestion"]["backlog"]["bytes"] = json!(null);
+    bad.push(("an unknown backlog called complete", v));
+    let mut v = base.clone();
+    v["rows"][0]["tokens"]["reasoning"] = json!(null);
+    bad.push(("a zero row with unknown reasoning", v));
+    let mut v = example("zero-usage");
+    v["rows"][0]["cost"]["unpriced_models_omitted"] = json!(1);
+    bad.push(("a zero row that left models out", v));
     let mut v = example("missing-branch");
     v["rows"][1]["tokens"] = priced_row()["tokens"].clone();
     bad.push(("missing row with tokens", v));
@@ -1197,6 +1227,22 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
         row["cost"]["unpriced_models"].as_array().unwrap().len(),
         query::UNPRICED_MODELS_MAX
     );
+    // Ten unpriced models: two are left out of the list, and the row says so.
+    assert_eq!(row["cost"]["unpriced_models_omitted"], 2);
+    // genie's I4: a name takes at most 40 bytes as JSON, its quotes and escapes included, and a
+    // cut name ends with the 3-byte ellipsis inside those 40.
+    for m in row["cost"]["unpriced_models"].as_array().unwrap() {
+        let json = serde_json::to_string(m).unwrap();
+        assert!(
+            json.len() <= query::MODEL_NAME_BYTES,
+            "{json} takes {}",
+            json.len()
+        );
+        assert!(
+            m.as_str().unwrap().ends_with('…'),
+            "{m}: a cut name says so"
+        );
+    }
     assert_eq!(row["token_precision"], "mixed");
     assert!(len(row) <= query::ROW_BYTES, "a row of {} bytes", len(row));
     let mut meta = v.clone();
@@ -1209,7 +1255,7 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     );
     assert_eq!(
         v["sources"].as_array().unwrap().len(),
-        4,
+        5,
         "{}",
         v["sources"]
     );
@@ -1380,7 +1426,7 @@ fn bin(fx: &Fx, a: &[&str]) -> Output {
 }
 
 #[test]
-fn query_and_status_leave_the_state_folder_byte_identical() {
+fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     let fx = plain_store();
     let before = folder(&fx.env.state());
     assert!(before.contains_key("meter.db"), "{:?}", before.keys());
@@ -2030,4 +2076,284 @@ fn ceiling_store() {
             .collect();
         common::write_lines(&p, &lines);
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The fix round on PR 806.
+
+/// The Reviewer's H1: a reset drops every row and the re-import commits chunk by chunk. Until a
+/// run over the new window ends, the answer has no watermark and an unknown backlog: never a
+/// partial re-import called complete and fresh, never a zero.
+#[test]
+fn a_reset_in_progress_is_never_complete_or_fresh() {
+    let fx = plain_store();
+    let (code, v) = fx.query(&args(&["feat/gn-12-cache"]));
+    assert_eq!(code, 0);
+    assert_eq!(v["ingestion"]["complete"], true);
+    // What sync does first: the reset, committed on its own.
+    let counted_from = Store::open(&fx.db())
+        .unwrap()
+        .meta_i64("counted_from_ms")
+        .unwrap()
+        .unwrap();
+    Store::open(&fx.db()).unwrap().reset(counted_from).unwrap();
+    let (code, v) = fx.query(&args(&["feat/gn-12-cache", "docs/none"]));
+    assert_eq!(code, 0, "{v}");
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let ing = &v["ingestion"];
+    assert!(ing["watermark"].is_null(), "{ing}");
+    assert_eq!(ing["complete"], false, "{ing}");
+    assert_eq!(ing["stale"], true, "{ing}");
+    assert!(
+        ing["backlog"]["bytes"].is_null() && ing["backlog"]["files"].is_null(),
+        "{ing}"
+    );
+    for r in rows_of(&v) {
+        assert_eq!(r["state"], "stale", "{r}");
+        assert!(
+            r["tokens"].is_null(),
+            "nothing re-imported yet: no number at all: {r}"
+        );
+    }
+}
+
+/// PR 802's review: dsh-tui logs no reasoning split, so a row it counted toward has reasoning
+/// null (unknown), never 0; a row of harnesses that log it keeps its number.
+#[test]
+fn reasoning_is_null_when_a_harness_that_counted_logs_none() {
+    let fx = plain_store();
+    let c = Connection::open(fx.db()).unwrap();
+    c.execute(
+        "INSERT INTO usage(id, hour_ms, harness, model, machine, repo, branch, input_uncached,
+           cache_read, cache_write_5m, cache_write_1h, output, reasoning, unsplit, precision,
+           events, updated_ms) VALUES('dsh-1', ?1, 'dsh-tui', 'model-d', 'm', ?2,
+           'feat/gn-12-cache', 10, 20, 0, 0, 30, 0, 0, 'exact', 1, 0)",
+        params![t("2026-11-08T11:00:00Z"), REPO],
+    )
+    .unwrap();
+    drop(c);
+    let (_, v) = fx.query(&args(&["feat/gn-12-cache"]));
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let tk = &rows_of(&v)[0]["tokens"];
+    assert!(tk["reasoning"].is_null(), "{tk}");
+    assert_eq!(tk["output"], 80, "the counts themselves stay known: {tk}");
+    let (_, v) = scenario("priced");
+    assert_eq!(rows_of(&v)[0]["tokens"]["reasoning"], 12000);
+}
+
+/// The team decision under RFC 0018 (a): in a state folder the meter cannot write, a store whose
+/// `-wal` and `-shm` already exist is read as usual; one without them is refused by name
+/// (`read_only_folder`, exit 1), with nothing created and no `immutable` open.
+#[cfg(unix)]
+#[test]
+fn a_read_only_state_folder_is_read_with_companions_and_refused_without() {
+    use std::os::unix::fs::PermissionsExt;
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: permissions do not bind root");
+        return;
+    }
+    let fx = plain_store();
+    let state = fx.env.state();
+    let mode = |m: u32| fs::set_permissions(&state, fs::Permissions::from_mode(m)).unwrap();
+    assert!(!state.join("meter.db-shm").exists(), "the store is at rest");
+    let before = folder(&state);
+    mode(0o500);
+    let (code, v) = fx.query(&args(&["feat/gn-12-cache"]));
+    let out = bin(&fx, &["status"]);
+    mode(0o700);
+    assert_eq!(code, query::exit::ERROR, "{v}");
+    assert_eq!(v["error"]["code"], "read_only_folder");
+    assert!(schema().valid(&v));
+    check_refusal_nulls("read_only_folder", &v);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("read_only_folder"));
+    strictly_same_folder(&folder(&state), &before, "a refused read-only folder");
+
+    // A reader left the companions: the read-only folder is read.
+    assert_eq!(fx.query(&args(&["feat/gn-12-cache"])).0, 0);
+    assert!(state.join("meter.db-shm").exists() && state.join("meter.db-wal").exists());
+    mode(0o500);
+    let (code, v) = fx.query(&args(&["feat/gn-12-cache"]));
+    let out = bin(&fx, &["status"]);
+    mode(0o700);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(rows_of(&v)[0]["state"], "measured");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The Fixer's L1: a newer store is refused before the state move runs, so nothing in either
+/// folder changes (not even the old folder's lock file the move would make).
+#[test]
+fn a_newer_store_is_refused_before_the_move_runs() {
+    let fx = plain_store();
+    set_version(&fx, "3");
+    let old = fx.env.dir.path().join("old-state");
+    fs::create_dir_all(&old).unwrap();
+    fs::copy(fx.db(), old.join("meter.db")).unwrap();
+    let (before_new, before_old) = (folder(&fx.env.state()), folder(&old));
+    let mut o = sync_opts(&fx, t(GENERATED));
+    o.migrate_from = Some(old.clone());
+    let out = {
+        let _g = serial();
+        meter::sync::run(&o).unwrap()
+    };
+    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    strictly_same_folder(&folder(&fx.env.state()), &before_new, "the state folder");
+    strictly_same_folder(&folder(&old), &before_old, "the old folder");
+}
+
+/// The Fixer's L2: the generation is guarded by whether the store holds rows, not by whether its
+/// window is recorded.
+#[test]
+fn a_store_with_rows_but_no_window_keeps_a_generation_before_its_reset() {
+    let fx = plain_store();
+    Connection::open(fx.db())
+        .unwrap()
+        .execute("DELETE FROM meta WHERE k = 'counted_from_ms'", [])
+        .unwrap();
+    let old_counts = store_counts(&fx.db());
+    let r = fx.env.run(&sync_opts(&fx, t(GENERATED)));
+    assert!(r.reimported);
+    let g = r.generation.expect("a generation before the reset");
+    assert_eq!(g.counts, old_counts);
+}
+
+/// The Fixer's L3: a priced amount above 0 never prints as 0 after rounding.
+#[test]
+fn a_tiny_priced_cost_is_never_shown_as_0() {
+    let mut fx = Fx::new(SYNCED);
+    healthy(&fx);
+    fx.claude(
+        "feat/tiny",
+        "claude-haiku-5-5",
+        t("2026-11-08T08:00:00Z"),
+        [1, 0, 0, 0, 0, 0],
+    );
+    fx.sync(SYNCED, 60);
+    let (_, v) = fx.query(&args(&["feat/tiny"]));
+    let c = &rows_of(&v)[0]["cost"];
+    assert_eq!(c["state"], "priced", "{c}");
+    for k in ["usd", "usd_estimated"] {
+        assert!(c[k].as_f64().unwrap() > 0.0, "{k}: {c}");
+    }
+    assert_eq!(c["usd_reported"], 0, "nothing reported is a real 0");
+}
+
+/// The Fixer's L4: a repo past 512 bytes gets the defined refusal (exit 2, request_too_large)
+/// with its echo, the repo cut to fit and marked so, never a null query.
+#[test]
+fn a_repo_past_its_bound_is_refused_with_a_marked_echo() {
+    let fx = plain_store();
+    let repo = format!("example.com/acme/{}", "w".repeat(600));
+    let a = vec![
+        "--repo".to_string(),
+        repo.clone(),
+        "--branch".into(),
+        "feat/x".into(),
+        "--json".into(),
+    ];
+    let (code, v) = fx.query(&a);
+    assert_eq!(code, query::exit::USAGE, "{v}");
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    check_refusal_nulls("repo past its bound", &v);
+    assert_eq!(v["error"]["code"], "request_too_large");
+    assert_eq!(v["error"]["limit_bytes"], 512);
+    assert_eq!(v["error"]["needed_bytes"], repo.len());
+    let q = &v["query"];
+    assert_eq!(q["repo_complete"], false);
+    let echoed = q["repo"].as_str().unwrap();
+    assert!(echoed.len() <= 512 && repo.starts_with(echoed), "{echoed}");
+    // An answer that fits never carries the field.
+    let (_, ok) = fx.query(&args(&["feat/gn-12-cache"]));
+    assert!(ok["query"].get("repo_complete").is_none());
+}
+
+/// The Fixer's L6: adding the query's index to an older store follows the same free-space rule
+/// as any write to an existing store's schema.
+#[test]
+fn adding_the_index_to_an_older_store_needs_twice_its_size_free() {
+    let fx = plain_store();
+    Connection::open(fx.db())
+        .unwrap()
+        .execute_batch("DROP INDEX usage_repo_branch")
+        .unwrap();
+    let state = fx.env.state();
+    let size = fs::metadata(fx.db()).unwrap().len();
+    let before = folder(&state);
+    let mut o = sync_opts(&fx, t(GENERATED));
+    o.free_bytes = Some(2 * size - 1);
+    let out = {
+        let _g = serial();
+        meter::sync::run(&o).unwrap()
+    };
+    assert!(matches!(out, Outcome::NoSpace { .. }), "{out:?}");
+    strictly_same_folder(&folder(&state), &before, "a refused index");
+    o.free_bytes = Some(2 * size);
+    fx.env.run(&o);
+    assert!(
+        meter::store::peek(&fx.db())
+            .unwrap()
+            .unwrap()
+            .has_repo_index
+    );
+}
+
+/// The Reviewer's L2: the free-space refusal through the real statvfs, not the test hook. The
+/// store is made larger than the free space by a sparse tail (SQLite reads its own size from the
+/// header, and a hole takes no disk), so twice its size cannot be free.
+#[cfg(unix)]
+#[test]
+fn a_real_free_space_refusal_reads_the_filesystem() {
+    let fx = plain_store();
+    set_version(&fx, "1");
+    let state = fx.env.state();
+    let free = meter::paths::free_bytes(&state).unwrap();
+    let head = |p: &Path| {
+        use std::io::Read;
+        let mut b = vec![0u8; 64 << 10];
+        let n = fs::File::open(p).unwrap().read(&mut b).unwrap();
+        b.truncate(n);
+        b
+    };
+    let len = fs::metadata(fx.db()).unwrap().len();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(fx.db())
+        .unwrap()
+        .set_len(len.max(free) + (1 << 20))
+        .unwrap();
+    let names = |d: &Path| -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let (len_before, head_before, names_before) = (
+        fs::metadata(fx.db()).unwrap().len(),
+        head(&fx.db()),
+        names(&state),
+    );
+    let o = sync_opts(&fx, t(GENERATED));
+    assert_eq!(o.free_bytes, None, "the real filesystem is asked");
+    let out = {
+        let _g = serial();
+        meter::sync::run(&o).unwrap()
+    };
+    match out {
+        Outcome::NoSpace { free: f, needed } => {
+            assert_eq!(needed, 2 * len_before, "{f}");
+            assert!(f < needed);
+        }
+        other => panic!("expected the real refusal, got {other:?}"),
+    }
+    assert_eq!(fs::metadata(fx.db()).unwrap().len(), len_before);
+    assert_eq!(head(&fx.db()), head_before);
+    assert_eq!(names(&state), names_before, "no generation, no companion");
 }

@@ -23,10 +23,12 @@ sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the loc
   --budget-secs N Stop after N seconds and resume next run (default 20).
   --no-publish    Do not write the summary doc.
   --doc NAME      Doc name to publish to (default herdr-meter).
-status    Print the store's state as JSON. Read-only: it creates, migrates and locks nothing.
+status    Print the store's state as JSON. It never writes the store: the database's content
+          does not change, nothing is migrated or locked, and the only files SQLite may add are
+          the store's -wal and -shm. A folder it cannot write is read only when those exist.
 query     Usage and estimated cost per branch of one repo, as the contract 1 envelope (RFC 0018,
-          meter/schema/query/v1/) on stdout, for every exit below. Read-only like status;
-          only sync refreshes the store. Capability meter.usage@1.
+          meter/schema/query/v1/) on stdout, for every exit below. It opens the store as status
+          does; only sync refreshes the store. Capability meter.usage@1.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
@@ -213,7 +215,8 @@ fn cmd_status() -> Result<ExitCode, String> {
         .clone()
         .ok_or("HOME is not set; set METER_STATE_DIR to choose a state directory")?;
     // The query's read-only open: no lock (a sync may be running; a wal reader waits for nobody),
-    // nothing created, nothing migrated. A move that has not finished opens nothing.
+    // nothing migrated, the database's content unchanged (SQLite may add its -wal and -shm). A move
+    // that has not finished opens nothing.
     let (db, location, stray) = match query::locate(&dirs, ctx.overridden)? {
         Located::Absent => {
             println!(
@@ -229,6 +232,9 @@ fn cmd_status() -> Result<ExitCode, String> {
             ..
         } => (db, location, stray),
     };
+    if query::read_only_folder(&db) {
+        return Err(format!("read_only_folder: {}", query::READ_ONLY_FOLDER));
+    }
     let store =
         Store::open_read_only(&db).map_err(|e| format!("cannot open {}: {e}", db.display()))?;
     store

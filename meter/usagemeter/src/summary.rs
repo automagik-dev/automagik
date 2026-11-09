@@ -66,6 +66,8 @@ struct T {
     usd_rep: f64,
     priced: bool,
     unpriced: i64,
+    /// A harness that logs no reasoning split (dsh-tui) counted here: `rs` is unknown, never 0.
+    rs_unknown: bool,
 }
 
 fn round_usd(v: f64) -> f64 {
@@ -83,6 +85,8 @@ impl T {
             rs: t.reasoning,
             un: t.unsplit,
             unpriced: t.unsplit,
+            rs_unknown: !crate::sources::Source::from_harness(&r.key.harness)
+                .is_some_and(|s| s.logs_reasoning()),
             ..T::default()
         };
         if let Some(u) = r.reported_usd {
@@ -111,6 +115,7 @@ impl T {
         self.usd_rep += o.usd_rep;
         self.priced |= o.priced;
         self.unpriced += o.unpriced;
+        self.rs_unknown |= o.rs_unknown;
     }
 
     fn tokens(&self) -> i64 {
@@ -131,7 +136,9 @@ impl T {
             ("rs", self.rs),
             ("un", self.un),
         ] {
-            if v != 0 {
+            if k == "rs" && self.rs_unknown {
+                o.insert(k.into(), Value::Null);
+            } else if v != 0 {
                 o.insert(k.into(), json!(v));
             }
         }

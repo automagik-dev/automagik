@@ -164,7 +164,11 @@ fn a_multi_frame_session_counts_each_call_once_and_compaction_on_its_own() {
     assert_eq!(model["harness"], "dsh-tui");
     assert!(model["d30"].get("usd").is_none(), "{model}");
     assert_eq!(model["d30"]["unpriced"], messages.total());
-    assert!(model["d30"].get("rs").is_none(), "{model}");
+    // dsh-tui logs no reasoning split: unknown, written as null, never 0 or left out.
+    assert!(
+        model["d30"].get("rs").is_some_and(|v| v.is_null()),
+        "{model}"
+    );
 }
 
 #[test]

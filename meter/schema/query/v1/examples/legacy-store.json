@@ -50,6 +50,13 @@
       "stale": false
     },
     {
+      "harness": "dsh-tui",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    },
+    {
       "harness": "omp",
       "status": "ok",
       "reason": null,
@@ -114,7 +121,8 @@
         "tokens_priced": 1281000,
         "tokens_reported": 0,
         "tokens_unpriced": 0,
-        "unpriced_models": []
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
       },
       "token_precision": "exact",
       "attribution": {

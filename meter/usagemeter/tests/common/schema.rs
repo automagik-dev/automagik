@@ -166,6 +166,16 @@ impl Schema {
                         out.push(format!("{at}: {n} branches of oneOf match"));
                     }
                 }
+                "anyOf" => {
+                    let any = sv.as_array().unwrap().iter().any(|s| {
+                        let mut e = Vec::new();
+                        self.check(s, v, at, &mut e);
+                        e.is_empty()
+                    });
+                    if !any {
+                        out.push(format!("{at}: no branch of anyOf matches"));
+                    }
+                }
                 "allOf" => {
                     for s in sv.as_array().unwrap() {
                         self.check(s, v, at, out);

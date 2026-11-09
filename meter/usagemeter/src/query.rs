@@ -1,12 +1,16 @@
 //! `usagemeter query`: the meter's answer for genie, contract 1 (RFC 0018 (a)). The schema is
 //! `meter/schema/query/v1/envelope.schema.json`, and its examples are this module's fixtures.
 //!
-//! It is fork-and-exit and truly read-only: it opens an existing store with
-//! `SQLITE_OPEN_READ_ONLY`, reads one snapshot in one read transaction and prints one envelope on
-//! stdout. No store or folder is created, nothing is migrated or synced, `meter.lock` is never
-//! taken, and there is no `hc` call, no git call and no network. Every exit the contract defines
-//! prints an envelope, refusals included, and the request is checked against the byte budget
-//! before the store is opened.
+//! It is fork-and-exit and never writes the store: it opens an existing store with
+//! `SQLITE_OPEN_READ_ONLY` and no checkpoint on close, reads one snapshot in one read transaction
+//! and prints one envelope on stdout. The database's content never changes. For a WAL store,
+//! SQLite itself may create the store's `-wal` and `-shm` companions, as RFC 0018 (a) allows; no
+//! other file or folder is created, nothing is migrated or synced, `meter.lock` is never taken,
+//! and there is no `hc` call, no git call and no network. In a state folder the meter cannot
+//! write, a store without those companions is refused by name (`read_only_folder`): SQLite could
+//! not open it without writing, and an `immutable` open is never used, because a sync elsewhere
+//! may be writing. Every exit the contract defines prints an envelope, refusals included, and the
+//! request is checked against the byte budget before the store is opened.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -215,10 +219,12 @@ struct Ingestion {
     stale_after_s: i64,
 }
 
+/// None: unknown (a reset's re-import has not finished a run yet, or a store that never
+/// recorded it). Unknown is never shown as 0, and makes the answer incomplete.
 #[derive(Serialize)]
 struct Backlog {
-    bytes: i64,
-    files: i64,
+    bytes: Option<i64>,
+    files: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -264,6 +270,9 @@ struct PriceInfo {
 #[derive(Serialize, Clone)]
 struct Echo {
     repo: String,
+    /// Present, and false, only when `repo` was cut to fit its bound (a refusal).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_complete: Option<bool>,
     window: &'static str,
     branch_count: usize,
     branches: Vec<String>,
@@ -285,16 +294,34 @@ struct Row {
     incomplete_sources: Vec<String>,
 }
 
-#[derive(Serialize, Clone, Copy, Default)]
+#[derive(Serialize, Clone, Copy)]
 struct TokensOut {
     input: i64,
     cache_read: i64,
     cache_write_5m: i64,
     cache_write_1h: i64,
     output: i64,
-    reasoning: i64,
+    /// None when a harness that counted toward the row logs no reasoning split (dsh-tui): its
+    /// reasoning is inside `output` and unknown, never 0.
+    reasoning: Option<i64>,
     unsplit: i64,
     total: i64,
+}
+
+/// Nothing yet: every count 0, reasoning a known 0 until a row that does not log it is added.
+impl Default for TokensOut {
+    fn default() -> TokensOut {
+        TokensOut {
+            input: 0,
+            cache_read: 0,
+            cache_write_5m: 0,
+            cache_write_1h: 0,
+            output: 0,
+            reasoning: Some(0),
+            unsplit: 0,
+            total: 0,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -310,6 +337,8 @@ struct Cost {
     tokens_reported: i64,
     tokens_unpriced: i64,
     unpriced_models: Vec<String>,
+    /// How many unpriced models `unpriced_models` leaves out past its cap: none goes silently.
+    unpriced_models_omitted: usize,
 }
 
 #[derive(Serialize)]
@@ -328,7 +357,7 @@ struct Activity {
     harnesses: Vec<String>,
 }
 
-/// USD to four decimals, written as an integer when it is whole (`0`, not `0.0`).
+/// USD to four decimals ([`round_usd`]), written as an integer when it is whole (`0`, not `0.0`).
 fn usd<S: Serializer>(v: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
     match v {
         None => s.serialize_none(),
@@ -343,8 +372,11 @@ fn usd<S: Serializer>(v: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
     }
 }
 
+/// To four decimals, except an amount above 0 that would round to 0: that keeps its exact value
+/// (`0.00002`), because a 0 is shown only when the cost truly is zero.
 fn round_usd(v: f64) -> f64 {
-    (v * 10_000.0).round() / 10_000.0
+    let r = (v * 10_000.0).round() / 10_000.0;
+    if r == 0.0 && v > 0.0 { v } else { r }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -430,12 +462,14 @@ pub fn branch_ok(b: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || c == '\\' || c == '\u{feff}')
 }
 
-/// The schema's repo form: `host/owner/repo`, host lower-case, every segment non-empty.
+/// The schema's repo form: `host/owner/repo`, host lower-case and at most 253 bytes (a DNS name),
+/// every segment non-empty.
 pub fn repo_ok(r: &str) -> bool {
     let mut parts = r.split('/');
     let host = parts.next().unwrap_or("");
     let rest: Vec<&str> = parts.collect();
     !host.is_empty()
+        && host.len() <= 253
         && host
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
@@ -474,8 +508,20 @@ fn echo(repo: &str, window: Window, branches: &[String], capped: bool) -> Echo {
         used += cost;
         kept.push(b.clone());
     }
+    let (repo_echo, repo_complete) = if repo.len() > MAX_REPO_BYTES {
+        // The host is at most 253 bytes (`repo_ok`), so the cut keeps `host/` and part of a
+        // segment: still the repo form.
+        let mut end = MAX_REPO_BYTES;
+        while !repo.is_char_boundary(end) {
+            end -= 1;
+        }
+        (repo[..end].trim_end_matches('/').to_string(), Some(false))
+    } else {
+        (repo.to_string(), None)
+    };
     Echo {
-        repo: repo.to_string(),
+        repo: repo_echo,
+        repo_complete,
         window: window.name(),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
@@ -601,30 +647,26 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         ))));
     }
     let window = window.unwrap_or(Window::D30);
-    if repo.len() > MAX_REPO_BYTES {
-        let mut e = ErrorObj::new(
-            "request_too_large",
-            format!(
-                "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
-                repo.len()
-            ),
-        );
-        e.limit_bytes = Some(MAX_REPO_BYTES);
-        e.needed_bytes = Some(repo.len());
-        return Err(Box::new(Refusal {
-            code: exit::USAGE,
-            status: "usage",
-            error: e,
-            echo: None,
-            store: None,
-            machine: None,
-        }));
-    }
     if !repo_ok(&repo) {
         return Err(Box::new(Refusal::usage(format!(
             "--repo takes host/owner/repo as the meter normalizes a remote, not {}",
             quoted(&repo)
         ))));
+    }
+    if repo.len() > MAX_REPO_BYTES {
+        // The defined refusal, echoed: its repo cut to fit (`repo_complete: false`), the request
+        // still matched by its count and sha256.
+        return Err(Box::new(too_large_request(
+            &repo,
+            window,
+            &branches,
+            format!(
+                "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
+                repo.len()
+            ),
+            MAX_REPO_BYTES,
+            repo.len(),
+        )));
     }
     if branches.len() > MAX_BRANCHES {
         let mut r = Refusal::usage(format!(
@@ -775,7 +817,8 @@ pub fn locate(dirs: &StateDirs, overridden: bool) -> Result<Located, String> {
 }
 
 /// `SQLITE_OPEN_READ_ONLY`, no checkpoint on close, a bounded busy timeout: the database and its
-/// wal keep exactly the bytes they had.
+/// wal keep exactly the bytes they had. SQLite may create the `-wal` and `-shm` companions of a
+/// WAL store it reads (see [`read_only_folder`]).
 pub fn open_read_only(db: &Path, busy: Duration) -> rusqlite::Result<Connection> {
     let conn = Connection::open_with_flags(
         db,
@@ -788,6 +831,41 @@ pub fn open_read_only(db: &Path, busy: Duration) -> rusqlite::Result<Connection>
     conn.busy_timeout(busy)?;
     Ok(conn)
 }
+
+/// Whether the store cannot be read without writing a file: its folder cannot be written and its
+/// `-wal` and `-shm` companions do not both exist. SQLite reads a WAL store read-only only once
+/// those exist (it creates them when it can); with them present, a read-only folder is read as
+/// usual. Opening `immutable` instead would skip SQLite's locks while a sync elsewhere (outside a
+/// sandbox that binds the folder read-only, say) may be writing, so the meter refuses by name.
+pub fn read_only_folder(db: &Path) -> bool {
+    let companion = |suffix: &str| {
+        let mut p = db.as_os_str().to_owned();
+        p.push(suffix);
+        PathBuf::from(p).symlink_metadata().is_ok()
+    };
+    let have_both = companion("-wal") && companion("-shm");
+    !have_both && !writable(db.parent().unwrap_or(Path::new(".")))
+}
+
+#[cfg(unix)]
+fn writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is a valid NUL-terminated path; access(2) only reads it.
+    unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn writable(dir: &Path) -> bool {
+    dir.metadata().is_ok_and(|m| !m.permissions().readonly())
+}
+
+/// The refusal for [`read_only_folder`].
+pub const READ_ONLY_FOLDER: &str = "the state folder cannot be written and the store has no -wal \
+     and -shm files, which SQLite needs to read it without writing; make the folder writable, or \
+     read it where a reader already left them";
 
 fn is_busy(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _)
@@ -926,7 +1004,9 @@ fn read(
                 cache_write_5m: nonneg(r.get(6)?),
                 cache_write_1h: nonneg(r.get(7)?),
                 output: nonneg(r.get(8)?),
-                reasoning: nonneg(r.get(9)?),
+                reasoning: crate::sources::Source::from_harness(&r.get::<_, String>(1)?)
+                    .filter(|s| s.logs_reasoning())
+                    .map(|_| nonneg(r.get(9).ok().flatten())),
                 unsplit: nonneg(r.get(10)?),
                 total: 0,
             };
@@ -975,7 +1055,10 @@ impl TokensOut {
         self.cache_write_5m = self.cache_write_5m.saturating_add(o.cache_write_5m);
         self.cache_write_1h = self.cache_write_1h.saturating_add(o.cache_write_1h);
         self.output = self.output.saturating_add(o.output);
-        self.reasoning = self.reasoning.saturating_add(o.reasoning);
+        self.reasoning = self
+            .reasoning
+            .zip(o.reasoning)
+            .map(|(a, b)| a.saturating_add(b));
         self.unsplit = self.unsplit.saturating_add(o.unsplit);
         self.total = self.total.saturating_add(o.total);
     }
@@ -987,7 +1070,7 @@ impl TokensOut {
             cache_write_5m: self.cache_write_5m,
             cache_write_1h: self.cache_write_1h,
             output: self.output,
-            reasoning: self.reasoning,
+            reasoning: self.reasoning.unwrap_or(0),
             unsplit: self.unsplit,
         }
     }
@@ -1056,6 +1139,7 @@ impl Acc {
         };
         let mut models: Vec<(&String, &i64)> = self.unpriced.iter().collect();
         models.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        let unpriced_models_omitted = models.len().saturating_sub(UNPRICED_MODELS_MAX);
         let unpriced_models = models
             .into_iter()
             .take(UNPRICED_MODELS_MAX)
@@ -1079,6 +1163,7 @@ impl Acc {
             tokens_reported: self.tokens_reported,
             tokens_unpriced: self.tokens_unpriced,
             unpriced_models,
+            unpriced_models_omitted,
         }
     }
 
@@ -1128,18 +1213,8 @@ fn sources(
         .into_iter()
         .map(|s| {
             let h = s.harness();
-            let status = snap
-                .meta
-                .get(&format!("{h}_status"))
-                .map(String::as_str)
-                .filter(|v| matches!(*v, "ok" | "degraded" | "unsupported" | "absent"))
-                .unwrap_or("ok")
-                .to_string();
-            let reason = snap
-                .meta
-                .get(&format!("{h}_reason"))
-                .filter(|r| !r.is_empty())
-                .map(|r| chars(r, LABEL_CHARS));
+            let (status, reason) = crate::sync::source_status(|k| snap.meta.get(k).cloned(), s);
+            let reason = reason.map(|r| chars(&r, LABEL_CHARS));
             let last = snap.health.get(h).copied().flatten();
             let counts = matches!(status.as_str(), "ok" | "degraded");
             let stale = counts && last.is_none_or(|t| now - t > stale_ms);
@@ -1319,6 +1394,15 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             )
         }
     };
+    if read_only_folder(&db) {
+        return refuse(failure(
+            exit::ERROR,
+            "error",
+            ErrorObj::new("read_only_folder", READ_ONLY_FOLDER),
+            None,
+            None,
+        ));
+    }
     let conn = match open_read_only(&db, ctx.busy) {
         Ok(c) => c,
         Err(e) => return refuse(unreadable(&e, None)),
@@ -1405,11 +1489,11 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         clipped,
     };
     let backlog = Backlog {
-        bytes: nonneg(meta_i64(meta, "last_pending_bytes")),
-        files: nonneg(meta_i64(meta, "last_pending_files")),
+        bytes: meta_i64(meta, "last_pending_bytes").map(|v| v.max(0)),
+        files: meta_i64(meta, "last_pending_files").map(|v| v.max(0)),
     };
     let stale = w.is_none_or(|w| now - w > stale_ms);
-    let complete = backlog.bytes == 0 && backlog.files == 0;
+    let complete = backlog.bytes == Some(0) && backlog.files == Some(0);
     let srcs = sources(&snap, stray, now, stale_ms);
     let harness_sources: Vec<&SourceInfo> =
         srcs.iter().filter(|s| s.harness != LEGACY_STORE).collect();
@@ -1526,6 +1610,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                             tokens_reported: 0,
                             tokens_unpriced: 0,
                             unpriced_models: Vec::new(),
+                            unpriced_models_omitted: 0,
                         }),
                         None,
                         Some(Activity {
