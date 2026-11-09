@@ -72,10 +72,10 @@ each as this RFC recommended:
    desktop's settings, never from a repo file. The owner sets it to Chat once ((d)).
 2. **The terminal face.** Decided by the owner, in the owner's own words (cut off at the
    end, kept as given): "the idea is to have that flip switch in the genie chat itself...
-   code mode, we see xterm rendering the very same hc pane as the". So the switch is in the chat view itself, a
-   **Code mode** switch: it swaps the rendered chat for xterm drawing the very same hc pane, in
-   place, both ways, from phase 1. Herdr's own window (RFC 0013's Code) stays reachable, but the
-   view never depends on it ((c)).
+   code mode, we see xterm rendering the very same hc pane as the". So the switch is in the chat
+   view itself, a **Code mode** switch: it swaps the rendered chat for xterm drawing the very
+   same hc pane, in place, both ways, from phase 1. Herdr's own window (RFC 0013's Code) stays
+   reachable, but the view never depends on it ((c)).
 3. **Allow-always from the view for a remote seat.** Decided by Chat: no. The rendered face
    offers allow and deny only; allow-always is given in Code mode, where the whole dialog is on
    the screen ((b)).
