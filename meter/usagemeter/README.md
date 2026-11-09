@@ -13,7 +13,8 @@ it talks to is the local `hc`.
 This project used to live in the `meter/` folder of
 [automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
 `automagik-meter`; it moved here with its history. Its store, summary doc and environment
-variables did not change, so an existing install keeps its data.
+variables did not change, so an existing install keeps its data. Since 0.5.0 the store lives in
+`~/.automagik/meter/` and the first `sync` moves it there (see [What it stores](#what-it-stores)).
 
 ## Privacy
 
@@ -73,6 +74,8 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
 - **Concurrent syncs are safe:** `sync` takes a non-blocking exclusive lock on `meter.lock` in the
   state dir (see [What it stores](#what-it-stores)). A second run while one holds it skips: it
   prints `another sync is running; nothing to do` and exits 0.
+- **Exit status of `sync`:** 0 when it ran or had nothing to do, 2 on an error, 3 when the state
+  move blocks it (files in the new dir must be resolved by hand; one stderr line says which).
 - **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
   `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64`, plus `SHA256SUMS` and `install.sh`.
 
@@ -120,13 +123,91 @@ skipped and counted.
 
 ## What it stores
 
-One SQLite file (WAL) per machine:
+One SQLite file (WAL) per machine, in the state dir:
 
-- macOS: `~/Library/Application Support/automagik/meter.db`
-- Linux: `$XDG_STATE_HOME/automagik/meter.db`, else `~/.local/state/automagik/meter.db`
-- `METER_STATE_DIR` overrides both.
+- `~/.automagik/meter/meter.db` on every OS.
+- `$AM_HOME/meter/meter.db` when `AM_HOME` is set to an absolute path.
+- `METER_STATE_DIR` overrides both, and wins over everything.
 
-The directory is 0700 and the file 0600. Rows are hourly `agent.usage` rollups keyed by (bot, role,
+The directory is 0700 and the file 0600.
+
+Before 0.5.0 the state dir was `~/Library/Application Support/automagik/` on macOS and
+`$XDG_STATE_HOME/automagik/` (else `~/.local/state/automagik/`) elsewhere. On a case-insensitive
+macOS volume that is the same folder as the Automagik desktop app's own data, so clearing the
+app's data deleted the store. The first `sync` of 0.5.0 or later moves the meter's own files out of
+that old default, once: `meter.db` (with `meter.db-wal` and `meter.db-shm`),
+`meter.lock`, `claude-limits.jsonl` and `claude-limits.last.json`. Nothing else in the old folder
+is opened, and the folder itself stays.
+
+- It runs under the new dir's `meter.lock` and the old dir's `meter.lock` (created empty if
+  missing). An older meter that starts mid-move finds the old lock held and exits at once, as it
+  does beside any running sync; it does not wait, and runs again on its next trigger. The move
+  skips (exit 0, retried next run) while another run holds either lock. The old `meter.lock` is
+  removed last; it stays only beside files that were left behind.
+- It never replaces a file. `meter.db`, `meter.db-wal` and `meter.db-shm` are always copied,
+  fsynced and compared, so the two dirs never share a file and an older meter writing to the old
+  dir cannot change the new copy (the move needs free space for one more copy of the store). The
+  `claude-limits.*` files are hard-linked on one filesystem, else copied the same way. Modes are
+  kept. No old name is removed before its new entry is fsynced, including an entry an interrupted
+  run already made; a failed fsync before that point stops `sync` with an error and the old file
+  stays. A copy that fails (a full disk, a source that changed) removes its temporary
+  `.<name>.part` file.
+- The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
+  dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
+  then all of them are copied into the new dir and fsynced, and the marker is renamed
+  `.meter-moved`. The next run finishes an interrupted move only if every file is still exactly
+  what the marker recorded.
+- The old `meter.db*` stay in the old dir as the recoverable generation (RFC 0018 (d)) until the
+  next sync that succeeds: not the run that copied them, nor a run that fails, stops at its time
+  budget or finds the last sync recent. That sync removes them, under the old `meter.lock`, only if
+  they are still exactly what `.meter-moved` recorded, then removes the marker and prints one
+  stderr line. If an older meter synced into them in the meantime, they are a store of its own:
+  they stay, are never merged, and each later `sync` names them on stderr. While the old lock is
+  held they stay until a later successful sync. The move therefore needs free space for one more
+  copy of the store until then.
+- An interrupted move whose old files changed since (an older meter wrote to them), or whose
+  marker cannot be read, leaves two stores that may each hold rows the other lacks. The meter
+  cannot merge them (rows are hourly rollups whose counts add up, so one row can have grown
+  differently in each) and never decides which one is complete. Nothing is moved, overwritten or
+  deleted, neither store is used, and each `sync` prints one line to stderr, syncs nothing and
+  exits 3.
+  To go on:
+  1. Stop every meter, then copy both stores with `cp` (not `mv`) into folders of your own: the
+     old dir's `meter.db*`, and the new dir's `meter.db*` and `.meter-migrating`. Opening a store
+     in place replays and removes its WAL, so read the copies, not the originals.
+  2. Compare the copies and choose the store to go on with. Remove the other one's `meter.db*`,
+     and `.meter-migrating` from the new dir. The next `sync` moves the old store, or uses the
+     new one.
+  3. Keep the copy of the store you did not choose: the rows only it has are there and nowhere
+     else. `sync --backfill` rebuilds every row from the logs still on disk, counting each event
+     once whichever store had it, but it drops the rows whose logs are gone.
+
+  A build of this move before the copy-only fix hard-linked `meter.db`. If `ls -i` shows the
+  same number for the two `meter.db` names, the older meter's writes went into the new dir's copy
+  too: it no longer matches its WAL and may not open ("database disk image is malformed"). Only
+  the old store still reads back. Save both anyway (step 1), go on with the old store (step 2),
+  then run `sync --backfill` to bring back, from the logs still on disk, the rows only the new
+  dir's WAL held; rows whose logs are gone are lost from the active store either way.
+- If the new dir already has a `meter.db` this move did not put there (even a byte-identical
+  copy), the old files all stay and `sync` uses the new dir's store, printing one stderr line. If
+  it has a `meter.db-wal` or `meter.db-shm` but no `meter.db`, nothing is created, moved or
+  deleted, and each `sync` prints one line, syncs nothing and exits 3 until they are moved away.
+- A `claude-limits.*` file the new dir already has a different copy of stays in the old dir, with
+  the same one line.
+- A `.meter-migrating` marker whose old files are all gone (removed by hand) is cleared when the
+  new dir holds exactly the generation it recorded. Otherwise the new dir may hold half a store:
+  `sync` exits 3 and syncs nothing until it is saved and the marker removed (see "An interrupted
+  move" above). A `.meter-moved` marker with no old files left is removed.
+- An empty `meter.db` (no bytes, no sidecars) in the old dir holds nothing: an older meter creates
+  one before it takes its lock. The next `sync` removes it.
+- If the new dir is the old dir under another name (a symlink), nothing moves.
+- With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
+- `status` reads the new dir only, under its `meter.lock`, read-only: it never changes the
+  schema or checkpoints the WAL. Before the first `sync` after an upgrade it reports
+  `synced: false`. While a sync runs, or while a move into the new dir has not finished, it opens
+  nothing and exits 2 with one stderr line.
+- `prices.json` (below) is not moved; the run that moves the store says so on stderr. Copy an
+  override from the old dir by hand. Rows are hourly `agent.usage` rollups keyed by (bot, role,
 harness, model, machine, repo, branch, hour, precision); the row id (`idempotency_key`) hashes all
 of it, so an hour has at most one `exact` row and one `total_only` row per key. The `ae_usage` view
 renders each row as an `ae/1` envelope:
@@ -311,6 +392,9 @@ window; each step is listed in `truncated`. Entries that stay always keep their 
 `models`, `windows` and the totals in `daily` are never cut.
 
 ### Schema history
+
+0.5.0 moved the state dir to `~/.automagik/meter/` (see [What it stores](#what-it-stores)). That is
+a path change, not a schema change: `schema_version` stays 2 and the `ae/1` rows are the same.
 
 - 2 — per-project, per-task and per-model windows (`d1`/`d7`/`d30`), hourly and daily series per
   harness, `un`/`unpriced`, `sources.*.status`. Replaces version 1's `totals`, `hourly` and `daily`

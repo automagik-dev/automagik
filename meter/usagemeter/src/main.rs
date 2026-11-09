@@ -22,7 +22,14 @@ sync      Read new harness usage (omp, Claude Code, Codex) into the local store 
   --doc NAME      Doc name to publish to (default herdr-meter).
 status    Print the store's state as JSON.
 
-The state lives in METER_STATE_DIR if set, else the platform state directory.";
+The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
+The first sync moves the meter's files out of the pre-0.5.0 default directory.
+
+Exit status: 0 done or nothing to do, 2 an error, 3 sync blocked by the state move (stderr
+says why).";
+
+/// `sync` did nothing because files in the state directory must be resolved by hand first.
+const EXIT_BLOCKED: u8 = 3;
 
 fn fail(msg: &str) -> ExitCode {
     eprintln!("meter: {msg}");
@@ -44,8 +51,8 @@ fn human_bytes(b: u64) -> String {
     }
 }
 
-fn state_dir() -> Result<std::path::PathBuf, String> {
-    paths::default_state_dir()
+fn state_dirs() -> Result<paths::StateDirs, String> {
+    paths::state_dirs(|k| std::env::var_os(k))
         .ok_or_else(|| "HOME is not set; set METER_STATE_DIR to choose a state directory".into())
 }
 
@@ -62,7 +69,9 @@ fn parse_num(flag: &str, v: Option<String>, min: u64, max: u64) -> Result<u64, S
 
 fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     let home = paths::home().ok_or("HOME is not set")?;
-    let mut opts = Options::new(home, state_dir()?, now_ms());
+    let dirs = state_dirs()?;
+    let mut opts = Options::new(home, dirs.dir, now_ms());
+    opts.migrate_from = dirs.legacy;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -98,6 +107,9 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     }
     match sync::run(&opts).map_err(|e| e.0)? {
         Outcome::Locked => println!("meter: another sync is running; nothing to do"),
+        // The one stderr line from the move says why and what to do. Not a success: a scheduled
+        // run must not report one while nothing syncs.
+        Outcome::Blocked => return Ok(ExitCode::from(EXIT_BLOCKED)),
         Outcome::Fresh { age_ms } => println!(
             "meter: last sync was {}s ago; nothing to do (use --force)",
             age_ms / 1000
@@ -154,13 +166,27 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
 }
 
 fn cmd_status() -> Result<ExitCode, String> {
-    let dir = state_dir()?;
+    let dir = state_dirs()?.dir;
     let db = dir.join("meter.db");
     if !db.exists() {
         println!("{}", serde_json::json!({"state_dir": dir, "synced": false}));
         return Ok(ExitCode::SUCCESS);
     }
-    let store = Store::open(&db).map_err(|e| format!("cannot open {}: {e}", db.display()))?;
+    // Under the state lock no sync (and so no move) runs while the store is read. A move that
+    // has not finished leaves files that may be another generation's: opening them could replay
+    // a wal into a database it does not belong to, so status opens nothing.
+    let _lock = paths::try_lock(&dir)
+        .map_err(|e| format!("cannot lock {}: {e}", dir.display()))?
+        .ok_or("another sync is running; run status again when it finishes")?;
+    if paths::move_unfinished(&dir) {
+        return Err(format!(
+            "a move into {} has not finished, so status opens nothing there; the next sync \
+             says why (README: \"An interrupted move\")",
+            dir.display()
+        ));
+    }
+    let store =
+        Store::open_read_only(&db).map_err(|e| format!("cannot open {}: {e}", db.display()))?;
     let get = |k: &str| store.meta_i64(k).ok().flatten();
     let sources = sync::source_health(&store).map_err(|e| e.to_string())?;
     let v = serde_json::json!({
