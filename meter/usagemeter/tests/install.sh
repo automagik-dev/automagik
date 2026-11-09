@@ -2,7 +2,7 @@
 # Exercises install.sh against a release laid out on disk: tests/install.sh <dir with usagemeter-* binaries>
 # Fresh install, an idempotent re-run (latest and pinned), never a downgrade (older, equal and
 # newer installed binaries, compared as numbers), a tampered binary that must not be installed,
-# and a bad version argument.
+# and bad version arguments (anything but X.Y.Z).
 set -eu
 
 src=$(cd "$1" && pwd)
@@ -123,7 +123,11 @@ grep -q 'checksum mismatch' "$work/err" || fail "no checksum error"
 [ "$(sums "$dest")" = "$pre" ] || fail "the tampered download replaced the installed binary"
 [ "$(ls -A "$home/.local/bin")" = usagemeter ] || fail "temp files left behind: $(ls -A "$home/.local/bin")"
 
-if run 0.x 2> "$work/err"; then fail "accepted a bad version"; fi
-cat "$work/err"
+# Only X.Y.Z, refused before any lookup: a fourth part is not a version, even under a newer binary.
+for bad in 0.x 1.2 1.2.3.4 v9000.1.2.3; do
+  if run "$bad" 2> "$work/err"; then fail "accepted a bad version: $bad"; fi
+  cat "$work/err"
+  grep -q "not a version: ${bad#v} " "$work/err" || fail "no version error for $bad"
+done
 
 echo "install.sh: all checks passed"

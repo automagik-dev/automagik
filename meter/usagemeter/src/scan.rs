@@ -8,6 +8,12 @@
 //!   or the file shrank below the saved offset, it is read again from the start; the dedupe set
 //!   absorbs what was counted before.
 //! - A line longer than `max_line` is skipped and counted, never buffered whole.
+//! - A dsh-tui session is multi-frame zstd: its offset is in the compressed file and always on a
+//!   frame boundary. Only whole frames are decoded, so a frame still being written (or cut short)
+//!   waits for the next run, like an unfinished line. Frames are decoded line by line: a line
+//!   longer than `max_line` is skipped and counted, never the rest of its frame. Bytes that are not
+//!   a frame (corruption, or a frame over `max_line` compressed) are skipped, counted once, up to
+//!   the next frame start, so one bad frame never drops the rest of the file.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -17,7 +23,7 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 
 use crate::event::{UsageEvent, hex};
-use crate::sources::{FileCtx, Line, Source};
+use crate::sources::{FileCtx, Line, Source, dsh_tui};
 use crate::store::{FileState, Health};
 
 pub const HEAD_BYTES: u64 = 4096;
@@ -50,7 +56,17 @@ fn mtime_ms(m: &fs::Metadata) -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Every `*.jsonl` under `root` (depth-limited), skipping symlinks to files and directories.
+/// Whether `path` is one of `source`'s logs: a `*.jsonl`, or a dsh-tui session file.
+fn is_log(source: Source, path: &Path) -> bool {
+    match source {
+        Source::DshTui => path
+            .file_name()
+            .is_some_and(|n| dsh_tui::FILE_NAMES.iter().any(|f| n == *f)),
+        _ => path.extension().is_some_and(|x| x == "jsonl"),
+    }
+}
+
+/// Every log of `source` under `root` (depth-limited), skipping symlinks to files and directories.
 pub fn discover(root: &Path, source: Source, out: &mut Vec<Candidate>) {
     fn walk(dir: &Path, depth: usize, source: Source, out: &mut Vec<Candidate>) {
         if depth > 8 {
@@ -68,7 +84,7 @@ pub fn discover(root: &Path, source: Source, out: &mut Vec<Candidate>) {
             let path = e.path();
             if ft.is_dir() {
                 walk(&path, depth + 1, source, out);
-            } else if ft.is_file() && path.extension().is_some_and(|x| x == "jsonl") {
+            } else if ft.is_file() && is_log(source, &path) {
                 let Ok(meta) = fs::symlink_metadata(&path) else {
                     continue;
                 };
@@ -196,8 +212,17 @@ pub fn plan(c: &Candidate, prev: Option<FileState>) -> io::Result<Plan> {
                     .and_then(|s| s.to_str())
                     .map(|s| s.chars().take(128).collect()),
                 parent_session: Some(parent),
-                cwd: None,
-                codex: None,
+                ..FileCtx::default()
+            },
+            // A dsh-tui session's folder is named for it, in case its header cannot be read.
+            None if c.source == Source::DshTui => FileCtx {
+                session: c
+                    .path
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.chars().take(128).collect()),
+                ..FileCtx::default()
             },
             None => FileCtx::default(),
         },
@@ -291,6 +316,9 @@ where
         }
     }
     f.seek(SeekFrom::Start(state.offset))?;
+    if source == Source::DshTui && state.path.ends_with(".zstd") {
+        return read_frames(state, &mut f, size_now, source, limits, commit);
+    }
     let mut out = ReadOutcome::default();
     let mut buf: Vec<u8> = Vec::new();
     let mut file_pos = state.offset;
@@ -373,8 +401,366 @@ where
     Ok(out)
 }
 
+/// A zstd frame's first four bytes.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+/// What starts at the front of a buffer of zstd data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Frame {
+    /// A whole frame of `len` bytes. A skippable frame holds no data.
+    Whole { len: usize, skippable: bool },
+    /// The frame does not end within the buffer (yet).
+    Partial,
+    /// Not a zstd frame.
+    Bad,
+}
+
+/// Walks the frame header and block headers (RFC 8878, section 3.1) to find where the frame
+/// that starts `b` ends, without decoding it.
+fn frame_at(b: &[u8]) -> Frame {
+    let le = |at: usize, n: usize| {
+        b.get(at..at + n).map(|x| {
+            x.iter()
+                .rev()
+                .fold(0u32, |v, byte| (v << 8) | u32::from(*byte))
+        })
+    };
+    let Some(magic) = le(0, 4) else {
+        return Frame::Partial;
+    };
+    if magic & 0xFFFF_FFF0 == 0x184D_2A50 {
+        let Some(n) = le(4, 4) else {
+            return Frame::Partial;
+        };
+        let len = 8 + n as usize;
+        return if b.len() >= len {
+            Frame::Whole {
+                len,
+                skippable: true,
+            }
+        } else {
+            Frame::Partial
+        };
+    }
+    if magic != u32::from_le_bytes(ZSTD_MAGIC) {
+        return Frame::Bad;
+    }
+    let Some(&fhd) = b.get(4) else {
+        return Frame::Partial;
+    };
+    if fhd & 0x08 != 0 {
+        return Frame::Bad; // reserved bit
+    }
+    let single = fhd & 0x20 != 0;
+    let dict = [0, 1, 2, 4][usize::from(fhd & 3)];
+    let fcs = [usize::from(single), 2, 4, 8][usize::from(fhd >> 6)];
+    let mut at = 5 + usize::from(!single) + dict + fcs;
+    loop {
+        let Some(h) = le(at, 3) else {
+            return Frame::Partial;
+        };
+        let size = match (h >> 1) & 3 {
+            1 => 1, // RLE: one byte repeated
+            3 => return Frame::Bad,
+            _ => (h >> 3) as usize,
+        };
+        at += 3 + size;
+        if h & 1 != 0 {
+            break;
+        }
+    }
+    if fhd & 0x04 != 0 {
+        at += 4; // content checksum
+    }
+    if b.len() >= at {
+        Frame::Whole {
+            len: at,
+            skippable: false,
+        }
+    } else {
+        Frame::Partial
+    }
+}
+
+/// Parses one decoded line.
+fn count_line(
+    line: &[u8],
+    source: Source,
+    ctx: &mut FileCtx,
+    events: &mut Vec<UsageEvent>,
+    health: &mut Health,
+) {
+    if line.is_empty() {
+        return;
+    }
+    match source.parse_line(line, ctx, events) {
+        Line::Ignored => {}
+        Line::Usage => health.usage_lines += 1,
+        Line::Bad => health.skipped_lines += 1,
+    }
+}
+
+/// Decodes one whole frame and parses its lines as they come out, holding at most one line: a
+/// line longer than `max_line` is skipped and counted, as in a JSONL file, and the rest of the
+/// frame is still read. A frame that stops decoding is counted as one skipped line; the lines
+/// decoded before the error stay counted. Returns whether the frame decoded to its end.
+fn parse_frame(
+    frame: &[u8],
+    source: Source,
+    max_line: usize,
+    ctx: &mut FileCtx,
+    events: &mut Vec<UsageEvent>,
+    health: &mut Health,
+) -> bool {
+    let Ok(mut decoder) = ruzstd::decoding::StreamingDecoder::new(frame) else {
+        health.skipped_lines += 1;
+        return false;
+    };
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut line: Vec<u8> = Vec::new();
+    let mut too_long = false;
+    loop {
+        let n = match decoder.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => {
+                health.skipped_lines += 1;
+                return false;
+            }
+        };
+        for piece in chunk[..n].split_inclusive(|b| *b == b'\n') {
+            let ends = piece.last() == Some(&b'\n');
+            let body = if ends {
+                &piece[..piece.len() - 1]
+            } else {
+                piece
+            };
+            if !too_long && line.len() + body.len() > max_line {
+                health.skipped_lines += 1;
+                too_long = true;
+                line.clear();
+            }
+            if !too_long {
+                line.extend_from_slice(body);
+            }
+            if ends {
+                if !too_long {
+                    count_line(&line, source, ctx, events, health);
+                }
+                line.clear();
+                too_long = false;
+            }
+        }
+    }
+    if !too_long {
+        count_line(&line, source, ctx, events, health);
+    }
+    true
+}
+
+/// [`read_file`] for a multi-frame zstd file: the same chunks, commits and size rule, over whole
+/// frames instead of whole lines.
+fn read_frames<F>(
+    state: &mut FileState,
+    f: &mut File,
+    size_now: u64,
+    source: Source,
+    limits: &ReadLimits,
+    mut commit: F,
+) -> io::Result<ReadOutcome>
+where
+    F: FnMut(&FileState, Vec<UsageEvent>, Health) -> io::Result<()>,
+{
+    let mut out = ReadOutcome::default();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut file_pos = state.offset;
+    // Bytes that are not a frame (or a frame too large to hold) are being skipped, up to the next
+    // frame start; they count as one skipped line.
+    let mut resync = false;
+    let mut eof = false;
+    loop {
+        if limits.exhausted() {
+            out.stopped = true;
+            break;
+        }
+        let left = size_now.saturating_sub(file_pos) as usize + 64 * 1024;
+        let start = buf.len();
+        buf.resize(start + limits.chunk_bytes.min(left), 0);
+        let mut filled = start;
+        while filled < buf.len() {
+            let n = f.read(&mut buf[filled..])?;
+            if n == 0 {
+                eof = true;
+                break;
+            }
+            filled += n;
+            file_pos += n as u64;
+        }
+        buf.truncate(filled);
+        let mut health = Health::default();
+        let mut events = Vec::new();
+        let mut consumed = 0usize;
+        let mut ctx = std::mem::take(&mut state.ctx);
+        while consumed < buf.len() {
+            match frame_at(&buf[consumed..]) {
+                Frame::Whole { len, skippable } => {
+                    let frame = &buf[consumed..consumed + len];
+                    let decoded = skippable
+                        || parse_frame(
+                            frame,
+                            source,
+                            limits.max_line,
+                            &mut ctx,
+                            &mut events,
+                            &mut health,
+                        );
+                    // A frame that does not decode may not end where its headers said (a torn
+                    // frame's last block runs into the next frame): go on at the next frame start
+                    // inside it, if there is one.
+                    consumed += match decoded {
+                        true => len,
+                        false => {
+                            memchr::memmem::find(&frame[1..], &ZSTD_MAGIC).map_or(len, |i| 1 + i)
+                        }
+                    };
+                    resync = false;
+                }
+                Frame::Partial if buf.len() - consumed < limits.max_line => break,
+                Frame::Partial | Frame::Bad => {
+                    if !resync {
+                        health.skipped_lines += 1;
+                        resync = true;
+                    }
+                    match memchr::memmem::find(&buf[consumed + 1..], &ZSTD_MAGIC) {
+                        Some(i) => consumed += 1 + i,
+                        None => {
+                            // A frame start can straddle the next read: keep its first 3 bytes.
+                            let keep = if eof { 0 } else { 3 };
+                            consumed = consumed.max(buf.len().saturating_sub(keep));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        state.ctx = ctx;
+        if consumed > 0 {
+            advance(state, &mut buf, consumed, &mut out);
+            commit(state, events, health)?;
+            limits.spend_chunk();
+        }
+        if eof {
+            break;
+        }
+    }
+    state.size = if out.stopped {
+        state.offset
+    } else {
+        state.offset + buf.len() as u64
+    };
+    Ok(out)
+}
+
 fn advance(state: &mut FileState, buf: &mut Vec<u8>, consumed: usize, out: &mut ReadOutcome) {
     state.offset += consumed as u64;
     out.bytes += consumed as u64;
     buf.drain(..consumed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A frame by hand: single segment, raw and RLE blocks, optional checksum.
+    fn frame(blocks: &[(&[u8], bool)], checksum: bool) -> Vec<u8> {
+        let mut f = vec![0x28, 0xB5, 0x2F, 0xFD];
+        f.push(0x20 | if checksum { 0x04 } else { 0 });
+        let content: usize = blocks
+            .iter()
+            .map(|(b, rle)| if *rle { 3 } else { b.len() })
+            .sum();
+        f.push(content as u8); // the single-segment content size, one byte
+        for (i, (b, rle)) in blocks.iter().enumerate() {
+            let last = u32::from(i + 1 == blocks.len());
+            let (ty, size) = if *rle { (1, 3) } else { (0, b.len() as u32) };
+            let h = last | (ty << 1) | (size << 3);
+            f.extend_from_slice(&h.to_le_bytes()[..3]);
+            f.extend_from_slice(if *rle { &b[..1] } else { b });
+        }
+        if checksum {
+            f.extend_from_slice(&[0, 0, 0, 0]);
+        }
+        f
+    }
+
+    #[test]
+    fn frame_ends_are_found_without_decoding() {
+        let f = frame(&[(b"ab\n", false), (b"x", true), (b"\n", false)], true);
+        assert_eq!(
+            frame_at(&f),
+            Frame::Whole {
+                len: f.len(),
+                skippable: false
+            }
+        );
+        // Any cut is a frame still being written, never a whole one.
+        for cut in 0..f.len() {
+            assert_eq!(frame_at(&f[..cut]), Frame::Partial, "cut at {cut}");
+        }
+        // Only the first frame of a buffer is measured.
+        let two = [f.as_slice(), &f].concat();
+        assert_eq!(
+            frame_at(&two),
+            Frame::Whole {
+                len: f.len(),
+                skippable: false
+            }
+        );
+        let skip = [0x50, 0x2A, 0x4D, 0x18, 2, 0, 0, 0, 9, 9];
+        assert_eq!(
+            frame_at(&skip),
+            Frame::Whole {
+                len: 10,
+                skippable: true
+            }
+        );
+        assert_eq!(frame_at(&skip[..9]), Frame::Partial);
+        assert_eq!(frame_at(b"{\"type\""), Frame::Bad);
+        let mut reserved = f.clone();
+        reserved[4] |= 0x08;
+        assert_eq!(frame_at(&reserved), Frame::Bad);
+        // The hand-made frame decodes to what it holds.
+        let mut ctx = FileCtx::default();
+        let (mut ev, mut h) = (Vec::new(), Health::default());
+        assert!(parse_frame(
+            &f,
+            Source::DshTui,
+            1 << 20,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
+        assert_eq!(h, Health::default());
+        // A line longer than max_line ("xxx" over 2) is skipped and counted; the frame still
+        // decodes to its end.
+        assert!(parse_frame(
+            &f,
+            Source::DshTui,
+            2,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
+        assert_eq!(h.skipped_lines, 1);
+        // Bytes that are not a frame do not decode.
+        assert!(!parse_frame(
+            b"junk",
+            Source::DshTui,
+            1 << 20,
+            &mut ctx,
+            &mut ev,
+            &mut h
+        ));
+        assert_eq!(h.skipped_lines, 2);
+    }
 }

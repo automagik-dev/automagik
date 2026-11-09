@@ -62,6 +62,8 @@ pub struct Options {
     pub claude_root: PathBuf,
     /// `~/.codex` (or `$CODEX_HOME`).
     pub codex_home: PathBuf,
+    /// `~/.dsh/sessions` (or `$DSH_HOME/sessions`).
+    pub dsh_root: PathBuf,
     pub state_dir: PathBuf,
     /// The old default state directory to move the meter's files out of, once, before the first
     /// run in `state_dir` (see [`paths::migrate`]). None when `METER_STATE_DIR` is set.
@@ -98,10 +100,16 @@ impl Options {
             .filter(|d| !d.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".codex"));
+        let dsh_root = std::env::var_os("DSH_HOME")
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".dsh"))
+            .join("sessions");
         Options {
             omp_root: home.join(".omp/agent/sessions"),
             claude_root,
             codex_home,
+            dsh_root,
             state_dir,
             migrate_from: None,
             days: None,
@@ -332,6 +340,12 @@ pub fn source_health(store: &Store) -> rusqlite::Result<Vec<SourceHealth>> {
             h.reason = store.meta("codex_reason")?.filter(|r| !r.is_empty());
             h.threads = Some(store.codex_thread_counts()?);
         }
+        if s == Source::DshTui {
+            h.reason = store.meta("dsh_unread")?.filter(|r| !r.is_empty());
+            if h.reason.is_some() {
+                h.status = "unsupported".into();
+            }
+        }
         out.push(h);
     }
     Ok(out)
@@ -471,6 +485,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let mut candidates: Vec<Candidate> = Vec::new();
     scan::discover(&opts.omp_root, Source::Omp, &mut candidates);
     scan::discover(&opts.claude_root, Source::Claude, &mut candidates);
+    scan::discover(&opts.dsh_root, Source::DshTui, &mut candidates);
+    let unread = crate::sources::dsh_tui::unread_generations(&opts.dsh_root);
+    store.set_meta("dsh_unread", unread.as_deref().unwrap_or(""))?;
     // Newest first: recent usage is what people look at, and an old backlog can wait a run.
     candidates.sort_by(|a, b| {
         b.mtime_ms

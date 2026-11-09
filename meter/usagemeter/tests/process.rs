@@ -15,14 +15,10 @@ fn a_killed_run_resumes_without_double_counting() {
     let env = Env::new();
     let ts = meter::time::format_rfc3339(meter::time::now_ms() - 3_600_000);
     let want = big_fixture(&env, 6, 3000, &ts);
-    let bin = env!("CARGO_BIN_EXE_usagemeter");
     let spawn = || {
-        std::process::Command::new(bin)
+        env.command()
             .args(["sync", "--force", "--no-publish"])
-            .env("HOME", env.home())
             .env("METER_STATE_DIR", env.state())
-            .env("METER_HC", env.dir.path().join("no-hc"))
-            .env_remove("CLAUDE_CONFIG_DIR")
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap()
@@ -55,14 +51,12 @@ fn sync_exits_0_when_there_is_nothing_new_to_read() {
     let f = env.claude("-work-app/sess-1.jsonl");
     write_lines(&f, &[claude_line("msg_1", "req_1", &ts, "model-a", &U1, 0)]);
     let sync = |args: &[&str]| {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"))
+        let out = env
+            .command()
             .arg("sync")
             .args(args)
             .arg("--no-publish")
-            .env("HOME", env.home())
             .env("METER_STATE_DIR", env.state())
-            .env("METER_HC", env.dir.path().join("no-hc"))
-            .env_remove("CLAUDE_CONFIG_DIR")
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
