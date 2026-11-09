@@ -38,12 +38,13 @@
 //
 // Node, no dependencies, never throws: a field it cannot read drops its segment. Run it with
 // node's absolute path (Claude Code's PATH can be bare). It wraps cleanly in the limits logger:
-// `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`. METER_STATE_DIR moves
-// the state folder (the logger's too).
+// `node claude-limits-statusline.mjs -- node automagik-statusline.mjs`. The state folder is the
+// meter's, ~/.automagik/meter (stateDir; METER_STATE_DIR moves it, the logger's too); a log still
+// in the old folder (legacyStateDir) is read as well, until the logger or the meter moves it.
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, lstatSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { homedir, platform } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GREEN = "\x1b[32m", YELLOW = "\x1b[33m", RED = "\x1b[31m", CYAN = "\x1b[36m", BOLD = "\x1b[1m", DIM = "\x1b[2m", RESET = "\x1b[0m";
@@ -208,12 +209,28 @@ export function format(input, opts = {}) {
 // Columns a line takes: colours take none; the emoji take two each.
 const visible = (s) => [...s.replace(/\x1b\[[0-9;]*m/g, "")].reduce((n, c) => n + (/\p{Extended_Pictographic}/u.test(c) ? 2 : 1), 0);
 
-/** Where Meter keeps its state; the limits logger uses the same folder. */
+/**
+ * Where Meter keeps its state, by usagemeter's own rule (its paths.rs): METER_STATE_DIR, else
+ * <AM_HOME>/meter when AM_HOME is an absolute path, else ~/.automagik/meter. The limits logger
+ * writes there too (claude-limits-statusline.mjs carries the same rule).
+ */
 export function stateDir(env = process.env) {
   if (env.METER_STATE_DIR) return env.METER_STATE_DIR;
-  const home = homedir();
-  return platform() === "darwin" ? join(home, "Library/Application Support/automagik")
-    : join(env.XDG_STATE_HOME || join(home, ".local/state"), "automagik");
+  if (env.AM_HOME && isAbsolute(env.AM_HOME)) return join(env.AM_HOME, "meter");
+  return join(env.HOME || homedir(), ".automagik/meter");
+}
+
+/**
+ * The state folder before the meter moved it (usagemeter 0.3.0 and older): ~/Library/Application
+ * Support/automagik on macOS, else $XDG_STATE_HOME/automagik (an absolute one) or
+ * ~/.local/state/automagik. null with METER_STATE_DIR (nothing moves then) or when it is stateDir.
+ */
+export function legacyStateDir(env = process.env, os = platform()) {
+  if (env.METER_STATE_DIR) return null;
+  const home = env.HOME || homedir();
+  const xdg = env.XDG_STATE_HOME && isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : join(home, ".local/state");
+  const dir = os === "darwin" ? join(home, "Library/Application Support/automagik") : join(xdg, "automagik");
+  return dir === stateDir(env) ? null : dir;
 }
 
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
@@ -340,6 +357,24 @@ export function readLimitsTail(dir = stateDir()) {
 }
 
 /**
+ * The limits log's readings: the state folder's, after those of a log still left in the old folder
+ * (legacyStateDir; the logger moves it on its next reading, the meter on its first sync). An old
+ * name that is the new log itself (a move cut short after its link) is read once, as the new one.
+ * runOut orders them by time. Never throws.
+ */
+export function readLimits(env = process.env) {
+  const dir = stateDir(env), old = legacyStateDir(env);
+  const log = (d) => join(d, "claude-limits.jsonl");
+  const leftover = old && !sameFile(log(old), log(dir));
+  return [...(leftover ? readLimitsTail(old) : []), ...readLimitsTail(dir)];
+}
+
+/** Whether two paths name one file (the same device and inode, links followed as readLimitsTail follows them). */
+function sameFile(a, b) {
+  try { const x = statSync(a), y = statSync(b); return x.dev === y.dev && x.ino === y.ino; } catch { return false; }
+}
+
+/**
  * The name of the bot this Herdr pane plays, or null outside a pane (no HC_TERMINAL_ID) or when
  * it plays none. Asks `automagik-herdr whois --json <terminal>` (the launcher at its absolute
  * path, run with /bin/sh, killed with SIGKILL after `timeout` ms), then reads the name from
@@ -402,7 +437,7 @@ function main() {
       line = format(input, {
         autoCompactWindow: safe(() => autoCompactWindowFor(input)),
         bot: safe(() => botName()),
-        limits: quota ? safe(() => readLimitsTail()) : null,
+        limits: quota ? safe(() => readLimits()) : null,
         columns: Number(process.env.COLUMNS) || null,
         color: !process.env.NO_COLOR,
       });

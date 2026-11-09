@@ -6,11 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WHOIS_TIMEOUT, autoCompactWindowFor, bar, botName, envWindow, format, localSettingsRoot, readLimitsTail, runOut, tokens, until } from "../automagik-statusline.mjs";
+import { WHOIS_TIMEOUT, autoCompactWindowFor, bar, botName, envWindow, format, legacyStateDir, localSettingsRoot, readLimits, readLimitsTail, runOut, stateDir, tokens, until } from "../automagik-statusline.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const fixture = (name) => JSON.parse(readFileSync(here(`fixtures/${name}.json`), "utf8"));
@@ -468,5 +468,189 @@ test("the command under a bare PATH, alone and wrapped by the limits logger", ()
       assert.equal(r.status, 0, r.stderr);
       assert.equal(r.stdout, "Claude\n");
     }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the state folder: the meter's own rule, METER_STATE_DIR first; the old folder only without it", () => {
+  assert.equal(stateDir({ HOME: "/h" }), "/h/.automagik/meter");
+  assert.equal(stateDir({ HOME: "/h", AM_HOME: "/am" }), "/am/meter");
+  assert.equal(stateDir({ HOME: "/h", AM_HOME: "am" }), "/h/.automagik/meter", "a relative AM_HOME is ignored, as the meter ignores it");
+  assert.equal(stateDir({ HOME: "/h", AM_HOME: "/am", METER_STATE_DIR: "/s" }), "/s");
+  assert.equal(legacyStateDir({ HOME: "/h" }, "linux"), "/h/.local/state/automagik");
+  assert.equal(legacyStateDir({ HOME: "/h", XDG_STATE_HOME: "/x" }, "linux"), "/x/automagik");
+  assert.equal(legacyStateDir({ HOME: "/h", XDG_STATE_HOME: "x" }, "linux"), "/h/.local/state/automagik");
+  assert.equal(legacyStateDir({ HOME: "/h", XDG_STATE_HOME: "/x" }, "darwin"), "/h/Library/Application Support/automagik");
+  assert.equal(legacyStateDir({ HOME: "/h", METER_STATE_DIR: "/s" }, "linux"), null, "nothing moves with METER_STATE_DIR");
+});
+
+const logger = here("../claude-limits-statusline.mjs");
+const reading = (pct) => ({ ...fixture("mid-session-quota"), rate_limits: { five_hour: { used_percentage: pct, resets_at: 1_793_810_000 } } });
+/** Runs the limits logger alone (no command after --) with exactly `env`. */
+const log = (env, pct = 40) => {
+  const r = spawnSync(process.execPath, [logger], { input: JSON.stringify(reading(pct)), env: { PATH: "/usr/bin:/bin", ...env }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, "");
+};
+const lines = (file) => readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+test("the limits logger writes where the status line reads, for each rule", () => {
+  const dir = temp();
+  try {
+    for (const extra of [{}, { AM_HOME: join(dir, "am") }, { AM_HOME: "relative" }, { METER_STATE_DIR: join(dir, "s") }]) {
+      const env = { HOME: dir, ...extra };
+      log(env);
+      const rows = readLimitsTail(stateDir(env));
+      assert.equal(rows.length, 1, JSON.stringify(extra));
+      assert.equal(rows[0].five_hour.used_percentage, 40);
+      assert.equal(statSync(stateDir(env)).mode & 0o777, 0o700, JSON.stringify(extra));
+      assert.equal(statSync(join(stateDir(env), "claude-limits.jsonl")).mode & 0o777, 0o600);
+      rmSync(stateDir(env), { recursive: true, force: true });
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a log in the old folder: read, moved once into the new folder, never over one already there", () => {
+  const dir = temp();
+  try {
+    const env = { HOME: dir };
+    const old = legacyStateDir(env), now = stateDir(env);
+    assert.ok(old && old.startsWith(dir), old);
+    mkdirSync(old, { recursive: true });
+    const before = [{ ts: iso(1_793_790_000), five_hour: { used_percentage: 10, resets_at: 1_793_810_000 } },
+      { ts: iso(1_793_791_000), five_hour: { used_percentage: 12, resets_at: 1_793_810_000 } }];
+    writeFileSync(join(old, "claude-limits.jsonl"), before.map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
+    writeFileSync(join(old, "claude-limits.last.json"), JSON.stringify({ key: "an older reading", at: 1 }));
+    // The meter's own files and anything else stay: they are the meter's to move.
+    for (const name of ["meter.db", "prices.json", "statusline-bots.json"]) writeFileSync(join(old, name), name);
+
+    // Before the logger runs again, the status line reads the old log.
+    assert.deepEqual(readLimits(env), before);
+    assert.equal(existsSync(now), false);
+
+    log(env, 15);
+    assert.deepEqual(readdirSync(old).sort(), ["meter.db", "prices.json", "statusline-bots.json"]);
+    const moved = lines(join(now, "claude-limits.jsonl"));
+    assert.deepEqual(moved.slice(0, 2), before, "the old readings come along");
+    assert.equal(moved.length, 3);
+    assert.equal(moved[2].five_hour.used_percentage, 15);
+    assert.equal(statSync(now).mode & 0o777, 0o700);
+    assert.equal(statSync(join(now, "claude-limits.jsonl")).mode & 0o777, 0o600, "the mode is kept");
+    assert.deepEqual(readLimits(env), moved, "read once: nothing is left in the old folder");
+
+    // A log left in the old folder again (another filesystem, an older logger) while the new one has
+    // its own: neither is replaced or merged on disk, and the status line reads both.
+    const stray = { ts: iso(1_793_792_000), five_hour: { used_percentage: 13, resets_at: 1_793_810_000 } };
+    writeFileSync(join(old, "claude-limits.jsonl"), `${JSON.stringify(stray)}\n`);
+    log(env, 16);
+    assert.deepEqual(lines(join(old, "claude-limits.jsonl")), [stray]);
+    assert.equal(lines(join(now, "claude-limits.jsonl")).length, 4);
+    assert.deepEqual(readLimits(env), [stray, ...lines(join(now, "claude-limits.jsonl"))]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the old folder is left alone with METER_STATE_DIR, and a link there is never followed", () => {
+  const dir = temp();
+  try {
+    const old = legacyStateDir({ HOME: dir });
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "claude-limits.jsonl"), `${JSON.stringify({ ts: "old" })}\n`);
+    const state = join(dir, "s");
+    log({ HOME: dir, METER_STATE_DIR: state });
+    assert.deepEqual(lines(join(old, "claude-limits.jsonl")), [{ ts: "old" }]);
+    assert.deepEqual(readLimits({ HOME: dir, METER_STATE_DIR: state }).length, 1, "only METER_STATE_DIR's log");
+    assert.equal(existsSync(join(dir, ".automagik")), false);
+
+    // A link in the old folder stays a link there; the logger starts a log of its own.
+    rmSync(join(old, "claude-limits.jsonl"));
+    const elsewhere = join(dir, "elsewhere.jsonl");
+    writeFileSync(elsewhere, `${JSON.stringify({ ts: "elsewhere" })}\n`);
+    symlinkSync(elsewhere, join(old, "claude-limits.jsonl"));
+    log({ HOME: dir });
+    assert.ok(lstatSync(join(old, "claude-limits.jsonl")).isSymbolicLink());
+    assert.equal(lstatSync(join(stateDir({ HOME: dir }), "claude-limits.jsonl")).isFile(), true);
+    assert.equal(lines(join(stateDir({ HOME: dir }), "claude-limits.jsonl")).length, 1);
+    assert.deepEqual(lines(elsewhere), [{ ts: "elsewhere" }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a move cut short after its link (both names on one file): read once, finished by the next reading", () => {
+  const dir = temp();
+  try {
+    const env = { HOME: dir };
+    const old = legacyStateDir(env), now = stateDir(env);
+    mkdirSync(old, { recursive: true });
+    mkdirSync(now, { recursive: true, mode: 0o700 });
+    const before = [{ ts: iso(1_793_790_000), five_hour: { used_percentage: 10, resets_at: 1_793_810_000 } },
+      { ts: iso(1_793_791_000), five_hour: { used_percentage: 12, resets_at: 1_793_810_000 } }];
+    writeFileSync(join(now, "claude-limits.jsonl"), before.map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
+    writeFileSync(join(now, "claude-limits.last.json"), JSON.stringify({ key: "an older reading", at: 1 }), { mode: 0o600 });
+    // The half-done state: the logger (or the meter) linked both files and stopped before the unlink.
+    for (const name of ["claude-limits.jsonl", "claude-limits.last.json"]) linkSync(join(now, name), join(old, name));
+    writeFileSync(join(old, "meter.db"), "the meter's");
+
+    assert.deepEqual(readLimits(env), before, "each reading once, not once per name");
+    log(env, 15);
+    assert.deepEqual(readdirSync(old), ["meter.db"], "the next reading finished the move");
+    const rows = lines(join(now, "claude-limits.jsonl"));
+    assert.deepEqual(rows.slice(0, 2), before);
+    assert.equal(rows.length, 3);
+    assert.deepEqual(readLimits(env), rows);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// /dev/shm is its own filesystem on the Linux runners: a hard link from there to the temp folder fails (EXDEV).
+const otherDevice = () => {
+  if (platform() === "darwin" || !existsSync("/dev/shm")) return null;
+  const dir = mkdtempSync("/dev/shm/meter-statusline-");
+  if (statSync(dir).dev !== statSync(tmpdir()).dev) return dir;
+  rmSync(dir, { recursive: true, force: true });
+  return null;
+};
+
+test("the old folder on another filesystem: the logger keeps writing it until the meter moves it, then follows", (t) => {
+  const xdg = otherDevice();
+  if (!xdg) { t.skip("no second filesystem here"); return; }
+  const dir = temp();
+  try {
+    const env = { HOME: dir, XDG_STATE_HOME: xdg };
+    const old = legacyStateDir(env), now = stateDir(env);
+    assert.equal(old, join(xdg, "automagik"));
+    mkdirSync(old, { recursive: true });
+    const before = { ts: iso(1_793_790_000), five_hour: { used_percentage: 10, resets_at: 1_793_810_000 } };
+    writeFileSync(join(old, "claude-limits.jsonl"), `${JSON.stringify(before)}\n`, { mode: 0o600 });
+    writeFileSync(join(old, "claude-limits.last.json"), JSON.stringify({ key: "an older reading", at: 1 }), { mode: 0o600 });
+
+    log(env, 15);
+    // No log of its own in the new folder: the meter's first sync would find one there and keep the
+    // old file, naming it on every sync after.
+    assert.equal(existsSync(join(now, "claude-limits.jsonl")), false);
+    assert.equal(existsSync(join(now, "claude-limits.last.json")), false);
+    const kept = lines(join(old, "claude-limits.jsonl"));
+    assert.equal(kept.length, 2);
+    assert.deepEqual(readLimits(env), kept);
+
+    // The meter's first sync moves both by a verified copy, then removes the old names; the logger follows.
+    mkdirSync(now, { recursive: true, mode: 0o700 });
+    for (const name of ["claude-limits.jsonl", "claude-limits.last.json"]) { copyFileSync(join(old, name), join(now, name)); rmSync(join(old, name)); }
+    log(env, 16);
+    assert.deepEqual(readdirSync(old), []);
+    const rows = lines(join(now, "claude-limits.jsonl"));
+    assert.equal(rows.length, 3);
+    assert.deepEqual(readLimits(env), rows);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(xdg, { recursive: true, force: true });
+  }
+});
+
+test("a new state folder looser than 0700 is tightened when the logger writes there", () => {
+  const dir = temp();
+  try {
+    const env = { HOME: dir };
+    mkdirSync(stateDir(env), { recursive: true });
+    chmodSync(stateDir(env), 0o755);
+    log(env);
+    assert.equal(statSync(stateDir(env)).mode & 0o777, 0o700);
+    assert.equal(lines(join(stateDir(env), "claude-limits.jsonl")).length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
