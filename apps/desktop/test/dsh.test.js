@@ -19,6 +19,8 @@ import { batchSafe } from '../scripts/batch-spawn.mjs'
 
 const posixOnly = { skip: process.platform === 'win32' ? 'the tools are sh scripts here' : false }
 const windowsOnly = { skip: process.platform === 'win32' ? false : 'Windows only' }
+// A folder mode that forbids removing a file in it: POSIX only, and never for root.
+const permissionOnly = { skip: process.platform === 'win32' ? 'Windows has no folder write mode' : process.getuid?.() === 0 ? 'root removes a file from any folder' : false }
 
 // Windows cannot remove a folder a process still runs in, and t.after runs its hooks in the order
 // they were added: the folder goes in one hook, after `stop` (set once the test starts its dsh),
@@ -331,6 +333,82 @@ setInterval(() => {}, 1000)
   scope.stop = () => stopDsh(child)
   assert.equal(url, `http://127.0.0.1:${port}/?token=file-token`)
   await stopDsh(child)
+})
+
+// A previous launch-url file the start cannot remove (here a read-only DSH_HOME) is logged with
+// its path and the error, and the start goes on to spawn dsh (#739).
+test('a start whose previous launch URL cannot be removed logs it and still starts dsh', permissionOnly, async (t) => {
+  const scope = scratch(t, 'omni-desktop-launch-url-kept-')
+  const { root } = scope
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, `
+const args = process.argv.slice(2)
+const port = args[args.indexOf('--port') + 1]
+setTimeout(() => console.log('dsh web: http://127.0.0.1:' + port + '/?token=kept'), 50)
+setInterval(() => {}, 1000)
+`)
+  const home = join(root, 'dsh')
+  mkdirSync(home)
+  const urlFile = launchUrlFileOf(home)
+  writeFileSync(urlFile, 'http://127.0.0.1:1/?token=stale\n')
+  chmodSync(home, 0o500)
+  // The log is optional (log?.write): a caller that passes none drops the line silently.
+  const written = []
+  const log = { write: chunk => written.push(String(chunk)) }
+  try {
+    const port = await freePort()
+    const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, urlFile, log })
+    scope.stop = () => stopDsh(child)
+    assert.equal(url, `http://127.0.0.1:${port}/?token=kept`, 'the start still resolves')
+    const reported = written.filter(line => line.startsWith('automagik:'))
+    assert.equal(reported.length, 1)
+    assert.ok(reported[0].includes(urlFile), reported[0])
+    assert.match(reported[0], /could not remove the previous launch URL/)
+    assert.match(reported[0], /EACCES/, reported[0])
+  } finally {
+    chmodSync(home, 0o700)
+  }
+})
+
+// The old file can name this very port with a dead token, and dsh's own recordLaunchUrl fails the
+// same way, so it is never replaced: the start must take its URL from dsh's output alone (#739).
+test('a start whose previous launch URL for the same port cannot be removed waits for dsh\'s own line', permissionOnly, async (t) => {
+  const scope = scratch(t, 'omni-desktop-launch-url-same-port-')
+  const { root } = scope
+  const bin = join(root, 'fake-dsh.mjs')
+  writeFileSync(bin, `
+const args = process.argv.slice(2)
+const port = args[args.indexOf('--port') + 1]
+setTimeout(() => console.log('dsh web: http://127.0.0.1:' + port + '/?token=fresh'), 800)
+setInterval(() => {}, 1000)
+`)
+  const port = await freePort()
+  const home = join(root, 'dsh')
+  mkdirSync(home)
+  const urlFile = launchUrlFileOf(home)
+  const stale = `http://127.0.0.1:${port}/?token=stale`
+  writeFileSync(urlFile, `${stale}\n`)
+  chmodSync(home, 0o500)
+  const written = []
+  const log = { write: chunk => written.push(String(chunk)) }
+  try {
+    const started = Date.now()
+    const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, urlFile, log })
+    scope.stop = () => stopDsh(child)
+    const elapsed = Date.now() - started
+    assert.equal(url, `http://127.0.0.1:${port}/?token=fresh`, 'the start resolves with the token dsh printed')
+    assert.notEqual(url, stale, 'never the dead token the old file names for this port')
+    // The file still names only the stale token: this URL could come from nowhere but stdout.
+    assert.equal(readFileSync(urlFile, 'utf8').trim(), stale)
+    assert.ok(elapsed >= 400, `resolved late, after dsh printed its line (${elapsed} ms)`)
+    const reported = written.filter(line => line.startsWith('automagik:'))
+    assert.equal(reported.length, 1)
+    assert.ok(reported[0].includes(urlFile), reported[0])
+    assert.match(reported[0], /could not remove the previous launch URL/)
+    assert.match(reported[0], /EACCES/, reported[0])
+  } finally {
+    chmodSync(home, 0o700)
+  }
 })
 
 test('a start forgets the dsh logins earlier starts left, and nothing else of the host', async () => {

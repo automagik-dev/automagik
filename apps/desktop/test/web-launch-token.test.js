@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -195,6 +196,25 @@ function openWebApp(apply, token) {
   return disposers
 }
 
+// A folder a non-root POSIX process cannot write into: the write-failure path's fixture. Windows
+// has no folder mode that blocks a write, and root writes into any folder.
+const readOnlyFolder = { skip: process.platform === 'win32' ? 'Windows has no read-only folder mode' : process.getuid?.() === 0 ? 'root writes into any folder' : false }
+
+// The launch URL line a start prints, and the error it may report, kept for a test.
+function captureOutput(t) {
+  const logged = []
+  const errored = []
+  const originalLog = console.log
+  const originalError = console.error
+  console.log = (...args) => logged.push(args.join(' '))
+  console.error = (...args) => errored.push(args.join(' '))
+  t.after(() => {
+    console.log = originalLog
+    console.error = originalError
+  })
+  return { logged, errored }
+}
+
 test('patches.json pins the new web app patch and the connection 401 path', () => {
   const patch = entryOf(PATCH)
   assert.equal(patch.dsh, DSH)
@@ -281,6 +301,69 @@ test('the patched web app records the launch URL owner-only, then removes it', a
   assert.equal(readFileSync(file, 'utf8'), `${secondUrl}\n`)
   second[0]()
   assert.equal(existsSync(file), false)
+})
+
+// A malformed DSH_HOME: its parent is a regular file, so the temporary file cannot be written
+// and removing it fails with ENOTDIR too. The write failure is reported, recordLaunchUrl returns
+// null, and the launch URL line still prints (#739).
+test('a malformed DSH_HOME reports the write failure and still prints the launch URL', async (t) => {
+  const runtime = makeRuntime(t)
+  patchRuntime(runtime.modules, runtime.patches)
+  const { apply } = await import(pathToFileURL(runtime.webFile).href)
+  const parent = join(runtime.root, 'not-a-folder')
+  writeFileSync(parent, 'a regular file where the home should be\n')
+  const home = join(parent, 'dsh')
+  const file = join(home, 'launch-url')
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  })
+  const { logged, errored } = captureOutput(t)
+
+  const disposers = openWebApp(apply, 'malformed')
+  assert.equal(logged.at(-1), 'dsh web: http://127.0.0.1:43123/?token=malformed', 'the URL line still prints')
+  assert.equal(errored.length, 1)
+  assert.ok(errored[0].includes(`could not save the launch URL in ${file}`), errored[0])
+  // On POSIX the write and its cleanup removal both fail with ENOTDIR; the removal must be caught,
+  // not escape, so the reported failure is the write and the line above still printed.
+  if (process.platform !== 'win32') assert.match(errored[0], /ENOTDIR/, errored[0])
+  assert.equal(existsSync(file), false)
+  // recordLaunchUrl returned null: shutdown has nothing to remove, and its effect does not throw.
+  assert.equal(disposers.length, 1)
+  for (const dispose of disposers) assert.doesNotThrow(dispose)
+})
+
+// The write-failure path against a read-only DSH_HOME: reported, never fatal, and the launch URL
+// line still prints (#739).
+test('a launch URL that cannot be written to a read-only DSH_HOME is reported, not fatal', readOnlyFolder, async (t) => {
+  const runtime = makeRuntime(t)
+  patchRuntime(runtime.modules, runtime.patches)
+  const { apply } = await import(pathToFileURL(runtime.webFile).href)
+  const home = join(runtime.root, 'dsh')
+  mkdirSync(home)
+  const file = join(home, 'launch-url')
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  })
+  const { logged, errored } = captureOutput(t)
+  chmodSync(home, 0o500)
+  try {
+    const disposers = openWebApp(apply, 'read-only')
+    assert.equal(logged.at(-1), 'dsh web: http://127.0.0.1:43123/?token=read-only', 'the URL line still prints')
+    assert.equal(errored.length, 1)
+    assert.ok(errored[0].includes(`could not save the launch URL in ${file}`), errored[0])
+    assert.match(errored[0], /EACCES/, errored[0])
+    assert.equal(existsSync(file), false)
+    assert.equal(disposers.length, 1)
+    for (const dispose of disposers) assert.doesNotThrow(dispose)
+  } finally {
+    chmodSync(home, 0o700)
+  }
 })
 
 test('the connection 401 names the launch URL file, resolved from DSH_HOME', async (t) => {

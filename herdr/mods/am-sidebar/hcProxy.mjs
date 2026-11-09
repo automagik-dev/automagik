@@ -36,7 +36,7 @@ import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
 import { commandArgv } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
-import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
+import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
 import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
@@ -442,13 +442,7 @@ function sendAllowed(record, policy) {
   const labels = isObject(record?.labels) ? record.labels : {};
   if (isOwnWorker(record, policy.caller)) return true;
   if (typeof labels.bot === "string" && policy.team.has(labels.bot)) return true;
-  const listed = typeof labels.bot === "string" && policy.file.bots.some((bot) => bot.id === labels.bot);
-  const self = policy.file.bots.find((bot) => bot.id === policy.caller.bot);
-  if (listed && !policy.caller.worker && self && SHARED_SEND_RANKS.includes(self.rank)) return true;
-  const role = typeof labels.role === "string" ? labels.role : "";
-  if (SHARED_ROLES.includes(role)) return true;
-  const def = typeof labels.bot === "string" ? policy.file.bots.find((bot) => bot.id === labels.bot) : null;
-  return Boolean(def && SHARED_ROLES.includes(def.rank));
+  return sharedSendAllowed(policy.file, policy.caller, labels);
 }
 
 /** One short upstream call: connect, send one request, read one reply, close. */

@@ -10,8 +10,8 @@ object ChatWatch {
      * [status] is Home's word for the chat: blocked, working, idle or done. [turn] is the phone's own count of the
      * turns it saw start, so a looked-at Done ([Cockpit.seenKey]) comes back when another turn finishes. [since]:
      * when the word last changed (ms). [receipt]: how this turn's request was answered, for its Done line. [left]: the
-     * phone closed this chat since: bots-dsh stops following a chat no phone watches and lists it idle, so the next
-     * quiet reading is no finish; the next active one is the same turn going on.
+     * phone closed this chat since: a chat no phone watches can still list idle (a state read bots-dsh could not
+     * make), so the next quiet reading is no finish; the next active one is the same turn going on.
      */
     data class Watched(val status: String, val turn: Long, val since: Long, val receipt: String = "", val left: Boolean = false)
 

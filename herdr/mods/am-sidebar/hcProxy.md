@@ -49,6 +49,8 @@ terminal on the computer running that bot:
 2. Run `automagik-herdr edit <bot> --hc-proxy on`, then
    `automagik-herdr proxy approve --project <project>`. Review the printed roster diff,
    including the switch change. A **roster change needs a pane restart** after approval.
+   After a re-approval, every worker start from an approved pane is refused until that pane
+   restarts, including dsh-tui helper workers. Restart before asking the pane to start workers.
 3. Run `automagik-herdr restart <bot>`. Check that bot before opting in the next.
 4. To roll back, run `automagik-herdr edit <bot> --hc-proxy off`, then
    `automagik-herdr proxy approve --project <project>` (review the diff), then
@@ -122,11 +124,16 @@ ids are never reused, so a rename between the check and the call cannot redirect
 |---|---|
 | `terminal.list` | allowed as is: metadata only (no screen text) |
 | `terminal.get`, `terminal.read`, `terminal.wait` | the caller itself, hcGuard's `teamOf` graph, and its own workers |
-| `terminal.send` | the same, plus hcGuard's pm/integrator/fixer widening for a bot whose bots.json entry has that rank, and the shared reviewer/fixer targets. The widening never reaches a worker pane |
+| `terminal.send` | the same, plus hcGuard's shared send rules: pm/integrator/fixer callers may send to any listed bot; captain callers may send to other captains; tester/reviewer/fixer targets serve every squad. Ranks come from the approved roster. Workers inherit no caller-rank widening |
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
 | `terminal.run` | the helper shape, or the exact approved template/agent shape below; bound bot panes only |
 | `templates.list` | only the approved worker template, with its metadata unchanged |
 | `proxy.workerTransport` | local transport identification for the wrapper's verified bot pane; never forwarded |
+
+The guard and proxy use the same shared send check. Tester targets require a roster rank;
+`role=tester` alone grants nothing. The existing reviewer/fixer label path remains.
+Both ranks for captain-to-captain sends come from the roster, never `role=captain` labels.
+These rules widen only sends; get/read/wait keep the same team graph.
 
 A worker start needs `--bg`, `parent` = the caller, `cwd` under the caller's project
 `.claude/worktrees/`, `worker.of` = the caller's bot, only the worker labels, and this argv:
@@ -164,7 +171,8 @@ written from the pane.
 
 At each worker spawn the proxy calls `readApprovedRecord` again. A missing, unreadable or
 invalid record refuses the allowance. Its digest, approval time and approver must still match
-the record with which this pane started. A newly approved snapshot needs a pane restart.
+the record with which this pane started. After re-approval, all worker starts from an approved
+pane are refused until that pane restarts, including helper workers.
 Neither the live `bots.json` nor the cached team graph supplies worker allowance.
 
 Only the snapshot's `worker.template` or `worker.agent` is allowed. The proxy derives the plan
@@ -182,7 +190,8 @@ The single generated env exception is the default Claude login wrapper,
 template text. The caller cannot add or change an unset or assignment. Separately, the real
 worker CLI wire carries `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`; only
 those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,64}`. All other
-keys and bad values refuse. Parent, caller and worker identity come from the verified pane.
+keys and bad values refuse. Only `caller` is overwritten with the verified pane's identity.
+A forged `parent` or `worker.of` is refused before forwarding; neither is overwritten.
 
 The CLI skips the PATH guard only when the actual transport answers the proxy's local
 `proxy.workerTransport` request for this pane. That single reply supplies both the verified

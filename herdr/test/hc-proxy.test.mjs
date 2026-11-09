@@ -362,6 +362,86 @@ test("the pm/integrator/fixer send widening is send only", async (t) => {
   assert.ok(worker.error, "another bot's worker is not a listed bot");
 });
 
+async function sharedSceneWithCore(t, terminal = "t100") {
+  const { s, fake, start } = await sceneWithCore(t, { proxy: false });
+  const capB = "b-iiiiiiiiii", testerB = "b-jjjjjjjjjj";
+  const file = team();
+  file.bots.find((entry) => entry.id === ID.dev).rank = "dev";
+  file.bots.push(
+    bot(capB, "member", { rank: "captain", lead: ID.main }),
+    bot(testerB, "member", { rank: "tester", lead: capB }),
+  );
+  writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(file));
+  approveProject({ project: s.project, env: s.env, approvedBy: "test" });
+  // No target role labels: reachability must come from the approved roster.
+  s.terminals.push(
+    { address: "t130", labels: { bot: capB }, cwd: s.project, state: "live" },
+    { address: "t131", labels: { bot: testerB }, cwd: s.project, state: "live" },
+  );
+  s.terminals.find((row) => row.address === "t100").labels.role = "captain";
+  s.terminals.find((row) => row.address === "t101").labels.role = "dev";
+  s.terminals.find((row) => row.address === "t121").labels.role = "captain";
+  appendFileSync(s.ledger, `${JSON.stringify({
+    v: 1, event: "attach", bot: ID.cap, project: s.project, terminal: "t101", core: "fake-core",
+    created_ms: 150, machine: null, at: "2026-11-01T00:01:00.000Z", by: "attach",
+  })}\n`);
+  const proxy = await start(terminal);
+  const client = await clientFor(proxy.socket);
+  t.after(() => client.close());
+  fake.clearLog();
+  return { client, fake, s };
+}
+
+test("proxy: a dev can send to another squad's tester by roster rank", async (t) => {
+  const { client, fake } = await sharedSceneWithCore(t);
+  const answer = await client.call("terminal.send", { terminal: "t131", text: "verdict request" });
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.equal(fake.calls("terminal.send").length, 1);
+  for (const method of ["terminal.get", "terminal.read", "terminal.wait"]) {
+    const refused = await client.call(method, { terminal: "t131" });
+    assert.match(refused.error?.message ?? "", /not in the caller's team/);
+  }
+});
+
+test("proxy: a captain can send to another squad's captain by roster rank", async (t) => {
+  const { client, fake } = await sharedSceneWithCore(t, "t101");
+  const answer = await client.call("terminal.send", { terminal: "t130", text: "gate request" });
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.equal(fake.calls("terminal.send").length, 1);
+  for (const method of ["terminal.get", "terminal.read", "terminal.wait"]) {
+    const refused = await client.call(method, { terminal: "t130" });
+    assert.match(refused.error?.message ?? "", /not in the caller's team/);
+  }
+});
+
+test("proxy: a dev cannot send to another squad's captain", async (t) => {
+  const { client, fake } = await sharedSceneWithCore(t);
+  const answer = await client.call("terminal.send", { terminal: "t130", text: "hi" });
+  assert.match(answer.error?.message ?? "", /not in the caller's team/);
+  assert.equal(fake.calls("terminal.send").length, 0);
+});
+
+test("proxy: a captain's worker cannot use captain-to-captain sends", async (t) => {
+  const { client, fake } = await sharedSceneWithCore(t, "t121");
+  const answer = await client.call("terminal.send", { terminal: "t130", text: "hi" });
+  assert.match(answer.error?.message ?? "", /not in the caller's team/);
+  assert.equal(fake.calls("terminal.send").length, 0);
+});
+
+test("proxy: tester and captain target labels alone do not widen sends", async (t) => {
+  const { client, fake, s } = await sharedSceneWithCore(t, "t101");
+  const target = s.terminals.find((row) => row.address === "t110");
+  for (const role of ["tester", "captain"]) {
+    target.labels.role = role;
+    for (const bot of [ID.other, "b-kkkkkkkkkk"]) {
+      target.labels.bot = bot;
+      const answer = await client.call("terminal.send", { terminal: "t110", text: "hi" });
+      assert.match(answer.error?.message ?? "", /not in the caller's team/);
+    }
+  }
+  assert.equal(fake.calls("terminal.send").length, 0);
+});
+
 test("terminal.run accepts only the exact worker shape and refuses the rest", async (t) => {
   const { s, fake, proxy, start } = await sceneWithCore(t);
   fake.clearLog();
@@ -1309,4 +1389,20 @@ test("approved worker accepts four bounded terminal vars and refuses bad values 
     assert.match(answer.error.message, /env .* override is refused/);
   }
   assert.equal(fake.calls("terminal.run").length, 1);
+});
+
+
+test("unbound approved pane refuses proxy.workerTransport", async (t) => {
+  const { s, fake, start } = await sceneWithCore(t, { proxy: false });
+  const proxy = await start("t100", { caller: { bot: ID.dev, project: s.project }, bound: false });
+  assert.ok(proxy.policy.approval, "this pane has a valid approved snapshot");
+  assert.equal(proxy.policy.bound, false, "only the bound check can refuse this transport");
+  const client = await clientFor(proxy.socket);
+  t.after(() => client.close());
+  fake.clearLog();
+  const answer = await client.call("proxy.workerTransport");
+  assert.equal(answer.result, undefined, "an unbound pane receives no transport identity");
+  assert.match(answer.error.message,
+    /^hc-proxy: proxy\.workerTransport: only an approved bot pane has a worker transport$/);
+  assert.deepEqual(fake.log, [], "the transport request is never forwarded upstream");
 });

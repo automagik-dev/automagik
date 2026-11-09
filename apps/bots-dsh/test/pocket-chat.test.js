@@ -1059,6 +1059,90 @@ test('questions: answered on the computer first closes the phone\'s card with th
   w.handle.close()
 })
 
+// ---- list: a Bot no phone watches is read from DSH, so its question reaches Home (#752)
+
+test('list: an unwatched Bot waiting on a question is blocked with its kind and the question in msg, on a writable bridge', async () => {
+  const data = sessions()
+  const controller = fakeController(data)
+  const source = writableOf(controller)
+  const pc = computer()
+  const { answer } = askQuestion(source, pc, { id: 'which', question: 'Which branch?', options: [{ label: 'main' }] })
+  await settle()
+  data['s-omni-2'].pending = ['question']
+  const listed = await source.list()
+  // The row keeps the shape Pocket knows; the open request's text is its line, with the question's kind.
+  assert.deepEqual(listed.find(row => row.terminal === 'dsh:omni'), {
+    terminal: 'dsh:omni', machine: null, agent: 'dsh', title: 'Omni',
+    status: { state: 'blocked', kind: 'question', msg: 'Which branch?', turn: 0 },
+    chat: 'session', shown: true, registryId: null,
+  })
+  // Listing is not watching: no entry was made, and the other Bot is listed beside it.
+  assert.equal(source.entries.size, 0)
+  assert.deepEqual(listed.map(row => row.terminal), ['dsh:omni', 'dsh:ada'])
+  // Answered on the computer: the request is gone, and the next listing is idle with no text.
+  pc.dialogs[0].answer({ answers: [{ id: 'which', selected: ['main'] }] })
+  await answer
+  data['s-omni-2'].pending = []
+  assert.deepEqual((await source.list()).find(row => row.terminal === 'dsh:omni').status, statusOf(null))
+  // An approval's summary is the line, with the permission kind.
+  const { outcome } = askApproval(source, pc, { callId: 'c9', toolName: 'bash' })
+  await settle()
+  data['s-omni-2'].pending = ['approval']
+  assert.deepEqual((await source.list()).find(row => row.terminal === 'dsh:omni').status, { state: 'blocked', kind: 'permission', msg: 'run bash', turn: 0 })
+  pc.dialogs[1].answer('allowed-once')
+  await outcome
+})
+
+test('list: on a read-only bridge the unwatched chat is blocked and says Answer on the computer', async () => {
+  const data = sessions()
+  data['s-omni-2'].pending = ['question']
+  const row = (await sourceOf(fakeController(data)).list()).find(item => item.terminal === 'dsh:omni')
+  assert.equal(row.status.state, 'blocked')
+  assert.equal(row.status.kind, 'question')
+  assert.equal(row.status.msg, ANSWER_ON_COMPUTER)
+})
+
+test('list: a watched Bot keeps its entry and is not read again; an unwatched one is', async () => {
+  const data = sessions()
+  const controller = fakeController(data)
+  const source = writableOf(controller)
+  const w = await watching(source)
+  controller.observe('s-omni-2', { cursor: 8, active: true, running: true, queue: [], pendingInput: [] })
+  await settle()
+  // DSH now waits on a question, but the listing serves the watch's word and asks the controller nothing.
+  data['s-omni-2'].pending = ['question']
+  controller.calls.length = 0
+  const listed = await source.list()
+  assert.equal(listed.find(row => row.terminal === 'dsh:omni').status.state, 'working')
+  assert.deepEqual(controller.calls.filter(call => call.startsWith('state ')), ['state ada'])
+  w.handle.close()
+})
+
+test('list: a state read that fails or is too slow still lists every Bot (idle fallback) and is logged', async () => {
+  // Failing: Omni's read throws, Ada's answers working, so the listing is whole and the other row is live.
+  const data = sessions()
+  data.ada.running = true
+  const failing = fakeController(data)
+  const state = failing.state
+  failing.state = async (params) => {
+    failing.calls.push(`state ${params.sessionId}`)
+    if (params.sessionId === 's-omni-2') throw new Error('the Session is unreachable')
+    return state(params)
+  }
+  const logs = []
+  const listed = await new DshChatSource({ adapter: createAdapter(failing), bots: ownBots(team()), timers, log: (...args) => logs.push(args) }).list()
+  assert.deepEqual(listed.map(row => [row.terminal, row.status.state]), [['dsh:omni', 'idle'], ['dsh:ada', 'working']])
+  assert.deepEqual(logs, [['pocket chat: could not read %s for the listing: %s', 'omni', 'the Session is unreachable']])
+  // Timing out: a state that never answers keeps that row idle; list itself never waits past listMs.
+  const slow = fakeController(sessions())
+  slow.state = ({ sessionId }) => {
+    slow.calls.push(`state ${sessionId}`)
+    return sessionId === 's-omni-2' ? new Promise(() => {}) : Promise.resolve({ cursor: -1, active: true, running: true, queue: [], pendingInput: [] })
+  }
+  const quickly = await within(new DshChatSource({ adapter: createAdapter(slow), bots: ownBots(team()), timers, listMs: 20 }).list(), 1000)
+  assert.deepEqual(quickly.map(row => [row.terminal, row.status.state]), [['dsh:omni', 'idle'], ['dsh:ada', 'working']])
+})
+
 // ---- shown[]: the person's picks in the home file (shown.js)
 
 const REG = 'b-abcdefghij'
