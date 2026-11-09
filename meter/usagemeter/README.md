@@ -285,6 +285,7 @@ links for 400 days. The rollups stay as they are.
 usagemeter sync                 # the normal run: at most 20 s, then publish
 usagemeter sync --no-publish    # update the store only
 usagemeter sync --backfill      # import the full history instead of 30 days (resumes across runs)
+usagemeter sync --evidence-backfill --days 90   # per-call evidence for the last 90 days, re-tagged
 usagemeter status               # what the store holds, as JSON
 usagemeter --version
 ```
@@ -300,6 +301,14 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
 - When the budget runs out, progress so far is committed and the rest waits for the next run. A
   killed run loses at most the chunk it was on and never counts anything twice.
 - A missing `hc` is not an error: the summary is just not published.
+- `--evidence-backfill --days N` (RFC 0021 (c), run by the operator, never on its own): N is 1 to
+  90, the evidence's retention, whatever the oldest ledger row says. For the hours before
+  `evidence_from`, it re-reads the omp, Claude Code and dsh-tui logs still on disk and moves each
+  call out of the rollup that counted it, with its evidence, to the row its attribution names
+  now; totals never change. Then `evidence_from` moves back, and every call from then is queued
+  to have its attribution recomputed from today's ledgers and labels. It runs under the budget,
+  one transaction per chunk, and later syncs go on with it until it is done. Codex threads, usage
+  whose logs are gone, and rows written before schema 3 keep their hours before evidence.
 - A store a newer meter wrote is refused (exit 12) before anything is opened for writing.
 - A write to an existing store's schema (a reset, the schema 3 migration, or the query's index on
   an older store) needs twice the store's size free (else exit 4, nothing changed). Before a reset
@@ -335,7 +344,23 @@ with the reason. Unknown is never 0: an unpriced amount, the reasoning of a harn
 none (dsh-tui) and the backlog while a reset's re-import is unfinished are null. The query never
 syncs: only `sync` refreshes the store.
 `sync` keeps an index on (repo, branch, hour), made by its first run after an upgrade (no row
-changes, no new `schema_version`), so a query reads only the rows of the branches it names.
+changes, no new `schema_version`); a query reads the repo's rows in its window through it.
+
+```sh
+usagemeter query --repo example.com/acme/widgets --by bot [--branch feat/x ...] --json
+```
+
+Actors (RFC 0021 (d)): every answer says who its tokens belong to.
+- Each row with tokens carries `attribution.actor`: `tokens_attributed`, `tokens_ambiguous`,
+  `tokens_unlinked` and `tokens_before_evidence` add up to `tokens.total`; `tokens_by_basis`
+  (`session`, `label`, `worktree`) to the attributed part; `tokens_by_branch_basis` (`log`,
+  `ledger`, `none`) to the total. Usage before `evidence_from`, all of it while that is null, and
+  rollups written before schema 3 are before evidence: never attributed, whatever bot they name.
+- `actor_unattributed` holds the repo's usage in the window given to no bot, one part per reason
+  (`claimants_differ`, `no_record`, `dsh_tui_seat`, `other_machine`, `before_evidence`).
+- `--by bot` answers one row per (bot, kind, role, squad, unrecorded, harness) of attributed
+  usage, the branches named (none needed) a filter. A bot with no row is 0 only when
+  `actor_unattributed.absent_bot_is_zero` is true; otherwise it is unknown.
 
 ## The summary doc
 
