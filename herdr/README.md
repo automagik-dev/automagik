@@ -1399,7 +1399,11 @@ and import nothing from Herdr; so does the briefing's text (`briefingText.mjs`).
 Model detection lives in `models.js` (`test/models.test.mjs`). `test/briefing.test.mjs`
 runs `briefing.mjs` under node with a fake `hc` on `PATH`, and `test/cli.test.mjs` runs every
 `automagik-herdr` command against scratch git projects with a recording fake `hc`
-(`test/fake-hc.mjs`). `test/bots.test.mjs` runs `bots.js` against stand-ins for
+(`test/fake-hc.mjs`). `test/scratch-project.mjs` makes every scratch project its own isolated
+project (`git init` when `isGit`, its own `.herdr` folder, and `GIT_CEILING_DIRECTORIES`),
+asserts before any CLI call that `projectOf`/`projectKeyOf` resolves to the scratch folder
+itself (failing with one line naming the outer project if it does not), and prints a one-line
+warning at suite start when `TMPDIR` lies inside a folder holding `.herdr/bots.json` or `.git`. `test/bots.test.mjs` runs `bots.js` against stand-ins for
 Herdr's `herdr` and `fs/promises` modules (`test/herdr-stub.mjs`, `test/fs-stub.mjs`; the
 second has only the seven functions Herdr gives a mod). A pass there does not prove the pack
 works inside Herdr. Check that in Herdr itself.

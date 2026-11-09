@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { DocError, docGet } from "../mods/am-sidebar/docGet.mjs";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -18,8 +19,7 @@ const METER = { tasks: { "gl-1": { usd: 1.25, work_min: 30, lead_min: 4 } } };
 const realSetTimeout = setTimeout;
 
 function scene(t, state = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-doc-cli-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-doc-cli-");
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
   for (const d of [bin, home, app]) mkdirSync(d, { recursive: true });
   const hc = join(bin, "hc");
@@ -30,7 +30,7 @@ function scene(t, state = {}) {
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: [], next: 100, ...state }));
   writeFileSync(logPath, "");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   const cli = (args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: "utf8", timeout: 20000 });

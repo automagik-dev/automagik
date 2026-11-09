@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -47,29 +48,26 @@ process.stdout.write("stub-out " + JSON.stringify(args) + "\\n"); process.exit(0
  * then `<home>/.config/herdr-app`). Dev's pane t7 is live there, Genie's send target.
  */
 function scene(t, { withAppHome = true } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-650-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-650-");
   // Not a folder named "home": privacy-check reads a "/home/<name>" path (even under <root>) as a
   // real home path. It is the scratch HOME all the same.
-  const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "box"), app = join(root, "app");
+  const bin = join(root, "bin"), home = join(root, "box"), app = join(root, "app");
   const guardBin = join(root, "guard-bin");
-  for (const d of [project, bin, home, app, guardBin]) mkdirSync(d, { recursive: true });
-  execFileSync("git", ["init", "-q", "--template=", project]);
+  for (const d of [bin, home, app, guardBin]) mkdirSync(d, { recursive: true });
+  const project = scratchProject(root, "proj", { template: "", bots: { version: 1, categories: [], bots: BOTS } });
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   // The guard's own stub: the CLI's fake hc has no send (the CLI never sends), this one logs it.
   exe(join(guardBin, "hc"), `#!${process.execPath}\n${GUARD_STUB.replace("__PEER__", ID.dev)}`);
   exe(join(bin, "herdr-app"), "#!/bin/sh\necho \"no window in tests\" >&2\nexit 1\n");
   exe(join(bin, "pgrep"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_PGREP}" "$@"\n`);
   exe(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
-  mkdirSync(join(project, ".herdr"));
-  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: BOTS }, null, 2)}\n`);
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   const peer = { address: "t7", name: "dev", cwd: project, state: "live", created_ms: 100, labels: { bot: ID.dev },
     foreground: { argv: ["claude"], cwd: project }, status: { app: "claude-code", state: "idle" } };
   writeFileSync(statePath, JSON.stringify({ terminals: [peer], next: 100 }));
   writeFileSync(logPath, "");
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C",
-    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "100" };
+    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "100", GIT_CEILING_DIRECTORIES: root };
   if (withAppHome) env.HERDR_APP_HOME = app;
   const cli = (args) => spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });
   return { root, project, bin, guardBin, home, app, statePath, logPath, env, cli };

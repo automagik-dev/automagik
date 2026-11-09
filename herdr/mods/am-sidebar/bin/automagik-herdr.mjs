@@ -1874,6 +1874,13 @@ async function cmdCreate(opts) {
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
+  if (opts.project !== undefined && project.dir === project.key) {
+    const given = (project.machine ? opts.project : resolvePath(opts.project)).replace(/\/+$/, "") || "/";
+    const same = project.dir === given || (!project.machine && (() => {
+      try { return realpathSync(project.dir) === realpathSync(given); } catch { return false; }
+    })());
+    if (!same) report([`saved in ${fileName(project)} (project ${project.key}, resolved from --project ${given}).`]);
+  }
   // A lead that becomes a captain; another machine's panes are left as they are.
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id, ...placeOf(project), bot: entry, relabelled } : id;

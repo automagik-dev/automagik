@@ -9,13 +9,15 @@ import {
   BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, paneKeyOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
 } from "../mods/am-sidebar/model.js";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const run = promisify(execFile);
+const roots = new Set();
 // What bots.js hands projectKeyOf, over Node instead of Herdr's exec.
 const git = async (args, cwd) => {
   try { return (await run("git", args, { cwd })).stdout; } catch { return null; }
 };
-const exists = async (path) => existsSync(path);
+const exists = async (path) => [...roots].some((r) => path === r || path.startsWith(`${r}/`)) && existsSync(path);
 const noGit = async () => null;
 // No git installed: the adapter answers null, as bots.js does for a program that can't start.
 const missingGit = async (args, cwd) => {
@@ -26,8 +28,9 @@ const unreachable = async () => { throw new Error("machine unreachable"); };
 // A scratch repository with one commit, a worktree and a subfolder, under $TMPDIR
 // (realpath: on macOS /var/folders is /private/var/folders, and git answers with the real one).
 function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "automagik-herdr-");
+  roots.add(root);
+  t.after(() => roots.delete(root));
   return root;
 }
 async function repo(t) {
@@ -59,7 +62,7 @@ test("project key: a subfolder belongs to its main checkout", async (t) => {
 
 test("project key: a worktree's committed bots.json is not its project", async (t) => {
   const { main, tree } = await repo(t);
-  mkdirSync(join(tree, ".herdr"));
+  mkdirSync(join(tree, ".herdr"), { recursive: true });
   writeFileSync(join(tree, ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(tree, git, exists), main);
 });
@@ -68,7 +71,7 @@ test("project key: outside git, the nearest folder holding .herdr/bots.json", as
   const root = scratch(t);
   const deep = join(root, "a", "b", "c");
   mkdirSync(deep, { recursive: true });
-  mkdirSync(join(root, "a", ".herdr"));
+  mkdirSync(join(root, "a", ".herdr"), { recursive: true });
   writeFileSync(join(root, "a", ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(deep, git, exists), join(root, "a"));
   assert.equal(await projectKeyOf(join(root, "a"), git, exists), join(root, "a"));
@@ -86,12 +89,12 @@ test("project key: a picked folder outside git under another project's folder is
   const root = scratch(t);
   const child = join(root, "repos", "child");
   mkdirSync(child, { recursive: true });
-  mkdirSync(join(root, "repos", ".herdr"));
+  mkdirSync(join(root, "repos", ".herdr"), { recursive: true });
   writeFileSync(join(root, "repos", ".herdr", "bots.json"), "{}");
   assert.deepEqual(await projectOf(child, git, exists), { key: join(root, "repos"), own: child });
   assert.equal(await projectKeyOf(child, git, exists), join(root, "repos"));
   // Once child has its own file, the walk-up finds it first.
-  mkdirSync(join(child, ".herdr"));
+  mkdirSync(join(child, ".herdr"), { recursive: true });
   writeFileSync(join(child, ".herdr", "bots.json"), "{}");
   assert.deepEqual(await projectOf(child, git, exists), { key: child, own: child });
 });
@@ -108,7 +111,7 @@ test("project key: git missing or failing reads as outside git", async (t) => {
   // Inside a real repository, but git can't answer: the folder rule applies.
   assert.equal(await projectKeyOf(sub, noGit, exists), sub);
   assert.equal(await projectKeyOf(sub, missingGit, exists), sub);
-  mkdirSync(join(main, ".herdr"));
+  mkdirSync(join(main, ".herdr"), { recursive: true });
   writeFileSync(join(main, ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(sub, missingGit, exists), main);
 });
@@ -545,7 +548,7 @@ test("pane key (#227): a folder that names no project gives null; a bots.json ab
   assert.equal(await paneKeyOf(deep, missingGit, exists), null);
   assert.equal(await paneKeyOf(join(root, "gone"), git, exists), null);
   // A project outside git: the walk-up finds it.
-  mkdirSync(join(root, "a", ".herdr"));
+  mkdirSync(join(root, "a", ".herdr"), { recursive: true });
   writeFileSync(join(root, "a", ".herdr", "bots.json"), "{}");
   assert.equal(await paneKeyOf(deep, noGit, exists), join(root, "a"));
   // A machine that can't be asked still rejects (the caller reads that as no project).
