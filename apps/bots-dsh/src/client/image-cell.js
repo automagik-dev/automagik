@@ -1,10 +1,12 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { call } from './api.js'
-import { CopyIcon, DownloadIcon } from './icons.js'
+import { CopyIcon, DownloadIcon, ExpandIcon } from './icons.js'
 import { t } from './i18n.js'
 import { clayArtOf, faceAt, LAMP, MARK_ART } from './clay-art.js'
 import { lookOf } from './characters.js'
 import { GENIE_AURORA, genieTint } from './genie-tint.js'
+import { IMAGE_VIEWER_CSS, ImageViewer } from './image-viewer.js'
 
 // -------------------------------------------------------------------------
 // An image being made in the chat (a generate_image call, or an agent's own image tool): the Bot
@@ -169,8 +171,10 @@ async function copyImage(url) {
  * image the service streams takes its place, sharper each time), and the finished image fades in
  * where the painter was once it has loaded. A call that failed or was stopped says the image was
  * not made, and why; an image that was made but no longer loads says so, and the painting stops.
+ * The finished image opens over the whole window (image-viewer.js) from a click on it or from
+ * its Open tool; `onAsk` sends what the person asks there to this chat.
  */
-export function ImageCell({ callId, prompt, size, done, content, isError, bot }) {
+export function ImageCell({ callId, prompt, size, done, content, isError, bot, onAsk }) {
   const running = !done
   const progress = useProgress(callId, running)
   // Until the host says when it started, the card counts from when it first showed.
@@ -182,6 +186,11 @@ export function ImageCell({ callId, prompt, size, done, content, isError, bot })
   const [image, setImage] = useState('loading')
   const loaded = image === 'loaded'
   const [copied, setCopied] = useState(false)
+  const [view, setView] = useState('closed')
+  const opener = useRef(null)
+  const open = () => setView('open')
+  // Focus goes back to the card without scrolling to it: after a request the chat shows its end.
+  const close = () => { setView('closed'); opener.current?.focus({ preventScroll: true }) }
   const face = useFace(running || (id !== undefined && image === 'loading'))
   const failed = done && (isError || id === undefined)
   if (failed || (id !== undefined && image === 'lost')) {
@@ -199,9 +208,10 @@ export function ImageCell({ callId, prompt, size, done, content, isError, bot })
     h('div', { className: 'bt-img-frame', style: painting ? undefined : { aspectRatio: ratioOf(size) } },
       painting ? h(Painter, { bot, face }) : null,
       partial ? h('img', { className: 'bt-img-partial', 'data-step': step, src: partial, alt: '', draggable: false }) : null,
-      url ? h('img', { className: 'bt-img-final', src: url, alt: prompt ?? '', onLoad: () => setImage('loaded'), onError: () => setImage('lost') }) : null,
+      url ? h('img', { className: 'bt-img-final', src: url, alt: prompt ?? '', onClick: loaded ? open : undefined, onLoad: () => setImage('loaded'), onError: () => setImage('lost') }) : null,
       url && loaded
         ? h('div', { className: 'bt-img-tools' },
+            h('button', { ref: opener, type: 'button', className: 'bt-img-tool', title: t('Open image'), 'aria-label': t('Open image'), 'aria-haspopup': 'dialog', onClick: open }, h(ExpandIcon)),
             h('a', { className: 'bt-img-tool', href: url, download: `${id}.png`, title: t('Save image'), 'aria-label': t('Save image') }, h(DownloadIcon)),
             typeof ClipboardItem === 'function' ? h('button', { type: 'button', className: 'bt-img-tool', title: copied ? t('Copied') : t('Copy image'), 'aria-label': t('Copy image'), onClick: () => { void copyImage(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }, () => {}) } }, h(CopyIcon)) : null)
         : null),
@@ -210,7 +220,10 @@ export function ImageCell({ callId, prompt, size, done, content, isError, bot })
       : h('figcaption', { className: 'bt-img-status', role: 'status' },
           h('span', { className: 'bt-img-dot', 'aria-hidden': true }),
           h('b', { className: 'bt-img-caption' }, t('Painting your image…')),
-          h('span', { className: 'bt-img-time' }, `${elapsed}s`)))
+          h('span', { className: 'bt-img-time' }, `${elapsed}s`)),
+    url && loaded && view === 'open'
+      ? createPortal(h(ImageViewer, { id, url, alt: prompt, onAsk, onClose: close }), document.body)
+      : null)
 }
 
 // No card behind the painter while it paints: only the painter, its dabs or its photo cards, and
@@ -274,7 +287,7 @@ export const IMAGE_CELL_CSS = `
 body[data-bt-motion=quiet] :is(.bt-img-omni,.bt-img-dot,.bt-img-partial,.bt-img-final,.bt-img-lamp,.bt-img-glow,.bt-img-rise){animation:none!important}
 body[data-bt-motion=quiet] :is(.bt-img-dab,.bt-img-spark,.bt-img-pic){display:none}
 body[data-bt-motion=quiet] .bt-img-glow{opacity:.6}
-`
+${IMAGE_VIEWER_CSS}`
 
 // Settings → Bots: what draws the Bots' images here, so the person knows before asking.
 export function ImagesSection({ Section, Row }) {

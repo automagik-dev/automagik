@@ -963,6 +963,114 @@ test('a generate_image call paints with the same Omni card', () => {
   assert.equal(find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final').props.alt, 'A black octopus')
 })
 
+// The finished image opens over the whole window (image-viewer.js): from a click on it or from
+// its Open tool, with Save, Close and a field that asks this same chat for changes.
+const keptImage = (tool = 'generate_image') => (tool === 'generate_image'
+  ? call('generate_image', 'gi_1', { args: { prompt: 'A black octopus' }, content: 'Drew the image and saved it as /w/images/img-1234abcd-ef.png.' })
+  : call('acp_tool', 'acp_1', { args: { id: 'ig-1', title: 'Image generation', kind: 'other', input: { prompt: 'A black octopus' }, image: true }, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png.' }))
+// The card as it stands with these states in place of their first values.
+const imageCard = (root, options, states) => {
+  stateFor = initial => states[initial] ?? initial
+  try { return show(root, options) } finally { stateFor = initial => initial }
+}
+const labelled = (node, label) => find(node, child => child.props?.['aria-label'] === label)
+const viewerOf = node => find(node, child => child.props?.role === 'dialog')
+
+test('a finished image opens in the viewer from a click on it or from its Open tool', () => {
+  // Until the image has loaded there is nothing to open.
+  const arriving = show(keptImage(), omniChat)
+  assert.equal(find(arriving, node => node.props?.className === 'bt-img-final').props.onClick, undefined)
+  assert.equal(labelled(arriving, 'Open image'), undefined)
+
+  const card = imageCard(keptImage(), omniChat, { loading: 'loaded' })
+  assert.equal(viewerOf(card), undefined, 'closed until asked')
+  const tools = find(card, node => node.props?.className === 'bt-img-tools').props.children.filter(Boolean)
+  assert.deepEqual(tools.map(tool => tool.props['aria-label']), ['Open image', 'Save image'], 'Open comes first, beside the card\'s own tools')
+  const open = labelled(card, 'Open image')
+  assert.equal(open.type, 'button')
+  assert.equal(open.props['aria-haspopup'], 'dialog')
+  for (const opener of [open, find(card, node => node.props?.className === 'bt-img-final')]) {
+    sets.length = 0
+    opener.props.onClick()
+    assert.deepEqual(sets, ['open'])
+  }
+})
+
+test('the viewer shows the image with Save, Close and a field to ask for changes', () => {
+  const card = imageCard(keptImage(), { ...omniChat, actions: { send: async () => true } }, { loading: 'loaded', closed: 'open' })
+  const viewer = viewerOf(card)
+  assert.equal(viewer.props['aria-modal'], true)
+  assert.equal(viewer.props['aria-label'], 'Image viewer')
+  const image = find(viewer, node => node.type === 'img')
+  assert.equal(image.props.src, 'api/omni-ui/image?id=img-1234abcd-ef')
+  assert.equal(image.props.alt, 'A black octopus')
+  const save = labelled(viewer, 'Save image')
+  assert.equal(save.type, 'a')
+  assert.equal(save.props.href, 'api/omni-ui/image?id=img-1234abcd-ef')
+  assert.equal(save.props.download, 'img-1234abcd-ef.png')
+  const field = labelled(viewer, 'Ask for changes to this image')
+  assert.equal(field.type, 'input')
+  assert.equal(field.props.placeholder, 'Ask for changes…')
+  assert.equal(labelled(viewer, 'Send').props.disabled, true, 'nothing to send yet')
+  // The app's own pieces: the scrim, the card's tools and the memory dialog's ask row.
+  const layer = find(card, node => node.props?.className === 'bt-imgv-layer')
+  assert.equal(typeof find(layer, node => node.props?.className === 'bt-scrim').props.onMouseDown, 'function')
+  assert.equal(save.props.className, 'bt-img-tool')
+  assert.match(find(viewer, node => node.type === 'form').props.className, /\bbt-mem-ask\b/)
+  assert.equal(field.props.className, 'bt-mem-input')
+
+  // Close, and the scrim, close it.
+  sets.length = 0
+  labelled(viewer, 'Close image').props.onClick()
+  find(layer, node => node.props?.className === 'bt-scrim').props.onMouseDown()
+  assert.deepEqual(sets, ['closed', 'closed'])
+
+  // Its own copy of the image failing to load says the image is gone.
+  sets.length = 0
+  image.props.onError()
+  assert.deepEqual(sets, ['lost'])
+  const lost = viewerOf(imageCard(keptImage(), omniChat, { loading: 'loaded', closed: 'open', shown: 'lost' }))
+  assert.match(text(find(lost, node => node.props?.role === 'status')), /The image could not be shown.*no longer in the team folder/)
+  assert.equal(find(lost, node => node.type === 'img'), undefined)
+  assert.equal(labelled(lost, 'Save image'), undefined, 'a lost image has nothing to save')
+  assert.ok(labelled(lost, 'Close image'))
+
+  // A chat that cannot be written to offers no field.
+  const readOnly = viewerOf(imageCard(keptImage(), omniChat, { loading: 'loaded', closed: 'open' }))
+  assert.equal(find(readOnly, node => node.type === 'form'), undefined)
+  assert.ok(labelled(readOnly, 'Close image'))
+  // Nor does a window that can only view the team, though it has a send action.
+  const viewOnly = viewerOf(imageCard(keptImage(), { ...omniChat, roster: { ...painters, readOnly: 'This window can only view the team.' }, actions: { send: async () => assert.fail('sent from a read-only window') } }, { loading: 'loaded', closed: 'open' }))
+  assert.equal(find(viewOnly, node => node.type === 'form'), undefined)
+  assert.ok(labelled(viewOnly, 'Save image'))
+})
+
+test('the viewer\'s field sends the request to the same chat, naming the image', async () => {
+  const typed = { loading: 'loaded', closed: 'open', '': 'Make it blue ' }
+  for (const [tool, sessionId] of [['generate_image', omni.id], ['acp_tool', omni.id], ['generate_image', room.id]]) {
+    const sent = []
+    const viewer = viewerOf(imageCard(keptImage(tool), { sessionId, roster: painters, actions: { send: async (...args) => { sent.push(args) } } }, typed))
+    assert.equal(labelled(viewer, 'Send').props.disabled, false)
+    sets.length = 0
+    await find(viewer, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+    assert.deepEqual(sent, [[sessionId, 'About the image images/img-1234abcd-ef.png: Make it blue']], `${tool} in ${sessionId}`)
+    assert.deepEqual(sets, ['sending', null, 'closed'], 'the viewer closes once the request is sent')
+  }
+
+  // A request the host refuses keeps the viewer open and says why.
+  const refused = viewerOf(imageCard(keptImage(), { ...omniChat, actions: { send: async () => { throw new Error('This Bot is not answering.') } } }, typed))
+  sets.length = 0
+  await find(refused, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(sets, ['sending', null, 'This Bot is not answering.', 'idle'])
+  const told = viewerOf(imageCard(keptImage(), { ...omniChat, actions: { send: async () => true } }, { ...typed, null: 'This Bot is not answering.' }))
+  assert.equal(text(find(told, node => node.props?.role === 'alert')), 'This Bot is not answering.')
+
+  // One request at a time.
+  const busy = viewerOf(imageCard(keptImage(), { ...omniChat, actions: { send: async () => assert.fail('sent twice') } }, { ...typed, idle: 'sending' }))
+  assert.equal(labelled(busy, 'Send').props.disabled, true)
+  await find(busy, node => node.type === 'form').props.onSubmit({ preventDefault() {} })
+})
+
 const painterOf = node => find(node, child => child.props?.className === 'bt-img-paint')
 const imageCall = () => call('generate_image', 'gi_2', { args: { prompt: 'A lamp' }, running: true })
 
