@@ -20,7 +20,7 @@ Yes and No.
   **Superseded** for "don't ask again" options by the next line. Mode changes stay excluded.
 - Owner, 2026-11-01: when a permission prompt offers a "don't ask again" or always option, the
   person can pick it in one tap, in the terminal's answer row and in the notification, ordered
-  Yes / Always / No. Notification actions keep the existing lock-screen rules. Requested by Felipe
+  Yes / Always / No. Notification actions keep the existing lock-screen rules. Requested by the owner
   for PR automagik-dev/automagik-pocket#41, answering PR automagik-dev/automagik-pocket#24's "Say if you want them in-app".
 
 ## Current state

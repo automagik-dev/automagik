@@ -17,7 +17,7 @@ writes it, and it is the only file in the folder that other mods may read.
 
 - Owner, 2026-11-01: Pocket Link publishes whether phones are connected in a small, stable,
   versioned file for other mods, kept apart from `status.json`. It holds no ticket, endpoint id or
-  secret, and a clean shutdown writes `running: false`. Requested by Felipe for PR automagik-dev/automagik-pocket#39, so that the
+  secret, and a clean shutdown writes `running: false`. Requested by the owner for PR automagik-dev/automagik-pocket#39, so that the
   Herdr sidebar can put a dot on its Pocket Link icon while a phone is connected.
 - Owner, 2026-11-01: `status.json` keeps the pairing ticket and stays 0600, because the dialog's
   QR code is built from it (PR automagik-dev/automagik-pocket#39).

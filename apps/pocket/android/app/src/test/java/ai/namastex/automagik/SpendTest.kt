@@ -47,10 +47,10 @@ class SpendTest {
     private fun view(vararg r: Spend.Reading?, machines: List<String> = emptyList()) = Spend.View(r.filterNotNull(), machines, now, ZoneOffset.UTC)
 
     private val app = "repo:example/app"
-    private val a = report("g9", v2("core-a",
+    private val a = report("desktop", v2("core-a",
         listOf(project("github.com/example/app", t(2.0), t(10.0), t(30.0)), project(null, t(0.5), t(0.5), t(0.5))),
         listOf(task("github.com/example/app", "feat/login", 4, t(1.0), t(4.0), t(12.0)), task("github.com/example/app", "fix/crash", 2, null, t(2.0), t(6.0)))))
-    private val b = report("ryzen", v2("core-b",
+    private val b = report("workstation", v2("core-b",
         listOf(project("gitlab.com/Example/App", t(3.0), t(5.0), t(8.0))),
         listOf(task("gitlab.com/Example/App", "feat/login", 3, t(3.0), t(5.0), t(8.0)))))
 
@@ -116,36 +116,36 @@ class SpendTest {
     }
 
     @Test fun staleAndMissingMachinesAreNamed() {
-        val stale = report("g9", v2("core-a", listOf(project("github.com/example/app", t(1.0), t(1.0), t(1.0))), generated = now - 3 * hour - 60_000))
-        val v = view(stale, b, machines = listOf("g9", "ryzen", "vps", "laptop"))
+        val stale = report("desktop", v2("core-a", listOf(project("github.com/example/app", t(1.0), t(1.0), t(1.0))), generated = now - 3 * hour - 60_000))
+        val v = view(stale, b, machines = listOf("desktop", "workstation", "vps", "laptop"))
         assertEquals(listOf(Spend.State.STALE, Spend.State.FRESH, Spend.State.MISSING, Spend.State.MISSING), v.coverage.machines.map { it.state })
-        assertEquals("2 of 4 machines reporting · g9 data 3 h old · no meter on laptop, vps", Spend.coverageLine(v.coverage))
+        assertEquals("2 of 4 machines reporting · desktop data 3 h old · no meter on laptop, vps", Spend.coverageLine(v.coverage))
         assertFalse(v.coverage.complete)
         // A stale doc still counts: its machine's totals don't vanish.
         assertEquals(4.0, v.project(app, D1)!!.usd!!, 1e-9)
     }
 
     @Test fun unsupportedVersionAsksForAnUpdate() {
-        val future = Spend.parse("g9", JSONObject().put("schema_version", 99).put("kind", "herdr-meter").put("projects", "anything"))
+        val future = Spend.parse("desktop", JSONObject().put("schema_version", 99).put("kind", "herdr-meter").put("projects", "anything"))
         assertTrue(future is Spend.Unsupported)
-        assertTrue(Spend.parse("g9", JSONObject().put("hello", 1)) is Spend.Unsupported)
+        assertTrue(Spend.parse("desktop", JSONObject().put("hello", 1)) is Spend.Unsupported)
         // A known version that doesn't parse (no generatedAt) is unsupported too, not a crash.
-        assertTrue(Spend.parse("g9", JSONObject().put("schema_version", 2).put("kind", "herdr-meter")) is Spend.Unsupported)
-        val v = view(future, b, machines = listOf("g9", "ryzen"))
-        assertEquals("1 of 2 machines reporting · g9: update the app or the meter (doc v99)", Spend.coverageLine(v.coverage))
+        assertTrue(Spend.parse("desktop", JSONObject().put("schema_version", 2).put("kind", "herdr-meter")) is Spend.Unsupported)
+        val v = view(future, b, machines = listOf("desktop", "workstation"))
+        assertEquals("1 of 2 machines reporting · desktop: update the app or the meter (doc v99)", Spend.coverageLine(v.coverage))
         assertEquals(3.0, v.project(app, D1)!!.usd!!, 1e-9)
     }
 
     @Test fun noMeterAnywhereShowsNothing() {
-        assertNull(Spend.parse("g9", null))
-        val v = view(machines = listOf("g9", "ryzen"))
+        assertNull(Spend.parse("desktop", null))
+        val v = view(machines = listOf("desktop", "workstation"))
         assertTrue(v.coverage.none)
         assertNull(v.total(D1)); assertNull(v.today()); assertNull(v.hourly())
         assertEquals("—", Spend.money(v.project(app, D1)))
     }
 
     @Test fun oneDocThroughTwoConnectionsCountsOnce() {
-        val again = report("g9 (via laptop)", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(10.0), t(30.0)))))
+        val again = report("desktop (via laptop)", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(10.0), t(30.0)))))
         assertEquals(2.0, view(a, again).project(app, D1)!!.usd!!, 1e-9)
     }
 
@@ -158,7 +158,7 @@ class SpendTest {
 
     @Test fun cutTasksElsewhereLeaveAWholeProjectExact() {
         // Tasks were cut, but this project's two tasks both stayed: its figures are whole.
-        val v = view(busy("g9", 2, 1.0, "feat/login", "fix/crash"))
+        val v = view(busy("desktop", 2, 1.0, "feat/login", "fix/crash"))
         assertEquals(2, v.taskCount(app, D1))
         assertEquals("$1.00", Spend.money(v.costPerTask(app, D1)))
         assertEquals("$1.00", Spend.money(v.task(app, "feat/login", D1)!!.sum))
@@ -166,14 +166,14 @@ class SpendTest {
 
     @Test fun cutTasksFallBackToTheMetersOwnFigures() {
         // One of three tasks kept: the 24 h count is unknown, but the meter's own 30-day count and $ per task hold.
-        val v = view(busy("g9", 3, 2.5, "feat/login"))
+        val v = view(busy("desktop", 3, 2.5, "feat/login"))
         assertNull(v.taskCount(app, D1)); assertNull(v.costPerTask(app, D1))
         assertEquals(3, v.taskCount(app, D30))
         assertEquals("$2.50", Spend.money(v.costPerTask(app, D30)))
         // The kept task is exact on its machine.
         assertEquals("$1.00", Spend.money(v.task(app, "feat/login", D1)!!.sum))
         // Two machines with the project: their counts can't be added (a branch may be on both), so "—".
-        val two = view(busy("g9", 3, 2.5, "feat/login"), b)
+        val two = view(busy("desktop", 3, 2.5, "feat/login"), b)
         assertNull(two.taskCount(app, D30)); assertEquals("—", Spend.money(two.costPerTask(app, D30)))
         // feat/login is kept on both machines, so its merged sum is exact.
         assertEquals("$4.00", Spend.money(two.task(app, "feat/login", D1)!!.sum))
@@ -181,7 +181,7 @@ class SpendTest {
 
     @Test fun cutProjectsAreLowerBounds() {
         // Cut projects make every project a lower bound.
-        val other = report("g9", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0)))) {
+        val other = report("desktop", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0)))) {
             it.put("projects_other", JSONObject().put("count", 2).put("tasks", 0).put("d30", t(1.0)))
         })
         assertEquals("≥ $2.00", Spend.money(view(other).project(app, D30)))
@@ -189,7 +189,7 @@ class SpendTest {
     }
 
     @Test fun meterStartedInsideTheWindowIsALowerBound() {
-        val young = report("g9", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0))), countedDays = 10,
+        val young = report("desktop", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0))), countedDays = 10,
             tasks = listOf(task("github.com/example/app", "feat/login", 1, t(1.0), t(1.0), t(1.0)))))
         val v = view(young)
         assertEquals("$2.00", Spend.money(v.project(app, D7)))
@@ -203,7 +203,7 @@ class SpendTest {
     @Test fun todayIsLocalMidnightFromTheHourlySeries() {
         // 48 hourly values ending at 12:00 UTC: the last 13 are today (00:00..12:00) in UTC.
         val usd = List(48) { i -> if (i >= 35) 1.0 else 0.25 }
-        val v = view(report("g9", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0))), hourlyUsd = usd)))
+        val v = view(report("desktop", v2("core-a", listOf(project("github.com/example/app", t(2.0), t(2.0), t(2.0))), hourlyUsd = usd)))
         assertEquals(13.0, v.today()!!.usd!!, 1e-9)
         assertEquals("$13", Spend.money(v.today()))
         val hours = v.hourly()!!
@@ -224,7 +224,7 @@ class SpendTest {
             .put("daily", JSONArray().put(JSONObject().put("day", "2026-01-10").put("harness", "claude-code").put("model", "m")
                 .put("repo", "github.com/example/app").put("branch", "feat/login").put("in", 1).put("cr", 1).put("out", 1).put("usd", 4.0)))
             .put("truncated", JSONArray())
-        val v = view(Spend.parse("g9", doc))
+        val v = view(Spend.parse("desktop", doc))
         assertEquals(1, (v.reports.single()).version)
         assertEquals("≥ $2.00", Spend.money(v.project(app, D1)))
         assertEquals(6.0, v.project(app, D7)!!.usd!!, 1e-9)
@@ -235,7 +235,7 @@ class SpendTest {
         assertTrue(v.project(app, D30)!!.atLeast)
         // Dropped repos on daily rows: 7d per project misses data, 24h doesn't.
         doc.put("truncated", JSONArray().put("daily rows without branch").put("daily rows without repo"))
-        val cut = view(Spend.parse("g9", doc))
+        val cut = view(Spend.parse("desktop", doc))
         assertTrue(cut.project(app, D7)!!.gap); assertNull(cut.taskCount(app, D7))
         assertEquals(1, cut.taskCount(app, D1))
     }
