@@ -46,14 +46,14 @@ object Notify {
         choices.map { if (it.always) "Always" else it.label.take(40) } + if (choices.size < 3) listOf("Reply") else emptyList()
 
     /** [detail]: what it asks or said, and where it runs. [lockScreen]: Reply works without unlocking, and the content shows there. */
-    /** [menu]: the options on the agent's screen, which become buttons (see [Prompt.choices]). */
+    /** [menu]: the options on the agent's screen, which become buttons (see [Prompt.choices]), and their dialog text. */
     fun post(context: Context, alert: Alerts.Alert, detail: String, silent: Boolean, lockScreen: Boolean, menu: Prompt.Menu? = null) =
         post(context, alert.ref, alert.kind, alert.text, detail, silent, lockScreen, null,
-            Prompt.choices(alert.terminal.kind, menu), menu?.options.orEmpty(), alert.terminal.message)
+            Prompt.choices(alert.terminal.kind, menu), menu?.options.orEmpty(), alert.terminal.message, menu?.dialog.orEmpty())
 
     /** [sent]: a reply's outcome, shown in place of [detail] without alerting again. */
     fun post(context: Context, ref: TerminalRef, kind: String, title: String, detail: String, silent: Boolean, lockScreen: Boolean, sent: String?,
-             choices: List<Prompt.Choice> = emptyList(), options: List<String> = emptyList(), msg: String = "") {
+             choices: List<Prompt.Choice> = emptyList(), options: List<String> = emptyList(), msg: String = "", dialog: String = "") {
         if (!allowed(context)) return
         // One button per option; each remembers the question and the whole menu, so a stale tap presses nothing.
         // A permission with a "don't ask again" option fills all three: Yes, Always, No, and Reply goes (Android shows at
@@ -63,7 +63,8 @@ object Notify {
             NotificationCompat.Action.Builder(R.drawable.ic_notify, names[i], PendingIntent.getBroadcast(context, id(ref) * 31 + c.index + 1,
                 Intent(context, ChoiceReceiver::class.java).putExtra(EXTRA_HOST, ref.hostId).putExtra(EXTRA_ADDRESS, ref.address).putExtra(EXTRA_TITLE, title)
                     .putExtra(EXTRA_KIND, kind).putExtra(EXTRA_DETAIL, detail).putExtra(EXTRA_MSG, msg)
-                    .putStringArrayListExtra(EXTRA_OPTIONS, ArrayList(options)).putExtra(EXTRA_INDEX, c.index).putExtra(EXTRA_LABEL, c.label),
+                    .putStringArrayListExtra(EXTRA_OPTIONS, ArrayList(options)).putExtra(EXTRA_INDEX, c.index).putExtra(EXTRA_LABEL, c.label)
+                    .putExtra(EXTRA_DIALOG, dialog),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)).setAuthenticationRequired(!lockScreen).build()
         }
         val reply = NotificationCompat.Action.Builder(R.drawable.ic_notify, "Reply", PendingIntent.getBroadcast(context, id(ref),
@@ -103,6 +104,7 @@ object Notify {
 
     private const val EXTRA_KIND = "ai.namastex.automagik.kind"
     private const val EXTRA_MSG = "ai.namastex.automagik.msg"
+    private const val EXTRA_DIALOG = "ai.namastex.automagik.dialog"
     private const val EXTRA_OPTIONS = "ai.namastex.automagik.options"
     private const val EXTRA_INDEX = "ai.namastex.automagik.index"
     private const val EXTRA_LABEL = "ai.namastex.automagik.label"
@@ -120,8 +122,8 @@ object Notify {
             val pending = goAsync()
             scope.launch {
                 try {
-                    show(vm.choose(ref, intent.getStringExtra(EXTRA_MSG).orEmpty(), intent.getStringArrayListExtra(EXTRA_OPTIONS).orEmpty(),
-                        intent.getIntExtra(EXTRA_INDEX, -1), intent.getStringExtra(EXTRA_LABEL).orEmpty()))
+                    show(vm.choose(ref, intent.getStringExtra(EXTRA_MSG).orEmpty(), intent.getStringExtra(EXTRA_DIALOG).orEmpty(),
+                        intent.getStringArrayListExtra(EXTRA_OPTIONS).orEmpty(), intent.getIntExtra(EXTRA_INDEX, -1), intent.getStringExtra(EXTRA_LABEL).orEmpty()))
                 } finally { pending.finish() }
             }
         }
