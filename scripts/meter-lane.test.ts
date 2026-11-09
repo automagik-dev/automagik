@@ -4,7 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ARTIFACTS, KEY_ID, KEYS_FILE, SLOTS, SUMS, checkPointer, keyVerdict, matches, parseSums, pointer, postedProblem, signPointer, slotFor, verify, type MeterKey } from './meter-lane';
+import { ARTIFACTS, INSTALL_SH, KEY_ID, KEYS_FILE, PACK_KEYS_COPY, SLOTS, SUMS, checkPointer, installKeys, keyVerdict, matches, parseSums, pointer, postedProblem, signPointer, slotFor, verify, withInstallKeys, type MeterKey } from './meter-lane';
+// @ts-expect-error: plain JavaScript, no types
+import { METER_TARGETS, verifyMeterPointer } from '../herdr/mods/am-sidebar/meterLane.mjs';
 
 // A throwaway key, made for this run only: no private key is ever committed.
 const pair = () => {
@@ -229,6 +231,37 @@ describe('the meter lane', () => {
     expect(replaced.status).toBe(0);
     expect(replaced.stdout).toContain('::warning::meter lane: the posted meter-lane pointer does not verify');
   }, 30_000);
+
+  test('the installers carry meter-keys.json: the pack\'s copy, am\'s and install.sh\'s METER_KEYS, public keys only', () => {
+    const text = readFileSync(KEYS_FILE, 'utf8');
+    const keys = JSON.parse(text).keys;
+    expect(keys.length).toBeGreaterThan(0);
+    expect(readFileSync(PACK_KEYS_COPY, 'utf8')).toBe(text);
+    expect(readFileSync(join(ROOT, 'am', 'meter-keys.json'), 'utf8')).toBe(text);
+    expect(installKeys(readFileSync(INSTALL_SH, 'utf8'))).toEqual(keys);
+    for (const k of keys) {
+      expect(createPublicKey(k.publicKey).asymmetricKeyType).toBe('ed25519');
+      expect(() => createPrivateKey(k.publicKey)).toThrow();
+    }
+    // keygen rewrites install.sh's line the same way it writes the two files.
+    const next = [...keys, { keyId: 'meter-next', publicKey: pair().pub }];
+    expect(installKeys(withInstallKeys(readFileSync(INSTALL_SH, 'utf8'), next))).toEqual(next);
+    expect(() => withInstallKeys('#!/bin/sh\n', next)).toThrow(/no METER_KEYS line/);
+    expect(readFileSync(SCRIPT, 'utf8')).toMatch(/writeFileSync\(PACK_KEYS_COPY, file\);\n\s*writeFileSync\(INSTALL_SH, withInstallKeys/);
+  });
+
+  test('the pack\'s verifier (meterLane.mjs) takes what this script signs, and nothing changed or signed by another key', () => {
+    expect(METER_TARGETS).toEqual(ARTIFACTS);
+    const key = pair();
+    const keys = [{ keyId: KEY_ID, publicKey: key.pub }];
+    const { bytes, sig } = signed('3.109.1', key);
+    const p = verifyMeterPointer(bytes, sig, keys);
+    expect(p).toMatchObject({ version: '3.109.1', sequence: 1090001, tag: 'v3.109.1', keyId: KEY_ID });
+    expect(p.assets['darwin-x86_64'].sha256).toBe(sha('usagemeter-darwin-x86_64 3.109.1'));
+    const changed = Buffer.from(bytes.toString('utf8').replace(sha('usagemeter-linux-x86_64 3.109.1'), 'f'.repeat(64)));
+    expect(() => verifyMeterPointer(changed, sig, keys)).toThrow(/not signed by a key this pack trusts/);
+    expect(() => verifyMeterPointer(bytes, sig, [{ keyId: KEY_ID, publicKey: pair().pub }])).toThrow(/not signed by a key this pack trusts/);
+  });
 });
 
 describe('the meter lane\'s names', () => {

@@ -1,11 +1,14 @@
 // The sidebar's usagemeter run (Group 6c, meter.js) with a fake exec, a fake clock and a fake
-// shared store: when it runs, never twice at once, a missing binary is silent; main.js's wiring;
-// the marker's usagemeter line. Nothing here runs a real usagemeter.
+// shared store: when it runs, never twice at once, a missing binary and the meter's own exits are
+// silent; SYNC under sh with fake binaries in a temp home; main.js's wiring; the marker's usagemeter
+// line. Nothing here runs a real usagemeter.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { METER_EVERY_MS, METER_FIRST_MS, METER_KEY, SYNC, meterBin, syncMeter } from "../mods/am-sidebar/meter.js";
 import { formatMarker, parseMarker } from "../mods/am-sidebar/release.js";
 
@@ -30,7 +33,7 @@ test("usagemeter sync: SYNC with the shared binary's absolute path, no other arg
   const calls = [];
   const r = await syncMeter({ exec: async (cmd, args) => { calls.push([cmd, args]); return { code: 0 }; }, bin: BIN, now: () => 1e12 });
   assert.deepEqual(calls, [["sh", ["-c", SYNC, "sh", BIN]]]);
-  assert.deepEqual(r, { ran: true, code: 0, wait: METER_EVERY_MS });
+  assert.deepEqual(r, { started: true, code: 0, wait: METER_EVERY_MS });
 });
 
 test("usagemeter sync: once 30 s after load, then at most once per 10 minutes over two hours", async () => {
@@ -66,35 +69,85 @@ test("usagemeter sync: never twice at once, in one copy or across copies", async
   const state = {};
   const first = syncMeter({ exec, bin: BIN, now, ...store, state });
   // The same copy again, and another copy, while the run is going: neither starts one.
-  assert.deepEqual(await syncMeter({ exec, bin: BIN, now, ...store, state }), { ran: false, why: "busy", wait: METER_EVERY_MS });
+  assert.deepEqual(await syncMeter({ exec, bin: BIN, now, ...store, state }), { started: false, why: "busy", wait: METER_EVERY_MS });
   const other = await syncMeter({ exec, bin: BIN, now, ...store, state: {} });
-  assert.equal(other.ran, false);
+  assert.equal(other.started, false);
   assert.equal(other.why, "fresh");
   // Even past ten minutes, this copy waits for its own run to end.
   clock += METER_EVERY_MS + 1;
   assert.equal((await syncMeter({ exec, bin: BIN, now, ...store, state })).why, "busy");
   assert.equal(calls.length, 1);
   calls[0].resolve({ code: 0, stdout: "", stderr: "" });
-  assert.equal((await first).ran, true);
+  assert.equal((await first).started, true);
   // Its run over and ten minutes gone: the next one starts.
   const second = syncMeter({ exec, bin: BIN, now, ...store, state });
   assert.equal(calls.length, 2);
   calls[1].resolve({ code: 0, stdout: "", stderr: "" });
-  assert.equal((await second).ran, true);
+  assert.equal((await second).started, true);
 });
 
-test("usagemeter sync: a missing binary (exec rejects) or a failing run is silent, and tried again later", async () => {
+test("usagemeter sync: sh that cannot start, or a failing run, is silent, and tried again later", async () => {
   const store = sharedStore();
   let clock = 1e12;
-  const missing = async () => { throw new Error("No such file or directory"); };
-  const r = await syncMeter({ exec: missing, bin: BIN, now: () => clock, ...store, state: {} });
-  assert.deepEqual(r, { ran: false, why: "missing", wait: METER_EVERY_MS });
+  // Herdr's exec rejects only when the program (sh) cannot start; a missing usagemeter is SYNC's exit 0.
+  const noShell = async () => { throw new Error("No such file or directory"); };
+  const r = await syncMeter({ exec: noShell, bin: BIN, now: () => clock, ...store, state: {} });
+  assert.deepEqual(r, { started: false, why: "no-shell", wait: METER_EVERY_MS });
   clock += METER_EVERY_MS;
   const failed = await syncMeter({ exec: async () => ({ code: 1 }), bin: BIN, now: () => clock, ...store, state: {} });
-  assert.deepEqual(failed, { ran: true, code: 1, wait: METER_EVERY_MS });
+  assert.deepEqual(failed, { started: true, code: 1, wait: METER_EVERY_MS });
   // A shared store that throws (or holds junk) does not stop the run.
   const odd = await syncMeter({ exec: async () => ({ code: 0 }), bin: BIN, now: () => clock, get: () => "junk", set: () => { throw new Error("x"); }, state: {} });
-  assert.equal(odd.ran, true);
+  assert.equal(odd.started, true);
+});
+
+/** Herdr's exec over a real sh: `{ code, stdout, stderr }`, rejecting only when the program can't start. */
+const shExec = (env) => (cmd, args) => new Promise((resolve, reject) => execFile(cmd, args, { env }, (err, stdout, stderr) => {
+  if (err && typeof err.code !== "number") reject(err); else resolve({ code: err ? err.code : 0, stdout, stderr });
+}));
+const fakeHome = (t) => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "am-meter-")));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".local", "bin"), { recursive: true });
+  return home;
+};
+const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+
+test("SYNC runs the binary $1 names (Herdr's absolute path), never the default; a missing one is exit 0, silent", async (t) => {
+  const home = fakeHome(t);
+  exe(join(home, ".local", "bin", "usagemeter"), `#!/bin/sh\necho "default $*" >> "$HOME/ran"\n`);
+  const named = join(home, "elsewhere", "usagemeter");
+  mkdirSync(dirname(named));
+  exe(named, `#!/bin/sh\necho "named $*" >> "$HOME/ran"\n`);
+  const exec = shExec({ HOME: home, PATH: "/usr/bin:/bin" });
+  assert.deepEqual(await syncMeter({ exec, bin: named, state: {} }), { started: true, code: 0, wait: METER_EVERY_MS });
+  assert.equal(readFileSync(join(home, "ran"), "utf8"), "named sync\n");
+  // $1 names a binary that is not there: nothing runs, not even the default, and the exit is 0.
+  rmSync(named);
+  assert.deepEqual(await syncMeter({ exec, bin: named, state: {} }), { started: true, code: 0, wait: METER_EVERY_MS });
+  assert.equal(readFileSync(join(home, "ran"), "utf8"), "named sync\n");
+  // No $1 (a linked machine): the default.
+  assert.equal(spawnSync("sh", ["-c", SYNC], { env: { HOME: home, PATH: "/usr/bin:/bin" } }).status, 0);
+  assert.equal(readFileSync(join(home, "ran"), "utf8"), "named sync\ndefault sync\n");
+});
+
+test("the first sync after the upgrade: a lock held, a blocked move or no space is silent, and the next run is due", async (t) => {
+  // The meter's own exits during its one-time move to ~/.automagik/meter (meter/usagemeter README):
+  // 0 when another sync or an older meter holds a lock, 3 when the move cannot prove a file its own,
+  // 4 when there is not twice the store's size free; nothing is changed in any of them.
+  const home = fakeHome(t);
+  const bin = join(home, ".local", "bin", "usagemeter");
+  const exec = shExec({ HOME: home, PATH: "/usr/bin:/bin" });
+  const store = sharedStore();
+  let clock = 1e12;
+  for (const [code, stderr] of [[0, "another sync is running; nothing to do"], [3, "meter: left meter.db in the old folder"], [4, "meter: not enough free space"]]) {
+    exe(bin, `#!/bin/sh\necho "${stderr}" >&2\nexit ${code}\n`);
+    const r = await syncMeter({ exec, bin, now: () => clock, ...store, state: {} });
+    assert.deepEqual(r, { started: true, code, wait: METER_EVERY_MS }, String(code));
+    // Within ten minutes nothing starts again; after them the next run does.
+    assert.equal((await syncMeter({ exec, bin, now: () => clock + 1000, ...store, state: {} })).why, "fresh");
+    clock += METER_EVERY_MS;
+  }
 });
 
 test("the sidebar wires it: Herdr's exec and home(), 30 s after load, no LaunchAgent anywhere", () => {
