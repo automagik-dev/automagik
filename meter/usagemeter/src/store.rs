@@ -936,8 +936,15 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .collect();
-    let path = dir.join(format!("{GENERATION_PREFIX}{version}-{stamp}"));
-    let made = (|| -> Result<BTreeMap<String, i64>, String> {
+    let base = format!("{GENERATION_PREFIX}{version}-{stamp}");
+    // A name no file has: a generation from the same second (or a kill's leftover) is never
+    // replaced, and never removed by this call, which removes only the file it created.
+    let mut path = dir.join(&base);
+    let mut created = false;
+    for n in 0..100 {
+        if n > 0 {
+            path = dir.join(format!("{base}-{n}"));
+        }
         let mut o = std::fs::OpenOptions::new();
         o.write(true).create_new(true);
         #[cfg(unix)]
@@ -945,10 +952,19 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
             use std::os::unix::fs::OpenOptionsExt;
             o.mode(0o600);
         }
-        drop(
-            o.open(&path)
-                .map_err(|e| format!("cannot create {}: {e}", path.display()))?,
-        );
+        match o.open(&path) {
+            Ok(_) => {
+                created = true;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
+        }
+    }
+    if !created {
+        return Err(format!("no free name for a generation beside {base}"));
+    }
+    let made = (|| -> Result<BTreeMap<String, i64>, String> {
         let src = crate::query::open_read_only(db, std::time::Duration::from_secs(5))
             .map_err(|e| format!("cannot open the store: {e}"))?;
         // The caller holds the sync lock, so nothing writes between the count and the copy.
@@ -975,10 +991,23 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
     match made {
         Ok(counts) => Ok(Generation { path, counts }),
         Err(e) => {
-            let _ = std::fs::remove_file(&path);
+            let _ = remove_generation(&path);
             Err(e)
         }
     }
+}
+
+/// Removes a generation and the rollback journal a killed copy may have left beside it.
+pub fn remove_generation(path: &Path) -> std::io::Result<()> {
+    let journal = path.with_file_name(format!(
+        "{}-journal",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    match std::fs::remove_file(&journal) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::remove_file(path)
 }
 
 /// The generations in `dir`, by name.
@@ -988,9 +1017,10 @@ pub fn generations(dir: &Path) -> Vec<std::path::PathBuf> {
         .flatten()
         .flatten()
         .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(GENERATION_PREFIX)
+            let n = e.file_name().to_string_lossy().into_owned();
+            // A copy's own companions are not generations.
+            n.starts_with(GENERATION_PREFIX)
+                && !["-journal", "-wal", "-shm"].iter().any(|x| n.ends_with(x))
         })
         .map(|e| e.path())
         .collect();

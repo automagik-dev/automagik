@@ -219,6 +219,11 @@ pub enum Outcome {
         /// The projected growth inside `needed`.
         growth: u64,
     },
+    /// The store ran out of room part-way, despite the check: the run stopped, and the store was
+    /// put back from its generation, or keeps the chunks it committed (`reason` says which).
+    RanOutOfRoom {
+        reason: String,
+    },
     Ran(Box<Report>),
 }
 
@@ -238,8 +243,26 @@ struct StoreWrite(rusqlite::Error);
 
 impl std::fmt::Display for StoreWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cannot write the store: {}", self.0)
+        if no_room(&self.0) {
+            write!(f, "{NO_ROOM}: {}", self.0)
+        } else {
+            write!(f, "cannot write the store: {}", self.0)
+        }
     }
+}
+
+/// How a run's error begins when the store could not be written for want of room.
+const NO_ROOM: &str = "no room to write the store";
+
+/// A write SQLite could not make for want of room: the disk is full (`SQLITE_FULL`), or a write
+/// failed outright (`SQLITE_IOERR_WRITE`, as a file-size limit's `EFBIG` gives).
+fn no_room(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ErrorCode::DiskFull
+                || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
+    )
 }
 
 impl std::error::Error for StoreWrite {}
@@ -257,7 +280,11 @@ fn store_failure(e: &io::Error) -> Option<Error> {
 
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Error {
-        Error(format!("meter database: {e}"))
+        if no_room(&e) {
+            Error(format!("{NO_ROOM}: meter database: {e}"))
+        } else {
+            Error(format!("meter database: {e}"))
+        }
     }
 }
 
@@ -756,7 +783,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         // One generation is kept: the newest, now that it is verified.
         for old in crate::store::generations(&opts.state_dir) {
             if old != g.path {
-                std::fs::remove_file(&old).map_err(|e| {
+                crate::store::remove_generation(&old).map_err(|e| {
                     Error(format!(
                         "cannot remove the older generation {}: {e}",
                         old.display()
@@ -793,7 +820,8 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             None => stored.unwrap_or(wanted),
         };
 
-        if !opts.force && !reimported {
+        // A run that migrated always goes on: it reports the migration and its generation.
+        if !opts.force && !reimported && !migrate {
             let last = store.meta_i64("last_success_ms")?;
             let pending = store.meta_i64("last_pending_bytes")?.unwrap_or(0);
             if let Some(last) = last
@@ -1040,7 +1068,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             // A later sync that succeeded on the migrated store: its generation has done its job.
             if !reimported && !migrate {
                 for g in crate::store::generations(&opts.state_dir) {
-                    match std::fs::remove_file(&g) {
+                    match crate::store::remove_generation(&g) {
                         Ok(()) => report.generations_removed.push(g),
                         Err(e) => eprintln!(
                             "meter: the generation {} was not removed: {e}; the next successful \
@@ -1091,7 +1119,18 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         report.elapsed = started.elapsed();
         Ok(Outcome::Ran(Box::new(report)))
     })();
-    ran.map_err(|e| rollback(&opts.state_dir, made.as_deref(), e))
+    match ran {
+        Ok(o) => Ok(o),
+        Err(e) => {
+            let full = e.0.starts_with(NO_ROOM);
+            let e = rollback(&opts.state_dir, made.as_deref(), e);
+            if full {
+                Ok(Outcome::RanOutOfRoom { reason: e.0 })
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 /// After a failed run, the store as it was before it: the generation this run kept, else one kept

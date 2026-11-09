@@ -34,8 +34,9 @@ The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagi
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
 
 Exit status of sync and status: 0 done or nothing to do, 2 an error, 3 sync blocked by the state
-move, 4 sync refused a migration for want of free space (twice the store's size), 12 the store
-was written by a newer meter (sync writes nothing to it). stderr says why.
+move, 4 sync refused a migration for want of free space (twice the store's size, plus what the
+logs still to import may add) or ran out of room part-way (the store put back as it was), 12
+the store was written by a newer meter (sync writes nothing to it). stderr says why.
 
 Exit status of query: 0 answered, 1 error, 2 bad request, 10 no store, 11 no snapshot in time,
 12 store from a newer meter, 13 store needs sync to migrate it, 14 contract not served, 15 the
@@ -146,6 +147,11 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
                 human_bytes(growth),
                 human_bytes(free)
             );
+            return Ok(ExitCode::from(EXIT_NO_SPACE));
+        }
+        // Exit 4 as for the up-front refusal: the store is as it was, or keeps whole chunks.
+        Outcome::RanOutOfRoom { reason } => {
+            eprintln!("meter: {reason}");
             return Ok(ExitCode::from(EXIT_NO_SPACE));
         }
         Outcome::Fresh { age_ms } => println!(

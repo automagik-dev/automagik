@@ -836,23 +836,36 @@ fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
     );
 }
 
-// The same refusal through the real statvfs: a sparse log (it takes no disk) whose size projects a
-// growth larger than any free space, so a real backfill refuses before writing a byte.
+// The Reviewer's M2 on PR 849, through the real statvfs and the binary: a widening backfill
+// whose logs still to import would grow the store past the free space refuses up front, exit 4,
+// before any rebuild starts: no generation, no reset, the folder byte for byte as it was. The log
+// is sparse (16 TiB that take no disk), so its projected growth passes any real free space.
 #[cfg(unix)]
 #[test]
-fn a_backfill_refuses_through_the_real_free_space() {
+fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
     let env = Env::new();
-    store_with_logs(&env, 0);
+    spread_logs(&env, meter::time::now_ms(), 3, 5);
+    let _serial = serial();
+    let sync = |args: &[&str]| {
+        env.command()
+            .env("METER_STATE_DIR", env.state())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = sync(&["sync", "--force", "--no-publish", "--days", "1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let sparse = env.claude("-work-app/s-sparse.jsonl");
     fs::File::create(&sparse).unwrap().set_len(1 << 44).unwrap();
     let before = folder(&env.state());
-    let mut o = env.opts();
-    o.backfill = true;
-    assert_eq!(o.free_bytes, None, "the real filesystem is asked");
-    match env.sync(&o) {
-        Outcome::NoSpace { free, needed, .. } => assert!(free < needed),
-        other => panic!("expected the real refusal, got {other:?}"),
-    }
+    let out = sync(&["sync", "--force", "--no-publish", "--backfill"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{err}");
+    assert!(err.contains("the logs still to import may add"), "{err}");
     assert_eq!(folder(&env.state()), before, "nothing changed");
 }
 
@@ -900,12 +913,12 @@ fn a_disk_full_mid_rebuild_fails_the_run_and_puts_the_store_back() {
     o.backfill = true;
     o.chunk_bytes = 4096;
     o.fail_writes_after = Some(3);
-    let err = {
-        let _serial = serial();
-        meter::sync::run(&env.hermetic(&o)).unwrap_err()
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
     };
-    assert!(err.0.contains("disk is full"), "{}", err.0);
-    assert!(err.0.contains("put back"), "{}", err.0);
+    assert!(reason.contains("disk is full"), "{reason}");
+    assert!(reason.contains("put back"), "{reason}");
     assert_eq!(snapshot_of(&env), before, "the store is as it was");
     assert!(meter::store::generations(&env.state()).is_empty());
     // A run that keeps its rows fails too, and leaves the old watermark: never fresh and partial.
@@ -929,11 +942,11 @@ fn a_disk_full_mid_rebuild_fails_the_run_and_puts_the_store_back() {
     o.chunk_bytes = 4096;
     o.fail_writes_after = Some(0);
     let last = snapshot_of(&env).2;
-    let err = {
-        let _serial = serial();
-        meter::sync::run(&env.hermetic(&o)).unwrap_err()
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
     };
-    assert!(err.0.contains("next sync goes on"), "{}", err.0);
+    assert!(reason.contains("next sync goes on"), "{reason}");
     assert_eq!(snapshot_of(&env).2, last, "the watermark did not move");
 }
 
@@ -978,7 +991,9 @@ fn a_real_write_failure_mid_rebuild_puts_the_store_back() {
         &["sync", "--force", "--no-publish", "--backfill"],
     );
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "{err}");
+    // Exit 4, as for the up-front refusal (the Reviewer's M2 on PR 849).
+    assert_eq!(out.status.code(), Some(4), "{err}");
+    assert!(err.contains("no room to write the store"), "{err}");
     assert!(err.contains("put back"), "{err}");
     assert_eq!(snapshot_of(&env), before, "the store is as it was");
 }
@@ -1036,4 +1051,60 @@ fn two_stores_hash_one_session_with_their_own_keys() {
     let (kb, hb) = hashes(&b);
     assert_ne!(ka, kb, "two stores, two keys");
     assert_ne!(ha, hb, "one session's ids never match across stores");
+}
+
+// The Reviewer's L1 on PR 849: a plain sync (no --force) that migrates goes on, so it reports the
+// migration and its generation instead of stopping as "fresh".
+#[test]
+fn a_migration_is_never_cut_short_as_fresh() {
+    let env = Env::new();
+    let db = v2_store(&env);
+    let c = Connection::open(&db).unwrap();
+    for (k, v) in [
+        ("last_success_ms", (now() - 60_000).to_string()),
+        ("last_pending_bytes", "0".to_string()),
+    ] {
+        c.execute("INSERT INTO meta(k, v) VALUES(?1, ?2)", params![k, v])
+            .unwrap();
+    }
+    drop(c);
+    let mut o = env.opts();
+    o.force = false;
+    match env.sync(&o) {
+        Outcome::Ran(r) => assert!(r.migrated && r.generation.is_some()),
+        other => panic!("expected the migration to run, got {other:?}"),
+    }
+}
+
+// The Reviewer's L5 on PR 849: a generation from the same second (or a kill's leftover at that
+// name) is never replaced or removed, and a copy's stray journal is not taken for a generation.
+#[test]
+fn a_generation_never_takes_or_removes_another_files_name() {
+    let env = Env::new();
+    write_lines(
+        &env.claude("-work-app/s-1.jsonl"),
+        &[line("m1", "s-1", "/work/app", now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    let db = env.state().join("meter.db");
+    let first = meter::store::write_generation(&db, 3, now()).unwrap();
+    let theirs = fs::read(&first.path).unwrap();
+    let second = meter::store::write_generation(&db, 3, now()).unwrap();
+    assert_ne!(first.path, second.path);
+    assert_eq!(
+        fs::read(&first.path).unwrap(),
+        theirs,
+        "the first is untouched"
+    );
+    let journal = first.path.with_file_name(format!(
+        "{}-journal",
+        first.path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::write(&journal, b"left by a kill").unwrap();
+    assert_eq!(
+        meter::store::generations(&env.state()),
+        [first.path.clone(), second.path.clone()]
+    );
+    meter::store::remove_generation(&first.path).unwrap();
+    assert!(!journal.exists() && !first.path.exists());
 }
