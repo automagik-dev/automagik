@@ -1,7 +1,7 @@
 // The person's own companion: the character they create in onboarding, which becomes their
 // Main Bot (the orchestrator). Two ways to make one: describe it and have an image model draw
-// it, when ChatGPT (DSH's openai-codex sign-in) or an OpenAI API key is connected; or pick
-// one of Omni's characters. The look and name are applied to the Main Bot through
+// it, when an OpenAI API key or a signed-in Codex CLI is here (or, last, a ChatGPT grant an
+// earlier version stored through DSH's openai-codex sign-in); or pick one of Omni's characters. The look and name are applied to the Main Bot through
 // @automagik/bots-dsh's `omniTeam` service when that plugin is present. The team step then
 // adds the Omni Bot, which keeps the person's channels.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -82,18 +82,33 @@ export function accountIdOf(token) {
   }
 }
 
-// Which image source this DSH can use right now, without revealing anything stored.
+// acp-dsh's acpAgents, when it can draw (imageAccess and generateImage), else undefined.
+const codexOf = (ctx) => {
+  try {
+    const service = ctx.get?.('acpAgents')
+    return typeof service?.generateImage === 'function' && typeof service?.imageAccess === 'function' ? service : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Which image source this DSH can use right now, without revealing anything stored. The Bots'
+// order (bots-dsh imagegen.js, owner decision D-g): an OpenAI key, then Codex on its own
+// sign-in, then the earlier ChatGPT grant. That grant is not refreshed here, so a run-out one
+// gives way to anything after it and is offered (not ready) only when nothing else draws.
 async function imageSource(ctx, now = Date.now()) {
+  const record = await ctx.credentials.readRecord?.(OPENAI_RECORD).catch(() => undefined)
+  if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return { kind: 'openai', fresh: true, token: record.key }
+  const env = await ctx.credentials.resolve?.(OPENAI_ENV).catch(() => undefined)
+  if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', fresh: true, token: env.value }
+  const codex = codexOf(ctx)
+  if (codex !== undefined && (await codex.imageAccess().catch(() => undefined))?.ready === true) return { kind: 'codex', fresh: true, service: codex }
   const grant = await ctx.credentials.readRecord?.(CODEX_RECORD).catch(() => undefined)
   const payload = grant?.kind === 'grant' ? grant.payload : undefined
   if (payload && typeof payload.access === 'string') {
     const fresh = typeof payload.expires !== 'number' || payload.expires > now + 60_000
     return { kind: 'chatgpt', fresh, token: payload.access, accountId: payload.accountId ?? accountIdOf(payload.access) }
   }
-  const record = await ctx.credentials.readRecord?.(OPENAI_RECORD).catch(() => undefined)
-  if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return { kind: 'openai', fresh: true, token: record.key }
-  const env = await ctx.credentials.resolve?.(OPENAI_ENV).catch(() => undefined)
-  if (typeof env?.value === 'string' && env.value !== '') return { kind: 'openai', fresh: true, token: env.value }
   return undefined
 }
 
@@ -223,9 +238,17 @@ export function createCompanionActions(ctx, { fetch: fetchImpl = globalThis.fetc
       const fields = parse(GeneratePayload, payload)
       if (fields === undefined) throw invalid('Describe your companion in a few words.')
       const source = await imageSource(ctx, now())
-      if (source === undefined) throw refused('Connect ChatGPT or an OpenAI key first, or pick a companion instead.')
-      if (!source.fresh) throw refused('Your ChatGPT sign-in needs a refresh. Send one message on a ChatGPT model, or sign in again in Connect AI.')
+      if (source === undefined) throw refused('Sign in to Codex or add an OpenAI key first, or pick a companion instead.')
+      if (!source.fresh) throw refused('Your earlier ChatGPT sign-in has run out. Sign in to Codex or add an OpenAI key in Connect AI, or pick a companion instead.')
       const prompt = companionPrompt(fields.description)
+      if (source.kind === 'codex') {
+        // Codex draws in one piece; its refusals (signed out, usage limit, timeout) read as they are.
+        const made = await source.service.generateImage({ prompt, size: '1024x1024', signal })
+          .catch((error) => { throw refused(String(error?.message ?? error).slice(0, 240)) })
+        if (typeof made?.base64 !== 'string' || made.base64 === '') throw refused('The image service answered without an image. Try again.')
+        if (Buffer.byteLength(made.base64, 'base64') > MAX_IMAGE_BYTES) throw refused('The image is too large to keep. Try again.')
+        return { image: `data:image/png;base64,${made.base64}`, via: 'codex' }
+      }
       const chatgpt = source.kind === 'chatgpt'
       const response = await fetchImpl(chatgpt ? CODEX_IMAGES : OPENAI_IMAGES, {
         method: 'POST',

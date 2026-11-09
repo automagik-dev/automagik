@@ -62,9 +62,10 @@ async function renderDock(t, { models, defaultModel = models[0]?.ref }) {
   const consoleError = console.error
   console.error = (...args) => { errors.push(args.map(String).join(' ')) }
   const picked = []
+  const patches = []
   const bot = { id: 'chief', name: 'Omni' }
   const roster = { ready: true, byId: { chief: bot }, models, defaultModel }
-  const actions = { updateBot: (id, patch) => { picked.push([id, patch.model]); return Promise.resolve() }, refreshModels: () => {} }
+  const actions = { updateBot: (id, patch) => { picked.push([id, patch.model]); patches.push(patch); return Promise.resolve() }, refreshModels: () => {} }
   const caught = []
   const root = createRoot(dom.window.document.getElementById('root'))
   flushSync(() => root.render(React.createElement(Slot, { onError: error => caught.push(error) },
@@ -76,7 +77,7 @@ async function renderDock(t, { models, defaultModel = models[0]?.ref }) {
     dom.window.close()
     globals.forEach((key, index) => saved[index] ? Object.defineProperty(globalThis, key, saved[index]) : delete globalThis[key])
   })
-  return { document: dom.window.document, caught, errors, picked }
+  return { document: dom.window.document, caught, errors, picked, patches }
 }
 
 const models = [
@@ -95,13 +96,27 @@ test('a Bot with no model renders its dock in React: the offered model, Start an
   assert.equal(dock.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · DeepSeek')
   const change = dock.querySelector('.bt-model-line .bt-model-change')
   assert.ok(change, 'the line has its "change" link')
-  // "change" opens the model menu on the offered model; picking another gives the Bot that one.
+  // "change" opens the model menu on the connections, the offered one marked; its models are
+  // the next step, and picking another gives the Bot that one.
   flushSync(() => change.click())
   await tick()
+  const connections = [...document.body.querySelectorAll('.bt-model-menu [role="menuitem"][aria-haspopup="menu"]')]
+  assert.deepEqual(connections.map(row => row.querySelector('.bt-menu-label').textContent), ['DeepSeek', 'Ollama'])
+  assert.deepEqual(connections.filter(row => row.hasAttribute('data-current')).map(row => row.querySelector('.bt-menu-hint').textContent), ['DeepSeek Flash'])
+  flushSync(() => connections[0].click())
+  await tick()
+  const own = [...document.body.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
+  assert.deepEqual(own.filter(row => row.getAttribute('aria-checked') === 'true').map(row => row.title), ['deepseek-official/deepseek-flash'])
+  flushSync(() => document.body.querySelector('.bt-model-menu .bt-model-back').click())
+  await tick()
+  flushSync(() => [...document.body.querySelectorAll('.bt-model-menu [role="menuitem"]')].find(row => row.textContent.startsWith('Ollama')).click())
+  await tick()
   const rows = [...document.body.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
-  assert.deepEqual(rows.filter(row => row.getAttribute('aria-checked') === 'true').map(row => row.title), ['deepseek-official/deepseek-flash'])
   flushSync(() => rows.find(row => row.title === 'local/flash').click())
   await tick()
+  // A closed menu lingers only for its exit (useLinger), marked as leaving.
+  const gone = () => document.body.querySelector('.bt-model-menu:not([data-leaving])') === null
+  assert.ok(gone(), 'a model with no levels applies and closes the menu')
   // Start picks the offered model for the Bot.
   const start = [...dock.querySelectorAll('button')].find(button => button.textContent === 'Start')
   flushSync(() => start.click())
@@ -114,3 +129,60 @@ test('the dock offers the first model that can run when DSH\'s default cannot', 
   assert.deepEqual(caught.map(error => error.message), [])
   assert.equal(document.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · Ollama')
 })
+
+test('the model menu works from the keyboard: arrows move, Right opens a step, Escape goes back one', async (t) => {
+  const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const { document, picked } = await renderDock(t, { models: [{ ...models[0], reasoning: levels }, models[1]] })
+  const window = document.defaultView
+  const change = document.querySelector('.bt-model-line .bt-model-change')
+  const key = (target, name) => flushSync(() => target.dispatchEvent(new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })))
+  // A click with no pointer (Enter on the link) puts the focus on the current connection.
+  flushSync(() => change.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 })))
+  await tick()
+  const menu = document.querySelector('.bt-model-menu')
+  assert.equal(menu.getAttribute('role'), 'menu')
+  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'DeepSeek')
+  key(document.activeElement, 'ArrowDown')
+  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'Ollama')
+  key(document.activeElement, 'ArrowUp')
+  key(document.activeElement, 'ArrowRight')
+  await tick()
+  // Step 2: the focus is on the model the Bot would run on, which has levels.
+  assert.equal(document.activeElement.title, 'deepseek-official/deepseek-flash')
+  assert.equal(document.activeElement.getAttribute('aria-haspopup'), 'menu')
+  key(document.activeElement, 'ArrowRight')
+  await tick()
+  const levelRows = [...document.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
+  assert.deepEqual(levelRows.map(row => row.textContent), ['Default', 'Low', 'High'])
+  // Escape goes back one step at a time, then closes.
+  key(document.activeElement, 'Escape')
+  await tick()
+  assert.ok(document.querySelector('.bt-model-menu [title="local/flash"]') === null && document.querySelector('.bt-model-menu [title="deepseek-official/deepseek-flash"]'), 'back on DeepSeek\'s models')
+  key(document.activeElement, 'Escape')
+  await tick()
+  assert.ok(document.querySelector('.bt-model-menu [data-current]'), 'back on the connections')
+  key(document.activeElement, 'Escape')
+  await tick()
+  assert.equal(document.querySelector('.bt-model-menu:not([data-leaving])'), null)
+  assert.equal(document.activeElement, change)
+  assert.deepEqual(picked, [])
+})
+
+// The offered model stands in for one the Bot does not have yet: a level picked on it saves
+// the model first, then the level, and "Default" saves the model alone.
+for (const [label, effort] of [['High', 'high'], ['Default', undefined]]) {
+  test(`picking the offered model's ${label} level in the dock saves the model too`, async (t) => {
+    const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+    const { document, patches } = await renderDock(t, { models: [{ ...models[0], reasoning: levels }, models[1]] })
+    flushSync(() => document.querySelector('.bt-model-line .bt-model-change').click())
+    await tick()
+    flushSync(() => [...document.querySelectorAll('.bt-model-menu [role="menuitem"]')].find(row => row.textContent.startsWith('DeepSeek')).click())
+    await tick()
+    flushSync(() => document.querySelector('.bt-model-menu [title="deepseek-official/deepseek-flash"]').click())
+    await tick()
+    flushSync(() => [...document.querySelectorAll('.bt-model-menu [role="menuitemradio"]')].find(row => row.textContent === label).click())
+    await tick()
+    await tick()
+    assert.deepEqual(JSON.parse(JSON.stringify(patches)), [{ model: 'deepseek-official/deepseek-flash' }, ...(effort ? [{ effort }] : [])])
+  })
+}

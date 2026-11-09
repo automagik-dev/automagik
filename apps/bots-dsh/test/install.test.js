@@ -44,6 +44,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on settings/document-updated',
     'on loader/volatile-update',
     'on acp-dsh/dsh-tools-changed',
+    'effect ds-bot: subscription move retry',
+    'on llm/adapters-updated',
+    'on settings/document-updated',
     'on session/created',
     'on permission-presets/catalog-changed',
     'on session/event',
@@ -102,6 +105,8 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     // Explicit checkpoints must cancel when their agent or plugin is disposed.
     'on agent/disposed',
     'effect ds-bot: cancel explicit checkpoints',
+    // A fresh part opened without a note archives its old part on its first answer.
+    'on session/event',
     'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
@@ -111,6 +116,14 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on llm/stream',
     'on agent/request-error',
     'on session/event',
+    // What a Bot's model really did, and a failed switch going back (model-state.js).
+    'on session/event',
+    'on agent/request-error (prepend)',
+    // A Bot on a signed-out agent fails before dispatch (model-access-hooks.js).
+    'on llm/stream',
+    // A CLI sign-in's chosen model, dropped by a turn on another, applied on ready (cli-login.js).
+    'on session/event',
+    'on acp-dsh/login-ready',
     'on llm/stream',
     'on agent/status',
     'tool generate_image',

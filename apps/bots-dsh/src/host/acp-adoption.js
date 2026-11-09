@@ -17,7 +17,14 @@
 // bridge over stdio, MCP `initialize` and `tools/list`. A success is cached per installed
 // adapter version; a failure is retried after ten minutes or the next start, so one slow start
 // never blocks the move forever. An older ACP plugin has no such method and is not migrated.
+//
+// A Claude Pro or Max plan signs in only through Claude Code now (subscription-move.js): while
+// pi-ai's `anthropic` route runs on that sign-in, the rollback never puts a Bot back on it. The
+// record is dropped and the Bot stays on `acp-claude`, unavailable while that route is gone
+// (turning Claude Code off turns it off for every Bot). A Bot subscription-move.js moved is its
+// own record's, never rebuilt here from `claudeCodeModel`.
 import { claudeFamilyOf, piAiClaudeOf } from './claude-models.js'
+import { anthropicSubscription } from './subscription-move.js'
 
 const ACP_AGENT = 'acp-claude'
 
@@ -132,6 +139,7 @@ async function acpClaudeState(ctx) {
 function priorMove(bot) {
   if (bot?.acpMoved !== undefined || typeof bot.claudeCodeModel !== 'string') return undefined
   if (typeof bot.model !== 'string' || !bot.model.startsWith(`${ACP_AGENT}/`)) return undefined
+  if (bot.subscriptionMoved?.target === bot.model) return undefined
   const from = piAiClaudeOf(bot.claudeCodeModel)
   if (from === undefined) return undefined
   const previous = from.slice(from.indexOf('/') + 1)
@@ -154,6 +162,12 @@ export function install(rt) {
   const restore = async (removed = false) => {
     const restored = []
     let changed = false
+    // Asked once per pass, and only when a record would go back to `anthropic`.
+    let cliOnly
+    const signInOnCli = async () => {
+      cliOnly ??= anthropicSubscription(ctx).then(value => value === true, () => false)
+      return cliOnly
+    }
     for (const bot of Object.values(state.bots ?? {})) {
       const moved = bot?.acpMoved ?? (state.claudeAcpMoved === true ? priorMove(bot) : undefined)
       if (moved === undefined) continue
@@ -161,6 +175,8 @@ export function install(rt) {
       const pickedEffort = (bot.effort ?? undefined) !== (moved.from.effort ?? undefined)
       delete bot.acpMoved
       changed = true
+      // The Claude plan's sign-in is Claude Code's alone: never back onto pi-ai's sign-in route.
+      if (typeof moved.from.model === 'string' && moved.from.model.startsWith('anthropic/') && await signInOnCli()) continue
       // A route that went away cannot keep answering, so even a Bot whose level the person
       // changed goes back to its model; their level is kept. With dshTools off the route is
       // still there and a person's change wins: leave the Bot where they put it.

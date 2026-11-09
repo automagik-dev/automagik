@@ -36,7 +36,7 @@ test('a message renders as the person, the model, a named call or a result; DSH 
   assert.equal(renderMessage({ ...answer(''), content: [{ type: 'tool-call', name: 'bash' }] }), '[called bash]')
   assert.equal(renderMessage({ role: 'tool', content: [{ type: 'text', text: 'ok' }] }), 'Tool result: ok')
   assert.equal(renderMessage(note('Current DSH file policy')), undefined)
-  assert.equal(renderMessage({ role: 'user', source: { kind: BOUNDARY_KIND }, content: [{ type: 'text', text: '[Now answered by X.]' }] }), undefined)
+  assert.equal(renderMessage({ role: 'user', source: { kind: BOUNDARY_KIND }, content: [{ type: 'text', text: '[Switching to X.]' }] }), undefined)
 })
 
 test('Auto review\'s synthetic bridge call never renders and never names a crossing provider', () => {
@@ -74,12 +74,12 @@ test('a long transcript keeps the most recent messages, with a marker that older
 })
 
 test('the boundary row is a notice outside the reply, naming where the turn came from', () => {
-  const row = boundaryNotice('Now answered by Claude Code (acp-claude)')
+  const row = boundaryNotice('Switching to Claude Code (acp-claude)')
   assert.equal(row.role, 'user')
   assert.equal(row.source.kind, BOUNDARY_KIND)
   assert.equal(row.source.form, 'notice')
-  assert.equal(row.source.summary, 'Now answered by Claude Code (acp-claude)')
-  assert.deepEqual(row.content, [{ type: 'text', text: '[Now answered by Claude Code (acp-claude).]' }])
+  assert.equal(row.source.summary, 'Switching to Claude Code (acp-claude)')
+  assert.deepEqual(row.content, [{ type: 'text', text: '[Switching to Claude Code (acp-claude).]' }])
 })
 
 const LEVELS = {

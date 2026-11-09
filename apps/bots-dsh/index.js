@@ -11,7 +11,11 @@ import * as extend from './src/host/extend.js'
 import * as store from './src/host/store.js'
 import * as addressPolicy from './src/host/address-policy.js'
 import * as models from './src/host/models.js'
+import * as modelState from './src/host/model-state.js'
+import * as modelAccessHooks from './src/host/model-access-hooks.js'
+import * as cliLogin from './src/host/cli-login.js'
 import * as acpAdoption from './src/host/acp-adoption.js'
+import * as subscriptionMove from './src/host/subscription-move.js'
 import * as providers from './src/host/providers.js'
 import * as permissions from './src/host/permissions.js'
 import * as turns from './src/host/turns.js'
@@ -60,9 +64,9 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
 const MODULES = [
-  diagnostics, extend, store, addressPolicy, models, acpAdoption, providers, permissions,
+  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions,
   turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
-  tools, chatIndex, groups, approvals, resume, memory, parts, fallback, images, imagegen,
+  tools, chatIndex, groups, approvals, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,
   update, dshUpdate, thinking, feed, channel, appManifest, pocketChat,
 ]
