@@ -933,6 +933,62 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
 });
 
+test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-trusted; writers list their folder", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].rank = "reviewer";
+  f.bots[0].worker = { agent: "antigravity" };
+  f.bots[1].agent = "antigravity";
+  f.bots[1].rank = "dev";
+  f.bots[1].worker = { agent: "antigravity" };
+  s.seed(f);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
+  const reviewer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.main}`);
+  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [], "the reviewer seat trusts nothing");
+  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, [], "its review worker trusts nothing");
+  const text = s.cli(["dsh-tui", "doctor"]).out;
+  assert.match(text, /agy trusted -; agy allow /, "the reviewer seat prints no trusted folder");
+  assert.match(text, /worker agy trusted -; worker agy allow /, "the review worker prints none either");
+  // A writer seat and its writer worker: the project, and (at launch) its worktree.
+  const writer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.cap}`);
+  assert.deepEqual(writer.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(writer.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  assert.match(text, new RegExp(`agy trusted ${s.project}; agy allow `));
+  assert.match(text, /worker agy trusted <worktree>; worker agy allow /);
+  // show carries the same effective rows as ls and doctor (botRow's JSON).
+  const show = s.cli(["show", "Genie", "--json"]).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, []);
+  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, []);
+  assert.match(s.cli(["show", "Genie"]).out, /agy trusted  -/);
+  const cap = s.cli(["show", "Captain", "--json"]).json();
+  assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+});
+
+test("Antigravity #884: restart --cwd writes DIR into the seat's permission file, never the project", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  s.seed(f);
+  const old = term("t5", { bot: ID.main, cwd: s.project, argv: ["agy", "--mode", "auto"], app: "antigravity" });
+  old.foreground.cwd = s.project;
+  old.labels = { ...old.labels, role: "main", "agent.session": SID };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old], next: 100 }));
+  const dir = join(s.root, "moved");
+  mkdirSync(dir);
+  assert.equal(s.cli(["restart", "Genie", "--cwd", dir, "--json"]).code, 0);
+  const path = agySettingsPath(s, ID.main);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--settings", path, "--mode", "auto", "--conversation", SID]);
+  // #884 M1/Low 2: a seat started or restarted with --cwd DIR lists DIR, not the project.
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  assert.deepEqual(data.trustedWorkspaces, [dir], "the folder the restart works in, exact");
+  assert.ok(data.permissions.allow.includes(`write_file(${dir})`), "write_file names DIR");
+  assert.equal(data.permissions.allow.includes(`write_file(${s.project})`), false, "never the project");
+  assert.equal(data.trustedWorkspaces.includes(s.project), false, "the project isn't trusted");
+  assert.equal(runCall(s.calls())[runCall(s.calls()).indexOf("--cwd") + 1], dir, "the pane runs in DIR");
+});
+
 test("Antigravity #823: restart --tree writes the permission file of a worker helper and resumes it with it", (t) => {
   const s = scene(t);
   const f = team();

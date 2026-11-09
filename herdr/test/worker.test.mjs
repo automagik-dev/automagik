@@ -594,9 +594,10 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
     "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
     assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
   }
-  // #879: a read-only launch prompts for folder trust before its first tool, so it is listed too.
-  assert.deepEqual(review.trustedWorkspaces, [cwd2], "the review worker's settings trust its worktree");
-  for (const wrong of [s2.project, dirname(cwd2), s2.env.HOME, "/"]) {
+  // #884 M1: a review launch is never auto-trusted: agy stops at its trust question instead of
+  // loading a contributor's or fork's review tree's project configuration.
+  assert.deepEqual(review.trustedWorkspaces, [], "a review worker trusts nothing");
+  for (const wrong of [cwd2, s2.project, dirname(cwd2), s2.env.HOME, "/"]) {
     assert.equal(review.trustedWorkspaces.includes(wrong), false, `review worker never trusts ${wrong}`);
   }
 });
