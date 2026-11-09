@@ -40,8 +40,9 @@ What the design found, and what this RFC answers:
   table), with no session key. No per-session or per-call task split, and no long-prompt tier
   price, can be recovered from it later. This is why the evidence contract (below) comes before
   any storage change.
-- **Some usage has no branch.** OMP logs none (`omp.rs`), so its usage reaches the store with
-  the repo known (from the session's working folder) and the branch null. While a repo has such
+- **Some usage has no branch.** OMP and dsh-tui log none (`omp.rs`, `dsh_tui.rs`), so their
+  usage reaches the store with the repo known (from the session's working folder) and the branch
+  null. While a repo has such
   usage, a branch with no rows of its own is not proof of zero.
 - **Branch totals are not task cost.** The doc's `tasks[]` rows are rolling d1, d7 and d30
   windows per repo and branch: never lifetime spend, and two cards on one branch share one total.
@@ -591,7 +592,7 @@ genie's side of the boundary, built in genie and named here only so the order is
 
 - `envelope.schema.json`, the contract.
 - `repo-normalization.json`, the remote-to-`--repo` cases.
-- `examples/`, one envelope per case. RFC 0021's delivery 2 adds eight, listed there, which are
+- `examples/`, one envelope per case. RFC 0021's delivery 2 adds nine, listed there, which are
   schema-only until its delivery 6: they validate and pass the crate's sum checks, but no meter
   answer is compared with them while the crate writes none of their fields.
 

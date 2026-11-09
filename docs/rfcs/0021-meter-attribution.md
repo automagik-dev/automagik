@@ -331,7 +331,13 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
 - **In the envelope**, `actor_unattributed` beside `unattributed`: the repo's ambiguous, unlinked
   and before-evidence tokens in the window, with their harnesses and a reason for each part
   (delivery 2, D5). A bot row is a lower bound whenever any of it is above zero, and a reader
-  shows "at least". `attribution.coverage` keeps RFC 0018's meaning (usage with no branch) and
+  shows "at least". **A bot with no row** is 0 only when nothing is in `actor_unattributed` and
+  RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a
+  watermark, the window not clipped, every source `ok` or `absent` (no `legacy-store`), and the
+  repo seen in the store. Otherwise it is unknown, never 0. The meter says which in
+  `actor_unattributed.absent_bot_is_zero`, so a reader never works it out, and the schema
+  refuses `true` whenever one of those conditions it can see fails (the Fixer's M1 on #825).
+  `attribution.coverage` keeps RFC 0018's meaning (usage with no branch) and
   is never moved by the actor share. A bot row of a query that names no branch counts usage with
   no branch itself (`tokens_by_branch_basis.none`), so it is always `complete`; with a branch
   filter, that usage could belong to a branch named, so its rows are `partial` while
@@ -547,6 +553,8 @@ release.
      where this machine's hc or ledgers show the terminal was started from another computer,
      else `no_record`; `before_evidence`. Each part carries its state, so a reader that meets a
      reason added later still knows which count it is in.
+   - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: nothing
+     unattributed and RFC 0018's zero conditions for the whole answer ((d)); else unknown.
    - Actors are reported on every row with tokens or on none: `actor_unattributed` is present
      exactly when they are, and a row with no tokens has no `attribution.actor`.
    - The order, enforced on both sides. RFC 0017's delivery 4 (#822) holds the meter lane
@@ -565,7 +573,9 @@ release.
      row beside a Claude worker's logged one); `actor-straddling-evidence.json` (a window that
      straddles `evidence_from`); `actor-no-evidence.json` and `by-bot-no-evidence.json`
      (`evidence_from` null, a vouched zero with a zero actor, and a bot answer with no row);
-     `by-bot-unfiltered.json` (a bot query naming no branch beside usage with no branch: an OMP
+     `by-bot-backlog.json` (nothing unattributed, but a budget-stopped sync left a backlog: an
+     absent bot is unknown and the rows are a lower bound); `by-bot-unfiltered.json` (a bot
+     query naming no branch beside usage with no branch: an OMP
      seat's row with its branch basis `none`, every row `complete`).
 
    *Check:* every example validates; the crate's contract test passes on the old ones and checks
