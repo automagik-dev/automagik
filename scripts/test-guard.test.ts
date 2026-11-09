@@ -136,17 +136,21 @@ describe('a real node --test run', () => {
 
 describe('the packages', () => {
   test('every script with --test-force-exit goes through the guard', () => {
-    const scripts = readdirSync(APPS, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .flatMap((entry) => {
-        try {
-          const { scripts = {} } = JSON.parse(readFileSync(join(APPS, entry.name, 'package.json'), 'utf8'));
-          return Object.values<string>(scripts);
-        } catch {
-          return [];
-        }
-      })
-      .filter((script) => script.includes('--test-force-exit'));
+    const read = new Map<string, string[]>();
+    for (const entry of readdirSync(APPS, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+      try {
+        const { scripts = {} } = JSON.parse(readFileSync(join(APPS, entry.name, 'package.json'), 'utf8'));
+        read.set(entry.name, Object.values<string>(scripts));
+      } catch {
+        // a folder with no package.json holds no scripts
+      }
+    }
+    // The scan read the packages: each plugin's own test script is among what it read, so an
+    // empty result below cannot come from reading nothing.
+    for (const plugin of ['acp-dsh', 'bots-dsh', 'locale-pt-br-dsh', 'welcome-dsh']) {
+      expect(read.get(plugin)?.some((script) => script.includes('--test'))).toBe(true);
+    }
+    const scripts = [...read.values()].flat().filter((script) => script.includes('--test-force-exit'));
     // None today: the Unfold plugins that ran through the guard left (RFC 0020). The guard and this
     // rule stay for the next package that needs --test-force-exit (#422).
     expect(scripts.filter((script) => !script.startsWith('node ../../scripts/test-guard.mjs '))).toEqual([]);
