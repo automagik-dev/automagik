@@ -74,8 +74,15 @@ elsewhere. Without `METER_STATE_DIR`:
 - The logger moves its two files out of the old folder once, on its next reading, when the new
   folder has none: a hard link, then the old name removed, never over a file already there (the
   meter's own rule). The meter's first sync moves the same two files; whichever runs first moves
-  them, and nothing of the logger's is left for the other. A file that cannot be linked (another
-  filesystem) stays in the old folder, and the status line keeps reading it.
+  them, and nothing of the logger's is left for the other. A move cut short after the link (both
+  names on one file) is read once and finished by the next reading.
+- When the link cannot be made (the old folder on another filesystem), the logger keeps writing
+  the old folder and starts no log in the new one. The meter's first sync then moves both files
+  with its own verified copy, finds nothing left to warn about, and the logger follows them. No
+  step by hand is needed.
+- The logger keeps the new folder at 0700, as the meter does: one already there with a looser mode
+  is tightened. The old folder's mode is never changed (on macOS it is the desktop app's data
+  folder too).
 - Nothing else in the old folder is touched: the store is the meter's to move. The old bot cache is
   left there; the status line builds a new one.
 

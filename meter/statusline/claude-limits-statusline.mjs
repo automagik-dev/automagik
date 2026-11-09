@@ -11,8 +11,10 @@
 // or ~/.local/state/automagik) is read once: a log and its last reading still there are moved into
 // the new folder (a hard link, then the old name removed; never over a file already there, the
 // meter's own rule), so the meter's first sync finds nothing of ours left to move; a move cut short
-// after the link is finished. A link that cannot be made (another filesystem) leaves the old file,
-// which the status line still reads.
+// after the link is finished. When the link cannot be made (the old folder on another filesystem),
+// the logger keeps writing the old folder and starts no log in the new one: the meter's first sync
+// then moves both files itself (its own verified copy) and finds nothing left to warn about, and
+// the logger follows them. The new folder is kept at 0700, tightened when it is looser.
 // One line: {ts, account, plan, five_hour, seven_day, model, session}. `account` is the
 // first 16 hex of sha256(accountUuid): the same account on two machines matches, and the
 // raw id is never written. No prompt text, no tokens, no email.
@@ -25,7 +27,7 @@
 // written as one: `-- sh -c '<command>'`.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, linkSync, lstatSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, linkSync, lstatSync, statSync, unlinkSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 
@@ -39,8 +41,6 @@ const oldDir = process.env.METER_STATE_DIR ? null
   : platform() === "darwin" ? join(HOME, "Library/Application Support/automagik")
     : join(XDG && isAbsolute(XDG) ? XDG : join(HOME, ".local/state"), "automagik");
 const NAMES = ["claude-limits.jsonl", "claude-limits.last.json"];
-const LOG = join(stateDir, NAMES[0]);
-const LAST = join(stateDir, NAMES[1]);
 const EVERY_MS = 5 * 60 * 1000;
 
 const chunks = [];
@@ -61,13 +61,16 @@ function accountInfo() {
   } catch { return { account: null, plan: null }; }
 }
 
+const isFile = (p) => { try { return lstatSync(p).isFile(); } catch { return false; } };
+
 /**
  * Moves the log and its last reading out of the old folder, once; a file of its own already in the
  * new folder leaves them. A move cut short between the link and the unlink (both names on one
- * file) is finished: the old name goes.
+ * file) is finished: the old name goes. Returns the folder to write in: the new one, or the old one
+ * while its log could not be moved and the new folder has none (the meter moves it then).
  */
 function adopt() {
-  if (!oldDir || oldDir === stateDir) return;
+  if (!oldDir || oldDir === stateDir) return stateDir;
   for (const name of NAMES) {
     const from = join(oldDir, name), to = join(stateDir, name);
     try {
@@ -84,12 +87,22 @@ function adopt() {
       unlinkSync(from);
     } catch { /* absent, or left where it is */ }
   }
+  return isFile(join(oldDir, NAMES[0])) && !lstatOk(join(stateDir, NAMES[0])) ? oldDir : stateDir;
+}
+
+const lstatOk = (p) => { try { lstatSync(p); return true; } catch { return false; } };
+
+/** The new state folder at 0700: made so, or tightened when it is looser (the meter keeps it so too). */
+function ownFolder(dir) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (statSync(dir).mode & 0o077) chmodSync(dir, 0o700);
 }
 
 function record(input) {
   const rl = input?.rate_limits;
   if (!rl || typeof rl !== "object") return;
-  adopt();
+  const dir = adopt();
+  const LOG = join(dir, NAMES[0]), LAST = join(dir, NAMES[1]);
   const { account, plan } = accountInfo();
   const pick = (w) => (w && typeof w === "object") ? { used_percentage: w.used_percentage ?? null, resets_at: w.resets_at ?? null } : null;
   const reading = { account, plan, five_hour: pick(rl.five_hour), seven_day: pick(rl.seven_day) };
@@ -98,7 +111,7 @@ function record(input) {
   let last = null;
   try { last = JSON.parse(readFileSync(LAST, "utf8")); } catch { /* first reading */ }
   if (last && last.key === key && now - last.at < EVERY_MS) return;
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  if (dir === stateDir) ownFolder(stateDir);
   const line = JSON.stringify({ ts: new Date(now).toISOString(), ...reading, model: input?.model?.id ?? null, session: input?.session_id ?? null }) + "\n";
   const fresh = !existsSync(LOG);
   appendFileSync(LOG, line, { mode: 0o600 });
