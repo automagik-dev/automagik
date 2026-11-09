@@ -59,6 +59,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
       mode, id: bot.id, name: str(bot.name), kind: bot.kind === "main" ? "main" : "member",
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
       role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: currentAgent(str(bot.agent)) === str(bot.agent) ? str(bot.model) : "",
+      code: bot.code !== false,
       agyMode: AGY_MODES.includes(bot.agyMode) ? bot.agyMode : AGY_MODE_DEFAULT,
       // Kept as stored for the write-back: the form edits no permission rule (#823).
       agyPermissions: bot.agyPermissions,
@@ -71,7 +72,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
   return {
     mode: "create", id, name: "", kind: file && mainBotOf(file) ? "member" : "main",
     character: look.character, colour: look.colour, role: "", instructions: "", agent, pin: "",
-    agyMode: AGY_MODE_DEFAULT,
+    code: true, agyMode: AGY_MODE_DEFAULT,
     lead: "", category: "", catTitle: "", catSub: "", rank: "", planned: false, wave: 1, note: "", storedPlanned: null,
   };
 }
@@ -262,6 +263,7 @@ export function entryOf(state, file) {
       id: state.id, name: state.name.trim(), kind: state.kind,
       look: { character: state.character, colour: state.colour },
       role: state.role.trim(), instructions: state.instructions,
+      code: state.code === false ? false : undefined,
       agent: state.agent || undefined, model: state.pin || undefined,
       // Antigravity's launch mode: the default is applied at launch, so only another one is stored.
       agyMode: state.agyMode && state.agyMode !== AGY_MODE_DEFAULT ? state.agyMode : undefined,
@@ -305,6 +307,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     if (state.kind === "main") parts.push(opt("kind", "main"));
     if (state.agent) parts.push(opt("agent", state.agent));
     if (state.role.trim()) parts.push(opt("role", state.role.trim()));
+    if (state.code === false) parts.push(opt("code", "false"));
     if (state.kind === "member" && leadId) parts.push(opt("lead", leadId));
     if (byMain && categoryId) parts.push(opt("category", categoryId));
     if (state.kind === "member" && state.rank) parts.push(opt("rank", state.rank));
@@ -322,6 +325,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     if (changed("name")) parts.push(opt("name", state.name.trim()));
     if (changed("agent") && state.agent) parts.push(opt("agent", state.agent));
     if (changed("role")) parts.push(opt("role", state.role.trim()));
+    if (changed("code")) parts.push(opt("code", state.code === false ? "false" : "true"));
     const wasPlace = placeOf(was, file);
     if (state.kind === "member" && leadId !== wasPlace.leadId) parts.push(opt("lead", leadId));
     if (byMain && (categoryId !== was.category || !wasPlace.byMain)) {
@@ -345,7 +349,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
 /** Whether an edit changed anything the form edits. */
 export function editChanged(state, initial) {
   if (!initial) return true;
-  return ["name", "kind", "character", "colour", "role", "instructions", "agent", "pin", "agyMode", "lead", "category",
+  return ["name", "kind", "character", "colour", "role", "instructions", "code", "agent", "pin", "agyMode", "lead", "category",
     "catTitle", "catSub", "rank", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
 }
 

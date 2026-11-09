@@ -345,6 +345,36 @@ test("Rank chips are not offered for the main bot", async () => {
   assert.ok(!nodes.has("bot-rank-none"));
 });
 
+test("Code bot toggle (#774): defaults on, toggles into the copied line and save, and edits back to on", async () => {
+  seed([MAIN]);
+  const { form, cx, draw, click } = await open({ form: "create" });
+  form.inputs.name.type("writer", cx);
+  draw();
+  assert.ok(nodes.has("bot-code"));
+  assert.equal(form.s.code, true);
+  await click("bot-copy");
+  assert.doesNotMatch(cx.clip, /--code/);
+  await click("bot-code");
+  assert.equal(form.s.code, false);
+  draw();
+  await click("bot-copy");
+  assert.match(cx.clip, / --code=false /);
+  await click("bot-save");
+  const writer = stored().bots.find((b) => b.name === "writer");
+  assert.equal(writer.code, false);
+
+  const edited = await open({ form: "edit", bot: writer.id });
+  edited.draw();
+  assert.equal(edited.form.s.code, false);
+  await edited.click("bot-code");
+  assert.equal(edited.form.s.code, true);
+  edited.draw();
+  await edited.click("bot-copy");
+  assert.match(edited.cx.clip, / --code=true /);
+  await edited.click("bot-save");
+  assert.equal("code" in stored().bots.find((b) => b.id === writer.id), false);
+});
+
 test("Bot settings (pick) with no bot: one New bot line that opens the Create form and closes the list", async () => {
   state.spaces = [{ id: "s1", folder: project, machine: null }];
   seed([]);

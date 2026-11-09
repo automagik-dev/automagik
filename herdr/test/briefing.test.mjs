@@ -17,7 +17,7 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
-  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
+  botOfBriefingFile, briefDecision, briefedPath, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
   amPartEntryPath, amPartHookCommand, amPartRunnerPath, hookTargetOf, installHook, isAmPartEntry, scriptOf,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
@@ -1036,6 +1036,28 @@ test("hook worker scope: a non-git project omits the instruction and stays quiet
   assert.match(out.stdout, /Keep the board green/);
   assert.doesNotMatch(out.stdout, /worker/i);
   assert.equal((await sc.brief(env, '{"session_id":"non-git"}', { keep: true })).stdout, "");
+});
+
+test("hook worker scope (#774): a timed-out git check reuses the recorded or launched git state and does not reprint", async (t) => {
+  const sc = await turns(t, () => ["claude"]);
+  const first = await sc.turn(1);
+  assert.ok(first.stdout.includes(WORKER_LINE));
+  // Make `git rev-parse --is-inside-work-tree` time out (SIGTERM -> UNANSWERED in exec).
+  const realGit = spawnSync("sh", ["-c", "PATH=/usr/bin:/bin command -v git"], { encoding: "utf8" }).stdout.trim();
+  const fakeGit = join(sc.bin, "git");
+  writeFileSync(fakeGit, `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--is-inside-work-tree" ]; then kill -TERM $$; fi\nexec "${realGit}" "$@"\n`);
+  chmodSync(fakeGit, 0o755);
+  assert.equal((await sc.turn(2)).stdout, "", "reuses seen.isGit from turn 1");
+  // Even an older seen record without `isGit` infers git from the recorded hash or started briefing file.
+  const seenFile = briefedPath(sc.app, "s-1");
+  const seen = JSON.parse(readFileSync(seenFile, "utf8"));
+  assert.equal(seen.isGit, true);
+  delete seen.isGit;
+  writeFileSync(seenFile, `${JSON.stringify(seen)}\n`);
+  assert.equal((await sc.turn(3)).stdout, "", "infers git from the recorded hash when seen.isGit is absent");
+  const path = briefingFilePath(sc.app, sc.main, ID.main);
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 2000);
+  assert.equal((await sc.turn(4)).stdout, "", "resumed with the launch file: no reprint when git times out");
 });
 
 test("hook, a bot Start launched with its briefing file: three turns print it 0 times; the session is still joined", async (t) => {

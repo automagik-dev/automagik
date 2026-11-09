@@ -1000,7 +1000,7 @@ function describe(project, bot, view, hcError) {
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     agyMode: bot.agent === "antigravity" ? agyModeOf(bot.agyMode) : (typeof bot.agyMode === "string" && bot.agyMode ? bot.agyMode : null),
     terminal: held?.binding.terminal ?? null, status, duplicate: false, since: held?.binding.at ?? null,
-    role: bot.role, rank: bot.rank ?? null, look: bot.look,
+    role: bot.role, rank: bot.rank ?? null, code: bot.code !== false, look: bot.look,
     hcProxy: bot.hcProxy === true,
     worker,
     ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
@@ -1150,7 +1150,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                                  machine (hc machine ls), through hc
        automagik-herdr --version                 the installed pack's version
 
-  ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, agy-mode, pane, status
+  ls [--all]                    bots with kind, lead, category, rank, code, planned, agent, model, agy-mode, pane, status
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
@@ -1167,7 +1167,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
-  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
+  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
              [--agy-allow=] [--agy-deny=] [--no-agy-permissions]   (empty: that list cleared)
@@ -1724,7 +1724,7 @@ function lsLines(projects) {
       const perms = b.agyPermissions || b.workerAgyPermissions
         ? `  agy-allow ${(b.agyPermissions ?? b.workerAgyPermissions).allow.length} deny ${(b.agyPermissions ?? b.workerAgyPermissions).deny.length}` : "";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${p.machine ? `${p.machine}/` : ""}${b.terminal}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  code ${b.code}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -1833,7 +1833,7 @@ async function cmdShow(opts, [ref]) {
       `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
-    `  rank         ${info.rank ?? "-"}`,
+    `  rank         ${info.rank ?? "-"}`, `  code         ${info.code}`,
     `  hc proxy     ${proxyStateText(info.hcProxyState)}`,
     `  worker       ${workerText(info.worker) || "-"}`,
     ...(info.worker?.swap ? [`  swap         ${workerText(info.worker.swap)} (planned swaps: about 1 task in 3)`] : []),
