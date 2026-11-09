@@ -160,9 +160,14 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             );
             if let Some(g) = &r.generation {
                 let rows: i64 = g.counts.values().sum();
+                let before = if r.migrated && !r.reimported {
+                    "the migration"
+                } else {
+                    "the reset"
+                };
                 println!(
-                    "meter: kept the store before the migration as {} ({rows} rows, every \
-                     table's count checked)",
+                    "meter: kept the store before {before} as {} ({rows} rows, every table's \
+                     count checked)",
                     g.path.display()
                 );
             }
