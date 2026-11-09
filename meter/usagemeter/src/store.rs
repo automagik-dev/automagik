@@ -217,7 +217,9 @@ impl Store {
                     [
                         SCHEMA_VERSION.to_string(),
                         evidence::KEY_META.to_string(),
-                        evidence::SessionKey::random().to_hex(),
+                        evidence::SessionKey::random()
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                            .to_hex(),
                     ],
                 )?;
                 Ok(true)
@@ -278,6 +280,7 @@ impl Store {
     /// hour: every rollup of an hour from then on is the evidence's. Before it commits, every table
     /// the store had holds as many rows as before (or none, on a reset); else nothing changes.
     pub fn migrate(&mut self, now_ms: i64, reset: Option<i64>) -> Result<(), String> {
+        let cut = evidence::retention_cut(now_ms);
         let tx = self
             .conn
             .transaction()
@@ -288,7 +291,7 @@ impl Store {
         let evidence_from = match reset {
             Some(from) => {
                 clear(&tx, from).map_err(db)?;
-                from
+                from.max(cut)
             }
             None => {
                 tx.execute(
@@ -316,7 +319,9 @@ impl Store {
             )
             .map_err(db)?;
         if !has_key {
-            put(evidence::KEY_META, &evidence::SessionKey::random().to_hex()).map_err(db)?;
+            let key = evidence::SessionKey::random()
+                .map_err(|e| format!("cannot make the store's hash key: {e}"))?;
+            put(evidence::KEY_META, &key.to_hex()).map_err(db)?;
         }
         put("schema_version", &SCHEMA_VERSION.to_string()).map_err(db)?;
         if reset.is_none() {
@@ -346,7 +351,8 @@ impl Store {
         {
             return Ok(k);
         }
-        let k = evidence::SessionKey::random();
+        let k = evidence::SessionKey::random()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         self.set_meta(evidence::KEY_META, &k.to_hex())?;
         Ok(k)
     }
@@ -376,6 +382,16 @@ impl Store {
     /// The evidence goes with the rows (the re-import writes it again) and starts at the new
     /// window; the `launch` and `link` tables stay: they hold what only past syncs saw.
     pub fn reset(&mut self, counted_from_ms: i64) -> rusqlite::Result<()> {
+        self.reset_at(counted_from_ms, counted_from_ms)
+    }
+
+    /// [`Store::reset`], with evidence starting at `evidence_from_ms` (never before the window):
+    /// a re-import writes no evidence a retention bound would drop at once.
+    pub fn reset_at(
+        &mut self,
+        counted_from_ms: i64,
+        evidence_from_ms: i64,
+    ) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
         clear(&tx, counted_from_ms)?;
         tx.execute(
@@ -384,7 +400,10 @@ impl Store {
         )?;
         tx.execute(
             "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
-            [evidence::FROM_META, &counted_from_ms.to_string()],
+            [
+                evidence::FROM_META,
+                &evidence_from_ms.max(counted_from_ms).to_string(),
+            ],
         )?;
         tx.commit()?;
         self.intern.clear();
