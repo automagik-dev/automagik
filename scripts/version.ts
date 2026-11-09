@@ -77,15 +77,16 @@ const CARGO_VERSION = /^version = "([^"]*)"$/;
 /**
  * The index of the line holding a crate's version, or -1: in a Cargo.toml the first `version = "…"`
  * of `[package]`; in a Cargo.lock the one of the `[[package]]` whose `name` is the crate's (the
- * lock's own top-level `version = 4` sits in no table and never matches).
+ * lock's own top-level `version = 4` sits in no table and never matches). A crate entry that ends
+ * with no version line is -1 too, so the next entry's version is never taken for the crate's.
  */
 export function cargoVersionLine(lines: string[], kind: 'toml' | 'lock', name: string): number {
   let table = '';
   let named = false;
   for (const [index, line] of lines.entries()) {
     if (/^\s*\[/.test(line)) {
+      if (named) return -1;
       table = line.trim();
-      named = false;
       continue;
     }
     if (kind === 'lock' && table === '[[package]]' && line === `name = "${name}"`) named = true;
