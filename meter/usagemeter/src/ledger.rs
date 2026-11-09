@@ -10,16 +10,27 @@
 //! malformed lines are skipped, unknown fields are ignored and any field may be missing in older
 //! rows (a field of the wrong type counts as missing).
 //!
-//! Resolution never guesses. Claude sessions resolve through their `session` row to the `start`
-//! row of the same terminal. Codex and omp sessions resolve by `cwd == worktree`, the agent, and a
-//! time window opened by the start row's `at` and closed by the next start row on the same
-//! worktree. Whenever more than one start row could claim a session the answer is
+//! Resolution never guesses. Whenever more than one start row could claim a session the answer is
 //! [`Resolution::Unmatched`].
 //!
+//! The ledger has no end rows, so a launch is only known to be over once another start row names
+//! the same terminal: a terminal runs one launch at a time, so the later start replaced it. A
+//! launch with no later start on its terminal may still be running, whatever else started since.
+//!
+//! - Claude sessions resolve through their `session` row to the terminal, then to the launch that
+//!   occupied that terminal when the row was written: the latest start on it whose `at` is not
+//!   after the row's `at`. A start on that terminal between the row and the query time means the
+//!   launch was replaced after it reported the id, so the answer is Unmatched.
+//! - Codex and omp sessions resolve by `cwd == worktree`. Every start on the worktree that had
+//!   begun by the query time, was not yet replaced on its terminal, and ran the same agent (or an
+//!   unrecorded one) is a claimant. A concurrent reviewer, or a second seat in the project folder,
+//!   is therefore a second claimant, and the session stays Unmatched.
+//!
 //! A start row too incomplete to build a [`Tag`] (no `bot`/`botId`, an unknown `kind`, no
-//! `terminal`) is still evidence: its worktree and `at` close the previous window, and its
-//! terminal and agent still count as a possible claimant. A session it could claim is
-//! [`Resolution::Unmatched`], never the tag of an earlier worker.
+//! `terminal`) is still evidence: its terminal and `at` end the launch before it on that terminal,
+//! and its terminal and agent still count as a possible claimant. A session it could claim is
+//! [`Resolution::Unmatched`], never the tag of an earlier worker. A start row without a usable
+//! `at` cannot be placed in time, so it keeps every answer it could change Unmatched.
 //!
 //! A Claude session id can be reported by more than one terminal: `/resume` in a new pane keeps
 //! the id. The session then belongs to the terminal whose `session` row has the latest `at` not
@@ -33,7 +44,7 @@
 //! Tasks are joined by [`TaskKey`] (project, task), never by the task id alone: two projects can
 //! both have a `gh-45`. Seats have no task.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -79,7 +90,7 @@ pub struct TaskKey {
 }
 
 /// The worker a session belongs to, as its start row recorded it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tag {
     /// `bot`, else `botId`.
     pub bot: String,
@@ -140,15 +151,29 @@ pub struct Query<'a> {
     pub agent: Source,
     pub session_id: &'a str,
     pub cwd: Option<&'a str>,
-    /// When the session ran (ms since the epoch). Bounds the Codex and omp windows, and picks the
-    /// terminal when a Claude session id was reported by more than one. Rows without a usable
-    /// time cannot be placed against it, so they never lose to a timed row: they make it Unmatched.
+    /// The time of the usage being attributed: the timestamp of one call (one transcript or log
+    /// event) of the session, in milliseconds since the Unix epoch, UTC. It is compared with the
+    /// ledger's `at` values, which Herdr writes with millisecond precision.
+    ///
+    /// Bounds, all against the same `at_ms`:
+    /// - a start row can claim the session from its own `at` on, inclusive (`at <= at_ms`);
+    /// - a later start on the same terminal ends that claim at its `at`, exclusive
+    ///   (`at_ms < end`), so a launch and its replacement never both own one instant;
+    /// - a Claude `session` row counts from its own `at` on, inclusive.
+    ///
+    /// Any instant at which the session was running gives an answer that is never wrong, because
+    /// the owner had started and was not yet replaced at that instant. A later instant can only
+    /// add claimants, so the same session may be a Tag for its first call and Unmatched for a call
+    /// after a concurrent worker started; a caller tagging a whole Codex or omp session at once may
+    /// pass its first call's time. Claude calls should pass their own time: a `/resume` moves
+    /// the session id to another terminal from that point on. Rows without a usable time cannot be
+    /// placed against `at_ms`, so they never lose to a timed row: they make it Unmatched.
     pub at_ms: i64,
 }
 
 /// One `start` row. The boundary and claimant evidence (terminal, worktree, agent, at) is kept
 /// even when the row is too incomplete to build a [`Tag`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Start {
     terminal: Option<String>,
     worktree: Option<String>,
@@ -157,9 +182,26 @@ struct Start {
     tag: Option<Tag>,
 }
 
+/// What other start rows on the same terminal say about a start's end. Derived once after parsing.
+#[derive(Debug, Clone, Copy, Default)]
+struct Life {
+    /// The `at` of the first strictly later start on the same terminal: the launch was replaced
+    /// then. None while no later start names the terminal (or the start itself has no time).
+    replaced_at: Option<i64>,
+    /// Another start on the same terminal has no usable time: it may have replaced this one at
+    /// any moment, so this start can never be confirmed as an owner.
+    untimed_neighbour: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct Ledger {
     starts: Vec<Start>,
+    /// Parallel to `starts`.
+    lives: Vec<Life>,
+    /// Normalized worktree to the indexes of the starts on it.
+    by_worktree: HashMap<String, Vec<usize>>,
+    /// Terminal to the indexes of the starts in it.
+    by_terminal: HashMap<String, Vec<usize>>,
     /// Session id to the (terminal, at) rows that reported it (deduped).
     sessions: HashMap<String, BTreeSet<(String, Option<i64>)>>,
 }
@@ -190,6 +232,7 @@ impl Ledger {
 
     pub fn parse(bytes: &[u8]) -> Ledger {
         let mut ledger = Ledger::default();
+        let mut seen = HashSet::new();
         for line in bytes.split(|b| *b == b'\n') {
             let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(line) else {
                 continue;
@@ -197,7 +240,7 @@ impl Ledger {
             match str_field(&row, "event") {
                 Some("start") => {
                     if let Some(s) = parse_start(&row)
-                        && !ledger.starts.contains(&s)
+                        && seen.insert(s.clone())
                     {
                         ledger.starts.push(s);
                     }
@@ -217,7 +260,39 @@ impl Ledger {
                 _ => {}
             }
         }
+        ledger.index();
         ledger
+    }
+
+    /// Builds the worktree and terminal indexes and each start's [`Life`], in one sorted pass per
+    /// terminal, so a query only looks at the starts that share its worktree or terminal.
+    fn index(&mut self) {
+        for (i, s) in self.starts.iter().enumerate() {
+            if let Some(w) = &s.worktree {
+                self.by_worktree
+                    .entry(normalize(w).to_owned())
+                    .or_default()
+                    .push(i);
+            }
+            if let Some(t) = &s.terminal {
+                self.by_terminal.entry(t.clone()).or_default().push(i);
+            }
+        }
+        self.lives = vec![Life::default(); self.starts.len()];
+        for idx in self.by_terminal.values() {
+            let mut times: Vec<i64> = idx.iter().filter_map(|&i| self.starts[i].at_ms).collect();
+            times.sort_unstable();
+            let untimed = idx.len() - times.len();
+            for &i in idx {
+                let at = self.starts[i].at_ms;
+                let others_untimed = untimed - usize::from(at.is_none());
+                self.lives[i] = Life {
+                    replaced_at: at
+                        .and_then(|at| times.get(times.partition_point(|t| *t <= at)).copied()),
+                    untimed_neighbour: others_untimed > 0,
+                };
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -269,60 +344,92 @@ impl Ledger {
                 None => return Resolution::Untagged,
             }
         };
-        let mut claims = self
-            .starts
+        // The report that ties the session to this launch: the latest timed one not after the
+        // query, else the first (the query predates every report), else the query time itself.
+        let reported = rows
             .iter()
-            .filter(|s| s.terminal.as_deref() == Some(terminal));
-        match (claims.next(), claims.next()) {
-            (None, _) => Resolution::Untagged,
+            .filter(|(t, _)| t == terminal)
+            .filter_map(|(_, at)| *at);
+        let row_at = reported
+            .clone()
+            .filter(|at| *at <= at_ms)
+            .max()
+            .or_else(|| reported.min())
+            .unwrap_or(at_ms);
+        self.resolve_on_terminal(terminal, row_at, at_ms)
+    }
+
+    /// The launch that occupied `terminal` when it reported the session at `row_at`, provided no
+    /// other launch replaced it between that report and the query time.
+    fn resolve_on_terminal(&self, terminal: &str, row_at: i64, at_ms: i64) -> Resolution {
+        let starts: Vec<&Start> = self
+            .by_terminal
+            .get(terminal)
+            .into_iter()
+            .flatten()
+            .map(|&i| &self.starts[i])
+            .collect();
+        if starts.is_empty() {
+            return Resolution::Untagged;
+        }
+        // A launch at an unknown time may be the one that held the terminal.
+        if starts.iter().any(|s| s.at_ms.is_none()) {
+            return Resolution::Unmatched;
+        }
+        // A launch between the report and the query: whichever side the session ran on is unknown.
+        let (lo, hi) = (row_at.min(at_ms), row_at.max(at_ms));
+        if starts
+            .iter()
+            .filter_map(|s| s.at_ms)
+            .any(|at| lo < at && at <= hi)
+        {
+            return Resolution::Unmatched;
+        }
+        let Some(latest) = starts
+            .iter()
+            .filter_map(|s| s.at_ms)
+            .filter(|at| *at <= row_at)
+            .max()
+        else {
+            // Every launch on the terminal came after the session: none of them opened it.
+            return Resolution::Untagged;
+        };
+        let mut owners = starts.iter().filter(|s| s.at_ms == Some(latest));
+        match (owners.next(), owners.next()) {
             (Some(s), None) => s.tag.clone().map_or(Resolution::Unmatched, Resolution::Tag),
-            (Some(_), Some(_)) => Resolution::Unmatched,
+            _ => Resolution::Unmatched,
         }
     }
 
     fn resolve_by_worktree(&self, agent: &str, cwd: &str, at_ms: i64) -> Resolution {
-        let cwd = normalize(cwd);
-        let on_worktree: Vec<&Start> = self
-            .starts
-            .iter()
-            .filter(|s| s.worktree.as_deref().map(normalize) == Some(cwd))
-            .collect();
-        let opens: Vec<(i64, &Start)> = on_worktree
-            .iter()
-            .filter_map(|s| Some((s.at_ms?, *s)))
-            .collect();
-        // A start without a usable time could sit anywhere: it may have closed any window on the
-        // worktree, and when it could run this agent it may be the owner itself.
-        let untimed: Vec<&Start> = on_worktree
-            .iter()
-            .filter(|s| s.at_ms.is_none())
-            .copied()
-            .collect();
-        // The window of a start row closes at the first later start on the same worktree; rows
-        // sharing an `at` keep each other's window open, so both stay candidates.
-        let closes_after = |at: i64| opens.iter().map(|(t, _)| *t).filter(|t| *t > at).min();
+        let on_worktree = self.by_worktree.get(normalize(cwd)).into_iter().flatten();
         let mut confirmed = Vec::new();
         let mut unknown = 0usize;
-        for (at, s) in &opens {
-            let in_window = *at <= at_ms && closes_after(*at).is_none_or(|end| at_ms < end);
-            if !in_window {
+        for &i in on_worktree {
+            let (s, life) = (&self.starts[i], self.lives[i]);
+            // A launch of another harness never runs this session.
+            if s.agent.as_deref().is_some_and(|a| a != agent) {
                 continue;
             }
-            // A row that could claim the session but cannot be tagged is uncertainty, not a miss.
-            match (s.agent.as_deref(), &s.tag) {
-                (Some(a), Some(t)) if a == agent => confirmed.push(t),
-                (Some(a), None) if a == agent => unknown += 1,
-                (Some(_), _) => {}
-                (None, _) => unknown += 1,
+            // A start without a usable time could sit anywhere, so it may be the owner itself.
+            let Some(at) = s.at_ms else {
+                unknown += 1;
+                continue;
+            };
+            // Not begun yet, or already replaced on its terminal: it cannot be running the session.
+            if at > at_ms || life.replaced_at.is_some_and(|end| end <= at_ms) {
+                continue;
+            }
+            // A claimant that cannot be confirmed (no tag, no recorded agent, or a neighbour that
+            // may have replaced it at an unknown time) is uncertainty, not a miss.
+            match (&s.tag, &s.agent, life.untimed_neighbour) {
+                (Some(t), Some(_), false) => confirmed.push(t),
+                _ => unknown += 1,
             }
         }
-        unknown += untimed
-            .iter()
-            .filter(|s| s.agent.as_deref().is_none_or(|a| a == agent))
-            .count();
         match (confirmed.as_slice(), unknown) {
             ([], 0) => Resolution::Untagged,
-            ([t], 0) if untimed.is_empty() => Resolution::Tag((*t).clone()),
+            ([t], 0) => Resolution::Tag((*t).clone()),
             _ => Resolution::Unmatched,
         }
     }
@@ -441,12 +548,13 @@ mod tests {
                "transcript": "/work/transcripts/example.jsonl", "at": at})
     }
 
+    /// A Claude call at 09:30, after the usual 09:00 start and 09:00:01 session report.
     fn claude(id: &str) -> Query<'_> {
         Query {
             agent: Source::Claude,
             session_id: id,
             cwd: None,
-            at_ms: 0,
+            at_ms: crate::time::parse_rfc3339("2026-01-01T09:30:00Z").unwrap(),
         }
     }
 
@@ -624,29 +732,46 @@ mod tests {
         botless.as_object_mut().unwrap().remove("bot");
         let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), botless]);
         assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
-        // An unknown kind still closes the window; it runs omp, so codex has no owner after it.
-        let mut robot = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
+        // An unknown kind in the same terminal still ends the codex launch; it runs omp, so codex
+        // has no owner after it.
+        let mut robot = start("t1", WT_A, "omp", "2026-01-01T12:00:00Z");
         robot["kind"] = json!("robot");
         let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), robot]);
         assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Untagged);
-        // A start row without a terminal still bounds the worktree.
+        // ... in another terminal it ends nothing, and an omp launch cannot claim codex.
+        let mut robot = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
+        robot["kind"] = json!("robot");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), robot]);
+        assert_eq!(tag(codex(&l, "2026-01-01T13:00:00Z")).bot, "b-example");
+        // A start row without a terminal replaces nothing, but a codex one may claim the session.
         let mut headless = start("t2", WT_A, "omp", "2026-01-01T12:00:00Z");
         headless["terminal"] = Value::Null;
+        let l = ledger(&[
+            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
+            headless.clone(),
+        ]);
+        assert_eq!(tag(codex(&l, "2026-01-01T13:00:00Z")).bot, "b-example");
+        headless["agent"] = json!("codex");
         let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), headless]);
-        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Untagged);
+        assert_eq!(codex(&l, "2026-01-01T13:00:00Z"), Resolution::Unmatched);
         // Claude: the only start on the session's terminal has no bot, so it cannot be confirmed.
         let mut botless = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
         botless["bot"] = Value::Null;
         let l = ledger(&[botless.clone(), session("t1", "s-1")]);
         assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
-        // ... and a relaunch on the terminal without a bot still makes it ambiguous.
+        // ... and a later relaunch on the terminal without a bot, with no new report, makes the
+        // calls after it ambiguous; the calls before it still belong to the first launch.
         botless["at"] = json!("2026-01-01T11:00:00Z");
         let l = ledger(&[
             start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
             botless,
             session("t1", "s-1"),
         ]);
-        assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
+        assert_eq!(tag(l.resolve(&claude("s-1"))).bot, "b-example");
+        assert_eq!(
+            l.resolve(&claude_at("s-1", "2026-01-01T11:30:00Z")),
+            Resolution::Unmatched
+        );
     }
 
     #[test]
@@ -746,15 +871,25 @@ mod tests {
             codex(&l, WT_A, "2026-01-01T09:30:00Z"),
             Resolution::Unmatched
         );
-        // A fully tagged omp start with an unparseable time: it cannot claim a codex session, but
-        // it may still have closed the codex window.
-        let mut omp = untimed("t2", WT_A, "omp");
+        // A fully tagged omp start with an unparseable time in the codex terminal: it cannot
+        // claim a codex session, but it may have replaced the codex launch at any moment.
+        let mut omp = untimed("t1", WT_A, "omp");
         omp["at"] = json!("not a time");
         omp["bot"] = json!("b-omp");
-        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), omp]);
+        let l = ledger(&[
+            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
+            omp.clone(),
+        ]);
         assert_eq!(
             codex(&l, WT_A, "2026-01-01T12:00:00Z"),
             Resolution::Unmatched
+        );
+        // ... in another terminal it replaces nothing and claims nothing.
+        omp["terminal"] = json!("t2");
+        let l2 = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), omp]);
+        assert_eq!(
+            tag(codex(&l2, WT_A, "2026-01-01T12:00:00Z")).bot,
+            "b-example"
         );
         // Nothing could claim codex there before 09:00, so that stays untagged, not uncertain.
         assert_eq!(
@@ -798,8 +933,8 @@ mod tests {
             "b-example"
         );
         assert_eq!(codex(WT_A, "2026-01-01T08:59:59Z"), Resolution::Untagged);
-        // The next start on the worktree closes the codex window.
-        assert_eq!(codex(WT_A, "2026-01-01T12:00:00Z"), Resolution::Untagged);
+        // An omp launch in another terminal neither ends the codex launch nor claims its session.
+        assert_eq!(tag(codex(WT_A, "2026-01-01T12:00:00Z")).bot, "b-example");
         assert_eq!(codex(WT_B, "2026-01-01T10:00:00Z"), Resolution::Untagged);
         assert_eq!(
             tag(l.resolve(&by_cwd(Source::Omp, WT_A, "2026-01-02T00:00:00Z"))).bot,
@@ -814,6 +949,174 @@ mod tests {
             ..by_cwd(Source::Codex, WT_A, "2026-01-01T10:00:00Z")
         };
         assert_eq!(l.resolve(&no_cwd), Resolution::Untagged);
+    }
+
+    #[test]
+    fn concurrent_reviewer_on_the_writers_worktree_is_a_second_claimant() {
+        let codex = |l: &Ledger, at| l.resolve(&by_cwd(Source::Codex, WT_A, at));
+        let mut reviewer = start("t2", WT_A, "codex", "2026-01-01T10:00:00Z");
+        reviewer["bot"] = json!("b-reviewer");
+        reviewer["role"] = json!("review");
+        let l = ledger(&[
+            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
+            reviewer.clone(),
+        ]);
+        // Before the reviewer started, only the writer could run a codex session there.
+        let writer = tag(codex(&l, "2026-01-01T09:30:00Z"));
+        assert_eq!(
+            (writer.bot.as_str(), writer.role),
+            ("b-example", Some(Role::Dev))
+        );
+        // After it, the writer has no end row: either of them may own the session.
+        assert_eq!(codex(&l, "2026-01-01T10:30:00Z"), Resolution::Unmatched);
+        assert_eq!(codex(&l, "2026-01-02T00:00:00Z"), Resolution::Unmatched);
+        // A reviewer on another harness cannot take a codex session.
+        reviewer["agent"] = json!("claude");
+        let l = ledger(&[
+            start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"),
+            reviewer.clone(),
+        ]);
+        assert_eq!(tag(codex(&l, "2026-01-01T10:30:00Z")).bot, "b-example");
+        // A codex reviewer launched into the writer's own terminal replaced the writer.
+        reviewer["agent"] = json!("codex");
+        reviewer["terminal"] = json!("t1");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), reviewer]);
+        assert_eq!(tag(codex(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
+        let r = tag(codex(&l, "2026-01-01T10:30:00Z"));
+        assert_eq!((r.bot.as_str(), r.role), ("b-reviewer", Some(Role::Review)));
+    }
+
+    #[test]
+    fn two_seats_in_the_project_folder_never_take_each_others_session() {
+        let seat = |terminal, bot, at| {
+            let mut row = start(terminal, PROJECT_A, "omp", at);
+            row["kind"] = json!("seat");
+            row["bot"] = json!(bot);
+            row["task"] = Value::Null;
+            row["branch"] = Value::Null;
+            row
+        };
+        let l = ledger(&[
+            seat("t1", "b-seat-one", "2026-01-01T09:00:00Z"),
+            seat("t2", "b-seat-two", "2026-01-01T09:05:00Z"),
+        ]);
+        let omp = |at| l.resolve(&by_cwd(Source::Omp, PROJECT_A, at));
+        let first = tag(omp("2026-01-01T09:02:00Z"));
+        assert_eq!((first.bot.as_str(), first.kind), ("b-seat-one", Kind::Seat));
+        // Both seats are live at 11:00: the session may be either's.
+        assert_eq!(omp("2026-01-01T11:00:00Z"), Resolution::Unmatched);
+        // The trailing slash a cwd may carry changes nothing.
+        assert_eq!(
+            l.resolve(&by_cwd(
+                Source::Omp,
+                "/work/example-project/",
+                "2026-01-01T11:00:00Z"
+            )),
+            Resolution::Unmatched
+        );
+    }
+
+    #[test]
+    fn query_time_bounds_are_inclusive_at_a_start_and_exclusive_at_its_replacement() {
+        let mut relaunch = start("t1", WT_A, "codex", "2026-01-01T10:00:00Z");
+        relaunch["bot"] = json!("b-relaunch");
+        let l = ledger(&[start("t1", WT_A, "codex", "2026-01-01T09:00:00Z"), relaunch]);
+        let ms = |at| crate::time::parse_rfc3339(at).unwrap();
+        let codex_ms = |at_ms| {
+            l.resolve(&Query {
+                agent: Source::Codex,
+                session_id: "rollout-1",
+                cwd: Some(WT_A),
+                at_ms,
+            })
+        };
+        let nine = ms("2026-01-01T09:00:00Z");
+        let ten = ms("2026-01-01T10:00:00Z");
+        // `at_ms` is in milliseconds: one millisecond either side of a boundary moves the answer.
+        assert_eq!(codex_ms(nine - 1), Resolution::Untagged);
+        assert_eq!(tag(codex_ms(nine)).bot, "b-example");
+        assert_eq!(tag(codex_ms(ten - 1)).bot, "b-example");
+        assert_eq!(tag(codex_ms(ten)).bot, "b-relaunch");
+        // A Claude session row counts from its own millisecond on.
+        let mut resumed = start("t2", WT_B, "claude", "2026-01-01T10:00:00Z");
+        resumed["bot"] = json!("b-resumed");
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            resumed,
+            session_at("t1", "s-1", "2026-01-01T09:00:01Z"),
+            session_at("t2", "s-1", "2026-01-01T10:30:00.250Z"),
+        ]);
+        let resume = ms("2026-01-01T10:30:00.250Z");
+        let claude_ms = |at_ms| {
+            l.resolve(&Query {
+                at_ms,
+                ..claude("s-1")
+            })
+        };
+        assert_eq!(tag(claude_ms(resume - 1)).bot, "b-example");
+        assert_eq!(tag(claude_ms(resume)).bot, "b-resumed");
+    }
+
+    #[test]
+    fn reused_claude_terminal_tags_the_launch_that_held_it_when_the_session_opened() {
+        let mut second = start("t1", WT_B, "claude", "2026-01-01T10:00:00Z");
+        second["bot"] = json!("b-second");
+        let first = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
+        let at = |l: &Ledger, when| l.resolve(&claude_at("s-1", when));
+        // The session opened under the second launch: the first one never had it.
+        let l = ledger(&[
+            first.clone(),
+            second.clone(),
+            session_at("t1", "s-1", "2026-01-01T10:00:05Z"),
+        ]);
+        assert_eq!(tag(at(&l, "2026-01-01T10:30:00Z")).bot, "b-second");
+        // It opened under the first launch, and the calls ran before the terminal was reused.
+        let l = ledger(&[
+            first.clone(),
+            second.clone(),
+            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
+        ]);
+        assert_eq!(tag(at(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
+        // A call after the reuse with no new report: the session cannot be placed.
+        assert_eq!(at(&l, "2026-01-01T10:30:00Z"), Resolution::Unmatched);
+        // The reviewer's probe: the only start on the terminal came after the session opened.
+        let l = ledger(&[
+            first.clone(),
+            session_at("t2", "s-2", "2026-01-01T08:00:00Z"),
+            {
+                let mut late = start("t2", WT_B, "claude", "2026-01-01T09:00:00Z");
+                late["bot"] = json!("b-late");
+                late
+            },
+        ]);
+        assert_eq!(
+            l.resolve(&claude_at("s-2", "2026-01-01T08:30:00Z")),
+            Resolution::Untagged
+        );
+        // A seat re-attached to another bot on the same terminal resolves by time too.
+        let mut reseat = second;
+        reseat["kind"] = json!("seat");
+        reseat["bot"] = json!("b-reseat");
+        let l = ledger(&[
+            first,
+            reseat,
+            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
+            session_at("t1", "s-3", "2026-01-01T10:00:05Z"),
+        ]);
+        assert_eq!(tag(at(&l, "2026-01-01T09:30:00Z")).bot, "b-example");
+        assert_eq!(
+            tag(l.resolve(&claude_at("s-3", "2026-01-01T10:30:00Z"))).bot,
+            "b-reseat"
+        );
+        // A launch on the terminal at an unknown time may be the one that held it.
+        let mut untimed = start("t1", WT_B, "claude", "2026-01-01T10:00:00Z");
+        untimed.as_object_mut().unwrap().remove("at");
+        let l = ledger(&[
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            untimed,
+            session_at("t1", "s-1", "2026-01-01T09:00:05Z"),
+        ]);
+        assert_eq!(at(&l, "2026-01-01T09:30:00Z"), Resolution::Unmatched);
     }
 
     #[test]
@@ -873,12 +1176,12 @@ mod tests {
             l.resolve(&claude_at("s-1", "2026-01-01T10:00:00Z")),
             Resolution::Unmatched
         );
-        // One terminal with two different start rows.
-        let mut relaunch = start("t1", WT_A, "claude", "2026-01-01T11:00:00Z");
-        relaunch["bot"] = json!("b-relaunch");
+        // One terminal with two start rows at the same instant.
+        let mut twin = start("t1", WT_A, "claude", "2026-01-01T09:00:00Z");
+        twin["bot"] = json!("b-twin");
         let l = ledger(&[
             start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
-            relaunch,
+            twin,
             session("t1", "s-1"),
         ]);
         assert_eq!(l.resolve(&claude("s-1")), Resolution::Unmatched);
