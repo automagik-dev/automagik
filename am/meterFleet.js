@@ -75,11 +75,21 @@ dest=$HOME/.local/bin/usagemeter`;
  * Run on the machine as `sh -c INSTALL sh <base> <asset> <version> <sha256>`: <base> the download
  * folder of the release the checked pointer names (https, or a test's file://), <sha256> the one it
  * names for <asset>. One download, checked against <sha256> before anything is written beside the
- * binary. Prints one line: `current`, `newer <v>`, `link`, `unknown` (left as it is) or
- * `installed`. Fails (stderr, exit 3: checksum, 4: no curl, 5: download, 6: write) with nothing
- * changed. The state is looked at again just before the rename, in case something else put a
- * usagemeter there meanwhile.
+ * binary. Only then is the new binary run once, from beside the binary (a temp folder may be
+ * noexec): `--version` under `env -i` (no variable but a bare PATH and a scratch HOME; usagemeter
+ * opens no network connection), killed after SMOKE_SECONDS, and its whole output must be exactly
+ * `usagemeter <version>`. The binary it replaces, which at that point can only be a regular file
+ * reporting an older version (a link, an unversioned or a newer one never reaches the swap), is kept
+ * as ~/.local/bin/usagemeter.prev: a hard link, so its mode is the binary's, replaced at the next
+ * swap. A broken release still leaves a working meter and one rename back:
+ * `mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter`. Prints one line: `current`,
+ * `newer <v>`, `link`, `unknown` (left as it is), `installed`, or `installed prev` (the old one
+ * kept). Fails (stderr, exit 3: checksum, 4: no curl, 5: download, 6: write, 7: the new binary
+ * does not run as <version>) with the old binary in place and no temp file left. The state is
+ * looked at again just before the rename, in case something else put a usagemeter there meanwhile.
  */
+/** How long the new binary's `--version` may take before the swap is refused. */
+export const SMOKE_SECONDS = 10;
 export const INSTALL = `set -u
 base=$1; asset=$2; want=$3; sum=$4
 ${VERSION_SH}
@@ -109,10 +119,21 @@ got=\${got%% *}
 mkdir -p "$dir" || { echo "could not make $dir" >&2; exit 6; }
 part=$(mktemp "$dir/.usagemeter.XXXXXX") || { echo "could not write in $dir" >&2; exit 6; }
 cp "$tmp/$asset" "$part" && chmod 755 "$part" || { echo "could not write $dest" >&2; exit 6; }
+env -i PATH=/usr/bin:/bin HOME="$tmp" "$part" --version </dev/null >"$tmp/smoke" 2>/dev/null & sp=$!
+( sleep ${SMOKE_SECONDS}; kill -9 "$sp" ) </dev/null >/dev/null 2>&1 & kp=$!
+wait "$sp"; kill "$kp" 2>/dev/null
+runs=$(cat "$tmp/smoke")
+[ "$runs" = "usagemeter $want" ] || { said=$(printf '%s' "$runs" | tr '\\n' ' ' | cut -c1-80); echo "the new usagemeter does not run as $want (--version said: \${said:-nothing}): the old binary stays, nothing was installed" >&2; exit 7; }
 s=$(state); if [ -n "$s" ]; then echo "$s"; exit 0; fi
+prev="$dest.prev"; kept=
+if [ -f "$dest" ] && [ ! -L "$dest" ]; then
+  if [ -L "$prev" ] || { [ -e "$prev" ] && [ ! -f "$prev" ]; }; then echo "$prev is a link or a folder, not the backup this keeps: nothing was installed" >&2; exit 6; fi
+  ln -f "$dest" "$prev" 2>/dev/null || { echo "could not keep the previous binary as $prev: nothing was installed" >&2; exit 6; }
+  kept=prev
+fi
 mv -f "$part" "$dest" || { echo "could not write $dest" >&2; exit 6; }
 part=
-echo installed`;
+echo "installed $kept"`;
 
 /** Run as `sh -c UNINSTALL sh <version>`: removes the binary only if it still reports <version>. */
 export const UNINSTALL = `set -u
@@ -152,7 +173,8 @@ export async function installOn(run, machine, { pointer, base }) {
   const r = await run(["sh", "-c", INSTALL, "sh", base, asset.name, want, asset.sha256], { on: machine, timeout: 180 });
   if (r.code !== 0) return { machine, status: "failed", want, why: short(r.stderr) || `exit ${r.code}` };
   const [word, have] = short(r.stdout).split(/\s+/);
-  if (word === "installed" || word === "current") return { machine, status: word, version: want, want };
+  if (word === "installed") return { machine, status: word, version: want, want, ...(have === "prev" ? { prev: true } : {}) };
+  if (word === "current") return { machine, status: word, version: want, want };
   if (word === "newer") return { machine, status: "newer", version: have ?? null, want };
   if (word === "link" || word === "unknown") return { machine, status: word, want };
   return { machine, status: "failed", want, why: `unexpected answer: ${short(r.stdout) || "(none)"}` };
@@ -186,7 +208,7 @@ export function recordAfter(machines, results) {
 export function resultLine(r) {
   const where = r.machine ? `on ${r.machine}` : "on this computer";
   switch (r.status) {
-    case "installed": return `usagemeter ${r.version} ${where}: installed (signed pointer, checksum ok).`;
+    case "installed": return `usagemeter ${r.version} ${where}: installed (signed pointer, checksum ok)${r.prev ? "; the previous one is kept as ~/.local/bin/usagemeter.prev (to go back: mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter)" : ""}.`;
     case "current": return `usagemeter ${r.version} ${where}: already installed.`;
     case "newer": return `usagemeter ${r.version ?? "(newer)"} ${where} is not older than ${r.want ?? "the meter lane's"}: not replacing it.`;
     case "link": return `usagemeter ${where}: ~/.local/bin/usagemeter is a link or a folder; left as it is.`;

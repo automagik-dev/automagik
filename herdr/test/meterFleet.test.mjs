@@ -33,7 +33,7 @@ const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("he
  * A scratch world: a fake hc with linked machines, an install record, and a release folder whose
  * meter lane names v`version` (publishMeter's options in `lane`). `machines` replaces the two.
  */
-function fleet(t, { marker = true, version = V, lane = {}, machines = null } = {}) {
+function fleet(t, { marker = true, version = V, lane = {}, machines = null, extraEnv = {} } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "am-fleet-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
@@ -65,6 +65,7 @@ function fleet(t, { marker = true, version = V, lane = {}, machines = null } = {
   const env = {
     PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HERDR_APP_HOME: app, TMPDIR: root,
     HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, AUTOMAGIK_HERDR_RELEASE_URL: `file://${release}`, AUTOMAGIK_HERDR_METER_KEYS: key.keys,
+    ...extraEnv,
   };
   const cli = (...args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { env, encoding: "utf8" });
@@ -370,6 +371,98 @@ test("meter install: never a downgrade (a newer, a dev build, a link or no versi
   assert.match(up.out, /on lin: installed \(signed pointer, checksum ok\)/);
   assert.equal(s.says("lin"), `usagemeter ${V}`);
   assert.deepEqual(s.mark().usagemeterOn, { lin: V });
+});
+
+test("the new build runs once before the swap: anything but exactly `usagemeter <version>` keeps the old binary", (t) => {
+  // Each build's sha256 is the pointer's: only the run catches it. The old binary stays, no temp is left.
+  const cases = [
+    ["another version", { reports: "3.200.4" }, /--version said: usagemeter 3\.200\.4\)/],
+    ["a longer version, not a prefix", { reports: "3.200.50" }, /--version said: usagemeter 3\.200\.50\)/],
+    ["more than the version", { script: () => `#!/bin/sh\necho "usagemeter ${V}"\necho extra\n` }, /--version said: usagemeter 3\.200\.5 extra\)/],
+    ["one that does not run", { script: () => "#!/bin/sh\nexit 1\n" }, /--version said: nothing\)/],
+  ];
+  for (const [what, lane, said] of cases) {
+    const s = fleet(t, { lane });
+    s.plant("lin", "0.3.0");
+    const kept = sha(s.meterOf("lin"));
+    const r = s.cli("meter", "install", "--linked");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Warning: usagemeter on lin: the new usagemeter does not run as 3\.200\.5 \(--version said: /, what);
+    assert.match(r.out, said, what);
+    assert.match(r.out, /the old binary stays, nothing was installed\./, what);
+    assert.equal(sha(s.meterOf("lin")), kept, `${what}: the old binary stays`);
+    assert.deepEqual(s.leftovers("lin"), [], `${what}: no temp file beside it`);
+    assert.deepEqual(s.temps(), [], `${what}: no temp folder`);
+    assert.equal(existsSync(`${s.meterOf("lin")}.prev`), false, what);
+    assert.deepEqual(s.mark().usagemeterOn, {}, what);
+  }
+});
+
+test("the smoke run sees no variable but a bare PATH and a scratch HOME, and a build that hangs is cut off", (t) => {
+  // A build that answers only under the minimal env: anything the caller's env carries would fail it.
+  const s = fleet(t, { extraEnv: { METER_SMOKE_LEAK: "x", METER_STATE_DIR: "/nowhere" }, lane: { script: () => `#!/bin/sh
+[ -z "\${METER_SMOKE_LEAK:-}\${METER_STATE_DIR:-}\${HC_FAKE_STATE:-}" ] && [ "$PATH" = /usr/bin:/bin ] && [ "$1" = --version ] && echo "usagemeter ${V}"
+exit 0
+` } });
+  const r = s.cli("meter", "install", "--local");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /on this computer: installed \(signed pointer, checksum ok\)/);
+  const hang = fleet(t, { lane: { script: () => "#!/bin/sh\nexec sleep 60\n" } });
+  hang.plant("lin", "0.3.0");
+  const started = Date.now();
+  const h = hang.cli("meter", "install", "--linked");
+  assert.ok(Date.now() - started < 40_000, "cut off at the smoke timeout, not left to hang");
+  assert.match(h.out, /the new usagemeter does not run as 3\.200\.5 \(--version said: nothing\)/);
+  assert.equal(hang.says("lin"), "usagemeter 0.3.0");
+  assert.deepEqual(hang.leftovers("lin"), []);
+});
+
+test("a swap keeps the old binary as usagemeter.prev, its mode the binary's; one rename goes back", (t) => {
+  const s = fleet(t);
+  s.plant("lin", "0.3.0");
+  chmodSync(s.meterOf("lin"), 0o750);
+  const old = readFileSync(s.meterOf("lin"));
+  const prev = `${s.meterOf("lin")}.prev`;
+  const r = s.cli("meter", "install", "--linked");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, re(`usagemeter ${V} on lin: installed (signed pointer, checksum ok); the previous one is kept as ~/.local/bin/usagemeter.prev (to go back: mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter).`));
+  assert.deepEqual(readFileSync(prev), old, ".prev is the old binary");
+  assert.equal(lstatSync(prev).mode & 0o777, 0o750, "with the old binary's mode");
+  assert.equal(s.says("lin"), `usagemeter ${V}`);
+  assert.deepEqual(s.leftovers("lin"), []);
+  // The next swap replaces it with the binary it replaces.
+  publishMeter(s.release, s.key, { version: "3.200.6" });
+  assert.match(s.cli("meter", "install", "--linked").out, /usagemeter 3\.200\.6 on lin: installed/);
+  assert.deepEqual(readFileSync(prev), assetBytes(s.release, s.pointer, "linux-x86_64"), ".prev is now the 3.200.5 build");
+  assert.equal(lstatSync(prev).mode & 0o777, 0o755);
+  // Going back is the one rename the line names.
+  const back = spawnSync("sh", ["-c", "mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter"], { env: { HOME: join(s.root, "m-lin"), PATH: "/usr/bin:/bin" } });
+  assert.equal(back.status, 0);
+  assert.equal(s.says("lin"), `usagemeter ${V}`);
+  assert.equal(existsSync(prev), false);
+});
+
+test("usagemeter.prev only ever holds a binary the swap replaced: never on a first install, a link, an unversioned or a newer one", (t) => {
+  const s = fleet(t);
+  const prev = `${s.meterOf("lin")}.prev`;
+  assert.match(s.cli("meter", "install", "--linked").out, re(`usagemeter ${V} on lin: installed (signed pointer, checksum ok).`));
+  assert.equal(existsSync(prev), false, "nothing replaced, nothing kept");
+  for (const [what, make] of [["newer", () => s.plant("lin", "3.201.0")], ["unversioned", () => exe(s.meterOf("lin"), "#!/bin/sh\necho hello\n")]]) {
+    rmSync(s.meterOf("lin"), { force: true });
+    make();
+    const before = readFileSync(s.meterOf("lin"));
+    assert.equal(s.cli("meter", "install", "--linked").code, 0);
+    assert.deepEqual(readFileSync(s.meterOf("lin")), before, what);
+    assert.equal(existsSync(prev), false, `${what}: no .prev`);
+  }
+  // A .prev that is a folder (not a backup this keeps): nothing is replaced.
+  rmSync(s.meterOf("lin"));
+  s.plant("lin", "0.3.0");
+  mkdirSync(prev);
+  const r = s.cli("meter", "install", "--linked");
+  assert.match(r.out, /usagemeter\.prev is a link or a folder, not the backup this keeps: nothing was installed/);
+  assert.equal(s.says("lin"), "usagemeter 0.3.0");
+  assert.deepEqual(s.leftovers("lin"), []);
 });
 
 test("meter install --machine: a disconnected machine exits 1, an unknown one 2; flags are exclusive", (t) => {

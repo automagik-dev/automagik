@@ -1485,6 +1485,63 @@ test("usagemeter: a build that is not the pointer's sha256 installs nothing and 
   assert.equal(meterSays(right), "usagemeter 3.200.5");
 });
 
+test("usagemeter: the new build runs once before the swap; anything but exactly its version keeps the old binary", (t) => {
+  for (const [what, opts, said] of [
+    ["another version", { reports: "3.200.4" }, "usagemeter 3.200.4"],
+    ["not a prefix", { reports: "3.200.50" }, "usagemeter 3.200.50"],
+    ["one that does not run", { script: () => "#!/bin/sh\nexit 1\n" }, "nothing"],
+  ]) {
+    const s = scratch(t);
+    s.publish("9.9.0");
+    s.publishMeter(opts);
+    plantMeter(s, "0.3.0");
+    const kept = sha(meterBin(s));
+    const r = s.run("--yes");
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(s.versions(), s.all("9.9.0"), `${what}: the pack still installs`);
+    assert.ok(r.out.includes(`Warning: usagemeter was not installed: the new usagemeter does not run as 3.200.5 (--version said: ${said}): the old binary stays, nothing was installed`), `${what}: ${r.out}`);
+    assert.equal(sha(meterBin(s)), kept, `${what}: the old binary stays`);
+    assert.deepEqual(leftovers(s), [], `${what}: no temp file`);
+    assert.equal(existsSync(`${meterBin(s)}.prev`), false, what);
+    assert.equal(parseMarker(s.mark()).usagemeter, null, what);
+  }
+});
+
+test("usagemeter: a swap keeps the old binary as usagemeter.prev (its mode), replaced at the next; one rename goes back", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  const pointer = s.publishMeter();
+  plantMeter(s, "0.3.0");
+  chmodSync(meterBin(s), 0o750);
+  const old = readFileSync(meterBin(s));
+  const prev = `${meterBin(s)}.prev`;
+  const r = s.run("--yes");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /The previous usagemeter 0\.3\.0 is kept as .*\/\.local\/bin\/usagemeter\.prev; to go back: mv .*\/usagemeter\.prev .*\/usagemeter/);
+  assert.deepEqual(readFileSync(prev), old);
+  assert.equal(lstatSync(prev).mode & 0o777, 0o750, "the old binary's mode");
+  assert.equal(meterSays(s), "usagemeter 3.200.5");
+  assert.deepEqual(leftovers(s), []);
+  // The next swap replaces it; the binary it replaced is now the backup.
+  s.publishMeter({ version: "3.200.6" });
+  assert.equal(s.run().code, 0);
+  assert.equal(meterSays(s), "usagemeter 3.200.6");
+  assert.equal(sha(prev), pointer.assets["darwin-arm64"].sha256);
+  // Going back: the one rename the installer printed.
+  assert.equal(spawnSync("sh", ["-c", "mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter"], { env: { HOME: s.home, PATH: "/usr/bin:/bin" } }).status, 0);
+  assert.equal(meterSays(s), "usagemeter 3.200.5");
+  // A first install keeps nothing; a newer binary is left, with no backup made.
+  const fresh = scratch(t);
+  fresh.publish("9.9.0");
+  fresh.publishMeter();
+  assert.equal(fresh.run("--yes").code, 0);
+  assert.equal(existsSync(`${meterBin(fresh)}.prev`), false);
+  plantMeter(fresh, "3.201.0");
+  assert.equal(fresh.run().code, 0);
+  assert.equal(meterSays(fresh), "usagemeter 3.201.0");
+  assert.equal(existsSync(`${meterBin(fresh)}.prev`), false);
+});
+
 test("usagemeter: a pointer that does not verify, or an older one, installs nothing; the pack still installs", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");

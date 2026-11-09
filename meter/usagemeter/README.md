@@ -37,7 +37,13 @@ the Automagik repository's releases (`meter.json` and its ed25519 signature, che
 meter's public keys, `meter-keys.json`), takes the build it names for each machine's OS and CPU,
 checks it against the sha256 the pointer names, and installs it to `~/.local/bin/usagemeter`
 atomically. It never downgrades: a binary of that version or a newer one stays, and a pointer
-older than one it already took is refused.
+older than one it already took is refused. Before the swap the new binary must answer
+`usagemeter --version` with exactly its version, or nothing changes. The binary it replaced is kept
+as `~/.local/bin/usagemeter.prev` until the next swap; to go back to it:
+
+```sh
+mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter
+```
 
 Each meter release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
 `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64` (the Linux builds static, musl), with

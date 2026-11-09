@@ -20,14 +20,15 @@ const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
  * Publishes v`version` into the release folder `root` and points the lane at it. `reports`: what
  * the fake binaries print; `edit(pointer)`: changes the pointer before it is signed; `signer`: the
  * key that signs (default `key`); `sig: false` leaves meter.json.sig out; `sums`: also write a
- * usagemeter.SHA256SUMS with these lines (`(name, realSha) => line`). Returns the pointer object.
+ * usagemeter.SHA256SUMS with these lines (`(name, realSha) => line`); `script(name)`: a build's
+ * whole text instead (its sha256 is still the one the pointer names). Returns the pointer object.
  */
-export function publishMeter(root, key, { version, reports = version, edit = null, signer = key, sig = true, sums = null } = {}) {
+export function publishMeter(root, key, { version, reports = version, edit = null, signer = key, sig = true, sums = null, script = null } = {}) {
   const dir = join(root, "download", `v${version}`);
   mkdirSync(dir, { recursive: true });
   const assets = {};
   for (const [target, name] of Object.entries(METER_TARGETS)) {
-    const body = `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${reports}"\n# ${name}\nexit 0\n`;
+    const body = script ? script(name) : `#!/bin/sh\n[ "$1" = --version ] && echo "usagemeter ${reports}"\n# ${name} ${version}\nexit 0\n`;
     writeFileSync(join(dir, name), body);
     chmodSync(join(dir, name), 0o755);
     assets[target] = { name, url: `${METER_DOWNLOADS}/v${version}/${name}`, sha256: sha(body), size: Buffer.byteLength(body) };

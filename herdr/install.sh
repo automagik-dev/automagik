@@ -753,8 +753,36 @@ install_meter() {
   fi
   mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
   part=$(mktemp "$BIN_DIR/.usagemeter.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
-  if cp "$udir/$asset" "$part" && chmod 755 "$part" && mv -f "$part" "$METER"; then
+  if ! { cp "$udir/$asset" "$part" && chmod 755 "$part"; }; then rm -f "$part"; why="could not write $METER"; return 1; fi
+  # Only after the sha256 matched: the new binary runs once, from beside the old one (a temp folder
+  # may be noexec), with no variable but a bare PATH and a scratch HOME (usagemeter opens no network
+  # connection), killed after 10 s; its whole answer must be exactly `usagemeter <version>`.
+  env -i PATH=/usr/bin:/bin HOME="$udir" "$part" --version </dev/null >"$udir/smoke" 2>/dev/null & usp=$!
+  ( sleep 10; kill -9 "$usp" ) </dev/null >/dev/null 2>&1 & ukp=$!
+  wait "$usp"; kill "$ukp" 2>/dev/null
+  uran=$(cat "$udir/smoke")
+  if [ "$uran" != "usagemeter $uwant" ]; then
+    rm -f "$part"
+    usaid=$(printf '%s' "$uran" | tr '\n' ' ' | cut -c1-80)
+    why="the new usagemeter does not run as $uwant (--version said: ${usaid:-nothing}): the old binary stays, nothing was installed"
+    return 1
+  fi
+  # The binary it replaces (here only a regular file reporting an older version: a link, an
+  # unversioned or a newer one returned above) is kept as $METER.prev for one swap: a hard link,
+  # so its mode is the binary's. Going back is one rename: mv $METER.prev $METER.
+  ukept=
+  if [ -f "$METER" ] && [ ! -L "$METER" ]; then
+    if [ -L "$METER.prev" ] || { [ -e "$METER.prev" ] && [ ! -f "$METER.prev" ]; }; then
+      rm -f "$part"; why="$METER.prev is a link or a folder, not the backup this keeps: nothing was installed"; return 1
+    fi
+    if ! ln -f "$METER" "$METER.prev" 2>/dev/null; then
+      rm -f "$part"; why="could not keep the previous binary as $METER.prev: nothing was installed"; return 1
+    fi
+    ukept=1
+  fi
+  if mv -f "$part" "$METER"; then
     say "Installed usagemeter $uwant ($METER, signed pointer, checksum ok)."
+    [ -z "$ukept" ] || say "The previous usagemeter $have is kept as $METER.prev; to go back: mv $METER.prev $METER"
     mark_meter "$uwant" || say "usagemeter: the ownership record could not note it; --uninstall will leave it."
     return 0
   fi

@@ -105,8 +105,18 @@ It also installs usagemeter, the token meter (`meter/usagemeter` in this reposit
 pointer names (`meter.json` and its ed25519 signature on this repository's rolling `meter-lane`
 release, checked against the meter's public keys the installer carries), checked against the
 sha256 that pointer names, written atomically. A pointer that does not verify, or one older than a
-pointer this install already took, installs nothing. It skips the download when that version is
-already there and never replaces a newer one (Pocket Link installs the same binary). While Herdr is open, the
+pointer this install already took, installs nothing. Before the swap the new binary is run once
+(`--version`, with a minimal environment and a 10-second limit) and must answer exactly its
+version, or the old binary stays. The binary it replaces is kept as `~/.local/bin/usagemeter.prev`
+until the next swap, so if a new release misbehaves, one rename goes back:
+
+```sh
+mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter
+```
+
+(`automagik-herdr meter install` or an update would put the newer build back, so hold those until
+a fixed release.) It skips the download when that version is already there and never replaces a
+newer one (Pocket Link installs the same binary). While Herdr is open, the
 sidebar runs `usagemeter sync` 30 seconds after it loads and then every 10 minutes, one run at a
 time; there is no LaunchAgent and no daemon. A dev build counts by its version number, so
 `3.108.17-dev` stays, and a file there that reports no version is left with a warning.
