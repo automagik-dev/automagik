@@ -47,6 +47,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0015](0015-live-chat-projection.md) | Live chat projection | Accepted (deliveries 1-3 merged: #267, #273, #280, #282; amended 2026-11-07: writes on DSH chats, global Bots included) | none (ships outside the five milestones) |
 | [0016](0016-windows-wslc.md) | Windows on a Linux sandbox (WSL containers) | Accepted (2026-11-04, by Felipe; answers: D38, D39, Q1-Q9) | not scheduled |
 | [0017](0017-usagemeter-crate.md) | usagemeter in the monorepo | Draft (answers: Q1-Q6 and Q8, 2026-11-08; question 7 open) | none (ships outside the five milestones) |
+| [0018](0018-meter-query-contract.md) | The meter query contract | Draft | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 

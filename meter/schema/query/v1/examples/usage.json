@@ -1,0 +1,22 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "usage",
+  "error": {
+    "code": "usage",
+    "message": "--json is required: query contract 1 has no text output"
+  },
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": null,
+  "machine": null,
+  "store": null,
+  "ingestion": null,
+  "window": null,
+  "sources": [],
+  "unattributed": null,
+  "pricing": null,
+  "query": null,
+  "rows": []
+}
