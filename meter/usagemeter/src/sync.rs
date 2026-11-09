@@ -102,6 +102,9 @@ pub struct Options {
     /// Fail the store write after this many chunks, as a full disk would (tests).
     #[doc(hidden)]
     pub fail_writes_after: Option<usize>,
+    /// Look for project app homes only inside this folder (tests: their temp folder).
+    #[doc(hidden)]
+    pub walk_within: Option<PathBuf>,
 }
 
 impl Options {
@@ -153,6 +156,7 @@ impl Options {
             chunk_limit: None,
             free_bytes: None,
             fail_writes_after: None,
+            walk_within: None,
         }
     }
 }
@@ -1231,6 +1235,7 @@ fn resolver(
 ) -> Result<Resolver, Error> {
     let mut r = Resolver::new(core, snapshot)
         .walk(opts.project_ledgers)
+        .walk_within(opts.walk_within.clone())
         .keyed(key);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);

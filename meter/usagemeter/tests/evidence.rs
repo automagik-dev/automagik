@@ -1118,3 +1118,43 @@ fn a_generation_never_takes_or_removes_another_files_name() {
     meter::store::remove_generation(&first.path).unwrap();
     assert!(!journal.exists() && !first.path.exists());
 }
+
+// The Tester's hermeticity point on PR 849: with the temp folder inside a project (TMPDIR under a
+// repository), the walk for project app homes stops at the test's own folder, so the project's
+// ledger (a worker that would claim this test's worktree) is never read.
+#[test]
+fn a_temp_folder_inside_a_project_never_reads_its_ledgers() {
+    let outer = tempfile::tempdir().unwrap();
+    let project = outer.path().join("project");
+    let tmp = project.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    let env = Env::new_in(&tmp);
+    let wt = env.dir.path().join("work/.worktrees/gh-48");
+    fs::create_dir_all(&wt).unwrap();
+    let wt = wt.to_string_lossy().into_owned();
+    write_ledger(
+        &project.join(".herdr/app-home/automagik-herdr/workers.jsonl"),
+        &[worker("t1", "b-outsider", "claude", &wt, now() - 7_200_000)],
+    );
+    write_lines(
+        &env.claude("-work/s-in.jsonl"),
+        &[line("m1", "s-in", &wt, now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    let store = env.store();
+    assert_eq!(
+        store.count("launch").unwrap(),
+        0,
+        "the project's ledger was read"
+    );
+    assert_eq!(
+        rows(&store),
+        [(
+            None,
+            "unlinked".into(),
+            None,
+            Some("feat/x".into()),
+            "log".into()
+        )]
+    );
+}
