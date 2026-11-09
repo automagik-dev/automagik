@@ -109,13 +109,14 @@ CREATE TABLE IF NOT EXISTS ledgers (home TEXT PRIMARY KEY, found_ms INTEGER NOT 
 ";
 
 /// The columns schema 3 adds to `usage`, each added only when missing.
-pub const USAGE_COLUMNS: [(&str, &str); 6] = [
+pub const USAGE_COLUMNS: [(&str, &str); 7] = [
     ("kind", "TEXT"),
     ("basis", "TEXT"),
     ("branch_basis", "TEXT"),
     ("actor_state", "TEXT"),
     ("unrecorded", "TEXT"),
     ("usd_events", "INTEGER"),
+    ("reason", "TEXT"),
 ];
 
 /// Every table and index [`DDL`] makes.
@@ -244,7 +245,8 @@ pub struct Dim {
 pub struct Actor {
     /// `attributed`, `ambiguous` or `unlinked`.
     pub state: String,
-    /// Why a call has no bot: `claimants_differ` or `no_record`.
+    /// Why a call has no bot: `claimants_differ` (ambiguous), or for an unlinked call
+    /// `other_machine`, `dsh_tui_seat` or `no_record` (RFC 0021 delivery 2, D5).
     pub reason: Option<String>,
     pub bot: Option<String>,
     pub kind: Option<String>,
@@ -306,6 +308,23 @@ impl Actor {
     }
 }
 
+/// Why an unlinked call has no bot, the first that holds (RFC 0021 delivery 2, D5): a dsh-tui
+/// fork's copy is `no_record` (its own session is unknown); a session that another machine's
+/// records name is `other_machine` (Decided 6); a dsh-tui session nothing claims is
+/// `dsh_tui_seat`, since dsh-tui calls are found by their worker's worktree alone and a seat has no
+/// session-to-terminal record yet (Decided 5); anything else is `no_record`.
+pub fn unlinked_reason(harness: &str, copied: bool, elsewhere: bool) -> &'static str {
+    if copied {
+        "no_record"
+    } else if elsewhere {
+        "other_machine"
+    } else if harness == "dsh-tui" {
+        "dsh_tui_seat"
+    } else {
+        "no_record"
+    }
+}
+
 fn basis_str(b: Basis) -> &'static str {
     b.as_str()
 }
@@ -341,6 +360,7 @@ pub fn rollup_key(dim: &Dim, actor: &Actor, hour_ms: i64) -> (RollupKey, Precisi
                 basis: actor.basis.clone(),
                 branch_basis: branch_basis.into(),
                 unrecorded: actor.unrecorded.clone(),
+                reason: actor.reason.clone(),
             }),
         },
         precision,
@@ -652,6 +672,137 @@ pub fn reattribute(
         },
     );
     crate::store::upsert_rows(tx, &rows, now_ms)
+}
+
+/// The `meta` key of an evidence backfill in progress: the start (ms) it re-reads the logs back
+/// to (`sync --evidence-backfill`, RFC 0018 (b) and RFC 0021 (c)).
+pub const BACKFILL_META: &str = "evidence_backfill_from_ms";
+
+/// An evidence backfill's own state, made when one starts and emptied when it ends: how far each
+/// log has been re-read (`offset` -1 once the whole file was), and the request keys it has adopted
+/// so far, so a call a log repeats is adopted once.
+pub const BACKFILL_DDL: &str = "
+CREATE TABLE IF NOT EXISTS ev_backfill (
+  path TEXT PRIMARY KEY, offset INTEGER NOT NULL, ctx TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS ev_backfill_seen (k INTEGER PRIMARY KEY);
+";
+
+/// Gives one re-read call of an hour before `evidence_from` its evidence (an evidence backfill):
+/// its tokens leave a rollup row that counted it before evidence (a frozen row, or one of an hour
+/// before `evidence_from`) with the same logging (harness, model, machine, repo, branch, hour and
+/// precision) and at least its tokens of every kind, for the row its derived attribution names, and
+/// its evidence row is written, all in the caller's transaction. A call no such row holds (its
+/// usage was counted under other logging, or never) is left alone: a backfill never adds a token
+/// to a total or takes one from it. Returns whether the call was adopted.
+#[allow(clippy::too_many_arguments)]
+pub fn adopt(
+    tx: &Transaction<'_>,
+    intern: &mut Interner,
+    e: &Evidence,
+    ts_ms: i64,
+    t: &Tokens,
+    reported_usd: Option<f64>,
+    evidence_from: i64,
+    now_ms: i64,
+) -> rusqlite::Result<bool> {
+    let hour = crate::time::hour_start(ts_ms);
+    let found: Option<String> = tx
+        .prepare_cached(
+            "SELECT id FROM usage
+             WHERE harness = ?1 AND model = ?2 AND machine = ?3 AND repo IS ?4
+               AND (branch IS ?5 OR (?5 IS NULL AND branch_basis = 'ledger'))
+               AND hour_ms = ?6 AND precision = ?7
+               AND (actor_state IS NULL OR hour_ms < ?8)
+               AND input_uncached >= ?9 AND cache_read >= ?10 AND cache_write_5m >= ?11
+               AND cache_write_1h >= ?12 AND output >= ?13 AND reasoning >= ?14
+               AND unsplit >= ?15 AND events >= 1
+             ORDER BY id LIMIT 1",
+        )?
+        .query_row(
+            params![
+                e.dim.harness,
+                e.dim.model,
+                e.dim.machine,
+                e.dim.repo,
+                e.dim.branch,
+                hour,
+                e.dim.precision,
+                evidence_from,
+                t.input_uncached,
+                t.cache_read,
+                t.cache_write_5m,
+                t.cache_write_1h,
+                t.output,
+                t.reasoning,
+                t.unsplit
+            ],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(row) = found else {
+        return Ok(false);
+    };
+    tx.execute(
+        "UPDATE usage SET input_uncached = input_uncached - ?2, cache_read = cache_read - ?3,
+           cache_write_5m = cache_write_5m - ?4, cache_write_1h = cache_write_1h - ?5,
+           output = output - ?6, reasoning = reasoning - ?7, unsplit = unsplit - ?8,
+           events = events - 1,
+           usd_events = CASE WHEN usd_events IS NULL THEN NULL ELSE usd_events - ?9 END,
+           reported_usd = CASE WHEN ?10 IS NULL OR reported_usd IS NULL THEN reported_usd
+                               ELSE max(reported_usd - ?10, 0) END,
+           updated_ms = ?11
+         WHERE id = ?1",
+        params![
+            row,
+            t.input_uncached,
+            t.cache_read,
+            t.cache_write_5m,
+            t.cache_write_1h,
+            t.output,
+            t.reasoning,
+            t.unsplit,
+            i64::from(reported_usd.is_some()),
+            reported_usd,
+            now_ms
+        ],
+    )?;
+    tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row])?;
+    insert(tx, intern, e, ts_ms, t, reported_usd)?;
+    let (key, p) = rollup_key(&e.dim, &e.actor, hour);
+    let mut rows = BTreeMap::new();
+    rows.insert(
+        (key, p),
+        crate::store::Pending {
+            squad: None,
+            tokens: *t,
+            usd: reported_usd,
+            usd_events: i64::from(reported_usd.is_some()),
+            events: 1,
+        },
+    );
+    crate::store::upsert_rows(tx, &rows, now_ms)?;
+    Ok(true)
+}
+
+/// Queues every session and start folder with a call of evidence from `from_ms` for the
+/// recompute pass: the backfill's "recomputing attribution" (RFC 0021 (c)).
+pub fn queue_since(tx: &Transaction<'_>, from_ms: i64) -> rusqlite::Result<usize> {
+    let s = tx.execute(
+        "INSERT INTO ev_dirty(k)
+         SELECT DISTINCT 's:' || lower(hex(session)) FROM evidence
+         WHERE ts_ms >= ?1 AND session IS NOT NULL
+         ON CONFLICT DO NOTHING",
+        [from_ms],
+    )?;
+    let c = tx.execute(
+        "INSERT INTO ev_dirty(k)
+         SELECT DISTINCT 'c:' || c.path FROM evidence e JOIN ev_cwd c ON c.id = e.session_cwd
+         WHERE e.ts_ms >= ?1
+         ON CONFLICT DO NOTHING",
+        [from_ms],
+    )?;
+    Ok(s + c)
 }
 
 /// Queues sessions and start folders for the recompute pass.

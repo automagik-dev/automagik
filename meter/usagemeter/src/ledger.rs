@@ -432,6 +432,11 @@ struct Index {
     /// agent, then session, to the links that tie it to launches.
     links: HashMap<String, HashMap<String, Vec<Link>>>,
     bindings: Bindings,
+    /// (agent, session) that a record of another machine names: a start or session row of
+    /// another core, or a session label on a linked machine's pane. Such a session's launch row
+    /// is in that computer's ledger, so a call of it that nothing here claims is `other_machine`
+    /// (RFC 0021 Decided 6, delivery 2 D5), never given a bot.
+    foreign: HashSet<(String, String)>,
 }
 
 /// What one claimant says about a call.
@@ -454,6 +459,9 @@ enum Claim {
 pub struct Resolver {
     core: Option<String>,
     snapshot: Vec<Terminal>,
+    /// The panes hc lists on a linked machine (an address with a `/`): never claimants, but a
+    /// session label on one says the session ran on another computer.
+    linked: Vec<Terminal>,
     rows: Rows,
     files: HashSet<PathBuf>,
     checked: HashSet<PathBuf>,
@@ -475,12 +483,13 @@ impl Resolver {
     /// `snapshot`: the terminals hc listed at this sync; those of a linked machine (an address
     /// with a `/`) are left out.
     pub fn new(core: Option<String>, snapshot: Vec<Terminal>) -> Resolver {
+        let (linked, snapshot) = snapshot
+            .into_iter()
+            .partition(|t: &Terminal| t.terminal.contains('/'));
         Resolver {
             core,
-            snapshot: snapshot
-                .into_iter()
-                .filter(|t| !t.terminal.contains('/'))
-                .collect(),
+            snapshot,
+            linked,
             ..Resolver::default()
         }
     }
@@ -496,7 +505,7 @@ impl Resolver {
     /// session's hash ([`SessionKey::hex`] with [`crate::evidence::scope`]). Call it before any
     /// ledger is added.
     pub fn keyed(mut self, key: SessionKey) -> Resolver {
-        for t in &mut self.snapshot {
+        for t in self.snapshot.iter_mut().chain(self.linked.iter_mut()) {
             let Some(h) = t.harness else { continue };
             let agent = agent_of(h).unwrap_or(h);
             let s = t.labels.session_for(h).map(|s| key.hex(agent, s));
@@ -597,6 +606,7 @@ impl Resolver {
                 &self.rows,
                 self.core.as_deref(),
                 &self.snapshot,
+                &self.linked,
                 &self.label_history,
             ));
         }
@@ -842,6 +852,7 @@ impl Resolver {
                 &self.rows,
                 self.core.as_deref(),
                 &self.snapshot,
+                &self.linked,
                 &self.label_history,
             ));
         }
@@ -849,6 +860,28 @@ impl Resolver {
             return Resolution::Unlinked;
         };
         ix.resolve(call)
+    }
+
+    /// Whether a record of another machine names the call's session (or its parent's): its
+    /// launch is that computer's, so the meter here cannot tie it to a bot (RFC 0021 Decided 6).
+    /// Asked of a call [`Resolver::resolve`] left unlinked, to say why.
+    pub fn elsewhere(&mut self, call: &Call) -> bool {
+        if self.index.is_none() {
+            self.index = Some(build(
+                &self.rows,
+                self.core.as_deref(),
+                &self.snapshot,
+                &self.linked,
+                &self.label_history,
+            ));
+        }
+        let (Some(ix), Some(agent)) = (self.index.as_ref(), agent_of(call.harness)) else {
+            return false;
+        };
+        [call.session, call.parent_session]
+            .into_iter()
+            .flatten()
+            .any(|s| ix.foreign.contains(&(agent.to_owned(), s.to_owned())))
     }
 }
 
@@ -1014,10 +1047,29 @@ fn build(
     rows: &Rows,
     core: Option<&str>,
     snapshot: &[Terminal],
+    linked: &[Terminal],
     label_history: &[(String, String, String)],
 ) -> Index {
     let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
     let mut ix = Index::default();
+    // Sessions another machine's records name: never claimants here, only the reason why not.
+    for s in rows.starts.iter().filter(|s| foreign(&s.core)) {
+        if let Some(session) = &s.session {
+            let agent = s.agent.as_deref().unwrap_or("claude");
+            let agent = agent_of(agent).unwrap_or(agent);
+            ix.foreign.insert((agent.to_owned(), session.clone()));
+        }
+    }
+    for r in rows.sessions.iter().filter(|r| foreign(&r.core)) {
+        let agent = agent_of(&r.agent).unwrap_or(&r.agent);
+        ix.foreign.insert((agent.to_owned(), r.session.clone()));
+    }
+    for t in linked {
+        let Some(h) = t.harness else { continue };
+        if let (Some(s), Some(agent)) = (t.labels.session_for(h), agent_of(h)) {
+            ix.foreign.insert((agent.to_owned(), s.to_owned()));
+        }
+    }
     // Launches: start rows grouped by key; a row with no key (written before RFC 0021) is its own.
     let mut by_key: HashMap<Key, usize> = HashMap::new();
     let mut members: Vec<Vec<&StartRow>> = Vec::new();

@@ -10,9 +10,11 @@ use meter::{paths, summary};
 const USAGE: &str = "\
 Usage:
   usagemeter sync [--force] [--backfill] [--days N] [--budget-secs N] [--no-publish] [--doc NAME]
+  usagemeter sync --evidence-backfill --days N [--budget-secs N] [--no-publish] [--doc NAME]
   usagemeter status
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
+  usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the local store and
@@ -20,6 +22,10 @@ sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the loc
   --force         Run even if the last sync is recent.
   --backfill      Re-import the full history (slow; resumes across runs).
   --days N        Import window in days (default 30). A wider window re-imports.
+  --evidence-backfill
+                  Give the last N days (--days, 1 to 90, the evidence's retention) per-call
+                  evidence from the logs still on disk, then recompute the attribution of every
+                  call from then. Totals never change; it resumes on later syncs until done.
   --budget-secs N Stop after N seconds and resume next run (default 20).
   --no-publish    Do not write the summary doc.
   --doc NAME      Doc name to publish to (default herdr-meter).
@@ -29,6 +35,8 @@ status    Print the store's state as JSON. It never writes the store: the databa
 query     Usage and estimated cost per branch of one repo, as the contract 1 envelope (RFC 0018,
           meter/schema/query/v1/) on stdout, for every exit below. It opens the store as status
           does; only sync refreshes the store. Capability meter.usage@1.
+  --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
+                  usage tied to a launch; any --branch is then a filter, and none is needed.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
@@ -87,11 +95,13 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     let dirs = state_dirs()?;
     let mut opts = Options::new(home, dirs.dir, now_ms());
     opts.migrate_from = dirs.legacy;
+    let mut evidence_backfill = false;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--force" => opts.force = true,
             "--backfill" => opts.backfill = true,
+            "--evidence-backfill" => evidence_backfill = true,
             "--no-publish" => opts.publish = false,
             "--days" => opts.days = Some(parse_num("--days", it.next(), 1, 36_500)? as i64),
             "--budget-secs" => {
@@ -119,6 +129,26 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
                 ));
             }
         }
+    }
+    if evidence_backfill {
+        // --days is then how far back the evidence goes, never the import window: it never asks
+        // past the evidence's retention, whatever the oldest ledger row says (RFC 0021 delivery 8).
+        if opts.backfill {
+            return Err("--evidence-backfill and --backfill do not go together".into());
+        }
+        let days = opts
+            .days
+            .take()
+            .ok_or("--evidence-backfill needs --days N (1 to 90)")?;
+        if days > meter::evidence::EVIDENCE_DAYS {
+            return Err(format!(
+                "--days takes 1 to {} with --evidence-backfill: evidence is kept {} days",
+                meter::evidence::EVIDENCE_DAYS,
+                meter::evidence::EVIDENCE_DAYS
+            ));
+        }
+        opts.evidence_backfill = Some(days);
+        opts.force = true;
     }
     match sync::run(&opts).map_err(|e| e.0)? {
         Outcome::Locked => println!("meter: another sync is running; nothing to do"),
@@ -184,6 +214,20 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
                 println!(
                     "meter: attribution: {} launch and {} link rows changed, {} calls moved",
                     r.launches_changed, r.links_changed, r.calls_moved
+                );
+            }
+            if let Some(b) = &r.evidence_backfill {
+                println!(
+                    "meter: evidence backfill from {}: {} calls given their evidence, {} left as \
+                     they were (no row before evidence held them as logged); {}",
+                    format_rfc3339(b.from_ms),
+                    b.adopted,
+                    b.left_alone,
+                    if b.done {
+                        "done, attribution queued for recompute"
+                    } else {
+                        "the next sync goes on"
+                    }
                 );
             }
             if r.reimported {

@@ -594,7 +594,7 @@ impl Store {
             "SELECT bot, role, harness, model, machine, repo, branch, hour_ms, squad,
                     input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
                     precision, reported_usd, events, unsplit, id,
-                    actor_state, kind, basis, branch_basis, unrecorded
+                    actor_state, kind, basis, branch_basis, unrecorded, reason
              FROM usage WHERE hour_ms >= ?1
              ORDER BY hour_ms, harness, model, repo, branch, bot, role, precision",
         )?;
@@ -618,6 +618,7 @@ impl Store {
                             basis: r.get(22)?,
                             branch_basis: r.get::<_, Option<String>>(23)?.unwrap_or_default(),
                             unrecorded: r.get(24)?,
+                            reason: r.get(25)?,
                         }),
                         None => None,
                     },
@@ -1020,9 +1021,9 @@ pub(crate) fn upsert_rows(
         "INSERT INTO usage(id, hour_ms, bot, role, squad, harness, model, machine, repo, branch,
            input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
            precision, reported_usd, events, updated_ms, unsplit,
-           actor_state, kind, basis, branch_basis, unrecorded, usd_events)
+           actor_state, kind, basis, branch_basis, unrecorded, usd_events, reason)
          VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
-           ?22, ?23, ?24, ?25, ?26, ?27)
+           ?22, ?23, ?24, ?25, ?26, ?27, ?28)
          ON CONFLICT(id) DO UPDATE SET
            usd_events = coalesce(usd_events, 0) + excluded.usd_events,
            squad = coalesce(excluded.squad, squad),
@@ -1073,7 +1074,8 @@ pub(crate) fn upsert_rows(
             a.and_then(|a| a.basis.clone()),
             branch_basis,
             a.and_then(|a| a.unrecorded.clone()),
-            p.usd_events
+            p.usd_events,
+            a.and_then(|a| a.reason.clone())
         ])?;
     }
     Ok(())

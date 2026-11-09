@@ -17,6 +17,7 @@ use crate::sources::codex::{self, State};
 use crate::store::{Attributed, FileState, Health, SCHEMA_VERSION, Store};
 use crate::summary::{self, SourceHealth};
 use crate::time::{DAY_MS, HOUR_MS, day_start};
+use rusqlite::OptionalExtension;
 
 /// Phase timings on stderr when `METER_TRACE` is set. Durations only, never content.
 struct Trace {
@@ -80,6 +81,11 @@ pub struct Options {
     /// Window for the first import, and for a widening re-import.
     pub days: Option<i64>,
     pub backfill: bool,
+    /// `--evidence-backfill --days N`: give the calls of the last `N` days (at most
+    /// [`evidence::EVIDENCE_DAYS`]) their evidence from the logs still on disk, and recompute the
+    /// attribution of every call from then (RFC 0018 (b), RFC 0021 (c)). Explicit, never on a
+    /// read; once started, it resumes on later syncs until it is done.
+    pub evidence_backfill: Option<i64>,
     pub force: bool,
     pub budget: Duration,
     pub stale_ms: i64,
@@ -99,6 +105,10 @@ pub struct Options {
     /// The free bytes the migration check sees, instead of asking the filesystem (tests).
     #[doc(hidden)]
     pub free_bytes: Option<u64>,
+    /// What `hc terminal.list` would answer, when `use_hc` is off (tests): the snapshot the
+    /// resolver and the launch table read, with the store's machine id as the core.
+    #[doc(hidden)]
+    pub snapshot: Option<Vec<crate::hc::Terminal>>,
 }
 
 impl Options {
@@ -136,6 +146,7 @@ impl Options {
             migrate_from: None,
             days: None,
             backfill: false,
+            evidence_backfill: None,
             force: false,
             budget: DEFAULT_BUDGET,
             stale_ms: DEFAULT_STALE_MS,
@@ -149,6 +160,7 @@ impl Options {
             now_ms,
             chunk_limit: None,
             free_bytes: None,
+            snapshot: None,
         }
     }
 }
@@ -188,6 +200,19 @@ pub struct Report {
     pub attribution_backlog: i64,
     /// Evidence rows dropped by the retention bounds.
     pub evidence_pruned: usize,
+    /// An evidence backfill ran this sync: the start it re-reads back to, the calls it gave their
+    /// evidence, and whether it is done (else the next sync goes on).
+    pub evidence_backfill: Option<Backfilled>,
+}
+
+/// What one sync did of an evidence backfill.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Backfilled {
+    pub from_ms: i64,
+    pub adopted: u64,
+    /// Calls re-read that no pre-evidence row held with the same logging: left as they were.
+    pub left_alone: u64,
+    pub done: bool,
 }
 
 #[derive(Debug)]
@@ -278,7 +303,7 @@ impl Attributor {
         copied: bool,
         branch: Option<&str>,
     ) -> Actor {
-        let r = self.resolver.resolve(&Call {
+        let call = Call {
             harness,
             session,
             parent_session: parent,
@@ -286,8 +311,14 @@ impl Attributor {
             session_cwd,
             at_ms,
             copied,
-        });
-        Actor::derive(&r, harness, branch)
+        };
+        let r = self.resolver.resolve(&call);
+        let mut a = Actor::derive(&r, harness, branch);
+        if matches!(r, crate::ledger::Resolution::Unlinked) {
+            let elsewhere = !copied && self.resolver.elsewhere(&call);
+            a.reason = Some(evidence::unlinked_reason(harness, copied, elsewhere).into());
+        }
+        a
     }
 
     /// A stored call's attribution, as the resolver gives it now.
@@ -752,7 +783,10 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let core = hc.as_mut().and_then(|h| h.core_id());
     let machine = machine_id(&store, core.as_deref())?;
     // None when hc did not answer: then no launch is taken for gone.
-    let listed = hc.as_mut().and_then(|h| h.terminals_listed());
+    let listed = match hc.as_mut() {
+        Some(h) => h.terminals_listed(),
+        None => opts.snapshot.clone(),
+    };
     let answered = listed.is_some();
     let snapshot = listed.unwrap_or_default();
     // Rows of another core are skipped: with hc away, the core this store last saw stands in.
@@ -898,6 +932,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
 
     trace.mark("read");
+    report.evidence_backfill =
+        evidence_backfill(opts, &mut store, &mut attr, counted_from, &limits, now)?;
+    trace.mark("evidence backfill");
     // The launches and links this run derived, what the snapshot showed, and the calls whose
     // attribution they change; then the recompute, under what is left of the budget.
     let cwds = evidence::cwds(&store.conn)?;
@@ -1249,6 +1286,169 @@ fn recompute(
         moved += changes.len() as u64;
     }
     Ok((moved, evidence::dirty_count(&store.conn)?))
+}
+
+/// The evidence backfill (`sync --evidence-backfill --days N`, RFC 0018 (b), now recomputing
+/// attribution, RFC 0021 (c)): explicit, bounded by the retention, chunked and resumable, never on a
+/// read. It starts at the later of `counted_from` and the start of the day `N - 1` days ago.
+///
+/// 1. Hours before `evidence_from` have rollups but no evidence. The omp, Claude Code and dsh-tui
+///    logs still on disk are re-read from their start, under the run's budget, each file from
+///    where the last run stopped (one transaction per chunk, with the file's place); each call of
+///    those hours is adopted ([`evidence::adopt`]): it takes its tokens out of the pre-evidence
+///    row that counted it, for the row its attribution, derived now, names, and gets its evidence.
+///    Totals never change. Codex threads, whose deltas carry no request identity a rerun could
+///    tell apart, keep their hours before evidence as they are, and so does usage whose logs are
+///    gone.
+/// 2. Once every log is read, `evidence_from` moves back to the start, and every session and start
+///    folder with evidence from then on is queued for the recompute pass, which re-derives each
+///    call's attribution from today's ledgers and labels.
+///
+/// The start is kept in `meta` until both are done, so a later sync goes on with it.
+fn evidence_backfill(
+    opts: &Options,
+    store: &mut Store,
+    attr: &mut Attributor,
+    counted_from: i64,
+    limits: &ReadLimits,
+    now: i64,
+) -> Result<Option<Backfilled>, Error> {
+    let asked = opts.evidence_backfill.map(|d| {
+        (day_start(now) - (d.clamp(1, evidence::EVIDENCE_DAYS) - 1) * DAY_MS).max(counted_from)
+    });
+    let kept = store.meta_i64(evidence::BACKFILL_META)?;
+    let Some(from) = [asked, kept].into_iter().flatten().min() else {
+        return Ok(None);
+    };
+    if kept != Some(from) {
+        store.set_meta(evidence::BACKFILL_META, &from.to_string())?;
+    }
+    let mut out = Backfilled {
+        from_ms: from,
+        ..Backfilled::default()
+    };
+    let evidence_from = store.meta_i64(evidence::FROM_META)?.unwrap_or(i64::MAX);
+    if from < evidence_from {
+        store.conn.execute_batch(evidence::BACKFILL_DDL)?;
+        let mut candidates: Vec<Candidate> = Vec::new();
+        scan::discover(&opts.omp_root, Source::Omp, &mut candidates);
+        scan::discover(&opts.claude_root, Source::Claude, &mut candidates);
+        scan::discover(&opts.dsh_root, Source::DshTui, &mut candidates);
+        candidates.sort_by(|a, b| a.path.cmp(&b.path));
+        forks_last(store, &mut candidates)?;
+        for c in &candidates {
+            if limits.exhausted() {
+                return Ok(Some(out));
+            }
+            let path = c.path.to_string_lossy().into_owned();
+            let cursor: Option<(i64, String)> = store
+                .conn
+                .query_row(
+                    "SELECT offset, ctx FROM ev_backfill WHERE path = ?1",
+                    [&path],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            // Done, or last written before the start: it holds no call to adopt.
+            if cursor.as_ref().is_some_and(|(o, _)| *o < 0) || c.mtime_ms < from {
+                continue;
+            }
+            let Ok(Plan::Read { state, .. }) = scan::plan(c, None) else {
+                continue;
+            };
+            let mut state = *state;
+            if let Some((offset, ctx)) = cursor {
+                state.offset = offset as u64;
+                state.ctx = serde_json::from_str(&ctx).unwrap_or_default();
+            }
+            let read = scan::read_file(&mut state, c.source, limits, |st, events, _| {
+                let calls = attr
+                    .attribute(store, events, from)
+                    .map_err(io::Error::other)?;
+                let r = (|| -> rusqlite::Result<(u64, u64)> {
+                    let tx = store.conn.transaction()?;
+                    let (mut adopted, mut alone) = (0u64, 0u64);
+                    for e in &calls {
+                        let Some(ev) = &e.evidence else { continue };
+                        // A call with evidence already, or none a rerun could tell apart.
+                        if e.ts_ms >= evidence_from || e.dedupe_key.is_empty() {
+                            continue;
+                        }
+                        let fresh = tx
+                            .prepare_cached("INSERT OR IGNORE INTO ev_backfill_seen(k) VALUES(?1)")?
+                            .execute([crate::event::key_hash(&e.dedupe_key)])?;
+                        if fresh == 0 {
+                            continue;
+                        }
+                        if evidence::adopt(
+                            &tx,
+                            &mut store.intern,
+                            ev,
+                            e.ts_ms,
+                            &e.tokens,
+                            e.reported_usd,
+                            evidence_from,
+                            now,
+                        )? {
+                            adopted += 1;
+                        } else {
+                            alone += 1;
+                        }
+                    }
+                    tx.execute(
+                        "INSERT INTO ev_backfill(path, offset, ctx) VALUES(?1, ?2, ?3)
+                         ON CONFLICT(path) DO UPDATE SET offset = excluded.offset,
+                           ctx = excluded.ctx",
+                        rusqlite::params![
+                            st.path,
+                            st.offset as i64,
+                            serde_json::to_string(&st.ctx).unwrap_or_else(|_| "{}".into())
+                        ],
+                    )?;
+                    tx.commit()?;
+                    Ok((adopted, alone))
+                })();
+                match r {
+                    Ok((a, l)) => {
+                        out.adopted += a;
+                        out.left_alone += l;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        store.intern.clear();
+                        Err(io::Error::other(e))
+                    }
+                }
+            });
+            match read {
+                Ok(o) if o.stopped => return Ok(Some(out)),
+                Ok(_) => {
+                    store.conn.execute(
+                        "INSERT INTO ev_backfill(path, offset) VALUES(?1, -1)
+                         ON CONFLICT(path) DO UPDATE SET offset = -1",
+                        [&path],
+                    )?;
+                }
+                // An unreadable log keeps its hours before evidence; the rest goes on.
+                Err(_) => {}
+            }
+        }
+    }
+    // Every log was read: evidence starts at the backfill's start, and every call from then is
+    // queued for the recompute pass, which re-derives its attribution.
+    let tx = store.conn.transaction()?;
+    if from < evidence_from {
+        tx.execute(
+            "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            [evidence::FROM_META, &from.to_string()],
+        )?;
+        tx.execute_batch("DELETE FROM ev_backfill; DELETE FROM ev_backfill_seen;")?;
+    }
+    evidence::queue_since(&tx, from)?;
+    tx.execute("DELETE FROM meta WHERE k = ?1", [evidence::BACKFILL_META])?;
+    tx.commit()?;
+    out.done = true;
+    Ok(Some(out))
 }
 
 /// Moves dsh-tui forks behind every other log, oldest fork first, keeping the rest in order: a

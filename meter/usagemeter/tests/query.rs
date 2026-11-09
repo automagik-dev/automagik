@@ -13,6 +13,7 @@
 //! fork and its exec would share a sync's lock).
 
 mod common;
+mod scenes;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -702,7 +703,8 @@ fn scenario_raw(name: &str) -> (u8, String) {
                 fx.query_raw(&args(&["feat/gn-12-cache"]))
             })
         }
-        other => panic!("no scenario builds the example {other}: add one"),
+        other => scenes::answer(other)
+            .unwrap_or_else(|| panic!("no scenario builds the example {other}: add one")),
     }
 }
 
@@ -841,10 +843,6 @@ fn each_example_is_what_the_meter_answers() {
     for name in example_names() {
         if name == "read-only-folder" && !permissions_bind() {
             eprintln!("{name}: skipped, a folder's mode does not bind root");
-            continue;
-        }
-        if SCHEMA_ONLY.contains(&name.as_str()) {
-            eprintln!("{name}: schema-only until RFC 0021 delivery 6, no meter answer to compare");
             continue;
         }
         let want = example(&name);
@@ -1229,11 +1227,9 @@ fn every_measured_row_keeps_three_questions_apart() {
 // ---------------------------------------------------------------------------------------------
 // The attribution contract (RFC 0021 delivery 2).
 
-/// RFC 0021 delivery 2's examples. The meter writes none of their fields until RFC 0021 delivery
-/// 6 (the query), so until then they are schema-only: they validate against the schema and pass
-/// the sum checks below, but no store is built for them and no meter answer is compared with
-/// them. Delivery 6 empties this list and adds a scenario for each.
-const SCHEMA_ONLY: [&str; 9] = [
+/// RFC 0021 delivery 2's examples: schema-only until delivery 6, each now built from a synthetic
+/// store (`scenes`) and compared with the meter's answer like every other example.
+const ATTRIBUTION_EXAMPLES: [&str; 9] = [
     "actor-ambiguous",
     "actor-ledger-branch",
     "actor-no-evidence",
@@ -1254,20 +1250,35 @@ fn reports_actors(v: &Value) -> bool {
             .is_some_and(|r| r.iter().any(|r| r["attribution"].get("actor").is_some()))
 }
 
+/// Each attribution example against its scene's answer, one at a time, with the difference.
 #[test]
-fn schema_only_examples_are_exactly_the_attribution_ones() {
-    // No attribution example is compared with a meter that cannot write it, and no example the
-    // meter answers today can hide behind the list.
+fn each_attribution_example_is_what_the_meter_answers() {
+    let s = schema();
+    let mut failed = Vec::new();
+    for name in ATTRIBUTION_EXAMPLES {
+        let (code, raw) = scenes::answer(name).unwrap();
+        let got: Value = serde_json::from_str(&raw).unwrap();
+        let e = s.errors(&got);
+        assert!(e.is_empty(), "{name}: the answer breaks the schema: {e:#?}");
+        assert_eq!(code, 0, "{name}");
+        if !same(&got, &example(name)) {
+            failed.push(format!("{name}:\n{}", pretty(&got)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+#[test]
+fn every_answer_reports_actors_and_every_refusal_none() {
+    // RFC 0021 (d): a meter that reports actors does so on every answer (actor_unattributed and,
+    // on every row with tokens, attribution.actor); a refusal reports none.
     let names = example_names();
-    for n in SCHEMA_ONLY {
+    for n in ATTRIBUTION_EXAMPLES {
         assert!(names.iter().any(|x| x == n), "{n} is not an example");
     }
     for n in &names {
-        assert_eq!(
-            reports_actors(&example(n)),
-            SCHEMA_ONLY.contains(&n.as_str()),
-            "{n}"
-        );
+        let v = example(n);
+        assert_eq!(reports_actors(&v), v["status"] == "ok", "{n}");
     }
 }
 
@@ -1485,7 +1496,7 @@ fn actor_counts_add_up_on_every_example() {
         assert!(e.is_empty(), "{n}: {e:#?}");
         checked += usize::from(reports_actors(&v));
     }
-    assert_eq!(checked, SCHEMA_ONLY.len());
+    assert!(checked >= ATTRIBUTION_EXAMPLES.len(), "{checked}");
 }
 
 #[test]
@@ -1819,9 +1830,16 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
         assert!(!s.valid(&v), "the schema accepts {what}");
     }
 
-    // The fields stay optional: an answer without them is the meter's answer today.
-    assert!(s.valid(&example("priced")));
-    assert!(!reports_actors(&example("priced")));
+    // The fields stay optional: an answer without them, a meter's from before RFC 0021 delivery
+    // 6, still validates.
+    let mut v = example("priced");
+    assert!(reports_actors(&v));
+    v.as_object_mut().unwrap().remove("actor_unattributed");
+    for r in v["rows"].as_array_mut().unwrap() {
+        r["attribution"].as_object_mut().unwrap().remove("actor");
+    }
+    assert!(!reports_actors(&v));
+    assert!(s.valid(&v), "{:#?}", s.errors(&v));
 }
 
 // ---------------------------------------------------------------------------------------------

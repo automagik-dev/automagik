@@ -138,6 +138,8 @@ impl Window {
 struct Request {
     repo: String,
     window: Window,
+    /// `--by bot`: bot rows (RFC 0021 (d)), the branches named becoming a filter.
+    by_bot: bool,
     branches: Vec<String>,
     stale_after_s: i64,
 }
@@ -161,6 +163,10 @@ struct Envelope {
     window: Option<WindowInfo>,
     sources: Vec<SourceInfo>,
     unattributed: Option<Unattributed>,
+    /// Present exactly when the meter reports actors (every answer, RFC 0021 (d)); a refusal
+    /// reports none and leaves it out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_unattributed: Option<ActorUnattributed>,
     pricing: Option<Pricing>,
     query: Option<Echo>,
     rows: Vec<Row>,
@@ -251,6 +257,25 @@ struct Unattributed {
     harnesses: Vec<String>,
 }
 
+/// The repo's usage in the window given to no bot (RFC 0021 (d), delivery 2 D5).
+#[derive(Serialize)]
+struct ActorUnattributed {
+    tokens_total: i64,
+    tokens_ambiguous: i64,
+    tokens_unlinked: i64,
+    tokens_before_evidence: i64,
+    parts: Vec<ActorPart>,
+    absent_bot_is_zero: bool,
+}
+
+#[derive(Serialize)]
+struct ActorPart {
+    state: &'static str,
+    reason: &'static str,
+    tokens_total: i64,
+    harnesses: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct Pricing {
     table: PriceInfo,
@@ -274,14 +299,25 @@ struct Echo {
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_complete: Option<bool>,
     window: &'static str,
+    /// `bot` for a `--by bot` request; absent for branch rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    by: Option<&'static str>,
     branch_count: usize,
     branches: Vec<String>,
     branches_complete: bool,
     request_sha256: String,
 }
 
+/// A row is a branch row or, for `--by bot`, a bot row: never both in one answer.
 #[derive(Serialize)]
-struct Row {
+#[serde(untagged)]
+enum Row {
+    Branch(Box<BranchRow>),
+    Bot(Box<BotRow>),
+}
+
+#[derive(Serialize)]
+struct BranchRow {
     branch: String,
     requested: usize,
     state: &'static str,
@@ -341,12 +377,59 @@ struct Cost {
     unpriced_models_omitted: usize,
 }
 
+/// A bot row (RFC 0021 (d)): the attributed usage of one bot key in the repo and window.
+#[derive(Serialize)]
+struct BotRow {
+    bot: String,
+    kind: String,
+    role: Option<String>,
+    squad: Option<String>,
+    unrecorded: Vec<&'static str>,
+    harness: String,
+    state: &'static str,
+    reason: Option<&'static str>,
+    tokens: TokensOut,
+    cost: Cost,
+    token_precision: &'static str,
+    attribution: Attribution,
+    activity: Activity,
+    incomplete_sources: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct Attribution {
     precision: &'static str,
     exclusive: bool,
     shared: bool,
     coverage: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<ActorOut>,
+}
+
+/// Who a row's tokens belong to (RFC 0021 (d)): the four counts add up to `tokens.total`,
+/// `tokens_by_basis` to `tokens_attributed`, and `tokens_by_branch_basis` to `tokens.total`.
+#[derive(Serialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct ActorOut {
+    tokens_attributed: i64,
+    tokens_ambiguous: i64,
+    tokens_unlinked: i64,
+    tokens_before_evidence: i64,
+    tokens_by_basis: ByBasis,
+    tokens_by_branch_basis: ByBranchBasis,
+}
+
+#[derive(Serialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct ByBasis {
+    session: i64,
+    label: i64,
+    worktree: i64,
+}
+
+#[derive(Serialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct ByBranchBasis {
+    log: i64,
+    ledger: i64,
+    none: i64,
 }
 
 #[derive(Serialize)]
@@ -479,10 +562,13 @@ pub fn repo_ok(r: &str) -> bool {
             .all(|s| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '\u{feff}'))
 }
 
-fn request_sha256(repo: &str, window: &str, branches: &[String]) -> String {
+/// The request's hash: repo, window, the line `by bot` for a bot request (it holds a space, which
+/// no branch can, so it never reads as a branch), then each branch, each followed by a line feed.
+fn request_sha256(repo: &str, window: &str, by_bot: bool, branches: &[String]) -> String {
     let mut h = Sha256::new();
     for part in std::iter::once(repo)
         .chain(std::iter::once(window))
+        .chain(by_bot.then_some("by bot"))
         .chain(branches.iter().map(String::as_str))
     {
         h.update(part.as_bytes());
@@ -493,7 +579,7 @@ fn request_sha256(repo: &str, window: &str, branches: &[String]) -> String {
 
 /// The request echoed back. A refusal keeps the leading names that fit in 4 KiB (each name
 /// counted as its JSON bytes plus a comma), cut at a whole name: at most 500, none past 255 bytes.
-fn echo(repo: &str, window: Window, branches: &[String], capped: bool) -> Echo {
+fn echo(repo: &str, window: Window, by_bot: bool, branches: &[String], capped: bool) -> Echo {
     let mut kept = Vec::new();
     let mut used = 0;
     for b in branches {
@@ -523,16 +609,18 @@ fn echo(repo: &str, window: Window, branches: &[String], capped: bool) -> Echo {
         repo: repo_echo,
         repo_complete,
         window: window.name(),
+        by: by_bot.then_some("bot"),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
         branches: kept,
-        request_sha256: request_sha256(repo, window.name(), branches),
+        request_sha256: request_sha256(repo, window.name(), by_bot, branches),
     }
 }
 
 fn too_large_request(
     repo: &str,
     window: Window,
+    by_bot: bool,
     branches: &[String],
     message: String,
     limit: usize,
@@ -545,7 +633,7 @@ fn too_large_request(
         code: exit::USAGE,
         status: "usage",
         error: e,
-        echo: Some(echo(repo, window, branches, true)),
+        echo: Some(echo(repo, window, by_bot, branches, true)),
         store: None,
         machine: None,
     }
@@ -556,6 +644,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let mut window: Option<Window> = None;
     let mut contract: Option<u64> = None;
     let mut stale: Option<i64> = None;
+    let mut by: Option<bool> = None;
     let mut branches: Vec<String> = Vec::new();
     let mut json = false;
     let mut it = args.iter();
@@ -575,6 +664,22 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
                 }
             }
             "--branch" => branches.push(value("--branch", it.next())?),
+            "--by" => {
+                let v = value("--by", it.next())?;
+                let bot = match v.as_str() {
+                    "bot" => true,
+                    "branch" => false,
+                    _ => {
+                        return Err(Box::new(Refusal::usage(format!(
+                            "--by takes branch or bot, not {}",
+                            quoted(&v)
+                        ))));
+                    }
+                };
+                if by.replace(bot).is_some() {
+                    return Err(Box::new(Refusal::usage("--by is given twice")));
+                }
+            }
             "--window" => {
                 let v = value("--window", it.next())?;
                 let w = match v.as_str() {
@@ -635,9 +740,11 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         )));
     }
     let repo = repo.ok_or_else(|| Refusal::usage("--repo is required"))?;
-    if branches.is_empty() {
+    let by_bot = by.unwrap_or(false);
+    // A bot query may name no branch: its branches are a filter (RFC 0021 D1).
+    if branches.is_empty() && !by_bot {
         return Err(Box::new(Refusal::usage(
-            "at least one --branch is required",
+            "at least one --branch is required (or --by bot)",
         )));
     }
     if let Some(i) = branches.iter().position(|b| !branch_ok(b)) {
@@ -659,6 +766,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
+            by_bot,
             &branches,
             format!(
                 "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
@@ -674,7 +782,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             branches.len()
         ));
         r.error.code = "too_many_branches";
-        r.echo = Some(echo(&repo, window, &branches, true));
+        r.echo = Some(echo(&repo, window, by_bot, &branches, true));
         return Err(Box::new(r));
     }
     if let Some(long) = branches.iter().map(String::len).max()
@@ -683,6 +791,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
+            by_bot,
             &branches,
             format!("a branch name takes {long} bytes; the most one takes is {MAX_BRANCH_BYTES}"),
             MAX_BRANCH_BYTES,
@@ -694,6 +803,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
+            by_bot,
             &branches,
             format!(
                 "the branch names take {names} bytes; the most one call takes is \
@@ -714,7 +824,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             code: exit::UNSUPPORTED_CONTRACT,
             status: "unsupported_contract",
             error: e,
-            echo: Some(echo(&repo, window, &branches, true)),
+            echo: Some(echo(&repo, window, by_bot, &branches, true)),
             store: None,
             machine: None,
         }));
@@ -722,6 +832,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     Ok(Request {
         repo,
         window,
+        by_bot,
         branches,
         stale_after_s: stale.unwrap_or(DEFAULT_STALE_AFTER_S),
     })
@@ -877,6 +988,7 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 
 /// One hourly usage row of the repo, as the query reads it.
 struct UsageRead {
+    /// The branch the row holds: logged, or filled from a worker's start row.
     branch: Option<String>,
     harness: String,
     model: String,
@@ -884,14 +996,108 @@ struct UsageRead {
     tokens: TokensOut,
     total_only: bool,
     reported_usd: Option<f64>,
+    /// How the row's calls were attributed, judged against `evidence_from`.
+    class: Class,
+    /// `log`, `ledger` or `none`.
+    branch_basis: BranchBasis,
+    /// The bot key, for an attributed row.
+    bot: Option<BotKey>,
+}
+
+/// How a rollup row's calls count in the four actor counts (RFC 0021 (d)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// Before `evidence_from` (or all of it while that is null), and every row written before
+    /// schema 3 (`actor_state` null, the frozen tags): never attributed, whatever it names.
+    Before,
+    Attributed(Basis),
+    Ambiguous,
+    Unlinked(Unlinked),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Basis {
+    Session,
+    Label,
+    Worktree,
+}
+
+/// Why an unlinked call has no bot, in the schema's reason order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Unlinked {
+    NoRecord,
+    DshTuiSeat,
+    OtherMachine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchBasis {
+    Log,
+    Ledger,
+    None,
+}
+
+/// A bot row's key, in the order rows are sorted: byte order, null first, `unrecorded` in its
+/// enum's order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct BotKey {
+    bot: String,
+    kind: String,
+    role: Option<String>,
+    squad: Option<String>,
+    /// 0 `[]`, 1 `["role"]`, 2 `["squad"]`, 3 `["role", "squad"]`.
+    unrecorded: u8,
+    harness: String,
+}
+
+impl BotKey {
+    fn unrecorded(&self) -> Vec<&'static str> {
+        match self.unrecorded {
+            0 => vec![],
+            1 => vec!["role"],
+            2 => vec!["squad"],
+            _ => vec!["role", "squad"],
+        }
+    }
+}
+
+/// The row's class from its stored attribution: before evidence when its hour is before
+/// `evidence_from` (or that is null) or it carries no state (written before schema 3); a state or
+/// basis this meter does not know is never counted as attributed.
+#[allow(clippy::too_many_arguments)]
+fn classify(
+    evidence_from: Option<i64>,
+    hour_ms: i64,
+    state: Option<&str>,
+    basis: Option<&str>,
+    reason: Option<&str>,
+) -> Class {
+    if evidence_from.is_none_or(|f| hour_ms < f) {
+        return Class::Before;
+    }
+    match (state, basis) {
+        (Some("attributed"), Some("session")) => Class::Attributed(Basis::Session),
+        (Some("attributed"), Some("label")) => Class::Attributed(Basis::Label),
+        (Some("attributed"), Some("worktree")) => Class::Attributed(Basis::Worktree),
+        (Some("ambiguous"), _) => Class::Ambiguous,
+        (Some("unlinked"), _) => Class::Unlinked(match reason {
+            Some("dsh_tui_seat") => Unlinked::DshTuiSeat,
+            Some("other_machine") => Unlinked::OtherMachine,
+            _ => Unlinked::NoRecord,
+        }),
+        _ => Class::Before,
+    }
 }
 
 struct Snapshot {
     version: i64,
     meta: BTreeMap<String, String>,
     health: BTreeMap<String, Option<i64>>,
+    /// Every row of the repo in the window, whatever its branch.
     rows: Vec<UsageRead>,
     repo_seen: bool,
+    /// The start of per-call evidence; None while the store has kept none.
+    evidence_from: Option<i64>,
 }
 
 enum Read {
@@ -939,7 +1145,6 @@ fn nonneg(v: Option<i64>) -> i64 {
 fn read(
     c: &Connection,
     repo: &str,
-    branches: &[String],
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
     c.execute_batch("BEGIN")?;
@@ -974,53 +1179,93 @@ fn read(
         }
     }
     let (from, to) = start(&meta);
-    // The branches named (and the empty name, which counts as no branch), then the rows with no
-    // branch at all: both through `usage_repo_branch`, so a call reads its own rows only.
-    let mut names: Vec<&str> = branches.iter().map(String::as_str).collect();
-    names.push("");
-    let names = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
-    const COLUMNS: &str = "SELECT branch, harness, model, hour_ms, input_uncached, cache_read,
-        cache_write_5m, cache_write_1h, output, reasoning, unsplit, precision, reported_usd
-        FROM usage";
+    let evidence_from = meta_i64(&meta, crate::evidence::FROM_META);
+    // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
+    // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
     let mut rows = Vec::new();
-    for sql in [
-        format!(
-            "{COLUMNS} WHERE repo = ?1 AND branch IN (SELECT value FROM json_each(?4))
-             AND hour_ms >= ?2 AND hour_ms < ?3"
-        ),
-        format!("{COLUMNS} WHERE repo = ?1 AND branch IS NULL AND hour_ms >= ?2 AND hour_ms < ?3"),
-    ] {
-        let mut st = c.prepare(&sql)?;
-        let n = st.parameter_count();
-        let mut q = if n == 4 {
-            st.query(rusqlite::params![repo, from, to, names])?
-        } else {
-            st.query(rusqlite::params![repo, from, to])?
-        };
+    {
+        let mut st = c.prepare(
+            "SELECT branch, harness, model, hour_ms, input_uncached, cache_read, cache_write_5m,
+               cache_write_1h, output, reasoning, unsplit, precision, reported_usd, actor_state,
+               basis, branch_basis, reason, bot, kind, role, squad, unrecorded
+             FROM usage WHERE repo = ?1 AND hour_ms >= ?2 AND hour_ms < ?3",
+        )?;
+        let mut q = st.query(rusqlite::params![repo, from, to])?;
         while let Some(r) = q.next()? {
+            let harness: String = r.get(1)?;
             let mut t = TokensOut {
                 input: nonneg(r.get(4)?),
                 cache_read: nonneg(r.get(5)?),
                 cache_write_5m: nonneg(r.get(6)?),
                 cache_write_1h: nonneg(r.get(7)?),
                 output: nonneg(r.get(8)?),
-                reasoning: crate::sources::Source::from_harness(&r.get::<_, String>(1)?)
+                reasoning: crate::sources::Source::from_harness(&harness)
                     .filter(|s| s.logs_reasoning())
                     .map(|_| nonneg(r.get(9).ok().flatten())),
                 unsplit: nonneg(r.get(10)?),
                 total: 0,
             };
             t.total = split_total(&t).saturating_add(t.unsplit);
+            let hour_ms: i64 = r.get(3)?;
+            let branch: Option<String> = r.get::<_, Option<String>>(0)?.filter(|b| !b.is_empty());
+            let state: Option<String> = r.get(13)?;
+            let basis: Option<String> = r.get(14)?;
+            let reason: Option<String> = r.get(16)?;
+            let class = classify(
+                evidence_from,
+                hour_ms,
+                state.as_deref(),
+                basis.as_deref(),
+                reason.as_deref(),
+            );
+            let branch_basis = match (r.get::<_, Option<String>>(15)?.as_deref(), &branch) {
+                (_, None) => BranchBasis::None,
+                (Some("ledger"), Some(_)) => BranchBasis::Ledger,
+                _ => BranchBasis::Log,
+            };
+            let bot = match (
+                class,
+                r.get::<_, Option<String>>(17)?,
+                r.get::<_, Option<String>>(18)?,
+            ) {
+                (Class::Attributed(_), Some(bot), Some(kind))
+                    if matches!(kind.as_str(), "worker" | "seat") =>
+                {
+                    let role: Option<String> = r.get(19)?;
+                    let squad: Option<String> = r.get(20)?;
+                    let unrecorded: Option<String> = r.get(21)?;
+                    let listed = |k: &str| {
+                        unrecorded
+                            .as_deref()
+                            .is_some_and(|u| u.split(',').any(|f| f == k))
+                    };
+                    // A role the start row left null is as unknown as one it left out.
+                    let no_role = listed("role") || role.is_none();
+                    let no_squad = listed("squad");
+                    Some(BotKey {
+                        bot,
+                        kind,
+                        role: role.filter(|_| !no_role),
+                        squad: squad.filter(|_| !no_squad),
+                        unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
+                        harness: harness.clone(),
+                    })
+                }
+                _ => None,
+            };
             rows.push(UsageRead {
-                branch: r.get(0)?,
-                harness: r.get(1)?,
+                branch,
+                harness,
                 model: r.get(2)?,
-                hour_ms: r.get(3)?,
+                hour_ms,
                 tokens: t,
                 total_only: r.get::<_, String>(11)? == "total_only",
                 reported_usd: r
                     .get::<_, Option<f64>>(12)?
                     .filter(|u| u.is_finite() && *u >= 0.0),
+                class,
+                branch_basis,
+                bot,
             });
         }
     }
@@ -1037,6 +1282,7 @@ fn read(
         health,
         rows,
         repo_seen,
+        evidence_from,
     })))
 }
 
@@ -1093,6 +1339,32 @@ struct Acc {
     tokens_reported: i64,
     tokens_unpriced: i64,
     unpriced: BTreeMap<String, i64>,
+    actor: ActorOut,
+}
+
+impl ActorOut {
+    /// Counts a row's `total` tokens by its class and its branch basis.
+    fn count(&mut self, class: Class, branch_basis: BranchBasis, total: i64) {
+        let add = |n: &mut i64| *n = n.saturating_add(total);
+        match class {
+            Class::Before => add(&mut self.tokens_before_evidence),
+            Class::Ambiguous => add(&mut self.tokens_ambiguous),
+            Class::Unlinked(_) => add(&mut self.tokens_unlinked),
+            Class::Attributed(b) => {
+                add(&mut self.tokens_attributed);
+                add(match b {
+                    Basis::Session => &mut self.tokens_by_basis.session,
+                    Basis::Label => &mut self.tokens_by_basis.label,
+                    Basis::Worktree => &mut self.tokens_by_basis.worktree,
+                });
+            }
+        }
+        add(match branch_basis {
+            BranchBasis::Log => &mut self.tokens_by_branch_basis.log,
+            BranchBasis::Ledger => &mut self.tokens_by_branch_basis.ledger,
+            BranchBasis::None => &mut self.tokens_by_branch_basis.none,
+        });
+    }
 }
 
 impl Acc {
@@ -1104,6 +1376,7 @@ impl Acc {
             return;
         }
         self.tokens.add(t);
+        self.actor.count(r.class, r.branch_basis, t.total);
         self.hours.insert(r.hour_ms);
         self.harnesses.insert(r.harness.clone());
         if r.total_only {
@@ -1314,6 +1587,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             window: None,
             sources: Vec::new(),
             unattributed: None,
+            actor_unattributed: None,
             pricing: None,
             query: r.echo,
             rows: Vec::new(),
@@ -1327,7 +1601,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         Ok(r) => r,
         Err(r) => return refuse(*r),
     };
-    let echo_capped = || Some(echo(&req.repo, req.window, &req.branches, true));
+    let echo_capped = || Some(echo(&req.repo, req.window, req.by_bot, &req.branches, true));
     let failure = |code: u8,
                    status: &'static str,
                    error: ErrorObj,
@@ -1415,7 +1689,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested);
         (requested.max(counted_from), end)
     };
-    let snap = match read(&conn, &req.repo, &req.branches, window_of) {
+    let snap = match read(&conn, &req.repo, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {
@@ -1520,26 +1794,57 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         .iter()
         .all(|s| matches!(s.status.as_str(), "ok" | "absent"));
 
-    // Usage with no recorded branch (OMP logs none): it could belong to any branch named.
+    // Usage with no branch, neither logged nor filled from a worker's start row (OMP and dsh-tui
+    // log none): it could belong to any branch named.
     let mut unattributed = 0i64;
     let mut unattributed_by: BTreeSet<String> = BTreeSet::new();
     let mut by_branch: BTreeMap<&str, Acc> = BTreeMap::new();
     for b in &req.branches {
         by_branch.entry(b.as_str()).or_default();
     }
+    // The repo's usage given to no bot, by reason (RFC 0021 (d), delivery 2 D5), whatever the
+    // branches named; and, for `--by bot`, the attributed usage per bot key.
+    let mut parts: BTreeMap<(u8, &'static str, &'static str), (i64, BTreeSet<String>)> =
+        BTreeMap::new();
+    let mut by_bot: BTreeMap<BotKey, Acc> = BTreeMap::new();
+    let named: BTreeSet<&str> = req.branches.iter().map(String::as_str).collect();
     for r in &snap.rows {
+        let total = r.tokens.total;
+        if total <= 0 {
+            continue;
+        }
         match r.branch.as_deref() {
-            None | Some("") => {
-                if r.tokens.total > 0 {
-                    unattributed = unattributed.saturating_add(r.tokens.total);
-                    unattributed_by.insert(r.harness.clone());
-                }
+            None => {
+                unattributed = unattributed.saturating_add(total);
+                unattributed_by.insert(r.harness.clone());
             }
             Some(b) => {
-                if let Some(acc) = by_branch.get_mut(b) {
+                if !req.by_bot
+                    && let Some(acc) = by_branch.get_mut(b)
+                {
                     acc.add(r, &table);
                 }
             }
+        }
+        let part = match r.class {
+            Class::Ambiguous => Some((0, "ambiguous", "claimants_differ")),
+            Class::Unlinked(Unlinked::NoRecord) => Some((1, "unlinked", "no_record")),
+            Class::Unlinked(Unlinked::DshTuiSeat) => Some((2, "unlinked", "dsh_tui_seat")),
+            Class::Unlinked(Unlinked::OtherMachine) => Some((3, "unlinked", "other_machine")),
+            Class::Before => Some((4, "before_evidence", "before_evidence")),
+            Class::Attributed(_) => None,
+        };
+        if let Some(k) = part {
+            let e = parts.entry(k).or_default();
+            e.0 = e.0.saturating_add(total);
+            e.1.insert(r.harness.clone());
+        }
+        // A bot query filtered by branch counts only usage on a branch named, logged or filled.
+        if req.by_bot
+            && let Some(key) = &r.bot
+            && (named.is_empty() || r.branch.as_deref().is_some_and(|b| named.contains(b)))
+        {
+            by_bot.entry(key.clone()).or_default().add(r, &table);
         }
     }
     let coverage = if unattributed > 0 {
@@ -1547,100 +1852,106 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     } else {
         "complete"
     };
-
-    // One row per distinct branch, in the order first named.
-    let mut order: Vec<(&str, usize)> = Vec::new();
-    for b in &req.branches {
-        match order.iter_mut().find(|(n, _)| *n == b.as_str()) {
-            Some(e) => e.1 += 1,
-            None => order.push((b.as_str(), 1)),
+    let actor_unattributed = {
+        let sum = |state: &str| -> i64 {
+            parts
+                .iter()
+                .filter(|((_, s, _), _)| *s == state)
+                .map(|(_, (n, _))| *n)
+                .fold(0i64, i64::saturating_add)
+        };
+        let (ambiguous, unlinked, before) =
+            (sum("ambiguous"), sum("unlinked"), sum("before_evidence"));
+        let total = ambiguous.saturating_add(unlinked).saturating_add(before);
+        // An absent bot is a real 0 only in a bot answer, with nothing given to no bot, and RFC
+        // 0018's zero conditions for the whole answer: ingestion complete and fresh with a
+        // watermark, the window not clipped, every source ok or absent, the repo seen, and, under
+        // a branch filter, no usage with no branch, which could be an absent bot's.
+        let absent_bot_is_zero = req.by_bot
+            && total == 0
+            && complete
+            && !stale
+            && w.is_some()
+            && !clipped
+            && all_vouch
+            && snap.repo_seen
+            && (req.branches.is_empty() || unattributed == 0);
+        ActorUnattributed {
+            tokens_total: total,
+            tokens_ambiguous: ambiguous,
+            tokens_unlinked: unlinked,
+            tokens_before_evidence: before,
+            parts: parts
+                .into_iter()
+                .map(|((_, state, reason), (n, h))| ActorPart {
+                    state,
+                    reason,
+                    tokens_total: n,
+                    harnesses: h.into_iter().collect(),
+                })
+                .collect(),
+            absent_bot_is_zero,
         }
-    }
-    let rows: Vec<Row> = order
-        .into_iter()
-        .map(|(branch, requested)| {
-            let acc = &by_branch[branch];
-            let found = acc.tokens.total > 0;
-            let missing_reason = if !snap.repo_seen {
-                Some("repo_not_seen")
-            } else if clipped {
-                Some("window_before_counted_from")
-            } else if !complete {
-                Some("backlog")
-            } else if !all_vouch {
-                Some("source_incomplete")
-            } else if unattributed > 0 {
-                Some("branch_unattributed")
-            } else {
-                None
-            };
-            let numbers = |acc: &Acc| {
-                (
-                    Some(acc.tokens),
-                    Some(acc.cost()),
-                    Some(acc.precision()),
-                    Some(acc.activity()),
-                )
-            };
-            let none = (None, None, None, None);
-            let (state, reason, (tokens, cost, precision, activity)) = if stale {
-                (
-                    "stale",
-                    Some("ingestion_stale"),
-                    if found { numbers(acc) } else { none },
-                )
-            } else if found {
-                ("measured", None, numbers(acc))
-            } else if any_unsupported {
-                ("unsupported", Some("source_unsupported"), none)
-            } else if let Some(why) = missing_reason {
-                ("missing", Some(why), none)
-            } else {
-                (
-                    "zero",
-                    None,
-                    (
-                        Some(TokensOut::default()),
-                        Some(Cost {
-                            state: "zero",
-                            usd: Some(0.0),
-                            usd_reported: Some(0.0),
-                            usd_estimated: Some(0.0),
-                            tokens_priced: 0,
-                            tokens_reported: 0,
-                            tokens_unpriced: 0,
-                            unpriced_models: Vec::new(),
-                            unpriced_models_omitted: 0,
-                        }),
-                        None,
-                        Some(Activity {
-                            first_hour: None,
-                            last_hour: None,
-                            hours: 0,
-                            harnesses: Vec::new(),
-                        }),
-                    ),
-                )
-            };
-            Row {
-                branch: branch.to_string(),
-                requested,
-                state,
-                reason,
-                tokens,
-                cost,
-                token_precision: precision,
-                attribution: Attribution {
-                    precision: "branch_window",
-                    exclusive: false,
-                    shared: requested > 1,
-                    coverage,
-                },
-                activity,
-                incomplete_sources: incomplete.clone(),
-            }
-        })
-        .collect();
+    };
+
+    let rows: Vec<Row> = if req.by_bot {
+        // A bot query that names no branch counts usage with no branch in its rows itself, so
+        // they are complete; under a branch filter, that usage could be owed to a branch named.
+        let bot_coverage = if req.branches.is_empty() {
+            "complete"
+        } else {
+            coverage
+        };
+        by_bot
+            .into_iter()
+            .filter(|(_, acc)| acc.tokens.total > 0)
+            .map(|(key, acc)| {
+                let (state, reason) = if stale {
+                    ("stale", Some("ingestion_stale"))
+                } else {
+                    ("measured", None)
+                };
+                Row::Bot(Box::new(BotRow {
+                    unrecorded: key.unrecorded(),
+                    bot: key.bot,
+                    kind: key.kind,
+                    role: key.role,
+                    squad: key.squad,
+                    harness: key.harness,
+                    state,
+                    reason,
+                    tokens: acc.tokens,
+                    cost: acc.cost(),
+                    token_precision: acc.precision(),
+                    attribution: Attribution {
+                        precision: "actor_interval",
+                        exclusive: false,
+                        shared: false,
+                        coverage: bot_coverage,
+                        actor: Some(acc.actor),
+                    },
+                    activity: acc.activity(),
+                    incomplete_sources: incomplete.clone(),
+                }))
+            })
+            .collect()
+    } else {
+        branch_rows(
+            &req,
+            &by_branch,
+            &BranchCtx {
+                stale,
+                complete,
+                clipped,
+                all_vouch,
+                any_unsupported,
+                repo_seen: snap.repo_seen,
+                unattributed,
+                coverage,
+                incomplete: &incomplete,
+            },
+        )
+    };
 
     let env = Envelope {
         contract: CONTRACT,
@@ -1656,7 +1967,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         ingestion: Some(Ingestion {
             watermark: w.map(format_rfc3339),
             counted_from: format_rfc3339(counted_from),
-            evidence_from: None,
+            evidence_from: snap.evidence_from.map(format_rfc3339),
             complete,
             backlog,
             stale,
@@ -1668,8 +1979,15 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             tokens_total: unattributed,
             harnesses: unattributed_by.into_iter().collect(),
         }),
+        actor_unattributed: Some(actor_unattributed),
         pricing: Some(pricing),
-        query: Some(echo(&req.repo, req.window, &req.branches, false)),
+        query: Some(echo(
+            &req.repo,
+            req.window,
+            req.by_bot,
+            &req.branches,
+            false,
+        )),
         rows,
     };
 
@@ -1716,6 +2034,119 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     ))
 }
 
+/// What every branch row of one answer shares.
+struct BranchCtx<'a> {
+    stale: bool,
+    complete: bool,
+    clipped: bool,
+    all_vouch: bool,
+    any_unsupported: bool,
+    repo_seen: bool,
+    unattributed: i64,
+    coverage: &'static str,
+    incomplete: &'a [String],
+}
+
+/// One row per distinct branch, in the order first named (RFC 0018 (a)).
+fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>) -> Vec<Row> {
+    let mut order: Vec<(&str, usize)> = Vec::new();
+    for b in &req.branches {
+        match order.iter_mut().find(|(n, _)| *n == b.as_str()) {
+            Some(e) => e.1 += 1,
+            None => order.push((b.as_str(), 1)),
+        }
+    }
+    order
+        .into_iter()
+        .map(|(branch, requested)| {
+            let acc = &by_branch[branch];
+            let found = acc.tokens.total > 0;
+            let missing_reason = if !c.repo_seen {
+                Some("repo_not_seen")
+            } else if c.clipped {
+                Some("window_before_counted_from")
+            } else if !c.complete {
+                Some("backlog")
+            } else if !c.all_vouch {
+                Some("source_incomplete")
+            } else if c.unattributed > 0 {
+                Some("branch_unattributed")
+            } else {
+                None
+            };
+            let numbers = |acc: &Acc| {
+                (
+                    Some(acc.tokens),
+                    Some(acc.cost()),
+                    Some(acc.precision()),
+                    Some(acc.activity()),
+                    Some(acc.actor),
+                )
+            };
+            let none = (None, None, None, None, None);
+            let (state, reason, (tokens, cost, precision, activity, actor)) = if c.stale {
+                (
+                    "stale",
+                    Some("ingestion_stale"),
+                    if found { numbers(acc) } else { none },
+                )
+            } else if found {
+                ("measured", None, numbers(acc))
+            } else if c.any_unsupported {
+                ("unsupported", Some("source_unsupported"), none)
+            } else if let Some(why) = missing_reason {
+                ("missing", Some(why), none)
+            } else {
+                (
+                    "zero",
+                    None,
+                    (
+                        Some(TokensOut::default()),
+                        Some(Cost {
+                            state: "zero",
+                            usd: Some(0.0),
+                            usd_reported: Some(0.0),
+                            usd_estimated: Some(0.0),
+                            tokens_priced: 0,
+                            tokens_reported: 0,
+                            tokens_unpriced: 0,
+                            unpriced_models: Vec::new(),
+                            unpriced_models_omitted: 0,
+                        }),
+                        None,
+                        Some(Activity {
+                            first_hour: None,
+                            last_hour: None,
+                            hours: 0,
+                            harnesses: Vec::new(),
+                        }),
+                        // A measured 0: every count 0, so the sums hold.
+                        Some(ActorOut::default()),
+                    ),
+                )
+            };
+            Row::Branch(Box::new(BranchRow {
+                branch: branch.to_string(),
+                requested,
+                state,
+                reason,
+                tokens,
+                cost,
+                token_precision: precision,
+                attribution: Attribution {
+                    precision: "branch_window",
+                    exclusive: false,
+                    shared: requested > 1,
+                    coverage: c.coverage,
+                    actor,
+                },
+                activity,
+                incomplete_sources: c.incomplete.to_vec(),
+            }))
+        })
+        .collect()
+}
+
 fn absent(
     failure: impl Fn(u8, &'static str, ErrorObj, Option<StoreInfo>, Option<Machine>) -> Refusal,
 ) -> Refusal {
@@ -1750,6 +2181,48 @@ fn line<T: Serialize>(v: &T) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_before_evidence_or_frozen_is_never_attributed() {
+        let ev = Some(10 * HOUR_MS);
+        let c = |from, hour, state: Option<&str>, basis: Option<&str>| {
+            classify(from, hour, state, basis, None)
+        };
+        // No evidence at all: every row is before it, whatever it names.
+        assert_eq!(
+            c(None, 20 * HOUR_MS, Some("attributed"), Some("session")),
+            Class::Before
+        );
+        // An hour before evidence_from, and a frozen row (no state) after it.
+        assert_eq!(
+            c(ev, 9 * HOUR_MS, Some("attributed"), Some("session")),
+            Class::Before
+        );
+        assert_eq!(c(ev, 11 * HOUR_MS, None, None), Class::Before);
+        // A basis or state this meter does not know is never attributed.
+        assert_eq!(
+            c(ev, 11 * HOUR_MS, Some("attributed"), Some("guess")),
+            Class::Before
+        );
+        assert_eq!(
+            c(ev, 10 * HOUR_MS, Some("attributed"), Some("label")),
+            Class::Attributed(Basis::Label)
+        );
+        assert_eq!(
+            classify(
+                ev,
+                11 * HOUR_MS,
+                Some("unlinked"),
+                None,
+                Some("other_machine")
+            ),
+            Class::Unlinked(Unlinked::OtherMachine)
+        );
+        assert_eq!(
+            classify(ev, 11 * HOUR_MS, Some("unlinked"), None, None),
+            Class::Unlinked(Unlinked::NoRecord)
+        );
+    }
 
     #[test]
     fn json_len_matches_serde() {

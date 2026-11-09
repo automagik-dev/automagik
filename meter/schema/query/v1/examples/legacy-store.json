@@ -18,7 +18,7 @@
   "ingestion": {
     "watermark": "2026-11-08T19:52:41Z",
     "counted_from": "2026-09-10T00:00:00Z",
-    "evidence_from": null,
+    "evidence_from": "2026-09-10T00:00:00Z",
     "complete": true,
     "backlog": {
       "bytes": 0,
@@ -75,6 +75,23 @@
     "tokens_total": 0,
     "harnesses": []
   },
+  "actor_unattributed": {
+    "tokens_total": 1281000,
+    "tokens_ambiguous": 0,
+    "tokens_unlinked": 1281000,
+    "tokens_before_evidence": 0,
+    "parts": [
+      {
+        "state": "unlinked",
+        "reason": "no_record",
+        "tokens_total": 1281000,
+        "harnesses": [
+          "claude-code"
+        ]
+      }
+    ],
+    "absent_bot_is_zero": false
+  },
   "pricing": {
     "table": {
       "origin": "bundled",
@@ -129,7 +146,23 @@
         "precision": "branch_window",
         "exclusive": false,
         "shared": false,
-        "coverage": "complete"
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 0,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 1281000,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 0,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 1281000,
+            "ledger": 0,
+            "none": 0
+          }
+        }
       },
       "activity": {
         "first_hour": "2026-11-05T09:00:00Z",

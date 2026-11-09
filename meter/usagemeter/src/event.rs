@@ -115,6 +115,9 @@ pub struct RollupAttr {
     pub branch_basis: String,
     /// The key fields the launch's start row did not record (`role`, `squad`), comma-separated.
     pub unrecorded: Option<String>,
+    /// Why a call has no bot (`claimants_differ`, `no_record`, `dsh_tui_seat`, `other_machine`),
+    /// for an ambiguous or unlinked call: the query's `actor_unattributed` parts read it here.
+    pub reason: Option<String>,
 }
 
 /// (bot, role, harness, model, machine, repo, branch, hour): one `agent.usage` row. Schema 3 rows
@@ -176,6 +179,11 @@ impl RollupKey {
                 a.unrecorded.as_deref(),
             ] {
                 part(&mut h, p);
+            }
+            // Only a call with no bot has a reason; an attributed row's id is unchanged by it.
+            if let Some(r) = a.reason.as_deref() {
+                h.update(b"\x1ereason\x1f");
+                part(&mut h, Some(r));
             }
         }
         hex(&h.finalize()[..16])
