@@ -419,14 +419,18 @@ And the cases across time:
 - **A meter binary older than its store** (a rollback): `query` exits 12. M1 makes `sync`
   refuse a newer store too, exit 12, writing nothing; today it would write into it.
 - **The state-path move** (automagik-dev/usagemeter#7, to `~/.automagik/meter`). Only `sync`
-  moves state: it renames the folder when both paths are on one filesystem, and otherwise copies,
-  checks and fsyncs before switching, keeping the old folder as the recoverable generation until
-  the next successful sync. `query` never moves anything: it reads the current path, then the
+  moves state, under the new folder's lock. It copies the database unit (`meter.db` and its
+  `-wal` and `-shm` files), checks and fsyncs each copy, and never renames it; the old `meter.db*`
+  files stay in the old folder as the recoverable generation. A later sync that succeeds with its
+  backlog caught up removes them, under the old folder's lock, and only if each one's length and
+  SHA-256 still match the snapshot taken when the move started. `query` never moves anything: it reads the current path, then the
   legacy path, read-only, and says which in `store.location`. `METER_STATE_DIR` is honoured by
   both and never moved.
-- **An old meter after the move** finds no store at its old path and starts a fresh one there.
-  Nothing is lost, because the new path is untouched. When the newer meter returns, the current
-  path wins and the stray store is reported by `status`, never merged or deleted on its own.
+- **An old meter after the move** still finds its store at its old path while the generation is
+  kept, and writes into it; once a caught-up sync has removed the generation, it finds no store
+  there and starts a fresh one. Nothing is lost, because the new path is untouched. When the newer
+  meter returns, the current path wins: an old store that changed after the move, or one started
+  fresh at the old path, is kept and reported by `sync`, never merged or deleted on its own.
 
 **Migration safety.**
 
