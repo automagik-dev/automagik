@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS usage (
   updated_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS usage_hour ON usage(hour_ms);
+CREATE INDEX IF NOT EXISTS usage_repo_branch ON usage(repo, branch, hour_ms);
 CREATE TABLE IF NOT EXISTS files (
   path TEXT PRIMARY KEY, source TEXT NOT NULL,
   dev INTEGER NOT NULL, ino INTEGER NOT NULL, size INTEGER NOT NULL, mtime_ms INTEGER NOT NULL,
@@ -527,10 +528,11 @@ impl Store {
 }
 
 /// Every table and index [`TABLES`] makes.
-const OBJECTS: [(&str, &str); 10] = [
+const OBJECTS: [(&str, &str); 11] = [
     ("table", "meta"),
     ("table", "usage"),
     ("index", "usage_hour"),
+    ("index", "usage_repo_branch"),
     ("table", "files"),
     ("table", "seen"),
     ("index", "seen_seq"),

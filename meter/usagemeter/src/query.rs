@@ -861,6 +861,7 @@ fn nonneg(v: Option<i64>) -> i64 {
 fn read(
     c: &Connection,
     repo: &str,
+    branches: &[String],
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
     c.execute_batch("BEGIN")?;
@@ -895,15 +896,31 @@ fn read(
         }
     }
     let (from, to) = start(&meta);
+    // The branches named (and the empty name, which counts as no branch), then the rows with no
+    // branch at all: both through `usage_repo_branch`, so a call reads its own rows only.
+    let mut names: Vec<&str> = branches.iter().map(String::as_str).collect();
+    names.push("");
+    let names = serde_json::to_string(&names).unwrap_or_else(|_| "[]".into());
+    const COLUMNS: &str = "SELECT branch, harness, model, hour_ms, input_uncached, cache_read,
+        cache_write_5m, cache_write_1h, output, reasoning, unsplit, precision, reported_usd
+        FROM usage";
     let mut rows = Vec::new();
-    {
-        let mut st = c.prepare(
-            "SELECT branch, harness, model, hour_ms, input_uncached, cache_read, cache_write_5m,
-                    cache_write_1h, output, reasoning, unsplit, precision, reported_usd
-             FROM usage WHERE repo = ?1 AND hour_ms >= ?2 AND hour_ms < ?3",
-        )?;
-        let it = st.query_map(rusqlite::params![repo, from, to], |r| {
-            let t = TokensOut {
+    for sql in [
+        format!(
+            "{COLUMNS} WHERE repo = ?1 AND branch IN (SELECT value FROM json_each(?4))
+             AND hour_ms >= ?2 AND hour_ms < ?3"
+        ),
+        format!("{COLUMNS} WHERE repo = ?1 AND branch IS NULL AND hour_ms >= ?2 AND hour_ms < ?3"),
+    ] {
+        let mut st = c.prepare(&sql)?;
+        let n = st.parameter_count();
+        let mut q = if n == 4 {
+            st.query(rusqlite::params![repo, from, to, names])?
+        } else {
+            st.query(rusqlite::params![repo, from, to])?
+        };
+        while let Some(r) = q.next()? {
+            let mut t = TokensOut {
                 input: nonneg(r.get(4)?),
                 cache_read: nonneg(r.get(5)?),
                 cache_write_5m: nonneg(r.get(6)?),
@@ -913,7 +930,8 @@ fn read(
                 unsplit: nonneg(r.get(10)?),
                 total: 0,
             };
-            Ok(UsageRead {
+            t.total = split_total(&t).saturating_add(t.unsplit);
+            rows.push(UsageRead {
                 branch: r.get(0)?,
                 harness: r.get(1)?,
                 model: r.get(2)?,
@@ -923,12 +941,7 @@ fn read(
                 reported_usd: r
                     .get::<_, Option<f64>>(12)?
                     .filter(|u| u.is_finite() && *u >= 0.0),
-            })
-        })?;
-        for row in it {
-            let mut row = row?;
-            row.tokens.total = split_total(&row.tokens).saturating_add(row.tokens.unsplit);
-            rows.push(row);
+            });
         }
     }
     let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
@@ -1318,7 +1331,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested);
         (requested.max(counted_from), end)
     };
-    let snap = match read(&conn, &req.repo, window_of) {
+    let snap = match read(&conn, &req.repo, &req.branches, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {

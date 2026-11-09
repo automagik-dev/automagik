@@ -1878,3 +1878,156 @@ fn opening_a_current_store_for_sync_writes_nothing() {
     let peek = meter::store::peek(&fx.db()).unwrap().unwrap();
     assert_eq!(peek.version, 0, "{peek:?}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// The ceilings' reference store (RFC 0018 (e)), for the measurement in the pull request. Not
+// part of a gate: `CEILING_DIR=<dir> cargo test --test query -- --ignored ceiling_store` writes
+// `<dir>/state` (90 days of hourly rows for 40 repos and 1,500 branches, three harnesses,
+// 1,000,000 dedupe keys) and `<dir>/home` (about 5 MiB of new Claude Code logs for the sync
+// that runs beside the concurrent queries). Synthetic data only.
+
+/// The repos and branches of the reference store: repo 0 holds 500 branches, the 39 others share
+/// the remaining 1,000.
+pub fn ceiling_branches() -> Vec<(String, String)> {
+    let mut v = Vec::new();
+    for j in 0..500 {
+        v.push((
+            "example.com/ceiling/repo-00".to_string(),
+            format!("feat/c-0-{j}"),
+        ));
+    }
+    for k in 0..1000 {
+        let i = 1 + k % 39;
+        v.push((
+            format!("example.com/ceiling/repo-{i:02}"),
+            format!("feat/c-{i}-{k}"),
+        ));
+    }
+    v
+}
+
+#[test]
+#[ignore]
+fn ceiling_store() {
+    let Some(dir) = std::env::var_os("CEILING_DIR").map(PathBuf::from) else {
+        return;
+    };
+    let state = dir.join("state");
+    let db = meter::paths::prepare(&state).unwrap();
+    let now = meter::time::now_ms();
+    let hour = meter::time::hour_start(now);
+    drop(Store::open(&db).unwrap());
+    let c = Connection::open(&db).unwrap();
+    c.execute_batch("BEGIN").unwrap();
+    let harnesses = ["claude-code", "codex", "omp"];
+    {
+        let mut st = c
+            .prepare(
+                "INSERT INTO usage(id, hour_ms, harness, model, machine, repo, branch,
+                   input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
+                   unsplit, precision, reported_usd, events, updated_ms)
+                 VALUES(?1, ?2, ?3, ?4, 'machine-ceiling', ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, 0,
+                   'exact', NULL, 7, ?12)",
+            )
+            .unwrap();
+        let mut n = 0u64;
+        for (b, (repo, branch)) in ceiling_branches().iter().enumerate() {
+            // About 100 rollup rows per branch over 90 days, about a third in the d30 window.
+            for r in 0..100u64 {
+                n += 1;
+                let h = hour - ((r * 21 + b as u64 * 7) % (90 * 24)) as i64 * HOUR_MS;
+                let harness = harnesses[(r % 3) as usize];
+                let model = if r % 3 == 1 {
+                    CODEX_MODEL
+                } else {
+                    CLAUDE_MODEL
+                };
+                let branch = if harness == "omp" && r % 9 == 2 {
+                    None
+                } else {
+                    Some(branch.as_str())
+                };
+                st.execute(params![
+                    format!("c{n}"),
+                    h,
+                    harness,
+                    model,
+                    repo,
+                    branch,
+                    1000 + r as i64,
+                    50_000 + r as i64,
+                    2_000,
+                    3_000,
+                    400,
+                    now
+                ])
+                .unwrap();
+            }
+        }
+        let mut seen = c
+            .prepare("INSERT INTO seen(k, seq) VALUES(?1, ?2)")
+            .unwrap();
+        for k in 0..1_000_000i64 {
+            seen.execute(params![k * 7919 + 13, k]).unwrap();
+        }
+        let mut sess = c
+            .prepare(
+                "INSERT INTO sessions(harness, session, parent_session, first_ms, last_ms)
+                 VALUES('claude-code', ?1, NULL, ?2, ?2)",
+            )
+            .unwrap();
+        for s in 0..10_000i64 {
+            sess.execute(params![format!("sess-ceiling-{s}"), now])
+                .unwrap();
+        }
+    }
+    let counted_from = meter::time::day_start(now) - 89 * meter::time::DAY_MS;
+    for (k, v) in [
+        ("counted_from_ms", counted_from.to_string()),
+        ("last_run_ms", (now - 300_000).to_string()),
+        ("last_success_ms", (now - 300_000).to_string()),
+        ("last_pending_bytes", "0".into()),
+        ("last_pending_files", "0".into()),
+        ("machine", "machine-ceiling".into()),
+        ("codex_status", "ok".into()),
+        ("codex_reason", String::new()),
+        ("omp_status", "ok".into()),
+        ("claude-code_status", "ok".into()),
+    ] {
+        c.execute(
+            "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            params![k, v],
+        )
+        .unwrap();
+    }
+    for h in harnesses {
+        c.execute(
+            "INSERT INTO health(source, last_success_ms) VALUES(?1, ?2)",
+            params![h, now - 300_000],
+        )
+        .unwrap();
+    }
+    c.execute_batch("COMMIT").unwrap();
+    drop(c);
+
+    // New logs for the sync that runs beside the concurrent queries: about 5 MiB in 50 files.
+    let home = dir.join("home");
+    for f in 0..50 {
+        let p = home.join(format!(".claude/projects/-work-ceiling/sess-{f}.jsonl"));
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let ts = format_rfc3339(now - 600_000);
+        let lines: Vec<String> = (0..80)
+            .map(|i| {
+                common::claude_line(
+                    &format!("msg_c{f}_{i}"),
+                    &format!("req_c{f}_{i}"),
+                    &ts,
+                    CLAUDE_MODEL,
+                    &common::U1,
+                    1200,
+                )
+            })
+            .collect();
+        common::write_lines(&p, &lines);
+    }
+}

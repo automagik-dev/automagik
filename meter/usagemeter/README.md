@@ -281,6 +281,8 @@ store only `sync` can migrate, 14 contract not served, 15 the answer would pass 
 whole, with how many rows would fit; it never pages or truncates). Each branch named gets one row:
 `measured`, `zero` only when the meter can vouch for it, else `missing`, `stale` or `unsupported`
 with the reason. Unknown is never 0. The query never syncs: only `sync` refreshes the store.
+`sync` keeps an index on (repo, branch, hour), made by its first run after an upgrade (no row
+changes, no new `schema_version`), so a query reads only the rows of the branches it names.
 
 ## The summary doc
 
