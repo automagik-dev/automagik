@@ -549,6 +549,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
+  if ("code" in bot && (bot.code === undefined || bot.code === null || bot.code === "")) delete merged.code;
   if ("worker" in bot && (!isObject(bot.worker) || Object.keys(bot.worker).length === 0)) delete merged.worker;
   if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
   return out;

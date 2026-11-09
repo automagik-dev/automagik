@@ -202,11 +202,16 @@ async function main(mePending, inputPending, appHome) {
   const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
   const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
   const guard = guardOnPath(process.env.PATH);
-  const isGit = (await git(["rev-parse", "--is-inside-work-tree"], key))?.trim() === "true";
+  const gitTree = await run("git", ["rev-parse", "--is-inside-work-tree"], key);
+  const isGit = gitTree !== UNANSWERED
+    ? gitTree?.trim() === "true"
+    : typeof seen?.isGit === "boolean"
+      ? seen.isGit
+      : [startedHash, seen?.hash].includes(textHash(launchBriefingText({ self: bot, file, guard, isGit: true })));
   const now = textHash(launchBriefingText({ self: bot, file, guard, isGit }));
   const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
   const offset = () => (transcript ? sizeOf(transcript) : 0);
-  const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset() });
+  const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset(), isGit });
   if (!decision.print) {
     if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
     return null;
@@ -234,11 +239,14 @@ function launchedHash(path) {
 
 // ---- which launch text each conversation has (never a print every turn) ----
 
-/** What a conversation's record holds: { hash, offset }, or null. */
+/** What a conversation's record holds: { hash, offset, isGit? }, or null. */
 export function readSeen(appHome, key) {
   try {
     const seen = JSON.parse(readFileSync(briefedPath(appHome, key), "utf8"));
-    return seen && typeof seen === "object" && typeof seen.hash === "string" ? { ...seen, offset: Number(seen.offset) || 0 } : null;
+    if (!seen || typeof seen !== "object" || typeof seen.hash !== "string") return null;
+    const out = { ...seen, offset: Number(seen.offset) || 0 };
+    if (typeof out.isGit !== "boolean") delete out.isGit;
+    return out;
   } catch { return null; }
 }
 /** Records `seen` for a conversation, replacing the file whole; a failure means the next turn prints again. */

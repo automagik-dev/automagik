@@ -5,6 +5,61 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  // The sign-in row in a Bot's chat (cli-login.js), and the host's sign-in messages (host/cli-login.js).
+  "Authorization code": "授权码",
+  "Copy link": "复制链接",
+  "Cancel the {name} sign-in opened in {bot}?": "要取消在 {bot} 中打开的 {name} 登录吗？",
+  "Cancel the {name} sign-in?": "要取消 {name} 登录吗？",
+  "Yes, cancel": "是，取消",
+  "Keep it": "保留",
+  "Open this link on any device:": "在任意设备上打开此链接：",
+  "Preparing your sign-in…": "正在准备登录…",
+  "Expires at {time}": "{time} 过期",
+  "Enter this code on that page:": "在该页面输入此代码：",
+  "Waiting for {name} to confirm…": "正在等待 {name} 确认…",
+  "Checking the code…": "正在检查代码…",
+  "Paste here the code shown after you authorize:": "授权后，将显示的代码粘贴到这里：",
+  "Finish the secret requested first.": "请先完成所请求的密钥。",
+  "The message field comes back as soon as you send the code or cancel.": "发送代码或取消后，消息框会恢复。",
+  "Cancel sign-in": "取消登录",
+  "To use {name} in this Bot, sign in to your account.": "要在此 Bot 中使用 {name}，请登录你的账号。",
+  "Sign in": "登录",
+  "Not now": "暂不",
+  "Done: signed in to {name}.": "完成：已登录 {name}。",
+  "Signed in, but {model} could not be used: {reason} This Bot stays on {kept}.": "已登录，但无法使用 {model}：{reason} 此 Bot 仍使用 {kept}。",
+  "its model": "原来的模型",
+  "The sign-in was interrupted by a restart. Get a new link.": "登录因重启而中断，请获取新链接。",
+  "Sign in to {name}": "登录 {name}",
+  "This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.": "这条消息包含登录代码，因此没有发送。请只在登录步骤中粘贴代码。",
+  "This model needs a sign-in to its coding agent.": "此模型需要先登录它的编程助手。",
+  "This sign-in request is no longer valid. Start again.": "本次登录请求已失效，请重新开始。",
+  "Paste the complete code shown by Claude, including the part after #.": "请粘贴 Claude 显示的完整代码，包括 # 后面的部分。",
+  "This sign-in has ended. Start again.": "本次登录已结束，请重新开始。",
+  "This CLI cannot sign in yet. Check its installation and try again.": "此 CLI 暂时无法登录，请检查安装后重试。",
+  "The connection restarted. Start sign-in again.": "连接已重启，请重新登录。",
+  "This sign-in request is not valid.": "此登录请求无效。",
+  "The sign-in status could not be verified. Start again.": "无法确认登录状态，请重新开始。",
+  "The sign-in link could not be verified. Start again.": "无法验证登录链接，请重新开始。",
+  "Could not continue this sign-in. Try again.": "无法继续登录，请重试。",
+  "This Bot is no longer available.": "此 Bot 已不可用。",
+  "The coding agent is not ready yet. Check its installation in Settings → Claude Code and Codex, then try again.": "编程助手尚未就绪。请在设置 → Claude Code 和 Codex 中检查安装，然后重试。",
+  "Codex device sign-in is unavailable. Enable device-code login in ChatGPT security settings or workspace permissions, then try again.": "Codex 设备登录不可用。请在 ChatGPT 安全设置或工作区权限中启用设备代码登录后重试。",
+  "Codex could not start device sign-in. Check your connection and device-code login permissions in ChatGPT, then try again.": "Codex 无法启动设备登录。请检查网络连接和 ChatGPT 中的设备代码登录权限后重试。",
+  "Sign-in did not finish. Try again.": "登录未完成，请重试。",
+  "This sign-in expired. Start again.": "本次登录已过期，请重新开始。",
+  "Sign-in cancelled.": "登录已取消。",
+  "The model could not be selected.": "无法选择此模型。",
+  // A Bot's model: what it really did (model-state.js), and a model that cannot run now.
+  'the new model': '新模型',
+  '{model} could not take over this conversation. This Bot stays on {kept}.': '{model} 无法接手这段对话。此 Bot 仍使用 {kept}。',
+  '{model} needs a sign-in before it can answer. This Bot stays on {kept}.': '{model} 需要先登录才能回答。此 Bot 仍使用 {kept}。',
+  '{model} did not answer. This Bot stays on {kept}.': '{model} 没有回答。此 Bot 仍使用 {kept}。',
+  '{model} needs a sign-in before it can answer.': '{model} 需要先登录才能回答。',
+  'Switching to this model. It has not answered yet.': '正在切换到此模型，它还没有回答。',
+  'Turn on {connection} in Settings → Claude Code and Codex before using this model.': '使用此模型前，请在设置 → Claude Code 和 Codex 中开启 {connection}。',
+  'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.': '等待 {connection} 安装完成，或在设置 → Claude Code 和 Codex 中重试。',
+  'Sign in to {connection} before using this model.': '使用此模型前，请登录 {connection}。',
+  '{name} could not switch to {model}. It stays on {kept}.': '{name} 无法切换到 {model}，仍使用 {kept}。',
   // A Bot's capability pills (capability-pills.js); 'Channels' is the Channels page's.
   'Computer': '电脑',
   'Leads the team': '带领团队',
@@ -552,9 +607,17 @@ const ZH = {
   none: '无',
   'Choose a model': '选择模型',
   '{provider} · not available': '{provider} · 不可用',
+  '{provider} · API key': '{provider} · API key',
+  '{provider} · sign-in': '{provider} · 登录',
+  'Not available': '不可用',
   'Model for {name}': '{name} 的模型',
   'No models are set up in DeepSeek Harness yet.': 'DeepSeek Harness 里还没有设置模型。',
   'Models and providers…': '模型和服务商…',
+  'Default ({model})': '默认（{model}）',
+  Connections: '连接',
+  'Back to connections': '返回连接',
+  'Back to {connection}': '返回 {connection}',
+  '{connection}, current model {model}': '{connection}，当前模型 {model}',
   Models: '模型',
   'Harness default': 'Harness 默认',
   Saving: '保存中',
@@ -1271,20 +1334,18 @@ const ZH = {
   'Automagik character': 'Automagik 角色',
   'Kept by this team': '本团队保存',
   'The image was not made': '图片没有生成',
+  'The image could not be shown': '无法显示这张图片',
+  'This image is no longer in the team folder.': '这张图片已不在团队文件夹中。',
   'Save image': '保存图片',
   'Copy image': '复制图片',
-  'Reading the brief': '正在理解描述',
-  'Sketching the composition': '正在勾勒构图',
-  'Laying in the color': '正在上色',
-  'Working the details': '正在刻画细节',
-  'Finishing touches': '最后润色',
-  'Almost there': '马上就好',
+  'Painting your image…': '正在绘制你的图片…',
   'Images': '图片',
   'Drawn with': '绘制方式',
   'Not connected': '未连接',
   'Your ChatGPT account': '你的 ChatGPT 账户',
   'Your OpenAI key': '你的 OpenAI 密钥',
-  'Sign in to ChatGPT or add an OpenAI key in Settings → Models, and every Bot can draw images in its chats.': '在“设置 → 模型”中登录 ChatGPT 或添加 OpenAI 密钥后，每个 Bot 都能在聊天中绘制图片。',
+  'Sign in to Codex from a Bot\'s chat, or add an OpenAI key in Settings → Models, and every Bot can draw images in its chats.': '在 Bot 的聊天中登录 Codex，或在“设置 → 模型”中添加 OpenAI 密钥后，每个 Bot 都能在聊天中绘制图片。',
+  'Codex, on your ChatGPT plan': 'Codex，使用你的 ChatGPT 套餐',
   "Every Bot can draw images in its chats. They are saved in the team workspace's images folder.": '每个 Bot 都能在聊天中绘制图片，图片保存在团队工作区的 images 文件夹中。',
   'Pets': '宠物',
   'Automagik': 'Automagik',
@@ -1606,8 +1667,38 @@ export function t(key, params) {
   return bound ? bound(key, params) : fill(key, params)
 }
 
+// Host messages with values in them (the model access refusals, models.js ACCESS_MESSAGES, and
+// a model switch DSH turned down, roster.js): the template is the dictionary key, worded with
+// the values the message carried.
+const HOST_TEMPLATES = [
+  'Turn on {connection} in Settings → Claude Code and Codex before using this model.',
+  'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.',
+  'Sign in to {connection} before using this model.',
+  '{name} could not switch to {model}. It stays on {kept}.',
+].map((template) => {
+  const names = []
+  const source = template.split(/(\{\w+\})/).map((part) => {
+    const name = /^\{(\w+)\}$/.exec(part)?.[1]
+    if (name === undefined) return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    names.push(name)
+    return '(.+?)'
+  }).join('')
+  return { template, names, pattern: new RegExp(`^${source}$`) }
+})
+function hostTemplate(message) {
+  for (const { template, names, pattern } of HOST_TEMPLATES) {
+    const found = pattern.exec(message)
+    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, found[index + 1]])))
+  }
+  return undefined
+}
+
 // A message from the host, in the interface language.
 export function hostText(message) {
+  if (typeof message === 'string' && (bound || language().startsWith('zh'))) {
+    const worded = hostTemplate(message)
+    if (worded !== undefined) return worded
+  }
   // A language pack that words this message (any language: the pt-BR pack, a plugin's
   // addStrings) wins; the patterns below are for Chinese only.
   if (bound && typeof message === 'string') {

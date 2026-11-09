@@ -536,15 +536,16 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     }
     /**
      * A notification's option button: re-reads the agent and presses the keys only if it still asks [msg] with the same
-     * [options] on screen; otherwise nothing is sent. Returns what to show in the notification.
+     * [options] and the same [dialog] text above them on screen; otherwise nothing is sent. Returns what to show in the
+     * notification.
      */
-    suspend fun choose(ref: TerminalRef, msg: String, options: List<String>, index: Int, label: String): String {
-        if (state.value.demo) return choosePreview(ref, msg, options, index, label)
+    suspend fun choose(ref: TerminalRef, msg: String, dialog: String, options: List<String>, index: Int, label: String): String {
+        if (state.value.demo) return choosePreview(ref, msg, dialog, options, index, label)
         val c = clients[ref.hostId] ?: return "Not sent: ${hostName(ref.hostId)} isn’t connected. Open Automagik to reconnect."
         if (index !in options.indices) return "Not sent: open the agent to answer."
         // The keys (herdr-core types them after ~3 s of quiet) and then Prompt.VERIFY_MS of read-back.
         return withTimeoutOrNull(12_000) {
-            runCatching { Prompt.choose({ m, p -> c.call(m, p) }, ref.address, msg, options, index, label) }.getOrElse { e -> "Not sent: ${e.message ?: "the core refused it"}" }
+            runCatching { Prompt.choose({ m, p -> c.call(m, p) }, ref.address, msg, dialog, options, index, label) }.getOrElse { e -> "Not sent: ${e.message ?: "the core refused it"}" }
         } ?: "Not confirmed: check the agent before trying again."
     }
     /** The menu [ref]'s agent shows now, read off its screen as [choose] reads it, or null. */
@@ -554,22 +555,25 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         return try { Prompt.menu(c.call("terminal.read", JSONObject().put("terminal", ref.address).put("lines", 0)).optString("text")) }
         catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
-    /** A terminal screen's answer button: [choose], then show the outcome. [done] runs either way. */
-    /** A terminal screen's or the deck's answer: [choose], then show the outcome. [done] runs either way, told whether it was sent ([Teams.sent]). */
-    fun answer(ref: TerminalRef, msg: String, options: List<String>, choice: Prompt.Choice, done: (sent: Boolean) -> Unit) {
+    /**
+     * A terminal screen's answer button: [choose], then show the outcome. [done] runs either way, told whether it was
+     * sent ([Teams.sent]).
+     */
+    fun answer(ref: TerminalRef, msg: String, dialog: String, options: List<String>, choice: Prompt.Choice, done: (sent: Boolean) -> Unit) {
         viewModelScope.launch {
             var sent = false
-            try { val outcome = choose(ref, msg, options, choice.index, choice.label); sent = Teams.sent(outcome); _state.update { it.copy(message = outcome) } }
+            try { val outcome = choose(ref, msg, dialog, options, choice.index, choice.label); sent = Teams.sent(outcome); _state.update { it.copy(message = outcome) } }
             finally { done(sent) }
         }
     }
-    /** The preview has no core: its blocked agent checks the menu the same way, logs the keys it would get, and moves on. */
-    private fun choosePreview(ref: TerminalRef, msg: String, options: List<String>, index: Int, label: String): String {
+    /** The preview has no core: its blocked agent checks the dialog and menu the same way, logs the keys it would get, and moves on. */
+    private fun choosePreview(ref: TerminalRef, msg: String, dialog: String, options: List<String>, index: Int, label: String): String {
         val t = terminalOf(ref)
         if (index !in options.indices) return "Not sent: open the agent to answer."
-        if (t == null || !t.attention || t.message != msg) return "Not sent: it isn’t asking that any more."
+        if (t == null || !t.attention || t.message != msg) return Prompt.CHANGED
         val menu = Prompt.menu(previewScreen(t))
-        if (menu == null || !Prompt.unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
+        if (menu == null || !Prompt.sameDialog(dialog, menu)) return Prompt.CHANGED
+        if (!Prompt.unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
         android.util.Log.i("PocketPrompt", "preview ${ref.address} keys=${Prompt.keys(menu, index).joinToString(",")}")
         _state.update { s ->
             val m = s.machines[ref.hostId] ?: return@update s

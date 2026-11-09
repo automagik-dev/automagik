@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { addressOf, heldIn, attachKey, attachRow, confirmBindings, foldAttach, machinesById, modeProblem, readAttach, verdictOf } from "../mods/am-sidebar/attach.js";
 import { readAttachFile } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -86,13 +87,8 @@ const term = (address, { bot: b, cwd, created = 1, state = "live" } = {}) => ({ 
   labels: b ? { bot: b } : {}, foreground: { argv: ["claude"], cwd }, status: { app: "claude-code", state: "idle" } });
 
 function scene(t, terminals = () => []) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-attach-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj");
-  mkdirSync(join(project, ".herdr"), { recursive: true });
-  git(project, "init", "-q");
-  git(project, "commit", "-q", "--allow-empty", "-m", "start");
-  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify(TEAM, null, 2)}\n`);
+  const root = scratchRoot(t, "hb-attach-");
+  const project = scratchProject(root, "proj", { commit: true, bots: TEAM });
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -110,7 +106,7 @@ function scene(t, terminals = () => []) {
   writeFileSync(statePath, JSON.stringify({ terminals: terminals(project), next: 100 }));
   writeFileSync(logPath, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: join(root, "herdr-app.json"), HERDR_APP_FAKE_LOG: join(root, "herdr-app.log") };
+    HERDR_APP_FAKE_STATE: join(root, "herdr-app.json"), HERDR_APP_FAKE_LOG: join(root, "herdr-app.log"), GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   const cli = (...args) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env, encoding: "utf8" });

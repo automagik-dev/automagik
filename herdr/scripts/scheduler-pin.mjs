@@ -5,7 +5,7 @@
 // cannot leave the panel handing out a repair command that 404s or fails its shasum.
 //
 // The public download URL is tried first; on a 5xx, a timeout or a network error checksums.txt
-// comes from the REST API asset route (release-assets.mjs, shared with usagemeter-pin.mjs). The
+// comes from the REST API asset route (release-assets.mjs). The
 // pinned hashes are checked the same way wherever the bytes came from.
 //
 //   node herdr/scripts/scheduler-pin.mjs

@@ -17,16 +17,17 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
-  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
+  botOfBriefingFile, briefDecision, briefedPath, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
   amPartEntryPath, amPartHookCommand, amPartRunnerPath, hookTargetOf, installHook, isAmPartEntry, scriptOf,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
+import { assertSafeTmpdir, scratchProject, scratchRoot } from "./scratch-project.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
 
 const run = promisify(execFile);
 // git here must not read this host's global ignore (it may list settings.local.json already).
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
-process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "herdr-xdg-"));
+process.env.XDG_CONFIG_HOME = mkdtempSync(join(assertSafeTmpdir(), "herdr-xdg-"));
 process.on("exit", () => rmSync(process.env.XDG_CONFIG_HOME, { recursive: true, force: true }));
 const NODE_DIR = dirname(process.execPath);
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs briefing.mjs with that runtime instead.
@@ -315,15 +316,10 @@ const FIXTURE = {
 };
 
 async function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-brief-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const main = join(root, "proj");
-  mkdirSync(join(main, ".herdr"), { recursive: true });
-  await run("git", ["init", "-q", main]);
-  await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: main });
+  const root = scratchRoot(t, "herdr-brief-");
+  const main = scratchProject(root, "proj", { commit: true, bots: team() });
   const tree = join(root, "proj-wt");
   await run("git", ["worktree", "add", "-q", "-b", "wt", tree], { cwd: main });
-  writeFileSync(join(main, ".herdr", "bots.json"), JSON.stringify(team()));
   const bin = join(root, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "hc"), FAKE_HC);
@@ -338,7 +334,7 @@ async function scratch(t) {
   const brief = async (env, input, { keep = false, feed = null, timeout = 0 } = {}) => {
     const options = {
       env: { PATH: `${bin}:${NODE_DIR}:/usr/bin:/bin`, FAKE_HC: fixture, FAKE_HC_HANG_MS: String(HANG_MS), HOME: root,
-        HERDR_BRIEFING_TIME_SCALE: String(SCALE), HERDR_APP_HOME: join(root, "app"), ...env },
+        HERDR_BRIEFING_TIME_SCALE: String(SCALE), HERDR_APP_HOME: join(root, "app"), GIT_CEILING_DIRECTORIES: root, ...env },
       timeout,
     };
     if (!keep) try { rmSync(join(options.env.HERDR_APP_HOME, "automagik-herdr", "briefed"), { recursive: true, force: true }); } catch {}
@@ -368,8 +364,7 @@ test("briefing.mjs: silent exits — no HC_TERMINAL_ID, no CLAUDE_PROJECT_DIR, n
 
 test("briefing.mjs: silent for a bot of a project with no bots.json, and for a planned bot's id", async (t) => {
   const { root, main, tree, brief } = await scratch(t);
-  const other = join(root, "elsewhere");
-  mkdirSync(other);
+  const other = scratchProject(root, "elsewhere");
   assert.equal((await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: other })).stdout, "");
   const fx = JSON.parse(readFileSync(join(root, "hc.json"), "utf8"));
   fx.terminals.t1.labels.bot = ID.plan;
@@ -735,15 +730,12 @@ test("briefing.mjs: a member reports to its lead's newest pane and counts only u
 // ---- launch.js afterBind over the Herdr stand-ins ----
 
 async function session(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-hook-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "herdr-hook-");
   const appHome = join(root, "herdr-app");
   mkdirSync(join(appHome, "mods", "am-sidebar"), { recursive: true });
   writeFileSync(join(appHome, "mods", "am-sidebar", "briefing.mjs"), "// installed\n");
   writeFileSync(join(appHome, "mods", "am-sidebar", "briefingEntry.mjs"), "// the entry point\n");
-  const proj = join(root, "proj");
-  await run("git", ["init", "-q", proj]);
-  await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: proj });
+  const proj = scratchProject(root, "proj", { commit: true });
   state.appHome = appHome;
   state.notes = [];
   return { root, appHome, proj };
@@ -953,8 +945,7 @@ test("briefDecision: launched with it, never; resumed, once unless it has that v
 });
 
 test("compactedSince: only what was added is read; a mark across two reads is found; a shorter file counts", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "herdr-compact-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "herdr-compact-");
   const path = join(root, "s.jsonl");
   writeFileSync(path, `{"type":"system",${COMPACT_MARK}}\n`);
   const first = compactedSince(path, 0);
@@ -1036,6 +1027,28 @@ test("hook worker scope: a non-git project omits the instruction and stays quiet
   assert.match(out.stdout, /Keep the board green/);
   assert.doesNotMatch(out.stdout, /worker/i);
   assert.equal((await sc.brief(env, '{"session_id":"non-git"}', { keep: true })).stdout, "");
+});
+
+test("hook worker scope (#774): a timed-out git check reuses the recorded or launched git state and does not reprint", async (t) => {
+  const sc = await turns(t, () => ["claude"]);
+  const first = await sc.turn(1);
+  assert.ok(first.stdout.includes(WORKER_LINE));
+  // Make `git rev-parse --is-inside-work-tree` time out (SIGTERM -> UNANSWERED in exec).
+  const realGit = spawnSync("sh", ["-c", "PATH=/usr/bin:/bin command -v git"], { encoding: "utf8" }).stdout.trim();
+  const fakeGit = join(sc.bin, "git");
+  writeFileSync(fakeGit, `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--is-inside-work-tree" ]; then kill -TERM $$; fi\nexec "${realGit}" "$@"\n`);
+  chmodSync(fakeGit, 0o755);
+  assert.equal((await sc.turn(2)).stdout, "", "reuses seen.isGit from turn 1");
+  // Even an older seen record without `isGit` infers git from the recorded hash or started briefing file.
+  const seenFile = briefedPath(sc.app, "s-1");
+  const seen = JSON.parse(readFileSync(seenFile, "utf8"));
+  assert.equal(seen.isGit, true);
+  delete seen.isGit;
+  writeFileSync(seenFile, `${JSON.stringify(seen)}\n`);
+  assert.equal((await sc.turn(3)).stdout, "", "infers git from the recorded hash when seen.isGit is absent");
+  const path = briefingFilePath(sc.app, sc.main, ID.main);
+  sc.pane(["claude", "--append-system-prompt-file", path, "--resume", "s-1"], 2000);
+  assert.equal((await sc.turn(4)).stdout, "", "resumed with the launch file: no reprint when git times out");
 });
 
 test("hook, a bot Start launched with its briefing file: three turns print it 0 times; the session is still joined", async (t) => {
@@ -1156,8 +1169,7 @@ function hookIo() {
 }
 
 test("CLI-only host: the hook runs am's entry through am's runner; a pack there keeps the pack hook", async (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "herdr-cli-only-");
   const app = join(root, "app"); // no mods/: no pack
   const store = join(root, "home", ".automagik", "parts", "automagik.am");
   const current = join(store, "current");
@@ -1201,8 +1213,7 @@ test("CLI-only host: the hook runs am's entry through am's runner; a pack there 
 });
 
 test("the CLI-only hook command: 0 and silent with its runner or entry missing, the entry runs when both are there", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-run-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "herdr-cli-only-run-");
   const app = join(root, "app");
   const store = join(root, "home", ".automagik", "parts", "automagik.am");
   const current = join(store, "current");
@@ -1211,7 +1222,7 @@ test("the CLI-only hook command: 0 and silent with its runner or entry missing, 
   writeFileSync(join(current, "bin", "run.sh"), '#!/bin/sh\necho "ran $1"\nexit 0\n');
   writeFileSync(join(current, "briefingEntry.mjs"), "// entry\n");
   const command = amPartHookCommand(app, store);
-  const hook = () => spawnSync("/bin/sh", ["-c", command], { cwd: root, input: "{}", encoding: "utf8", env: { HOME: root, PATH: "/usr/bin:/bin" } });
+  const hook = () => spawnSync("/bin/sh", ["-c", command], { cwd: root, input: "{}", encoding: "utf8", env: { HOME: root, PATH: "/usr/bin:/bin", GIT_CEILING_DIRECTORIES: root } });
   const ran = hook();
   assert.deepEqual([ran.status, ran.stdout], [0, `ran ${amPartEntryPath(store)}\n`]);
   rmSync(amPartEntryPath(store));
@@ -1223,8 +1234,7 @@ test("the CLI-only hook command: 0 and silent with its runner or entry missing, 
 });
 
 test("installHook with neither the pack nor the am part writes nothing and says plainly that neither is there", async (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-cli-only-none-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "herdr-cli-only-none-");
   const app = join(root, "app");
   const store = join(root, "home", ".automagik", "parts", "automagik.am");
   const project = join(root, "proj");

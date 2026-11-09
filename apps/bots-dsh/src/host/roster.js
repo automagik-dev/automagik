@@ -206,7 +206,9 @@ export function install(rt) {
     // Checked before the Session exists, so a bad list creates no Bot and leaves no orphan.
     const denyTools = cleanDenyTools(denyToolsInput)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
-    const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
+    // A model that cannot run now (an agent whose CLI is signed out) refuses the Bot before
+    // its Session exists.
+    const modelRef = model ? await rt.resolveModel(model, { checkAccess: true, remember: false }) : pickModel ? undefined : await rt.defaultModel()
     // A thinking level needs a model to resolve against; with none it would be dropped
     // silently, so the create fails before a Session is made.
     if (effort && modelRef === undefined) throw refusal('Pick a model before choosing a thinking level')
@@ -384,7 +386,7 @@ export function install(rt) {
     }
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
-      : await rt.resolveModel(patch.model)
+      : await rt.resolveModel(patch.model, { checkAccess: true, remember: false, keep: bot.model })
     // A new level resolves against the model the Bot will run on: the new one, the
     // model it keeps, or — the model cleared — the one it last ran on.
     const effortRef = modelRef === undefined ? bot.model ?? bot.appliedModel : modelRef ?? bot.appliedModel
@@ -396,44 +398,50 @@ export function install(rt) {
         effortId = await rt.resolveEffort(effortRef, patch.effort)
       }
     }
-    if (patch.name !== undefined) {
-      const next = String(patch.name).trim().slice(0, 40)
-      const clash = rt.findBot(next)
-      const pending = isHeld('bot', next) && normalize(next) !== normalize(bot.name)
-      if (next === '' || (clash && clash.id !== id) || pending) throw refusal(`Name ${next} is not available`)
+    // The name and the permission level are checked here too, before the model switch below
+    // writes anything: a refusal of either leaves the model as it was.
+    const nextName = patch.name === undefined ? undefined : String(patch.name).trim().slice(0, 40)
+    if (nextName !== undefined) {
+      const clash = rt.findBot(nextName)
+      const pending = isHeld('bot', nextName) && normalize(nextName) !== normalize(bot.name)
+      if (nextName === '' || (clash && clash.id !== id) || pending) throw refusal(`Name ${nextName} is not available`)
       // A name saved before the rule stays usable until it changes.
-      const problem = next === bot.name ? undefined : nameProblem(next)
+      const problem = nextName === bot.name ? undefined : nameProblem(nextName)
       if (problem !== undefined) throw refusal(problem)
-      bot.name = next
-      const agent = await rt.resolveAgent(rt.chatOf(id))
-      await ctx.sessionTitle.rename(agent.session, next)
-      await followMemberNames(Object.values(state.rooms).filter(room => room.members.includes(id)))
     }
+    if (patch.permission !== undefined) rt.checkPreset(patch.permission)
+    // The model goes first: checked above, applied to the Session now, and only then part of
+    // the record. A selection DSH turns down refuses the whole update, with nothing written.
+    const modelChanged = patch.model !== undefined || patch.effort !== undefined
+    const modelBefore = modelChanged ? modelFields(bot) : undefined
+    if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
     const roleBefore = bot.role
     const instructionsBefore = bot.instructions
-    if (role !== undefined) bot.role = role
-    if (patch.instructions !== undefined) bot.instructions = String(patch.instructions).trim()
-    let modelChanged = false
-    if (patch.color !== undefined) {
-      if (patch.color === null) delete bot.color
-      else if (isColor(currentColor(patch.color))) bot.color = currentColor(patch.color)
+    try {
+      if (nextName !== undefined) {
+        bot.name = nextName
+        const agent = await rt.resolveAgent(rt.chatOf(id))
+        await ctx.sessionTitle.rename(agent.session, nextName)
+        await followMemberNames(Object.values(state.rooms).filter(room => room.members.includes(id)))
+      }
+      if (role !== undefined) bot.role = role
+      if (patch.instructions !== undefined) bot.instructions = String(patch.instructions).trim()
+      if (patch.color !== undefined) {
+        if (patch.color === null) delete bot.color
+        else if (isColor(currentColor(patch.color))) bot.color = currentColor(patch.color)
+      }
+      if (patch.avatar !== undefined) {
+        const avatar = cleanAvatar(patch.avatar)
+        if (avatar) bot.avatar = avatar
+        else delete bot.avatar
+      }
+      if (patch.permission !== undefined) await rt.setPermission(bot, patch.permission)
+    } catch (error) {
+      // A step after the switch still failed (the title, the level's apply): the model goes
+      // back too, on the record and on its Sessions, so the refused update leaves it as it was.
+      if (modelChanged) await restoreModel(bot, modelBefore)
+      throw error
     }
-    if (patch.avatar !== undefined) {
-      const avatar = cleanAvatar(patch.avatar)
-      if (avatar) bot.avatar = avatar
-      else delete bot.avatar
-    }
-    if (patch.model !== undefined) {
-      if (modelRef === null) delete bot.model
-      else bot.model = modelRef
-      modelChanged = true
-    }
-    if (patch.effort !== undefined) {
-      if (effortId === null) delete bot.effort
-      else bot.effort = effortId
-      modelChanged = true
-    }
-    if (patch.permission !== undefined) await rt.setPermission(bot, patch.permission)
     if (browserGrants !== undefined) {
       if (browserGrants === null) delete bot.browserGrants
       else bot.browserGrants = browserGrants
@@ -482,7 +490,6 @@ export function install(rt) {
       void rt.deliver({ toId: bot.id, text: notes.join('\n'), role: 'update' })
         .catch(error => rt.warn('ds-bot: profile update for %s not delivered: %s', bot.name, error?.message ?? error))
     }
-    if (modelChanged) await rt.applyModel(bot, { force: true })
     if (moved) void rt.followFolder(bot.id)
     if (!policyOnly && bot.model && bot.kickoff !== undefined) {
       const held = bot.kickoff
@@ -491,6 +498,52 @@ export function install(rt) {
       sendKickoff(bot, held)
     }
     return bot
+  }
+
+  // A Bot's new model or level, on its Sessions before it is saved. `previousModel` keeps the
+  // model it leaves (model-state.js), so a switch that fails on its first turn goes back to it.
+  // If DSH turns the selection down, the record is as it was and the update is refused.
+  const MODEL_FIELDS = ['model', 'effort', 'previousModel', 'appliedModel', 'appliedEffort']
+  const modelFields = bot => Object.fromEntries(MODEL_FIELDS.filter(key => Object.hasOwn(bot, key)).map(key => [key, bot[key]]))
+  function putModelFields(bot, before) {
+    for (const key of MODEL_FIELDS) {
+      if (Object.hasOwn(before, key)) bot[key] = before[key]
+      else delete bot[key]
+    }
+  }
+
+  // An accepted switch undone because the rest of its update was refused: the old fields back,
+  // and the old selection on the Bot's Sessions again (applyModel saves the record it restores).
+  async function restoreModel(bot, before) {
+    putModelFields(bot, before)
+    try {
+      await rt.applyModel(bot, { force: true })
+    } catch (error) {
+      rt.warn('ds-bot: the model of %s was not selected again: %s', bot.name, error?.message ?? error)
+    }
+    putModelFields(bot, before)
+  }
+
+  async function switchModel(bot, patch, modelRef, effortId) {
+    const before = modelFields(bot)
+    if (patch.model !== undefined) {
+      rt.noteModelChoice?.(bot, modelRef ?? undefined)
+      if (modelRef === null) delete bot.model
+      else bot.model = modelRef
+    }
+    if (patch.effort !== undefined) {
+      if (effortId === null) delete bot.effort
+      else bot.effort = effortId
+    }
+    try {
+      await rt.applyModel(bot, { force: true })
+    } catch (error) {
+      putModelFields(bot, before)
+      rt.warn('ds-bot: the model of %s was not changed: %s', bot.name, error?.message ?? error)
+      if (typeof error?.code === 'string' && error.code.startsWith('bot/')) throw error
+      const wanted = patch.model === undefined ? 'this thinking level' : modelRef ?? 'no model'
+      throw refusal(`${bot.name} could not switch to ${wanted}. It stays on ${before.model ?? 'its current model'}.`, { cause: error })
+    }
   }
 
   async function setFlags(id, { pinned, hidden }) {

@@ -22,6 +22,7 @@ import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.m
 import { commandArgv } from "../mods/am-sidebar/restart.js";
 import { agySettingsArgs, agySettingsFile } from "../mods/am-sidebar/models.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
+import { shortSocketDir } from "./scratch-project.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PROXY = join(here, "..", "mods", "am-sidebar", "hcProxy.mjs");
@@ -54,7 +55,7 @@ const team = () => ({
 
 /** One scene: temp app home + ledger, project + bots.json, a worktree and the runtime folder. */
 function scene() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hcp-")));
+  const root = shortSocketDir(null, "hcp-");
   const app = join(root, "app"), project = join(root, "project"), home = join(root, "home"), runtime = join(root, "run");
   const worktree = join(project, ".claude", "worktrees", "wt");
   const bin = join(root, "bin");
@@ -114,25 +115,35 @@ function scene() {
 /** Start the fake core and, unless proxy: false, the pane t100 proxy; one cleanup for all. */
 async function sceneWithCore(t, { version = "0.1.14", proxy = true, proxyOptions = {} } = {}) {
   const s = scene();
-  const fake = await startFakeCore({ socket: join(s.root, "core.sock"), terminals: s.terminals, version });
+  let fake = null;
   const proxies = [];
-  const start = async (terminal = "t100", extra = {}) => {
-    const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env, forbiddenRoots: s.forbiddenRoots, ...extra });
-    proxies.push(started);
-    return started;
-  };
-  t.after(async () => {
-    for (const started of proxies) { try { await started.close(); } catch { /* gone */ } }
-    try { await fake.close(); } catch { /* gone */ }
+  const closeAll = async () => {
+    for (const started of proxies.splice(0)) { try { await started.close(); } catch { /* gone */ } }
+    try { await fake?.close(); } catch { /* gone */ }
+    fake = null;
     rmSync(s.root, { recursive: true, force: true });
-  });
-  const first = proxy ? await start("t100", proxyOptions) : null;
-  return { s, fake, start, proxy: first };
+  };
+  t.after(closeAll);
+  try {
+    fake = await startFakeCore({ socket: join(s.root, "core.sock"), terminals: s.terminals, version });
+    const start = async (terminal = "t100", extra = {}) => {
+      const started = await startProxy({ terminal, upstream: fake.socket, appHome: s.app, env: s.env, forbiddenRoots: s.forbiddenRoots, ...extra });
+      started.server?.unref?.();
+      proxies.push(started);
+      return started;
+    };
+    const first = proxy ? await start("t100", proxyOptions) : null;
+    return { s, fake, start, proxy: first };
+  } catch (err) {
+    await closeAll();
+    throw err;
+  }
 }
 
 class Client {
   constructor(socket) {
     this.socket = socket;
+    socket.unref?.();
     this.buffer = Buffer.alloc(0);
     this.lines = [];
     this.waiters = [];

@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import { readJsonLines } from "./log-lines.mjs";
 import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -38,17 +39,16 @@ const OVERRIDE = { id: "b-overtuiaaa", name: "Overt", kind: "member", agent: "ds
  * bot's agent, its first word a program in the scratch bin.
  */
 function startOne(t, bot, { bots = BOTS, override = null } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-golden-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj"), bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
-  for (const d of [project, bin, home, join(app, "mods/am-sidebar")]) mkdirSync(d, { recursive: true });
+  const root = scratchRoot(t, "hb-golden-");
+  const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
+  for (const d of [bin, home, join(app, "mods/am-sidebar")]) mkdirSync(d, { recursive: true });
   // No template: a runner's own init.templateDir can't change the exclude file the start writes.
-  execFileSync("git", ["init", "-q", "--template=", project]);
+  const project = scratchProject(root, "proj", { template: "" });
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   exe(join(bin, "herdr-app"), "#!/bin/sh\necho \"no window in tests\" >&2\nexit 1\n");
   for (const a of ["claude", "omp", "hermes"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
   writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
-  mkdirSync(join(project, ".herdr"));
+  mkdirSync(join(project, ".herdr"), { recursive: true });
   writeFileSync(join(project, ".herdr/pane-env"), "PATH_PREPEND=/opt/node-22/bin\nHERDR_APP_HOME=/srv/bots/herdr-app\n");
   if (override) {
     exe(join(bin, override[0]), "#!/bin/sh\nexit 0\n");
@@ -62,7 +62,7 @@ function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   writeFileSync(statePath, JSON.stringify({ terminals: [], next: 100 }));
   writeFileSync(logPath, "");
   // A pinned PATH, so the pane's PATH is the same on every runner.
-  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C" };
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C", GIT_CEILING_DIRECTORIES: root };
   const r = spawnSync(process.execPath, [CLI, "start", bot.name, "--json"], { cwd: project, env, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   // The briefing file's name starts with a hash of the project's folder, a new temp folder each run.

@@ -130,7 +130,7 @@ function scene(t, { terminals = [] } = {}) {
   exe(join(bin, "herdr-app"), "#!/bin/sh\necho \"no window in tests\" >&2\nexit 1\n");
   exe(join(bin, "dsh-tui"), "#!/bin/sh\nexit 0\n");
   writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
-  mkdirSync(join(project, ".herdr"));
+  mkdirSync(join(project, ".herdr"), { recursive: true });
   writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [
     { id: ID, name: "Genie", kind: "main", look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "dsh-tui" },
   ] }, null, 2)}\n`);

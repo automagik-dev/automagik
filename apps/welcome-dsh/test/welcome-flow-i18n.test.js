@@ -65,7 +65,7 @@ const texts = (tree, match) => findAll(tree, match).map(textOf)
 
 // What the host sends for Connect AI (src/host/ais.js): two rows found, the rest to add.
 const ROWS = [
-  { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan, or an Anthropic API key', kind: 'signin', ready: true, on: true, found: 'Signed in to Claude' },
+  { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan through Claude Code, or an Anthropic API key', kind: 'signin', ready: true, on: true, found: 'Signed in to Claude Code' },
   { id: 'openai', name: 'OpenAI API', via: 'With an API key, billed per use', kind: 'key', ready: true, on: false, found: 'OPENAI_API_KEY found' },
   { id: 'openrouter', name: 'OpenRouter', via: 'One key, hundreds of models', kind: 'key', ready: false, on: false, found: null },
   { id: 'zai', name: 'Z.ai', via: 'GLM models, with an API key', kind: 'key', ready: false, on: false, found: null },
@@ -126,8 +126,8 @@ const ENGLISH = {
     speech: 'Turn on everything you have. More brains, more Pip.',
     rail: ['Your companion', 'Your team', 'Connect Omni', 'Connect AI'],
     headings: ['Found on this computer', 'Add another'],
-    via: ['Your Claude Pro or Max plan, or an Anthropic API key', 'With an API key, billed per use', 'Your Cursor plan · dsh-subscriptions'],
-    found: ['Signed in to Claude', 'OPENAI_API_KEY found', '2 accounts'],
+    via: ['Your Claude Pro or Max plan through Claude Code, or an Anthropic API key', 'With an API key, billed per use', 'Your Cursor plan · dsh-subscriptions'],
+    found: ['Signed in to Claude Code', 'OPENAI_API_KEY found', '2 accounts'],
     terms: 'Subscriptions: personal use under the vendor\'s terms.',
     more: 'Show 9 more',
     every: 'Every other provider DSH knows is in Settings → Models.',
@@ -169,8 +169,8 @@ test('under a pt-BR locale, Connect AI, the sign-ins and the companion step rend
         speech: 'Ligue tudo o que você tiver. Mais cérebros, mais Pip.',
         rail: ['Sua companhia', 'Sua equipe', 'Conectar o Omni', 'Conectar IA'],
         headings: ['Encontradas neste computador', 'Adicionar outra'],
-        via: ['Seu plano Claude Pro ou Max, ou uma chave de API da Anthropic', 'Com uma chave de API, cobrada por uso', 'Seu plano do Cursor · dsh-subscriptions'],
-        found: ['Login feito no Claude', 'OPENAI_API_KEY encontrada', '2 contas'],
+        via: ['Seu plano Claude Pro ou Max pelo Claude Code, ou uma chave de API da Anthropic', 'Com uma chave de API, cobrada por uso', 'Seu plano do Cursor · dsh-subscriptions'],
+        found: ['Login feito no Claude Code', 'OPENAI_API_KEY encontrada', '2 contas'],
         terms: 'Assinaturas: uso pessoal nos termos de cada fornecedor.',
         more: 'Mostrar mais 9',
         every: 'Todos os outros provedores que o DSH conhece estão em Configurações → Modelos.',
@@ -187,6 +187,31 @@ test('under a pt-BR locale, Connect AI, the sign-ins and the companion step rend
         hatch: 'Fazer nascer',
       },
     })
+  } finally {
+    locale.setLocale('en')
+  }
+})
+
+// Claude's and ChatGPT's setup: the CLI's sign-in in a Bot's chat, and Claude's API key.
+function cliSetup(id) {
+  const cli = { id: id === 'claude' ? 'acp-claude' : 'acp-codex', key: id === 'claude' ? 'claude' : 'codex', name: id === 'claude' ? 'Claude Code' : 'Codex', on: false, cli: { found: true, state: 'ready' }, connector: { state: 'off' }, signedIn: false, listed: false, restartNeeded: false }
+  const row = { ...VENDORS.find(vendor => vendor.id === id), ready: false, on: false, found: null, signIn: true, cli }
+  const tree = render(flow.Row({ row, acp: { view: null, busy: null, problems: {}, login: () => true }, open: true, busy: false, problem: null, onFlip: () => {}, onSaved: () => {}, onClose: () => {}, onDedupe: () => {} }))
+  return findAll(tree, node => node.type === 'button' && node.props.role !== 'switch').map(textOf)
+}
+
+test('Claude and ChatGPT set up through their CLIs, in English and in pt-BR, and the duplicate reads in the DSH language', () => {
+  locale.setLocale('en')
+  assert.deepEqual(cliSetup('claude'), ['Sign in to Claude CodeWith your plan, in a Bot\'s chat', 'Use an API keyBilled per use', 'Cancel'])
+  assert.deepEqual(cliSetup('chatgpt'), ['Sign in to CodexWith your plan, in a Bot\'s chat', 'Cancel'])
+  // Without acp-dsh, Claude's setup is its Anthropic key form as before; ChatGPT has none.
+  const keyOnly = id => render(flow.Row({ row: { ...VENDORS.find(vendor => vendor.id === id), ready: false, on: false, found: null, signIn: false }, open: true, busy: false, problem: null, onFlip: () => {}, onSaved: () => {}, onClose: () => {}, onDedupe: () => {} }))
+  assert.equal(findAll(keyOnly('claude'), node => node.type === 'input')[0].props.placeholder, 'Paste your Claude key')
+  assert.match(textOf(keyOnly('chatgpt')), /This DSH offers no ChatGPT sign-in\./)
+  locale.setLocale('pt-BR')
+  try {
+    assert.deepEqual(cliSetup('claude'), ['Entrar no Claude CodeCom o seu plano, no chat de um Bot', 'Usar uma chave de APICobrado por uso', 'Cancelar'])
+    assert.equal(flow.t('DSH sign-in'), 'login do DSH')
   } finally {
     locale.setLocale('en')
   }

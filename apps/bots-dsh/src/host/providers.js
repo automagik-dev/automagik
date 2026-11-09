@@ -1,3 +1,5 @@
+import { runsOnSignIn } from './subscription-move.js'
+
 // Model providers and their API keys, for a window that has no DSH Models page of its
 // own. DSH keeps all of it: a provider route in the settings of the adapter that serves
 // it, the route's key in DSH's credential store under the reference the route names.
@@ -89,6 +91,43 @@ export function install(rt) {
       if (info?.configured === false) missing.add(id)
     }))
     return missing
+  }
+
+  // How each of pi-ai's routes is connected, for the model menu's connection names: `via` is
+  // `key` for a route that names an API key, finds one in the environment pi-ai reads, or holds
+  // a pasted key as its record (kind `api-key`); `signin` for one that runs on pi-ai's own
+  // sign-in, by the one rule the move and Connect AI use too (subscription-move.js
+  // runsOnSignIn: a stored grant, and no key found to win over it).
+  // `needsSignIn`: a sign-in route whose record is not stored, so every turn on it fails.
+  // Read-only: a key or a record is only described, never read. Any other route is left out.
+  async function routeAuth(providers) {
+    const found = seams()
+    if (found === undefined) return new Map()
+    let map
+    let directory
+    try {
+      map = sections(found.settings)
+      directory = ctx.llm.listConfigurableProviders()
+    } catch {
+      return new Map()
+    }
+    const described = describe => Promise.resolve().then(describe).catch(() => undefined)
+    const auth = new Map()
+    await Promise.all(providers.map(async (id) => {
+      const entry = directory.find(item => item?.provider === id && item.settingsNs === PI_AI)
+      if (entry === undefined) return
+      if (refOf(profileOf(entry, map)) !== undefined) { auth.set(id, { via: 'key' }); return }
+      if (entry.nativeAuth?.oauth !== true) return
+      const record = typeof found.credentials.describeRecord === 'function' ? await described(() => found.credentials.describeRecord(`${PI_AI}/${id}`)) : undefined
+      let keyFound = false
+      for (const env of entry.nativeAuth.env ?? []) {
+        if ((await described(() => found.credentials.describe(env)))?.configured === true) { keyFound = true; break }
+      }
+      if (record?.configured === true) { auth.set(id, { via: runsOnSignIn(record, keyFound) ? 'signin' : 'key' }); return }
+      if (keyFound) { auth.set(id, { via: 'key' }); return }
+      auth.set(id, { via: 'signin', ...(record?.configured === false ? { needsSignIn: true } : {}) })
+    }))
+    return auth
   }
 
   // The providers set up in DSH, with their models and key state, and the ones DSH
@@ -222,5 +261,5 @@ export function install(rt) {
     return providersView()
   }
 
-  Object.assign(rt, { keyRefs, missingKeys, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider })
+  Object.assign(rt, { keyRefs, missingKeys, routeAuth, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider })
 }

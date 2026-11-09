@@ -681,6 +681,7 @@ export async function applyUpdate({ tgzPath, version, sequence = null, modsDir =
     const record = {
       version, mods: [], layout: before?.layout ?? null, before: before?.before ?? "none", adopted: [...(before?.adopted ?? [])],
       migrated: [...(before?.migrated ?? [])], usagemeter: before?.usagemeter ?? null,
+      usagemeterSequence: before?.usagemeterSequence ?? null,
       usagemeterOn: { ...(before?.usagemeterOn ?? {}) }, usagemeterScope: before?.usagemeterScope ?? null,
       // When the pack was put in place (the mod manager's INSTALLED); a repair keeps the date.
       installed: (repair ? before?.installed : null) ?? new Date().toISOString(),

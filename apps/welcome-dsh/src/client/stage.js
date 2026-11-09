@@ -138,6 +138,17 @@ export function noteShowing(scope = globalThis) {
   return () => { scope[SHOWING] -= 1 }
 }
 
+// A step that hands the person to the app for a moment (Connect AI opening a Bot's chat to sign
+// in to a coding agent) steps aside without completing: the modal and #root's inert go, the step
+// keeps its place in the onboarding, and this one small piece brings it back. It still counts as
+// showing, so no other wizard opens on top meanwhile.
+export function StepAside({ text, back, onBack }) {
+  useEffect(() => noteShowing(), [])
+  return createPortal(h('div', { className: 'oai-aside', role: 'status' },
+    h('span', null, text),
+    h('button', { type: 'button', onClick: onBack }, back)), document.body)
+}
+
 // `hero` replaces the companion (or, before there is one, the octopus) at the top.
 export function Stage({ title, speech, at, glitching, hero, mark = 'AUTOMAGIK', wide = false, children }) {
   const titleRef = useRef(null)

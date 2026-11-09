@@ -13,7 +13,7 @@ import { structuredNameOf } from '../src/host/acp.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 import { AGENTS } from '../src/host/agents.js'
 import { Backchannel, offeredTools, presetOf } from '../src/host/backchannel.js'
-import { SYNTHETIC_KIND } from '../src/host/names.js'
+import { isAuthRequired, SYNTHETIC_KIND } from '../src/host/names.js'
 import { credentialShapes } from '../src/host/redact.js'
 import { BOUNDARY_KIND, crossed } from '../src/host/switch.js'
 import { optionFor, TOOL_NAME } from '../src/host/tool.js'
@@ -99,7 +99,9 @@ function host({ answer = 'allowed-once' } = {}) {
     get: name => (name === 'approval' ? { request: async (req) => { asked.push(req); return typeof answer === 'function' ? answer(req) : answer } } : undefined),
     on: (name, listener) => { listeners.set(name, [...(listeners.get(name) ?? []), listener]); return () => {} },
     effect: (fn) => { disposers.push(fn()) },
+    provide: (name, service) => { provided[name] = service },
   }
+  const provided = {}
   // The old path, explicitly: dshTools defaults on, so this host is the kill-switch suite.
   apply(ctx, { fakeAgent: FAKE, claude: false, codex: false, dshTools: false })
   const close = () => { for (const fn of disposers) fn(); rmSync(cwd, { recursive: true, force: true }) }
@@ -121,6 +123,7 @@ function host({ answer = 'allowed-once' } = {}) {
     ctx,
     registrations,
     disposals,
+    provided,
     // A plugin reload: the old module and adapter go, DSH keeps the agents and their scoped
     // tools, and the reloaded adapter is constructed over them (its constructor takes over the
     // agents that are idle). Old listeners are not re-emitted here, as DSH disposed them.
@@ -520,6 +523,38 @@ test('an agent that cannot start fails the step with its reason', async () => {
   for await (const chunk of registered['acp-fake'].stream(markAgentLoopRequest({ provider: 'acp-fake', model: 'default', sessionId: 's9', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }))) chunks.push(chunk)
   assert.equal(chunks.at(-1).reason.kind, 'error')
   assert.match(chunks.at(-1).reason.failure.message, /Fake agent did not start/)
+})
+
+// An agent whose CLI is signed out answers ACP's auth_required. The turn fails with its own
+// code (the Bot team asks for a sign-in and never falls back on it), whether the refusal comes
+// when its session opens or on a prompt. Any other agent error keeps ACP_AGENT.
+for (const where of ['session', 'prompt']) {
+  test(`a signed-out agent (auth_required on ${where}) fails the step as MODEL_ACCESS_REQUIRED`, async (t) => {
+    process.env.FAKE_ACP_AUTH = where
+    t.after(() => { delete process.env.FAKE_ACP_AUTH })
+    const h = host()
+    const signedOut = []
+    const told = h.adapter.onSignedOut
+    h.adapter.onSignedOut = (id) => { signedOut.push(id); told?.(id) }
+    try {
+      const chunks = await step(h.adapter, [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }])
+      const reason = chunks.at(-1).reason
+      assert.equal(reason.kind, 'error')
+      assert.equal(reason.failure.code, 'MODEL_ACCESS_REQUIRED')
+      assert.deepEqual(signedOut, ['acp-fake'], 'the host drops its cached sign-in for that agent')
+      assert.match(reason.failure.message, /^Fake agent is not signed in: Authentication required/)
+    } finally {
+      h.close()
+    }
+  })
+}
+
+test('isAuthRequired reads only ACP\'s auth_required, not every -32000 server error', () => {
+  assert.equal(isAuthRequired({ code: -32000, message: 'Authentication required' }), true)
+  assert.equal(isAuthRequired({ code: -32000, message: 'Authentication required: run login' }), true)
+  assert.equal(isAuthRequired({ code: -32000, message: 'permission failed' }), false)
+  assert.equal(isAuthRequired({ code: -32603, message: 'Authentication required' }), false)
+  assert.equal(isAuthRequired(undefined), false)
 })
 
 // #661: DSH resolves a step's admitted tool set in preStep, before the adapter streams that
@@ -1245,17 +1280,17 @@ test('a Session moving to an agent carries its transcript redacted, and each cro
     assert.equal(h.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source?.kind === NOTICE_KIND), false)
     const boundary = () => h.session.snapshotEvents().filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(boundary().length, 1)
-    assert.match(boundary()[0].data.source.summary, /Now answered by Fake agent \(acp-fake\)/)
+    assert.match(boundary()[0].data.source.summary, /Switching to Fake agent \(acp-fake\)/)
     // The row is one the chat draws: a notice, not reply text from the agent.
     assert.equal(boundary()[0].data.role, 'user')
     assert.equal(boundary()[0].data.source.form, 'notice')
-    assert.equal(boundary()[0].data.content[0].text, '[Now answered by Fake agent (acp-fake).]')
+    assert.equal(boundary()[0].data.content[0].text, '[Switching to Fake agent (acp-fake).]')
     // Moving back to DSH is the other crossing: a row, and the agent session (and bridge) end.
     h.adapter.noteEvent(h.session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
     assert.equal(boundary().length, 2)
-    assert.match(boundary()[1].data.source.summary, /Now answered by DSH/)
+    assert.match(boundary()[1].data.source.summary, /Switching to DSH/)
     assert.equal(boundary()[1].data.source.form, 'notice')
-    assert.equal(boundary()[1].data.content[0].text, '[Now answered by DSH.]')
+    assert.equal(boundary()[1].data.content[0].text, '[Switching to DSH.]')
     assert.equal(h.adapter.live.size, 0)
     assert.equal(h.backchannel.records.size, 0)
   } finally {
@@ -1791,7 +1826,7 @@ test('an agent answer is logged as said, and redacted at each provider crossing'
     const rows = h.session.snapshotEvents()
       .filter(event => event.type === 'user/message' && event.data.source?.kind === BOUNDARY_KIND)
     assert.equal(rows.length, 1)
-    assert.match(rows[0].data.source.summary, /Now answered by Fake agent B \(acp-fake-b\)/)
+    assert.match(rows[0].data.source.summary, /Switching to Fake agent B \(acp-fake-b\)/)
   } finally {
     h.close()
     rmSync(dir, { recursive: true, force: true })
@@ -1942,6 +1977,100 @@ test('the kept disposer is idempotent, and a fresh or missing Session still beha
       () => h.adapter.scope('gone'),
       error => error.code === 'acp_agent_missing' && /gone/.test(error.message),
     )
+  } finally {
+    h.close()
+  }
+})
+
+// An image the agent makes with its own tool (Codex's "Image generation"): the card shows it from
+// the call's first sight, the PNG from the call's own update goes to the chat's image keeper, and
+// neither the result nor the stored reply names the path the agent saved it at.
+function imageKeeper({ fail = false } = {}) {
+  const seen = { started: [], kept: [], failed: [] }
+  return {
+    seen,
+    start: call => seen.started.push(call),
+    keep: async (image) => {
+      seen.kept.push(image)
+      if (fail) throw new Error('the disk is full')
+      return { id: 'img-12345678', file: '/team/images/img-12345678.png' }
+    },
+    fail: call => seen.failed.push(call),
+  }
+}
+const ONE_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+test('an agent\'s image call keeps its PNG through the chat\'s keeper and its reply drops the local path', async () => {
+  const h = host()
+  const keeper = imageKeeper()
+  h.provided.acpAgents.keepImages(keeper)
+  try {
+    const messages = []
+    const { steps } = await turn(h, messages, 'image-call')
+    const [first, second] = steps
+    const call = first.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call').block
+    const args = JSON.parse(call.arguments)
+    assert.equal(args.title, 'Image generation')
+    assert.equal(args.image, true, 'the card is drawn as an image from the first sight of the call')
+    assert.equal(keeper.seen.started.length, 1)
+    assert.equal(keeper.seen.started[0].callId, call.id)
+    assert.equal(keeper.seen.kept.length, 1)
+    assert.equal(keeper.seen.kept[0].base64, ONE_PIXEL)
+    assert.equal(keeper.seen.kept[0].callId, call.id)
+    assert.equal(keeper.seen.kept[0].mimeType, 'image/png')
+    const value = first.result.value
+    assert.equal(value.status, 'completed')
+    assert.match(value.text, /^Image generated and saved as \/team\/images\/img-12345678\.png\./)
+    // Nothing of the agent's own copy reaches the transcript: not its path, not the bytes.
+    const stored = JSON.stringify(messages)
+    assert.doesNotMatch(stored, /fake-codex-home|generated_images/)
+    assert.ok(!stored.includes(ONE_PIXEL))
+    assert.equal(textIn(second), ' Here it is:  Also at `the image`.')
+  } finally {
+    h.close()
+  }
+})
+
+test('a failed image call, or one with nowhere to keep it, ends the card with a clear reason', async () => {
+  const h = host()
+  const keeper = imageKeeper()
+  const off = h.provided.acpAgents.keepImages(keeper)
+  try {
+    const messages = []
+    const failed = await turn(h, messages, 'image-call-fail')
+    assert.equal(failed.steps[0].result.value.status, 'failed')
+    assert.match(failed.steps[0].result.value.text, /could not make this image/)
+    assert.equal(keeper.seen.failed.length, 1)
+    assert.equal(keeper.seen.kept.length, 0)
+    off()
+    const homeless = await turn(h, messages, 'image-call')
+    assert.equal(homeless.steps[0].result.value.status, 'failed')
+    assert.match(homeless.steps[0].result.value.text, /no place to keep it/)
+    assert.doesNotMatch(JSON.stringify(messages), /fake-codex-home|generated_images/)
+    h.provided.acpAgents.keepImages(imageKeeper({ fail: true }))
+    const full = await turn(h, messages, 'image-call')
+    assert.match(full.steps[0].result.value.text, /could not be kept: the disk is full/)
+  } finally {
+    h.close()
+  }
+})
+
+test('a call that answers with an image but makes none (a Read) keeps its own result', async () => {
+  const h = host()
+  const keeper = imageKeeper()
+  h.provided.acpAgents.keepImages(keeper)
+  try {
+    const { steps } = await turn(h, [], 'image-call-other')
+    const call = steps[0].find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call').block
+    assert.equal(JSON.parse(call.arguments).image, undefined, 'its title does not say image, so no image card')
+    assert.equal(keeper.seen.started.length, 0)
+    assert.equal(keeper.seen.kept.length, 0, 'the image it read is not copied into the team')
+    assert.equal(keeper.seen.failed.length, 0)
+    const value = steps[0].result.value
+    assert.equal(value.status, 'completed', 'a JPEG it read does not fail the call')
+    assert.equal(value.title, 'Read photo.jpg')
+    assert.equal(value.text, 'Read photo.jpg')
+    assert.doesNotMatch(value.text, /Image generated/)
   } finally {
     h.close()
   }

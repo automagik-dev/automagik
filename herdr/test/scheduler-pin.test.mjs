@@ -53,6 +53,16 @@ test("a 504 from the public checksums.txt is served by the API asset route", asy
   assert.ok(publicRequests.length > 0 && publicRequests.every((request) => request.headers.authorization === undefined), "the token is never sent to the public URL");
 });
 
+// release-assets.mjs's other fallback (it was usagemeter-pin.mjs's test until RFC 0017 retired that check).
+test("a network error from the public download falls back to the API asset route too", async () => {
+  const forwarded = globalThis.fetch;
+  const offlinePublic = (url, init) => (String(url).includes(`/download/${TAG}/`) ? Promise.reject(new TypeError("fetch failed")) : forwarded(url, init));
+  const r = await run({ fetch: offlinePublic });
+  assert.equal(r.code, 0, r.errors.join("\n"));
+  assert.ok(r.requests.every((request) => !request.path.startsWith("/download/")), "the public route was unreachable");
+  assert.ok(r.logs.includes("checksums.txt: served by the REST API asset route"), "the API served it");
+});
+
 test("when both routes fail the check exits 2", async () => {
   const r = await run({ publicStatus: 504, apiStatus: 503 });
   assert.equal(r.code, 2);

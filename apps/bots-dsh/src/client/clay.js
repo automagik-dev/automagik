@@ -74,7 +74,6 @@ html body [data-slot="main.conversation"]>[class*="_root"]{margin:8px;height:cal
 html body [class*="_sidebarCol"]{border:0!important}
 html body [class*="_rightbarCol"]{background:var(--bt-main)!important;border:0!important}
 html body [class*="_rightbarCol"] section[class*="_tabHost"][class*="_pane"]{margin:8px 8px 8px 0;height:calc(100% - 16px);border:0;border-radius:var(--clay-r-lg);overflow:hidden;${slab('var(--bt-sidebar)')}}
-html body header[class*="_header"]:has(.bt-head)::before{display:none}
 html body [data-composer-card]{${important(recessed('var(--clay-niche)'))};border:0!important;border-radius:var(--clay-r)!important}
 html body [data-composer-card]:hover{border:0!important}
 html body [data-composer-card]:focus-within{border:0!important;box-shadow:inset 3px 4px 6px color-mix(in srgb,var(--clay-niche) var(--clay-lo),var(--clay-umber)),inset -2px -2px 3px color-mix(in srgb,var(--clay-niche) var(--clay-hi),var(--clay-shine)),0 0 0 1.5px color-mix(in srgb,var(--clay-ring) 40%,transparent)!important}

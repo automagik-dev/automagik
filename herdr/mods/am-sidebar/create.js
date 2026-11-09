@@ -1089,6 +1089,7 @@ export class BotForm {
       .when(member, (el) => el.child(this.reportsTo(v)).child(this.category(v)).child(this.rank(v)))
       .when(!member, (el) => el.child(div().text_size(12).text_color(t.muted)
         .child("The project's main bot: every other bot reports to it, directly or through a lead.")))
+      .child(this.codeBlock(v))
       .child(this.plannedBlock(v));
   }
 
@@ -1152,6 +1153,24 @@ export class BotForm {
           .children(RANKS.map((r) => this.chip(t, `bot-rank-${r}`, r, pick(r), { on: state.rank === r }))))
         .child(div().text_size(11).text_color(t.muted)
           .child("Optional; the pane's role= label. The main bot is role=main, and a bot others report to is captain, automatically.")));
+  }
+
+  codeBlock(v) {
+    const { t, state } = v;
+    const on = state.code !== false;
+    const toggle = h_flex().id("bot-code").w(34).h(20).flex_none().p(2).rounded_full().cursor_pointer()
+      .bg(on ? t.accent : t.raised).border_1().border_color(on ? t.accent : t.input)
+      .when(on, (el) => el.justify_end()).accessibility_label("Code bot (worker instruction in Git projects)")
+      .on_click((_e, cx) => this.set({ code: !on }, cx))
+      .child(div().size(14).rounded_full().bg(on ? t.accent_foreground ?? "#ffffff" : t.muted));
+    return v_flex().gap(10).px(12).py(10).rounded(10).border_1().border_color(t.border)
+      .bg(t.surface ?? t.background)
+      .child(h_flex().gap(10).items_center()
+        .child(toggle)
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(13).font_medium().child("Code bot"))
+          .child(div().text_size(11).text_color(t.muted)
+            .child("Gets the worker instruction in Git projects. Turn off for writing, planning or research bots."))));
   }
 
   plannedBlock(v) {

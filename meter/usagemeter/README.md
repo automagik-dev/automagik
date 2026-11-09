@@ -26,37 +26,42 @@ to the local herdr-core. The binary itself opens no network connection.
 
 ## Install
 
+The Automagik Herdr pack installs it, on this computer and on every connected linked machine:
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh
+automagik-herdr meter install
 ```
 
-A pinned version (`0.3.0` or `v0.3.0`, as an argument or `USAGEMETER_VERSION`):
+(`herdr/install.sh` does the same on a new machine.) It reads the signed `meter-lane` pointer on
+the Automagik repository's releases (`meter.json` and its ed25519 signature, checked against the
+meter's public keys, `meter-keys.json`), takes the build it names for each machine's OS and CPU,
+checks it against the sha256 the pointer names, and installs it to `~/.local/bin/usagemeter`
+atomically. It never downgrades: a binary of that version or a newer one stays, and a pointer
+older than one it already took is refused. Before the swap the new binary must answer
+`usagemeter --version` with exactly its version, or nothing changes. The binary it replaced is kept
+as `~/.local/bin/usagemeter.prev` until the next swap; to go back to it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh -s -- 0.3.0
+mv ~/.local/bin/usagemeter.prev ~/.local/bin/usagemeter
 ```
 
-Each release also carries its own `install.sh`
-(`https://github.com/automagik-dev/usagemeter/releases/download/v0.3.0/install.sh`).
-
-The installer is POSIX `sh` and needs only `curl` and `sha256sum` (or `shasum -a 256`), no sudo.
-It picks the release binary for this OS and CPU, checks it against the release's `SHA256SUMS`,
-and installs it to `~/.local/bin/usagemeter` atomically. It never downgrades: with that version
-or a newer one already installed, it changes nothing and exits 0. A pinned version is checked with
-`usagemeter --version` without touching the network; the latest by comparing the installed file
-with the release's `SHA256SUMS` (one small download), then by the version of the verified
-download. An older binary is replaced.
-
-Each release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
-`usagemeter-linux-x86_64` and `usagemeter-linux-aarch64` (static, musl), with `SHA256SUMS`. By
-hand:
+Each meter release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
+`usagemeter-linux-x86_64` and `usagemeter-linux-aarch64` (the Linux builds static, musl), with
+`usagemeter.SHA256SUMS`, `meter.json` and `meter.json.sig`, on its `vX.Y.Z` release. By hand, the
+build the pointer names (check its signature with `bun scripts/meter-lane.ts verify` from a
+checkout):
 
 ```sh
-curl -fLO https://github.com/automagik-dev/usagemeter/releases/latest/download/usagemeter-linux-x86_64
-curl -fLO https://github.com/automagik-dev/usagemeter/releases/latest/download/SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS
+base=https://github.com/automagik-dev/automagik/releases/download
+curl -fLO "$base/meter-lane/meter.json" -fLO "$base/meter-lane/meter.json.sig"
+v=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' meter.json)
+curl -fLO "$base/v$v/usagemeter-linux-x86_64" -fLO "$base/v$v/usagemeter.SHA256SUMS"
+sha256sum --check --ignore-missing usagemeter.SHA256SUMS
 install -m 755 usagemeter-linux-x86_64 ~/.local/bin/usagemeter
 ```
+
+The standalone `install.sh` in this folder still installs from the old upstream releases until it
+is retired (RFC 0017 delivery 9); use the commands above instead.
 
 Releases: every merge to `dev` that brings a shipping commit (anything but `chore(release)`,
 `ci`, `docs` or `test`) cuts the next `0.N.0`, tags it and publishes the binaries.
@@ -463,8 +468,8 @@ Tests use synthetic fixtures only. In the Automagik monorepo, the root `.github/
 (its `usagemeter` job) runs the same on Linux and macOS, then `tests/install.sh`, which installs
 the binary it built with `install.sh` from a release laid out on disk. The version is the
 repository's one version: the root `scripts/version.ts` writes it to `Cargo.toml` and
-`Cargo.lock`. Releases from here come with the meter lane (RFC 0017 in the repository's
-`docs/rfcs/`); until then the releases named above are upstream's.
+`Cargo.lock`. Releases come from here, on the meter lane (RFC 0017 in the repository's
+`docs/rfcs/`), and installers take them through the signed `meter-lane` pointer (see Install).
 
 Some names still say "meter" because existing installs and readers depend on them: the state
 files `meter.db` and `meter.lock`, the variables `METER_STATE_DIR`, `METER_HC` and `METER_TRACE`,

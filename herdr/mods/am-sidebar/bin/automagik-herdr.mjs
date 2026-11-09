@@ -41,8 +41,9 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
   paneCommand, planText as restartText, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
-import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, USAGEMETER, heldModLine, updatesOff } from "../release.js";
-import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterPins, meterReleases, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
+import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, heldModLine, updatesOff } from "../release.js";
+import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
+import { readMeterLane } from "../meterLane.mjs";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, utf8Length, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
@@ -1007,7 +1008,7 @@ function describe(project, bot, view, hcError) {
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     agyMode: bot.agent === "antigravity" ? agyModeOf(bot.agyMode) : (typeof bot.agyMode === "string" && bot.agyMode ? bot.agyMode : null),
     terminal: held?.binding.terminal ?? null, status, duplicate: false, since: held?.binding.at ?? null,
-    role: bot.role, rank: bot.rank ?? null, look: bot.look,
+    role: bot.role, rank: bot.rank ?? null, code: bot.code !== false, look: bot.look,
     hcProxy: bot.hcProxy === true,
     worker,
     ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
@@ -1157,7 +1158,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                                  machine (hc machine ls), through hc
        automagik-herdr --version                 the installed pack's version
 
-  ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, agy-mode, pane, status
+  ls [--all]                    bots with kind, lead, category, rank, code, planned, agent, model, agy-mode, pane, status
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
@@ -1174,7 +1175,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
-  edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
+  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
              [--agy-allow=] [--agy-deny=] [--no-agy-permissions]   (empty: that list cleared)
@@ -1283,8 +1284,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 back is skipped until a newer one is out. Only for a pack
                                 install.sh put in place, never a checkout
   meter install [--machine M | --linked | --local]
-                                the pinned usagemeter (v${USAGEMETER.version}, hash-checked on each
-                                machine, never a downgrade) in ~/.local/bin on this computer and
+                                usagemeter, the build the signed meter-lane pointer names (its
+                                sha256 checked on each machine, never a downgrade, a pointer
+                                older than one already taken refused) in ~/.local/bin on this computer and
                                 every connected linked machine (hc machine ls); --machine: that
                                 one, e.g. one linked later; --linked: the machines only; --local:
                                 this computer only. A machine that fails is a warning. Running
@@ -1731,7 +1733,7 @@ function lsLines(projects) {
       const perms = b.agyPermissions || b.workerAgyPermissions
         ? `  agy-allow ${(b.agyPermissions ?? b.workerAgyPermissions).allow.length} deny ${(b.agyPermissions ?? b.workerAgyPermissions).deny.length}` : "";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${p.machine ? `${p.machine}/` : ""}${b.terminal}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  code ${b.code}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -1840,7 +1842,7 @@ async function cmdShow(opts, [ref]) {
       `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
-    `  rank         ${info.rank ?? "-"}`,
+    `  rank         ${info.rank ?? "-"}`, `  code         ${info.code}`,
     `  hc proxy     ${proxyStateText(info.hcProxyState)}`,
     `  worker       ${workerText(info.worker) || "-"}`,
     ...(info.worker?.swap ? [`  swap         ${workerText(info.worker.swap)} (planned swaps: about 1 task in 3)`] : []),
@@ -1879,6 +1881,13 @@ async function cmdCreate(opts) {
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
+  if (opts.project !== undefined && project.dir === project.key) {
+    const given = (project.machine ? opts.project : resolvePath(opts.project)).replace(/\/+$/, "") || "/";
+    const same = project.dir === given || (!project.machine && (() => {
+      try { return realpathSync(project.dir) === realpathSync(given); } catch { return false; }
+    })());
+    if (!same) report([`saved in ${fileName(project)} (project ${project.key}, resolved from --project ${given}).`]);
+  }
   // A lead that becomes a captain; another machine's panes are left as they are.
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id, ...placeOf(project), bot: entry, relabelled } : id;
@@ -5349,19 +5358,21 @@ async function meterMachines() {
 }
 
 /**
- * The install record after `results` (only a v2 one install.sh wrote; none: nothing is noted), and
- * the scope an explicit `meter install` agreed to (`scope`: all, or local; never narrower than all).
+ * The install record after `results` (only a v2 one install.sh wrote; none: nothing is noted), the
+ * scope an explicit `meter install` agreed to (`scope`: all, or local; never narrower than all), and
+ * the meter-lane pointer's `sequence` it took (never lowered).
  */
-function noteMeter(modsDir, results, scope = null) {
+function noteMeter(modsDir, results, scope = null, sequence = null) {
   const record = readMarker(modsDir);
   if (!record || record.v1) return;
   const usagemeterScope = scope === "all" || (scope === "local" && record.usagemeterScope !== "all") ? scope : record.usagemeterScope;
   const here = results.find((r) => r.machine === null);
   const usagemeter = here?.status === "installed" ? here.version : ["newer", "link", "unknown"].includes(here?.status) ? null : record.usagemeter;
   const usagemeterOn = recordAfter(record.usagemeterOn, results);
-  if (usagemeter === record.usagemeter && usagemeterScope === record.usagemeterScope
+  const usagemeterSequence = Number.isSafeInteger(sequence) && !(record.usagemeterSequence > sequence) ? sequence : record.usagemeterSequence;
+  if (usagemeter === record.usagemeter && usagemeterScope === record.usagemeterScope && usagemeterSequence === record.usagemeterSequence
     && JSON.stringify(usagemeterOn) === JSON.stringify(record.usagemeterOn)) return;
-  writeMarker(modsDir, { ...record, usagemeter, usagemeterOn, usagemeterScope });
+  writeMarker(modsDir, { ...record, usagemeter, usagemeterSequence, usagemeterOn, usagemeterScope });
 }
 
 /**
@@ -5372,11 +5383,15 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
   const modsDir = io.modsDir ?? defaultModsDir(process.env);
   if (rest.length) throw new CliError(`meter ${verb} takes no arguments (got ${rest.join(" ")}).`, 2);
   const results = [], notes = [];
+  let lane = null;
   if (verb === "install") {
     if ([opts.machine !== undefined, opts.linked, opts.local].filter(Boolean).length > 1) throw new CliError("Give one of --machine, --linked and --local.", 2);
-    const releases = meterReleases(process.env);
-    const pins = meterPins(process.env, (path) => readFileSync(path, "utf8"));
-    if (opts.machine === undefined && !opts.linked) results.push(await installOn(meterRun, null, { releases, pins }));
+    // The signed pointer, read and checked here once, before any machine is asked anything: a
+    // refusal (its signature, its fields, a sequence older than the record's) changes nothing.
+    try {
+      lane = await readMeterLane({ env: process.env, recorded: readMarker(modsDir)?.usagemeterSequence ?? null });
+    } catch (e) { throw new CliError(`usagemeter: ${e?.message ?? e}.`); }
+    if (opts.machine === undefined && !opts.linked) results.push(await installOn(meterRun, null, lane));
     if (!opts.local) {
       const found = await meterMachines();
       if (found.why) {
@@ -5388,7 +5403,7 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
         list = list.filter((m) => m.name === opts.machine);
         if (!list.length) throw new CliError(`No linked machine "${opts.machine}" (hc machine ls).`, 2);
       }
-      for (const m of list) results.push(m.connected ? await installOn(meterRun, m.name, { releases, pins }) : { machine: m.name, status: "disconnected" });
+      for (const m of list) results.push(m.connected ? await installOn(meterRun, m.name, lane) : { machine: m.name, status: "disconnected" });
     }
   } else if (verb === "uninstall") {
     if (opts.machine !== undefined || opts.linked || opts.local) throw new CliError("meter uninstall takes no --machine, --linked or --local.", 2);
@@ -5409,7 +5424,7 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
   // An explicit `meter install` is the person's yes (install.sh's own run passes --linked
   // and records its scope itself; `update` asks only within the scope already agreed).
   const agreed = verb === "install" && !opts.linked && opts.machine === undefined ? (opts.local ? "local" : "all") : null;
-  try { noteMeter(modsDir, results, agreed); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
+  try { noteMeter(modsDir, results, agreed, lane?.pointer.sequence ?? null); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
   if (opts.machine !== undefined && results.some((r) => r.status === "failed" || r.status === "disconnected")) {
     throw new CliError(results.map(resultLine).join("\n").replace(/^Warning: /, ""));
   }
@@ -5526,8 +5541,9 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
 }
 
 /**
- * After `update` installed a pack: that pack's own `meter install` (its release.js may pin a newer
- * usagemeter than this running CLI's), as install.sh's scope says. Lines to print; never throws.
+ * After `update` installed a pack: that pack's own `meter install` (the build the signed meter-lane
+ * pointer names now, checked with that pack's keys), as install.sh's scope says. Lines to print;
+ * never throws.
  */
 export async function meterAfterUpdate(io) {
   const modsDir = io.modsDir ?? defaultModsDir(io.env ?? process.env);
