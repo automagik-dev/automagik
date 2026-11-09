@@ -494,8 +494,10 @@ workspace is refused by every other; the workspace holds no Cloud credential. A 
 workspace a single-use code that the gate exchanges with the Cloud service on the server side,
 never a token in a URL.
 *Amended by [RFC 0025][25] (2026-11-09):* a Cloud workspace may also hold a scoped, short-lived,
-revocable gateway token, minted per workspace or per Bot, that can call only the model gateway,
-never Stripe or Cloud's control plane (0025, (i)).
+revocable gateway token, minted per workspace or per Bot, and the control-plane identity that
+renews it, held by the gate outside DSH's routes. The token can call only the model gateway,
+never Stripe or Cloud's control plane. A per-Bot token is a budget and an attribution label, not
+isolation inside the VM; the workspace's total grants and caps are the bound (0025, (i)).
 
 **Backups.** Per workspace: scheduled snapshots of the volume, an encrypted copy off the host
 under a per-workspace key the workspace never holds; a restore makes a new instance and keeps the
@@ -828,8 +830,8 @@ principals are keyed by `(issuer, sub)`.
    complete for one instance ((i)).
    *Amended by [RFC 0025][25] (2026-11-09):* BYO model access is free; managed tokens are an
    opt-in through Cloud's gateway at a published margin; compute is metered from the host
-   lifecycle. The workspace subscription and seats stand; 0025's question 6 carries the included
-   seats and host shape.
+   lifecycle. The workspace subscription and seats stand; 0025's Open questions carry the
+   included seats and host shape under RFC 0024 Q8.
 9. **The billing system.** *Decided by the owner, 2026-11-09 (Decided 14):* Stripe directly, Stripe
    Billing with a subscription per workspace and signed webhooks into Cloud's entitlements,
    "including support to agentic payments": Bots paying or being paid on a customer's behalf
