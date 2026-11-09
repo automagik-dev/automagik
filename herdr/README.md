@@ -141,7 +141,7 @@ the same later:
 
 ```bash
 automagik-herdr dsh-tui install   # install, or update to the pack's pin
-automagik-herdr dsh-tui doctor    # what is there: dsh, the dsh-tui profile, the shim, the guide
+automagik-herdr dsh-tui doctor    # what is there: dsh, the profile, the shim, the guide, Antigravity's lists
 automagik-herdr dsh-tui uninstall # the plugin and the shim away; sessions and state stay
 ```
 
@@ -456,7 +456,8 @@ automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
-       [--agy-mode auto|accept-edits|plan] [--planned-wave N [--planned-note T]]
+       [--agy-mode auto|accept-edits|plan] [--agy-allow RULE]... [--agy-deny RULE]...
+       [--planned-wave N [--planned-note T]]
        [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
 automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
@@ -751,7 +752,10 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   runs that agent's own default model. Effort goes to `claude --effort`, codex
   `-c model_reasoning_effort`, and pi or omp `--thinking`; other agents get none, with a
   warning. An Antigravity worker always gets `--mode` (the bot's `worker.agyMode`, auto when
-  absent); any other agent's launch line is unchanged.
+  absent) and its own `--settings` permission file, written per launch (see
+  [Antigravity's permission list](#antigravitys-permission-list)); any other agent's launch
+  line is unchanged. A template whose command runs `agy` is rebuilt with the file and its task;
+  one whose command can't take words runs without the list, with a plain warning.
 - **Templates:** `--template T` runs the hc template `T` (`hc templates` lists them)
   instead of an agent, for seats whose command sets more than a model: a custom model
   provider, keys, flags. A template owns its command, so `--template` with `--agent`,
@@ -1088,6 +1092,17 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
+- `agyPermissions` is optional: rules an Antigravity bot and its workers add to the permission
+  list every launch carries (#823). `{ "allow": ["command(npm publish)"], "deny": ["command(git stash)"] }`,
+  each list optional. A rule is `command(<the words it starts with>)` or
+  `write_file(<an absolute folder>)`; anything else is dropped with a warning and never reaches
+  agy. The launch's own allow list (its scope and rank or role) and the fixed deny rules
+  (`git push --force`, `git push -f`, `git reset --hard`, `rm -rf`, `gh pr merge`, `gh release`)
+  are always there, so this field only ever adds rules: it cannot drop a fixed deny.
+  `create|edit --agy-allow RULE` and `--agy-deny RULE` (repeatable) set a list; one empty value
+  clears that list and `--no-agy-permissions` clears both. The form keeps the field as it is.
+  `show` prints the effective lists, `ls` their counts, and `dsh-tui doctor` the lists per bot
+  plus a host-level row saying whether agy's terminal sandbox (and so `--mode`) is available.
 - `rank` is optional: one of `captain`, `dev`, `tester`, `reviewer`, `fixer`, `integrator`,
   `pm`, `owner`. It sets the pane's `role=` label (see [Pane labels](#pane-labels)). `main` is not a
   rank: `role=main` belongs to the main bot alone. The free-text `role` is separate and goes
@@ -1103,6 +1118,40 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   with a warning.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
+
+### Antigravity's permission list
+
+On a host where agy's terminal sandbox is unavailable (restricted unprivileged user
+namespaces, say), agy ignores `--mode auto` with a warning and runs in its default review mode:
+an unattended bot would stop at its first command. agy 1.5.3 takes a permission list from
+`--settings` for one session, never saved, so every Antigravity launch of this pack — a bot's
+start, restart and resume, a worker, a helper Restart --tree runs again — writes its own file
+0600 under `<app home>/automagik-herdr/agy-settings/` and passes it as `--settings <file>`.
+The pack never writes agy's own `settings.json`, so its trust list and saved settings stay the
+person's.
+
+The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
+time (agy replaces its saved list field by field). The allow list is as narrow as the launch
+needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
+`bun`, the read-only `gh` verbs, and the repository's own gates (`node --test`,
+`node --check`, `bun test`, `scripts/privacy-check.mjs`, `scripts/am-copies.mjs`, the
+`version`/`entries`/`parts`/`catalog` checks, …). A read-only seat (rank `reviewer`) or worker
+(role `review`) gets no `write_file`, no plain `git`/`node`, and only read verbs and the test
+checks. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
+`git push --force`, `git push -f`, `git reset --hard`, `rm -rf`, `gh pr merge`, `gh release`.
+
+The settings file's path is deterministic from the bot, the scope, the role and the worktree,
+so an approved-worker proxy plan and the argv it approves name the same file: the approved
+worker's `--settings` path is part of the exact argv the proxy checks, and another path is
+refused. A template whose command runs agy is rebuilt with the file and its task; one whose
+command ends in a separator or a comment can't take either, so it runs without the list with a
+plain warning. A linked machine's start writes the file under that machine's app home, through
+`hc`; with no app home there the start is refused rather than launched without its list.
+
+`dsh-tui doctor` prints each Antigravity bot's effective allow and deny lists (its seat's and
+its worker defaults'), in JSON too, plus one host-level row saying whether agy's terminal
+sandbox, and so `--mode`, can work here: Linux's user namespace controls, or macOS's
+`/usr/bin/sandbox-exec`. Unreadable evidence is a note, not a false warning.
 
 ### The briefing hook (Claude bots)
 

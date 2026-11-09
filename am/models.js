@@ -403,6 +403,215 @@ export function agyModeArgs(agentKey, mode = null) {
   return agentKey === "antigravity" ? ["--mode", agyModeOf(mode)] : [];
 }
 
+// ---- Antigravity's per-launch permission list (--settings, #823) ----
+//
+// agy 1.5.3 reads a permission list from a session's --settings file, never saving it: the file
+// is a JSON settings object whose `permissions.allow` and `permissions.deny` are arrays of rules.
+// A rule is `command(<the words it starts with>)` (a prefix match on the argv) or
+// `write_file(<an absolute folder>)` (the files inside it). A deny rule wins over an allow rule.
+// agy replaces its saved list field by field, so every launch carries both arrays in full.
+
+/** The rules every Antigravity launch carries; a roster adds rules and can never drop one. */
+export const AGY_FIXED_DENY = Object.freeze([
+  "command(git push --force)",
+  "command(git push -f)",
+  "command(git reset --hard)",
+  "command(rm -rf)",
+  "command(gh pr merge)",
+  "command(gh release)",
+]);
+
+/** The rule types agy 1.5.3 takes: a command prefix, or a folder its files are written under. */
+export const AGY_RULE_TYPES = Object.freeze(["command", "write_file"]);
+
+/** Why `rule` can't go in a permission list, or null. One line. */
+export function agyRuleProblem(rule) {
+  if (typeof rule !== "string" || !rule.trim()) return "a rule is text such as command(git) or write_file(/folder)";
+  const text = rule.trim();
+  if (/[\n\r]/.test(text)) return `${JSON.stringify(text)} has a line break`;
+  const m = /^([a-z_]+)\(([\s\S]*)\)$/.exec(text);
+  if (!m) return `${JSON.stringify(text)} isn't a rule (command(...) or write_file(...))`;
+  const [, type, inner] = m;
+  if (!AGY_RULE_TYPES.includes(type)) return `${JSON.stringify(text)}: unknown rule type ${type} (${AGY_RULE_TYPES.join(" or ")})`;
+  if (!inner.trim()) return `${JSON.stringify(text)}: ${type === "write_file" ? "no folder" : "no command"}`;
+  if (type === "write_file") {
+    if (!inner.trim().startsWith("/")) return `${JSON.stringify(text)}: write_file takes an absolute folder`;
+    if (inner.includes(")")) return `${JSON.stringify(text)}: a folder can't hold ")" in a rule`;
+  }
+  return null;
+}
+
+/** A roster `agyPermissions` value as { allow, deny, problems }: only the rules that pass, deduped. */
+export function normalizeAgyPermissions(value) {
+  if (!isObject(value)) return { allow: [], deny: [], problems: ["agyPermissions is not an object with allow and deny lists"] };
+  const problems = [];
+  const out = { allow: [], deny: [] };
+  for (const key of Object.keys(value)) if (!["allow", "deny"].includes(key)) problems.push(`agyPermissions ${key} isn't allow or deny; ignored`);
+  for (const key of ["allow", "deny"]) {
+    const list = value[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) { problems.push(`agyPermissions ${key} is not a list of rules`); continue; }
+    for (const rule of list) {
+      const why = agyRuleProblem(rule);
+      if (why) { problems.push(why); continue; }
+      const text = rule.trim();
+      if (!out[key].includes(text)) out[key].push(text);
+    }
+  }
+  return { ...out, problems };
+}
+
+// The read-only gh verbs a bot needs to read its task's pull request, checks and issues.
+const AGY_GH_READ = ["gh pr view", "gh pr list", "gh pr diff", "gh pr checks", "gh pr status", "gh issue view",
+  "gh issue list", "gh issue status", "gh repo view", "gh run list", "gh run view", "gh workflow list",
+  "gh workflow view", "gh release view", "gh label list", "gh search repos", "gh search prs", "gh search issues"];
+
+// The repository's own gates (AGENTS.md, the pack's gate): checks and tests that don't write.
+const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/privacy-check.mjs", "node scripts/am-copies.mjs",
+  "node scripts/version.mjs", "node scripts/entries.mjs", "node scripts/parts.mjs", "node scripts/catalog.mjs",
+  "node scripts/lane.ts", "node scripts/test-guard.mjs", "node ../scripts/privacy-check.mjs", "node ../scripts/am-copies.mjs"];
+
+// A seat or worker that writes: the shell tools the task needs, and the gates to prove it.
+const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GATES].map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): reads and runs the gates, writes nothing.
+const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "git status", "git rev-parse",
+  "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
+  ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
+
+/**
+ * The effective allow and deny rules of an Antigravity launch: the defaults its scope and role
+ * need, plus the roster's own additions (a bot's `agyPermissions` reaches its workers too).
+ * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
+ * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
+ * `write_file` opens to a writer. The fixed deny rules are always there; nothing drops them.
+ * Returns { allow, deny, warnings }.
+ */
+export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null }) {
+  const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
+  const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
+  const warnings = [];
+  if (!readOnly && typeof folder === "string" && folder) {
+    const why = agyRuleProblem(`write_file(${folder})`);
+    if (why) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
+    else allow.push(`write_file(${folder})`);
+  }
+  const roster = bot?.agyPermissions === undefined ? { allow: [], deny: [], problems: [] } : normalizeAgyPermissions(bot.agyPermissions);
+  allow.push(...roster.allow);
+  for (const why of roster.problems) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
+  const deny = [...AGY_FIXED_DENY, ...roster.deny];
+  return { allow: [...new Set(allow)], deny: [...new Set(deny)], warnings };
+}
+
+// A stable, path-free tag for a folder in a settings file's name: FNV-1a, 8 hex characters.
+function agyFolderTag(folder) {
+  let h = 0x811c9dc5;
+  for (const ch of String(folder)) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * The per-launch settings file of `botId`'s launch under `appHomeDir`, deterministic from the
+ * approved data a linked worker's plan has too (the bot id, the role and the worktree), so an
+ * approved plan and the argv it approves name the same file. `scope`: "seat", "worker" (whose
+ * role and worktree tag the name), or "helper" (a tree helper that is no worker, tagged by its
+ * folder so it never rewrites the bot's own seat file).
+ */
+export function agySettingsFile(appHomeDir, botId, scope = "seat", role = null, folder = null) {
+  const root = String(appHomeDir).replace(/\/+$/, "");
+  const safeRole = /^[a-z][a-z0-9-]{0,31}$/.test(String(role ?? "")) ? role : "dev";
+  const tail = scope === "worker" ? `worker-${safeRole}${folder ? `-${agyFolderTag(folder)}` : ""}`
+    : scope === "seat" ? "seat" : `${String(scope).replace(/[^a-z0-9-]/g, "") || "helper"}${folder ? `-${agyFolderTag(folder)}` : ""}`;
+  return `${root}/automagik-herdr/agy-settings/${botId}-${tail}.json`;
+}
+
+/**
+ * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny, warnings },
+ * or null for a bot with no id. `text` is the JSON agy reads from `--settings`: permissions.allow
+ * and permissions.deny, both arrays in full (agy replaces its saved lists field by field).
+ */
+export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, appHomeDir }) {
+  if (!bot?.id || !appHomeDir) return null;
+  const plan = agyPermissionPlan({ bot, scope, role, folder });
+  const path = agySettingsFile(appHomeDir, bot.id, scope, role, folder);
+  const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny } }, null, 2)}\n`;
+  return { path, text, allow: plan.allow, deny: plan.deny, warnings: plan.warnings };
+}
+
+/** The words that hand `agentKey` a permission list from `path`: ["--settings", path], or []. */
+export function agySettingsArgs(agentKey, path) {
+  return agentKey === "antigravity" && path ? ["--settings", path] : [];
+}
+
+/** `args` without the --settings words an earlier Antigravity launch left in a command line. */
+export function withoutAgySettings(agentKey, args) {
+  const words = Array.isArray(args) ? args.map(String) : [];
+  if (agentKey !== "antigravity") return words;
+  const out = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const w = words[i];
+    if (w === "--") { out.push(...words.slice(i)); break; }
+    if (w === "--settings") { i += 1; continue; }
+    if (w.startsWith("--settings=")) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * `argv` (an Antigravity launch) with `--settings <path>` right after its program, any older
+ * settings words taken out. Any other agent's argv, or one that doesn't run agy (a shell
+ * template), is returned as it is.
+ */
+export function withAgySettings(agentKey, argv, path) {
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  if (agentKey !== "antigravity" || !path || agentKeyOfArgv(words) !== agentKey) return words;
+  const at = programAt(words);
+  const rest = withoutAgySettings(agentKey, words.slice(at + 1));
+  return [...words.slice(0, at + 1), "--settings", path, ...rest];
+}
+
+/**
+ * Whether agy's terminal sandbox, and so `--mode`, can work on this host, from local evidence
+ * only: injected `platform` and `read(path) => string | null | undefined` (null: the file isn't
+ * there, undefined: it couldn't be read). Linux: unprivileged user namespaces restricted when
+ * max_user_namespaces is 0, unprivileged_userns_clone is 0 or apparmor_restrict_unprivileged_userns
+ * is 1; every control unreadable is evidence too. macOS: the Seatbelt tool agy's sandbox uses,
+ * /usr/bin/sandbox-exec. Returns { state: "available" | "missing" | "unknown", detail }.
+ */
+export function agySandbox({ platform = process.platform, read = () => null } = {}) {
+  const view = (path) => {
+    try { return read(path); } catch { return undefined; }
+  };
+  if (platform === "linux") {
+    const controls = [
+      ["/proc/sys/user/max_user_namespaces", "0", "max_user_namespaces is 0"],
+      ["/proc/sys/kernel/unprivileged_userns_clone", "0", "unprivileged_userns_clone is 0"],
+      ["/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "1", "apparmor_restrict_unprivileged_userns is 1"],
+    ];
+    let readable = 0, unreadable = 0;
+    for (const [path, restricted, said] of controls) {
+      const text = view(path);
+      if (typeof text === "string") {
+        readable += 1;
+        if (text.trim() === restricted) return { state: "missing", detail: `unprivileged user namespaces are restricted (${said})` };
+      } else if (text === undefined) unreadable += 1;
+    }
+    if (readable === 0) return { state: "missing", detail: "the unprivileged user namespace controls are unreadable" };
+    if (unreadable) return { state: "unknown", detail: `some unprivileged user namespace controls are unreadable (${unreadable} of ${controls.length})` };
+    return { state: "available", detail: "unprivileged user namespaces are not restricted" };
+  }
+  if (platform === "darwin") {
+    const tool = view("/usr/bin/sandbox-exec");
+    if (typeof tool === "string") return { state: "available", detail: "the Seatbelt sandbox tool is there (/usr/bin/sandbox-exec)" };
+    if (tool === null) return { state: "missing", detail: "the Seatbelt sandbox tool is missing (/usr/bin/sandbox-exec)" };
+    return { state: "unknown", detail: "the Seatbelt sandbox tool could not be read (/usr/bin/sandbox-exec)" };
+  }
+  return { state: "unknown", detail: `this platform (${platform}) isn't one agy's terminal sandbox is known on` };
+}
+
 // How each agent takes a first prompt that starts an interactive session. Most read a bare
 // trailing argument; agy 1.5.3 only through `-i` / `--prompt-interactive` (a stray trailing
 // argument is an error).

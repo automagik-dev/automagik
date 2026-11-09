@@ -3,10 +3,10 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, agyModeArgs, agyModeProblem, canResume, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutResume }
-  from "./models.js";
+import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsPlan, canResume, effortArgs, modelArgs, resumeArgs, resumesById,
+  withoutAgySettings, withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
-import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
+import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
@@ -96,24 +96,32 @@ export function withoutPrompt(args) {
  * (agentKeyOfArgv), null when unknown or when nothing runs; `session`: the old pane's session id
  * (its agent.session label, or the ledger's); `fresh`, `agent`, `model`: the options (undefined:
  * not given); `template`: the hc template the old pane ran and hc still lists, with its CURRENT
- * command ({ name, command }), or null. A template owns its command (#213): the replacement runs
+ * command ({ name, command }), or null; `agy`: { appHomeDir, folder } when this launch may write
+ * the Antigravity permission list (#823), null for a caller that writes it itself (a linked
+ * machine's start). A template owns its command (#213): the replacement runs
  * that command, never the pane's copy of it, with the agent's own resume words when it resumes.
  * An --agent or --model is a swap, always fresh: a conversation doesn't cross agents, and the
  * command is the agent table's. Otherwise the command is the template's, or the agent row, its
- * Antigravity mode (agyModeArgs: --mode, auto by default), the model pin and the agent's own
- * resume words for `session` (resumeArgs), so a flag the pane once had but the source no longer
- * names is dropped. Returns { mode: "resume" | "fresh" | "swap",
- * agent, model, resume (the resume words, [] for a new conversation), argv, source (the agent
- * row with no resume words, for launchChange), template (the template's name, null when the
- * agent row ran), note } (`note`: why a resume wasn't possible, else null).
+ * Antigravity mode (agyModeArgs: --mode, auto by default), its permission list (--settings,
+ * #823), the model pin and the agent's own resume words for `session` (resumeArgs), so a flag
+ * the pane once had but the source no longer names is dropped. Returns { mode: "resume" |
+ * "fresh" | "swap", agent, model, resume (the resume words, [] for a new conversation), argv,
+ * source (the agent row with no resume words, for launchChange), template (the template's name,
+ * null when the agent row ran), agySettings (the file to write first, or null), note } (`note`:
+ * why a resume wasn't possible, else null).
  */
-export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null }) {
+export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null, agy = null }) {
   const swap = agent !== undefined || model !== undefined;
   const key = agent ?? bot.agent;
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
   const pin = model !== undefined ? (model || null) : key === bot.agent ? (bot.model ?? null) : null;
   // Antigravity always gets its mode (auto unless the roster names one); [] for every other agent.
   const modeWords = agyModeArgs(key, bot.agyMode ?? null);
+  const settings = agy && key === "antigravity"
+    ? agySettingsPlan({ bot, scope: "seat", folder: agy.folder ?? "", appHomeDir: agy.appHomeDir }) : null;
+  const settingsWords = agySettingsArgs(key, settings?.path);
+  // The source a pane's launch is compared with names no settings file: that one is this
+  // launch's own, never a change a restart should report.
   const source = [...run, ...modeWords, ...modelArgs(key, pin)];
   // A template owns its command only when it runs the bot's own agent, whatever the pane's
   // foreground says (unknown included): a template for another agent, a swap or a pane on
@@ -124,11 +132,17 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   // fresh and say why, as a helper does.
   const blocked = "its template's command ends in a separator or a comment, so it can't take resume words";
   const plan = (mode, extra = [], note = null) => {
-    if (!tpl) return { mode, agent: key, model: pin, resume: extra, argv: [...run, ...modeWords, ...extra, ...modelArgs(key, pin)], source, template: null, note };
-    const argv = commandArgv({ shell: tpl.command }, extra);
-    if (argv) return { mode, agent: key, model: null, resume: extra, argv, source, template: tpl.name, note };
-    if (extra.length) return { mode: "fresh", agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name, note: blocked };
-    return { mode, agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name, note };
+    if (!tpl) return { mode, agent: key, model: pin, resume: extra, argv: [...run, ...modeWords, ...settingsWords, ...extra, ...modelArgs(key, pin)],
+      source, template: null, agySettings: settings, note };
+    const words = [...settingsWords, ...extra];
+    const argv = commandArgv({ shell: tpl.command }, words);
+    if (argv) return { mode, agent: key, model: null, resume: extra, argv, source, template: tpl.name, agySettings: settings, note };
+    // Nothing past the template's own command: neither the permission list nor resume words.
+    if (words.length) {
+      return { mode: "fresh", agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name,
+        agySettings: null, note: settingsWords.length ? `${blocked}; the Antigravity permission list can't be added either` : blocked };
+    }
+    return { mode, agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name, agySettings: null, note };
   };
   if (swap) return plan("swap");
   if (runningAgent && runningAgent !== key) return plan("fresh", [], `its pane runs ${runningAgent}, not ${key}, and a conversation doesn't cross agents`);
@@ -227,7 +241,7 @@ export function launchDiff(oldWords, newWords, agent = null) {
  */
 export function paneLaunch(launch, agentKey) {
   if (!launch || launch.shell !== undefined || agentKeyOfArgv(launch.argv) !== agentKey) return null;
-  return withoutPrompt(withoutResume(agentKey, withoutBriefing(agentKey, launch.argv)));
+  return withoutPrompt(withoutResume(agentKey, withoutAgySettings(agentKey, withoutBriefing(agentKey, launch.argv))));
 }
 
 /**
@@ -372,13 +386,15 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
 /**
  * What Restart --tree runs again for one helper that ends with the bot's pane (#213): `get`, its
  * hc get; `worker`, the workers ledger's start row for its terminal (null: not a worker);
- * `session`, its known session id; `agents`, Herdr's table. A worker's command is rebuilt from
+ * `session`, its known session id; `agents`, Herdr's table; `agy`: { appHomeDir, bot } when an
+ * Antigravity helper's permission list (#823) may be written here (the bot it serves), null
+ * when the caller doesn't write one. A worker's command is rebuilt from
  * its row (its task, the last word hc was given, isn't sent twice) unless a template owns it;
  * any other helper's is its own launch command (paneCommand). Returns { name, replaced, cwd,
- * labels, agent, session, mode: "resume" | "fresh", resume, argv, note }, or { name, replaced, error }
- * when there is nothing to run.
+ * labels, agent, session, mode: "resume" | "fresh", resume, argv, agySettings (the file to write
+ * first, or null), note }, or { name, replaced, error } when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents, fresh = null }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
   // A worker's worktree first (the ledger's), then the pane's folder, then its program's.
@@ -386,8 +402,9 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
   const labels = { ...(get?.labels ?? {}) };
   const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null);
   const template = worker?.template ?? labels[WORKER_TEMPLATE_LABEL] ?? get?.template ?? null;
+  const isWorker = Boolean(worker || labels[WORKER_OF_LABEL]);
   let command = null;
-  if (!template && (worker || labels[WORKER_OF_LABEL]) && agent && agents[agent]?.run?.length) {
+  if (!template && isWorker && agent && agents[agent]?.run?.length) {
     const model = worker?.model ?? labels[WORKER_MODEL_LABEL] ?? null;
     const effort = worker?.effort ?? labels[WORKER_EFFORT_LABEL] ?? null;
     // Its Antigravity mode from the pane's label (a worker writes one only when not auto); an
@@ -404,17 +421,26 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
   if (!command || !cwd) {
     return { name, replaced, error: `${replaced} can't be run again: hc gave ${cwd ? "no command this pack can reuse" : "no folder"} for it` };
   }
+  // A command that a person's own launch gave may carry an older permission file; this one names
+  // the file for this launch (or none).
+  if (command.shell === undefined) command = { argv: withoutAgySettings(agent, command.argv) };
+  let settings = agy?.bot && agent === "antigravity"
+    ? agySettingsPlan({ bot: agy.bot, scope: isWorker ? "worker" : "helper",
+      role: worker?.role ?? labels[WORKER_ROLE_LABEL] ?? "dev", folder: cwd, appHomeDir: agy.appHomeDir })
+    : null;
+  const settingsWords = agySettingsArgs(agent, settings?.path);
   const id = agent ? sessionFor(agent, session) : null;
   let resume = fresh ? null : agent && canResume(agent) ? resumeArgs(agent, id) : null;
   let note = fresh ?? (resume ? null : agent ? `${agent} has no resume this pack knows` : "its agent isn't one this pack knows");
-  let argv = commandArgv(command, resume ?? []);
+  let argv = commandArgv(command, [...settingsWords, ...(resume ?? [])]);
   if (!argv) {
     resume = null;
-    note = "its command ends in a separator or a comment, so it can't take resume words";
+    note = `its command ends in a separator or a comment, so it can't take resume words${settingsWords.length ? ` or its Antigravity permission list` : ""}`;
+    settings = null;
     argv = commandArgv(command);
   }
   return { name, replaced, cwd, labels, agent, session: resume && resumesById(agent) ? id : null, mode: resume ? "resume" : "fresh",
-    resume: resume ?? [], argv, note };
+    resume: resume ?? [], argv, agySettings: settings, note };
 }
 
 /**

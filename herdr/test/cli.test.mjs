@@ -5,20 +5,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
-import { withoutBriefing } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
 const strip = (words) => withoutBriefing("codex", withoutBriefing("claude", words));
 const plain = (argv) => { const i = argv.indexOf("--"); return i < 0 ? strip(argv) : [...argv.slice(0, i + 1), ...strip(argv.slice(i + 1))]; };
+// #823: an Antigravity launch's own permission file, and its words without those two.
+const agySettingsPath = (s, botId, tail = "seat") => join(s.app, "automagik-herdr/agy-settings", `${botId}-${tail}.json`);
+const withoutSettings = (words) => {
+  const i = words.indexOf("--settings");
+  return i < 0 ? words : [...words.slice(0, i), ...words.slice(i + 2)];
+};
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 import { readJsonLines } from "./log-lines.mjs";
 
@@ -670,7 +676,8 @@ test("Antigravity (#793): a pin already in the cache starts without running agy,
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.agyCalls(), [], "a cached pin never refreshes, old cache and all");
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--mode", "auto", "--model", "gemini-4-argon-high"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))),
+    ["agy", "--settings", agySettingsPath(s, ID.main), "--mode", "auto", "--model", "gemini-4-argon-high"]);
   // The pin is not in the old cache: one refresh, then the refusal names the list it found.
   const s2 = scene(t);
   const f2 = team();
@@ -708,7 +715,7 @@ test("Antigravity #812: start and restart pass --mode auto by default and the ch
   auto.seed(plainBot);
   const started = auto.cli(["start", "Genie"]);
   assert.equal(started.code, 0, started.err);
-  assert.deepEqual(plain(agentWords(runCall(auto.calls()))), ["agy", "--mode", "auto"]);
+  assert.deepEqual(plain(agentWords(runCall(auto.calls()))), ["agy", "--settings", agySettingsPath(auto, ID.main), "--mode", "auto"]);
 
   const s = scene(t);
   const chosen = team();
@@ -716,11 +723,11 @@ test("Antigravity #812: start and restart pass --mode auto by default and the ch
   chosen.bots[0].agyMode = "plan";
   s.seed(chosen);
   assert.equal(s.cli(["start", "Genie"]).code, 0);
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--mode", "plan"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--settings", agySettingsPath(s, ID.main), "--mode", "plan"]);
   const restarted = s.cli(["restart", "Genie", "--force", "--json"]);
   assert.equal(restarted.code, 0, restarted.err);
   const second = s.calls().filter((c) => c[0] === "run")[1];
-  assert.deepEqual(plain(agentWords(second)), ["agy", "--mode", "plan", "--continue"]);
+  assert.deepEqual(plain(agentWords(second)), ["agy", "--settings", agySettingsPath(s, ID.main), "--mode", "plan", "--continue"]);
   assert.deepEqual([restarted.json().mode, restarted.json().note], ["resume", null]);
 
   const bad = scene(t);
@@ -753,7 +760,117 @@ test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doct
   assert.match(s.cli(["show", "Ag"]).out, /agy mode     auto/);
   const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
   const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${saved.id}`);
-  assert.match(row.detail, /Ag: agy mode auto; hcProxy /);
+  assert.match(row.detail, /Ag: agy mode auto; agy allow /);
+  assert.match(row.detail, /agy deny .*command\(git push --force\)/);
+});
+
+test("Antigravity #823: start and restart write a private permission file and pass --settings; the roster adds rules", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].agyPermissions = { allow: ["command(npm publish)"], deny: ["command(git stash)"] };
+  s.seed(f);
+  const started = s.cli(["start", "Genie"]);
+  assert.equal(started.code, 0, started.err);
+  const path = agySettingsPath(s, ID.main);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--settings", path, "--mode", "auto"]);
+  assert.equal(statSync(path).mode & 0o777, 0o600, "the launch's file is private");
+  assert.equal(statSync(join(s.app, "automagik-herdr/agy-settings")).mode & 0o777, 0o700, "in a private folder");
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  assert.ok(data.permissions.allow.includes("command(hc)"));
+  assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's allow is added");
+  assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "a bot writes in its project");
+  assert.equal(data.permissions.allow.some((r) => r.startsWith("write_file(") && !r.endsWith(`${s.project})`)), false,
+    "and nowhere else");
+  for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule), `fixed deny ${rule}`);
+  assert.ok(data.permissions.deny.includes("command(git stash)"), "the roster's deny is added");
+  // Restart: the same file, rewritten from the source as it is now, and resumed with it.
+  f.bots[0].agyPermissions = { allow: ["command(npm publish)", "command(bun publish)"], deny: [] };
+  s.seed(f);
+  const restarted = s.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(restarted.code, 0, restarted.err);
+  assert.deepEqual([restarted.json().mode, restarted.json().note], ["resume", null]);
+  const second = s.calls().filter((c) => c[0] === "run")[1];
+  assert.deepEqual(plain(agentWords(second)), ["agy", "--settings", path, "--mode", "auto", "--continue"]);
+  const again = JSON.parse(readFileSync(path, "utf8"));
+  assert.ok(again.permissions.allow.includes("command(bun publish)"));
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  for (const rule of AGY_FIXED_DENY) assert.ok(again.permissions.deny.includes(rule));
+});
+
+test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty value, and show, ls and doctor print the lists", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const made = s.cli(["create", "--name", "Ag", "--agent", "antigravity", "--agy-allow", "command(npm publish)",
+    "--agy-allow", "command(hc)", "--agy-deny", "command(git stash)", "--json"]);
+  assert.equal(made.code, 0, made.err);
+  const saved = s.bots().bots.find((b) => b.id === made.json().id);
+  assert.deepEqual(saved.agyPermissions, { allow: ["command(npm publish)", "command(hc)"], deny: ["command(git stash)"] });
+  const show = s.cli(["show", "Ag"]).out;
+  assert.match(show, /agy allow .*command\(hc\)/);
+  assert.match(show, /agy allow .*command\(npm publish\)/);
+  assert.match(show, /agy deny .*command\(git stash\)/);
+  assert.match(show, /agy deny .*command\(git push --force\)/, "the fixed denies are shown too");
+  assert.match(s.cli(["ls"]).out, /agy-allow \d+ deny \d+/);
+  // Given values replace that list; one empty value clears it.
+  assert.equal(s.cli(["edit", "Ag", "--agy-allow", "command(bun)"]).code, 0);
+  assert.deepEqual(s.bots().bots.find((b) => b.name === "Ag").agyPermissions.allow, ["command(bun)"]);
+  assert.equal(s.cli(["edit", "Ag", "--agy-deny="]).code, 0);
+  assert.deepEqual(s.bots().bots.find((b) => b.name === "Ag").agyPermissions, { allow: ["command(bun)"], deny: [] });
+  assert.equal(s.cli(["edit", "Ag", "--no-agy-permissions"]).code, 0);
+  assert.equal(s.bots().bots.find((b) => b.name === "Ag").agyPermissions, undefined);
+  // Junk is refused by name, and nothing is saved.
+  const before = readFileSync(s.botsPath, "utf8");
+  const bad = s.cli(["edit", "Ag", "--agy-allow", "nope"]);
+  assert.equal(bad.code, 2);
+  assert.match(bad.err, /--agy-allow: "nope" isn't a rule \(command\(\.\.\.\) or write_file\(\.\.\.\)\)/);
+  assert.equal(readFileSync(s.botsPath, "utf8"), before, "nothing was saved");
+  assert.equal(s.cli(["edit", "Ag", "--agy-allow", "write_file(rel)"]).code, 2);
+  // Doctor: the effective lists per bot, and the host's sandbox row.
+  assert.equal(s.cli(["edit", "Ag", "--agy-allow", "command(npm publish)"]).code, 0);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
+  const row = doctor.checks.find((c) => c.check === `hc-proxy:${saved.id}`);
+  assert.ok(row.agyPermissions.allow.includes("command(npm publish)"));
+  assert.ok(row.agyPermissions.allow.includes(`write_file(${s.project})`));
+  for (const rule of AGY_FIXED_DENY) assert.ok(row.agyPermissions.deny.includes(rule));
+  const sandbox = doctor.checks.find((c) => c.check === "agy-sandbox");
+  assert.ok(sandbox, "a host-level sandbox row when a bot runs agy");
+  assert.equal(sandbox.ok, true);
+  if (process.platform !== "linux" && process.platform !== "darwin") assert.match(sandbox.detail, /isn't one agy's terminal sandbox is known on/);
+  assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
+});
+
+test("Antigravity #823: restart --tree writes the permission file of a worker helper and resumes it with it", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  s.seed(f);
+  const old = term("t5", { bot: ID.main, cwd: s.project, argv: ["agy"], app: "antigravity" });
+  old.foreground = { argv: ["agy", "--mode", "auto"], cwd: s.project, pid: 1 };
+  old.labels = { ...old.labels, role: "main", "agent.session": SID };
+  const wt = join(s.root, "proj.worktrees", "fix-823");
+  mkdirSync(wt, { recursive: true });
+  const worker = { ...term("t7", { argv: ["agy", "--mode", "auto", "-i", "do the task"], app: "antigravity", cwd: wt, parent: "t5" }),
+    name: "fix-823-dev", die_with_parent: true,
+    argv: ["agy", "--mode", "auto", "-i", "do the task"],
+    labels: { "worker.of": ID.main, branch: "fix/823", "worker.role": "dev" } };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old, worker], next: 100 }));
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(ledgerPath(s.app), `${JSON.stringify({ event: "start", kind: "worker", terminal: "t7", pid: 1, botId: ID.main,
+    task: "fix-823", branch: "fix/823", project: s.project, lead: ID.main, worktree: wt, agent: "antigravity", role: "dev" })}\n`);
+  const r = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const runs = s.calls().filter((c) => c[0] === "run");
+  assert.equal(runs.length, 2, "the bot and its helper");
+  const seatPath = agySettingsPath(s, ID.main);
+  const helperPath = agySettingsFile(s.app, ID.main, "worker", "dev", wt);
+  assert.deepEqual(plain(agentWords(runs[0])), ["agy", "--settings", seatPath, "--mode", "auto", "--conversation", SID]);
+  assert.deepEqual(plain(agentWords(runs[1])), ["agy", "--mode", "auto", "--settings", helperPath, "--continue"]);
+  assert.equal(statSync(helperPath).mode & 0o777, 0o600);
+  const data = JSON.parse(readFileSync(helperPath, "utf8"));
+  assert.ok(data.permissions.allow.includes(`write_file(${wt})`), "the helper writes in its worktree");
+  assert.ok(!data.permissions.allow.includes(`write_file(${s.project})`), "not in the project");
+  for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
 });
 
 // ---- edit, rm, category ----
@@ -2247,12 +2364,12 @@ test("restart (#328 review): agy's --continue isn't limited to the folder, so an
   assert.equal(r.json().mode, "fresh", r.err);
   assert.equal(r.json().note, "no Antigravity session id is known for t5, and Captain (t9) also runs Antigravity, so --continue could resume theirs "
     + "instead of Genie's (Antigravity's --continue isn't limited to one folder)");
-  assert.deepEqual(ownWords(runCall(s.calls())), ["agy", "--mode", "auto"]);
+  assert.deepEqual(ownWords(runCall(s.calls())), ["agy", "--settings", agySettingsPath(s, ID.main), "--mode", "auto"]);
   // Alone on agy: --continue, as before.
   const alone = shareScene(t, "antigravity", { captain: { argv: ["codex"], app: "codex", cwd: "/elsewhere" } });
   const a = alone.cli(["restart", "Genie", "--json"]);
   assert.equal(a.json().mode, "resume", a.err);
-  assert.deepEqual(ownWords(runCall(alone.calls())), ["agy", "--mode", "auto", "--continue"]);
+  assert.deepEqual(ownWords(runCall(alone.calls())), ["agy", "--settings", agySettingsPath(alone, ID.main), "--mode", "auto", "--continue"]);
 });
 
 test("restart (#328 review): a ledger session row from an earlier pane at a reused address is never resumed", (t) => {

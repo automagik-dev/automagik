@@ -34,7 +34,7 @@ import { pathToFileURL } from "node:url";
 import { readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { AGY_MODE_DEFAULT } from "./models.js";
+import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsFile } from "./models.js";
 import { commandArgv } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
@@ -268,6 +268,14 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
   if (typeof task !== "string" || /^\s*-/.test(task) || task.includes("\0")) {
     return "approved worker task must be one text word that is not an option";
   }
+  const labels = p.labels;
+  // The permission file an Antigravity worker reads is deterministic from the approved data
+  // (the bot, its role and the worktree), so the plan and the argv name the same file (#823).
+  let agySettingsPath = null;
+  const agyFileFor = () => {
+    if (!snapshot.appHome || !bot?.id) return null;
+    return agySettingsFile(snapshot.appHome, bot.id, "worker", labels["worker.role"] ?? "dev", p.cwd);
+  };
   let templateArgv = null;
   let login = [];
   if (plan.template) {
@@ -275,15 +283,21 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     if (!template || typeof template.command !== "string" || !template.command.trim()) {
       return `approved worker template ${plan.template} is not available from the core`;
     }
-    if (templateAgent(template.command) === "claude") {
+    const runs = templateAgent(template.command);
+    if (runs === "claude") {
       templateArgv = commandArgv({ shell: template.command }, [task]);
       if (!templateArgv) return `approved worker template ${plan.template} cannot take a task`;
       login = ["-u", "CLAUDE_CONFIG_DIR"];
+    } else if (runs === "antigravity") {
+      agySettingsPath = agyFileFor();
+      templateArgv = commandArgv({ shell: template.command }, [...agySettingsArgs("antigravity", agySettingsPath), task]);
+      if (!templateArgv) return `approved worker template ${plan.template} cannot take a task and its permission list`;
     }
   } else if (plan.agent === "claude") {
     login = ["-u", "CLAUDE_CONFIG_DIR"];
+  } else if (plan.agent === "antigravity") {
+    agySettingsPath = agyFileFor();
   }
-  const labels = p.labels;
   // A chosen Antigravity mode is a worker label; auto is the default, so it has none (workers.js
   // workerArgs writes the label only when it isn't auto), and the label must name the approved mode.
   const agyModeLabel = plan.agyMode && plan.agyMode !== AGY_MODE_DEFAULT ? plan.agyMode : null;
@@ -296,7 +310,7 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: plan.argv,
     task, template: plan.template, templateArgv, login, path: snapshot.path,
     taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
-    space: labels["herdr.space"] });
+    space: labels["herdr.space"], agySettingsPath });
   const expected = plan.template && !templateArgv ? args.slice(-2)
     : args.slice(args.indexOf("--") + 1);
   if (!Array.isArray(p.argv) || p.argv.length !== expected.length

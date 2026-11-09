@@ -20,6 +20,7 @@ import { approveProject, recordFileOf, sha256Of } from "../mods/am-sidebar/appro
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
 import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { commandArgv } from "../mods/am-sidebar/restart.js";
+import { agySettingsArgs, agySettingsFile } from "../mods/am-sidebar/models.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1214,6 +1215,7 @@ async function approvedWorkerScene(t, worker) {
   fake.state.templates = [
     { name: "dev-sol", command: "codex --model chosen", description: "Approved", body: "Work" },
     { name: "review-sol", command: "claude --model chosen", description: "Other", body: "Review" },
+    { name: "agy-sol", command: "agy --mode auto", description: "Antigravity", body: "Ag" },
   ];
   const proxy = await start("t100", { caller: { bot: ID.dev, project: s.project }, bound: true });
   const client = await clientFor(proxy.socket);
@@ -1224,13 +1226,17 @@ async function approvedWorkerScene(t, worker) {
 function approvedParams(s, worker, templateCommand = null) {
   const plan = workerPlan({ agent: "dsh-tui", worker });
   const task = "do the task";
-  const claude = plan.agent === "claude"
-    || (templateCommand && templateAgent(templateCommand) === "claude");
+  const runs = plan.agent ?? (templateCommand ? templateAgent(templateCommand) : null);
+  const claude = runs === "claude";
+  // #823: the deterministic permission file an approved Antigravity worker's argv names.
+  const agySettingsPath = runs === "antigravity" ? agySettingsFile(s.app, ID.dev, "worker", "dev", s.worktree) : null;
   const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one",
     cwd: s.worktree, parent: "t100", ...plan, task, path: s.env.PATH,
     project: s.project, taskId: "gn-1", lead: ID.dev,
-    login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [],
-    templateArgv: plan.template && claude ? commandArgv({ shell: templateCommand }, [task]) : null });
+    login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [], agySettingsPath,
+    templateArgv: plan.template && runs === "claude" ? commandArgv({ shell: templateCommand }, [task])
+      : plan.template && runs === "antigravity" ? commandArgv({ shell: templateCommand }, [...agySettingsArgs("antigravity", agySettingsPath), task])
+        : null });
   const labels = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--label") {
@@ -1238,17 +1244,18 @@ function approvedParams(s, worker, templateCommand = null) {
       labels[key] = value.join("=");
     }
   }
-  return runParams(s, { argv: plan.template && !claude ? args.slice(-2)
+  return runParams(s, { argv: plan.template && !claude && !agySettingsPath ? args.slice(-2)
     : args.slice(args.indexOf("--") + 1), labels, env: {} });
 }
 
 for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
-  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" },
+  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }, { template: "agy-sol" },
   { agent: "antigravity", agyMode: "auto" }, { agent: "antigravity", agyMode: "accept-edits" },
   { agent: "antigravity", agyMode: "plan" }]) {
   test(`approved worker allows named ${worker.template ?? `${worker.agent} (${worker.agyMode ?? "default"})`} with today's identity`, async (t) => {
     const { s, client, fake } = await approvedWorkerScene(t, worker);
-    const params = approvedParams(s, worker, fake.state.templates[0].command);
+    const template = worker.template ? fake.state.templates.find((row) => row.name === worker.template).command : null;
+    const params = approvedParams(s, worker, template);
     const answer = await client.call("terminal.run", params);
     assert.ok(answer.result, JSON.stringify(answer));
     const forwarded = fake.calls("terminal.run").at(-1).params;
@@ -1264,6 +1271,19 @@ for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
     assert.equal(fake.calls("terminal.run").length, 1);
   });
 }
+
+test("approved Antigravity worker names the deterministic permission file; a forged path is refused", async (t) => {
+  const worker = { agent: "antigravity", agyMode: "auto" };
+  const { s, client } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  const at = params.argv.indexOf("--settings");
+  assert.ok(at > 0, JSON.stringify(params.argv));
+  assert.equal(params.argv[at + 1], agySettingsFile(s.app, ID.dev, "worker", "dev", s.worktree));
+  const forged = { ...params, argv: params.argv.map((word, i) => (i === at + 1 ? join(s.root, "other.json") : word)) };
+  const answer = await client.call("terminal.run", forged);
+  assert.ok(answer.error, "another settings file is not the approved plan");
+  assert.match(answer.error.message, /approved worker argv refused: does not match approved agent antigravity exactly/);
+});
 
 test("approved Antigravity worker refuses a worker.agyMode label that does not match the approved mode", async (t) => {
   for (const [approved, wrong] of [["plan", "accept-edits"], ["accept-edits", "plan"], ["auto", "plan"]]) {

@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
+import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agySettingsArgs, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
   promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -318,14 +318,16 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * (`templateArgv`, `sh -c '<command> "$@"' sh <task>`, as Restart re-runs a template) under
  * `/usr/bin/env <login words>`, its template label kept. `agyMode`: an Antigravity worker's
  * execution mode (auto by default), written in the `worker.agyMode` label only when it isn't
- * auto, so Restart --tree runs it with the same mode. `agent` `dsh-tui`: the pack's
+ * auto, so Restart --tree runs it with the same mode. `agySettingsPath`: the permission file an
+ * Antigravity worker reads (`--settings`, models.js agySettings*), so its task argv carries it;
+ * null for every other agent, whose task argv is as it was. `agent` `dsh-tui`: the pack's
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
  * boundary (#624, #628, #631). `sandbox`: a dsh-tui worker runs behind the per-pane hc proxy
  * (hcPane.mjs) before DSH starts; `project` is the main checkout the proxy snapshots (omitted:
  * the helper finds the project above the worktree).
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, agyMode, argv, task, template, path,
-  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null }) {
+  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null, agySettingsPath = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -348,7 +350,7 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
   const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
-  const taskArgv = [...argv, ...promptArgs(agent, task)];
+  const taskArgv = [...argv, ...agySettingsArgs(agent, agySettingsPath), ...promptArgs(agent, task)];
   const launchArgv = sandboxRoot ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot: sandboxRoot }) : taskArgv;
   return [...args, "--parent", parent, "--", ...env, ...launchArgv];
 }

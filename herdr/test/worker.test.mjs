@@ -5,14 +5,14 @@ import net from "node:net";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -494,7 +494,9 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const s = scene(t, { file: auto });
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "-i", "fix the login form"]);
+  const cwdOf = (run) => run[run.indexOf("--cwd") + 1];
+  assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "--settings",
+    agySettingsFile(s.app, ID.dev, "worker", "dev", cwdOf(s.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r.json().agyMode, "auto");
   assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("worker.agyMode=")), false, "the default isn't a label");
 
@@ -503,7 +505,8 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const s2 = scene(t, { file: chosen });
   const r2 = s2.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r2.code, 0, r2.err);
-  assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "-i", "fix the login form"]);
+  assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "--settings",
+    agySettingsFile(s2.app, ID.dev, "worker", "dev", cwdOf(s2.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r2.json().agyMode, "plan");
   assert.ok(labelsOf(s2.runs()[0]).includes("worker.agyMode=plan"));
 
@@ -515,6 +518,63 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   assert.match(r3.err, /Dev's workers: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
   assert.match(r3.err, /--worker-agy-mode <accept-edits\|auto\|plan>/);
   assert.equal(s3.runs().length, 0, "nothing started");
+});
+
+test("worker #823: an Antigravity worker writes its 0600 permission file (its worktree, the roster's rules), a review worker a read-only one", (t) => {
+  const f = team();
+  f.bots[2].worker = { agent: "antigravity" };
+  f.bots[2].agyPermissions = { allow: ["command(npm publish)"], deny: ["command(git stash)"] };
+  const s = scene(t, { file: f });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const cwd = run[run.indexOf("--cwd") + 1];
+  const path = agySettingsFile(s.app, ID.dev, "worker", "dev", cwd);
+  assert.ok(after(run).includes(path), "the task argv carries the file");
+  assert.equal(statSync(path).mode & 0o777, 0o600, "private");
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  assert.ok(data.permissions.allow.includes(`write_file(${cwd})`), "it writes in its worktree");
+  assert.equal(data.permissions.allow.some((rule) => rule.startsWith("write_file(") && rule !== `write_file(${cwd})`), false);
+  assert.ok(data.permissions.allow.includes("command(npm publish)"), "the bot's roster reaches its worker");
+  assert.ok(data.permissions.deny.includes("command(git stash)"));
+  for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
+  // A reviewer runs on another branch's worktree: no write_file and no writer shell of its own.
+  const g = team();
+  g.bots[2].worker = { agent: "antigravity" };
+  const s2 = scene(t, { file: g });
+  const r2 = s2.cli(["worker", "review the login form", "--branch", "feat/agy-review", "--role", "review", "--json"]);
+  assert.equal(r2.code, 0, r2.err);
+  const run2 = s2.runs()[0];
+  const cwd2 = run2[run2.indexOf("--cwd") + 1];
+  const path2 = agySettingsFile(s2.app, ID.dev, "worker", "review", cwd2);
+  assert.ok(after(run2).includes(path2));
+  const review = JSON.parse(readFileSync(path2, "utf8"));
+  assert.equal(review.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "a review worker writes nothing");
+  assert.equal(review.permissions.allow.includes("command(git)"), false, "no writer shell at all");
+  assert.ok(review.permissions.allow.includes("command(git diff)"));
+});
+
+test("worker #823: a template that runs agy is rebuilt with --settings and its task, or says it can't take the list", (t) => {
+  const f = team();
+  f.bots[2].worker = { template: "agy-work" };
+  const s = scene(t, { file: f, templates: [...TEMPLATES, { name: "agy-work", command: "agy --mode auto" },
+    { name: "agy-stuck", command: "agy --mode auto; # no words" }] });
+  const r = s.cli(["worker", "do the task", "--branch", "feat/agy", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const cwd = run[run.indexOf("--cwd") + 1];
+  const path = agySettingsFile(s.app, ID.dev, "worker", "dev", cwd);
+  assert.deepEqual(runArgv(run), ["/usr/bin/env", "sh", "-c", 'agy --mode auto "$@"', "sh", "--settings", path, "do the task"]);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.ok(JSON.parse(readFileSync(path, "utf8")).permissions.allow.includes(`write_file(${cwd})`));
+  // One that can't take words runs through hc's template form without a list, with a plain warning.
+  const g = team();
+  g.bots[2].worker = { template: "agy-stuck" };
+  const s2 = scene(t, { file: g, templates: [...TEMPLATES, { name: "agy-stuck", command: "agy --mode auto; # no words" }] });
+  const r2 = s2.cli(["worker", "do the task", "--branch", "feat/agy", "--json"]);
+  assert.equal(r2.code, 0, r2.err);
+  assert.deepEqual(templateArgv(s2.runs()[0]), ["agy-stuck", "do the task"], "hc's template form, no words");
+  assert.match(r2.json().warnings.join("\n"), /template agy-stuck ends in a separator or a comment, so its Antigravity permission list can't be added/);
 });
 
 test("worker: a bot's space label the window no longer has is left out; a moved bot pane's space is used", (t) => {
