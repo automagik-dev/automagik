@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use common::*;
 use meter::event::Tokens;
-use meter::sync::{self, Outcome};
+use meter::sync::Outcome;
 
 const TS: &str = "2026-01-15T10:15:00.000Z";
 
@@ -287,6 +287,7 @@ fn a_rewrite_after_a_long_history_is_not_double_counted() {
 
 #[test]
 fn budget_stop_resumes_without_double_counting() {
+    let _serial = serial();
     let env = Env::new();
     let want = big_fixture(&env, 3, 40, TS);
     let mut o = env.opts();
@@ -296,7 +297,7 @@ fn budget_stop_resumes_without_double_counting() {
     let mut runs = 0;
     loop {
         runs += 1;
-        let r = match sync::run(&o).unwrap() {
+        let r = match env.sync(&o) {
             Outcome::Ran(r) => r,
             other => panic!("a run with pending bytes must not be skipped as fresh: {other:?}"),
         };
@@ -314,7 +315,7 @@ fn budget_stop_resumes_without_double_counting() {
     assert!(runs > 3, "the limit should have sliced the import");
     assert_eq!(env.totals()["model-a"], want);
     // Complete and fresh now: the next run does nothing.
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Fresh { .. }));
+    assert!(matches!(env.sync(&o), Outcome::Fresh { .. }));
 }
 
 #[test]
@@ -528,18 +529,19 @@ fn no_prompt_text_titles_or_secrets_reach_the_store_or_the_doc() {
 
 #[test]
 fn single_flight_and_staleness() {
+    let _serial = serial();
     let env = Env::new();
     let f = env.claude("-work-app/sess-1.jsonl");
     write_lines(&f, &[claude_line("msg_1", "req_1", TS, "model-a", &U1, 0)]);
     let mut o = env.opts();
     o.force = false;
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Ran(_)));
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Fresh { .. }));
+    assert!(matches!(env.sync(&o), Outcome::Ran(_)));
+    assert!(matches!(env.sync(&o), Outcome::Fresh { .. }));
     o.now_ms += 11 * 60 * 1000;
     let held = meter::paths::try_lock(&env.state()).unwrap().unwrap();
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Locked));
+    assert!(matches!(env.sync(&o), Outcome::Locked));
     drop(held);
-    assert!(matches!(sync::run(&o).unwrap(), Outcome::Ran(_)));
+    assert!(matches!(env.sync(&o), Outcome::Ran(_)));
 }
 
 #[test]
@@ -654,4 +656,44 @@ fn a_chunk_commits_its_rows_keys_and_offset_together() {
         .unwrap();
     assert_eq!((h.events, h.duplicates), (0, 1));
     assert_eq!(store.rows_since(i64::MIN).unwrap()[0].tokens, U1.tokens());
+}
+
+/// The Reviewer's Low L4 on upstream PR 7: a child a sibling test spawns shares every open file
+/// of this process, the sync lock included, from its fork until its exec (close-on-exec acts only
+/// at the exec). A lock dropped in that window still looks held, and the next sync reports Locked.
+/// Every spawn and every lock a test takes in one binary runs under `serial()`, so no child is
+/// between its fork and its exec while a lock is dropped and taken again. Here a child is held
+/// in that window for 300 ms, right after the lock is taken.
+#[cfg(unix)]
+#[test]
+fn a_lock_dropped_beside_a_spawning_test_is_free_again() {
+    use std::os::unix::process::CommandExt;
+    use std::sync::mpsc::channel;
+    let env = Env::new();
+    meter::paths::ensure_dir(&env.state()).unwrap();
+    let (go, wait) = channel::<()>();
+    let spawner = std::thread::spawn(move || {
+        wait.recv().unwrap();
+        let _serial = serial();
+        let mut c = std::process::Command::new("true");
+        // SAFETY: the hook only sleeps (nanosleep is async-signal-safe).
+        unsafe {
+            c.pre_exec(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                Ok(())
+            });
+        }
+        c.status().unwrap();
+    });
+    let held = {
+        let _serial = serial();
+        let held = meter::paths::try_lock(&env.state()).unwrap().unwrap();
+        go.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(held);
+        meter::paths::try_lock(&env.state()).unwrap()
+    };
+    assert!(held.is_some(), "a dropped lock is free again");
+    drop(held);
+    spawner.join().unwrap();
 }

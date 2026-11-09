@@ -395,14 +395,17 @@ fn a_state_database_of_another_shape_is_unsupported_not_zero() {
     let cx = Codex::with_columns(&env, &COLUMNS.replace("git_origin_url TEXT,", ""));
     let f = cx.rollout("t-1");
     write_lines(&f, &[tc("2026-01-15T09:10:00Z", 1000, 800, 100, 40)]);
+    fs::create_dir_all(env.home().join(".claude/projects")).unwrap();
     let r = env.run(&env.opts());
     let doc = r.summary.unwrap();
     let codex = &doc["sources"]["codex"];
     assert_eq!(codex["status"], "unsupported");
     assert_eq!(codex["reason"], "threads lacks git_origin_url");
     assert!(codex_rows(&env).is_empty());
-    // The other harnesses are unaffected.
+    // The other harnesses are unaffected; one with no log folder is absent, with no success.
     assert_eq!(doc["sources"]["claude-code"]["status"], "ok");
+    assert_eq!(doc["sources"]["omp"]["status"], "absent");
+    assert!(doc["sources"]["omp"]["last_success"].is_null());
 }
 
 #[test]

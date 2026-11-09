@@ -11,10 +11,7 @@
   },
   "generated_at": "2026-11-08T20:00:05Z",
   "as_of": null,
-  "machine": {
-    "id": "machine-a1b2c3",
-    "scope": "local"
-  },
+  "machine": null,
   "store": null,
   "ingestion": null,
   "window": null,

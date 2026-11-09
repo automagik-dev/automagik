@@ -814,6 +814,72 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
     Ok(m)
 }
 
+/// Whether the old default directory holds usage the store in `new` never counts: an older
+/// meter wrote to the generation a move left there (a database unit file whose length differs
+/// from the move's snapshot, one that is newer than the move's marker, or a sidecar the snapshot
+/// did not have), or the old directory holds a store of its own (no finished move's marker names
+/// it). Looks with `stat` and one small marker read: it opens no database and changes nothing.
+/// The query and `status` report the reason; they never fold that store in.
+pub fn stray_legacy_store(old: &Path, new: &Path) -> Option<&'static str> {
+    if old == new || same_dir(old, new) {
+        return None;
+    }
+    let db = old.join("meter.db").symlink_metadata().ok()?;
+    if !db.is_file() || db.len() == 0 {
+        return None;
+    }
+    let moved = new.join(MOVED);
+    match read_snapshot(&moved) {
+        Ok(Marker::Valid(s)) => {
+            let since = moved.symlink_metadata().and_then(|m| m.modified()).ok();
+            let changed = DB_UNIT.iter().any(|f| {
+                let Ok(m) = old.join(f).symlink_metadata() else {
+                    return false;
+                };
+                match s.files.get(*f) {
+                    None => m.len() > 0,
+                    Some(want) => {
+                        m.len() != want.len
+                            || since
+                                .zip(m.modified().ok())
+                                .is_some_and(|(marker, file)| file > marker)
+                    }
+                }
+            });
+            changed.then_some(
+                "an older meter wrote to the store in the old state folder after the move; that \
+                 usage is not counted here",
+            )
+        }
+        _ => Some(
+            "the old state folder holds a store of its own, which an older meter may still write \
+             to; that usage is not counted here",
+        ),
+    }
+}
+
+/// Bytes free for an unprivileged writer on the filesystem holding `dir`.
+#[cfg(unix)]
+pub fn free_bytes(dir: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes())
+        .map_err(|_| io::Error::other("the path holds a NUL byte"))?;
+    // SAFETY: `c` is a valid NUL-terminated path and `st` a properly sized, writable statvfs.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // The field types differ by OS (u32 on macOS, u64 on Linux).
+    #[allow(clippy::unnecessary_cast)]
+    let (avail, frsize) = (st.f_bavail as u64, st.f_frsize as u64);
+    Ok(avail.saturating_mul(frsize))
+}
+
+#[cfg(not(unix))]
+pub fn free_bytes(_: &Path) -> io::Result<u64> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1132,28 @@ mod tests {
         assert_eq!(names, ["remove free=false", "remove free=false"]);
         assert!(!exists(&old.join("meter.db")) && !exists(&old.join("meter.db-wal")));
         assert!(!exists(&new.join(MOVED)) && !exists(&old.join("meter.lock")));
+    }
+
+    /// The Reviewer's Low L3 on upstream PR 7: the old copies go sidecars first and `meter.db`
+    /// last, so an older meter that opens the old folder mid-removal never finds a database
+    /// beside another generation's wal.
+    #[test]
+    fn the_old_copies_go_sidecars_first_and_the_database_last() {
+        let t = tempfile::tempdir().unwrap();
+        let (old, new) = (t.path().join("old"), t.path().join("new"));
+        fs::create_dir_all(&old).unwrap();
+        ensure_dir(&new).unwrap();
+        for f in DB_UNIT {
+            fs::write(old.join(f), f.as_bytes()).unwrap();
+        }
+        migrate(&old, &new).unwrap();
+        let ((), seen) = with_steps(record, || drop_old_generation(&old, &new).unwrap());
+        let removed: Vec<String> = seen
+            .iter()
+            .filter(|(w, _)| w == "remove")
+            .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(removed, ["meter.db-wal", "meter.db-shm", "meter.db"]);
     }
 
     #[test]

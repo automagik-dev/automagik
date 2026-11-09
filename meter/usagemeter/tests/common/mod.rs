@@ -1,6 +1,8 @@
 //! Synthetic fixtures only: every id, path, model and number here is made up.
 #![allow(dead_code)]
 
+pub mod schema;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -12,6 +14,35 @@ use meter::store::Store;
 use meter::sync::{self, Options, Outcome, Report};
 
 pub const NOW: &str = "2026-01-15T12:00:00Z";
+
+/// One test at a time past this point, within one test binary. Hold it around every process a
+/// test spawns and around every sync or lock a test takes ([`Env::run`] takes it itself): std
+/// opens files close-on-exec, but a child between its fork and its exec still shares the
+/// parent's open lock, so a lock a test dropped can look held to the next sync (see
+/// `meter::paths::try_lock`). A thread that already holds it takes it again for free.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HELD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+pub struct Serial(Option<std::sync::MutexGuard<'static, ()>>);
+
+impl Drop for Serial {
+    fn drop(&mut self) {
+        HELD.with(|h| h.set(h.get() - 1));
+    }
+}
+
+pub fn serial() -> Serial {
+    let guard = if HELD.with(|h| h.get()) > 0 {
+        None
+    } else {
+        Some(SERIAL.lock().unwrap_or_else(|e| e.into_inner()))
+    };
+    HELD.with(|h| h.set(h.get() + 1));
+    Serial(guard)
+}
 
 pub fn now() -> i64 {
     meter::time::parse_rfc3339(NOW).unwrap()
@@ -84,8 +115,43 @@ impl Env {
         o
     }
 
+    /// `o` with every harness root outside this test's temp folder moved under the temp home, as
+    /// [`Env::opts`] sets them: an `Options` built by hand (`Options::new` reads `DSH_HOME`,
+    /// `CODEX_HOME` and `CLAUDE_CONFIG_DIR`) can never read the machine's own sessions. A root
+    /// a test points inside its temp folder on purpose is kept.
+    pub fn hermetic(&self, o: &Options) -> Options {
+        let mut o = o.clone();
+        let inside = |p: &Path| p.starts_with(self.dir.path());
+        let home = self.home();
+        for (root, default) in [
+            (&mut o.omp_root, home.join(".omp/agent/sessions")),
+            (&mut o.claude_root, home.join(".claude/projects")),
+            (&mut o.codex_home, home.join(".codex")),
+            (&mut o.dsh_root, home.join(".dsh/sessions")),
+        ] {
+            if !inside(root) {
+                *root = default;
+            }
+        }
+        for p in [&o.state_dir].into_iter().chain(o.migrate_from.as_ref()) {
+            assert!(
+                inside(p),
+                "a test's state stays in its temp folder: {}",
+                p.display()
+            );
+        }
+        o
+    }
+
+    /// The one way a test syncs in-process: [`Env::hermetic`] options, under [`serial`].
+    pub fn sync(&self, o: &Options) -> Outcome {
+        let o = self.hermetic(o);
+        let _serial = serial();
+        sync::run(&o).unwrap()
+    }
+
     pub fn run(&self, o: &Options) -> Report {
-        match sync::run(o).unwrap() {
+        match self.sync(o) {
             Outcome::Ran(r) => *r,
             other => panic!("expected a run, got {other:?}"),
         }

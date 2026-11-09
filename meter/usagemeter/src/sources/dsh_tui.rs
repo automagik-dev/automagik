@@ -31,7 +31,9 @@
 //!     that totals a turn can never count its calls twice.
 //! - A missing count is 0 when the counts present add up to `totalTokens`. When `totalTokens` is
 //!   larger, the rest is of an unknown kind: it is counted as `unsplit` in a `total_only` event of
-//!   its own (`…|rest`), never guessed into a kind.
+//!   its own (`…|rest`), never guessed into a kind. With no readable `totalTokens`, the call is
+//!   exact only when all four counts are readable; otherwise its total is unknown, and the line is
+//!   skipped and counted (the source then reports `degraded`), never counted as 0.
 //! - dsh-tui logs no reasoning split (the reasoning is inside `outputTokens`), so `reasoning` is
 //!   unknown, not 0: see [`super::Source::logs_reasoning`]. It logs no cost and no git branch:
 //!   the tokens are priced only if the price table has the model, and `branch` is null. The repo
@@ -143,24 +145,24 @@ struct MessageSource {
 #[serde(rename_all = "camelCase")]
 struct Usage {
     #[serde(default, deserialize_with = "count")]
-    input_tokens: i64,
+    input_tokens: Option<i64>,
     #[serde(default, deserialize_with = "count")]
-    output_tokens: i64,
+    output_tokens: Option<i64>,
     #[serde(default, deserialize_with = "count")]
-    cache_read_tokens: i64,
+    cache_read_tokens: Option<i64>,
     #[serde(default, deserialize_with = "count")]
-    cache_write_tokens: i64,
+    cache_write_tokens: Option<i64>,
     #[serde(default, deserialize_with = "count")]
-    total_tokens: i64,
+    total_tokens: Option<i64>,
 }
 
-/// A count that may be missing, null, a float or not a number at all: anything but a finite,
-/// non-negative number is 0, and `totalTokens` then shows what is missing.
-fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+/// A count that may be missing, null, a float or not a number at all: None unless it is a finite,
+/// non-negative number.
+fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
     let v = serde_json::Value::deserialize(d)?;
     Ok(v.as_f64()
         .filter(|x| x.is_finite() && *x >= 0.0)
-        .map_or(0, |x| x as i64))
+        .map(|x| x as i64))
 }
 
 pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> Line {
@@ -218,17 +220,31 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         None if ctx.seeded => return Line::Bad,
         None => format!("{HARNESS}|{}|{seq}", session.as_deref().unwrap_or("?")),
     };
+    let counts = [
+        usage.input_tokens,
+        usage.cache_read_tokens,
+        usage.cache_write_tokens,
+        usage.output_tokens,
+    ];
+    // With no readable `totalTokens`, only four readable counts say how much the call used: any
+    // count missing or unreadable leaves its total unknown, and unknown is never 0. The line is
+    // skipped and counted, which makes the source degraded.
+    let total = match usage.total_tokens {
+        Some(t) => t,
+        None if counts.iter().all(Option::is_some) => counts.iter().flatten().sum(),
+        None => return Line::Bad,
+    };
     ctx.seq = Some(seq);
     let split = Tokens {
-        input_uncached: usage.input_tokens,
-        cache_read: usage.cache_read_tokens,
-        cache_write_5m: usage.cache_write_tokens,
+        input_uncached: usage.input_tokens.unwrap_or(0),
+        cache_read: usage.cache_read_tokens.unwrap_or(0),
+        cache_write_5m: usage.cache_write_tokens.unwrap_or(0),
         cache_write_1h: 0,
-        output: usage.output_tokens,
+        output: usage.output_tokens.unwrap_or(0),
         reasoning: 0,
         unsplit: 0,
     };
-    let rest = usage.total_tokens - split.split_total();
+    let rest = total - split.split_total();
     let base = UsageEvent {
         dedupe_key: key.clone(),
         ts_ms: ts_ms as i64,
@@ -374,6 +390,26 @@ mod tests {
             "session.lock",
         ] {
             assert_eq!(generation_of(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_call_with_no_total_needs_every_count() {
+        let mut ctx = FileCtx::default();
+        run(&[HEADER], &mut ctx);
+        let all = r#"{"inputTokens":1,"outputTokens":2,"cacheReadTokens":3,"cacheWriteTokens":4}"#;
+        let (r, ev) = run(&[&msg(0, all)], &mut ctx);
+        assert_eq!(r, [Line::Usage]);
+        assert_eq!(ev[0].tokens.total(), 10);
+        assert_eq!(ev[0].precision, Precision::Exact);
+        for usage in [
+            r#"{"inputTokens":1}"#,
+            "{}",
+            r#"{"inputTokens":1,"outputTokens":2,"cacheReadTokens":3,"cacheWriteTokens":null}"#,
+        ] {
+            let (r, ev) = run(&[&msg(1, usage)], &mut ctx);
+            assert_eq!(r, [Line::Bad], "{usage}");
+            assert!(ev.is_empty(), "{usage}");
         }
     }
 

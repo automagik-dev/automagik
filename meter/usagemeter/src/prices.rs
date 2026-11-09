@@ -127,10 +127,9 @@ impl PriceTable {
     /// The bundled table plus the override file, if it exists. A broken override is an error so a
     /// typo never silently falls back to stale prices.
     pub fn load(override_path: &Path) -> Result<PriceTable, String> {
-        let mut t = PriceTable::bundled();
         let text = match std::fs::read_to_string(override_path) {
             Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(PriceTable::bundled()),
             Err(e) => {
                 return Err(format!(
                     "cannot read the price override {}: {e}",
@@ -138,12 +137,18 @@ impl PriceTable {
                 ));
             }
         };
-        let o: OverrideFile = serde_json::from_str(&text).map_err(|e| {
+        PriceTable::with_override(&text).map_err(|e| {
             format!(
                 "price override {} is not valid: {e}",
                 override_path.display()
             )
-        })?;
+        })
+    }
+
+    /// The bundled table plus an override file's text.
+    pub fn with_override(text: &str) -> Result<PriceTable, String> {
+        let mut t = PriceTable::bundled();
+        let o: OverrideFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
         for (k, v) in o.models {
             t.models.insert(normalize_model(&k), v);
         }

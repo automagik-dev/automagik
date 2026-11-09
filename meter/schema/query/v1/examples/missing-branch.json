@@ -36,7 +36,7 @@
   },
   "sources": [
     {
-      "harness": "claude",
+      "harness": "claude-code",
       "status": "ok",
       "reason": null,
       "last_success": "2026-11-08T19:52:41Z",
@@ -47,6 +47,13 @@
       "status": "ok",
       "reason": null,
       "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "dsh-tui",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
       "stale": false
     },
     {
@@ -101,13 +108,14 @@
       },
       "cost": {
         "state": "priced",
-        "usd": 0.214,
+        "usd": 0.242,
         "usd_reported": 0,
-        "usd_estimated": 0.214,
+        "usd_estimated": 0.242,
         "tokens_priced": 176000,
         "tokens_reported": 0,
         "tokens_unpriced": 0,
-        "unpriced_models": []
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
       },
       "token_precision": "exact",
       "attribution": {
@@ -121,7 +129,7 @@
         "last_hour": "2026-11-08T16:00:00Z",
         "hours": 4,
         "harnesses": [
-          "claude"
+          "claude-code"
         ]
       },
       "incomplete_sources": []

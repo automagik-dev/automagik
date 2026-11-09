@@ -121,15 +121,21 @@ never has to tell a v1 refusal from an old meter's error by stderr text. The sch
 | `as_of` | the moment every `ok` or `degraded` source is counted up to: the oldest of their last successes |
 | `machine` | `id` (herdr-core's core id, or the store's stored id) and `scope`, always `local` in v1 |
 | `store` | the store's `schema_version`, and `location`: `current`, `legacy` (the state folder before automagik-dev/usagemeter#7) or `override` (`METER_STATE_DIR`). Never the path. |
-| `ingestion` | `watermark` (when the last successful sync finished), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`), `stale` and the `stale_after_s` used (proposed default 7200) |
+| `ingestion` | `watermark` (when the last successful sync finished; null while a reset's re-import has not finished a run), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`; each null when unknown, and then `complete` is false), `stale` and the `stale_after_s` used (proposed default 7200) |
 | `window` | `name`, `requested_start`, the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark), `clipped` |
-| `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`), `reason`, `last_success`, `stale` |
+| `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`; `absent` when the harness's log folder is not on this machine), `reason`, `last_success`, `stale`. dsh-tui is `degraded` when a usage line or frame could not be read (a call with no readable total, a frame whose checksum does not match) or when bytes at the end of a session that stopped growing are not a whole frame, and `unsupported` while a session is in a format the meter does not read. Then, when the folder before the state move holds usage this store never counts (an older meter wrote there after the move, or a store of its own is there), one more entry, `legacy-store`, `degraded`, with the reason: that usage is reported, never folded in |
 | `unattributed` | usage in this repo and window with no recorded branch: `tokens_total` and `harnesses` (today only OMP's). Zero when there is none. |
 | `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
-| `query` | the request echoed back: `repo`, `window`, `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window` and each branch in order, each followed by a line feed). A refusal caps the echo (below); `query` is null only when the arguments do not parse. |
+| `query` | the request echoed back: `repo`, `window`, `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window` and each branch in order, each followed by a line feed). A refusal caps the echo (below), and a repo past its 512 bytes is echoed cut at a whole character with `repo_complete: false`; `query` is null only when the arguments do not parse. |
 | `rows[]` | one per distinct branch named (below) |
 
-On a refusal, the fields the meter did not reach are null, and `rows` is empty.
+On a refusal, `rows` and `sources` are empty and `as_of`, `ingestion`, `window`, `unattributed`
+and `pricing` are null, whatever the meter read before it refused. Only two fields carry what the
+store said: `store` once its `schema_version` was read (exit 12, 13 and 15, and exit 1 when the
+failure came after that read), and `machine` on exit 15 alone. Both are null on exit 2, 10, 11 and
+14. `query` is null only on an exit 2 whose arguments do not parse; every other refusal echoes the
+request, capped (below). The schema enforces each of these, and the crate's contract test checks
+them on every example and on the meter's own refusals.
 
 A row:
 
@@ -138,8 +144,8 @@ A row:
 | `branch`, `requested` | the branch, and how many times the call named it |
 | `state` | `measured`, `zero`, `missing`, `stale` or `unsupported` (next table) |
 | `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `branch_unattributed`, `ingestion_stale`, `source_unsupported` |
-| `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
-| `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models` |
+| `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added; null when a harness that counted toward the row logs no reasoning split, dsh-tui today), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
+| `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models`, and `unpriced_models_omitted`, how many the list leaves out past its 8 |
 | `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
 | `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero |
 | `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
@@ -156,8 +162,10 @@ A row:
 | `unsupported` | nothing found while a source on this machine is `unsupported` | null | unknown ("update needed") |
 
 Cost: `priced` when no token is unpriced; `partial` when some are, and `usd` is then a lower
-bound; `unpriced` when none is priced, and `usd` is then null, never 0; `zero` only on a zero
-row. Null or unknown never becomes 0, in the meter or in a reader.
+bound; `unpriced` when none is priced, and `usd`, `usd_reported` and `usd_estimated` are then
+null, never 0; `zero` only on a zero row. Amounts are rounded to four decimals, except that an
+amount above 0 that would round to 0 keeps its exact value: a 0 is shown only when the cost truly
+is zero. Null or unknown never becomes 0, in the meter or in a reader.
 
 **Usage with no branch.** OMP logs no branch, so its usage reaches the store with its repo known
 and its branch null, and it could belong to any branch of that repo. While the repo has any such
@@ -181,7 +189,7 @@ with a remote) belongs to no `--repo` and is not counted here.
 | Exit | `status` | When | Reads rows | Writes |
 |---|---|---|---|---|
 | 0 | `ok` | answered; rows may be `missing`, `stale`, `unsupported` or `zero` | yes | nothing |
-| 2 | `usage` | bad arguments, no `--json`, or a request past the request bound (more than 500 branches, or too many bytes); `error.limit_bytes` and `error.needed_bytes` for the bytes | no | nothing |
+| 2 | `usage` | bad arguments, no `--json`, or a request past the request bound: more than 500 branches (`error.code` `too_many_branches`), or too many bytes (`request_too_large`, which always carries `error.limit_bytes` and `error.needed_bytes`) | no | nothing |
 | 10 | `absent_store` | no store at the state folder: never synced on this machine | no | nothing; the folder is not created |
 | 11 | `locked` | no consistent snapshot within the busy budget (proposed 2 s); `error.retry_after_s` | no | nothing |
 | 12 | `newer_schema` | the store's `schema_version` is newer than this binary knows | no | nothing |
@@ -217,7 +225,7 @@ the output cap, which it checks before it prints:
 | Request | at most 500 branches, each at most 255 bytes of UTF-8, at most 64 KiB (65,536 bytes) for all names together, and a `--repo` of at most 512 bytes. Past any of these: exit 2 |
 | Echo | at most 2 × 64 KiB of names, plus 3 bytes per name and the repo: about 134 KiB |
 | Metadata | everything outside `query.branches` and `rows` is at most 16 KiB. Its strings are bounded (`error.message` 1,000 characters; source, label and reason 200) and the source list is short |
-| A row | at most 2 KiB: its escaped branch name and fixed fields |
+| A row | at most 2 KiB: its escaped branch name, its fixed fields, and `unpriced_models`, which keeps at most 8 names (the models with the most unpriced tokens). A name takes at most 40 bytes as JSON, its two quotes and any escapes included; a cut name ends with `…` (3 bytes), inside those 40. `tokens_unpriced` still counts every unpriced token, and `unpriced_models_omitted` says how many models were left out |
 | A refusal | at most 8 KiB. Its echo keeps the leading names that fit in 4 KiB, cut at a whole name, with `branches_complete: false`, `branch_count` and `request_sha256`, so the reader can match the refusal to its request without a full echo |
 
 The echo and the metadata together stay under 150 KiB, so any request within the request bound
@@ -236,8 +244,13 @@ The query opens an existing store and nothing else:
 - No creation (a missing store or folder is exit 10, and nothing is made), no migration (exit 12
   or 13), no sync, no price fetch, no doc publish, no `hc` call or start, no git call, no network.
 - The only files it may cause are SQLite's own `-wal` and `-shm` companions, which a reader of a
-  WAL store can need. A test checks that `meter.db`'s bytes and every other file in the state
-  folder are unchanged after a query.
+  WAL store can need: the database's content never changes, but the folder is not byte-identical
+  when they appear. A test checks that `meter.db`'s bytes and every other file in the state
+  folder are unchanged after a query, and that an existing `-wal` keeps its bytes.
+- In a state folder the reader cannot write, SQLite reads the store only when its `-wal` and
+  `-shm` already exist; then the query reads it as usual. Without them it refuses by name: exit
+  1, `error.code` `read_only_folder`. It never opens the store `immutable`, because a sync
+  elsewhere (outside a sandbox that binds the folder read-only, say) may be writing.
 - M1 moves `usagemeter status` onto the same read-only open, because today it writes.
 
 #### Who refreshes the store
@@ -417,7 +430,10 @@ And the cases across time:
 - **A newer meter, an older genie.** The meter serves contract 1 for at least one compatibility
   release after contract 2 ships. Past that, exit 14 tells genie which versions remain.
 - **A meter binary older than its store** (a rollback): `query` exits 12. M1 makes `sync`
-  refuse a newer store too, exit 12, writing nothing; today it would write into it.
+  refuse a newer store too, exit 12, writing nothing: it reads the version before the state move
+  runs and before it opens the store for writing, under the state folder's lock (or, with no lock
+  file there at all, only if none appears while it reads, since every meter makes its lock file
+  before it writes), so no companion file is made.
 - **The state-path move** (automagik-dev/usagemeter#7, to `~/.automagik/meter`). Only `sync`
   moves state, under the new folder's lock. It copies the database unit (`meter.db` and its
   `-wal` and `-shm` files), checks and fsyncs each copy, and never renames it; the old `meter.db*`
@@ -430,7 +446,9 @@ And the cases across time:
   kept, and writes into it; once a caught-up sync has removed the generation, it finds no store
   there and starts a fresh one. Nothing is lost, because the new path is untouched. When the newer
   meter returns, the current path wins: an old store that changed after the move, or one started
-  fresh at the old path, is kept and reported by `sync`, never merged or deleted on its own.
+  fresh at the old path, is kept and reported by `sync`, never merged or deleted on its own. The
+  query and `status` report it too, as the `legacy-store` source (a), so its usage is never
+  silently missing from an answer: no row is `zero` beside it.
 
 **Migration safety.**
 
@@ -438,8 +456,13 @@ And the cases across time:
   ids, the evidence table's first creation over a full store), `sync` writes a recoverable
   generation: an online backup to `meter.db.gen-<schema>-<utc>` in the state folder, mode 0600,
   opened and row-counted before the migration starts.
-- It migrates only with at least twice the store's size free (proposed); otherwise it refuses,
-  says why, and keeps the old store working.
+- It migrates only with at least twice the store's size free (proposed); otherwise it refuses
+  (exit 4), says why, and keeps the old store working, changing nothing. The same rule covers
+  every write to an existing store's schema, such as the index M1 adds for the query, and the
+  generation is guarded by whether the store holds any row, not by its recorded window.
+- A reset commits on its own, and the re-import after it commits chunk by chunk: until a run over
+  the new window ends, the store has no watermark and an unknown backlog. A reader then reports
+  the answer incomplete and every row `stale`, never a partial count as complete and fresh.
 - The migration runs in one write transaction, and there is no `migrating` marker. Until it
   commits, a reader of the WAL store is served the old snapshot, consistent and with its old
   `schema_version`. After the commit, the reader sees the new store, or exits 12 if it is an older
@@ -508,8 +531,9 @@ RFC 0017's build rule.
 2. **M1, the query.** `usagemeter query` per contract 1; the read-only open, which `status`
    moves to; `sync` refusing a newer store; and the migration-safety rules of (d). *Check:*
    - the crate's contract test (below) passes on every fixture;
-   - a query leaves the state folder byte-identical;
-   - `usagemeter status` leaves the state folder byte-identical;
+   - a query leaves `meter.db` and every other file in the state folder unchanged (SQLite's
+     `-wal` and `-shm` companions aside, (a));
+   - `usagemeter status` does the same;
    - `sync` on a store with a newer `schema_version` exits 12 and writes nothing (the folder is
      byte-identical after it);
    - before `sync` resets an outdated store, a generation is written, and its row counts match
@@ -562,11 +586,13 @@ genie's side of the boundary, built in genie and named here only so the order is
 | `priced.json` | two measured rows from Claude and Codex, which record a branch | 0 |
 | `partial-priced.json` | an unknown model and `total_only` tokens: `cost.state: partial` | 0 |
 | `missing-branch.json` | a window clipped by `counted_from`: one row `missing` | 0 |
-| `stale-source.json` | ingestion 30 hours old, Codex degraded for three days: rows `stale` | 0 |
+| `stale-source.json` | ingestion 30 hours old, Codex degraded for three days: rows `stale`, with the last known numbers, or all null for a branch with nothing found | 0 |
 | `ambiguous-branch.json` | one branch named by two cards: `requested: 2`, `shared: true` | 0 |
 | `zero-usage.json` | a vouched zero | 0 |
 | `unsupported-source.json` | an unreadable Codex schema: no zero can be vouched for | 0 |
 | `unattributed-branch.json` | healthy OMP usage in the repo with no branch: a partial Claude subset, and `missing` (`branch_unattributed`) instead of 0 | 0 |
+| `unpriced-cost.json` | a row whose only model has no price: `cost.state: unpriced`, every amount null | 0 |
+| `legacy-store.json` | the folder before the state move holds a store of its own: the `legacy-store` source, a measured row that lists it, and `missing` (`source_incomplete`) instead of 0 | 0 |
 | `usage.json` | no `--json`: the arguments do not parse, so `query` is null | 2 |
 | `request-too-large.json` | 500 names of about 200 bytes, past the request bound: echo capped at 4 KiB, with count and hash | 2 |
 | `absent-store.json` | no store | 10 |

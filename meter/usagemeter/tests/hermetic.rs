@@ -115,6 +115,31 @@ fn decoy_inner() {
     let doc = r.summary.unwrap();
     assert_eq!(doc["sources"]["codex"]["status"], "absent", "{doc}");
     assert!(env.store().rows_since(i64::MIN).unwrap().is_empty());
+    // In-process, from Options built by hand: `Options::new` reads DSH_HOME, CODEX_HOME and
+    // CLAUDE_CONFIG_DIR, which point into the decoy here. Env::run (every in-process sync goes
+    // through Env::sync) moves each harness root back under the temp home.
+    let mut hand = meter::sync::Options::new(env.home(), env.state(), common::now());
+    for root in [&hand.dsh_root, &hand.codex_home, &hand.claude_root] {
+        assert!(
+            root.starts_with(&decoy),
+            "the decoy reaches Options::new: {}",
+            root.display()
+        );
+    }
+    hand.use_hc = false;
+    hand.resolve_repos = false;
+    hand.publish = false;
+    hand.force = true;
+    let r = env.run(&hand);
+    assert_eq!(
+        r.files_seen, 0,
+        "a hand-built in-process sync read a decoy file"
+    );
+    assert!(env.store().rows_since(i64::MIN).unwrap().is_empty());
+    let o = env.hermetic(&hand);
+    for root in [&o.omp_root, &o.claude_root, &o.codex_home, &o.dsh_root] {
+        assert!(root.starts_with(env.home()), "{}", root.display());
+    }
     // Through the binary, the way the process and migrate tests run it: its default state
     // directory lands in the temp home, never in AM_HOME, XDG_STATE_HOME or METER_STATE_DIR.
     let out = env
@@ -136,5 +161,21 @@ fn decoy_inner() {
         Some("absent")
     );
     assert!(store.rows_since(i64::MIN).unwrap().is_empty());
+    // The query through the binary reads the temp home's store, never METER_STATE_DIR's decoy.
+    let out = env
+        .command()
+        .args([
+            "query",
+            "--repo",
+            "example.com/acme/app",
+            "--branch",
+            "feat/x",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{v}");
+    assert_eq!(v["store"]["location"], "current", "{v}");
     println!("decoy_inner: checked");
 }
