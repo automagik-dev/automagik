@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/am-sidebar/workers.js";
 import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath,
-  amPartEntryPath, amPartHookCommand, scriptOf } from "../mods/am-sidebar/briefingText.mjs";
+  amPartEntryPath, amPartHookCommand, amPartRunnerPath, scriptOf } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable, ownHook,
@@ -82,6 +82,26 @@ test("an am-part hook is ours: classified, never doubled, and moved onto the sta
   assert.deepEqual(JSON.parse(mergeHook(text, hookCommand(app)).text).hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: hookCommand(app), timeout: 10 }] }]);
   assert.equal(toStable(app)(command), hookCommand(app), "a pack install moves it to the stable entry, which runs am's briefing first");
   assert.equal(ownHook(app)(command), false, "the pack's uninstall leaves am's hook alone");
+});
+
+test("scriptOf refuses a hand-edited am-part command: every guard must line up with what it runs", () => {
+  const app = "/h", store = "/am/parts/automagik.am";
+  const runner = amPartRunnerPath(store), entry = amPartEntryPath(store);
+  const amHome = store.replace(/\/parts\/automagik\.am$/, "");
+  const shape = ({ guardRunner = runner, guardEntry = entry, runRunner = runner, runEntry = entry, shell = "sh", env = "", tail = "" }) =>
+    `[ ! -f "${guardRunner}" ] || [ ! -f "${guardEntry}" ] || HERDR_APP_HOME="${app}" AM_HOME="${amHome}"${env ? ` ${env}` : ""} ${shell} "${runRunner}" "${runEntry}"${tail}`;
+  assert.equal(shape({}), amPartHookCommand(app, store), "every row is an edit of the command installHook writes");
+  assert.equal(scriptOf(shape({})), entry, "the command as written is read");
+  const rows = [
+    ["a changed guard runner", { guardRunner: `${runner}.other` }],
+    ["a changed run runner", { runRunner: `${runner}.other` }],
+    ["a changed guard entry", { guardEntry: `${entry}.other` }],
+    ["a changed run entry", { runEntry: `${entry}.other` }],
+    ["a trailing command after the entry", { tail: "; echo mine" }],
+    ["another shell instead of sh", { shell: "bash" }],
+    ["an extra env word", { env: "EXTRA=1" }],
+  ];
+  for (const [what, edit] of rows) assert.equal(scriptOf(shape(edit)), null, what);
 });
 
 test("retargetHooks: only the pack's command shape moves, every other byte stays; odd shapes and bad JSON are reported", () => {
