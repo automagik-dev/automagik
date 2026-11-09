@@ -3,8 +3,8 @@
  * Automagik's DSH plugin market index (marketplace/automagik.json, format 1): this repository's
  * plugins, each a git source pinned to a release commit with the plugin's folder, and the outside
  * plugins Automagik vetted (VETTED), each pinned to the commit that was reviewed. Unfold's
- * plugins are built and tested here but never listed (`unlisted`): they come with Unfold's own
- * instance, not from a market, and Unfold's own release ships them.
+ * plugins are never listed (`unlisted`): they left this repository for Unfold's own (RFC 0020),
+ * come with Unfold's own instance, not from a market, and Unfold's own release ships them.
  *
  *   bun scripts/marketplace.ts check        DSH's own parser, then every entry proven against this repository
  *   bun scripts/marketplace.ts pin <ref>    list the plugins at <ref> (a release tag), at its version
@@ -34,7 +34,10 @@ export const VETTED = [
   'https://github.com/automagik-genie/dsh-subscriptions',
 ];
 
-/** A plugin of ours the index never lists: Unfold's, which only Unfold's own instance carries. */
+/**
+ * A name the index never lists: Unfold's, which only Unfold's own instance carries and Unfold's
+ * own repository publishes (RFC 0020). A name guard, so the index never offers a second source.
+ */
 export const unlisted = (name: string) => name.startsWith('@automagik/unfold-');
 
 interface GitSource {
