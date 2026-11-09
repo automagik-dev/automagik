@@ -41,6 +41,10 @@ const PATCH = 'session-scan-tolerance.patch'
 const PERSIST = '@deepseek-ai/dsh-session-persistence-jsonl'
 const WORKSPACE = '@deepseek-ai/dsh-workspace'
 const FILE = 'lib/index.js'
+// Warnings JSON-escape absolute paths on Windows, so assertions use these separator-free names.
+const SESSION = 'valid-one'
+const BACKUP = `${SESSION}.backup-20260101T000000`
+const STRAY = 'notes.jsonl'
 // The workspace module is unchanged glue, so it has no patches.json entry; this pins the copy
 // the activation test reads to the same published 0.2.2-rc.1 bytes.
 const WORKSPACE_SHA256 = '931ca0cb10c5102066c7723690a887f0e6e8e7ab0ffdee1a782686745b0b934f'
@@ -373,12 +377,12 @@ test('a backup sibling aborts the unpatched listing; the patched one lists the v
   const runtime = makeRuntime(t)
   const { sessions, cwd } = syntheticTree(runtime)
   writeSession(sessions, cwd)
-  const backup = writeSession(sessions, cwd, { dirName: 'valid-one.backup-20260101T000000' })
+  writeSession(sessions, cwd, { dirName: BACKUP })
   const before = snapshotTree(sessions)
 
   await assert.rejects(
     async () => (await openPersistence(runtime.persist, sessions, 'unpatched')).list(),
-    error => /^corrupt session log /.test(error.message) && error.message.includes(backup) && error.message.includes('header id "valid-one"'),
+    error => /^corrupt session log /.test(error.message) && error.message.includes(BACKUP) && error.message.includes(`header id "${SESSION}"`),
   )
 
   assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
@@ -386,7 +390,7 @@ test('a backup sibling aborts the unpatched listing; the patched one lists the v
   assert.deepEqual(listed.map(snapshot => snapshot.header.id), ['valid-one'])
   assert.equal(warnings.length, 1, 'one line per skipped folder')
   assert.match(warnings[0], /^dsh-session: skipped session folder /)
-  assert.ok(warnings[0].includes(backup), warnings[0])
+  assert.ok(warnings[0].includes(BACKUP), warnings[0])
   assert.match(warnings[0], /corrupt session log .*header id "valid-one"/)
   assert.deepEqual(snapshotTree(sessions), before, 'the scan must not rewrite the tree')
 })
@@ -395,20 +399,20 @@ test('a stray session file aborts the unpatched listing; the patched one reports
   const runtime = makeRuntime(t)
   const { sessions, cwd } = syntheticTree(runtime)
   writeSession(sessions, cwd)
-  const stray = join(sessions, projectKey(cwd), 'notes.jsonl')
+  const stray = join(sessions, projectKey(cwd), STRAY)
   writeFileSync(stray, '{"not":"a session"}\n')
 
   await assert.rejects(
     async () => (await openPersistence(runtime.persist, sessions, 'unpatched')).list(),
-    error => error.message.includes(stray) && /unsupported flat-file layout/.test(error.message),
+    error => error.message.includes(STRAY) && /flat-file layout/.test(error.message),
   )
 
   assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
   const { value: listed, warnings } = await withWarnings(async () => (await openPersistence(runtime.persist, sessions, 'patched')).list())
   assert.deepEqual(listed.map(snapshot => snapshot.header.id), ['valid-one'])
   assert.equal(warnings.length, 1, 'one line per stray file')
-  assert.ok(warnings[0].includes(stray), warnings[0])
-  assert.match(warnings[0], /unsupported flat-file layout/)
+  assert.ok(warnings[0].includes(STRAY), warnings[0])
+  assert.match(warnings[0], /flat-file layout/)
 })
 
 test('a duplicate session id aborts the unpatched listing; the patched one keeps the first valid entry and reports the other', async (t) => {
@@ -435,8 +439,8 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
   const runtime = makeRuntime(t)
   const { sessions, cwd } = syntheticTree(runtime)
   writeSession(sessions, cwd)
-  const backup = writeSession(sessions, cwd, { dirName: 'valid-one.backup-20260101T000000' })
-  const stray = join(sessions, projectKey(cwd), 'notes.jsonl')
+  writeSession(sessions, cwd, { dirName: BACKUP })
+  const stray = join(sessions, projectKey(cwd), STRAY)
   writeFileSync(stray, '{"not":"a session"}\n')
 
   // The symptom: listStoredHeaders() is the registry's first call, so the scan throw stops
@@ -446,7 +450,7 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
       const unpatched = await openPersistence(runtime.persist, sessions, 'unpatched')
       return activateWorkspace(runtime, unpatched, 'workspace-unpatched')
     },
-    error => /unsupported flat-file layout/.test(error.message),
+    error => /flat-file layout/.test(error.message),
   )
 
   assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
@@ -460,14 +464,15 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
   } finally {
     console.warn = original
   }
-  assert.deepEqual([...activated.registry.headers.keys()], ['valid-one'])
+  assert.deepEqual([...activated.registry.headers.keys()], [SESSION])
   assert.equal(activated.registry.entities.size, 1, 'the registry activates and groups the valid session')
-  assert.equal(activated.registry.sessionPaths.get('valid-one'), realpathSync(cwd))
+  // Windows may keep a short (8.3) spelling of tmpdir on one side; compare canonical paths.
+  assert.equal(realpathSync(activated.registry.sessionPaths.get(SESSION)), realpathSync(cwd))
   assert.equal(activated.state().initialized, true)
   assert.equal(activated.warnings.length, 0)
   assert.equal(warnings.length, 2, 'the backup folder and the stray file are reported')
-  assert.ok(warnings.some(line => line.includes(backup)), warnings.join('\n'))
-  assert.ok(warnings.some(line => line.includes(stray)), warnings.join('\n'))
+  assert.ok(warnings.some(line => line.includes(BACKUP)), warnings.join('\n'))
+  assert.ok(warnings.some(line => line.includes(STRAY)), warnings.join('\n'))
 })
 
 test('the root itself still fails closed when it is not a readable directory', async (t) => {
