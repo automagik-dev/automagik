@@ -122,10 +122,13 @@ describe('the plugin lane', () => {
   test('the contract holds the meter lane until RFC 0021 delivery 2 widens attribution.precision', () => {
     const contract = readFileSync(join(import.meta.dir, '..', METER_CONTRACT), 'utf8');
     const precision = (values: unknown) => JSON.stringify({ properties: { rows: { items: { properties: { attribution: { properties: { precision: values } } } } } } });
-    // Today's contract names branch_window alone: held, so the crate ships nothing yet.
-    expect(contract).toContain('"enum": ["branch_window"]');
-    expect(contractHeld(contract)).toBe(true);
-    expect(contractHeld(contract.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
+    // RFC 0021 delivery 2 widened the committed contract, so it no longer holds the lane (a listed key
+    // still must). Dev's contract before it (v3.108.14, frozen below) named branch_window alone.
+    expect(contractHeld(contract)).toBe(false);
+    const before = readFileSync(join(import.meta.dir, 'fixtures', 'meter-hold', 'contract-dev-v3.108.14.schema.json'), 'utf8');
+    expect(before).toContain('"enum": ["branch_window"]');
+    expect(contractHeld(before)).toBe(true);
+    expect(contractHeld(before.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
     expect(contractHeld(precision({ enum: ['branch_window', 'task_interval'] }))).toBe(true);
     expect(contractHeld(precision({ oneOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] }))).toBe(false);
     // A $ref'd attribution, or a row picked by its precision (oneOf branches), opens it too.
@@ -142,8 +145,8 @@ describe('the plugin lane', () => {
       { if: { properties: { attribution: { properties: { precision: { const: 'actor_interval' } } } } }, then: {} },
     ];
     for (const decoy of decoys) expect(contractHeld(JSON.stringify(decoy))).toBe(true);
-    // The real contract with a decoy precision elsewhere naming actor_interval: still held.
-    const decoyed = JSON.parse(contract);
+    // The contract before delivery 2 with a decoy precision elsewhere naming actor_interval: still held.
+    const decoyed = JSON.parse(before);
     decoyed.properties.decoy = { type: 'object', properties: { precision: { enum: ['actor_interval'] } } };
     expect(contractHeld(JSON.stringify(decoyed))).toBe(true);
     // No contract, or one that does not parse, holds.
