@@ -478,10 +478,6 @@
     {
       "folder": "apps/desktop",
       "issue": "#795"
-    },
-    {
-      "folder": "apps/landing",
-      "issue": "#795"
     }
   ]
 }
