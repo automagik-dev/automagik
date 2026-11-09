@@ -74,6 +74,8 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
 - **Concurrent syncs are safe:** `sync` takes a non-blocking exclusive lock on `meter.lock` in the
   state dir (see [What it stores](#what-it-stores)). A second run while one holds it skips: it
   prints `another sync is running; nothing to do` and exits 0.
+- **Exit status of `sync`:** 0 when it ran or had nothing to do, 2 on an error, 3 when the state
+  move blocks it (files in the new dir must be resolved by hand; one stderr line says which).
 - **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
   `usagemeter-linux-x86_64` and `usagemeter-linux-aarch64`, plus `SHA256SUMS` and `install.sh`.
 
@@ -138,25 +140,37 @@ that old default, once: `meter.db` (with `meter.db-wal` and `meter.db-shm`),
 is opened, and the folder itself stays.
 
 - It runs under the new dir's `meter.lock` and the old dir's `meter.lock` (created empty if
-  missing, so an older meter starting mid-move waits), and skips (exit 0, retried next run) while
-  another run holds either. The old `meter.lock` is removed last; it stays only beside files that
-  were left behind.
+  missing). An older meter that starts mid-move finds the old lock held and exits at once, as it
+  does beside any running sync; it does not wait, and runs again on its next trigger. The move
+  skips (exit 0, retried next run) while another run holds either lock. The old `meter.lock` is
+  removed last; it stays only beside files that were left behind.
 - It never replaces a file. `meter.db`, `meter.db-wal` and `meter.db-shm` are always copied,
   fsynced and compared, so the two dirs never share a file and an older meter writing to the old
   dir cannot change the new copy (the move needs free space for one more copy of the store). The
   `claude-limits.*` files are hard-linked on one filesystem, else copied the same way. Modes are
   kept. No old name is removed before its new entry is fsynced, including an entry an interrupted
   run already made; a failed fsync before that point stops `sync` with an error and the old file
-  stays.
+  stays. A copy that fails (a full disk, a source that changed) removes its temporary
+  `.<name>.part` file.
 - The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
-  then all of them are placed in the new dir, and only then are the old names removed. The next
-  run finishes an interrupted move only if every file is still exactly what the marker recorded.
+  then all of them are copied into the new dir and fsynced, and the marker is renamed
+  `.meter-moved`. The next run finishes an interrupted move only if every file is still exactly
+  what the marker recorded.
+- The old `meter.db*` stay in the old dir as the recoverable generation (RFC 0018 (d)) until the
+  next sync that succeeds: not the run that copied them, nor a run that fails, stops at its time
+  budget or finds the last sync recent. That sync removes them, under the old `meter.lock`, only if
+  they are still exactly what `.meter-moved` recorded, then removes the marker and prints one
+  stderr line. If an older meter synced into them in the meantime, they are a store of its own:
+  they stay, are never merged, and each later `sync` names them on stderr. While the old lock is
+  held they stay until a later successful sync. The move therefore needs free space for one more
+  copy of the store until then.
 - An interrupted move whose old files changed since (an older meter wrote to them), or whose
   marker cannot be read, leaves two stores that may each hold rows the other lacks. The meter
   cannot merge them (rows are hourly rollups whose counts add up, so one row can have grown
   differently in each) and never decides which one is complete. Nothing is moved, overwritten or
-  deleted, neither store is used, and each `sync` prints one line to stderr and syncs nothing.
+  deleted, neither store is used, and each `sync` prints one line to stderr, syncs nothing and
+  exits 3.
   To go on:
   1. Stop every meter, then copy both stores with `cp` (not `mv`) into folders of your own: the
      old dir's `meter.db*`, and the new dir's `meter.db*` and `.meter-migrating`. Opening a store
@@ -177,9 +191,15 @@ is opened, and the folder itself stays.
 - If the new dir already has a `meter.db` this move did not put there (even a byte-identical
   copy), the old files all stay and `sync` uses the new dir's store, printing one stderr line. If
   it has a `meter.db-wal` or `meter.db-shm` but no `meter.db`, nothing is created, moved or
-  deleted, and each `sync` prints one line and syncs nothing until they are moved away.
+  deleted, and each `sync` prints one line, syncs nothing and exits 3 until they are moved away.
 - A `claude-limits.*` file the new dir already has a different copy of stays in the old dir, with
   the same one line.
+- A `.meter-migrating` marker whose old files are all gone (removed by hand) is cleared when the
+  new dir holds exactly the generation it recorded. Otherwise the new dir may hold half a store:
+  `sync` exits 3 and syncs nothing until it is saved and the marker removed (see "An interrupted
+  move" above). A `.meter-moved` marker with no old files left is removed.
+- An empty `meter.db` (no bytes, no sidecars) in the old dir holds nothing: an older meter creates
+  one before it takes its lock. The next `sync` removes it.
 - If the new dir is the old dir under another name (a symlink), nothing moves.
 - With `METER_STATE_DIR` set nothing is moved and `~/.automagik/meter` is not created.
 - `status` reads the new dir only, under its `meter.lock`, read-only: it never changes the
