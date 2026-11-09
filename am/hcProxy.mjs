@@ -413,8 +413,8 @@ export function explicitCaller(value) {
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv }) {
-  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId }) {
+  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId, team: teamOf(file, caller) };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */
@@ -799,7 +799,7 @@ export async function startProxy(options = {}) {
     }
   }
   const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home, path: panePath, shim: shimPathOf(env), stableRoot,
-    approval, approvalEnv: { HOME: env.HOME, XDG_DATA_HOME: env.XDG_DATA_HOME } };
+    coreId: status.result?.core?.id, approval, approvalEnv: { HOME: env.HOME, XDG_DATA_HOME: env.XDG_DATA_HOME } };
   const policy = policyOf(snapshot);
   log({ ev: "snapshot", caller: caller.bot, project: caller.project, worker: caller.worker, bots: file.bots.length });
 
@@ -1000,7 +1000,7 @@ class Session {
         return;
       }
       if (hasId(request)) this.client.write(`${JSON.stringify({ jsonrpc: "2.0", id,
-        result: { v: 1, terminal: this.policy.terminal } })}\n`);
+        result: { v: 1, terminal: this.policy.terminal, core: { id: this.policy.coreId } } })}\n`);
       return;
     }
     if (method === "terminal.list") {

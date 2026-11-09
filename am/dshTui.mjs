@@ -897,8 +897,10 @@ export function workerProxyTransport(socketPath, terminal, timeoutMs = 750) {
       if (end < 0) return;
       try {
         const reply = JSON.parse(buffer.slice(0, end));
-        finish(reply.id === 1 && !reply.error && reply.result?.v === 1
-          && reply.result?.terminal === terminal);
+        const valid = reply.id === 1 && !reply.error && reply.result?.v === 1
+          && reply.result?.terminal === terminal
+          && typeof reply.result?.core?.id === "string" && reply.result.core.id.length > 0;
+        finish(valid ? reply.result : false);
       } catch { finish(false); }
     });
   });

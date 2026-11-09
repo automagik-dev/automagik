@@ -1,6 +1,7 @@
 // `automagik-herdr worker` (bot workers): a bot starts one worker per task, an hc child of its
 // pane, in the task's worktree. Run as a program against scratch git projects under $TMPDIR,
 // with the fake `hc` first on PATH (test/fake-hc.mjs). The real hc is never run.
+import net from "node:net";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
@@ -2046,16 +2047,27 @@ async function proxyWorkerCli(t) {
   const proxy = await startProxy({ terminal: "t1", upstream: fake.socket, appHome: s.app, env,
     caller: { bot: ID.dev, project: s.project }, bound: true,
     forbiddenRoots: [["project", s.project], ["app home", s.app], ["temp", paneTmp], ["runtime", runtime]] });
+  const transportRequests = [];
+  proxy.server.on("connection", (socket) => socket.on("data", (data) => {
+    for (const line of data.toString().trim().split("\n")) {
+      if (JSON.parse(line).method === "proxy.workerTransport") transportRequests.push(line);
+    }
+  }));
+  // A proxied start must obtain core identity from that same reply, without server.status.
+  const state = s.hcState(); state.fail = ["server"];
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
   t.after(async () => { await proxy.close(); await fake.close(); });
-  return { s, env, fake, proxy };
+  return { s, env, fake, proxy, transportRequests };
 }
 
 test("proxied worker CLI skips the guard only for the actual proxy transport", async (t) => {
-  const { s, env, fake, proxy } = await proxyWorkerCli(t);
+  const { s, env, fake, proxy, transportRequests } = await proxyWorkerCli(t);
   const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/proxied", "--json"],
     { env: { ...env, HC_SOCKET: proxy.socket } });
   assert.equal(r.code, 0, r.err);
   assert.equal(fake.calls("terminal.run").length, 1, "spawn reached the proxy then fake core");
+  assert.equal(transportRequests.length, 1, "one reply supplies core id and route identity");
+  assert.equal(s.calls().filter((args) => args[0] === "server").length, 0);
   const params = fake.calls("terminal.run")[0].params;
   assert.equal(params.caller, "t1");
   assert.equal(params.parent, "t1");
@@ -2081,4 +2093,28 @@ test("unproxied worker CLI keeps the guard refusal with switch off and forged en
   assert.notEqual(r.code, 0);
   assert.match(r.err, /hc guard: refused run:/);
   assert.equal(s.runs().length, 0, "no unguarded spawn with the switch off");
+  assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
+    "an unproxied pane retains server.status for core id");
+});
+
+
+test("worker transport rejects a mismatched terminal for core id and routing", async (t) => {
+  const s = scene(t);
+  const socketPath = join(s.root, "wrong-terminal.sock");
+  let probes = 0;
+  const server = net.createServer((socket) => socket.on("data", () => {
+    probes++;
+    socket.end(JSON.stringify({ jsonrpc: "2.0", id: 1,
+      result: { v: 1, terminal: "t999", core: { id: "wrong-core" } } }) + "\n");
+  }));
+  await new Promise((done) => server.listen(socketPath, done));
+  t.after(() => new Promise((done) => server.close(done)));
+  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/wrong-terminal", "--json"],
+    { env: { PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath } });
+  assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
+    "a failed terminal check must ignore the reply's core id");
+  assert.equal(probes, 1);
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /hc guard: refused run:/);
+  assert.equal(s.runs().length, 0);
 });

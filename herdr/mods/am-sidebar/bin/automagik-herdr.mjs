@@ -48,8 +48,7 @@ import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
-  uninstallDshTui } from "../dshTui.mjs";
-import { workerProxyTransport } from "../dshTui.mjs";
+  uninstallDshTui, workerProxyTransport } from "../dshTui.mjs";
 import { approveProject, approvedProxyEnabled, approvedProxyState, parseApprovedRecord,
   projectKey, proxyStateFor, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
@@ -729,14 +728,20 @@ async function hcLookup(terminal, { timeout } = {}) {
   throw new CliError(`hc get ${terminal} failed: ${(r.stderr || r.stdout).trim()}`);
 }
 
+// The single transport reply supplies both verified terminal and startup-verified core id.
+// This caches transport identity only; worker allowance is re-read by the proxy at each spawn.
+let workerTransportOnce = null;
+const workerTransport = () => (workerTransportOnce ??=
+  workerProxyTransport(process.env.HC_SOCKET, process.env.HC_TERMINAL_ID));
 let coreOnce = null;
 /**
  * This computer's hc core id: `hc server status`'s core.id, "permanent random id, reset only
  * when state is wiped" (hc schema CoreInfo). Asked once per run; a failure throws.
  */
 function coreId() {
-  coreOnce ??= hcRealJson(["server", "status"]).then((s) => {
-    const id = s?.core?.id;
+  coreOnce ??= workerTransport().then(async (transport) => {
+    const status = transport || await hcRealJson(["server", "status"]);
+    const id = status?.core?.id;
     if (typeof id !== "string" || !id) throw new CliError("hc server status gave no core id.");
     return id;
   });
@@ -4679,7 +4684,8 @@ async function cmdWorker(opts, rest) {
         (warning) => warnings.push(warning)) });
     // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added
     // flags and working roster edits cannot do so; the same socket still checks terminal.run.
-    const proxied = await workerProxyTransport(process.env.HC_SOCKET, me.address);
+    const transport = await workerTransport();
+    const proxied = transport && transport.terminal === me.address;
     const r = await (proxied ? hcReal(args) : hc(args));
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;

@@ -185,8 +185,11 @@ those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,6
 keys and bad values refuse. Parent, caller and worker identity come from the verified pane.
 
 The CLI skips the PATH guard only when the actual transport answers the proxy's local
-`proxy.workerTransport` request for this pane. It then uses the real hc on that same proxy
-transport, so the proxy checks the approved start. A working roster edit or caller-added env
+`proxy.workerTransport` request for this pane. That single reply supplies both the verified
+terminal and the core id verified when the proxy started; the CLI uses it for core identity
+and the worker route. A missing, failed or wrong-terminal reply keeps the existing
+`server.status` identity lookup and guard route. It then uses the real hc on that same proxy
+transport for a verified reply, so the proxy checks the approved start. A working roster edit or caller-added env
 marker cannot select this route. Without that proxy response, it keeps today's guard route
 and its refusal. This is necessary because the old guard accepts only its plain dsh-tui shape.
 
