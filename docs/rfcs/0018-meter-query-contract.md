@@ -623,7 +623,8 @@ The data is synthetic: `example.com` repos, made-up branches, no session ids. Wh
 **Versioning.**
 
 - **Additive changes keep contract 1.** These are a new optional field, a new `reason`, or a new
-  source. They change the schema and the examples in the same pull request. Readers ignore
+  source. A new `--by` value, with its row kind and its reasons, is additive too. They change the
+  schema and the examples in the same pull request. Readers ignore
   fields they do not know and never validate at runtime.
 - **Breaking changes make contract 2.** These are a removed or renamed field, a changed meaning
   or unit, a new row `state`, or a new `cost.state`. Readers learn it first; a reader that meets
