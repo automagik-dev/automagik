@@ -6,6 +6,7 @@
 
 pub mod event;
 pub mod hc;
+pub mod ledger;
 pub mod paths;
 pub mod prices;
 pub mod repo;
