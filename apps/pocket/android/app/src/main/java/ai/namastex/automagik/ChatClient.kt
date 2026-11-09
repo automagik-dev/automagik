@@ -8,6 +8,37 @@ import java.io.Closeable
 class ChatUnsupported : IllegalStateException(Chat.UPDATE_LINK)
 
 /**
+ * The chat connection the view model drives. [ChatClient] is the production one, over Pocket Link's chat route; this
+ * interface is the internal seam that lets the JVM unit tests put a fake bridge behind the same code path (#754).
+ */
+internal interface ChatLink : Closeable {
+    val dshWrite: Boolean
+    suspend fun list(): List<Chat.Terminal>
+    suspend fun subscribe(terminal: String, after: String?, event: (JSONObject) -> Unit, closed: (String) -> Unit): Int
+    suspend fun backfill(terminal: String, before: String, limit: Int = 50): JSONArray
+    suspend fun send(terminal: String, text: String, id: String): JSONObject
+    suspend fun sendHeld(terminal: String, id: String): JSONObject
+    suspend fun cancelHeld(terminal: String, id: String): JSONObject
+    suspend fun answer(terminal: String, row: String, choice: String, text: String? = null): JSONObject
+    suspend fun interrupt(terminal: String): JSONObject
+}
+
+/** The production [ChatLink]: [ChatClient] over Pocket Link's chat route, straight through. */
+internal class PocketLinkChat(private val client: ChatClient) : ChatLink {
+    override val dshWrite get() = client.dshWrite
+    override suspend fun list() = client.list()
+    override suspend fun subscribe(terminal: String, after: String?, event: (JSONObject) -> Unit, closed: (String) -> Unit) =
+        client.subscribe(terminal, after, event, closed)
+    override suspend fun backfill(terminal: String, before: String, limit: Int) = client.backfill(terminal, before, limit)
+    override suspend fun send(terminal: String, text: String, id: String) = client.send(terminal, text, id)
+    override suspend fun sendHeld(terminal: String, id: String) = client.sendHeld(terminal, id)
+    override suspend fun cancelHeld(terminal: String, id: String) = client.cancelHeld(terminal, id)
+    override suspend fun answer(terminal: String, row: String, choice: String, text: String?) = client.answer(terminal, row, choice, text)
+    override suspend fun interrupt(terminal: String) = client.interrupt(terminal)
+    override fun close() = client.close()
+}
+
+/**
  * The `chat.*` methods of Pocket Link's `herdr-pocket/chat/1` route, over the same framing herdr-core speaks
  * ([CoreClient]). A write on a DSH chat is refused here, before anything is sent, unless the bridge's hello said
  * `dshWrite: true` ([dshWrite]); the bridge refuses it too without a socket that takes writes (dsh-source.mjs).
