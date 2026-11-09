@@ -53,7 +53,18 @@ fn populate(decoy: &Path) {
     fs::create_dir_all(decoy.join("codex")).unwrap();
     fs::write(decoy.join("codex/state_5.sqlite"), "not a database").unwrap();
     fs::create_dir_all(decoy.join("herdr/automagik-herdr")).unwrap();
-    fs::write(decoy.join("herdr/automagik-herdr/workers.jsonl"), "{}\n").unwrap();
+    // A ledger that would tag every call below as the decoy's bot, were it read.
+    let ledger = decoy.join("herdr/automagik-herdr/workers.jsonl");
+    let start = format!(
+        r#"{{"event":"start","kind":"worker","terminal":"t1","botId":"b-decoydecoy","worktree":"/work/app","agent":"claude","role":"dev","squad":"b-decoydecoy","session":"sess-1","created_ms":1,"at":"{}"}}"#,
+        meter::time::format_rfc3339(1)
+    );
+    fs::write(&ledger, format!("{start}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }
 
 /// The decoy folder's file listing, to show nothing was written into it.
@@ -126,6 +137,14 @@ fn decoy_inner() {
             root.display()
         );
     }
+    for ledger in [&hand.app_home, &hand.workers_ledger] {
+        let ledger = ledger.as_deref().unwrap();
+        assert!(
+            ledger.starts_with(&decoy),
+            "the decoy reaches Options::new: {}",
+            ledger.display()
+        );
+    }
     hand.use_hc = false;
     hand.resolve_repos = false;
     hand.publish = false;
@@ -140,6 +159,8 @@ fn decoy_inner() {
     for root in [&o.omp_root, &o.claude_root, &o.codex_home, &o.dsh_root] {
         assert!(root.starts_with(env.home()), "{}", root.display());
     }
+    assert!(o.app_home.unwrap().starts_with(env.home()));
+    assert_eq!(o.workers_ledger, None);
     // Through the binary, the way the process and migrate tests run it: its default state
     // directory lands in the temp home, never in AM_HOME, XDG_STATE_HOME or METER_STATE_DIR.
     let out = env
@@ -177,5 +198,19 @@ fn decoy_inner() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{v}");
     assert_eq!(v["store"]["location"], "current", "{v}");
+    // A call the decoy's ledger would tag stays untagged: the ledger is never read.
+    let ts = meter::time::format_rfc3339(common::now() - 3_600_000);
+    write_lines(
+        &env.claude("-work-app/sess-1.jsonl"),
+        &[claude_line("m-ledger", "r-ledger", &ts, "model-a", &U1, 0)],
+    );
+    let r = env.run(&env.opts());
+    assert_eq!(r.files_read, 1);
+    let rows = env.store().rows_since(i64::MIN).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].key.bot.as_deref(), rows[0].squad.as_deref()),
+        (None, None)
+    );
     println!("decoy_inner: checked");
 }

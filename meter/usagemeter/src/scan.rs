@@ -16,7 +16,7 @@
 //!   the next frame start, so one bad frame never drops the rest of the file.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -127,6 +127,36 @@ pub fn candidate_of(path: &Path) -> Option<Candidate> {
     })
 }
 
+/// The first cwd recorded in the parent transcript of the sub-agent transcript at `path`
+/// (`…/<session>/subagents/<agent>.jsonl` → `…/<session>.jsonl`), reading at most 4 MiB of it.
+/// None when it cannot be read or records none.
+pub fn claude_first_cwd(path: &Path) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        cwd: Option<String>,
+    }
+    let session_dir = path.parent()?.parent()?;
+    let parent =
+        session_dir.with_file_name(format!("{}.jsonl", session_dir.file_name()?.to_str()?));
+    let f = open_nofollow(&parent).ok()?;
+    let mut r = io::BufReader::new(f.take(4 << 20));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line).ok()? == 0 {
+            return None;
+        }
+        if memchr::memmem::find(&line, b"\"cwd\"").is_none() {
+            continue;
+        }
+        if let Ok(Row { cwd: Some(cwd) }) = serde_json::from_slice::<Row>(&line)
+            && !cwd.is_empty()
+        {
+            return Some(cwd.chars().take(1024).collect());
+        }
+    }
+}
+
 /// `…/<session>/subagents/<agent>.jsonl` belongs to `<session>`.
 pub fn parent_session(path: &Path) -> Option<String> {
     let dir = path.parent()?;
@@ -161,6 +191,55 @@ fn head_skip(f: &mut File, source: Source) -> io::Result<Option<u64>> {
         n += k;
     }
     Ok(memchr::memchr(b'\n', &buf[..n]).map(|i| i as u64 + 1))
+}
+
+/// What a dsh-tui session's header says about where it came from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DshHeader {
+    /// A fork: its first rows are copies of another session's.
+    pub seeded: bool,
+    /// `createdAt`, epoch ms.
+    pub created_at: Option<i64>,
+}
+
+/// The header of a dsh-tui session file: its first line, decoded only as far as that line's end
+/// (at most 64 KiB of it), however large the frame holding it. None when the file cannot be read
+/// or does not start with a header. Used only to order reads, so a parent session is read before
+/// its forks.
+pub fn dsh_header(path: &Path) -> Option<DshHeader> {
+    const MAX: usize = 64 * 1024;
+    let f = open_nofollow(path).ok()?;
+    let mut line = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut read_line = |r: &mut dyn Read| -> Option<()> {
+        while line.len() < MAX {
+            let n = r.read(&mut chunk).ok()?;
+            if n == 0 {
+                return None;
+            }
+            match memchr::memchr(b'\n', &chunk[..n]) {
+                Some(end) => {
+                    line.extend_from_slice(&chunk[..end]);
+                    return Some(());
+                }
+                None => line.extend_from_slice(&chunk[..n]),
+            }
+        }
+        None
+    };
+    if path.to_string_lossy().ends_with(".zstd") {
+        let mut d = ruzstd::decoding::StreamingDecoder::new(f).ok()?;
+        read_line(&mut d)?;
+    } else {
+        read_line(&mut io::BufReader::new(f))?;
+    }
+    let mut ctx = FileCtx::default();
+    dsh_tui::parse_line(&line, &mut ctx, &mut Vec::new());
+    ctx.session.as_ref()?;
+    Some(DshHeader {
+        seeded: ctx.seeded,
+        created_at: ctx.created_at,
+    })
 }
 
 fn open_nofollow(p: &Path) -> io::Result<File> {
@@ -211,6 +290,7 @@ pub fn plan(c: &Candidate, prev: Option<FileState>) -> io::Result<Plan> {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| s.chars().take(128).collect()),
+                parent_cwd: claude_first_cwd(&c.path),
                 parent_session: Some(parent),
                 ..FileCtx::default()
             },
