@@ -73,7 +73,22 @@ android {
         "darwin-*/**", "linux-*/**", "win32-*/**")
         // Compressed in the APK: about half the download, unpacked once at install.
         jniLibs.useLegacyPackaging = true }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        // Robolectric takes a lock at <user.home>/.robolectric-download-lock and reads its android-all
+        // jar from <user.home>/.m2/repository. A sandboxed pane has a read-only home, so the lock fails
+        // ("Couldn't create lock file"). Give the test JVMs a writable home under build/ (the lock
+        // lands there), and point Robolectric's Maven resolver at the real, shared repository so the
+        // cached jar is read in place: a miss still downloads into ~/.m2/repository for CI's cache.
+        val sharedMavenRepository = System.getProperty("maven.repo.local")?.takeIf { it.isNotBlank() }
+            ?: File(System.getProperty("user.home"), ".m2/repository").absolutePath
+        unitTests.all { test ->
+            val robolectricHome = project.layout.buildDirectory.dir("robolectric-home").get().asFile
+            test.doFirst { robolectricHome.mkdirs() }
+            test.systemProperty("user.home", robolectricHome.absolutePath)
+            test.systemProperty("maven.repo.local", sharedMavenRepository)
+        }
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
