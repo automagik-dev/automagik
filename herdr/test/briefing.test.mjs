@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import {
   chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync,
-  symlinkSync, writeFileSync,
+  statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -434,12 +434,16 @@ test("briefing.mjs: a new Claude session is labelled on its terminal and logged 
   assert.equal(fx().terminals.t1.labels["agent.transcript"], undefined, "/tmp: not Claude's");
   const rows = () => readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.deepEqual({ ...rows()[0], at: undefined }, { event: "session", terminal: "t1", session: "s-1", transcript: "/tmp/s-1.jsonl", at: undefined });
+  // RFC 0021 (f) 6: the ledger the hook makes is the owner's alone.
+  assert.equal(statSync(ledger).mode & 0o777, 0o600);
   // The same session next turn: no label call, no row. A new one (after /clear): both again.
   await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app }, input);
   assert.equal(rows().length, 1);
   assert.equal(fx().labelled.length, 1);
+  chmodSync(ledger, 0o664); // made under umask 002 by an older writer: the next append narrows it
   await brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: tree, HERDR_APP_HOME: app }, JSON.stringify({ session_id: "s-2" }));
   assert.equal(rows().length, 2);
+  assert.equal(statSync(ledger).mode & 0o777, 0o600);
   assert.equal(fx().terminals.t1.labels["agent.session"], "s-2");
   // A worker's pane (no bot label, no project): no briefing, but its session is joined.
   const worker = await brief({ HC_TERMINAL_ID: "t5", HERDR_APP_HOME: app }, JSON.stringify({ session_id: "w-1" }));

@@ -3,8 +3,8 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, agyModeArgs, agyModeProblem, canResume, effortArgs, modelArgs, resumeArgs, resumesById, withoutBriefing, withoutResume }
-  from "./models.js";
+import { agentKeyOfArgv, agyModeArgs, agyModeProblem, canResume, effortArgs, modelArgs, ownsSession, resumeArgs, resumesById, sessionIdArgs,
+  withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
@@ -105,9 +105,15 @@ export function withoutPrompt(args) {
  * names is dropped. Returns { mode: "resume" | "fresh" | "swap",
  * agent, model, resume (the resume words, [] for a new conversation), argv, source (the agent
  * row with no resume words, for launchChange), template (the template's name, null when the
- * agent row ran), note } (`note`: why a resume wasn't possible, else null).
+ * agent row ran), note, sessionId } (`note`: why a resume wasn't possible, else null).
+ * `newSession` (RFC 0021 (f) 2): the id the CLI chose for a new conversation. A fresh or swap
+ * plan on an agent Herdr chooses ids for (Claude) starts on it (`--session-id`, sessionIdArgs)
+ * and returns it as `sessionId`, unless its command picks a session of its own (ownsSession: a
+ * person's --session-id, --resume or --continue wins) or is a template command that can't take
+ * words; a resume never gets one (it keeps its session). Else `sessionId` is null.
  */
-export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null }) {
+export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null,
+  newSession = null }) {
   const swap = agent !== undefined || model !== undefined;
   const key = agent ?? bot.agent;
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
@@ -130,13 +136,19 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
     if (extra.length) return { mode: "fresh", agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name, note: blocked };
     return { mode, agent: key, model: null, resume: [], argv: commandArgv({ shell: tpl.command }), source, template: tpl.name, note };
   };
-  if (swap) return plan("swap");
-  if (runningAgent && runningAgent !== key) return plan("fresh", [], `its pane runs ${runningAgent}, not ${key}, and a conversation doesn't cross agents`);
-  if (fresh) return plan("fresh");
-  if (!canResume(key)) return plan("fresh", [], `${key} has no resume this pack knows`);
+  // A new conversation: on the CLI's chosen id when the command takes one and picks none itself.
+  const started = (mode, note = null) => {
+    const words = sessionIdArgs(key, newSession);
+    const takes = words.length && !ownsSession(tpl ? tpl.command : source) && (!tpl || commandArgv({ shell: tpl.command }, words));
+    return takes ? { ...plan(mode, words, note), resume: [], sessionId: newSession } : { ...plan(mode, [], note), sessionId: null };
+  };
+  if (swap) return started("swap");
+  if (runningAgent && runningAgent !== key) return started("fresh", `its pane runs ${runningAgent}, not ${key}, and a conversation doesn't cross agents`);
+  if (fresh) return started("fresh");
+  if (!canResume(key)) return started("fresh", `${key} has no resume this pack knows`);
   // The id goes to every agent that resumes by one (models.js resumesById), never only Claude.
   const id = resumesById(key) ? sessionFor(key, session) : null;
-  return plan("resume", resumeArgs(key, id));
+  return { ...plan("resume", resumeArgs(key, id)), sessionId: null };
 }
 
 const sameWords = (a, b) => a.length === b.length && a.every((w, i) => w === b[i]);
@@ -293,7 +305,12 @@ export function ledgerSession(rows, terminal, agentKey = "claude", created_ms = 
   const born = Number.isSafeInteger(created_ms) ? created_ms : null;
   for (let i = (rows?.length ?? 0) - 1; i >= 0; i -= 1) {
     const r = rows[i];
-    if (born === null && r?.event === "start" && r.terminal === terminal) return null;
+    // A start row naming its session (RFC 0021: the id Herdr chose, or resumed) is that launch's first one.
+    if (r?.event === "start" && r.terminal === terminal && (born === null || r.created_ms === born || !Number.isSafeInteger(r.created_ms))) {
+      const own = (r.agent ?? "claude") === agentKey && (born === null || r.created_ms === born) ? sessionFor(agentKey, r.session) : null;
+      if (own) return { session: own, transcript: null };
+      if (born === null) return null;
+    }
     if (r?.event !== "session" || r.terminal !== terminal || (r.agent ?? "claude") !== agentKey) continue;
     if (born !== null && typeof r.at === "string" && Date.parse(r.at) < born) return null;
     const session = sessionFor(agentKey, r.session);
@@ -468,12 +485,30 @@ export function carriedLabels(old) {
   return out;
 }
 
-/** One line for the owner: what the replacement does with the conversation. */
+/** What a session id is shown as in any output (RFC 0021: session ids stay in the machine's ledgers). */
+export const SESSION_MASK = "***";
+/** `words` with every occurrence of session id `id` shown as SESSION_MASK (no id: as they are). */
+export const maskSession = (words, id) => (typeof id === "string" && id ? words.map((w) => String(w).split(id).join(SESSION_MASK)) : [...words]);
+/**
+ * `argv` as output shows it: the value after --session-id (or in --session-id=<id>), and `id`
+ * wherever it appears (a resumed session), as SESSION_MASK.
+ */
+export function maskedArgv(argv, id = null) {
+  if (!Array.isArray(argv)) return argv ?? null;
+  const out = maskSession(argv, id);
+  for (let i = 0; i < out.length; i += 1) {
+    if (out[i] === "--session-id" && i + 1 < out.length) out[i + 1] = SESSION_MASK;
+    else if (String(out[i]).startsWith("--session-id=")) out[i] = `--session-id=${SESSION_MASK}`;
+  }
+  return out;
+}
+
+/** One line for the owner: what the replacement does with the conversation. The session id itself is never shown. */
 export function planText(plan, session) {
   if (plan.mode === "swap") return `on ${plan.agent}${plan.model ? ` (${plan.model})` : ""}, a new conversation`;
   if (plan.mode === "fresh") return plan.note ? `a new conversation (${plan.note})` : "a new conversation";
-  if (plan.agent === "claude") return session ? `resuming session ${session}` : "resuming the latest conversation in its folder (--continue)";
-  return session ? `resuming session ${session} (${plan.resume.join(" ")})` : `resuming its last conversation (${plan.resume.join(" ")})`;
+  if (plan.agent === "claude") return session ? "resuming its session by id" : "resuming the latest conversation in its folder (--continue)";
+  return session ? `resuming its session by id (${maskSession(plan.resume, session).join(" ")})` : `resuming its last conversation (${plan.resume.join(" ")})`;
 }
 
 // ---- the sidebar's Restart: the CLI, as launch.js runCli runs it ----

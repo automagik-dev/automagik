@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -342,6 +342,7 @@ test("acceptance: a v0.2.0 hook is moved and backed up; through the new command 
   assert.equal(r.direction, "forward");
   assert.deepEqual(r.rewritten, [settings(s.proj)]);
   assert.equal(read(stableBriefingPath(s.app)), read(join(PACK, "briefingEntry.mjs")), "the entry point is in place");
+  assert.equal(statSync(stableBriefingPath(s.app)).mode & 0o777, 0o600, "made the owner's alone (RFC 0021 delivery 3)");
   assert.equal(read(settings(s.proj) + BACKUP_SUFFIX), original);
   const command = commands(settings(s.proj))[1];
   assert.equal(command, hookCommand(s.app));

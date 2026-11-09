@@ -477,13 +477,40 @@ export function resumeArgs(agentKey, session = null) {
   return RESUME[agentKey] ? RESUME[agentKey](s) : null;
 }
 
+// The agents whose new session's id Herdr chooses at launch (RFC 0021 (f) 2), and the words
+// that pass it: Claude Code 2.1.319 `--session-id <uuid>` ("Use a specific session ID for the
+// conversation (must be a valid UUID)", read from `claude --help` on 2026-11-09). Claude refuses
+// it beside --continue or --resume (unless --fork-session), so it goes only on a fresh launch.
+const SESSION_ID = {
+  claude: (id) => ["--session-id", id],
+};
+
+/** True when Herdr chooses the session id of a fresh `agentKey` launch (SESSION_ID lists it). */
+export const choosesSession = (agentKey) => Boolean(SESSION_ID[agentKey]);
+
+/** The words that start `agentKey` on the new session `id`: [] for an agent Herdr doesn't choose ids for. */
+export const sessionIdArgs = (agentKey, id) => (SESSION_ID[agentKey] && typeof id === "string" && id ? SESSION_ID[agentKey](id) : []);
+
+// A Claude command line's own session words: a resume, a continue, or a session id of its own.
+const CLAUDE_SESSION_WORD = /^(?:--resume|-r|--continue|-c|--session-id|--fork-session)(?:=|$)/;
+
+/**
+ * Whether a command already picks its own Claude session: its argv (or, for a template, its
+ * shell command's words) holds --resume, -r, --continue, -c, --session-id or --fork-session.
+ * Such a launch gets no id from Herdr: a person's own words win.
+ */
+export function ownsSession(command) {
+  const words = Array.isArray(command) ? command.map(String) : String(command ?? "").split(/[\s'"]+/);
+  return words.some((w) => CLAUDE_SESSION_WORD.test(w));
+}
+
 // The words an earlier resume left in a command line, per agent, so a reused command doesn't
 // resume twice: `flags` stand alone, `valued` take the next word (or `=value`), `inline` only
 // take `=value` (omp's --resume picks a session when bare), `optional` take `=value` or the next
 // word unless it is a flag (kimi's -S, --session [id]). codex's is the `resume` subcommand with
 // its --last or session id. -c is --continue (codex's is --config).
 const RESUMED = {
-  claude: { flags: ["--continue", "-c"], valued: ["--resume", "-r"] },
+  claude: { flags: ["--continue", "-c"], valued: ["--resume", "-r", "--session-id"] },
   omp: { flags: ["--continue", "-c", "--resume", "-r"], inline: ["--resume", "-r", "--restore"] },
   pi: { flags: ["--continue", "-c", "--resume", "-r"], valued: ["--session"] },
   kimi: { flags: ["--continue", "-c"], optional: ["--session", "-S"] },

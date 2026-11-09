@@ -281,6 +281,31 @@ export function effectiveLead(file, botId) {
 }
 
 /**
+ * A bot's squad (RFC 0021 (e)): the id of the bot heading its chain of effective leads, the
+ * last one before the main bot. A bot that reports to the main bot directly is its own squad,
+ * whether it leads others or not. Null for the main bot, an unknown id, a file with no main bot,
+ * and a chain that can't be followed to the main bot: a lead that is missing or planned (where
+ * effectiveLead falls back to the main bot with a warning), or a loop. Never guessed. The start
+ * row freezes it at launch: it is never recomputed for a launch already written.
+ */
+export function squadOf(file, botId) {
+  const main = mainBotOf(file);
+  const byId = new Map((file?.bots ?? []).map((b) => [b.id, b]));
+  let cur = byId.get(botId);
+  if (!main || !cur || cur === main || cur.kind === "main") return null;
+  const seen = new Set();
+  while (cur) {
+    if (seen.has(cur.id)) return null;
+    seen.add(cur.id);
+    const { lead, warning } = effectiveLead(file, cur.id);
+    if (warning || !lead) return null;
+    if (lead === main.id) return cur.id;
+    cur = byId.get(lead);
+  }
+  return null;
+}
+
+/**
  * Every reason a file must not be written as it is (empty: fine). Stricter than parseBots.
  * A category id that isn't a slug is refused only when it is new: one `before` (the file the
  * edit started from, its text or object; null: none) already lists stays writable, so a

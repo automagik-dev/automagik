@@ -107,12 +107,13 @@ export function paneArgs(argv, { botId, project = null, worker = false, stableRo
     ...(project ? ["--project", project] : []), ...(worker ? ["--worker"] : []), "--", ...argv];
 }
 
-// The usage-tagging contract (usagemeter reads these): a worker terminal carries
-// `worker.of=<botId>`, `branch=<branch>` and `worker.role=<role>`, and its cwd is the task
-// worktree. Started with Genie's task id (`--task`), it also carries `task=<id>`,
+// The usage-tagging contract: usagemeter reads the workers ledger first (its start, session and
+// end rows, below; RFC 0021) and these labels only as a second witness, seen at a sync: a worker
+// terminal carries `worker.of=<botId>`, `branch=<branch>` and `worker.role=<role>`, and its cwd
+// is the task worktree. Started with Genie's task id (`--task`), it also carries `task=<id>`,
 // `task.project=<main checkout>` and `task.lead=<lead bot>`; usagemeter joins on (project, task).
 // A worker started before the task contract has no `branch` label: its `task` label is the
-// branch (workerBranch reads either).
+// branch (workerBranch reads either). The ledger outranks a label whenever they disagree.
 export const WORKER_OF_LABEL = "worker.of";
 export const TASK_LABEL = "task";
 export const TASK_PROJECT_LABEL = "task.project";
@@ -322,10 +323,11 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * deny-by-default hc guard folder goes first on the worker PATH (GUARD_DIR); a guardrail, not a
  * boundary (#624, #628, #631). `sandbox`: a dsh-tui worker runs behind the per-pane hc proxy
  * (hcPane.mjs) before DSH starts; `project` is the main checkout the proxy snapshots (omitted:
- * the helper finds the project above the worktree).
+ * the helper finds the project above the worktree). `session`: the Claude session id the worker's
+ * argv starts it on (`--session-id`), set as its agent.session label too.
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, agyMode, argv, task, template, path,
-  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null }) {
+  taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null, session = null }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -335,6 +337,8 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   }
   args.push("--label", `${BRANCH_LABEL}=${branch}`);
   if (role) args.push("--label", `${WORKER_ROLE_LABEL}=${role}`);
+  // The session id Herdr chose for a new Claude worker (RFC 0021 (f) 2; its argv carries --session-id).
+  if (session) args.push("--label", `${SESSION_LABEL}=${session}`);
   // The bot's Herdr space and no tab: the worker opens in a tab of its own there.
   if (space) args.push("--label", `herdr.space=${space}`);
   if (template && templateArgv) {
@@ -491,39 +495,93 @@ export function baseCandidates(given, originHead) {
 
 // ---- the workers ledger: <app home>/automagik-herdr/workers.jsonl ----
 //
-// Append-only, one JSON object per line, each line one O_APPEND write. Rows outlive the
-// terminals: usagemeter joins its usage to bots and tasks through them.
+// Append-only, one JSON object per line, each line one O_APPEND write, the file the owner's
+// alone (0600: usagemeter refuses a group- or world-writable one). Rows outlive the terminals:
+// usagemeter joins its usage to bots and tasks through them. Every field added since the first
+// rows is additive: a reader that doesn't know one ignores it, and an old row without it still
+// reads (RFC 0021: `valid_from` is then the row's `at`, and it has no end).
 
 export const LEDGER_FILE = "automagik-herdr/workers.jsonl";
 export const ledgerPath = (appHome) => `${String(appHome).replace(/\/+$/, "")}/${LEDGER_FILE}`;
+/** The workers ledger's mode, on creation and on every append (RFC 0021 (f) 6). */
+export const LEDGER_MODE = 0o600;
 const stamp = (at) => new Date(at ?? Date.now()).toISOString();
 const orNull = (x) => (x === undefined || x === "" ? null : x);
+const msOrNull = (x) => (Number.isSafeInteger(x) ? x : null);
 
 /**
  * A start row: a worker (`kind: "worker"`, `worktree` its cwd as a real path) or a bot seat
- * (`kind: "seat"`, from start and attach; `worktree` its folder). `task`: Genie's task id
- * (`--task`), else null; rows written before the task contract hold the branch there, with
- * no `branch` key. `branch`: the worker's branch. `project`: the main checkout (usagemeter
- * joins on project and task); `lead`: the task's lead bot; `base`: the commit the worktree
- * started from; `created`: this command made the worktree. `swap`: the task ran the bot's
- * other arm (planned swaps); `override`: the bot picked the agent, model, effort or template
- * itself; `override_requested`: on a swap task, the { agent?, model?, effort? } it asked for
- * and didn't get, else null. `pid` is the terminal's foreground pid when hc gave one.
- * `template`: the hc template a worker runs (its agent, model and effort are then null),
- * else null. `role`: a worker's role (ROLES). A seat's worker fields are null or false.
+ * (`kind: "seat"`, from start, restart, attach and --tree; `worktree` its folder). `task`:
+ * Genie's task id (`--task`), else null; rows written before the task contract hold the branch
+ * there, with no `branch` key. `branch`: the worker's branch. `project`: the main checkout
+ * (usagemeter joins on project and task); `lead`: a worker's task lead, a seat's effective lead
+ * (null for the main bot); `base`: the commit the worktree started from; `created`: this command
+ * made the worktree. `swap`: the task ran the bot's other arm (planned swaps); `override`: the
+ * bot picked the agent, model, effort or template itself; `override_requested`: on a swap task,
+ * the { agent?, model?, effort? } it asked for and didn't get, else null. `pid` is the
+ * terminal's foreground pid when hc gave one. `template`: the hc template a worker runs (its
+ * agent, model and effort are then null), else null. `role`: a worker's role (ROLES), a seat's
+ * pane role at launch (launchArgs.js roleOf: main, captain or a rank), else null.
+ * RFC 0021: `core` (this computer's hc core id) and `created_ms` (the terminal's, from hc get)
+ * key the launch with `terminal`, since hc reuses terminal ids; `squad` (model.js squadOf, frozen
+ * here at launch); `session`: the Claude session the launch runs (the id Herdr chose with
+ * --session-id, or the one it resumed), else null. A seat's worker fields are null or false.
  */
 export function startRow({ kind, terminal, pid, botId, task, branch, project, lead, worktree, base, created, agent, model, effort,
-  template, role, swap, override, overrideRequested, at }) {
+  template, role, swap, override, overrideRequested, core, createdMs, squad, session, at }) {
   const requested = overrideRequested && Object.keys(overrideRequested).length ? { ...overrideRequested } : null;
   return { event: "start", kind, terminal, pid: Number.isInteger(pid) ? pid : null, botId, task: orNull(task),
     worktree: orNull(worktree), agent: orNull(agent), model: orNull(model), effort: orNull(effort), template: orNull(template),
     role: orNull(role), branch: orNull(branch), project: orNull(project), lead: orNull(lead), base: orNull(base),
-    created: created === true, swap: swap === true, override: override === true, override_requested: requested, at: stamp(at) };
+    created: created === true, swap: swap === true, override: override === true, override_requested: requested,
+    core: orNull(core), created_ms: msOrNull(createdMs), squad: orNull(squad), session: orNull(session), at: stamp(at) };
 }
 
-/** A session row: the Claude session (and its transcript) a terminal now runs. */
-export function sessionRow({ terminal, session, transcript, at }) {
-  return { event: "session", terminal, session, transcript: orNull(transcript), at: stamp(at) };
+/**
+ * A session row: the session (and its transcript) a terminal now runs. `agent`: the harness
+ * (absent or null: Claude's, as the briefing hook's rows always were); `core` and `created_ms`
+ * key the launch when the writer knows them, else they are left out.
+ */
+export function sessionRow({ terminal, session, transcript, agent, core, createdMs, at }) {
+  return { event: "session", terminal, session, transcript: orNull(transcript),
+    ...(agent && agent !== "claude" ? { agent } : {}),
+    ...(core ? { core } : {}), ...(Number.isSafeInteger(createdMs) ? { created_ms: createdMs } : {}), at: stamp(at) };
+}
+
+/** Why a launch ended in the ledger's eyes: the CLI replaced its terminal, or a sweep found it finished. */
+export const END_REASONS = ["replaced", "finished"];
+
+/**
+ * An end row (RFC 0021 (f) 4): the launch keyed by (`core`, `terminal`, `created_ms`) ended at
+ * `at`. Written only once the terminal really ended: after the CLI's hc kill of it succeeded
+ * (`replaced`), or when the worktree sweep found it finished (`finished`, `at` its finished_ms).
+ */
+export function endRow({ kind, terminal, core, createdMs, reason, at }) {
+  return { event: "end", kind: orNull(kind), terminal, core: orNull(core), created_ms: msOrNull(createdMs), reason, at: stamp(at) };
+}
+
+/** A launch's key in the ledger: `core`, `terminal` and `created_ms`, or null when one is missing. */
+export const launchKey = (r) => (typeof r?.core === "string" && r.core && typeof r.terminal === "string" && r.terminal
+  && Number.isSafeInteger(r.created_ms) ? `${r.core}\n${r.terminal}\n${r.created_ms}` : null);
+
+/**
+ * The end rows a sweep writes (`kind` worker, reason finished): for each worker start row on
+ * this computer (`core`) whose terminal `gets` (hc get answers by address) shows finished, with
+ * the same created_ms (a reused id is another terminal), and whose launch has no end row yet.
+ * A start row with no created_ms or core (written before RFC 0021) never gets one.
+ */
+export function finishedEnds(rows, gets, core, at = null) {
+  const ended = new Set(rows.filter((r) => r?.event === "end").map(launchKey).filter(Boolean));
+  const out = [];
+  for (const r of rows) {
+    if (r?.event !== "start" || r.kind !== "worker" || r.core !== core) continue;
+    const key = launchKey(r);
+    const get = gets.get?.(r.terminal) ?? null;
+    if (!key || ended.has(key) || !get || get.created_ms !== r.created_ms || !Number.isSafeInteger(get.finished_ms)) continue;
+    ended.add(key);
+    out.push(endRow({ kind: "worker", terminal: r.terminal, core, createdMs: r.created_ms, reason: "finished", at: at ?? get.finished_ms }));
+  }
+  return out;
 }
 
 /** One ledger line. */

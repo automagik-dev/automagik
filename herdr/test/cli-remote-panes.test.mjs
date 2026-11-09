@@ -338,6 +338,8 @@ test("start --machine of a Claude bot with no app home there: none is made; one 
   assert.equal(existsSync(join(s.home, ".claude")), false);
   assert.deepEqual(agentPart(startedWith(s)), ["claude"], "started, without the flag");
   assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
+  // RFC 0021: a linked machine's launch is unchanged: no --session-id, no agent.session label, no workers row here.
+  assert.equal(startedWith(s).some((w) => w === "--session-id" || w.startsWith("agent.session=")), false);
 });
 
 test("start --machine of a Claude bot with an app home there but no briefing entry: its briefing file (0600, folder 0700), noHookThere", (t) => {
@@ -719,8 +721,10 @@ test("restart --machine resumes by id when the pane carries a session (--resume 
   assert.equal(s.cli(["attach", "Hedge", "vm/t9", ...s.on]).code, 0);
   const r = s.cli(["restart", "Atlas", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json().argv, ["hermes", "--tui", "--resume", "atlas-sess-1"], "its own conversation, by id, though Hedge shares the folder");
-  assert.equal(r.json().session, "atlas-sess-1");
+  // RFC 0021: --json masks the session id; what hc ran resumes it by id.
+  assert.deepEqual(r.json().argv, ["hermes", "--tui", "--resume", "***"], "its own conversation, by id, though Hedge shares the folder");
+  assert.equal(r.json().session, "***");
+  assert.equal(r.out.includes("atlas-sess-1"), false);
   const now = s.hcState().terminals.find((x) => x.address === "vm/t100");
   assert.equal(now.labels["agent.session"], "atlas-sess-1", "carried, so the next restart resumes it too");
   // A label that can't be an id ("-x"): no --resume, so still refused while Hedge shares the folder, even with --force.
@@ -751,8 +755,9 @@ test("restart --machine #413: codex can't resume a thread whose model provider i
   assert.ok(!runs[1].includes("resume"), "then a new thread");
   const out = r.json();
   assert.deepEqual([out.mode, out.terminal, out.replaced], ["fresh", "t101", "t9"]);
-  assert.equal(out.note, `codex can't resume thread ${thread} (vm/t100 said "${gone}"), so it starts on a new one`);
-  assert.ok(out.warnings.some((w) => w.includes(`thread ${thread}`)));
+  assert.equal(out.note, `codex can't resume its thread (***) (vm/t100 said "${gone}"), so it starts on a new one`);
+  assert.ok(out.warnings.some((w) => w.includes("its thread (***)")));
+  assert.equal(`${r.out}${r.err}`.includes(thread), false, "the thread's id is never printed (RFC 0021)");
   assert.equal(s.hcState().terminals.find((x) => x.address === "vm/t101").labels["agent.session"], undefined);
   assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one is up");
 });
