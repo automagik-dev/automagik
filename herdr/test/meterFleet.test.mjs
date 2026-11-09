@@ -5,7 +5,7 @@
 // here reaches a real machine, a real hc or the network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -374,7 +374,7 @@ test("sync fan-out: this computer, then each connected linked machine in turn; f
   const exec = async (bin, args, opts) => { calls.push([bin, args, opts?.on ?? null]); if (opts?.on === "far") throw new Error("unreachable"); return { code: 0 }; };
   const state = {};
   const r = await syncMeter({ exec, bin: "/h/.local/bin/usagemeter", state, machines: ["lin", "far"] });
-  assert.deepEqual(calls, [["/h/.local/bin/usagemeter", ["sync"], null], ["sh", ["-c", SYNC], "lin"], ["sh", ["-c", SYNC], "far"]]);
+  assert.deepEqual(calls, [["sh", ["-c", SYNC, "sh", "/h/.local/bin/usagemeter"], null], ["sh", ["-c", SYNC], "lin"], ["sh", ["-c", SYNC], "far"]]);
   assert.deepEqual(r.on, { lin: 0, far: null });
   assert.equal(r.ran, true);
   assert.equal(state.busy, false);
@@ -436,4 +436,46 @@ test("SYNC on a machine: no binary is silent (exit 0); one there runs `sync`", (
   mkdirSync(join(home, ".local", "bin"), { recursive: true });
   exe(join(home, ".local", "bin", "usagemeter"), `#!/bin/sh\necho "ran $*"\n`);
   assert.equal(run().stdout, "ran sync\n");
+});
+
+// usagemeter finds hc on PATH (METER_HC is its tests' own). Herdr started from the Dock, and hc
+// exec on a linked machine, may run it without ~/.local/bin, where hc is: no terminal, label or
+// machine id then reaches the meter. A fake hc and a fake usagemeter in a temp home only.
+const hcWorld = (t) => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "am-sync-hc-")));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const bin = join(home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
+  exe(join(bin, "hc"), `#!/bin/sh\necho "fake hc $*"\n`);
+  exe(join(bin, "usagemeter"), `#!/bin/sh\nprintf '%s\\n' "$PATH" > "$HOME/path"\n`
+    + `hc machine-id > "$HOME/hc" 2>/dev/null || echo "no hc" > "$HOME/hc"\n`);
+  const seen = () => ({ path: readFileSync(join(home, "path"), "utf8").trim(), hc: readFileSync(join(home, "hc"), "utf8").trim() });
+  return { home, bin, seen };
+};
+
+test("SYNC on a machine: ~/.local/bin goes on PATH once, after what is there, so usagemeter finds hc", (t) => {
+  const { home, bin, seen } = hcWorld(t);
+  const run = (PATH) => spawnSync("/bin/sh", ["-c", SYNC], { env: { HOME: home, PATH }, encoding: "utf8" });
+  assert.equal(run("/usr/bin:/bin").status, 0);
+  assert.deepEqual(seen(), { path: `/usr/bin:/bin:${bin}`, hc: "fake hc machine-id" });
+  // Already there (first, last or between): PATH is left as it is, in its order.
+  for (const path of [`${bin}:/usr/bin:/bin`, `/usr/bin:/bin:${bin}`, `/usr/bin:${bin}:/bin`]) {
+    run(path);
+    assert.deepEqual(seen(), { path, hc: "fake hc machine-id" }, path);
+  }
+  // An empty PATH gets the folder alone, with no empty entry (the current folder) before it.
+  run("");
+  assert.deepEqual(seen(), { path: bin, hc: "fake hc machine-id" });
+});
+
+test("the local sync finds hc too: the same SYNC, with Herdr's absolute usagemeter path", async (t) => {
+  const { home, bin, seen } = hcWorld(t);
+  const env = { HOME: home, PATH: "/usr/bin:/bin" };
+  // Herdr's exec: { code, stdout, stderr }, rejects only when the program can't start.
+  const exec = (cmd, args) => new Promise((resolve, reject) => execFile(cmd, args, { env }, (err, stdout, stderr) => {
+    if (err && typeof err.code !== "number") reject(err); else resolve({ code: err ? err.code : 0, stdout, stderr });
+  }));
+  const r = await syncMeter({ exec, bin: join(bin, "usagemeter"), state: {} });
+  assert.deepEqual(r, { ran: true, code: 0, wait: METER_EVERY_MS });
+  assert.deepEqual(seen(), { path: `/usr/bin:/bin:${bin}`, hc: "fake hc machine-id" });
 });
