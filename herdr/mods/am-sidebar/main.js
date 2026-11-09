@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText, orderMachines, movedToTop, readMachineOrder } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText, orderMachines, movedToTop, readMachineOrder, programForApp } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -347,7 +347,7 @@ export default class Spaces extends View {
       if (!["working", "blocked", "idle", "done"].includes(k.status)) return [];
       const s = spaceOf.get(p.tab);
       const app = k.report.app;
-      const program = (this.known ?? []).find((x) => x.key === app || app.startsWith(`${x.key}-`)) ?? p.program;
+      const program = programForApp(app, this.known) ?? p.program;
       return [{ alias: true, core: k.address, address: p.terminal, pane: p.pane, tab: p.tab, status: k.status, app,
         program, focused: p.focused, title: p.title, space: s?.id, space_name: s?.name ?? "", seq: 0 }];
     });

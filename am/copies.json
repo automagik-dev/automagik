@@ -110,6 +110,10 @@
       "to": "am/model.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/modelCache.js",
+      "to": "am/modelCache.js"
+    },
+    {
       "from": "herdr/mods/am-sidebar/models.js",
       "to": "am/models.js"
     },

@@ -785,8 +785,8 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.equal(plan.effort, null);
   assert.deepEqual(plan.argv, ["grok"]);
   assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
-  const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-3.1-pro", effort: "max" } });
-  assert.deepEqual(agy.argv, ["agy", "--model", "gemini-3.1-pro", "--effort", "max"]);
+  const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "max" } });
+  assert.deepEqual(agy.argv, ["agy", "--model", "gemini-4-argon-high", "--effort", "max"]);
   assert.deepEqual(agy.warnings, []);
   const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
   assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
@@ -866,12 +866,12 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
     ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
   // agy takes its first prompt only through -i; a bare trailing task is an error to it.
-  const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-3.1-pro", effort: "high" } });
+  const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "high" } });
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", agent: agyPlan.agent,
     model: agyPlan.model, effort: agyPlan.effort, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
   ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
-    "--label", "worker.model=gemini-3.1-pro", "--label", "worker.effort=high", "--parent", "t1", "--",
-    "/usr/bin/env", "PATH=/x/bin", "agy", "--model", "gemini-3.1-pro", "--effort", "high", "-i", "fix the build"]);
+    "--label", "worker.model=gemini-4-argon-high", "--label", "worker.effort=high", "--parent", "t1", "--",
+    "/usr/bin/env", "PATH=/x/bin", "agy", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
   assert.deepEqual(promptArgs("antigravity", "t"), ["-i", "t"]);
   assert.deepEqual(promptArgs("claude", "t"), ["t"]);
   assert.deepEqual(promptArgs(undefined, "t"), ["t"], "no agent named: the bare task, as before");

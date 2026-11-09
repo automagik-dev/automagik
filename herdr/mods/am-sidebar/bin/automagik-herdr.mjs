@@ -8,7 +8,7 @@
 // (that wrapper runs this file through bin/run.sh, which finds node 22.7+ or bun without node on PATH).
 // Apache-2.0.
 
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { accessSync, closeSync, constants, existsSync, linkSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
@@ -30,6 +30,7 @@ import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBr
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, agentKeyOfArgv, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, resolveAgent, resumeAfterTurn, resumesById,
   shownModel, withBriefing, withOverrides } from "../models.js";
+import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
   ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
@@ -176,7 +177,7 @@ function claudeLogin(argv, warnings = []) {
   if (chosen.warning) warnings.push(chosen.warning);
   return chosen.words;
 }
-const modelIo = () => ({ home: home(), read: (p) => { try { return readText(p); } catch { return null; } } });
+const modelIo = () => ({ home: home(), appHome: appHome(), read: (p) => { try { return readText(p); } catch { return null; } } });
 /** The agents Herdr can start: its shipped table with the app home's programs.json applied. */
 const agentTable = () => withOverrides(readText(`${appHome()}/programs.json`));
 
@@ -1251,6 +1252,15 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 {"program": null, "path": null} when none has it. For the
                                 Accounts panel, which runs claude auth status as a launch would.
 
+Antigravity (\`agy\`, 1.5.3): --model takes the ids \`agy models\` lists (a Gemini or Claude
+id, e.g. gemini-4-argon-high), never the label its settings.json keeps. The pack caches that
+list under <app home>/automagik-herdr/antigravity-models.json, refreshed at most once a run
+when it is missing or a day old; agy not installed, signed in or listing nothing keeps the
+last cached list and the refusal says when there is none. The pack starts agy with no
+permission flag (it also has --dangerously-skip-permissions, --mode and --sandbox), so its
+own permission prompt stays the person's answer. Its first prompt goes through -i, its resume
+through --conversation <id> (--fresh starts new).
+
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
 rank. Start, attach, detach and an edit keep the panes' bot, role, category and squad labels
@@ -1296,13 +1306,45 @@ function readInstructions(opts) {
   return text;
 }
 
+/**
+ * The models `agent` may be pinned to (models.js knownModels), cache-first for Antigravity
+ * (#793): a pin the cache already lists is used as it is, even when the cache is old, with no
+ * `agy models`; a missing cache or an unlisted pin refreshes once in this run (modelCache.js)
+ * and reads again. A refresh that fails (agy isn't installed, isn't signed in) keeps the last
+ * cached list; with none, the pin is refused and the message says why.
+ */
+function modelList(agent, pin = null) {
+  let list = knownModels(agent, modelIo());
+  if (agent !== "antigravity" || !pin || list.includes(pin)) return list;
+  if (agModelsLooked) return list;
+  agModelsLooked = true;
+  try {
+    refreshAgModelsSync({
+      appHome: appHome(),
+      read: (path) => readText(path),
+      write: (path, text) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); },
+      rename: (from, to) => renameSync(from, to),
+      exec: (command, args, options) => {
+        const file = programPath(command);
+        if (!file) throw new Error(`${command} isn't installed`);
+        return agModelsSpawnResult(spawnSync(file, args, { encoding: "utf8", timeout: options?.timeout ?? AG_MODELS_TIMEOUT_MS }));
+      },
+      now: Date.now(),
+    });
+  } catch { /* no cache and no list: knownModels reads what is there */ }
+  return knownModels(agent, modelIo());
+}
+
+// Whether this CLI run has already looked at `agy models`: one refresh a run at most.
+let agModelsLooked = false;
+
 function checkModel(agent, model) {
   if (!agent) throw new CliError("A model pin needs a coding agent (--agent).", 2);
   if (modelRefusal(agent)) throw new CliError(modelRefusal(agent), 2);
-  const list = knownModels(agent, modelIo());
+  const list = modelList(agent, model);
   if (!list.includes(model)) {
     throw new CliError(list.length ? `${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`
-      : `There is no list of ${agent} models to pin from; leave the model unpinned (the running one is detected).`);
+      : `There is no list of ${agent} models to pin from${agent === "antigravity" ? " (agy models has listed none: agy may not be installed, signed in, or cached yet)" : ""}; leave the model unpinned (the running one is detected).`);
   }
 }
 
@@ -1370,7 +1412,7 @@ export function entryFrom(opts, base, project, { creating }) {
   if (opts.model !== undefined && opts["no-model"]) throw new CliError("Give --model or --no-model, not both.", 2);
   if (opts["no-model"]) delete entry.model;
   if (opts.model !== undefined) { checkModel(entry.agent, opts.model); entry.model = opts.model; }
-  else if (entry.model && opts.agent !== undefined && !knownModels(entry.agent, modelIo()).includes(entry.model)) {
+  else if (entry.model && opts.agent !== undefined && !modelList(entry.agent, entry.model).includes(entry.model)) {
     throw new CliError(`${entry.name} is pinned to ${entry.model}, which ${entry.agent} doesn't list; pass --model or --no-model.`);
   }
   workerDefaults(opts, entry);
@@ -1439,7 +1481,7 @@ function workerDefaults(opts, entry) {
   else if (model !== undefined) {
     if (optionLike(model)) throw new CliError(`--worker-model: "${model}" starts with a dash, so an agent would read it as an option.`, 2);
     const agent = w.agent ?? entry.agent;
-    const list = agent ? knownModels(agent, modelIo()) : [];
+    const list = agent ? modelList(agent, model) : [];
     if (list.length && !list.includes(model)) throw new CliError(`--worker-model: ${model} isn't a known ${agent} model. Pick one of: ${list.join(", ")}.`);
     w.model = model;
   }
@@ -2299,7 +2341,7 @@ async function seatOnMachine(project, bot, over = {}) {
   const agentKey = over.agent ?? bot.agent;
   const agent = agentTable()[agentKey];
   if (!agent?.run?.length) throw new CliError(`${bot.name}'s coding agent "${agentKey}" isn't one Herdr can start.`);
-  if (!over.argv && bot.model && !knownModels(bot.agent, modelIo()).includes(bot.model)) {
+  if (!over.argv && bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
@@ -2596,7 +2638,7 @@ async function launchSeat(project, bot, over = {}) {
   const agentKey = over.agent ?? bot.agent;
   const model = over.argv ? (over.model ?? null) : bot.model;
   // A12: a pin that isn't one of the agent's listed models (an old free-text model) is refused.
-  if (!over.argv && bot.model && !knownModels(bot.agent, modelIo()).includes(bot.model)) {
+  if (!over.argv && bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> (the error lists them), or clear it with --no-model.`);
   }
@@ -3265,7 +3307,7 @@ async function cmdRestart(opts, [ref]) {
     const edit = { agent: opts.agent, model: opts.model };
     if (opts.model === undefined && target !== bot.agent) edit["no-model"] = true;
     entry = entryFrom(edit, stored, project, { creating: false });
-  } else if (bot.model && !knownModels(bot.agent, modelIo()).includes(bot.model)) {
+  } else if (bot.model && !modelList(bot.agent, bot.model).includes(bot.model)) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model>, restart it on one with --model <model>, or clear the pin with --no-model.`);
   }
@@ -4612,7 +4654,7 @@ async function cmdWorker(opts, rest) {
     }
   } else {
     if (!onPath(plan.argv[0])) throw new CliError(`${agents[plan.agent].name} (${plan.argv[0]}) isn't installed on this computer.`);
-    const list = plan.model ? knownModels(plan.agent, modelIo()) : [];
+    const list = plan.model ? modelList(plan.agent, plan.model) : [];
     if (list.length && !list.includes(plan.model)) warnings.push(`${plan.model} isn't on ${plan.agent}'s model list; started with it anyway.`);
   }
   // Where it works: --worktree's, the branch's worktree, or the folder a new one gets (made
