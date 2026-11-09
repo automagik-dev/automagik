@@ -158,6 +158,7 @@ test("code is an optional boolean; invalid values warn; unrelated form edits kee
     assert.equal(parseBots(text(file)).file.bots[0].code, code);
     const { code: ignored, ...entry } = file.bots[0];
     assert.equal(applyBotEdit(file, { ...entry, role: "Updated" }).bots[0].code, code);
+    assert.equal("code" in applyBotEdit(file, { ...entry, code: undefined }).bots[0], false);
   }
   for (const code of ["false", 0, null, {}]) {
     const file = sample((f) => { f.bots[0].code = code; return f; });
