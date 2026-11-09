@@ -1034,9 +1034,8 @@ class Session {
         reply(`terminal.run: ${why}`);
         return;
       }
-      // Identity belongs to the verified pane, never a caller-provided replacement.
-      params.parent = this.policy.terminal;
-      params.labels = { ...params.labels, [WORKER_OF_LABEL]: this.policy.caller.bot };
+      // runProblem above already required parent and worker.of to equal this pane and bot:
+      // identity is checked, never rewritten.
       await this.forward(request, method, params);
       return;
     }
