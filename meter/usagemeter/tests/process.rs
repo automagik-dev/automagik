@@ -209,8 +209,9 @@ fn a_reimport_killed_partway_is_reported_incomplete() {
     }
     let _ = child.kill();
     let _ = child.wait();
+    // The reset removes the backlog a run records at its end: still absent, the run did not end.
     assert_eq!(
-        read("SELECT v FROM meta WHERE k = 'last_run_ms'"),
+        read("SELECT v FROM meta WHERE k = 'last_pending_bytes'"),
         None,
         "the kill should land after the reset and before the run ends"
     );
