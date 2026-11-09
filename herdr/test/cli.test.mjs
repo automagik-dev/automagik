@@ -4079,3 +4079,109 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
     noIdIn(new Set([SID]), r, `the provider-gone note${json ? " (--json)" : ""}`);
   }
 });
+
+test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support --lead-project and --no-lead-project", (t) => {
+  const s = scene(t);
+  s.seed(team());
+
+  // Create a second git project (spoke) under s.root.
+  const spoke = join(s.root, "spoke");
+  mkdirSync(spoke);
+  git(spoke, "init", "-q");
+  git(spoke, "commit", "-q", "--allow-empty", "-m", "start");
+
+  // Create SpokeMain in spoke reporting to Genie in s.project via --lead and --lead-project.
+  const createdMain = s.cli([
+    "create",
+    "--project", spoke,
+    "--kind", "main",
+    "--name", "SpokeMain",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Genie",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMain.code, 0, createdMain.err);
+  const spokeMainId = createdMain.json().id;
+  assert.equal(createdMain.json().bot.lead, ID.main);
+  assert.equal(createdMain.json().bot.leadProject, s.project);
+
+  // Create SpokeMember in spoke reporting to Captain in s.project.
+  const createdMem = s.cli([
+    "create",
+    "--project", spoke,
+    "--name", "SpokeMember",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Captain",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMem.code, 0, createdMem.err);
+  assert.equal(createdMem.json().bot.lead, ID.cap);
+  assert.equal(createdMem.json().bot.leadProject, s.project);
+
+  // Refusals: missing folder, folder with no .herdr/bots.json, missing bot, planned lead, or cross-project cycle.
+  const missingDir = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", join(s.root, "nope")]);
+  assert.equal(missingDir.code, 2);
+  assert.match(missingDir.err, /is not a folder/);
+
+  const noBotsDir = join(s.root, "empty-proj");
+  mkdirSync(noBotsDir);
+  const noBots = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", noBotsDir]);
+  assert.equal(noBots.code, 1);
+  assert.match(noBots.err, /No \.herdr\/bots\.json in/);
+
+  const noSuchBot = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Nobody", "--lead-project", s.project]);
+  assert.equal(noSuchBot.code, 1);
+  assert.match(noSuchBot.err, /no bot "Nobody"/i);
+
+  const plannedLead = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Studio", "--lead-project", s.project]);
+  assert.equal(plannedLead.code, 1);
+  assert.match(plannedLead.err, /planned/);
+
+  // Cross-project cycle refusal: editing Captain in s.project to report to SpokeMember in spoke.
+  const cycle = s.cli(["edit", "Captain", "--project", s.project, "--lead", "SpokeMember", "--lead-project", spoke]);
+  assert.equal(cycle.code, 1);
+  assert.match(cycle.err, /reports to Captain, so it can't be its lead/);
+
+  // ls, show, brief, and dsh-tui doctor in spoke and s.project.
+  const lsOut = s.cli(["ls", "--project", spoke]);
+  assert.equal(lsOut.code, 0, lsOut.err);
+  assert.match(lsOut.out, new RegExp(`main → Genie \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(lsOut.out, new RegExp(`→ Captain \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+
+  const showJson = s.cli(["show", "SpokeMain", "--project", spoke, "--json"]);
+  assert.equal(showJson.code, 0, showJson.err);
+  assert.equal(showJson.json().lead, ID.main);
+  assert.equal(showJson.json().leadName, "Genie");
+  assert.equal(showJson.json().leadProject, s.project);
+  const showText = s.cli(["show", "SpokeMain", "--project", spoke]);
+  assert.equal(showText.code, 0, showText.err);
+  assert.match(showText.out, new RegExp(`lead\\s+Genie \\(${ID.main}\\) in ${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+  const briefSpoke = s.cli(["brief", "SpokeMain", "--project", spoke]);
+  assert.equal(briefSpoke.code, 0, briefSpoke.err);
+  assert.match(briefSpoke.out, /Your lead: Genie \(bot b-aaaaaaaaaa\)/);
+
+  const briefHub = s.cli(["brief", "Genie", "--project", s.project]);
+  assert.equal(briefHub.code, 0, briefHub.err);
+  assert.match(briefHub.out, new RegExp(`SpokeMain \\(bot ${spokeMainId}`));
+
+  const doc = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const docChecks = doc.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(docChecks.length, 2);
+  assert.equal(docChecks.every((c) => c.ok), true);
+
+  // Clearing with --no-lead-project and --lead-project="".
+  const clearMain = s.cli(["edit", "SpokeMain", "--project", spoke, "--no-lead-project", "--json"]);
+  assert.equal(clearMain.code, 0, clearMain.err);
+  assert.equal(clearMain.json().bot.lead, undefined);
+  assert.equal(clearMain.json().bot.leadProject, undefined);
+
+  const clearMem = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead-project=", "--json"]);
+  assert.equal(clearMem.code, 0, clearMem.err);
+  assert.equal(clearMem.json().bot.lead, undefined);
+  assert.equal(clearMem.json().bot.leadProject, undefined);
+});

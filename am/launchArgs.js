@@ -2,7 +2,7 @@
 // rule (DESIGN Decision 3), which terminal counts among duplicates, the labels of a pane and
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf } from "./model.js";
+import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf, projectEntriesOf } from "./model.js";
 import { ENV, GUARD_DIR, guardPathWith, paneArgs, stableGuardDir, stableRootOf } from "./workers.js";
 import { envWords } from "./logins.js";
 
@@ -23,10 +23,11 @@ export function hcName(name, botId, taken = new Set()) {
  * reports to its effective lead's live terminal and outlives it, else has none.
  * `liveOf(botId)` is that bot's live terminal address, or null.
  */
-export function parentArgs(file, botId, liveOf) {
+export function parentArgs(file, botOrId, liveOf, opts = {}) {
+  const botId = typeof botOrId === "string" ? botOrId : botOrId?.id;
   const bot = file.bots.find((b) => b.id === botId);
-  if (!bot || bot.kind === "main") return ["--no-parent"];
-  const { lead } = effectiveLead(file, botId);
+  if (!bot || (bot.kind === "main" && !bot.leadProject)) return ["--no-parent"];
+  const { lead } = effectiveLead(file, botId, opts);
   const live = lead ? liveOf(lead) : null;
   return live ? ["--parent", live, "--outlive-parent"] : ["--no-parent"];
 }
@@ -127,21 +128,37 @@ export const SQUAD_MARK = "automagik-herdr.squad";
 /** Whether a pane's squad is the one this pack copied (its mark still names it). */
 export const copiedSquad = (have) => Boolean(have?.[SQUAD_LABEL]) && have?.[SQUAD_MARK] === have[SQUAD_LABEL];
 
-/** The bot a member reports to (A1), "" for the main bot or an unknown one. */
-export function leadIdOf(file, botId) {
+/** The bot a member (or a main bot with a cross-project lead) reports to (A1), "" otherwise. */
+export function leadIdOf(file, botOrId, opts = {}) {
+  const botId = typeof botOrId === "string" ? botOrId : botOrId?.id;
   const bot = file?.bots?.find((b) => b.id === botId);
-  return bot?.kind === "member" ? effectiveLead(file, botId).lead : "";
+  return bot && (bot.kind === "member" || bot.leadProject) ? effectiveLead(file, botId, opts).lead : "";
 }
 
 /**
  * A bot pane's `role=` (A16): the main bot is `main`; a member that leads another bot (by
  * effective lead) is `captain`; else its rank. No rank: null (no label).
  */
-export function roleOf(file, botId) {
+export function roleOf(file, botOrId, opts = {}) {
+  const botId = typeof botOrId === "string" ? botOrId : botOrId?.id;
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot) return null;
   if (bot === mainBotOf(file)) return "main";
-  if (file.bots.some((b) => b.id !== botId && b.kind === "member" && effectiveLead(file, b.id).lead === botId)) return "captain";
+  if (file.bots.some((b) => {
+    if (b.id === botId || b.kind !== "member") return false;
+    const eff = effectiveLead(file, b.id, opts);
+    return !eff.leadProject && eff.lead === botId;
+  })) return "captain";
+  if (opts?.projects) {
+    for (const [otherKey, otherFile] of projectEntriesOf(opts.projects)) {
+      if (opts.project && otherKey === opts.project) continue;
+      for (const b of otherFile?.bots ?? []) {
+        if (!b?.leadProject) continue;
+        const eff = effectiveLead(otherFile, b.id, { project: otherKey, projects: opts.projects });
+        if (eff.lead === botId && (!opts.project || eff.leadProject === opts.project)) return "captain";
+      }
+    }
+  }
   return bot.rank || null;
 }
 

@@ -23,13 +23,13 @@
 // to another listed captain; both ranks come from bots.json, and workers inherit nothing.
 
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
-import { descendantsOf, effectiveLead, mainBotOf, parseBots, RANKS } from "./model.js";
+import { collectProjectMap, descendantsOf, effectiveLead, inferProjectOf, mainBotOf, parseBots, projectFileOf, RANKS } from "./model.js";
 import { ENV, WORKER_OF_LABEL } from "./workers.js";
 
 /** The commands a sandboxed bot may call unchanged. */
@@ -278,22 +278,69 @@ function readBots(project) {
   try { return parseBots(readFileSync(join(project, ".herdr", "bots.json"), "utf8")).file; } catch { return null; }
 }
 
+function loadProjectsFor(project, file, appHomeDir = null, extraKeys = []) {
+  const hasReal = (typeof project === "string" && project && existsSync(project))
+    || (file?.bots ?? []).some((b) => typeof b?.leadProject === "string" && b.leadProject && existsSync(b.leadProject))
+    || (extraKeys ?? []).some((k) => typeof k === "string" && k && existsSync(k));
+  if (!hasReal) return null;
+  const keys = [...(extraKeys ?? [])];
+  if (appHomeDir) {
+    try {
+      for (const b of foldAttach(readAttach(readFileSync(attachPath(appHomeDir), "utf8")).rows).byKey.values()) {
+        if (!b.machine && typeof b.project === "string") keys.push(b.project);
+      }
+    } catch { /* ignore */ }
+  }
+  return collectProjectMap({
+    project,
+    file,
+    appHome: appHomeDir,
+    extraKeys: keys,
+    readText: (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } },
+    listDir: (p) => { try { return readdirSync(p); } catch { return []; } },
+  });
+}
+
 /**
  * The declared lead chain of a bot: its `lead`, then that bot's `lead`, while each id is
- * listed in the project's bots.json (planned entries included), cycle-safe. effectiveLead
- * falls back to the main bot at a planned lead; this is the declared path, so a guarded
- * captain reaches a planned Orchestrator without changing the tree's rule.
+ * listed in the project's bots.json (planned entries included within the same project),
+ * cycle-safe. effectiveLead falls back to the main bot at a planned lead; this is the
+ * declared path, so a guarded captain reaches a planned Orchestrator without changing the
+ * tree's rule. Cross-project hops follow effectiveLead so invalid or planned cross-project
+ * leads are not followed.
  */
-function declaredLeads(file, botId) {
+function declaredLeads(file, botId, { project = null, projects = null } = {}) {
   const out = [];
-  const seen = new Set([botId]);
-  let cur = file.bots.find((b) => b.id === botId)?.lead;
-  while (typeof cur === "string" && cur && !seen.has(cur)) {
-    const def = file.bots.find((b) => b.id === cur);
+  const verifiedProjects = projects ?? new Map();
+  let curFile = file;
+  let curProject = inferProjectOf(file, botId, project, projects);
+  let curBot = curFile?.bots?.find((b) => b.id === botId);
+  const seen = new Set([`${curProject}\0${botId}`]);
+  while (curBot) {
+    if (curBot.leadProject) {
+      const eff = effectiveLead(curFile, curBot.id, { project: curProject || null, projects: verifiedProjects });
+      if (!eff.lead || !eff.leadProject) break;
+      const targetFile = projectFileOf(verifiedProjects, eff.leadProject);
+      const def = targetFile?.bots?.find((b) => b.id === eff.lead);
+      if (!def) break;
+      const key = `${eff.leadProject}\0${def.id}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      out.push(def.id);
+      curFile = targetFile;
+      curProject = eff.leadProject;
+      curBot = def;
+      continue;
+    }
+    const nextId = curBot.lead;
+    if (typeof nextId !== "string" || !nextId) break;
+    const def = curFile?.bots?.find((b) => b.id === nextId);
     if (!def) break;
-    seen.add(cur);
-    out.push(cur);
-    cur = def.lead;
+    const key = `${curProject}\0${def.id}`;
+    if (seen.has(key)) break;
+    seen.add(key);
+    out.push(def.id);
+    curBot = def;
   }
   return out;
 }
@@ -303,20 +350,39 @@ function declaredLeads(file, botId) {
  * for a worker). Exported for the per-pane hc proxy (#631), which reads the same graph from its
  * start-time snapshot instead of re-reading the writable roster.
  */
-export function teamOf(file, caller) {
+export function teamOf(file, caller, options = {}, maybeOptions = {}) {
+  const opts = typeof options === "boolean" ? maybeOptions : (options ?? {});
+  const callerBot = typeof caller === "string" ? caller : caller?.bot;
+  const callerWorker = typeof options === "boolean" ? options : Boolean(caller?.worker);
+  const project = opts?.project ?? (typeof caller === "object" ? caller?.project : null) ?? null;
+  const projects = opts?.projects ?? (typeof caller === "object" ? caller?.projects : null)
+    ?? loadProjectsFor(project, file, opts?.appHome ?? null, opts?.extraKeys ?? []);
+  const verifiedProjects = projects ?? new Map();
+  const ownProject = inferProjectOf(file, callerBot, project, projects);
   const allowed = new Set();
   const main = mainBotOf(file);
   if (main) allowed.add(main.id);
-  const seen = new Set([caller.bot]);
-  let lead = effectiveLead(file, caller.bot).lead;
-  while (lead && !seen.has(lead)) {
-    allowed.add(lead);
-    seen.add(lead);
-    lead = effectiveLead(file, lead).lead;
+  let curFile = file;
+  let curProject = ownProject;
+  let curBotId = callerBot;
+  const seen = new Set([`${curProject}\0${curBotId}`]);
+  while (curFile && curBotId) {
+    const eff = effectiveLead(curFile, curBotId, { project: curProject || null, projects: verifiedProjects });
+    if (!eff.lead) break;
+    const nextProject = eff.leadProject ?? curProject;
+    const key = `${nextProject}\0${eff.lead}`;
+    if (seen.has(key)) break;
+    seen.add(key);
+    allowed.add(eff.lead);
+    if (eff.leadProject && eff.leadProject !== curProject) {
+      curFile = projectFileOf(verifiedProjects, eff.leadProject);
+      curProject = eff.leadProject;
+    }
+    curBotId = eff.lead;
   }
-  for (const id of declaredLeads(file, caller.bot)) allowed.add(id);
-  for (const id of descendantsOf(file, caller.bot)) allowed.add(id);
-  if (caller.worker) allowed.add(caller.bot);
+  for (const id of declaredLeads(file, callerBot, { project: ownProject || null, projects: verifiedProjects })) allowed.add(id);
+  for (const id of descendantsOf(file, callerBot, { project: ownProject || null, projects })) allowed.add(id);
+  if (callerWorker) allowed.add(callerBot);
   return allowed;
 }
 
@@ -423,7 +489,12 @@ function sendProblem(real, args, env, terminal, on) {
   const hit = targetOf(real, target, on.value, env);
   if (!hit) return "the target is not resolvable with hc";
   const { labels } = hit;
-  const allowed = teamOf(file, caller);
+  const targetProject = projectOfFolder(hit.get?.cwd);
+  const allowed = teamOf(file, caller, {
+    project: caller.project,
+    appHome: appHome(env),
+    extraKeys: targetProject ? [targetProject] : [],
+  });
   if (typeof labels.bot === "string" && allowed.has(labels.bot)) return null;
   if (labels[WORKER_OF_LABEL] === caller.bot) return null;
   if (sharedSendAllowed(file, caller, labels)) return null;

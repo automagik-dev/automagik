@@ -679,3 +679,63 @@ test("#231: a lead with two live panes: a parent that is either is no mark; a th
   assert.ok(!("parentMark" in remote("t2")));
   assert.deepEqual(remote("t9").parentMark.leadPanes, ["box/t5", "box/t2"]);
 });
+
+test("cross-project lead (#850): buildTree nests a cross-project main or member under its lead in the other project and tags projectName", () => {
+  const hubFile = parseBots(JSON.stringify({
+    version: 1,
+    categories: [],
+    bots: [bot("b-coordcoord", { kind: "main", name: "Coord" })],
+  })).file;
+  const spokeFile = parseBots(JSON.stringify({
+    version: 1,
+    categories: [],
+    bots: [
+      bot("b-spokemainm", { kind: "main", name: "SpokeMain", lead: "b-coordcoord", leadProject: "/work/hub" }),
+      bot("b-spokedevdv", { kind: "member", name: "SpokeDev", lead: "b-spokemainm" }),
+    ],
+  })).file;
+  const projects = [
+    { key: "/work/hub", file: hubFile, spaces: ["s1"] },
+    { key: "/work/spoke", file: spokeFile, spaces: ["s2"] },
+  ];
+  const terms = [
+    T("t1", { labels: { bot: "b-coordcoord" }, status: "idle", status_ms: NOW }),
+    T("t2", { labels: { bot: "b-spokemainm" }, parent: "t1", status: "working", status_ms: NOW }),
+    T("t3", { labels: { bot: "b-spokedevdv" }, parent: "t2", status: "idle", status_ms: NOW }),
+  ];
+  const trees = buildTree({ projects, live: liveFrom(terms, knownBots(projects)), terminals: terms, now: NOW });
+  const hubTree = trees.find((t) => t.key === "/work/hub");
+  const spokeTree = trees.find((t) => t.key === "/work/spoke");
+
+  // SpokeMain and its member SpokeDev nest under Coord in hubTree, tagged with /work/spoke and projectName "spoke".
+  assert.equal(spokeTree.main, null);
+  assert.equal(hubTree.uncategorised.length, 1);
+  const nestedMain = hubTree.uncategorised[0];
+  assert.equal(nestedMain.bot.id, "b-spokemainm");
+  assert.equal(nestedMain.project, "/work/spoke");
+  assert.equal(nestedMain.projectName, "spoke");
+  assert.ok(!("parentMark" in nestedMain), "parent t1 matches cross-project lead Coord's pane");
+  assert.equal(nestedMain.members.length, 1);
+  assert.equal(nestedMain.members[0].bot.id, "b-spokedevdv");
+  assert.equal(nestedMain.members[0].project, "/work/spoke");
+  assert.equal(nestedMain.members[0].projectName, "spoke");
+
+  // secondLine and visibleRows carry project and projectName for cross-project rows.
+  const rows = visibleRows(hubTree, new Map([[botFold("b-spokemainm"), true]]));
+  const spokeMainRow = rows.find((r) => r.node?.bot.id === "b-spokemainm");
+  const spokeDevRow = rows.find((r) => r.node?.bot.id === "b-spokedevdv");
+  assert.equal(spokeMainRow.project, "/work/spoke");
+  assert.equal(spokeMainRow.projectName, "spoke");
+  assert.equal(spokeDevRow.project, "/work/spoke");
+  assert.match(secondLine(spokeMainRow), / · spoke$/);
+
+  // When the target leadProject is not loaded, the bot stays in its own project tree with a warning.
+  const loneSpoke = buildTree({
+    projects: [{ key: "/work/spoke", file: spokeFile, spaces: ["s2"] }],
+    live: {},
+    terminals: [],
+    now: NOW,
+  })[0];
+  assert.equal(loneSpoke.main.bot.id, "b-spokemainm");
+  assert.match(loneSpoke.main.warning, /project \/work\/hub has no roster/);
+});

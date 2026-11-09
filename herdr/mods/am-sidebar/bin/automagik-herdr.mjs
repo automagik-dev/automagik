@@ -10,7 +10,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  CATEGORY_ID, PROJECTS_FILE, RANKS, defaultLook, descendantsOf, effectiveLead, listedProjects, mainBotOf, newBotId, newCategoryId,
+  CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
   botsText, parseBots, plannedOf, projectKeyOf, projectOf, squadOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
@@ -970,12 +970,28 @@ async function attachedGet(botId) {
   return held?.get && local(held.get.address ?? held.binding.terminal) ? { ...held.get, address: held.get.address ?? held.binding.terminal } : null;
 }
 
+function localProjectsFor(project, appHomeDir = appHome(), extraKeys = []) {
+  if (project?.machine) return null;
+  return collectProjectMap({
+    project: project?.key ?? null,
+    file: project?.file ?? null,
+    appHome: appHomeDir,
+    extraKeys,
+    readText: (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } },
+    listDir: (p) => { try { return readdirSync(p); } catch { return []; } },
+  });
+}
+
 /** One bot as ls and show print it. With hc failing, the bot is still shown, its pane unknown. */
-function describe(project, bot, view, hcError) {
+function describe(project, bot, view, hcError, projects = null) {
   const { file } = project;
   const held = !bot.planned && view ? liveFor(view, bot.id, project) : null;
   const live = held?.get ?? null;
-  const lead = bot.kind === "member" ? effectiveLead(file, bot.id) : { lead: "" };
+  const projectsMap = projects ?? localProjectsFor(project);
+  const lead = bot.kind === "member" || bot.leadProject
+    ? effectiveLead(file, bot.id, { project: project.key, projects: projectsMap })
+    : { lead: "", leadProject: null, leadBot: null, warning: null };
+  const leadName = lead.leadBot?.name ?? (!lead.leadProject && lead.lead ? file.bots.find((b) => b.id === lead.lead)?.name ?? null : null);
   const fallback = bot.agent ? defaultModel(bot.agent, modelIo()) : null;
   const shown = shownModel({ argv: live?.foreground?.argv, agentKey: bot.agent, pinned: bot.model, fallback });
   // The workers' Antigravity mode is shown as the default (auto) when their agent is Antigravity.
@@ -994,8 +1010,9 @@ function describe(project, bot, view, hcError) {
     ? agyPermissionPlan({ bot, scope: "worker", role: workerRole(bot).role, folder: null }) : null;
   const out = {
     id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
-    lead: lead.lead || null, leadName: file.bots.find((b) => b.id === lead.lead)?.name ?? null,
-    category: bot.kind === "member" && lead.lead === mainBotOf(file)?.id ? (bot.category ?? null) : null,
+    lead: lead.lead || null, leadName,
+    ...(lead.leadProject ? { leadProject: lead.leadProject } : (bot.leadProject ? { leadProject: bot.leadProject } : {})),
+    category: bot.kind === "member" && !lead.leadProject && lead.lead === mainBotOf(file)?.id ? (bot.category ?? null) : null,
     planned: bot.planned ?? null, agent: bot.agent ?? null,
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
     agyMode: bot.agent === "antigravity" ? agyModeOf(bot.agyMode) : (typeof bot.agyMode === "string" && bot.agyMode ? bot.agyMode : null),
@@ -1059,7 +1076,13 @@ export async function briefedLaunch(project, bot, agentKey, argv, appHomeDir = a
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings };
-  const text = launchBriefingText({ self: bot, file: project.file, isGit: await projectIsGit(project) });
+  const text = launchBriefingText({
+    self: bot,
+    file: project.file,
+    project: project.key,
+    projects: localProjectsFor(project, appHomeDir),
+    isGit: await projectIsGit(project),
+  });
   let launch = null;
   if (way === "file") {
     const path = briefingFilePath(appHomeDir, project.key, bot.id);
@@ -1121,7 +1144,8 @@ const OPTIONS = {
   project: { type: "string" }, name: { type: "string" }, agent: { type: "string" }, kind: { type: "string" },
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   code: { type: "string" },
-  lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
+  lead: { type: "string" }, "lead-project": { type: "string" }, "no-lead-project": { type: "boolean" },
+  category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
   "agy-mode": { type: "string" }, "worker-agy-mode": { type: "string" },
@@ -1154,7 +1178,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
-         [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
+         [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--agy-mode accept-edits|auto|plan]   Antigravity's --mode; default auto
          [--agy-allow RULE]... [--agy-deny RULE]...
@@ -1167,7 +1191,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
-  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
+  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
              [--agy-allow=] [--agy-deny=] [--no-agy-permissions]   (empty: that list cleared)
@@ -1529,21 +1553,84 @@ export function entryFrom(opts, base, project, { creating }) {
     else delete entry.agyPermissions;
   }
   workerDefaults(opts, entry);
-  // Lead (A1): the main bot or another non-planned member, never itself or one of its own.
-  if (opts.lead !== undefined) {
-    if (entry.kind === "main") throw new CliError("A main bot has no lead.", 2);
-    const lead = findBot(file, opts.lead);
-    if (lead.id === entry.id) throw new CliError(`${entry.name} can't lead itself.`);
-    if (lead.planned) throw new CliError(`${lead.name} is planned, so it can't lead a bot yet.`);
-    if (!creating && descendantsOf(file, entry.id).has(lead.id)) throw new CliError(`${lead.name} reports to ${entry.name}, so it can't be its lead.`);
-    entry.lead = lead.id;
+  // Lead (A1): the main bot or another non-planned member in this project, or a non-planned bot
+  // in another project (--lead-project), never itself or one of its own.
+  if (opts["no-lead-project"] && opts["lead-project"] !== undefined && opts["lead-project"] !== "") {
+    throw new CliError("Give --lead-project or --no-lead-project, not both.", 2);
   }
-  if (entry.kind === "main") delete entry.lead;
+  const clearingLeadProject = Boolean(opts["no-lead-project"] || opts["lead-project"] === "");
+  if (clearingLeadProject) {
+    delete entry.leadProject;
+    if (opts.lead === undefined) delete entry.lead;
+  }
+  const rawLeadProject = !clearingLeadProject && opts["lead-project"] !== undefined
+    ? opts["lead-project"].trim()
+    : null;
+  if (rawLeadProject !== null) {
+    if (!rawLeadProject) {
+      delete entry.leadProject;
+      if (opts.lead === undefined) delete entry.lead;
+    } else {
+      const targetDir = project.machine ? cleanProjectPath(rawLeadProject) : cleanProjectPath(resolvePath(rawLeadProject));
+      if (!targetDir.startsWith("/")) throw new CliError("--lead-project must be a folder path.", 2);
+      if (!project.machine) {
+        let isDir = false;
+        try { isDir = statSync(targetDir).isDirectory(); } catch { /* not there */ }
+        if (!isDir) throw new CliError(`--lead-project: ${targetDir} is not a folder.`, 2);
+      }
+      if (targetDir === cleanProjectPath(project.key)) {
+        delete entry.leadProject;
+        if (opts.lead === undefined && !entry.lead) {
+          throw new CliError("--lead-project needs --lead (the lead bot's id or name).", 2);
+        }
+      } else {
+        const leadRef = opts.lead !== undefined ? opts.lead : entry.lead;
+        if (!leadRef) throw new CliError("--lead-project needs --lead (the lead bot's id or name in that project).", 2);
+        if (project.machine) {
+          entry.lead = leadRef;
+          entry.leadProject = targetDir;
+        } else {
+          const targetProject = loadProject(targetDir);
+          if (targetProject.text === null) throw new CliError(`No ${BOTS_PATH} in ${targetDir}.`);
+          let lead;
+          try {
+            lead = findBot(targetProject.file, leadRef);
+          } catch (e) {
+            throw new CliError(String(e?.message ?? e).replace("in this project.", `in ${targetDir}.`), e?.code ?? 1);
+          }
+          if (lead.planned) throw new CliError(`${lead.name} is planned in ${targetDir}, so it can't lead a bot yet.`);
+          const projects = localProjectsFor(project, appHome(), [targetDir]) ?? new Map();
+          projects.set(targetDir, targetProject.file);
+          if (project.key) projects.set(cleanProjectPath(project.key), file);
+          if (!creating && leadsBackTo(targetDir, targetProject.file, lead, cleanProjectPath(project.key), entry.id, projects)) {
+            throw new CliError(`${lead.name} in ${targetDir} reports to ${entry.name}, so it can't be its lead.`);
+          }
+          entry.lead = lead.id;
+          entry.leadProject = targetDir;
+        }
+      }
+    }
+  }
+  if ((rawLeadProject === null || !entry.leadProject) && opts.lead !== undefined) {
+    delete entry.leadProject;
+    if (opts.lead === "") {
+      delete entry.lead;
+    } else {
+      if (entry.kind === "main") throw new CliError("A main bot has no lead.", 2);
+      const lead = findBot(file, opts.lead);
+      if (lead.id === entry.id) throw new CliError(`${entry.name} can't lead itself.`);
+      if (lead.planned) throw new CliError(`${lead.name} is planned, so it can't lead a bot yet.`);
+      if (!creating && descendantsOf(file, entry.id).has(lead.id)) throw new CliError(`${lead.name} reports to ${entry.name}, so it can't be its lead.`);
+      entry.lead = lead.id;
+    }
+  }
+  if (entry.kind === "main" && !entry.leadProject) delete entry.lead;
+  if (!entry.lead) delete entry.leadProject;
   // Category (A2): only for a bot whose lead is the main bot.
   if (opts.category !== undefined && opts["no-category"]) throw new CliError("Give --category or --no-category, not both.", 2);
   if (opts["no-category"]) delete entry.category;
   if (opts.category !== undefined) {
-    const leadsToMain = entry.kind === "member" && (!entry.lead || entry.lead === main?.id);
+    const leadsToMain = entry.kind === "member" && !entry.leadProject && (!entry.lead || entry.lead === main?.id);
     if (!leadsToMain) throw new CliError("A category goes only on a member that reports to the main bot.", 2);
     entry.category = findCategory(file, opts.category).id;
   }
@@ -1718,7 +1805,10 @@ function lsLines(projects) {
     lines.push(`${p.project}${p.machine ? ` on ${p.machine}` : ""}${p.error ? `  (${p.error})` : ""}`);
     if (!p.bots.length && !p.error) lines.push("  no bots");
     for (const b of p.bots) {
-      const where = b.kind === "main" ? "main" : `→ ${b.leadName ?? "?"}${b.category ? ` [${b.category}]` : ""}`;
+      const crossLead = b.leadProject ? ` (${b.leadProject})` : "";
+      const where = b.kind === "main"
+        ? (b.leadProject && b.lead ? `main → ${b.leadName ?? b.lead}${crossLead}` : "main")
+        : `→ ${b.leadName ?? "?"}${crossLead}${b.category ? ` [${b.category}]` : ""}`;
       const model = b.model ? `${b.model} (${b.modelSource})` : "-";
       const agy = b.agyMode ? `  agy-mode ${b.agyMode}` : "";
       const perms = b.agyPermissions || b.workerAgyPermissions
@@ -1822,7 +1912,8 @@ async function cmdShow(opts, [ref]) {
   if (opts.json) return info;
   return [
     `${info.name} (${info.id})`, `  project      ${info.project}${info.machine ? ` on ${info.machine}` : ""}`, `  kind         ${info.kind}`,
-    ...(info.lead ? [`  lead         ${info.leadName} (${info.lead})`] : []),
+    ...(info.lead ? [`  lead         ${info.leadName ?? info.lead} (${info.lead})${info.leadProject ? ` in ${info.leadProject}` : ""}`] : []),
+    ...(info.leadProject && !info.lead ? [`  lead project ${info.leadProject}`] : []),
     ...(info.category ? [`  category     ${info.category}`] : []),
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
@@ -1872,6 +1963,7 @@ async function cmdCreate(opts) {
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
+  if (!project.machine && entry.leadProject) listProject(entry.leadProject);
   // A lead that becomes a captain; another machine's panes are left as they are.
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id, ...placeOf(project), bot: entry, relabelled } : id;
@@ -1884,6 +1976,7 @@ async function cmdEdit(opts, [ref]) {
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
+  if (!project.machine && entry.leadProject) listProject(entry.leadProject);
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id: bot.id, ...placeOf(project), bot: entry, relabelled } : `${entry.name} (${bot.id}) saved.`;
 }
@@ -4364,7 +4457,16 @@ async function cmdBrief(opts, [ref]) {
     return { get, duplicate: false, addresses: [get.address], gets: [get] };
   };
   const self = await locate(bot.id);
-  const text = await gatherBriefing({ file: project.file, bot, address: self.get?.address ?? null, ask, locate, isGit: await projectIsGit(project) });
+  const text = await gatherBriefing({
+    file: project.file,
+    bot,
+    address: self.get?.address ?? null,
+    ask,
+    locate,
+    isGit: await projectIsGit(project),
+    project: project.key,
+    projects: localProjectsFor(project),
+  });
   return opts.json ? { id: bot.id, briefing: text } : text;
 }
 
@@ -5425,14 +5527,17 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
     r.bots = [];
     let roster = [];
     let projectKey = null;
+    let projectFile = null;
+    let app = null;
     try {
       const project = io.project ?? await projectFor(opts);
       roster = project.file.bots;
       projectKey = project.key;
+      projectFile = project.file;
       const approval = approvedProxyState({ project: project.key, bot: { id: "" }, env });
       if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
         detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
-      const app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
+      app = env.HERDR_APP_HOME || join(env.HOME || homedir(), ".config/herdr-app");
       const bindings = foldAttach(readAttachFile(attachPath(app)) ?? []).byBot;
       r.bots = await doctorBotProxies({ bots: project.file.bots, project: project.key,
         bindings, env });
@@ -5442,6 +5547,15 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       r.code = 1;
     }
     const byId = new Map(roster.map((b) => [b.id, b]));
+    const projects = projectKey && projectFile && roster.some((b) => b.leadProject)
+      ? collectProjectMap({
+        project: projectKey,
+        file: projectFile,
+        appHome: app,
+        readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } },
+        listDir: (path) => { try { return readdirSync(path); } catch { return []; } },
+      })
+      : null;
     // #823: whether agy's terminal sandbox, and so --mode, can work on this host, from local
     // evidence only; a host with no Antigravity bot or worker needs no row.
     const agyBots = roster.filter((b) => b.agent === "antigravity" || resolveAgent(b.worker?.agent ?? "") === "antigravity");
@@ -5490,6 +5604,19 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
           : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;
+      if (agent?.leadProject && projectFile) {
+        const eff = effectiveLead(projectFile, bot.id, { project: projectKey, projects });
+        bot.lead = eff.lead || agent.lead;
+        bot.leadProject = eff.leadProject ?? agent.leadProject;
+        if (eff.warning) bot.leadWarning = eff.warning;
+        r.checks.push({
+          check: `lead:${bot.id}`,
+          ok: !eff.warning,
+          detail: eff.warning ?? `${bot.name}: lead ${eff.leadBot?.name ?? eff.lead} (${eff.lead}) in ${eff.leadProject}`,
+          fix: eff.warning ? `automagik-herdr edit ${bot.id} --lead <bot> --lead-project <dir>` : null,
+        });
+        if (eff.warning) r.code = 1;
+      }
     }
     exitAfter.code = r.code;
     return opts.json ? r : r.checks.map((c) => `${!c.ok ? "FAIL" : c.warning ? "WARN" : "ok  "} ${c.check}: ${c.detail}${c.fix ? ` (fix: ${c.fix})` : ""}`).join("\n");

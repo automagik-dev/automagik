@@ -800,3 +800,91 @@ test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv 
   const dshWorker = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent: "dsh-tui", argv: ["dsh-tui"], task: "t", path: "/a:/b" });
   assert.deepEqual(dshWorker.slice(dshWorker.indexOf("--") + 1), ["/usr/bin/env", `PATH=${GUARD_DIR}:/a:/b`, "dsh-tui", "--", "t"]);
 });
+
+test("cross-project lead (#850): hc send allows cross-project lead and reports in both directions, and refuses unrelated or unverified targets", async (t) => {
+  const { teamOf } = await import("../mods/am-sidebar/hcGuard.mjs");
+  const { parseBots } = await import("../mods/am-sidebar/model.js");
+
+  const coordId = "b-7777777777";
+  const unrelatedHubId = "b-6666666666";
+  const spokeMainId = "b-5555555555";
+  const spokeDevId = "b-4444444444";
+
+  const hubRaw = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(coordId, "main", { name: "Coord" }),
+      bot(unrelatedHubId, "member", { name: "UnrelatedHub", lead: coordId }),
+    ],
+  };
+  const spokeRaw = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(spokeMainId, "main", { name: "SpokeMain", lead: coordId, leadProject: "/work/hub" }),
+      bot(spokeDevId, "member", { name: "SpokeDev", lead: spokeMainId }),
+    ],
+  };
+  const hubFile = parseBots(JSON.stringify(hubRaw)).file;
+  const spokeFile = parseBots(JSON.stringify(spokeRaw)).file;
+  const projects = new Map([["/work/hub", hubFile], ["/work/spoke", spokeFile]]);
+
+  // SpokeMain and SpokeDev reach Coord in /work/hub, not UnrelatedHub.
+  const spokeMainTeam = teamOf(spokeFile, spokeMainId, true, { project: "/work/spoke", projects });
+  assert.equal(spokeMainTeam.has(coordId), true);
+  assert.equal(spokeMainTeam.has(unrelatedHubId), false);
+  const spokeDevTeam = teamOf(spokeFile, spokeDevId, true, { project: "/work/spoke", projects });
+  assert.equal(spokeDevTeam.has(coordId), true);
+  assert.equal(spokeDevTeam.has(unrelatedHubId), false);
+
+  // Coord in /work/hub reaches SpokeMain and SpokeDev across projects.
+  const coordTeam = teamOf(hubFile, coordId, true, { project: "/work/hub", projects });
+  assert.equal(coordTeam.has(spokeMainId), true);
+  assert.equal(coordTeam.has(spokeDevId), true);
+
+  // Without verified projects, a cross-project lead is not trusted by teamOf.
+  const unverifiedTeam = teamOf(spokeFile, spokeMainId, true);
+  assert.equal(unverifiedTeam.has(coordId), false);
+
+  // End-to-end guard run across two projects on disk.
+  const s = scene(t);
+  const hubDir = join(s.root, "hub");
+  mkdirSync(join(hubDir, ".herdr"), { recursive: true });
+  writeFileSync(join(hubDir, ".herdr", "bots.json"), JSON.stringify(hubRaw, null, 2));
+  writeFileSync(
+    join(s.project, ".herdr", "bots.json"),
+    JSON.stringify({
+      version: 1,
+      categories: [],
+      bots: [
+        bot(ID.main, "main", { name: "Main", lead: coordId, leadProject: hubDir }),
+        bot(ID.dev, "member", { name: "Dev", lead: ID.main }),
+      ],
+    }, null, 2),
+  );
+  const st = JSON.parse(readFileSync(s.statePath, "utf8"));
+  st.terminals.push({ address: "t200", name: "coord", state: "live" }, { address: "t201", name: "unrelated", state: "live" });
+  st.get.t200 = get("t200", { bot: coordId }, { cwd: hubDir, name: "coord" });
+  st.get.t201 = get("t201", { bot: unrelatedHubId }, { cwd: hubDir, name: "unrelated" });
+  writeFileSync(s.statePath, JSON.stringify(st));
+  const ledger = join(s.app, "automagik-herdr", "attach.jsonl");
+  const rows = [
+    { v: 1, event: "attach", bot: ID.dev, project: s.project, terminal: "t100", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+    { v: 1, event: "attach", bot: coordId, project: hubDir, terminal: "t200", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+  ];
+  writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  chmodSync(ledger, 0o600);
+
+  // Dev in s.project -> Coord in hubDir is allowed.
+  const toLead = guardRun(s, ["send", "t200", "status report"]);
+  assert.equal(toLead.status, 0, toLead.stderr);
+
+  // Dev in s.project -> UnrelatedHub in hubDir is refused.
+  const toUnrelated = guardRun(s, ["send", "t201", "nope"]);
+  assertRefused(toUnrelated);
+
+  // Coord in hubDir -> Dev in s.project is allowed.
+  const toReport = guardRun(s, ["send", "t100", "ack"], { HC_TERMINAL_ID: "t200" });
+  assert.equal(toReport.status, 0, toReport.stderr);
+});

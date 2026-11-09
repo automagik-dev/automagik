@@ -240,8 +240,29 @@ export function parseBots(text) {
       warnings.push(`${where}: unknown rank ${JSON.stringify(bot.rank)}; ignored (one of ${RANKS.join(", ")})`);
       delete bot.rank;
     }
-    if (bot.kind === "main" && bot.lead !== undefined) { warnings.push(`${where}: a main bot has no lead; ignored`); delete bot.lead; }
+    if (bot.leadProject !== undefined) {
+      if (!isText(bot.leadProject)) {
+        warnings.push(`${where}: leadProject is not text; ignored`);
+        delete bot.leadProject;
+      } else {
+        const clean = trimSlash(bot.leadProject.trim());
+        if (!clean.startsWith("/")) {
+          warnings.push(`${where}: leadProject must be an absolute folder path; ignored`);
+          delete bot.leadProject;
+        } else {
+          bot.leadProject = clean;
+        }
+      }
+    }
     if (bot.lead !== undefined && !isText(bot.lead)) delete bot.lead;
+    if (bot.leadProject !== undefined && !isText(bot.lead)) {
+      warnings.push(`${where}: leadProject without lead; ignored`);
+      delete bot.leadProject;
+    }
+    if (bot.kind === "main" && bot.lead !== undefined && !bot.leadProject) {
+      warnings.push(`${where}: a main bot has no lead; ignored`);
+      delete bot.lead;
+    }
     if (bot.category !== undefined && !categories.some((c) => c.id === bot.category)) warnings.push(`${where}: unknown category ${bot.category}`);
     bots.push(bot);
   });
@@ -250,7 +271,7 @@ export function parseBots(text) {
   if (mains.length > 1) warnings.push(`${mains.length} main bots; ${mains[0].id} counts`);
   const file = { ...raw, version: 1, categories, bots };
   for (const b of bots) {
-    if (b.kind !== "member") continue;
+    if (b.kind !== "member" && !b.leadProject) continue;
     const { warning } = effectiveLead(file, b.id);
     if (warning) warnings.push(`${b.id}: ${warning}`);
   }
@@ -262,32 +283,155 @@ export function mainBotOf(file) {
   return file.bots.find((b) => b.kind === "main") ?? null;
 }
 
+/** A normalized project folder path (without trailing slash, except "/"), or "". */
+export const cleanProjectPath = (p) => (typeof p === "string" && p.trim() ? trimSlash(p.trim()) : "");
+
+/** All `[cleanKey, BotsFile]` entries from a `projects` Map, array, or plain object. */
+export function projectEntriesOf(projects) {
+  if (!projects) return [];
+  const out = [];
+  const add = (k, v) => {
+    const key = cleanProjectPath(k);
+    const file = Array.isArray(v?.bots) ? v : Array.isArray(v?.file?.bots) ? v.file : null;
+    if (key && file) out.push([key, file]);
+  };
+  if (projects instanceof Map) {
+    for (const [k, v] of projects.entries()) add(k, v);
+  } else if (Array.isArray(projects)) {
+    for (const p of projects) add(p?.key ?? p?.project, p);
+  } else if (typeof projects === "object") {
+    for (const [k, v] of Object.entries(projects)) add(k, v);
+  }
+  return out;
+}
+
+/** Looks up a project's `BotsFile` in `projects` (Map, array, plain object, or resolver fn). */
+export function projectFileOf(projects, folder) {
+  if (!projects || !folder) return null;
+  const key = cleanProjectPath(folder);
+  if (!key) return null;
+  if (typeof projects === "function") {
+    const hit = projects(key) ?? projects(folder);
+    return Array.isArray(hit?.bots) ? hit : Array.isArray(hit?.file?.bots) ? hit.file : null;
+  }
+  for (const [k, file] of projectEntriesOf(projects)) {
+    if (k === key) return file;
+  }
+  return null;
+}
+
+export function inferProjectOf(file, botId, project, projects) {
+  const given = cleanProjectPath(project);
+  if (given) return given;
+  if (!projects) return "";
+  const entries = projectEntriesOf(projects);
+  const byRef = entries.find(([, f]) => f === file);
+  if (byRef) return byRef[0];
+  const mainId = file ? mainBotOf(file)?.id : null;
+  const byBot = entries.find(([, f]) => (mainId && mainBotOf(f)?.id === mainId) || f.bots?.some((b) => b.id === botId));
+  return byBot ? byBot[0] : "";
+}
+
+export function leadsBackTo(startProj, startFile, startBot, originProj, originId, projects) {
+  const seen = new Set();
+  let curProj = startProj;
+  let curFile = startFile;
+  let curBot = startBot;
+  while (curBot && curFile) {
+    if (curBot.id === originId && (!originProj || !curProj || curProj === originProj)) return true;
+    const key = `${curProj ?? ""}\0${curBot.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (curBot.planned) return false;
+    const curMain = mainBotOf(curFile);
+    const nextCross = isText(curBot.leadProject) ? cleanProjectPath(curBot.leadProject) : "";
+    if (nextCross && (!curProj || nextCross !== curProj)) {
+      if (!projects || !isText(curBot.lead)) return false;
+      const nextFile = projectFileOf(projects, nextCross);
+      const nextBot = nextFile?.bots?.find((b) => b.id === curBot.lead);
+      if (!nextBot || nextBot.planned) {
+        if (curBot === curMain || !curMain) return false;
+        curBot = curMain;
+        continue;
+      }
+      curProj = nextCross;
+      curFile = nextFile;
+      curBot = nextBot;
+      continue;
+    }
+    if (curBot === curMain || curBot.kind === "main") return false;
+    const nextId = curBot.lead ?? curMain?.id;
+    if (!nextId) return false;
+    curBot = curFile.bots?.find((b) => b.id === nextId);
+  }
+  return false;
+}
+
 /**
  * Whom a bot reports to (A1): its `lead`, else the main bot. A lead that is missing,
  * planned, not a counting bot, or that leads back to this bot falls back to the main bot
  * with a warning. The main bot itself, an unknown id, or a file with no main bot: "".
+ * When a bot (`member` or `main`) has `leadProject`, its lead is resolved in that project
+ * when `projects` is given, returning `{ lead, leadProject, leadBot }`, or falling back
+ * to the main bot (for a member) or `""` (for a main bot) with a warning when invalid.
  */
-export function effectiveLead(file, botId) {
+export function effectiveLead(file, botId, { project = null, projects = null } = {}) {
   const main = mainBotOf(file);
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot) return { lead: "", warning: `no bot ${botId}` };
+  const ownProject = inferProjectOf(file, botId, project, projects);
+  const targetProject = isText(bot.leadProject) ? cleanProjectPath(bot.leadProject) : "";
+  if (targetProject && ownProject && targetProject === ownProject && (bot === main || bot.kind === "main")) {
+    return { lead: "", warning: `lead ${bot.lead} in ${targetProject}: a main bot has no lead in its own project` };
+  }
+  if (targetProject && (!ownProject || targetProject !== ownProject)) {
+    const crossFallback = (why) => (bot === main || bot.kind === "main" || !main
+      ? { lead: "", warning: `lead ${bot.lead} in ${targetProject} ${why}` }
+      : { lead: main.id, warning: `lead ${bot.lead} in ${targetProject} ${why}; reports to the main bot` });
+    if (!targetProject.startsWith("/") || !isText(bot.lead)) return crossFallback("is missing");
+    if (!projects) {
+      if (!ID_SHAPE.test(bot.lead)) return crossFallback("is missing");
+      if (bot.lead === bot.id) return crossFallback("leads back to this bot");
+      return { lead: bot.lead, leadProject: targetProject, leadBot: null };
+    }
+    const targetFile = projectFileOf(projects, targetProject);
+    if (!targetFile) return crossFallback(`is missing (project ${targetProject} has no roster)`);
+    const targetBot = targetFile.bots?.find((b) => b.id === bot.lead);
+    if (!targetBot) return crossFallback("is missing");
+    if (targetBot.planned) return crossFallback("is planned");
+    const targetMain = mainBotOf(targetFile);
+    if (targetBot.kind === "main" && targetBot !== targetMain) return crossFallback("is not the counting main bot");
+    if (leadsBackTo(targetProject, targetFile, targetBot, ownProject, bot.id, projects)) {
+      return crossFallback("leads back to this bot");
+    }
+    return { lead: targetBot.id, leadProject: targetProject, leadBot: targetBot };
+  }
   if (!main) return { lead: "", warning: "no main bot" };
   if (bot === main) return { lead: "" };
   const byId = new Map(file.bots.map((b) => [b.id, b]));
   const leadOf = (b) => b.lead ?? main.id;
   const first = leadOf(bot);
   const fallback = (why) => ({ lead: main.id, warning: `lead ${first} ${why}; reports to the main bot` });
-  if (first === main.id) return { lead: main.id };
+  if (first === main.id) {
+    if (projects && main.leadProject && leadsBackTo(ownProject, file, main, ownProject, bot.id, projects)) {
+      return fallback("leads back to this bot");
+    }
+    return { lead: main.id };
+  }
   const target = byId.get(first);
   if (!target) return fallback("is missing");
   if (target.planned) return fallback("is planned");
   if (target.kind === "main") return fallback("is not the counting main bot");
+  if (projects && leadsBackTo(ownProject, file, target, ownProject, bot.id, projects)) {
+    return fallback("leads back to this bot");
+  }
   // Follow the chain up: back to this bot is a cycle. A chain that breaks further up
   // (missing, planned, a cycle not through this bot) ends at the main bot there instead.
   const seen = new Set([bot.id]);
   for (let cur = target; cur && cur !== main && cur.kind !== "main" && !cur.planned;) {
     if (seen.has(cur.id)) return cur.id === bot.id ? fallback("leads back to this bot") : { lead: first };
     seen.add(cur.id);
+    if (cur.leadProject && (!ownProject || cleanProjectPath(cur.leadProject) !== ownProject)) break;
     cur = byId.get(leadOf(cur));
   }
   return { lead: first };
@@ -310,9 +454,9 @@ export function squadOf(file, botId) {
   while (cur) {
     if (seen.has(cur.id)) return null;
     seen.add(cur.id);
-    const { lead, warning } = effectiveLead(file, cur.id);
+    const { lead, leadProject, warning } = effectiveLead(file, cur.id);
     if (warning || !lead) return null;
-    if (lead === main.id) return cur.id;
+    if (leadProject || lead === main.id) return cur.id;
     cur = byId.get(lead);
   }
   return null;
@@ -326,7 +470,7 @@ export function squadOf(file, botId) {
  * Planned leads use effectiveLead's main-bot fallback with a read warning and do not
  * block unrelated saves. Missing leads, self-leads and cycles still refuse a write.
  */
-export function checkBots(file, before = null) {
+export function checkBots(file, before = null, { project = null, projects = null } = {}) {
   let had = before;
   if (typeof had === "string") { try { had = JSON.parse(had); } catch { had = null; } }
   const oldIds = new Set((Array.isArray(had?.categories) ? had.categories : []).map((c) => c?.id).filter(isText));
@@ -380,7 +524,14 @@ export function checkBots(file, before = null) {
         }
       }
     }
-    if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
+    if (b.leadProject !== undefined) {
+      if (!isText(b.leadProject) || !cleanProjectPath(b.leadProject).startsWith("/")) {
+        errors.push(`${at}: leadProject must be an absolute folder path`);
+      } else if (!isText(b.lead)) {
+        errors.push(`${at}: leadProject needs a lead`);
+      }
+    }
+    if (b.kind === "main" && b.lead !== undefined && !isText(b.leadProject)) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
     if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
   }
@@ -388,11 +539,14 @@ export function checkBots(file, before = null) {
   if (mains !== 1) errors.push(`${mains} main bots; a project has exactly one`);
   else if (!errors.length) {
     const byId = new Map(file.bots.map((b) => [b.id, b]));
+    const ownProject = cleanProjectPath(project);
     for (const b of file.bots) {
-      if (b.kind !== "member") continue;
-      const { warning } = effectiveLead(file, b.id);
-      const target = byId.get(b.lead);
-      if (warning && (b.lead === b.id || !target?.planned)) errors.push(`${b.id}: ${warning}`);
+      if (b.kind !== "member" && !b.leadProject) continue;
+      const isCross = Boolean(b.leadProject && (!ownProject || cleanProjectPath(b.leadProject) !== ownProject));
+      if (isCross && !projects) continue;
+      const { warning } = effectiveLead(file, b.id, { project, projects });
+      const target = !isCross ? byId.get(b.lead) : null;
+      if (warning && (isCross || b.lead === b.id || !target?.planned)) errors.push(`${b.id}: ${warning}`);
     }
   }
   return errors;
@@ -464,15 +618,48 @@ export async function paneKeyOf(folder, git, exists) {
 }
 
 /** The bots under `botId` at any depth (by effective lead): none of them can be its lead. */
-export function descendantsOf(file, botId) {
+export function descendantsOf(file, botId, { project = null, projects = null } = {}) {
+  if (!projects) {
+    const ownProject = cleanProjectPath(project);
+    const out = new Set();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const b of file?.bots ?? []) {
+        if (out.has(b.id) || b.id === botId || b.kind !== "member") continue;
+        const { lead, leadProject } = effectiveLead(file, b.id, { project: ownProject || null });
+        if (leadProject && (!ownProject || leadProject !== ownProject)) continue;
+        if (lead === botId || out.has(lead)) { out.add(b.id); grew = true; }
+      }
+    }
+    return out;
+  }
+  const ownProject = inferProjectOf(file, botId, project, projects);
+  const entries = projectEntriesOf(projects);
+  if (file && Array.isArray(file.bots) && !entries.some(([k, f]) => f === file || (ownProject && k === ownProject))) {
+    entries.unshift([ownProject, file]);
+  }
+  const reachPairs = new Set([`${ownProject}\0${botId}`]);
   const out = new Set();
   let grew = true;
   while (grew) {
     grew = false;
-    for (const b of file.bots) {
-      if (out.has(b.id) || b.id === botId || b.kind !== "member") continue;
-      const { lead } = effectiveLead(file, b.id);
-      if (lead === botId || out.has(lead)) { out.add(b.id); grew = true; }
+    for (const [projKey, projFile] of entries) {
+      for (const b of projFile?.bots ?? []) {
+        if (!b?.id || b.planned || (b.id === botId && (!ownProject || projKey === ownProject))) continue;
+        if (b.kind !== "member" && !b.leadProject) continue;
+        const pairKey = `${projKey}\0${b.id}`;
+        if (reachPairs.has(pairKey)) continue;
+        const eff = effectiveLead(projFile, b.id, { project: projKey || null, projects });
+        if (!eff.lead) continue;
+        const targetProj = eff.leadProject ?? projKey;
+        const targetPair = `${targetProj}\0${eff.lead}`;
+        if (reachPairs.has(targetPair) || (!ownProject && !targetProj && (eff.lead === botId || out.has(eff.lead)))) {
+          reachPairs.add(pairKey);
+          out.add(b.id);
+          grew = true;
+        }
+      }
     }
   }
   return out;
@@ -489,7 +676,8 @@ export function effectiveCategory(file, botId) {
   const byId = new Map(file.bots.map((b) => [b.id, b]));
   let bot = byId.get(botId);
   for (let steps = 0; bot && main && bot !== main && steps <= file.bots.length; steps += 1) {
-    const { lead } = effectiveLead(file, bot.id);
+    const { lead, leadProject } = effectiveLead(file, bot.id);
+    if (leadProject) return null;
     if (lead === main.id) {
       const known = (file.categories ?? []).some((c) => c?.id === bot.category);
       return known && CATEGORY_ID.test(bot.category) ? bot.category : null;
@@ -521,12 +709,12 @@ export function newCategoryId(title, categories = []) {
 /**
  * A copy of `raw` (parseBots' raw file, or a new one) with one bot created or edited, the
  * Create form's write-back. `entry` holds every field the form edits; an optional one it
- * leaves out or empty is removed (planned, lead, category, agent, model, agyMode); other keys the
- * stored entry had are kept. `rank` (A16) and `worker` are removed only when `entry` names
- * them empty, so a front end that doesn't edit them (the form has no worker fields) keeps the
- * stored ones; a `worker` with none of its fields left is removed too.
- * A lead equal to the main bot is stored as no lead; a category goes only with the main bot
- * as lead; `newCategory` ({ title, sub }) is added to the categories and used.
+ * leaves out or empty is removed (planned, lead, leadProject, category, agent, model, agyMode);
+ * other keys the stored entry had are kept. `rank` (A16) and `worker` are removed only when
+ * `entry` names them empty, so a front end that doesn't edit them (the form has no worker fields)
+ * keeps the stored ones; a `worker` with none of its fields left is removed too.
+ * A lead equal to the main bot (with no leadProject) is stored as no lead; a category goes only
+ * with the main bot as lead; `newCategory` ({ title, sub }) is added to the categories and used.
  */
 export function applyBotEdit(raw, entry, newCategory = null) {
   const out = JSON.parse(JSON.stringify(raw ?? { version: 1, categories: [], bots: [] }));
@@ -540,12 +728,14 @@ export function applyBotEdit(raw, entry, newCategory = null) {
     out.categories.push(cat);
     bot.category = cat.id;
   }
+  if (bot.leadProject) bot.leadProject = cleanProjectPath(bot.leadProject);
+  if (!bot.lead || !bot.leadProject) delete bot.leadProject;
   const main = out.bots.find((b) => b?.kind === "main" && b.id !== bot.id);
-  if (bot.kind === "main" || (main && bot.lead === main.id)) delete bot.lead;
+  if (!bot.leadProject && (bot.kind === "main" || (main && bot.lead === main.id))) delete bot.lead;
   if (bot.kind === "main" || bot.lead) delete bot.category;
   const i = out.bots.findIndex((b) => b?.id === bot.id);
   const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
-  for (const k of ["planned", "lead", "category", "agent", "model", "agyMode", "agyPermissions"]) {
+  for (const k of ["planned", "lead", "leadProject", "category", "agent", "model", "agyMode", "agyPermissions"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
@@ -576,4 +766,79 @@ export function listedProjects(text) {
 export function withListedProject(text, key, max = MAX_LISTED_PROJECTS) {
   const keys = [...listedProjects(text).filter((k) => k !== key), key].slice(-max);
   return `${JSON.stringify(keys, null, 2)}\n`;
+}
+
+/**
+ * Known projects on this machine for cross-project lead / team resolution (`project -> BotsFile`).
+ * Reads `project`, any `leadProject` referenced by loaded bots (transitively), `extraKeys`,
+ * `<appHome>/am-sidebar-projects.json`, `<appHome>/shared.json`, and immediate sibling folders of
+ * `project` when `listDir` is supplied.
+ */
+export function collectProjectMap({
+  project = null,
+  file = null,
+  appHome = null,
+  readText = () => null,
+  listDir = () => [],
+  extraKeys = [],
+} = {}) {
+  const map = new Map();
+  const queue = [];
+  const seen = new Set();
+  const enqueue = (k) => {
+    const clean = cleanProjectPath(k);
+    if (!clean || !clean.startsWith("/") || seen.has(clean)) return;
+    seen.add(clean);
+    queue.push(clean);
+  };
+  const ownKey = cleanProjectPath(project);
+  if (ownKey) {
+    seen.add(ownKey);
+    if (file && Array.isArray(file.bots)) {
+      map.set(ownKey, file);
+      for (const b of file.bots) if (b?.leadProject) enqueue(b.leadProject);
+    } else {
+      queue.push(ownKey);
+    }
+  } else if (file && Array.isArray(file.bots)) {
+    for (const b of file.bots) if (b?.leadProject) enqueue(b.leadProject);
+  }
+  for (const k of extraKeys ?? []) enqueue(k);
+  if (appHome) {
+    const home = cleanProjectPath(appHome);
+    for (const k of listedProjects(readText(`${home}/${PROJECTS_FILE}`))) enqueue(k);
+    for (const k of listedProjects(readText(`${home}/automagik-herdr/projects.json`))) enqueue(k);
+    try {
+      const shared = JSON.parse(readText(`${home}/shared.json`) ?? "null");
+      const list = shared?.["am.sidebar.projects"] ?? shared?.["spaces-agents.projects"];
+      if (Array.isArray(list)) {
+        for (const p of list) {
+          if (typeof p === "string") enqueue(p);
+          else if (p && typeof p.key === "string" && !p.machine) enqueue(p.key);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  if (ownKey && ownKey !== "/") {
+    const parent = parentOf(ownKey);
+    if (parent && parent !== "/") {
+      let names = [];
+      try { names = listDir(parent) ?? []; } catch { names = []; }
+      for (const name of names.slice(0, 64)) {
+        if (typeof name === "string" && name && !name.startsWith(".")) enqueue(`${parent}/${name}`);
+      }
+    }
+  }
+  while (queue.length) {
+    const key = queue.shift();
+    if (map.has(key)) continue;
+    const text = readText(`${key === "/" ? "" : key}/${BOTS_PATH}`);
+    if (typeof text !== "string" || !text.trim()) continue;
+    try {
+      const parsed = parseBots(text).file;
+      map.set(key, parsed);
+      for (const b of parsed.bots) if (b?.leadProject) enqueue(b.leadProject);
+    } catch { /* skip invalid project */ }
+  }
+  return map;
 }

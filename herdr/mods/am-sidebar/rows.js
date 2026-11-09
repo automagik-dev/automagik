@@ -4,7 +4,7 @@
 // goes in the sidebar (A8), the rows a fold state leaves showing (A7) and the machines' order.
 // Pure: no `herdr`, `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
 
-import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
+import { BOT_LABEL, RANKS, cleanProjectPath, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { AGENTS, detectModel, defaultModelFrom, resolveAgent } from "./models.js";
 import { workerBranch, workerTaskId } from "./workers.js";
@@ -218,56 +218,132 @@ export function helpersOf(terminals, address, known = new Set(), depth = 0, seen
 export function buildTree({ projects, live = {}, terminals = [], now = Date.now() }) {
   const known = knownBots(projects);
   const done = new Set();
-  const trees = [];
+  const unique = [];
+  const byMachine = new Map();
   for (const p of projects ?? []) {
     const pid = projectId(p);
     if (done.has(pid)) continue;
     done.add(pid);
+    unique.push(p);
+    const m = p.machine ?? null;
+    if (!byMachine.has(m)) byMachine.set(m, new Map());
+    const clean = cleanProjectPath(p.key);
+    if (clean) byMachine.get(m).set(clean, p);
+  }
+  const tagProject = (n, projKey) => {
+    n.project = projKey;
+    n.projectName = folderName(projKey);
+    for (const m of n.members ?? []) tagProject(m, projKey);
+  };
+  const built = [];
+  const treeByPid = new Map();
+  const nodesByPid = new Map();
+  const pendingCross = [];
+
+  for (const p of unique) {
+    const pid = projectId(p);
+    const sameMachine = byMachine.get(p.machine ?? null) ?? new Map();
     const file = p.file ?? { version: 1, categories: [], bots: [] };
     const main = mainBotOf(file);
     const warnings = [...(p.warnings ?? [])];
-    const leads = new Map(file.bots.map((b) => [b.id, b === main ? { lead: "" } : effectiveLead(file, b.id)]));
+    const leads = new Map(file.bots.map((b) => [
+      b.id,
+      b === main && !b.leadProject
+        ? { lead: "", leadProject: null, leadBot: null, warning: null }
+        : effectiveLead(file, b.id, { project: p.key, projects: sameMachine }),
+    ]));
     const names = new Map(file.bots.map((b) => [b.id, b.name]));
     const placed = new Set();
+    const nodeMap = new Map();
+    nodesByPid.set(pid, nodeMap);
+
     const node = (bot) => {
       placed.add(bot.id);
       const planned = Boolean(bot.planned);
       const l = planned ? null : liveOf(live, p, bot.id);
-      const members = planned ? [] : file.bots.filter((b) => !placed.has(b.id) && b !== main && leads.get(b.id)?.lead === bot.id).map(node);
+      const eff = leads.get(bot.id);
+      const members = planned
+        ? []
+        : file.bots
+            .filter((b) => !placed.has(b.id) && b !== main && !leads.get(b.id)?.leadProject && leads.get(b.id)?.lead === bot.id)
+            .map(node);
       const n = {
         bot, planned, pose: poseOf(l, now), members,
         live: l ? { terminal: l.terminal, duplicate: l.duplicate, parent: l.parent ?? null } : null,
         status: l?.status ?? null, program: l?.program ?? null, argv: l?.argv ?? null,
         helpers: l ? helpersOf(terminals, l.terminal, known) : [],
       };
-      const warning = leads.get(bot.id)?.warning;
-      if (warning && bot !== main) n.warning = warning;
+      const warning = eff?.warning;
+      if (warning && (bot !== main || bot.leadProject)) n.warning = warning;
       // A row's mark when its pane's hc parent is not its lead's pane (#231): two map reads.
-      const leadId = l && bot !== main ? leads.get(bot.id)?.lead : null;
-      const mark = leadId ? parentMarkOf(l, liveOf(live, p, leadId), leadId, names.get(leadId) ?? null) : null;
+      const leadId = l && (bot !== main || eff?.leadProject) ? eff?.lead : null;
+      const targetProj = eff?.leadProject ? sameMachine.get(eff.leadProject) ?? p : p;
+      const leadName = eff?.leadProject ? eff?.leadBot?.name ?? null : names.get(leadId) ?? null;
+      const mark = leadId ? parentMarkOf(l, liveOf(live, targetProj, leadId), leadId, leadName) : null;
       if (mark) n.parentMark = mark;
+      nodeMap.set(bot.id, n);
       return n;
     };
+
     if (!main) {
       // No main bot (or a file that did not parse): every bot at the top, nothing nested.
       if (!warnings.includes("no main bot") && file.bots.length) warnings.unshift("no main bot");
-      trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [],
-        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings, ...(p.stale ? { stale: true } : {}) });
+      const tree = { key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [],
+        uncategorised: file.bots.map((b) => ({ ...node(b), members: [] })), warnings, ...(p.stale ? { stale: true } : {}) };
+      built.push({ p, pid, tree, skip: false });
+      treeByPid.set(pid, tree);
       continue;
     }
+
     placed.add(main.id);
-    const direct = file.bots.filter((b) => b !== main && leads.get(b.id)?.lead === main.id);
+    // Build any member with a valid cross-project lead so it is placed and queued for its target lead.
+    for (const b of file.bots) {
+      if (b === main || placed.has(b.id)) continue;
+      const eff = leads.get(b.id);
+      if (eff?.leadProject && sameMachine.has(eff.leadProject)) {
+        const moved = node(b);
+        tagProject(moved, p.key);
+        pendingCross.push({ moved, targetPid: projectId(sameMachine.get(eff.leadProject)), leadId: eff.lead });
+      }
+    }
+
+    const direct = file.bots.filter((b) => b !== main && !leads.get(b.id)?.leadProject && leads.get(b.id)?.lead === main.id);
     const categories = file.categories
       .map((c) => ({ id: c.id, title: c.title, ...(c.sub ? { sub: c.sub } : {}), bots: direct.filter((b) => b.category === c.id && !placed.has(b.id)).map(node) }))
       .filter((c) => c.bots.length);
     const uncategorised = direct.filter((b) => !placed.has(b.id)).map(node);
     const mainNode = node(main);
+    const mainEff = leads.get(main.id);
+    if (mainEff?.leadProject && sameMachine.has(mainEff.leadProject)) {
+      mainNode.members = [...categories.flatMap((c) => c.bots), ...uncategorised];
+      tagProject(mainNode, p.key);
+      pendingCross.push({ moved: mainNode, targetPid: projectId(sameMachine.get(mainEff.leadProject)), leadId: mainEff.lead });
+      const tree = { key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: null, categories: [], uncategorised: [], warnings,
+        ...(p.stale ? { stale: true } : {}) };
+      built.push({ p, pid, tree });
+      treeByPid.set(pid, tree);
+      continue;
+    }
     // main's own `members` are its direct reports, already grouped above.
     mainNode.members = [];
-    trees.push({ key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings,
-      ...(p.stale ? { stale: true } : {}) });
+    const tree = { key: p.key, machine: p.machine ?? null, spaces: p.spaces ?? [], main: mainNode, categories, uncategorised, warnings,
+      ...(p.stale ? { stale: true } : {}) };
+    built.push({ p, pid, tree });
+    treeByPid.set(pid, tree);
   }
-  return trees;
+
+  for (const { moved, targetPid, leadId } of pendingCross) {
+    const targetTree = treeByPid.get(targetPid);
+    const targetNode = nodesByPid.get(targetPid)?.get(leadId);
+    if (!targetTree || !targetNode) continue;
+    if (targetTree.main === targetNode && !targetNode.project) {
+      targetTree.uncategorised.push(moved);
+    } else {
+      targetNode.members.push(moved);
+    }
+  }
+
+  return built.map((item) => item.tree);
 }
 
 /**
@@ -356,7 +432,7 @@ export const categoryFold = (tree, categoryId) => `c:${projectId(tree)}:${catego
  */
 export function visibleRows(tree, open = new Map()) {
   const rows = [];
-  const isOpen = (id, dflt) => (open.has(id) ? open.get(id) : dflt);
+  const isOpen = (id, dflt) => (open instanceof Set ? open.has(id) : open.has(id) ? open.get(id) : dflt);
   const helperRows = (owner, helpers, guides) => helpers.map((h) => ({
     kind: "helper", id: `h:${h.terminal}`, owner: owner.bot.id, ownerTerminal: owner.live?.terminal ?? null, helper: h,
     foldable: false, open: false,
@@ -364,10 +440,11 @@ export function visibleRows(tree, open = new Map()) {
   }));
   const botRows = (n, guides) => {
     const id = botFold(n.bot.id);
-    if (n.planned) { rows.push({ kind: "planned", id, node: n, guides, foldable: false, open: false }); return; }
+    const cross = n.project ? { project: n.project, projectName: n.projectName } : {};
+    if (n.planned) { rows.push({ kind: "planned", id, node: n, guides, foldable: false, open: false, ...cross }); return; }
     const foldable = n.members.length + n.helpers.length > 0;
     const o = foldable && isOpen(id, false);
-    rows.push({ kind: "bot", id, node: n, guides, foldable, open: o });
+    rows.push({ kind: "bot", id, node: n, guides, foldable, open: o, ...cross });
     if (!o) return;
     for (const m of n.members) botRows(m, [...guides, "member"]);
     rows.push(...helperRows(n, n.helpers, [...guides, "member"]));
@@ -446,7 +523,8 @@ export function secondLine(r, tree, { texts = {}, defaults = null, argvOf = () =
     if (argv) model = detectModel(argv, b.agent) || defaultOf(b.agent, defaults, texts);
   }
   if (r.kind === "main") return ["Main bot", n.live ? model : "not running", folderName(tree.key)].filter(Boolean).join(" · ");
-  return (n.live ? [b.role, model] : ["not running", b.role]).filter(Boolean).join(" · ");
+  const role = b.role || (b.kind === "main" ? "Main bot" : "");
+  return (n.live ? [role, model, n.projectName] : ["not running", role, n.projectName]).filter(Boolean).join(" · ");
 }
 
 /**
