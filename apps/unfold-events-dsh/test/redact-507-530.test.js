@@ -228,3 +228,35 @@ test('#507: a list item under an explicit credential name is remembered without 
   assert.ok(kept.includes(INDENTED), 'the item is remembered')
   assert.ok(!masked(later(INDENTED), kept).includes(INDENTED), 'a later bare occurrence is masked')
 })
+
+// 9. A plain name of several words: the credential word is not the first one, so the rest of the
+// `?` line after its props, minus a trailing comment, claims the value, in each #507 shape.
+const WORDS = [
+  ['a two-word name', `db ${PASS}`],
+  ['an anchor and a two-word name', `&a db ${PASS}`],
+  ['a two-word name and a comment', `db ${PASS} # note`],
+]
+for (const [what, name] of WORDS) {
+  const shapes = [
+    ['no colon line', `? ${name}\n  ${INDENTED}\n`, [INDENTED]],
+    ['a gap line', `? ${name}\n  ${INDENTED}\n: ${VALUE}\n`, [INDENTED, VALUE]],
+    ['a map child', `? ${name}\n  staging: ${VALUE}\n`, [VALUE]],
+  ]
+  for (const [shape, input, values] of shapes) {
+    test(`#507: a plain multi-word credential name hides and remembers (${what}, ${shape})`, () => {
+      const served = redactText(input)
+      const kept = secretsIn(input)
+      for (const value of values) {
+        assert.ok(!served.includes(value), 'the value is hidden')
+        assert.ok(kept.includes(value), 'the value is remembered')
+        assert.ok(!masked(later(value), kept).includes(value), 'a later bare occurrence is masked')
+      }
+    })
+  }
+}
+
+test('#507: a plain multi-word non-credential name still serves its indented line', () => {
+  const input = '? db host\n  north\n'
+  assert.equal(redactText(input), input)
+  assert.deepEqual(secretsIn(input), [])
+})

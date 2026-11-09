@@ -386,7 +386,11 @@ function explicitKeyHits(s) {
   let covered = 0
   for (let m = keyLine.exec(s); m; m = keyLine.exec(s)) {
     if (m.index < covered) continue
-    if (!credentialName(explicitKeyName(m[3]))) continue
+    if (!credentialName(explicitKeyName(m[3]))) {
+      // A plain name of several words (`? db password`): the rest of the line, minus a comment.
+      const rest = m[3].slice(KEY_PROPS.exec(m[3])[0].length).replace(/(?:^|[ \t])#.*$/, '')
+      if (!credentialName(rest)) continue
+    }
     const keyIndent = m[2].length
     let cursor = m.index + m[0].length
     if (s.startsWith('\r\n', cursor)) cursor += 2
