@@ -159,6 +159,30 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
   });
 
+  test('herdr/scripts/ is repository tooling: only the pack build rides the herdr lane', () => {
+    const none = () => false;
+    // #824 changed only the privacy scanner's list (v3.108.13): the pack carried no such change.
+    const privacyList = ['herdr/scripts/privacy-list.json'];
+    expect(ships(privacyList, none)).toBe(false);
+    expect(herdrShips(privacyList)).toBe(false);
+    expect(kindOf(privacyList, none)).toBe('plugins');
+    // A CI-only script, existing or new, alone and beside a plugin: no release and no herdr lane.
+    for (const path of ['herdr/scripts/catalog.mjs', 'herdr/scripts/new-tool.mjs']) {
+      expect(ships([path], none)).toBe(false);
+      expect(herdrShips([path])).toBe(false);
+      expect(kindOf([path], none)).toBe('plugins');
+      const besidePlugin = [path, 'apps/bots-dsh/client.js'];
+      expect(ships(besidePlugin, none)).toBe(true);
+      expect(kindOf(besidePlugin, none, none, besidePlugin)).toBe('plugins');
+      expect(herdrShips(besidePlugin)).toBe(false);
+    }
+    // The pack build itself: release.yml runs the tag's own pack.mjs to build the attached tarball.
+    const packBuild = ['herdr/scripts/pack.mjs'];
+    expect(ships(packBuild, none)).toBe(true);
+    expect(herdrShips(packBuild)).toBe(true);
+    expect(kindOf(packBuild, none, none, packBuild)).toBe('herdr');
+  });
+
   test('a root .genie/ plan ships nothing: it never makes a full release', () => {
     const none = () => false;
     const plan = ['.genie/wishes/restore-official-sidebar-with-advanced-b/WISH.md'];
