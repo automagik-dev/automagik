@@ -5,6 +5,7 @@
 // `read(path) => string | null`, so `node --test` runs it and the CLI and the mod share it.
 // Apache-2.0.
 import { LEGACY_AGENTS } from "./retired.js";
+import { agModelsPath, parseAgModelsCache } from "./modelCache.js";
 
 /**
  * The agents people start, keyed as Herdr's shipped programs table keys them (the table in
@@ -22,6 +23,9 @@ export const AGENTS = Object.freeze({
   copilot: { name: "Copilot", run: ["copilot"], match: ["github-copilot"] },
   amp: { name: "Amp", run: ["amp"] },
   grok: { name: "Grok", run: ["grok"] },
+  // agy 1.5.3 also takes permission flags (--dangerously-skip-permissions, --mode
+  // accept-edits|auto|plan, --sandbox); this pack passes none of them, so a bot's own
+  // permission prompt stays the person's answer, as for every other agent it starts.
   antigravity: { name: "Antigravity", run: ["agy"], match: ["agy"] },
   kimi: { name: "Kimi", run: ["kimi"] },
   kiro: { name: "Kiro", run: ["kiro-cli"], match: ["kiro-cli"] },
@@ -118,7 +122,7 @@ export function agentKeyOfArgv(argv, agents = AGENTS) {
 }
 
 // Each agent's model flags, read from `<agent> --help` on this host (2026-11-01: Claude Code
-// 2.1.316, codex, omp, pi; 2026-11-02: agy 1.4.12, whose Go parser takes -model as --model). Agents not installed here have none listed, so their
+// 2.1.316, codex, omp, pi; 2026-11-09: agy 1.5.3, whose Go parser takes -model as --model). Agents not installed here have none listed, so their
 // model is never guessed: detectModel and modelArgs give null / [] for them.
 const FLAGS = {
   claude: { long: ["--model"] },
@@ -232,10 +236,11 @@ const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "claude-fable-5-1", "claude-op
 /**
  * The models a bot running `agentKey` may be pinned to (A12: picked from a list, never
  * typed). Claude Code: CLAUDE_MODELS above. Codex: the slugs in its own model cache,
- * `~/.codex/models_cache.json` `.models[].slug`, which Codex refreshes itself. Any agent:
- * plus its configured default (defaultModelFrom), except Antigravity, whose settings keep a
- * label that `--model` may not take (`agy models` names those). Others: empty (no pin offered).
- * `texts` as for defaultModelFrom.
+ * `~/.codex/models_cache.json` `.models[].slug`, which Codex refreshes itself. Antigravity:
+ * the ids the pack's cache holds from `agy models` (modelCache.js; its settings keep a label
+ * `--model` may not take), plus that cache's labels for the picker. Any other agent: plus its
+ * configured default (defaultModelFrom). Others: empty (no pin offered).
+ * `texts` as for defaultModelFrom; Antigravity's `antigravityModels` text is the cache's.
  */
 export function knownModelsFrom(agentKey, texts = {}) {
   const out = [];
@@ -245,13 +250,22 @@ export function knownModelsFrom(agentKey, texts = {}) {
     const cache = parseJson(texts.codexModels);
     for (const m of Array.isArray(cache?.models) ? cache.models : []) add(m?.slug ?? m?.id);
   }
-  if (agentKey !== "antigravity") add(defaultModelFrom(agentKey, texts));
+  if (agentKey === "antigravity") for (const m of parseAgModelsCache(texts.antigravityModels)?.models ?? []) add(m.id);
+  else add(defaultModelFrom(agentKey, texts));
   return out;
 }
 
-/** knownModelsFrom over a synchronous `read(path)` under `home` (the CLI); no reader: the static list. */
-export function knownModels(agentKey, { home, read } = {}) {
-  return knownModelsFrom(agentKey, read && home ? textsOf(home, read) : {});
+/**
+ * knownModelsFrom over a synchronous `read(path)` under `home`, plus the pack's Antigravity
+ * model cache under `appHome` (modelCache.js). No reader: the static list (Claude's), and no
+ * Antigravity list.
+ */
+export function knownModels(agentKey, { home, read, appHome } = {}) {
+  const texts = read && home ? textsOf(home, read) : {};
+  if (read && appHome) {
+    try { texts.antigravityModels = read(agModelsPath(appHome)) ?? null; } catch { texts.antigravityModels = null; }
+  }
+  return knownModelsFrom(agentKey, texts);
 }
 
 /** The arguments that start `agentKey` on `model` (A12), [] when there is no pin or no known flag. */
@@ -292,10 +306,10 @@ export function resolveAgent(name, agents = AGENTS) {
   return next && agents[next] ? next : null;
 }
 
-// Each agent's reasoning-effort flag, read from `<agent> --help` on this host (2026-11-02):
+// Each agent's reasoning-effort flag, read from `<agent> --help` on this host (2026-11-02:
 // Claude Code 2.1.316 `--effort <level>`; codex's config key `model_reasoning_effort`
-// through `-c`; pi `--thinking <level>`; omp `--thinking=<value>`; agy 1.4.12
-// `--effort` (low|medium|high|xhigh|max).
+// through `-c`; pi `--thinking <level>`; omp `--thinking=<value>`; 2026-11-09: agy 1.5.3
+// `--effort` (low|medium|high|xhigh|max)).
 const EFFORT = {
   claude: (level) => ["--effort", level],
   codex: (level) => ["-c", `model_reasoning_effort=${level}`],
@@ -314,8 +328,8 @@ export function effortArgs(agentKey, effort) {
 }
 
 // How each agent takes a first prompt that starts an interactive session. Most read a bare
-// trailing argument; agy 1.4.12 only through `-i` / `--prompt-interactive` (a stray
-// trailing argument is an error).
+// trailing argument; agy 1.5.3 only through `-i` / `--prompt-interactive` (a stray trailing
+// argument is an error).
 const PROMPT = {
   antigravity: (task) => ["-i", task],
   "dsh-tui": (task) => ["--", plainPrompt(task)],
@@ -337,7 +351,8 @@ export function promptArgs(agentKey, task) {
 // was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,
 // agy, hermes) and again on 2026-11-04 (omp 18.14.2 `-r, --resume=<value>` by ID prefix;
 // codex-cli 0.166.0 `resume [SESSION_ID]` / `--last`; pi 1.5.0 `--session <path|id>`; kimi
-// 2.5.0 `-S, --session [id]`; agy 1.5.0 `--conversation` by ID; hermes wasn't runnable then).
+// 2.5.0 `-S, --session [id]`; 2026-11-09: agy 1.5.3 `--conversation` by ID, `-c`/`--continue`
+// the latest; hermes wasn't runnable then).
 // Each resumes a known session by id, else (--continue, resume --last) the latest one, in its
 // folder for most (codex resume --last filters by folder unless --all; agy's help says only "the
 // most recent conversation"), which may be another bot's: so with no id and another bot on that
@@ -363,7 +378,7 @@ const RESUME_AFTER_TURN = new Set(["dsh-tui"]);
 /** True when `agentKey`'s id-less resume needs a finished turn in the old pane (RESUME_AFTER_TURN). */
 export const resumeAfterTurn = (agentKey) => RESUME_AFTER_TURN.has(agentKey);
 
-// The agents whose id-less resume isn't limited to the folder (agy 1.5.0: "Continue the most
+// The agents whose id-less resume isn't limited to the folder (agy 1.5.3: "Continue the most
 // recent conversation"): any other bot on that agent, wherever it runs, may own that one.
 const CONTINUES_ANYWHERE = new Set(["antigravity"]);
 /** True when `agentKey`'s id-less resume may take a conversation from any folder (CONTINUES_ANYWHERE). */

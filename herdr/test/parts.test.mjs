@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -173,7 +173,7 @@ test("herdr.pack links automagik-herdr as install.sh does, leaves someone else's
   assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
   const d = doctorOf(m, "herdr.pack");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node"]);
+  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node", "agent-antigravity"]);
   const noPath = doctorOf(m, "herdr.pack", { PATH: "/usr/bin" });
   assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
   assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
@@ -279,6 +279,22 @@ test("herdr.pack uninstall: the whole pack out; hooks, entry point, keys and lin
   uninstall(m.ctx(), P("herdr.pack"), { purge: true });
   assert.ok(!existsSync(prev));
   assert.deepEqual(ls(m.mods), ["pocket-link"]);
+});
+
+test("doctor notes Antigravity's agy, installed or missing, without failing the pack (#793)", (t) => {
+  const m = machine(t);
+  writeFileSync(join(m.app, "keys.json"), "{}\n"); // This scene has completed native initialization.
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const missing = doctorOf(m, "herdr.pack").checks.find((c) => c.check === "agent-antigravity");
+  assert.equal(missing.ok, true, "a person's absent agent is a note, never a broken pack");
+  assert.match(missing.detail, /agy\) is not installed/);
+  assert.equal(missing.fix, null);
+  mkdirSync(m.binDir, { recursive: true });
+  const agy = join(m.binDir, "agy");
+  writeFileSync(agy, "#!/bin/sh\nexit 0\n");
+  chmodSync(agy, 0o755);
+  const there = doctorOf(m, "herdr.pack").checks.find((c) => c.check === "agent-antigravity");
+  assert.match(there.detail, /agy\) is installed at .*\/agy$/);
 });
 
 test("doctor reads only: a healthy pack passes every part, a broken one names the check and its fix", (t) => {

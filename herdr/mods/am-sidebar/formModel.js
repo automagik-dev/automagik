@@ -169,9 +169,11 @@ export function modelOptions(info, pin = "") {
 
 /**
  * The model line: what the bot runs and why. `detected`: the model read from the bot's
- * running pane (edit of a live bot), with `terminal` its address.
+ * running pane (edit of a live bot), with `terminal` its address. `agentKey`: the agent, so a
+ * pinless Antigravity says where its list would come from (`agy models`) instead of a bare
+ * "doesn't list its models".
  */
-export function modelLine({ agentName, pin, info, detected = null, terminal = null }) {
+export function modelLine({ agentName, agentKey = null, pin, info, detected = null, terminal = null }) {
   const name = agentName || "The agent";
   if (detected) {
     const shown = pin || detected;
@@ -182,6 +184,9 @@ export function modelLine({ agentName, pin, info, detected = null, terminal = nu
   }
   if (pin) return { shown: pin, note: `Pinned. Start runs ${name} with this model; the sidebar shows what the pane really runs.`, source: "pinned" };
   if (info.def) return { shown: info.def, note: `${name}'s default, from ${info.from}. Read from the running pane once started.`, source: "default" };
+  if (agentKey === "antigravity") {
+    return { shown: "its own default", note: "Antigravity's models come from `agy models`; none are cached here yet (agy may not be installed). Read from the running pane once started.", source: null };
+  }
   return { shown: "its own default", note: `${name} doesn't list its models. Read from the running pane once started.`, source: null };
 }
 

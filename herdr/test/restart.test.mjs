@@ -41,6 +41,20 @@ test("restartPlan resume: claude with the pane's session and the bot's pin; --co
   assert.deepEqual(pi.argv, ["pi", "--continue"]);
 });
 
+test("agy 1.5.3 restart (#793): a session resumes by --conversation, else --continue; --fresh starts new", () => {
+  const agy = { agent: "antigravity", model: "gemini-4-argon-high" };
+  const resume = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID });
+  assert.deepEqual([resume.mode, resume.argv], ["resume", ["agy", "--conversation", SID, "--model", "gemini-4-argon-high"]]);
+  assert.equal(planText(resume, SID), `resuming session ${SID} (--conversation ${SID})`);
+  const latest = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity" });
+  assert.deepEqual(latest.argv, ["agy", "--continue", "--model", "gemini-4-argon-high"]);
+  const fresh = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID, fresh: true });
+  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["agy", "--model", "gemini-4-argon-high"]]);
+  // A session id that isn't one safe word never reaches --conversation.
+  assert.deepEqual(restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: "--dangerously-skip-permissions" }).argv,
+    ["agy", "--continue", "--model", "gemini-4-argon-high"]);
+});
+
 test("restartPlan fresh: --fresh, an agent with no resume, a pane running another agent (each says why)", () => {
   const fresh = restartPlan({ bot: claude, run: ["claude"], runningAgent: "claude", session: SID, fresh: true });
   assert.deepEqual([fresh.mode, fresh.argv, fresh.note], ["fresh", ["claude", "--model", "claude-opus-5-5"], null]);

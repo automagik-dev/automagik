@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   ASLEEP_MS, liveFrom, poseOf, nextWake, helpersOf, buildTree, placeTrees, placesOf, withSpaceless, visibleRows, botFold, categoryFold, knownBots, projectId,
   secondLine, modelDefaultsFrom, modelTextsUpdate, argvToAsk, argvEntry, argvAfter, argvReader, heldClickOf, heldTerminalOf, liveOf, paneCounts, listedKeyOf, parentMarkOf, parentMarkText,
+  programForApp,
 } from "../mods/am-sidebar/rows.js";
 import { parseBots } from "../mods/am-sidebar/model.js";
 
@@ -48,6 +49,19 @@ test("liveFrom: label + live + agent in front; newest holder wins and is flagged
   assert.equal(live["b-devdevdevd"].terminal, "box/t4");
   // No filter: any label counts.
   assert.ok(liveFrom(terms)["b-unknownbot"]);
+});
+
+test("an agy pane (#793): agy in front counts even when the table says no agent, and its blocked prompt is needs-you", () => {
+  const terms = [T("t1", { labels: { bot: "b-mainmainma" }, status: "blocked", status_ms: NOW,
+    program: { key: "agy", name: "agy", agent: false }, foreground: { argv: ["agy", "--model", "gemini-4-argon-high"] } })];
+  const live = liveFrom(terms, knownBots([{ key: KEY, file }]));
+  assert.equal(live["b-mainmainma"].terminal, "t1");
+  assert.equal(poseOf(live["b-mainmainma"], NOW), "needs-you");
+  // The reported app name maps to Herdr's entry, the pack's agent table's, or a plain one.
+  assert.equal(programForApp("claude-code", [{ key: "claude", name: "Claude Code" }]).key, "claude");
+  assert.deepEqual(programForApp("agy", [{ key: "antigravity", name: "Antigravity", icon: null }]), { key: "antigravity", name: "Antigravity", icon: null });
+  assert.deepEqual(programForApp("agy", []), { key: "antigravity", name: "Antigravity", icon: null, tint: false }, "Herdr's table may lack it");
+  assert.equal(programForApp("nope", []), null);
 });
 
 test("poseOf: Decision 7's mapping, asleep at exactly ten idle minutes", () => {

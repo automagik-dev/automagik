@@ -3,8 +3,11 @@
 // and the flags Start passes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
-import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, knownModels, knownModelsFrom, modelArgs, resolveAgent, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
+import { agModelsCacheText, agModelsPath, parseAgModelsOutput } from "../mods/am-sidebar/modelCache.js";
+
+import { AGENTS, LEGACY_AGENTS, agentArgv, agentKeyOfArgv, configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom, modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides } from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
   withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { launchChange, paneCommand, paneLaunch, restartPlan } from "../mods/am-sidebar/restart.js";
@@ -73,6 +76,18 @@ test("defaultModel reads Claude's settings.json, Codex's top-level config.toml m
   assert.equal(defaultModel("antigravity", io), "Gemini 3.1 Pro");
   assert.equal(defaultModel("gemini", io), null, "gemini is retired: its settings are not read");
   assert.deepEqual(knownModels("antigravity", io), [], "a settings label is shown, never offered as a pin");
+  // The pin list is the pack's cache of `agy models`, under the app home (#793): its ids,
+  // never the settings label the CLI would reject.
+  const table = readFileSync(new URL("./fixtures/agy/models-1.5.3.txt", import.meta.url), "utf8");
+  const cache = agModelsCacheText(parseAgModelsOutput(table), "2026-11-09T12:00:00Z");
+  const appIo = { home: "/h", appHome: "/app", read: (p) => ({ [agModelsPath("/app")]: cache }[p] ?? null) };
+  const ids = knownModels("antigravity", appIo);
+  assert.deepEqual(ids, parseAgModelsOutput(table).map((m) => m.id));
+  assert.ok(ids.includes("gemini-4-argon-high") && ids.includes("claude-opus-5-5-high"), "Gemini and Claude ids");
+  assert.ok(!ids.includes("Gemini 4 Argon (High)"), "the settings label is never a pin");
+  assert.deepEqual(knownModels("antigravity", { ...appIo, appHome: "/none" }), [], "no cache: no list, no guess");
+  assert.deepEqual(knownModelsFrom("antigravity", { antigravityModels: cache }), ids);
+  assert.deepEqual(knownModelsFrom("antigravity", {}), []);
   assert.equal(defaultModel("amp", io), null);
   assert.equal(defaultModel("codex", files({ "/h/.codex/config.toml": '[profiles.fast]\nmodel = "gpt-6-luna"\n' })), null, "a profile's model is not the default");
   assert.equal(defaultModel("claude", files({ "/h/.claude/settings.json": "{not json" })), null);
@@ -149,6 +164,18 @@ test("antigravity replaces gemini: agy argv is antigravity, gemini resolves to i
     "a programs.json that adds gemini back keeps it");
   assert.equal(configPaths("/h").antigravitySettings, "/h/.gemini/antigravity-cli/settings.json");
   assert.equal(configPaths("/h").geminiSettings, undefined);
+});
+
+test("agy 1.5.3's flags: --model/-model, --effort, -i/--prompt-interactive, -c/--continue, --conversation; no permission flag is passed", () => {
+  // What the fixture help (test/fixtures/agy/help-1.5.3.txt) says, and what Start, a worker
+  // and Restart pass: the same words, no guessed one.
+  assert.deepEqual(modelArgs("antigravity", "gemini-4-argon-high"), ["--model", "gemini-4-argon-high"]);
+  assert.deepEqual(effortArgs("antigravity", "xhigh"), ["--effort", "xhigh"]);
+  assert.deepEqual(promptArgs("antigravity", "fix the build"), ["-i", "fix the build"]);
+  assert.deepEqual(resumeArgs("antigravity", "3f1c2d4e-0000-4000-8000-000000000001"), ["--conversation", "3f1c2d4e-0000-4000-8000-000000000001"]);
+  assert.deepEqual(resumeArgs("antigravity"), ["--continue"]);
+  const words = [...modelArgs("antigravity", "claude-sonnet-5-5-high"), ...effortArgs("antigravity", "max"), ...promptArgs("antigravity", "t")];
+  for (const flag of ["--dangerously-skip-permissions", "--sandbox", "--mode"]) assert.ok(!words.includes(flag), flag);
 });
 
 // ---- the briefing at launch (each agent's own system-prompt mechanism) ----

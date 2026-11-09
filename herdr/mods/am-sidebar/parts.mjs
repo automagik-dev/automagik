@@ -79,6 +79,13 @@ const exists = (p) => lstat(p) !== null;
 const isLink = (p) => Boolean(lstat(p)?.isSymbolicLink());
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+// A program of the pack's on this computer: PATH, then the user bin folder the pack links into.
+const programOn = (ctx, program) => {
+  for (const dir of [...(ctx.env.PATH ?? "").split(":"), ctx.binDir]) {
+    if (dir && isFile(join(dir, program))) return join(dir, program);
+  }
+  return null;
+};
 const packFolder = (name) => /^[a-z0-9][a-z0-9-]*$/.test(name) && name !== POCKET_LINK;
 const fresh = (dir, prefix) => join(dir, `${prefix}${process.pid}-${randomBytes(4).toString("hex")}`);
 /** Names a mod's tree never ships (update.mjs privateName: dot-names, node_modules, editor files). */
@@ -596,6 +603,11 @@ export function doctor(ctx, part) {
         : `${dsh.shim} (exec dsh --profile dsh-tui "$@")`
       : dsh.shimExists ? `${dsh.shim} is not this installer's`
         : dsh.profile ? `${dsh.shim} is missing: \`automagik-herdr dsh-tui install\` adds it` : "not installed");
+    // Antigravity (#793): a bot or worker on it can't start without agy, and its models come
+    // from `agy models`. A note, never a broken pack (agy is the person's install, not am's).
+    const agy = programOn(ctx, "agy");
+    note("agent-antigravity", agy ? `antigravity (agy) is installed at ${agy}`
+      : "antigravity (agy) is not installed: bots and workers on it cannot start until it is (its model list comes from agy models)");
   }
 
   if (part.kind === "layout") {

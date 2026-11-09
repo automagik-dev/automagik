@@ -15,10 +15,11 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Popover, Button, Scrollbar } from "gpui-base";
-import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify } from "herdr";
+import { theme, readTextFile, pickFolder, knownAgents, openOverlay, closeOverlay, spaces, panes, focused, run, home, appHome, settings, hc, notify, exec } from "herdr";
 import * as fs from "fs/promises";
 import { BOTS_PATH, CHARACTERS, MAX_INSTRUCTIONS, RANKS, botsText, parseBots, newBotId, applyBotEdit } from "./model.js";
-import { LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
+import { AGENTS, LEGACY_AGENTS, configPaths, detectModel } from "./models.js";
+import { agModelsPath, refreshAgModels } from "./modelCache.js";
 import { INKS, characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { UI_ICONS, uiIconFile, NEW_CATEGORY, MAX_WAVE, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, omniLook, placeOf, problemOf, rowLineOf, thousands } from "./formModel.js";
 import { restartAnswer, restartArgs } from "./restart.js";
@@ -34,6 +35,9 @@ export const FORM_SIZE = { width: 1000, height: 840 };
 // Character pictures: the sidebar's folder under the app home, outside mods/ (a write inside
 // a mod folder reloads it), drawn by the path relative to the app home, as image() takes it.
 const PETS = "am-sidebar-pets";
+// The app homes whose Antigravity model cache was looked at this Herdr session: `agy models`
+// runs at most once per session (modelCache.js), never on a render or per opened form.
+const MODELS_LOOKED = new Set();
 const COLOUR_ORDER = Object.keys(INKS); // the mockup's swatch order
 const CLEAR = "#00000000";
 
@@ -118,6 +122,10 @@ export class BotForm {
       for (const [name, path] of Object.entries(configPaths(home()))) {
         try { this.texts[name] = await readTextFile(path); } catch { this.texts[name] = null; }
       }
+      // The pack's Antigravity model cache (modelCache.js): read here, refreshed once a session
+      // when Antigravity is the bot's agent and the cache is missing or old (load, set), so the
+      // pin list is a local file on every render after that.
+      try { this.texts.antigravityModels = await readTextFile(agModelsPath(appHome())); } catch { this.texts.antigravityModels = null; }
       this.models.clear();
       try { await this.open(cx); } catch (e) { this.error = String(e?.message ?? e); }
       this.ensurePets(cx);
@@ -126,13 +134,69 @@ export class BotForm {
   }
 
   // The coding agents Herdr can start on `machine` (null: this computer), installed first.
+  // Herdr's own table may not list an agent the pack knows (Antigravity's agy, #793): the
+  // pack's AGENTS fills those in, installed by whether their program is on this PATH.
   async loadAgents(machine) {
     this.agentsOn = machine;
     this.agentsError = null;
-    try { this.agents = (await knownAgents({ on: machine })).sort((a, b) => Number(b.installed) - Number(a.installed)); }
-    catch (e) {
+    try {
+      const listed = await knownAgents({ on: machine });
+      this.agents = machine ? listed : await this.withPackAgents(listed);
+      this.agents.sort((a, b) => Number(b.installed) - Number(a.installed));
+    } catch (e) {
       this.agents = [];
       this.agentsError = `Herdr couldn't list ${machine ? `${machine}'s` : "its"} coding agents (${e?.message ?? e}).`;
+    }
+  }
+
+  // `listed` (knownAgents) with every pack agent Herdr didn't list added, its installed flag
+  // read from this computer's PATH and `~/.local/bin` (where agy installs), as knownAgents does.
+  async withPackAgents(listed) {
+    const out = (Array.isArray(listed) ? listed : []).map((a) => ({ ...a }));
+    const have = new Set(out.map((a) => a.key));
+    for (const [key, a] of Object.entries(AGENTS)) {
+      if (have.has(key)) continue;
+      out.push({ key, name: a.name, installed: await this.programInstalled(a.run?.[0]), icon: null, tint: false });
+    }
+    return out;
+  }
+
+  // Whether `program` is one this computer can run: on PATH, in `~/.local/bin`, or beside the
+  // node running Herdr (an nvm-installed agent, as the CLI's programPath looks).
+  async programInstalled(program) {
+    if (typeof program !== "string" || !program) return false;
+    if (program.includes("/")) return fs.exists(program);
+    const env = typeof process === "undefined" ? {} : process.env;
+    const execPath = typeof process === "undefined" ? "" : process.execPath;
+    const dirs = [...String(env.PATH ?? "").split(":"), `${home()}/.local/bin`,
+      String(execPath ?? "").replace(/\/[^/]*$/, "")].filter(Boolean);
+    for (const dir of dirs) if (await fs.exists(`${dir.replace(/\/+$/, "")}/${program}`)) return true;
+    return false;
+  }
+
+  // The Antigravity model cache, refreshed once this session when the bot's agent is Antigravity
+  // and the cache is missing or older than modelCache's day: `agy models` at most once, then a
+  // local file. A failed refresh keeps the last list and records why for the model line.
+  async refreshModels() {
+    if (this.s?.agent !== "antigravity") return;
+    const app = appHome();
+    if (MODELS_LOOKED.has(app)) return;
+    MODELS_LOOKED.add(app);
+    try {
+      const r = await refreshAgModels({
+        appHome: app,
+        read: (path) => readTextFile(path),
+        write: async (path, text) => {
+          await fs.mkdir(`${app}/automagik-herdr`, { recursive: true });
+          await fs.writeFile(path, text);
+        },
+        exec,
+        now: Date.now(),
+      });
+      if (typeof r.text === "string") this.texts.antigravityModels = r.text;
+      this.modelsWhy = r.why ?? null;
+    } catch (e) {
+      this.modelsWhy = String(e?.message ?? e);
     }
   }
 
@@ -237,6 +301,7 @@ export class BotForm {
       const b = this.raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
       if (!b) throw new Error(await this.noBot(this.p.bot, this.dir, key, this.readFrom));
       this.fill(formFrom({ mode: "edit", bot: b }));
+      await this.refreshModels();
       this.initial = this.snapshot();
       // The model a running pane shows, read from its pane where it runs (machine/tN there).
       this.live = null;
@@ -245,6 +310,7 @@ export class BotForm {
       const agent = this.s.agent || (this.agents.find((a) => a.installed)?.key ?? "");
       const fresh = formFrom({ mode: "create", file, id: this.s.id, agent });
       this.s = { ...this.s, kind: fresh.kind, agent, lead: "", category: "" };
+      await this.refreshModels();
     }
   }
 
@@ -346,6 +412,9 @@ export class BotForm {
     this.copied = false;
     this.error = null;
     if ("character" in patch || "colour" in patch) this.ensurePets(cx);
+    // Antigravity picked for the first time this session: its model list is fetched once now,
+    // after the picker draws (modelCache.js), never on a render.
+    if (patch.agent === "antigravity") cx.spawn(async (cx) => { await this.refreshModels(); this.models.clear(); cx.notify(); });
     cx.notify();
   }
 
@@ -471,7 +540,7 @@ export class BotForm {
     this.swapOpen = !this.swapOpen;
     if (this.swapOpen && !this.swapAgents) {
       cx.spawn(async (cx) => {
-        try { this.swapAgents = (await knownAgents()).filter((a) => a.installed !== false && !LEGACY_AGENTS[a.key]); }
+        try { this.swapAgents = (await this.withPackAgents(await knownAgents())).filter((a) => a.installed !== false && !LEGACY_AGENTS[a.key]); }
         catch { this.swapAgents = []; }
         cx.notify();
       });
@@ -759,7 +828,7 @@ export class BotForm {
     const agent = this.agents.find((a) => a.key === state.agent) ?? null;
     const info = this.modelInfo(state.agent);
     const live = this.live && this.live.model ? this.live : null;
-    const model = modelLine({ agentName: agent?.name ?? state.agent, pin: state.pin, info, detected: live?.model ?? null, terminal: live?.terminal ?? null });
+    const model = modelLine({ agentName: agent?.name ?? state.agent, agentKey: state.agent, pin: state.pin, info, detected: live?.model ?? null, terminal: live?.terminal ?? null });
     const place = placeOf(state, file);
     const cli = commandOf(state, { key: this.dir ?? this.key, file, initial: this.initial, machine: this.machine });
     const pinKept = this.initial && state.pin === this.initial.pin && state.agent === this.initial.agent;

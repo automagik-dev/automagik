@@ -6,7 +6,7 @@
 
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
-import { detectModel, defaultModelFrom } from "./models.js";
+import { AGENTS, detectModel, defaultModelFrom, resolveAgent } from "./models.js";
 import { workerBranch, workerTaskId } from "./workers.js";
 
 /** Idle this long is asleep (Automagik's own threshold). */
@@ -23,6 +23,22 @@ const addressOf = (t) => t?.address ?? t?.id ?? null;
 // `hc get` (`readArgv`, for this pane only).
 const agentInFront = (t, readArgv) => rowIsAgent(t) === true
   || agentInForeground(Array.isArray(t.foreground?.argv) ? t : { foreground: { argv: readArgv(t) } });
+
+/**
+ * The program a core report's app name stands for (`report.app`, #793): Herdr's own table
+ * names it by key or a key prefix (`claude-code` is claude's), else the pack's agent table maps
+ * the run's program name (`agy` is antigravity) to that table's entry, or a plain one when Herdr
+ * doesn't list the agent. Null when neither knows the name.
+ */
+export function programForApp(app, known = []) {
+  if (typeof app !== "string" || !app) return null;
+  const listed = known ?? [];
+  const direct = listed.find((x) => x.key === app || app.startsWith(`${x.key}-`));
+  if (direct) return direct;
+  const key = resolveAgent(app);
+  if (!key) return null;
+  return listed.find((x) => x.key === key) ?? { key, name: AGENTS[key]?.name ?? key, icon: null, tint: false };
+}
 
 /**
  * The live map: bot id -> its live pane, from `terminals()` rows. A terminal counts while it

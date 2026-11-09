@@ -5,6 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { UI_ICONS, uiIconFile, commandOf, countTone, editChanged, entryOf, formFrom, leadOptions, modelInfo, modelLine, modelOptions, NEW_CATEGORY, placeOf, problemOf, rowLineOf, shellQuote, thousands } from "../mods/am-sidebar/formModel.js";
+import { agModelsCacheText, parseAgModelsOutput } from "../mods/am-sidebar/modelCache.js";
+const AGY_CACHE = agModelsCacheText(parseAgModelsOutput(readFileSync(new URL("./fixtures/agy/models-1.5.3.txt", import.meta.url), "utf8")), "2026-11-09T12:00:00Z");
+const AGY_TEXTS = { antigravitySettings: JSON.stringify({ model: "Gemini 4 Argon (High)" }), antigravityModels: AGY_CACHE };
 import { applyBotEdit, checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -102,6 +105,23 @@ test("modelInfo / modelOptions: Default first, then only the agent's known model
   // A stored pin the list lost stays selectable, marked.
   assert.equal(modelOptions(info, "gpt-5").at(-1).hint, "not in the list");
   assert.ok(modelInfo("claude", {}).models.includes("opus"));
+});
+
+test("Antigravity (#793): the settings label is the Default, the pin list is agy models' ids", () => {
+  const info = modelInfo("antigravity", AGY_TEXTS);
+  assert.equal(info.def, "Gemini 4 Argon (High)");
+  assert.equal(info.from, "your Antigravity settings");
+  const opts = modelOptions(info);
+  assert.equal(opts[0].label, "Default (Gemini 4 Argon (High))");
+  assert.equal(opts[0].hint, "your Antigravity settings");
+  assert.deepEqual(opts.slice(1).map((o) => o.id), parseAgModelsOutput(readFileSync(new URL("./fixtures/agy/models-1.5.3.txt", import.meta.url), "utf8")).map((m) => m.id));
+  assert.ok(opts.some((o) => o.id === "gemini-4-argon-high") && opts.some((o) => o.id === "claude-opus-5-5-high"));
+  assert.ok(!opts.some((o) => o.id === "Gemini 4 Argon (High)"), "the label is never offered as a pin");
+  // No cache and no settings label: the line says where the list would come from.
+  const bare = modelLine({ agentName: "Antigravity", agentKey: "antigravity", pin: "", info: modelInfo("antigravity", {}) });
+  assert.equal(bare.shown, "its own default");
+  assert.match(bare.note, /models come from `agy models`/);
+  assert.doesNotMatch(bare.note, /doesn't list its models/);
 });
 
 test("modelLine: the mockup's three notes, and a live pane's model", () => {
