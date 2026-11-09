@@ -210,3 +210,12 @@ for (const [what, name] of ESCAPED) {
     })
   }
 }
+
+// 8. A list item under an explicit credential name: the item is the value, not its `- ` mark.
+test('#507: a list item under an explicit credential name is remembered without its dash', () => {
+  const input = `? ${PASS}\n  - ${INDENTED}\n`
+  assert.ok(!redactText(input).includes(INDENTED), 'the item is hidden')
+  const kept = secretsIn(input)
+  assert.ok(kept.includes(INDENTED), 'the item is remembered')
+  assert.ok(!masked(later(INDENTED), kept).includes(INDENTED), 'a later bare occurrence is masked')
+})

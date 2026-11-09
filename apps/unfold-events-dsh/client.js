@@ -1595,8 +1595,9 @@ function credentialName(name) {
   return KEY_NAME_LOWER.test(plain) || KEY_NAME_CAMEL.test(plain);
 }
 function explicitLineValue(content) {
-  const child = /^[^ \t"'][^:]*?:[ \t]+(\S.*)$/.exec(content);
-  const text = child ? child[1] : content;
+  const item = content.replace(/^(?:-[ \t]+)+/, "");
+  const child = /^[^ \t"'][^:]*?:[ \t]+(\S.*)$/.exec(item);
+  const text = child ? child[1] : item;
   const quoted = /^(["'`])((?:\\.|(?!\1)[^\\])*?)\1/.exec(text);
   if (quoted) return quoted[2];
   const first = /^(?:[&!][^\s"'`]*[ \t]+)*([^\s"'`]+)/.exec(text);

@@ -358,10 +358,14 @@ function credentialName(name) {
   return KEY_NAME_LOWER.test(plain) || KEY_NAME_CAMEL.test(plain)
 }
 
-/** The value a hidden line holds, for `secretsIn`: a child key's value, else the line's first word. */
+/**
+ * The value a hidden line holds, for `secretsIn`: a child key's value, else the line's first word.
+ * A list item's `- ` marks are not the value: the item after them is.
+ */
 function explicitLineValue(content) {
-  const child = /^[^ \t"'][^:]*?:[ \t]+(\S.*)$/.exec(content)
-  const text = child ? child[1] : content
+  const item = content.replace(/^(?:-[ \t]+)+/, '')
+  const child = /^[^ \t"'][^:]*?:[ \t]+(\S.*)$/.exec(item)
+  const text = child ? child[1] : item
   const quoted = /^(["'`])((?:\\.|(?!\1)[^\\])*?)\1/.exec(text)
   if (quoted) return quoted[2]
   const first = /^(?:[&!][^\s"'`]*[ \t]+)*([^\s"'`]+)/.exec(text)
