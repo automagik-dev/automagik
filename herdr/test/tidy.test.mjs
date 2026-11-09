@@ -14,6 +14,7 @@ import { readState, spacesOf } from "../mods/am-sidebar/bin/state.mjs";
 import { runProgram } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { fixtures, golden, view } from "./sidebar-fixture.mjs";
 import { readJsonLines, readLines } from "./log-lines.mjs";
+import { assertSafeTmpdir, scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const TIDY = new URL("./fixtures/tidy/", import.meta.url);
@@ -314,13 +315,9 @@ const ID = { main: "b-mmmmmmmmmm", cap: "b-cccccccccc", dev: "b-dddddddddd", bet
  * is beta's bots on alpha's folder.
  */
 function scene(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-tidy-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-tidy-");
   const repo = (name, file) => {
-    const dir = join(root, name);
-    mkdirSync(join(dir, ".herdr"), { recursive: true });
-    writeFileSync(join(dir, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
-    git(dir, "init", "-q");
+    const dir = scratchProject(root, name, { bots: file });
     git(dir, "add", ".");
     git(dir, "commit", "-q", "-m", "start");
     return dir;
@@ -358,7 +355,7 @@ function scene(t) {
   mkdirSync(app);
   const list = join(app, "am-sidebar-projects.json");
   writeFileSync(list, `${JSON.stringify([alpha, join(root, "gone"), beta], null, 2)}\n`);
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: hcState, HC_FAKE_LOG: hcLog, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   const cli = (args) => { const r = spawnSync(process.execPath, [CLI, ...args], { cwd: alpha, env, encoding: "utf8" }); return { code: r.status, out: r.stdout, err: r.stderr }; };
   const read = (p) => readFileSync(p, "utf8");
@@ -408,7 +405,7 @@ test("readState names a program that isn't there; with no hc the window-free rea
 });
 
 test("readState: only a folder found missing under a parent that is there counts as gone", async (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-gone-")));
+  const root = realpathSync(mkdtempSync(join(assertSafeTmpdir(), "hb-gone-")));
   const locked = join(root, "locked");
   mkdirSync(join(locked, "proj"), { recursive: true });
   chmodSync(locked, 0o000);
@@ -460,8 +457,13 @@ test("a fix that fails is a warning, never a failed command", (t) => {
 test("readState: one hc ls, an hc get per local terminal, and what git says of each folder", async (t) => {
   const s = scene(t);
   const prev = { ...process.env };
-  t.after(() => { for (const k of ["PATH", "HC_FAKE_STATE", "HC_FAKE_LOG"]) process.env[k] = prev[k]; });
-  Object.assign(process.env, { PATH: s.env.PATH, HC_FAKE_STATE: s.env.HC_FAKE_STATE, HC_FAKE_LOG: s.env.HC_FAKE_LOG });
+  t.after(() => {
+    for (const k of ["PATH", "HC_FAKE_STATE", "HC_FAKE_LOG", "GIT_CEILING_DIRECTORIES"]) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  });
+  Object.assign(process.env, { PATH: s.env.PATH, HC_FAKE_STATE: s.env.HC_FAKE_STATE, HC_FAKE_LOG: s.env.HC_FAKE_LOG, GIT_CEILING_DIRECTORIES: s.root });
   const state = await readState({ run: runProgram, home: join(s.root, "home"), appHome: s.app });
   assert.deepEqual(s.hcCalls().map((c) => c.join(" ")).sort(),
     ["get t1 --json", "get t2 --json", "get t3 --json", "get t4 --json", "ls --json"]);
@@ -476,15 +478,14 @@ test("readState: one hc ls, an hc get per local terminal, and what git says of e
 });
 
 test("create with no hc on PATH warns once, about its own panes, and nothing from tidy", (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-nohc-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const bin = join(root, "bin"), project = join(root, "p"), app = join(root, "app");
-  for (const d of [bin, project, app]) mkdirSync(d);
-  git(project, "init", "-q");
+  const root = scratchRoot(t, "hb-nohc-");
+  const bin = join(root, "bin"), app = join(root, "app");
+  for (const d of [bin, app]) mkdirSync(d);
+  const project = scratchProject(root, "p");
   symlinkSync(process.execPath, join(bin, "node"));
   symlinkSync(execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(), join(bin, "git"));
   const r = spawnSync(process.execPath, [CLI, "create", "--name", "Solo", "--agent", "claude"],
-    { cwd: project, env: { HOME: root, PATH: bin, HERDR_APP_HOME: app }, encoding: "utf8" });
+    { cwd: project, env: { HOME: root, PATH: bin, HERDR_APP_HOME: app, GIT_CEILING_DIRECTORIES: root }, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stderr, /tidy/);
   assert.equal(r.stderr.trim().split("\n").length, 1);

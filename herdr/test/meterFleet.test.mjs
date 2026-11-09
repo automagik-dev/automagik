@@ -19,6 +19,7 @@ import { USAGEMETER, formatMarker, parseMarker } from "../mods/am-sidebar/releas
 import { meterAfterUpdate } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 import { assetBytes, meterKey, publishMeter, writePointer } from "./meter-lane-fake.mjs";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "mods", "am-sidebar", "bin", "automagik-herdr.mjs");
@@ -34,8 +35,7 @@ const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("he
  * meter lane names v`version` (publishMeter's options in `lane`). `machines` replaces the two.
  */
 function fleet(t, { marker = true, version = V, lane = {}, machines = null, extraEnv = {} } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-fleet-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "am-fleet-");
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -65,6 +65,7 @@ function fleet(t, { marker = true, version = V, lane = {}, machines = null, extr
   const env = {
     PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, HERDR_APP_HOME: app, TMPDIR: root,
     HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, AUTOMAGIK_HERDR_RELEASE_URL: `file://${release}`, AUTOMAGIK_HERDR_METER_KEYS: key.keys,
+    GIT_CEILING_DIRECTORIES: dirname(root),
     ...extraEnv,
   };
   const cli = (...args) => {
@@ -676,8 +677,7 @@ test("a machine that hangs during sync: left at the 30 s limit (the caller's tim
 });
 
 test("SYNC on a machine: no binary is silent (exit 0); one there runs `sync`", (t) => {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), "am-sync-")));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const home = scratchRoot(t, "am-sync-");
   const run = () => spawnSync("sh", ["-c", SYNC], { env: { HOME: home, PATH: "/usr/bin:/bin" }, encoding: "utf8" });
   assert.equal(run().status, 0);
   mkdirSync(join(home, ".local", "bin"), { recursive: true });
@@ -689,8 +689,7 @@ test("SYNC on a machine: no binary is silent (exit 0); one there runs `sync`", (
 // exec on a linked machine, may run it without ~/.local/bin, where hc is: no terminal, label or
 // machine id then reaches the meter. A fake hc and a fake usagemeter in a temp home only.
 const hcWorld = (t) => {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), "am-sync-hc-")));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const home = scratchRoot(t, "am-sync-hc-");
   const bin = join(home, ".local", "bin");
   mkdirSync(bin, { recursive: true });
   exe(join(bin, "hc"), `#!/bin/sh\necho "fake hc $*"\n`);

@@ -39,6 +39,7 @@ const freshClaude = (words) => {
 };
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 import { readJsonLines } from "./log-lines.mjs";
+import { assertScratchProject, scratchProject, scratchRoot, warnTmpdir } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -57,14 +58,8 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
 /** A scratch world: a git project, a fake hc, a fake home and app home. `trimsGit`: a git whose
  * stdout is trimmed, as a Herdr exec would answer the rule (#626, #665). */
 function scene(t, { terminals = [], briefing = true, amPart = false, window = { down: true }, trimsGit = false, isGit = true } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj");
-  mkdirSync(project);
-  if (isGit) {
-    git(project, "init", "-q");
-    git(project, "commit", "-q", "--allow-empty", "-m", "start");
-  }
+  const root = scratchRoot(t, "hb-cli-");
+  const project = scratchProject(root, "proj", { isGit, commit: isGit });
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -100,7 +95,7 @@ function scene(t, { terminals = [], briefing = true, amPart = false, window = { 
   writeFileSync(appState, JSON.stringify(window));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", AGY_FAKE_LOG: agyLog };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", AGY_FAKE_LOG: agyLog, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
@@ -539,7 +534,7 @@ test("from a worktree branched before a bot was added: edit names both files, re
   git(s.project, "worktree", "add", "-q", wt);
   // The worktree's own file, from before Genie: another main bot only.
   const wtText = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.plan, "main", { name: "Old" })] }, null, 2)}\n`;
-  mkdirSync(join(wt, ".herdr"));
+  mkdirSync(join(wt, ".herdr"), { recursive: true });
   writeFileSync(join(wt, ".herdr/bots.json"), wtText);
   const mainText = readFileSync(s.botsPath, "utf8");
   const e = s.cli(["edit", "Genie", "--role", "x"], { cwd: wt });
@@ -1162,7 +1157,7 @@ test("ls and show (#227): the main checkout's pane is not the clone's; a row wit
   const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
   const clone = join(s.root, "proj-clone");
   git(s.root, "clone", "-q", s.project, clone);
-  mkdirSync(join(clone, ".herdr"));
+  mkdirSync(join(clone, ".herdr"), { recursive: true });
   writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
   const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
   // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
@@ -1204,9 +1199,7 @@ test("create, edit, category, start and attach list their project for the sideba
   assert.equal(s.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(listed(), [s.project]);
   // ls --all adds a listed project the sidebar never remembered.
-  const other = join(s.root, "other");
-  mkdirSync(join(other, ".herdr"), { recursive: true });
-  writeFileSync(join(other, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] }));
+  const other = scratchProject(s.root, "other", { bots: { version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] } });
   writeFileSync(list, JSON.stringify([other]));
   assert.deepEqual(s.cli(["ls", "--all", "--json"]).json().projects.map((p) => p.project), [s.project, other]);
   // Reading leaves the list alone; a read-only command adds nothing.
@@ -1215,8 +1208,7 @@ test("create, edit, category, start and attach list their project for the sideba
 });
 
 test("twenty CLIs listing projects at once lose none of them", async (t) => {
-  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-list-")));
-  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const app = scratchRoot(t, "hb-list-");
   const writer = `import { listProject } from ${JSON.stringify(CLI)};\nprocess.exitCode = listProject(process.argv[1], process.argv[2]) ? 0 : 1;`;
   const keys = Array.from({ length: 20 }, (_, i) => `/p/${i}`);
   const codes = await Promise.all(keys.map((key) => new Promise((done) => {
@@ -1229,8 +1221,7 @@ test("twenty CLIs listing projects at once lose none of them", async (t) => {
 });
 
 test("a stale project-list lock (a CLI killed mid-write) is taken over, and nothing is left behind", (t) => {
-  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-lock-")));
-  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const app = scratchRoot(t, "hb-lock-");
   const lock = join(app, "am-sidebar-projects.json.lock");
   writeFileSync(lock, "999999 someone-else");
   const old = new Date(Date.now() - 60_000);
@@ -1503,8 +1494,7 @@ test("start on a CLI-only host (no pack, the am part installed) writes am's entr
 test("attach refuses a Claude pane whose session runs outside the project, naming both folders; nothing written", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/elsewhere" })] });
   s.seed(team());
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), "hb-out-")));
-  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -1836,8 +1826,7 @@ test("attach: a terminal argument that looks like an option is refused; a claude
   const opt = s.cli(["attach", "Genie", "--", "--all"]);
   assert.equal(opt.code, 2);
   assert.match(opt.err, /"--all" isn't a terminal/);
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), "hb-out-")));
-  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -2429,8 +2418,7 @@ test("restart (#341): a teammate re-seated in a worktree still left its omp conv
   seats(gone, join(gone.root, "wt"), "t12");
   assert.match(fresh(gone), /^no Oh My Pi session id is known for t5, and Captain \(t7, ended\) also ran Oh My Pi in /);
   // Captain live in the worktree (t9): that pane isn't here, its old seat row here still is.
-  const wt = join(mkdtempSync(join(tmpdir(), "herdr-341-")), "wt");
-  t.after(() => rmSync(dirname(wt), { recursive: true, force: true }));
+  const wt = join(scratchRoot(t, "herdr-341-"), "wt");
   const moved = shareScene(t, "omp", { captain: { cwd: wt }, ledger: seed });
   seats(moved, wt, "t9");
   const note = fresh(moved);
@@ -4112,3 +4100,103 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
     noIdIn(new Set([SID]), r, `the provider-gone note${json ? " (--json)" : ""}`);
   }
 });
+
+test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr/bots.json, warn once, and fail loudly on an unisolated folder", (t) => {
+  const box = scratchRoot(t, "hb-858-");
+  const outer = join(box, "outer");
+  const nestedTmp = join(outer, ".tmp");
+  mkdirSync(join(outer, ".herdr"), { recursive: true });
+  mkdirSync(nestedTmp, { recursive: true });
+  git(outer, "init", "-q");
+  git(outer, "commit", "-q", "--allow-empty", "-m", "init");
+  const outerBotsPath = join(outer, ".herdr/bots.json");
+  const outerBefore = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Outer" })] }, null, 2)}\n`;
+  writeFileSync(outerBotsPath, outerBefore);
+
+  const herdrOnly = join(box, "herdr-only");
+  mkdirSync(join(herdrOnly, ".herdr"), { recursive: true });
+  mkdirSync(join(herdrOnly, "tmp"), { recursive: true });
+  writeFileSync(join(herdrOnly, ".herdr/bots.json"), outerBefore);
+
+  const linkToNested = join(box, "linked-tmp");
+  symlinkSync(nestedTmp, linkToNested);
+
+  for (const [unsafeTmp, expectedOuter] of [[nestedTmp, outer], [join(herdrOnly, "tmp"), herdrOnly], [linkToNested, outer]]) {
+    const lines = [];
+    const line = warnTmpdir(unsafeTmp, { once: false, write: (s) => lines.push(s) });
+    assert.equal(lines.length, 1);
+    assert.equal(line.trim().split("\n").length, 1, "one-line warning");
+    assert.match(line, new RegExp(`TMPDIR .*inside project/git folder ${expectedOuter}`));
+    assert.match(line, /set TMPDIR to a folder outside every project folder \(for example TMPDIR=\/tmp\)/);
+  }
+
+  const prevTmp = process.env.TMPDIR;
+  try {
+    process.env.TMPDIR = nestedTmp;
+    const s = scene(t);
+    assert.equal(s.project.startsWith(nestedTmp), true, "scratch project lives under nested TMPDIR");
+    const created = s.cli(["create", "--name", "Solo", "--agent", "claude", "--json"]);
+    assert.equal(created.code, 0, created.err);
+    assert.equal(created.json().project, s.project);
+    const edited = s.cli(["edit", "Solo", "--role", "Inner role", "--json"]);
+    assert.equal(edited.code, 0, edited.err);
+    assert.equal(s.bots().bots[0].role, "Inner role");
+
+    const sPlain = scene(t, { isGit: false });
+    assert.equal(sPlain.project.startsWith(nestedTmp), true);
+    const createdPlain = sPlain.cli(["create", "--name", "PlainSolo", "--agent", "claude", "--json"]);
+    assert.equal(createdPlain.code, 0, createdPlain.err);
+    assert.equal(createdPlain.json().project, sPlain.project);
+  } finally {
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+  }
+
+  const missedGit = join(nestedTmp, "missed-git");
+  mkdirSync(missedGit, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedGit, { ceiling: box, env: {} }),
+    new RegExp(`^Error: Scratch project ${missedGit} resolved to outer project ${outer} instead of itself \\(#858\\)\\.$`),
+  );
+
+  const missedHerdr = join(herdrOnly, "tmp", "missed-herdr");
+  mkdirSync(missedHerdr, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedHerdr, { ceiling: join(herdrOnly, "tmp"), env: {} }),
+    new RegExp(`^Error: Scratch project ${missedHerdr} resolved to outer project ${herdrOnly} instead of itself \\(#858\\)\\.$`),
+  );
+
+  assert.equal(readFileSync(outerBotsPath, "utf8"), outerBefore, "outer .herdr/bots.json is byte-identical");
+  assert.equal(readFileSync(join(herdrOnly, ".herdr/bots.json"), "utf8"), outerBefore, "herdr-only .herdr/bots.json is byte-identical");
+});
+
+test("#858: non-git scratch folder stops at the scene ceiling and create --project reports a resolved parent project", (t) => {
+  const s = scene(t);
+  git(s.root, "init", "-q");
+  const rootBotsPath = join(s.root, ".herdr/bots.json");
+  const rootBefore = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Outer" })] }, null, 2)}\n`;
+  mkdirSync(join(s.root, ".herdr"), { recursive: true });
+  writeFileSync(rootBotsPath, rootBefore);
+
+  const plain = join(s.root, "plain");
+  mkdirSync(plain);
+  const solo = s.cli(["create", "--name", "Solo", "--agent", "claude", "--project", plain, "--json"]);
+  assert.equal(solo.code, 0, solo.err);
+  assert.equal(solo.json().project, plain);
+  assert.equal(solo.err, "", "exact non-git --project emits no resolved-parent note");
+  assert.equal(readFileSync(rootBotsPath, "utf8"), rootBefore, "outer root bots.json untouched");
+  assert.ok(existsSync(join(plain, ".herdr/bots.json")));
+
+  const sub = join(s.project, "sub");
+  mkdirSync(sub);
+  const resolved = s.cli(["create", "--name", "Genie", "--agent", "claude", "--project", sub, "--json"]);
+  assert.equal(resolved.code, 0, resolved.err);
+  assert.equal(resolved.json().project, s.project);
+  assert.match(resolved.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
+
+  const plainMode = s.cli(["create", "--name", "Member", "--agent", "claude", "--project", sub]);
+  assert.equal(plainMode.code, 0, plainMode.err);
+  assert.match(plainMode.out.trim(), /^b-[a-z2-7]{10}$/);
+  assert.match(plainMode.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
+});
+
