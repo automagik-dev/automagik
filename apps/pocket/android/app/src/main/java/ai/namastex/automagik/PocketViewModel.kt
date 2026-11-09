@@ -572,7 +572,9 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         if (index !in options.indices) return "Not sent: open the agent to answer."
         if (t == null || !t.attention || t.message != msg) return Prompt.CHANGED
         val menu = Prompt.menu(previewScreen(t))
-        if (menu == null || !Prompt.sameDialog(dialog, menu)) return Prompt.CHANGED
+        if (menu == null) return Prompt.CHANGED
+        if (dialog.isBlank() || menu.dialog.isBlank()) return Prompt.NOT_READABLE
+        if (!Prompt.sameDialog(dialog, menu)) return Prompt.CHANGED
         if (!Prompt.unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
         android.util.Log.i("PocketPrompt", "preview ${ref.address} keys=${Prompt.keys(menu, index).joinToString(",")}")
         _state.update { s ->

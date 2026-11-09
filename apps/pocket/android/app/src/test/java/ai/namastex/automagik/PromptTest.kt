@@ -326,7 +326,20 @@ Do you want to proceed?
         val (outcome, calls) = tapped(landing = "working", fresh = blankDialog.replace("make build", "make deploy"),
             dialog = captured.dialog)
         assertEquals(listOf("terminal.get", "terminal.read"), calls)
-        assertEquals(Prompt.CHANGED, outcome)
+        assertEquals(Prompt.NOT_READABLE, outcome)
+        assertFalse(Teams.sent(outcome))
+    }
+
+    @Test fun aFreshReadWithABlankDialogSendsNoKeys() {
+        // The captured text is readable, but the re-read cannot find any text above the same options.
+        val readable = Prompt.menu(permissionAtYes)!!.dialog
+        val fresh = Prompt.menu(blankDialog)!!
+        assertEquals("", fresh.dialog)
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, fresh.options)
+        val (outcome, calls) = tapped(landing = "working", fresh = blankDialog, dialog = readable)
+        assertEquals(Prompt.NOT_READABLE, outcome)
+        assertFalse(Teams.sent(outcome))
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
     }
 
     @Test fun anOptionsOnlyChangeKeepsItsOwnMessage() {
