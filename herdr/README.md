@@ -451,16 +451,16 @@ you delete is copied back on the next load (pick another theme in Settings to st
 build and run their own teams.
 
 ```text
-automagik-herdr ls [--all]                 bots: kind, lead, category, rank, planned, agent, model, pane, status
+automagik-herdr ls [--all]                 bots: kind, lead, category, rank, code, planned, agent, model, pane, status
 automagik-herdr show <bot>                 one bot in full
-automagik-herdr create --name N --agent A [--kind main|member] [--role R]
+automagik-herdr create --name N --agent A [--kind main|member] [--role R] [--code true|false]
        [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
        [--character C --colour K | --omni] [--model M] [--rank R]
        [--agy-mode auto|accept-edits|plan] [--agy-allow RULE]... [--agy-deny RULE]...
        [--planned-wave N [--planned-note T]]
        [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
-automagik-herdr edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
+automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
@@ -1073,10 +1073,13 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 - `planned` marks a bot that is not started yet. It needs no `agent`.
 - `instructions` holds at most 4,000 characters.
 - `code` is an optional boolean, defaulting to `true`. Set `code: false` for a bot whose
-  work is not code with `automagik-herdr edit <bot> --code false`; `--code true` restores it.
-  Create accepts the same option. Both launch and full briefings include the instruction
-  to start a worker only for code bots in a Git working tree, including linked projects.
-  Otherwise that instruction is omitted, leaving the bot's own instructions to lead.
+  work is not code with the **Code bot** toggle in the bot editor or
+  `automagik-herdr edit <bot> --code false`; `--code true` restores it.
+  Create accepts the same option, and `show` and `ls` print it. Both launch and full briefings
+  include the instruction to start a worker only for code bots in a Git working tree,
+  including linked projects; if the per-turn hook's Git check times out, it reuses the
+  recorded Git answer from the session's start or prior turn so the briefing does not
+  reprint. Otherwise that instruction is omitted, leaving the bot's own instructions to lead.
   Other edits, installs and updates keep the setting in the project's roster.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old

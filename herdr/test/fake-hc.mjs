@@ -335,13 +335,17 @@ switch (words[0]) {
     if ((state.execTimedOut ?? []).some((w) => argv.join(" ").includes(w))) { if (state.execTimedOutAfterMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.execTimedOutAfterMs); out({ code: null, stdout: "", stderr: "", timed_out: true }); break; }
     // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
     // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
-    const r = spawnSync(argv[0], argv.slice(1), { cwd: cwd ?? m.home, encoding: "utf8",
+    // m.paths { [remotePath]: diskPath } maps a linked machine's path to its scratch disk folder.
+    const toDisk = (s) => (typeof s === "string" && m.paths ? Object.entries(m.paths).reduce((acc, [from, to]) => acc.replaceAll(from, to), s) : s);
+    const fromDisk = (s) => (typeof s === "string" && m.paths ? Object.entries(m.paths).reduce((acc, [from, to]) => acc.replaceAll(to, from), s) : s);
+    const mapped = argv.map(toDisk);
+    const r = spawnSync(mapped[0], mapped.slice(1), { cwd: toDisk(cwd) ?? m.home, encoding: "utf8",
       env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin`,
         SHELL: new URL("./fake-login-shell", import.meta.url).pathname, FAKE_LOGIN_PATH: m.login?.path ?? "",
         FAKE_LOGIN_NOISE: m.login?.noise ?? "", FAKE_LOGIN_EXIT: m.login?.exit ?? "" } });
     // state.loseExecAnswer: a program (by name) ran there, then the link dropped: unavailable, as hc says.
     if (state.loseExecAnswer && state.loseExecAnswer === argv[0]) { delete state.loseExecAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
-    out({ code: r.status ?? -1, stdout: b64(r.stdout), stderr: b64(r.stderr), timed_out: false });
+    out({ code: r.status ?? -1, stdout: b64(fromDisk(r.stdout)), stderr: b64(fromDisk(r.stderr)), timed_out: false });
     break;
   }
   case "file": {
@@ -351,8 +355,10 @@ switch (words[0]) {
     const m = (state.machines ?? []).find((x) => x.name === on);
     if (on && !m) err(4, "machine_unknown", `unknown machine "${on}"`);
     if (m && m.state !== "connected") err(1, "unavailable", `${on} is not connected`);
-    const path = args.at(-1);
-    if (!existsSync(path)) err(3, "not_found", `no file ${path}`);
+    const givenPath = args.at(-1);
+    const path = typeof givenPath === "string" && m?.paths
+      ? Object.entries(m.paths).reduce((acc, [from, to]) => acc.replaceAll(from, to), givenPath) : givenPath;
+    if (!existsSync(path)) err(3, "not_found", `no file ${givenPath}`);
     const text = readFileSync(path, "utf8");
     if (words[1] === "read") {
       const lines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
@@ -369,7 +375,7 @@ switch (words[0]) {
     writeFileSync(path, current.slice(0, at) + now + current.slice(at + old.length));
     // state.loseEditAnswer: the edit lands, then the link drops: hc's real answer, unavailable.
     if (state.loseEditAnswer) { delete state.loseEditAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
-    out({ bytes: now.length, path });
+    out({ bytes: now.length, path: givenPath });
     break;
   }
   case "connect": {

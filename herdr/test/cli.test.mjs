@@ -1086,13 +1086,16 @@ test("ls --json: kind, lead, category, planned, agent, model detected → pinned
   assert.deepEqual([by.Dev.lead, by.Dev.leadName, by.Dev.model, by.Dev.modelSource], [ID.cap, "Captain", "claude-opus-5-5", "pinned"]);
   assert.deepEqual(by.Studio.planned, { wave: 3, note: "later" });
   assert.equal(by.Studio.status, "planned");
-  for (const key of ["id", "name", "kind", "lead", "category", "planned", "agent", "model", "modelSource", "terminal", "status", "duplicate"]) assert.ok(key in by.Dev, key);
+  for (const key of ["id", "name", "kind", "lead", "category", "code", "planned", "agent", "model", "modelSource", "terminal", "status", "duplicate"]) assert.ok(key in by.Dev, key);
+  assert.equal(by.Dev.code, true);
   const text = s.cli(["ls"]);
-  assert.match(text.out, /Captain .* claude-opus-5-5 \(detected\) {2}working in t5/);
+  assert.match(text.out, /Captain {2}→ Genie \[eng\] {2}code true {2}claude {2}claude-opus-5-5 \(detected\) {2}working in t5/);
   const show = s.cli(["show", "dev", "--json"]).json();
   assert.equal(show.id, ID.dev);
+  assert.equal(show.code, true);
   assert.equal(show.instructions, "i");
   assert.match(s.cli(["show", "Captain"]).out, /model {8}claude-opus-5-5 \(detected\)/);
+  assert.match(s.cli(["show", "Captain"]).out, /code {9}true/);
   assert.match(s.cli(["show", "nobody"]).err, /No bot "nobody"/);
 });
 
@@ -3340,13 +3343,18 @@ test("worker scope: start and brief agree for git, worktree, opted-out and non-g
   }
 });
 
-test("code setting: create, edit, unrelated edits and invalid input preserve the stored choice", (t) => {
+test("code setting: create, edit, unrelated edits and invalid input preserve the stored choice, and ls, show and help print it", (t) => {
   const s = scene(t);
   s.seed(team());
+  assert.match(s.cli(["--help"]).out, /edit <bot> \[the create options\] \[--code true\|false\]/);
   const made = s.cli(["create", "--name", "Writer", "--agent", "claude", "--code", "false"]);
   assert.equal(made.code, 0, made.err);
   const writer = () => s.bots().bots.find((b) => b.name === "Writer");
   assert.equal(writer().code, false);
+  assert.equal(s.cli(["ls", "--json"]).json().projects[0].bots.find((b) => b.name === "Writer").code, false);
+  assert.match(s.cli(["ls"]).out, /Writer {2}→ Genie {2}code false {2}claude/);
+  assert.equal(s.cli(["show", "Writer", "--json"]).json().code, false);
+  assert.match(s.cli(["show", "Writer"]).out, /code {9}false/);
   const role = s.cli(["edit", "Writer", "--role", "Writes prose"]);
   assert.equal(role.code, 0, role.err);
   assert.equal(writer().code, false);
@@ -3360,6 +3368,10 @@ test("code setting: create, edit, unrelated edits and invalid input preserve the
   const enabled = s.cli(["edit", "Writer", "--code", "true"]);
   assert.equal(enabled.code, 0, enabled.err);
   assert.equal(writer().code, true);
+  assert.equal(s.cli(["ls", "--json"]).json().projects[0].bots.find((b) => b.name === "Writer").code, true);
+  assert.match(s.cli(["ls"]).out, /Writer {2}→ Genie {2}code true {2}claude/);
+  assert.equal(s.cli(["show", "Writer", "--json"]).json().code, true);
+  assert.match(s.cli(["show", "Writer"]).out, /code {9}true/);
   assert.ok(s.cli(["brief", "Writer", "--json"]).json().briefing.includes(WORKER_LINE));
 });
 
