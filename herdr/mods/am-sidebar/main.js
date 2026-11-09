@@ -27,7 +27,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText, orderMachines, movedToTop, readMachineOrder } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -198,6 +198,7 @@ export default class Spaces extends View {
     this.over = null;
     this.machines = [];
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    this.machineOrder = readMachineOrder(localStorage.getItem("machines.order")); // topButton
     this.refreshMachines(cx);
     // Hermes reports no status to the core: read its screen for the question footer.
     this.screen = {}; // terminal address -> "blocked" | null
@@ -267,6 +268,7 @@ export default class Spaces extends View {
     // (shipped mods track focus only on overlays), so the fold arrow shows on hover only.
     this.open = new Map();
     this.hoverRow = null;
+    this.hoverMachine = undefined; // the hovered machine header (null is this computer)
     this.trees = [];
     // Per project id, from the last draw that showed its space: its index in its sidebar
     // list, where its rows stay once that space closes.
@@ -1213,7 +1215,7 @@ export default class Spaces extends View {
         || this.snap.spaces.some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    const machineNames = [null, ...remote];
+    const machineNames = orderMachines([null, ...remote], this.machineOrder ?? []);
     const tail = rest.filter((id) => !machineNames.includes(byId.get(id).machine ?? null)).flatMap((id) => spaceless(byId.get(id)));
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : [...list(rows, null), ...tail];
     return [...machineNames.flatMap((m) => {
@@ -1223,6 +1225,12 @@ export default class Spaces extends View {
       const folded = this.folded.has(m);
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
         .cursor_pointer().hover(s => s.bg(t.hover))
+        .on_hover((over, cx) => {
+          const next = over ? m : this.hoverMachine === m ? undefined : this.hoverMachine;
+          if (next === this.hoverMachine) return;
+          this.hoverMachine = next;
+          cx.notify();
+        })
         .on_click((_e, cx) => {
           folded ? this.folded.delete(m) : this.folded.add(m);
           localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
@@ -1230,6 +1238,7 @@ export default class Spaces extends View {
         })
         .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
+          .when(m !== machineNames[0], el => el.child(this.topButton(m, t)))
           .when(!connected, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground))
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", m ? { machine: m } : {}); }).child("+")))
@@ -1309,6 +1318,21 @@ export default class Spaces extends View {
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .child(this.addButton(w, t)),
       );
+  }
+
+  // A machine header's "Move to top" (every header but the first, while expanded): always
+  // there at the same size, like the row's +, seen and pressable only while the header is
+  // hovered. The order is this person's, kept like the folds (localStorage machines.order).
+  topButton(m, t) {
+    const el = div().id(`machine-top-${m ?? "local"}`).flex_none().px(4).rounded(4).child("\u2191");
+    if (this.hoverMachine !== m) return el.opacity(0);
+    return el.hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip("Move to top")
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        this.machineOrder = movedToTop(this.machineOrder ?? [], m);
+        localStorage.setItem("machines.order", JSON.stringify(this.machineOrder));
+        cx.notify();
+      });
   }
 
   // The row's + (new agent in this space): always there at the same size, so hovering

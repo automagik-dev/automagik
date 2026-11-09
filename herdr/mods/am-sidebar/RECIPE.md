@@ -9,7 +9,10 @@ Herdr's shipped `spaces` 0.1.7 (the owner's clone of it); everything bot-shaped 
 
 One scrolling column, `chrome` background, 13 px text.
 
-- **Machine headers** when a space isn't on this computer; **space rows** with the space's icon
+- **Machine headers** when a space isn't on this computer: this computer first, then the others by
+  name, unless the person moved one up (a hovered header's `↑`, **Move to top**; the order is kept in
+  the sidebar's localStorage as `machines.order`, like the folds; machines it does not name follow
+  in that default order); **space rows** with the space's icon
   (an image, an emoji on its colour, or its letter), name, repo · branch, `↑n ↓n`, and a `+` that
   opens `am-new-menu` for that space.
 - **Under the first space of each project** (its folder's git main checkout; worktree spaces keep
