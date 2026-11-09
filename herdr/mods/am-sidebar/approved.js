@@ -33,6 +33,13 @@ export const KEY_HEX = 32;
 /** The folder holding every project's approved record. */
 export const approvedRootOf = (env = process.env) => join(dataRootOf(env), APPROVED_DIR);
 
+/**
+ * The folder the per-pane proxy writes an approved worker's Antigravity permission file in
+ * (#823 review H1): under the approved root, which the sandbox binds read-only, so a sandboxed
+ * pane can neither plant nor edit it. Only the unsandboxed proxy writes here.
+ */
+export const approvedSettingsDir = (env = process.env) => join(approvedRootOf(env), "agy-settings");
+
 /** The digest an approved roster and a working file are compared by. */
 export const sha256Of = (text) => createHash("sha256").update(String(text)).digest("hex");
 

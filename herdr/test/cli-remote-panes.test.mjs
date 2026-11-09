@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
 import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { AGY_FIXED_DENY } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
@@ -515,6 +516,71 @@ test("start --machine with a pane-env that has another key or a relative path: o
     assert.deepEqual([argv[0], argv.slice(2)], ["/usr/bin/env", ["hermes", "--tui"]], argv.join(" "));
     assert.equal(argv[1].includes("/opt/node-22/bin"), false);
   }
+});
+
+// ---- the Antigravity permission list there (#823): written on that machine, through hc ----
+
+/** Atlas on Antigravity, with the agent installed on vm and a linked project roster. */
+function agyScene(t, { appHome = true } = {}) {
+  const s = scene(t);
+  exe(join(s.root, "vm-bin", "agy"), "#!/bin/sh\nexit 0\n");
+  const path = join(s.project, ".herdr", "bots.json");
+  const file = JSON.parse(readFileSync(path, "utf8"));
+  file.bots.find((b) => b.id === ATLAS).agent = "antigravity";
+  file.bots.find((b) => b.id === ATLAS).agyPermissions = { allow: ["command(npm publish)"], deny: [] };
+  writeFileSync(path, JSON.stringify(file));
+  if (appHome) mkdirSync(vmApp(s), { recursive: true });
+  return s;
+}
+
+/** The 0600 permission file a linked Antigravity seat reads, under vm's own app home. */
+const agySeatFile = (s) => join(vmApp(s), "automagik-herdr", "agy-settings", `${ATLAS}-seat.json`);
+const LOCAL_AGY_DIR = (s) => join(s.app, "automagik-herdr", "agy-settings");
+
+test("start --machine of an Antigravity bot: its 0600 permission file is written on vm through hc, and the argv names vm's path", (t) => {
+  const s = agyScene(t);
+  const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const file = agySeatFile(s);
+  assert.deepEqual(r.json().argv, ["agy", "--settings", file, "--mode", "auto"], "the command names the file there");
+  assert.deepEqual(agentPart(startedWith(s)), ["agy", "--settings", file, "--mode", "auto"]);
+  // Written on vm, in vm's app home, through hc: 0600 in a 0700 folder.
+  assert.ok(existsSync(file), file);
+  assert.equal(modeOf(file).toString(8), "600");
+  assert.equal(modeOf(join(vmApp(s), "automagik-herdr/agy-settings")).toString(8), "700");
+  const data = JSON.parse(readFileSync(file, "utf8"));
+  assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "the project on vm");
+  assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's addition");
+  for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule), rule);
+  // Never this computer's app home: no file, no path in the argv.
+  assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "never written here");
+  assert.equal(r.json().argv.includes(file), true);
+  assert.equal(r.json().argv.some((w) => w.startsWith(s.app)), false);
+  // Restart --machine writes the same file there again and names it, resumed.
+  const again = s.cli(["restart", "Atlas", ...s.on, "--force", "--json"]);
+  assert.equal(again.code, 0, again.err);
+  const run = s.calls().filter((c) => c[0] === "run")[1];
+  const words = agentPart(run.slice(run.indexOf("--") + 1));
+  assert.deepEqual(words, ["agy", "--settings", file, "--mode", "auto", "--continue"]);
+  assert.equal(modeOf(file).toString(8), "600");
+  assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "still here nothing");
+});
+
+test("start and restart --machine of an Antigravity bot with no app home there: one clear refusal, nothing started, nothing written here", (t) => {
+  const s = agyScene(t, { appHome: false });
+  const line = new RegExp(`^Atlas runs on vm without its Antigravity permission list: its app home there, `
+    + `${vmApp(s)}, isn't a folder, and a start never makes one\\. Install automagik-herdr on vm, or set `
+    + `HERDR_APP_HOME in the project's \\.herdr/pane-env there to an app home that is there\\. Nothing was started\\.$`);
+  for (const args of [["start", "Atlas", ...s.on], ["restart", "Atlas", ...s.on, "--force"]]) {
+    const r = s.cli(args);
+    assert.equal(r.code, 1, args.join(" "));
+    const said = r.err.split("\n").filter((x) => x.includes("Antigravity permission list"));
+    assert.equal(said.length, 1, r.err);
+    assert.match(said[0].replace(/^automagik-herdr: /, ""), line);
+  }
+  assert.equal(s.calls().filter((c) => c[0] === "run").length, 0, "nothing started");
+  assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
+  assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "never this computer's app home");
 });
 
 test("attach --machine vm/t8 as it is: labels only, the row's terminal is t8; whois keeps its shape, no '/' in it", (t) => {

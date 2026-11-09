@@ -10,7 +10,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, closeSync, constants, existsSync, fchmodSync, linkSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -28,8 +28,8 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
-  sessionIdArgs, shownModel, withBriefing, withOverrides } from "../models.js";
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+  sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
@@ -51,7 +51,7 @@ import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui, workerProxyTransport } from "../dshTui.mjs";
-import { approveProject, approvedProxyEnabled, approvedProxyState, parseApprovedRecord,
+import { approveProject, approvedProxyEnabled, approvedProxyState, approvedSettingsDir, parseApprovedRecord,
   projectKey, proxyStateFor, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -987,6 +987,12 @@ function describe(project, bot, view, hcError) {
   else if (hcError) status = "hc unavailable";
   else if (!held && view && unknownFor(view, bot.id, project)) status = "unknown"; // its machine isn't answering
   else if (held) status = agentInForeground(live) ? live.status?.state ?? "running" : "no agent in front";
+  // #823: the effective permission lists the launch carries: a seat's on the project folder,
+  // and a worker default's (its task worktree is added at its launch).
+  const seatAgy = bot.agent === "antigravity" ? agyPermissionPlan({ bot, scope: "seat", folder: project.key }) : null;
+  const workerAgent = !worker ? resolveAgent(bot.agent) : worker.template ? null : resolveAgent(worker.agent ?? bot.agent);
+  const workerAgy = workerAgent === "antigravity"
+    ? agyPermissionPlan({ bot, scope: "worker", role: workerRole(bot).role, folder: null }) : null;
   const out = {
     id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
     lead: lead.lead || null, leadName: file.bots.find((b) => b.id === lead.lead)?.name ?? null,
@@ -998,6 +1004,8 @@ function describe(project, bot, view, hcError) {
     role: bot.role, rank: bot.rank ?? null, look: bot.look,
     hcProxy: bot.hcProxy === true,
     worker,
+    ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
+    ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
   };
   if (lead.warning) out.warning = lead.warning;
   if (hcError && !bot.planned) out.hcError = hcError;
@@ -1075,6 +1083,38 @@ export async function briefedLaunch(project, bot, agentKey, argv, appHomeDir = a
   return { argv: withBriefing(agentKey, argv, launch, agents), env: launch?.env ?? {}, warnings };
 }
 
+/**
+ * Writes an Antigravity launch's permission file (#823): 0600 in a 0700 folder under the pack's
+ * app home, never agy's own settings. A failed write refuses the launch: starting without the
+ * list would stop the bot at its first prompt. `settings`: models.js agySettingsPlan.
+ */
+function writeAgySettingsFile(settings, bot) {
+  try {
+    const dir = dirname(settings.path);
+    // Never follow a symlinked folder or file: this file decides what agy may do. A temp in the
+    // real folder (created O_EXCL) renamed onto the path replaces a link, never its target.
+    let st = null;
+    try { st = lstatSync(dir); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+    if (st) {
+      if (st.isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+      if (!st.isDirectory()) throw new Error(`${dir} is not a folder`);
+    } else {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (lstatSync(dir).isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+    }
+    try { if (lstatSync(settings.path).isSymbolicLink()) throw new Error(`${settings.path} is a symlink`); }
+    catch (e) { if (e?.code !== "ENOENT") throw e; }
+    const tmp = `${settings.path}.${randomUUID()}.tmp`;
+    writeFileSync(tmp, settings.text, { mode: 0o600, flag: "wx" });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, settings.path);
+    chmodSync(settings.path, 0o600);
+  } catch (e) {
+    throw new CliError(`${bot?.name ?? "The bot"} wasn't started: its Antigravity permission list couldn't be written `
+      + `(${settings.path}: ${e?.message ?? e}).`);
+  }
+}
+
 // ---- arguments ----
 
 const OPTIONS = {
@@ -1086,6 +1126,8 @@ const OPTIONS = {
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
   "agy-mode": { type: "string" }, "worker-agy-mode": { type: "string" },
+  "agy-allow": { type: "string", multiple: true }, "agy-deny": { type: "string", multiple: true },
+  "no-agy-permissions": { type: "boolean" },
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
   space: { type: "string" }, tab: { type: "string" },
   title: { type: "string" }, sub: { type: "string" }, id: { type: "string" },
@@ -1116,6 +1158,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--agy-mode accept-edits|auto|plan]   Antigravity's --mode; default auto
+         [--agy-allow RULE]... [--agy-deny RULE]...
+                                       Antigravity permission rules this bot and its workers add
+                                       to their launch's own lists (repeatable; never removes a
+                                       fixed deny). An empty value clears that list
          [--planned-wave N [--planned-note T]]          prints the new bot's id
          [--worker-agent A] [--worker-model M] [--worker-effort E]   its workers' defaults
          [--worker-agy-mode accept-edits|auto|plan]                  (Antigravity's --mode)
@@ -1125,6 +1171,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   edit <bot> [the create options] [--unplanned] [--no-model] [--no-category] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
+             [--agy-allow=] [--agy-deny=] [--no-agy-permissions]   (empty: that list cleared)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -1248,7 +1295,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   dsh-tui doctor                whether dsh, the dsh-tui profile and the shim are there, and
                                 whether the profile is the pinned one, plus each bot's hcProxy
                                 working and approved settings and whether its attached proxy
-                                answers (read-only); off with proxy up warns: rollback unfinished
+                                answers, and each Antigravity bot's effective permission lists
+                                and whether agy's terminal sandbox is there (read-only); off
+                                with proxy up warns: rollback unfinished
   proxy approve --project <dir> approve a project's working .herdr/bots.json as the proxy's
                                 roster and hcProxy switch: print the diff against the previous
                                 approval, then
@@ -1275,9 +1324,13 @@ list under <app home>/automagik-herdr/antigravity-models.json, refreshed at most
 when it is missing or a day old; agy not installed, signed in or listing nothing keeps the
 last cached list and the refusal says when there is none. Every Antigravity launch passes
 \`--mode\` (auto, accept-edits or plan): a bot's \`agyMode\` field, else auto; its workers'
-\`worker.agyMode\`, else auto. The pack never passes --dangerously-skip-permissions and never
-writes agy's own settings, so its trust list and saved settings stay the person's. Its first
-prompt goes through -i, its resume through --conversation <id> (--fresh starts new).
+\`worker.agyMode\`, else auto. Each launch also writes its own session permission list, 0600
+under <app home>/automagik-herdr/agy-settings/, and passes it as \`--settings\`: a narrow allow
+list for its scope and the fixed denies --force pushes, hard resets, rm -rf, PR merges and
+releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny dropped. The pack
+never passes --dangerously-skip-permissions and never writes agy's own settings, so its trust
+list and saved settings stay the person's. Its first prompt goes through -i, its resume
+through --conversation <id> (--fresh starts new).
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
 The main bot's pane is role=main, and a bot that leads others is role=captain, whatever their
@@ -1452,6 +1505,30 @@ export function entryFrom(opts, base, project, { creating }) {
     if (why) throw new CliError(`--agy-mode: ${why}`, 2);
     const mode = agyModeOf(opts["agy-mode"]);
     entry.agyMode = mode === AGY_MODE_DEFAULT ? "" : mode;
+  }
+  // Antigravity's permission additions (#823): repeatable rules that add to the fixed deny rules
+  // and the launch's own allow list; one empty value clears that list, and --no-agy-permissions
+  // clears both. They only ever add: the fixed denies are added at launch.
+  if (opts["no-agy-permissions"] && (opts["agy-allow"] !== undefined || opts["agy-deny"] !== undefined)) {
+    throw new CliError("Give --no-agy-permissions or --agy-allow/--agy-deny, not both.", 2);
+  }
+  if (opts["no-agy-permissions"]) delete entry.agyPermissions;
+  if (opts["agy-allow"] !== undefined || opts["agy-deny"] !== undefined) {
+    const stored = entry.agyPermissions && typeof entry.agyPermissions === "object" && !Array.isArray(entry.agyPermissions)
+      ? entry.agyPermissions : {};
+    const pick = (given, kept, flag) => {
+      if (given === undefined) return Array.isArray(kept) ? kept.filter((r) => typeof r === "string") : [];
+      const rules = given.filter((r) => r.trim() !== "");
+      for (const rule of rules) {
+        const why = agyRuleProblem(rule);
+        if (why) throw new CliError(`${flag}: ${why}`, 2);
+      }
+      return [...new Set(rules.map((r) => r.trim()))];
+    };
+    const allow = pick(opts["agy-allow"], stored.allow, "--agy-allow");
+    const deny = pick(opts["agy-deny"], stored.deny, "--agy-deny");
+    if (allow.length || deny.length) entry.agyPermissions = { allow, deny };
+    else delete entry.agyPermissions;
   }
   workerDefaults(opts, entry);
   // Lead (A1): the main bot or another non-planned member, never itself or one of its own.
@@ -1646,8 +1723,10 @@ function lsLines(projects) {
       const where = b.kind === "main" ? "main" : `→ ${b.leadName ?? "?"}${b.category ? ` [${b.category}]` : ""}`;
       const model = b.model ? `${b.model} (${b.modelSource})` : "-";
       const agy = b.agyMode ? `  agy-mode ${b.agyMode}` : "";
+      const perms = b.agyPermissions || b.workerAgyPermissions
+        ? `  agy-allow ${(b.agyPermissions ?? b.workerAgyPermissions).allow.length} deny ${(b.agyPermissions ?? b.workerAgyPermissions).deny.length}` : "";
       const status = b.planned ? `planned, wave ${b.planned.wave}` : b.terminal ? `${b.status} in ${p.machine ? `${p.machine}/` : ""}${b.terminal}` : b.status;
-      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}${agy}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
+      lines.push(`  ${b.id}  ${b.name}${b.rank ? ` (${b.rank})` : ""}  ${where}  ${b.agent ?? "-"}  ${model}${agy}${perms}  ${status}${b.warning ? `  ! ${b.warning}` : ""}`);
     }
     for (const w of p.warnings ?? []) lines.push(`  ! ${w}`);
     const hcError = p.bots.find((b) => b.hcError)?.hcError;
@@ -1750,6 +1829,10 @@ async function cmdShow(opts, [ref]) {
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
     ...(info.agyMode ? [`  agy mode     ${info.agyMode}`] : []),
+    ...(info.agyPermissions ? [`  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
+      `  agy deny     ${info.agyPermissions.deny.join(", ") || "-"}`] : []),
+    ...(info.workerAgyPermissions ? [`  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
+      `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
     `  rank         ${info.rank ?? "-"}`,
@@ -2354,15 +2437,14 @@ async function appHomeOn(machine) {
 }
 
 /**
- * The app home on `machine` a bot's briefing file and hook go in (#582): pane-env's HERDR_APP_HOME,
- * else that machine's ~/.config/herdr-app, and only while that folder is there already: a start
- * never makes an app home on a linked machine (it may be a shared one). A pane-env that was left
- * out means none at all, never the default. Resolves { dir (null: no briefing file and no hook
- * there), warnings (one when null) }.
+ * The app home on `machine` a launch's private file goes in (#582, #823): pane-env's
+ * HERDR_APP_HOME, else that machine's ~/.config/herdr-app, and only while that folder is there
+ * already: a start never makes an app home on a linked machine (it may be a shared one). A
+ * pane-env that was left out means none at all, never the default. Resolves { dir (null: none),
+ * warning (why, null when dir) }.
  */
-async function briefingHomeOn(machine, bot, paneEnv) {
-  const none = (why) => ({ dir: null, warnings: [`${bot.name} runs on ${machine} without its briefing in its system prompt or per turn: ${why}. `
-    + `Its role and team still come from ${BOTS_PATH}.`] });
+async function launchHomeOn(machine, bot, paneEnv, purpose) {
+  const none = (why) => ({ dir: null, warning: `${bot.name} runs on ${machine} without ${purpose}: ${why}` });
   if (paneEnv.refused) return none(`its ${PANE_ENV_PATH} there was left out, so no app home there is used, not even the default one`);
   const dir = paneEnv.appHome ?? await appHomeOn(machine);
   if (!dir) return none(`${machine} gave no home folder for its app home`);
@@ -2370,7 +2452,14 @@ async function briefingHomeOn(machine, bot, paneEnv) {
     return none(`its app home there, ${dir}, isn't a folder, and a start never makes one. Install automagik-herdr on ${machine}, `
       + `or set HERDR_APP_HOME in the project's ${PANE_ENV_PATH} there to an app home that is there`);
   }
-  return { dir, warnings: [] };
+  return { dir, warning: null };
+}
+
+/** launchHomeOn for the briefing (#582): { dir (null: no briefing file and no hook there), warnings (one when null) }. */
+async function briefingHomeOn(machine, bot, paneEnv) {
+  const home = await launchHomeOn(machine, bot, paneEnv, "its briefing in its system prompt or per turn");
+  if (home.dir) return { dir: home.dir, warnings: [] };
+  return { dir: null, warnings: [`${home.warning}. Its role and team still come from ${BOTS_PATH}.`] };
 }
 
 // A file of the pack's own on `machine` (a briefing), private as briefedLaunch's (0600 in a 0700
@@ -2514,9 +2603,23 @@ async function seatOnMachine(project, bot, over = {}) {
     throw new CliError(`${bot.name} is pinned to "${bot.model}", which isn't a ${bot.agent} model this computer lists. `
       + `Pick one with automagik-herdr edit ${bot.id} --model <model> --machine ${machine} --project ${key}, or clear it with --no-model.`);
   }
-  // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const command = over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const paneEnv = await paneEnvOn(machine, key);
+  // #823: agy reads its permission list from a file on its own machine, under that machine's
+  // app home; with none there the start is refused rather than launched without its list.
+  let agySettings = null;
+  if (agentKey === "antigravity") {
+    const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
+    if (!agyHome.dir) throw new CliError(`${agyHome.warning}. Nothing was started.`);
+    agySettings = agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(agyHome.dir) });
+    try { await ownFileOn(machine, agySettings.path, agySettings.text); }
+    catch (e) {
+      throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
+        + `(${agySettings.path}: ${e?.message ?? e}).`);
+    }
+  }
+  // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
+  const command = withAgySettings(agentKey, over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)],
+    agySettings?.path);
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
@@ -2553,7 +2656,8 @@ async function seatOnMachine(project, bot, over = {}) {
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
     parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey, guard: remoteGuard });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...home.warnings, ...briefed.warnings, ...hook.warnings];
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...home.warnings, ...briefed.warnings, ...hook.warnings,
+    ...(agySettings?.warnings ?? [])];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
     const r = await hc(args, callBound());
@@ -2822,6 +2926,11 @@ async function launchSeat(project, bot, over = {}) {
   const agent = startableAgent(bot, agentKey);
   // Antigravity always gets a mode (auto by default); every other agent's argv is unchanged.
   const agyMode = launchAgyMode(bot, agentKey);
+  // #823: the session's permission list, written private under the app home before the launch;
+  // a restart's plan names the same file, so it is written again with the roster as it is now.
+  const agySettings = agentKey === "antigravity"
+    ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(appHome()) })) : null;
+  if (agySettings) writeAgySettingsFile(agySettings, bot);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
   const leadGet = lead ? await attachedGet(lead) : null;
@@ -2836,7 +2945,9 @@ async function launchSeat(project, bot, over = {}) {
   const session = over.argv ? (over.session ?? null) : chosen;
   if (session && agentKey === "claude") labels[SESSION_LABEL] = session;
   // The briefing goes into the command itself (start and restart alike), so no hook prints it every turn.
-  const briefed = await briefedLaunch(project, bot, agentKey, chosen ? [...source, ...sessionIdArgs(agentKey, chosen)] : source);
+  const seatArgv = chosen ? [...source, ...sessionIdArgs(agentKey, chosen)] : source;
+  const briefed = await briefedLaunch(project, bot, agentKey, withAgySettings(agentKey, seatArgv, agySettings?.path));
+  if (agySettings?.warnings?.length) briefed.warnings.push(...agySettings.warnings);
   const argv = briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
@@ -3340,6 +3451,11 @@ async function rerunHelpers(plans, parent, say) {
     let command;
     try { command = helperCommand(p, say); }
     catch (e) { failed(e.message); continue; }
+    // #823: the Antigravity permission file this helper's argv names, written as its start does.
+    if (p.agySettings) {
+      try { writeAgySettingsFile(p.agySettings, { name: p.name ?? p.replaced }); }
+      catch (e) { failed(e.message); continue; }
+    }
     const r = await hc(helperArgs({ name, cwd: p.cwd, labels: p.labels, parent, ...command, login }));
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
@@ -3444,10 +3560,15 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
       botId: binding?.bot ?? worker?.botId ?? h.labels?.[WORKER_OF_LABEL] ?? bot.id,
       project: binding?.project ?? worker?.project ?? project.key, worker: !binding,
     } : null;
+    // #823: the bot whose permission list an Antigravity helper gets: the one the pane plays
+    // (an attached bot), else its worker row's bot, else the bot being restarted.
+    const agyBot = [binding?.bot, worker?.botId].map((id) => project.file.bots.find((b) => b.id === id)).find(Boolean)
+      ?? project.file.bots.find((b) => b.id === bot.id) ?? bot;
     for (const k of ["agent.session", "revive.session"]) holdId(h.labels?.[k]);
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
-      agents, fresh }), worker, binding, proxyIdentity, createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
+      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot } }), worker, binding, proxyIdentity,
+      createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
   const broken = tree.filter((p) => p.error).map((p) => p.error);
@@ -3559,6 +3680,7 @@ async function cmdRestart(opts, [ref]) {
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
+    agy: { appHomeDir: appHome(), folder: key },
     // A new conversation on Claude runs on an id chosen here (RFC 0021 (f) 2); a resume keeps its own.
     newSession: newSessionId(),
   };
@@ -4908,9 +5030,11 @@ async function cmdWorker(opts, rest) {
   // A Claude template runs its own command under the login words (#453): hc's template form takes
   // no environment. One that can't take its task as a last argument is refused, as unrunnable.
   let templateArgv = null;
+  let templateCommand = null;
   if (plan.template) {
     const t = await templateRuns(plan.template, agents);
     runs = t.runs;
+    templateCommand = t.command?.trim() ? t.command : null;
     if (runs === "claude") {
       templateArgv = t.command?.trim() ? commandArgv({ shell: t.command }, [task]) : null;
       if (!templateArgv) {
@@ -4989,6 +5113,29 @@ async function cmdWorker(opts, rest) {
     }
     worktree = realDir(place.worktree) ?? place.worktree;
     base = await baseCommit(place, project.key);
+    // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added flags
+    // and working roster edits cannot do so; the same socket still checks terminal.run.
+    const transport = await workerTransport();
+    const proxied = transport && transport.terminal === me.address;
+    // #823: an Antigravity worker's permission file, written before it starts; a template that
+    // runs agy is rebuilt with `--settings` (hc's template form takes no extra words), or runs
+    // without the list with a plain warning when its command can't take them. H1: for a proxied
+    // start the proxy writes the file from the approved snapshot under the data root, which the
+    // sandbox binds read-only; this pane only names that path and never writes it.
+    const settingsDir = proxied ? approvedSettingsDir() : agySettingsDir(appHome());
+    let agySettings = null;
+    if (plan.agent === "antigravity" || (plan.template && runs === "antigravity")) {
+      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: place.worktree, settingsDir });
+      if (agySettings?.warnings.length) warnings.push(...agySettings.warnings);
+      if (agySettings && !proxied) writeAgySettingsFile(agySettings, bot);
+      if (plan.template && runs === "antigravity") {
+        const built = templateCommand
+          ? commandArgv({ shell: templateCommand }, [...agySettingsArgs("antigravity", agySettings?.path), task]) : null;
+        if (built) templateArgv = built;
+        else warnings.push(`${bot.name}'s template ${plan.template} ${templateCommand
+          ? "ends in a separator or a comment, so its Antigravity permission list can't be added" : "gave no command, so its Antigravity permission list can't be added"}; it runs without one.`);
+      }
+    }
     // A Claude worker gets the per-turn hook in its worktree: it prints no briefing there (the
     // worker is no bot), but it ties the Claude session to the terminal (briefing.mjs).
     if (runs === undefined) {
@@ -5008,13 +5155,10 @@ async function cmdWorker(opts, rest) {
       templateArgv,
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
+      agySettingsPath: agySettings && !templateArgv ? agySettings.path : null,
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
         approvedProxyState({ project: project.key, bot }), process.platform,
         (warning) => warnings.push(warning)) });
-    // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added
-    // flags and working roster edits cannot do so; the same socket still checks terminal.run.
-    const transport = await workerTransport();
-    const proxied = transport && transport.terminal === me.address;
     const r = await (proxied ? hcReal(args) : hc(args));
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -5288,9 +5432,11 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
     const r = doctorDshTui({ env, forbiddenRoots: io.forbiddenRoots });
     r.bots = [];
     let roster = [];
+    let projectKey = null;
     try {
       const project = io.project ?? await projectFor(opts);
       roster = project.file.bots;
+      projectKey = project.key;
       const approval = approvedProxyState({ project: project.key, bot: { id: "" }, env });
       if (approval.error) r.checks.push({ check: "approved-roster", ok: true, warning: true,
         detail: approval.error, fix: "automagik-herdr proxy approve (review the diff)" });
@@ -5304,6 +5450,21 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       r.code = 1;
     }
     const byId = new Map(roster.map((b) => [b.id, b]));
+    // #823: whether agy's terminal sandbox, and so --mode, can work on this host, from local
+    // evidence only; a host with no Antigravity bot or worker needs no row.
+    const agyBots = roster.filter((b) => b.agent === "antigravity" || resolveAgent(b.worker?.agent ?? "") === "antigravity");
+    if (agyBots.length) {
+      const read = (path) => {
+        try { return readFileSync(path, "utf8"); } catch (e) { return e?.code === "ENOENT" ? null : undefined; }
+      };
+      const sandbox = agySandbox({ platform: process.platform, read });
+      r.checks.push({ check: "agy-sandbox", ok: true, warning: sandbox.state === "missing",
+        detail: sandbox.state === "available" ? `${sandbox.detail}: Antigravity's --mode takes effect`
+          : sandbox.state === "missing"
+            ? `${sandbox.detail}, so agy's terminal sandbox is unavailable and --mode doesn't take effect: `
+              + "the launch's own permission list still lets the bot work"
+            : `Antigravity's terminal sandbox is unverified (${sandbox.detail}), so whether --mode takes effect is unknown` });
+    }
     for (const bot of r.bots) {
       const state = bot.hcProxyState;
       const needsApproval = state.working && state.approved !== true;
@@ -5311,8 +5472,29 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         && (state.approved !== true || !bot.terminal || bot.up));
       const agent = byId.get(bot.id);
       const agy = agent?.agent === "antigravity" ? `agy mode ${agyModeOf(agent.agyMode)}; ` : "";
+      // The effective allow and deny lists each Antigravity launch of this bot carries: its
+      // seat's, and its worker defaults' (a task's worktree is added to a worker's at launch).
+      const seatAgy = agent?.agent === "antigravity" && projectKey
+        ? agyPermissionPlan({ bot: agent, scope: "seat", folder: projectKey }) : null;
+      const workerAgent = agent && !agent.worker?.template ? resolveAgent(agent.worker?.agent ?? agent.agent) : null;
+      const workerAgy = workerAgent === "antigravity"
+        ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRole(agent).role, folder: null }) : null;
+      if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny };
+      if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny };
+      const perms = [
+        seatAgy ? `agy allow ${seatAgy.allow.join(", ")}; agy deny ${seatAgy.deny.join(", ")}` : "",
+        workerAgy ? `worker agy allow ${workerAgy.allow.join(", ")}; worker agy deny ${workerAgy.deny.join(", ")}` : "",
+      ].filter(Boolean).join("; ");
+      // The lists are a guardrail against accidents, never the boundary: say so wherever they print.
+      const guardrail = perms ? "these lists are a guardrail against accidents, not a security boundary: "
+        + "a rule matches word prefixes only (a force refspec with + attached, combined short flags like -fu, "
+        + "and a reset reaching --hard after other words aren't caught); a review launch's git subcommands "
+        + "take every argument, so some write; allowing node, bun or git with any arguments lets a determined "
+        + "agent do anything" : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
-        detail: `${bot.name}: ${agy}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
+        detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
+        ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
+        ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
           : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;

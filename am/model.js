@@ -3,7 +3,7 @@
 // default look. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so `node --test` runs it.
 // Apache-2.0.
 
-import { AGY_MODES, LEGACY_AGENTS } from "./models.js";
+import { AGY_MODES, LEGACY_AGENTS, agyRuleProblem, normalizeAgyPermissions } from "./models.js";
 
 /** The hc label key that ties a terminal to a bot; its value is the bot id (A9). */
 export const BOT_LABEL = "bot";
@@ -199,6 +199,19 @@ export function parseBots(text) {
       if (typeof bot.agyMode !== "string") { warnings.push(`${where}: agyMode is not text; ignored`); delete bot.agyMode; }
       else if (!AGY_MODES.includes(bot.agyMode)) warnings.push(`${where}: agyMode ${JSON.stringify(bot.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
     }
+    // Antigravity's permission additions (#823): a malformed shape is dropped whole; a bad rule
+    // is dropped on its own, with a warning, so nothing junk reaches agy.
+    if (bot.agyPermissions !== undefined) {
+      const normalized = normalizeAgyPermissions(bot.agyPermissions);
+      if (!isObject(bot.agyPermissions)) {
+        warnings.push(`${where}: ${normalized.problems[0]}; ignored`);
+        delete bot.agyPermissions;
+      } else {
+        for (const why of normalized.problems) warnings.push(`${where}: agyPermissions: ${why}`);
+        if (normalized.allow.length || normalized.deny.length) bot.agyPermissions = { allow: normalized.allow, deny: normalized.deny };
+        else delete bot.agyPermissions;
+      }
+    }
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
     else if (isObject(bot.worker) && typeof bot.worker.agyMode === "string" && !AGY_MODES.includes(bot.worker.agyMode)) {
@@ -351,6 +364,21 @@ export function checkBots(file, before = null) {
     }
     if (isObject(b.worker) && b.worker.agyMode !== undefined && !AGY_MODES.includes(b.worker.agyMode)) {
       errors.push(`${at}: worker agyMode ${JSON.stringify(b.worker.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
+    }
+    if (b.agyPermissions !== undefined) {
+      if (!isObject(b.agyPermissions)) errors.push(`${at}: agyPermissions is not an object with allow and deny lists`);
+      else {
+        for (const key of Object.keys(b.agyPermissions)) {
+          if (!["allow", "deny"].includes(key)) errors.push(`${at}: agyPermissions ${key} isn't allow or deny`);
+          else if (!Array.isArray(b.agyPermissions[key])) errors.push(`${at}: agyPermissions ${key} is not a list of rules`);
+          else {
+            for (const rule of b.agyPermissions[key]) {
+              const why = agyRuleProblem(rule);
+              if (why) errors.push(`${at}: agyPermissions ${key}: ${why}`);
+            }
+          }
+        }
+      }
     }
     if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
@@ -517,7 +545,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   if (bot.kind === "main" || bot.lead) delete bot.category;
   const i = out.bots.findIndex((b) => b?.id === bot.id);
   const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
-  for (const k of ["planned", "lead", "category", "agent", "model", "agyMode"]) {
+  for (const k of ["planned", "lead", "category", "agent", "model", "agyMode", "agyPermissions"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;

@@ -108,6 +108,8 @@ impl Env {
         o.claude_root = self.home().join(".claude/projects");
         o.codex_home = self.home().join(".codex");
         o.dsh_root = self.home().join(".dsh/sessions");
+        o.app_home = Some(self.home().join(".config/herdr-app"));
+        o.workers_ledger = None;
         o.use_hc = false;
         o.resolve_repos = false;
         o.publish = false;
@@ -132,6 +134,13 @@ impl Env {
             if !inside(root) {
                 *root = default;
             }
+        }
+        // Herdr's ledgers: the temp home's app home, and no ledger named from outside.
+        if !o.app_home.as_deref().is_some_and(inside) {
+            o.app_home = Some(home.join(".config/herdr-app"));
+        }
+        if !o.workers_ledger.as_deref().is_some_and(inside) {
+            o.workers_ledger = None;
         }
         for p in [&o.state_dir].into_iter().chain(o.migrate_from.as_ref()) {
             assert!(

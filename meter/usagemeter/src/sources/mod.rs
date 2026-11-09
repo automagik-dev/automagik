@@ -59,6 +59,11 @@ pub struct FileCtx {
     pub parent_session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// A Claude sub-agent transcript: the folder its parent session started in (the parent
+    /// transcript's first cwd), None when that transcript could not be read. A sub-agent belongs
+    /// to its parent's launch, so this, not its own first cwd, is where its session started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_cwd: Option<String>,
     /// A Codex rollout: the thread it belongs to and its running total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<codex::CodexCtx>,
@@ -68,6 +73,13 @@ pub struct FileCtx {
     /// A dsh-tui session seeded from another (a fork): its first rows are copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub seeded: bool,
+    /// A dsh-tui session's `createdAt` (epoch ms): in a fork, a call at or before it is a copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    /// A dsh-tui fork's first `session/end-seed {inherited: true}` has been read: the rows before
+    /// it are all copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seed_cut: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

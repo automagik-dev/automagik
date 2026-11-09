@@ -60,6 +60,8 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
       character: str(bot.look?.character, look.character), colour: str(bot.look?.colour, look.colour),
       role: str(bot.role), instructions: str(bot.instructions), agent: currentAgent(str(bot.agent)), pin: currentAgent(str(bot.agent)) === str(bot.agent) ? str(bot.model) : "",
       agyMode: AGY_MODES.includes(bot.agyMode) ? bot.agyMode : AGY_MODE_DEFAULT,
+      // Kept as stored for the write-back: the form edits no permission rule (#823).
+      agyPermissions: bot.agyPermissions,
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
       rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,
@@ -263,6 +265,8 @@ export function entryOf(state, file) {
       agent: state.agent || undefined, model: state.pin || undefined,
       // Antigravity's launch mode: the default is applied at launch, so only another one is stored.
       agyMode: state.agyMode && state.agyMode !== AGY_MODE_DEFAULT ? state.agyMode : undefined,
+      // The form edits no permission rule: a stored field is written back as it was (#823).
+      agyPermissions: state.agyPermissions,
       // An untouched stale lead is written back as stored; the view keeps warning on it.
       lead: member ? (state.lead && state.lead !== leadId ? state.lead : leadId && leadId !== main?.id ? leadId : undefined) : undefined,
       category: byMain && state.category && !newCat ? state.category : undefined,

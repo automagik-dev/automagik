@@ -214,6 +214,12 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         session,
         parent_session: ctx.parent_session.clone(),
         cwd,
+        // Where the session started: its first recorded cwd, or for a sub-agent its parent's.
+        session_cwd: if ctx.parent_session.is_some() {
+            ctx.parent_cwd.clone()
+        } else {
+            ctx.cwd.clone()
+        },
         branch,
         repo: None,
         tokens: tokens(
@@ -228,6 +234,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         ),
         precision: Precision::Exact,
         reported_usd: None,
+        copied: false,
     };
     for (i, it) in u.iterations.iter().flatten().enumerate() {
         if it.ty.as_deref() != Some("advisor_message") {

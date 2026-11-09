@@ -129,11 +129,13 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         session,
         parent_session: ctx.parent_session.clone(),
         cwd: ctx.cwd.clone(),
+        session_cwd: ctx.cwd.clone(),
         branch: None,
         repo: None,
         tokens,
         precision: Precision::Exact,
         reported_usd,
+        copied: false,
     });
     Line::Usage
 }

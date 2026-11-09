@@ -183,6 +183,15 @@ test("entryOf: under a captain no category; a new category is added; planned kee
   assert.equal(entryOf({ ...plan, planned: false }, FILE).entry.planned, undefined);
 });
 
+test("agyPermissions (#823): the form keeps a stored field it doesn't edit; a create writes none", () => {
+  const stored = { ...FILE.bots[0], agent: "antigravity", agyPermissions: { allow: ["command(npm publish)"], deny: [] } };
+  const file = { ...FILE, bots: [stored, ...FILE.bots.slice(1)] };
+  const initial = formFrom({ mode: "edit", bot: stored });
+  const out = applyBotEdit(file, entryOf(initial, file).entry);
+  assert.deepEqual(out.bots[0].agyPermissions, stored.agyPermissions);
+  assert.equal(entryOf(create(), FILE).entry.agyPermissions, undefined);
+});
+
 test("entryOf: an untouched edit writes the bot back as stored", () => {
   for (const b of FILE.bots) {
     const out = applyBotEdit(FILE, entryOf(edit(b.id), FILE).entry);
