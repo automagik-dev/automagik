@@ -82,24 +82,34 @@ export function install(rt) {
     aside = true
     const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
     const backup = `${statePath}.broken-${digest}`
-    const identical = async () => {
+    // What is at the backup's name: a complete copy of exactly these bytes, readable bytes
+    // that differ (a torn or foreign copy), or something that cannot be read at all.
+    const classify = async () => {
       try {
-        return (await readFile(backup)).equals(bytes)
-      } catch {
-        return false
+        return { case: (await readFile(backup)).equals(bytes) ? 'same' : 'torn' }
+      } catch (readError) {
+        const reason = readError?.code ?? readError?.message ?? String(readError)
+        return { case: 'unreadable', reason }
       }
     }
     try {
       // COPYFILE_EXCL: a complete copy an earlier load made is reused, never rewritten.
       await copyFile(statePath, backup, constants.COPYFILE_EXCL)
     } catch (copyError) {
-      // Reuse only a complete copy of exactly these bytes; a torn copy, or anything else
-      // at that name, keeps the team read-only instead of claiming a backup it lacks.
-      if (copyError?.code !== 'EEXIST' || !(await identical())) {
-        stuck = copyError?.code === 'EEXIST'
-          ? 'the set-aside backup is incomplete'
-          : copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
+      // A copy that failed for another reason keeps the team read-only, as before.
+      if (copyError?.code !== 'EEXIST') {
+        stuck = copyError?.code ?? copyError?.message ?? error?.message ?? String(error)
         warn('ds-bot: unreadable state %s: %s; backup failed: %s', statePath, error, copyError)
+        return undefined
+      }
+      // Reuse only a complete copy of exactly these bytes. A torn or foreign copy is the
+      // incomplete case readOnly() names; one that cannot be read is named apart from it.
+      const existing = await classify()
+      if (existing.case !== 'same') {
+        stuck = existing.case === 'torn'
+          ? 'the set-aside backup is incomplete'
+          : `the set-aside backup is unreadable: ${existing.reason}`
+        warn('ds-bot: unreadable state %s: %s; %s', statePath, error, stuck)
         return undefined
       }
     }
