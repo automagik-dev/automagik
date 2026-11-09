@@ -670,7 +670,7 @@ test("Antigravity (#793): a pin already in the cache starts without running agy,
   const r = s.cli(["start", "Genie"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(s.agyCalls(), [], "a cached pin never refreshes, old cache and all");
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--model", "gemini-4-argon-high"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--mode", "auto", "--model", "gemini-4-argon-high"]);
   // The pin is not in the old cache: one refresh, then the refusal names the list it found.
   const s2 = scene(t);
   const f2 = team();
@@ -2247,12 +2247,12 @@ test("restart (#328 review): agy's --continue isn't limited to the folder, so an
   assert.equal(r.json().mode, "fresh", r.err);
   assert.equal(r.json().note, "no Antigravity session id is known for t5, and Captain (t9) also runs Antigravity, so --continue could resume theirs "
     + "instead of Genie's (Antigravity's --continue isn't limited to one folder)");
-  assert.deepEqual(ownWords(runCall(s.calls())), ["agy"]);
+  assert.deepEqual(ownWords(runCall(s.calls())), ["agy", "--mode", "auto"]);
   // Alone on agy: --continue, as before.
   const alone = shareScene(t, "antigravity", { captain: { argv: ["codex"], app: "codex", cwd: "/elsewhere" } });
   const a = alone.cli(["restart", "Genie", "--json"]);
   assert.equal(a.json().mode, "resume", a.err);
-  assert.deepEqual(ownWords(runCall(alone.calls())), ["agy", "--continue"]);
+  assert.deepEqual(ownWords(runCall(alone.calls())), ["agy", "--mode", "auto", "--continue"]);
 });
 
 test("restart (#328 review): a ledger session row from an earlier pane at a reused address is never resumed", (t) => {
