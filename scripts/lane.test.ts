@@ -23,6 +23,20 @@ describe('the plugin lane', () => {
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
+  test('the usagemeter crate ships nothing until the meter lane (RFC 0017 delivery 2)', () => {
+    const none = () => false;
+    // The import and its CI: the crate, its version lines, the installer, the tooling and the RFCs.
+    const importing = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/Cargo.toml', 'meter/usagemeter/Cargo.lock',
+      'meter/usagemeter/install.sh', 'meter/usagemeter/tests/install.sh', 'meter/usagemeter/README.md', 'meter/usagemeter/.gitignore',
+      '.github/workflows/ci.yml', 'scripts/version.ts', 'scripts/import-usagemeter.sh', 'docs/rfcs/0017-usagemeter-crate.md', 'AGENTS.md'];
+    expect(ships(importing, none)).toBe(false);
+    expect(herdrShips(importing)).toBe(false);
+    expect(pocketShips(importing)).toBe(false);
+    expect(AM.test('meter/usagemeter/src/main.rs')).toBe(false);
+    // Beside a plugin it is still a plugin patch: the crate never makes a release more than it is.
+    expect(kindOf([...importing, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+  });
+
   test('a .gitignore-only change cuts no release', () => {
     const none = () => false;
     expect(ships(['.gitignore'], none)).toBe(false);

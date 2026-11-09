@@ -413,10 +413,12 @@ a path change, not a schema change: `schema_version` stays 2 and the `ae/1` rows
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Tests use synthetic fixtures only. CI (`.github/workflows/ci.yml`) runs the same on Linux and
-macOS, builds the four release binaries (`build.yml`) and runs `tests/install.sh`, which installs
-one with `install.sh` from a release laid out on disk. `release.yml` cuts the releases;
-`scripts/version.sh` reads and sets the version in `Cargo.toml` and `Cargo.lock`.
+Tests use synthetic fixtures only. In the Automagik monorepo, the root `.github/workflows/ci.yml`
+(its `usagemeter` job) runs the same on Linux and macOS, then `tests/install.sh`, which installs
+the binary it built with `install.sh` from a release laid out on disk. The version is the
+repository's one version: the root `scripts/version.ts` writes it to `Cargo.toml` and
+`Cargo.lock`. Releases from here come with the meter lane (RFC 0017 in the repository's
+`docs/rfcs/`); until then the releases named above are upstream's.
 
 Some names still say "meter" because existing installs and readers depend on them: the state
 files `meter.db` and `meter.lock`, the variables `METER_STATE_DIR`, `METER_HC` and `METER_TRACE`,
