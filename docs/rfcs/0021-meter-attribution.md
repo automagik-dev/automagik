@@ -77,10 +77,13 @@ owner's ask to compare bots across agents:
    Decided by Chat, 2026-11-09: one rule for every bot, stable for history.
 2. **Herdr chooses Claude session ids**, with `--session-id` on every fresh Claude launch (f).
    Decided by Chat, 2026-11-09: it removes the timing race for the best-covered harness.
-3. **No earlier route to machines**: no upstream bridge release; attribution waits for RFC 0017's
-   deliveries 4 and 6. Decided by Chat, 2026-11-09: a bridge would break the freeze RFC 0017 set.
-4. **The backfill**: the operator runs it once per machine after delivery 7, back to the oldest
-   ledger row; earlier hours stay unknown. Decided by Chat, 2026-11-09: explicit and bounded.
+3. **No earlier route to machines**: no upstream release carrying code, so none carries
+   attribution; it waits for RFC 0017's deliveries 4 and 6. RFC 0017's own README-only pointer
+   release at archive time stays as planned. Decided by Chat, 2026-11-09: a code release upstream
+   would break the freeze RFC 0017 set.
+4. **The backfill**: the operator runs it once per machine after delivery 7, back to the later
+   of the oldest ledger row and the retention bound; earlier hours stay unknown. Decided by Chat,
+   2026-11-09: explicit and bounded.
 5. **dsh-tui seats stay unlinked for now.** Decided by Chat, 2026-11-09: no record ties them to a
    terminal, and DSH's live session index is a private file whose format may change. Later,
    either DSH records the terminal it runs in, or Herdr labels a dsh-tui pane with its session id
@@ -128,7 +131,9 @@ overwrite what the start row recorded.
 - **codex and omp** workers resolve by worktree, as `ledger.rs` does. Their seats share the
   project root, so the worktree path can never tell them apart: they need a session id, from the
   `revive.session` or `agent.session` label seen at a sync, or from a session row Herdr writes
-  whenever it sets that label (f).
+  when it carries a session id on a restart or resume (f). The pack never sets `revive.session`
+  itself (an outside reviver does), so a fresh codex or omp seat has no session row until its
+  first restart or resume; that gap is accepted below.
 - **dsh-tui** workers resolve by worktree from the session header's `cwd`. A dsh-tui seat has no
   session-to-terminal record yet; Decided 5 says how one could come.
 - **agy** is later: the meter has no agy source yet. Its conversations record their workspace
@@ -155,8 +160,11 @@ overwrite what the start row recorded.
   the harness logged (Claude, a Codex thread) is `branch_basis: log` and is never replaced. Never
   from git on today's checkout and never from another harness's session at the same hour. Calls
   that resolve to no worker (seats, ambiguous worktrees) keep the branch null and stay in RFC
-  0018's `unattributed`. This amends RFC 0018 (a), which matched branches only against the log or
-  the Codex thread; its matching sentence and its "Usage with no branch" rule say so too.
+  0018's `unattributed`. This amends RFC 0018 in three places, each edited in the same pull
+  request to allow the start-row branch with `branch_basis: ledger`: (a)'s matching sentence (the
+  branch "recorded from the log or the Codex thread"); its "Usage with no branch" rule (which let
+  only M3's validity intervals attribute such usage); and (b)'s list of what stays unknown (OMP
+  branches).
 
 **What stays unknown.** A call with no claimant is `unlinked`; one with two claimants that differ
 is `ambiguous`. Both are kept as such, counted, and never given a bot.
@@ -188,7 +196,8 @@ is `ambiguous`. Both are kept as such, counted, and never given a bot.
   seats; and the hc snapshot at each sync, where a terminal with `finished_ms` ends there, and one
   that is gone ends somewhere between the last sync that saw it and the first that did not. A call
   inside such a gap, with another claimant, stays ambiguous. Accepted: a seat that starts and ends
-  between two syncs with no session row is unlinked.
+  between two syncs with no session row is unlinked, and so is a fresh codex or omp seat's usage
+  before its first restart or resume, unless a sync saw a session label on it.
 
 ### (b) The session-to-terminal record
 
@@ -204,8 +213,10 @@ Three ways to get it:
 **Recommended: C.** The ledger is the authority, the snapshot the second witness. They never vote:
 when the two disagree about one interval, that interval is ambiguous.
 
-The meter folds both into two tables in its state folder (mode 0600, machine-local), as RFC 0018
-(b) evidence with validity intervals.
+The meter folds both into two tables in its state folder (mode 0600, machine-local), with
+validity intervals. They follow RFC 0018 (b)'s rules (retention, machine-local ids, superseded
+rows kept) but do not extend its session-to-task contract: a bot per session is the ownership
+map's M3 row ("Bots and lead association").
 
 `launch`, one row per launch:
 
@@ -276,12 +287,20 @@ another link of the same session covers part of that span, the overlap is ambigu
   after the evidence is pruned, so a filled branch is still told apart from a logged one.
 - The store's `schema_version` goes from 2 to 3 for the evidence, `launch` and `link` tables, with
   RFC 0018 (d)'s migration rules: a generation first, the free-space refusal, one transaction.
+  A meter older than the store refuses it, as M1's `sync` and `query` do (exit 12), writing
+  nothing.
+- **Frozen tags.** Rollups written before schema 3, by today's live-terminal rule
+  (`Attributor::actor`), carry a bot or role but no basis. The migration leaves them with a null
+  basis, and they are never counted as attributed: not in `attribution.actor`, not in a bot row.
+  The same holds for any rollup hour before `evidence_from`: its tags stay for the doc and
+  `status`, and a query counts its usage as `tokens_before_evidence` (d).
 
 **History.** Re-tagging the past is a rebuild from the native logs, and it is
 `usagemeter sync --evidence-backfill --days <n>` from RFC 0018 (b), now also recomputing
 attribution: explicit, bounded by the retention and the read budget, chunked and resumable, a
 generation kept first, never automatic and never on a read. The operator runs it once per
-machine after attribution ships, back to the oldest ledger row (Decided, 4). What stays
+machine after attribution ships, back to the later of the oldest ledger row and the retention
+bound (Decided, 4), since `--days` is capped by it. What stays
 unknown for good: hours before the ledgers existed, logs already deleted, and calls whose session
 no record names.
 
@@ -326,6 +345,12 @@ name a bot, because it can no longer be replayed. A window wholly before `eviden
 every token in `tokens_before_evidence` and 0 in each other count, which is a measured 0, not an
 unknown one.
 
+A `--by bot` row keeps `actor_interval` precision on a straddling window because it holds only
+the evidence-backed part. Frozen rollup tags, including those written by today's live-terminal
+rule, never enter it. A branch row keeps `branch_window` and its full total, the part before
+`evidence_from` included, which is RFC 0018 (b)'s fallback; only its `attribution.actor` counts
+split that total.
+
 `attribution.precision` is `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
 type is breaking once a release carries contract 1, and M3 already plans `task_interval`. No
 release carries the meter yet (`NEVER_SHIPPED` holds `meter/`), so **recommended**: widen the
@@ -343,18 +368,20 @@ release. Otherwise the same change makes contract 2. Either way genie reviews it
 
 **Decided: A** (Decided, 1). Herdr writes `squad` in every start row: the id of the bot heading the
 launching bot's chain of effective leads (the last bot before the main bot, by the registry's
-`lead` and the pack's `effectiveLead`), the bot itself when it leads others and reports to the main
-bot, and null for the main bot. It is frozen at launch, because the registry changes. The pane
-label stays a display hint the meter only records in the snapshot. Named squads (a `squad`
-field in the registry, copied into the start row) would need a later amendment.
+`lead` and the pack's `effectiveLead`). That is the bot itself whenever it reports to the main
+bot directly, whether or not it leads others, and null for the main bot. It is frozen at launch,
+because the registry changes. The pane label stays a display hint the meter only records in the
+snapshot. Named squads (a `squad` field in the registry, copied into the start row) would need a
+later amendment.
 
 ### (f) Herdr-side changes
 
 For the Herdr Captain's review. All are additive to `workers.jsonl`, whose other reader in the
 pack (`reapCandidates`) reads `start` rows only and ignores unknown fields:
 
-1. **Start rows gain `core` and `created_ms`**, from the `hc get` the CLI already does, on every
-   path that writes one (start, attach, restart, `--tree`, resume).
+1. **Start rows gain `core` and `created_ms`** on every path that writes one (start, attach,
+   restart, `--tree`, resume): `core` from the CLI's core id (`coreId()`, from hc's server
+   status), `created_ms` from the `hc get` it already does.
 2. **Claude launches get their session id from Herdr.** A fresh Claude launch is started with
    `--session-id <uuid>` that the CLI chooses, and its start row records `session`. A resume
    records the resumed id. The flag is checked against the pinned Claude Code version first, as
@@ -364,12 +391,15 @@ pack (`reapCandidates`) reads `start` rows only and ignores unknown fields:
 4. **An `end` row** (`event: "end"`, the launch key, `reason`, `at`) when the CLI stops or replaces
    a terminal (stop, restart, `--tree`), and from the worktree sweep when it finds a worker's
    terminal finished.
-5. **A session row whenever Herdr sets a session label** (`agent.session`, `revive.session`) for
-   any harness, so codex and omp seats get one at the moment Herdr learns the id. The briefing
-   hook's session rows keep working for in-pane changes; its install for seats started with
-   `--append-system-prompt-file` is checked.
-6. **Ledger files are created 0600**, like the attach ledger, because the meter refuses a group-
-   or world-writable one.
+5. **A session row whenever Herdr carries a session id**, for any harness: the pack sets
+   `agent.session` from the Claude hook and carries a session id on a restart or resume, and each
+   of those writes a session row. The pack never sets `revive.session` (an outside reviver does),
+   so a fresh codex or omp seat gets a row only at its first restart or resume (an accepted gap,
+   (a)). The briefing hook's session rows keep working for in-pane changes; its install for seats
+   started with `--append-system-prompt-file` is checked.
+6. **Ledger files are 0600**, like the attach ledger, because the meter refuses a group- or
+   world-writable one: created 0600, and an existing ledger's mode set to 0600 on append, since a
+   file made under umask 002 is 0664.
 7. The usage-tagging comment in `workers.js` says the meter reads the ledger first and the labels
    as a second witness.
 
@@ -457,9 +487,23 @@ release.
      genie makes its ids unique per repo. Delivery 2's enum and M3's task row agree on it.
    - D5: `actor_unattributed` gives distinct reasons for usage whose launch row is on another
      machine (Decided, 6) and for dsh-tui seats (Decided, 5), so a card can say why.
+   - Reviewer: the order against RFC 0017's delivery 4, which is scheduled in parallel, is
+     enforced, not only stated: RFC 0017's delivery 4 Check gains "RFC 0021 delivery 2 merged
+     (enum widened)", or a schema test in the crate fails while `attribution.precision` lacks
+     `actor_interval`.
 
    *Check:* every example validates, and the crate's contract test passes on the old ones.
 3. **The Herdr rows** (herdr patch). (f) 1 to 7. The Herdr Captain reviews.
+   *Acceptance (the Reviewer's items, required):*
+   - (f) 5 is built as worded: session rows where the pack sets `agent.session` or carries a
+     session id; no claim that it sets `revive.session`.
+   - `core` comes from `coreId()` (server status), and only `created_ms` from `hc get`.
+   - The three seat callers of `startRow` pass `role` and `lead`; today they pass neither.
+   - `appendLedger` sets 0600 on an existing ledger, not only on a new one.
+   - A test pins squad for a bot that reports to the main bot and leads no one: the bot itself.
+   - Raw Claude session ids in start rows land in project app homes, so every project Herdr writes
+     a ledger in ignores that folder in git, and the CLI warns when it does not.
+
    *Check:* on a temp app home with a fake hc: a seat start row carries `core`, `created_ms`,
    `role`, `lead` and `squad`; a Claude start carries `--session-id` and the same id in its row;
    a restart writes an `end` row for the old launch; a new ledger is 0600; `reapCandidates` gives
@@ -475,6 +519,12 @@ release.
 5. **Evidence and links** (crate; with M3). The `launch` and `link` tables, the snapshot at sync,
    derived attribution, the rollup cache, the dsh-tui and omp branch fill, and schema 3 under RFC
    0018 (d).
+   *Acceptance (the Reviewer's items, required):*
+   - `launch` and `link` are described as following RFC 0018 (b)'s rules, not as an extension of
+     its session-to-task contract; bot per session is the ownership map's M3 row.
+   - A meter older than a schema 3 store refuses it (exit 12) and writes nothing.
+   - Frozen rollup tags (null basis) are never counted as attributed.
+
    *Check:* RFC 0018's interrupted-backfill and rebuild ceilings hold; a launch learned after its
    usage was ingested moves that usage to its bot on the next sync, and the rollups agree with the
    evidence; no session id appears in any output.
@@ -491,7 +541,9 @@ release.
    delivery 4.
    *Check:* a machine that took the pack release runs a meter whose `query --by bot` answers.
 8. **The backfill** (the operator, per machine). `usagemeter sync --evidence-backfill` back to the
-   oldest ledger row.
+   later of the oldest ledger row and the retention bound.
+   *Acceptance (the Reviewer's item, required):* `--days` never asks past the retention bound
+   (90 days), whatever the oldest ledger row says.
    *Check:* `actor_unattributed` falls for the backfilled hours; rows before the ledger stay
    unknown.
 
