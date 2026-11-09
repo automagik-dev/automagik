@@ -1,7 +1,9 @@
 // The sidebar's usagemeter run (Group 6c): `usagemeter sync` once METER_FIRST_MS after load, then
 // every METER_EVERY_MS while Herdr is open. No LaunchAgent and no daemon: Herdr's exec runs the
 // one shared binary install.sh put in ~/.local/bin (Herdr started from the Dock may lack that
-// folder on its PATH, so the path is absolute). One run at a time, never more often than
+// folder on its PATH, so the path is absolute), through SYNC, which also puts that folder on
+// PATH, as am-quota's AUTH_SCRIPT and agentPath.mjs do: usagemeter finds hc on PATH, and without
+// hc no terminal, label or machine id reaches the meter. One run at a time, never more often than
 // usagemeter's own 10-minute freshness check: the start time is shared across sidebar copies,
 // and a copy never starts a run while its last one is still going. A missing binary is silent.
 // Then the same on each connected linked machine (SYNC through exec's `on`), one at a
@@ -23,8 +25,17 @@ const TIMED_OUT = Symbol("timed out");
 /** The shared value (Herdr's shared/setShared) holding when the last run started (ms). */
 export const METER_KEY = "am.sidebar.meter-started";
 
-/** Run as `sh -c SYNC` on a linked machine: its own usagemeter sync; no binary there is silent. */
-export const SYNC = `m=$HOME/.local/bin/usagemeter
+/**
+ * Run as `sh -c SYNC` on a linked machine (its own usagemeter sync; no binary there is silent),
+ * and as `sh -c SYNC sh <bin>` here (Herdr's absolute path). ~/.local/bin goes on PATH, after what
+ * is there and only when it is missing, so usagemeter finds hc (hc exec and Herdr started from the
+ * Dock may run it without that folder).
+ */
+export const SYNC = `case ":$PATH:" in
+*":$HOME/.local/bin:"*) ;;
+*) PATH=\${PATH:+$PATH:}$HOME/.local/bin; export PATH ;;
+esac
+m=\${1:-$HOME/.local/bin/usagemeter}
 [ -x "$m" ] || exit 0
 exec "$m" sync`;
 
@@ -42,13 +53,13 @@ export const syncTargets = (machines, scope = null, owned = []) => (scope === "n
 export const meterBin = (home) => `${home}/.local/bin/usagemeter`;
 
 /**
- * One due `usagemeter sync`: `exec(bin, ["sync"])` (Herdr's exec: resolves `{ code, stdout,
- * stderr }`, rejects when the program can't start), unless this copy's run is still going
- * (`state.busy`) or a run started less than METER_EVERY_MS ago (`get(METER_KEY)`, from any copy).
- * The start is stored with `set(METER_KEY, now())` before the run, so a second caller in the
- * meantime finds it fresh. No timeout of its own: Herdr's exec gives a program at most 30 s, and
- * usagemeter ends itself within its 20-second budget; a copy never starts a second run while one
- * it started is still going.
+ * One due `usagemeter sync`: `exec("sh", ["-c", SYNC, "sh", bin])` (Herdr's exec: resolves
+ * `{ code, stdout, stderr }`, rejects when the program can't start; no binary: exit 0), unless
+ * this copy's run is still going (`state.busy`) or a run started less than METER_EVERY_MS ago
+ * (`get(METER_KEY)`, from any copy). The start is stored with `set(METER_KEY, now())` before the
+ * run, so a second caller in the meantime finds it fresh. No timeout of its own: Herdr's exec
+ * gives a program at most 30 s, and usagemeter ends itself within its 20-second budget; a copy
+ * never starts a second run while one it started is still going.
  * `machines`: the connected linked machines to sync after this computer, one at a time, within the
  * same run (`exec("sh", ["-c", SYNC], { on })`; a rejection or a failure there is silent), each
  * within METER_EXEC_LIMIT_MS when `sleep` (the caller's timer) is given.
@@ -66,7 +77,7 @@ export async function syncMeter({ exec, now = Date.now, bin, get = () => null, s
   try {
     let here;
     try {
-      const result = await exec(bin, ["sync"]);
+      const result = await exec("sh", ["-c", SYNC, "sh", bin]);
       here = { ran: true, code: result?.code ?? null, wait: METER_EVERY_MS };
     } catch {
       here = { ran: false, why: "missing", wait: METER_EVERY_MS };
