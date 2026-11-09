@@ -1243,8 +1243,10 @@ function approvedParams(s, worker, templateCommand = null) {
 }
 
 for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
-  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }]) {
-  test(`approved worker allows named ${worker.agent ?? worker.template} with today's identity`, async (t) => {
+  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" },
+  { agent: "antigravity", agyMode: "auto" }, { agent: "antigravity", agyMode: "accept-edits" },
+  { agent: "antigravity", agyMode: "plan" }]) {
+  test(`approved worker allows named ${worker.template ?? `${worker.agent} (${worker.agyMode ?? "default"})`} with today's identity`, async (t) => {
     const { s, client, fake } = await approvedWorkerScene(t, worker);
     const params = approvedParams(s, worker, fake.state.templates[0].command);
     const answer = await client.call("terminal.run", params);
@@ -1253,13 +1255,28 @@ for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
     assert.deepEqual(forwarded, { ...params, caller: "t100" },
       "argv, parent and worker labels match today's plain start; verified caller replaces input");
     assert.equal(forwarded.argv.includes("--worker"), false, "no dsh-tui wrapper or mask");
+    // An Antigravity worker's program is agy; every other named worker runs its key.
+    const program = worker.agent === "antigravity" ? "agy" : worker.agent;
     const other = worker.template ? { ...params, argv: ["review-sol", "do the task"] }
-      : { ...params, argv: params.argv.map((word) => word === worker.agent ? "pi" : word) };
+      : { ...params, argv: params.argv.map((word) => word === program ? "pi" : word) };
     const refused = await client.call("terminal.run", other);
     assert.match(refused.error.message, /approved worker argv refused.*exactly/);
     assert.equal(fake.calls("terminal.run").length, 1);
   });
 }
+
+test("approved Antigravity worker refuses a worker.agyMode label that does not match the approved mode", async (t) => {
+  for (const [approved, wrong] of [["plan", "accept-edits"], ["accept-edits", "plan"], ["auto", "plan"]]) {
+    const worker = { agent: "antigravity", agyMode: approved };
+    const { s, client, fake } = await approvedWorkerScene(t, worker);
+    const params = approvedParams(s, worker);
+    const answer = await client.call("terminal.run", { ...params, labels: { ...params.labels, "worker.agyMode": wrong } });
+    assert.ok(answer.error, `${approved} approved, ${wrong} label must be refused`);
+    assert.match(answer.error.message, /approved worker label worker\.agyMode does not match approval/, approved);
+    assert.equal(answer.error.message.includes("\n"), false);
+    assert.equal(fake.calls("terminal.run").length, 0, "nothing forwarded");
+  }
+});
 
 test("approved worker template listing is filtered and a live edit widens neither list nor start", async (t) => {
   const worker = { template: "dev-sol" };
