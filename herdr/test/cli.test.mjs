@@ -13,6 +13,7 @@ import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
+import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
 // the tests on the rest of the command compare it with those words out.
@@ -36,13 +37,15 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
 
 /** A scratch world: a git project, a fake hc, a fake home and app home. `trimsGit`: a git whose
  * stdout is trimmed, as a Herdr exec would answer the rule (#626, #665). */
-function scene(t, { terminals = [], briefing = true, window = { down: true }, trimsGit = false } = {}) {
+function scene(t, { terminals = [], briefing = true, window = { down: true }, trimsGit = false, isGit = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, "proj");
   mkdirSync(project);
-  git(project, "init", "-q");
-  git(project, "commit", "-q", "--allow-empty", "-m", "start");
+  if (isGit) {
+    git(project, "init", "-q");
+    git(project, "commit", "-q", "--allow-empty", "-m", "start");
+  }
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -2964,6 +2967,55 @@ function agentScene(t, agent, { config = null } = {}) {
   return s;
 }
 const briefingWords = (words) => words.map((w, i) => [w, i]).filter(([w]) => w.includes("<herdr-bot>"));
+
+test("worker scope: start and brief agree for git, worktree, opted-out and non-git projects", (t) => {
+  for (const mode of ["git", "worktree", "opt-out", "non-git"]) {
+    const s = scene(t, { isGit: mode !== "non-git" });
+    const file = team();
+    if (mode === "opt-out") file.bots[0].code = false;
+    s.seed(file);
+    let cwd = s.project;
+    if (mode === "worktree") {
+      cwd = join(s.root, "tree");
+      git(s.project, "worktree", "add", "-q", "-b", "tree", cwd);
+    }
+    const full = s.cli(["brief", "Genie", "--json"], { cwd });
+    assert.equal(full.code, 0, full.err);
+    const started = s.cli(["start", "Genie", "--json"], { cwd });
+    assert.equal(started.code, 0, started.err);
+    const words = agentWords(runCall(s.calls()));
+    const path = words[words.indexOf("--append-system-prompt-file") + 1];
+    const launch = readFileSync(path, "utf8");
+    const expected = mode === "git" || mode === "worktree";
+    for (const text of [full.json().briefing, launch]) {
+      assert.equal(text.includes(WORKER_LINE), expected, mode);
+      if (!expected) assert.doesNotMatch(text, /worker/i);
+    }
+  }
+});
+
+test("code setting: create, edit, unrelated edits and invalid input preserve the stored choice", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const made = s.cli(["create", "--name", "Writer", "--agent", "claude", "--code", "false"]);
+  assert.equal(made.code, 0, made.err);
+  const writer = () => s.bots().bots.find((b) => b.name === "Writer");
+  assert.equal(writer().code, false);
+  const role = s.cli(["edit", "Writer", "--role", "Writes prose"]);
+  assert.equal(role.code, 0, role.err);
+  assert.equal(writer().code, false);
+  const before = readFileSync(s.botsPath, "utf8");
+  for (const value of ["off", "0", "", "False"]) {
+    const invalid = s.cli(["edit", "Writer", "--code", value]);
+    assert.equal(invalid.code, 2, invalid.err);
+    assert.match(invalid.err, /--code is true or false/);
+    assert.equal(readFileSync(s.botsPath, "utf8"), before);
+  }
+  const enabled = s.cli(["edit", "Writer", "--code", "true"]);
+  assert.equal(enabled.code, 0, enabled.err);
+  assert.equal(writer().code, true);
+  assert.ok(s.cli(["brief", "Writer", "--json"]).json().briefing.includes(WORKER_LINE));
+});
 
 test("start: omp, pi and grok get the briefing once, as the word or value right after their executable", (t) => {
   for (const [agent, flag] of [["omp", null], ["pi", "--append-system-prompt"], ["grok", "--rules"]]) {

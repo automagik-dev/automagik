@@ -17,7 +17,7 @@ import { state } from "./use-stubs.mjs";
 import { parseBots } from "../mods/am-sidebar/model.js";
 import {
   briefingText, directMembers, mergeHook, hookCommand, legacyHookCommand, directHookCommand, briefingPath, stableBriefingPath, withExclude, EXCLUDE_LINE, BRIEFING_LIMIT,
-  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE,
+  botOfBriefingFile, briefDecision, briefingFilePath, launchBriefingText, textHash, GUARD_LINE, WORKER_LINE,
 } from "../mods/am-sidebar/briefingText.mjs";
 import { BUDGET_MS, CALL_MS, GUARD_MS, COMPACT_MARK, compactedSince, timeScale } from "../mods/am-sidebar/briefing.mjs";
 const { afterBind } = await import("../mods/am-sidebar/launch.js");
@@ -984,6 +984,54 @@ async function turns(t, argv, { input = (n) => JSON.stringify({ session_id: "s-1
   return { ...sc, app, fxPath, turn, pane };
 }
 const count = (outs) => outs.filter((o) => o.stdout.includes("<herdr-bot>")).length;
+
+test("worker instruction: launch and full briefings agree on code and git scope", async (t) => {
+  for (const [name, code, isGit, expected] of [
+    ["default", undefined, undefined, true],
+    ["code bot in git", true, true, true],
+    ["opted-out bot in git", false, true, false],
+    ["default bot outside git", undefined, false, false],
+    ["code bot outside git", true, false, false],
+    ["opted-out bot outside git", false, false, false],
+  ]) {
+    await t.test(name, () => {
+      const file = team();
+      const self = { ...byId(file, ID.main), code };
+      for (const render of [launchBriefingText, briefingText]) {
+        const text = render({ self, file, isGit });
+        assert.equal(text.includes(WORKER_LINE), expected);
+        if (!expected) assert.doesNotMatch(text, /worker/i);
+        assert.match(text, /Keep the board green/);
+      }
+    });
+  }
+});
+
+test("hook worker scope: a code opt-out refreshes both the briefing and its hash once", async (t) => {
+  const sc = await turns(t, () => ["claude"]);
+  assert.ok((await sc.turn(1)).stdout.includes(WORKER_LINE));
+  const file = team();
+  byId(file, ID.main).code = false;
+  writeFileSync(join(sc.main, ".herdr/bots.json"), JSON.stringify(file));
+  const out = await sc.turn(2);
+  assert.equal(out.stderr, "");
+  assert.match(out.stdout, /Keep the board green/);
+  assert.doesNotMatch(out.stdout, /worker/i);
+  assert.equal((await sc.turn(3)).stdout, "");
+});
+
+test("hook worker scope: a non-git project omits the instruction and stays quiet next turn", async (t) => {
+  const sc = await scratch(t);
+  const project = join(sc.root, "non-git");
+  mkdirSync(join(project, ".herdr"), { recursive: true });
+  writeFileSync(join(project, ".herdr/bots.json"), JSON.stringify(team()));
+  const env = { HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: project };
+  const out = await sc.brief(env, '{"session_id":"non-git"}', { keep: true });
+  assert.equal(out.stderr, "");
+  assert.match(out.stdout, /Keep the board green/);
+  assert.doesNotMatch(out.stdout, /worker/i);
+  assert.equal((await sc.brief(env, '{"session_id":"non-git"}', { keep: true })).stdout, "");
+});
 
 test("hook, a bot Start launched with its briefing file: three turns print it 0 times; the session is still joined", async (t) => {
   const { turn, root } = await turns(t, (app, main) => ["claude", "--append-system-prompt-file", briefingFilePath(app, main, ID.main)]);

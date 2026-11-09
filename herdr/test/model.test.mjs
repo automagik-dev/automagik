@@ -150,6 +150,25 @@ function sample(edit = (f) => f) {
 }
 const text = (f) => JSON.stringify(f);
 
+test("code is an optional boolean; invalid values warn; unrelated form edits keep the opt-out", () => {
+  assert.deepEqual(checkBots(sample()), []);
+  for (const code of [true, false]) {
+    const file = sample((f) => { f.bots[0].code = code; return f; });
+    assert.deepEqual(checkBots(file), []);
+    assert.equal(parseBots(text(file)).file.bots[0].code, code);
+    const { code: ignored, ...entry } = file.bots[0];
+    assert.equal(applyBotEdit(file, { ...entry, role: "Updated" }).bots[0].code, code);
+  }
+  for (const code of ["false", 0, null, {}]) {
+    const file = sample((f) => { f.bots[0].code = code; return f; });
+    assert.ok(checkBots(file).some((line) => /code is not a boolean/.test(line)));
+    const parsed = parseBots(text(file));
+    assert.equal(parsed.file.bots[0].code, undefined);
+    assert.ok(parsed.warnings.some((line) => /code is not a boolean/.test(line)));
+    assert.deepEqual(parsed.raw.bots[0].code, code);
+  }
+});
+
 test("hcProxy is an optional boolean, malformed settings warn and never opt in", () => {
   for (const value of [true, false]) {
     const file = sample((f) => { f.bots[0].hcProxy = value; return f; });

@@ -101,6 +101,16 @@ export function runProgram(command, args, { cwd, timeout = 15000 } = {}) {
 }
 const git = async (args, cwd) => { const r = await runProgram("git", args, { cwd }); return r.code === 0 ? r.stdout : null; };
 
+/** Check the project's own filesystem, including linked projects, before adding worker advice. */
+async function projectIsGit(project) {
+  const args = ["rev-parse", "--is-inside-work-tree"];
+  if (project.machine) {
+    const r = await remoteIo.exec("git", args, project.machine, { cwd: project.key });
+    return r.code === 0 && r.stdout.trim() === "true";
+  }
+  return (await git(args, project.key))?.trim() === "true";
+}
+
 /** The project a folder keys to (DESIGN Decision 15): the walk-up, for the folder a command runs in. */
 export const keyOf = (folder) => projectKeyOf(resolvePath(folder), git, exists);
 
@@ -1017,12 +1027,12 @@ const ownConfigOf = (agentKey) => (agentKey === "codex" ? configPaths(home()).co
  * can't be written, or a codex config that sets its own developer_instructions, means no
  * briefing at launch and a warning. Returns { argv, env, warnings }.
  */
-export function briefedLaunch(project, bot, agentKey, argv, appHomeDir = appHome()) {
+export async function briefedLaunch(project, bot, agentKey, argv, appHomeDir = appHome()) {
   const warnings = [];
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings };
-  const text = launchBriefingText({ self: bot, file: project.file });
+  const text = launchBriefingText({ self: bot, file: project.file, isGit: await projectIsGit(project) });
   let launch = null;
   if (way === "file") {
     const path = briefingFilePath(appHomeDir, project.key, bot.id);
@@ -1051,6 +1061,7 @@ const OPTIONS = {
   json: { type: "boolean" }, all: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean" },
   project: { type: "string" }, name: { type: "string" }, agent: { type: "string" }, kind: { type: "string" },
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
+  code: { type: "string" },
   lead: { type: "string" }, category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
@@ -1080,6 +1091,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   ls [--all]                    bots with kind, lead, category, rank, planned, agent, model, pane, status
   show <bot>                    one bot in full
   create --name N --agent A [--kind main|member] [--role R]
+         [--code true|false]            false omits the worker instruction; default true
          [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--planned-wave N [--planned-note T]]          prints the new bot's id
@@ -1310,6 +1322,10 @@ export function entryFrom(opts, base, project, { creating }) {
   if (creating && !main && entry.kind !== "main") throw new CliError("The first bot in a project must be its main bot (--kind main).");
   if (entry.kind === "main" && main && main.id !== entry.id) throw new CliError(`This project already has a main bot, ${main.name} (${main.id}).`);
   if (opts.role !== undefined) entry.role = opts.role;
+  if (opts.code !== undefined) {
+    if (!["true", "false"].includes(opts.code)) throw new CliError("--code is true or false; nothing was saved.", 2);
+    entry.code = opts.code === "true";
+  }
   entry.role ??= "";
   // Rank (A16): one of RANKS, for the pane's role= label; --rank= clears it (kept empty so
   // applyBotEdit removes the stored one).
@@ -2179,7 +2195,7 @@ async function briefedOn(machine, project, bot, agentKey, argv, boxHome, guard =
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || briefingOwnConfig(agentKey) || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings: [] };
-  const text = launchBriefingText({ self: bot, file: project.file, guard });
+  const text = launchBriefingText({ self: bot, file: project.file, guard, isGit: await projectIsGit(project) });
   const warnings = [];
   let launch = null;
   if (way === "file") {
@@ -2588,7 +2604,7 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // The briefing goes into the command itself (start and restart alike), so no hook prints it every turn.
-  const briefed = briefedLaunch(project, bot, agentKey, over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)]);
+  const briefed = await briefedLaunch(project, bot, agentKey, over.argv ?? [...agent.run, ...modelArgs(bot.agent, bot.model)]);
   const argv = briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
@@ -3930,7 +3946,7 @@ async function cmdBrief(opts, [ref]) {
     return { get, duplicate: false, addresses: [get.address], gets: [get] };
   };
   const self = await locate(bot.id);
-  const text = await gatherBriefing({ file: project.file, bot, address: self.get?.address ?? null, ask, locate });
+  const text = await gatherBriefing({ file: project.file, bot, address: self.get?.address ?? null, ask, locate, isGit: await projectIsGit(project) });
   return opts.json ? { id: bot.id, briefing: text } : text;
 }
 
