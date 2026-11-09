@@ -2360,13 +2360,16 @@ test("history: the bot's panes, starts, sessions (only while it held the pane) a
   assert.deepEqual(h.attach.map((r) => r.event), ["attach", "detach"]);
   assert.deepEqual(h.starts.map((r) => r.terminal), ["t5"]);
   assert.deepEqual(h.workers.map((r) => r.branch), ["fix-x"]);
-  assert.deepEqual(h.sessions.map((r) => r.session), ["11111111-aaaa"], "Captain's later session in t5 isn't Dev's");
+  // One session row, Dev's (Captain's later session in t5 isn't Dev's); its id shown as *** (RFC 0021).
+  assert.deepEqual(h.sessions.map((r) => [r.terminal, r.session]), [["t5", "***"]]);
+  assert.equal(json.out.includes("11111111-aaaa"), false);
   assert.equal(h.transcript, "/x/dev.jsonl");
   const text = s.cli(["history", "Dev"]);
   assert.equal(text.code, 0, text.err);
   assert.match(text.out, /^Dev \(b-cccccccccc\)\n {2}what happened\n {4}2026-11-03 10:03 detached from t5 · by detach\n/);
   assert.match(text.out, / {2}workers\n {4}2026-11-03 10:02 fix-x · dev · codex · t8\n/);
   assert.match(text.out, / {2}transcript {3}\/x\/dev\.jsonl/);
+  assert.equal(`${text.out}${text.err}`.includes("11111111-aaaa"), false, "no session id in text either");
   // The ledgers are only read.
   assert.equal(attachOf(s).length, 3);
   assert.equal(ledgerOf(s).length, 4);
@@ -2414,8 +2417,9 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.deepEqual(plain(agentWords(second)), ["codex"], "then a new thread");
   const j = r.json();
   assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
-  assert.equal(j.note, `codex can't resume thread ${SID} (t100 said "${CODEX_GONE}"), so it starts on a new one`);
-  assert.ok(j.warnings.some((w) => w.includes(`thread ${SID}`)), "the sidebar's warnings say it too");
+  assert.equal(j.note, `codex can't resume its thread (***) (t100 said "${CODEX_GONE}"), so it starts on a new one`);
+  assert.ok(j.warnings.some((w) => w.includes("its thread (***)")), "the sidebar's warnings say it too");
+  assert.equal(`${r.out}${r.err}`.includes(SID), false, "the thread's id is never printed (RFC 0021)");
   assert.equal(s.hcState().terminals.find((x) => x.address === "t101").labels["agent.session"], undefined, "the dead thread's id isn't carried on");
   assert.ok(at(s.calls(), "kill", "t6") > at(s.calls(), "run"), "t6 ends once t101 is up");
   assert.equal(foldRows(attachOf(s)).byBot.get(ID.cap).terminal, "t101");
@@ -2424,7 +2428,9 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   const s2 = codexBot([{ runAs: "exit", screen: `${other}\n% ` }]);
   const r2 = s2.cli(["restart", "Captain", "--json"]);
   assert.equal(r2.code, 1);
-  assert.equal(r2.json().cause, other);
+  // codex's own words, relayed with the thread id shown as *** (RFC 0021: no id in any output).
+  assert.equal(r2.json().cause, other.split(SID).join("***"));
+  assert.equal(`${r2.out}${r2.err}`.includes(SID), false);
   assert.equal(runs(s2).length, 1);
   assert.equal(at(s2.calls(), "kill"), -1);
   // The phrase without codex's code is another failure: no fresh start.
@@ -2905,16 +2911,20 @@ test("restart --tree: hc run failing for helper 2 of 3: helpers 1 and 3 run agai
   assert.equal(r.code, 1, "the bot and two helpers restarted, one didn't");
   assert.equal(r.json().terminal, "t100");
   assert.deepEqual(r.json().helpers.map((h) => [h.replaced, h.terminal, h.up, Boolean(h.error)]), [["t7", "t101", true, false], ["t8", null, false, true], ["t10", "t102", true, false]]);
-  const line = r.json().helpers[1].by_hand;
-  // The same words the restart ran for it: its name, folder, labels, parent, the seat's PATH and its command, resumed.
+  const shown = r.json().helpers[1].by_hand;
+  // RFC 0021: the line shows *** for the session id; put back as its note says, it is the same
+  // words the restart ran for it: its name, folder, labels, parent, the seat's PATH and its command, resumed.
+  assert.equal(shown.includes(SID2), false);
+  const line = shown.split("***").join(SID2);
   const tried = s.calls().find((c) => c[0] === "run" && c.includes("rev-1"));
   assert.deepEqual(pastedLine(t, line), tried);
   assert.deepEqual([tried[tried.indexOf("--cwd") + 1], tried[tried.indexOf("--parent") + 1]], [wt2, "t100"]);
   assert.ok(tried.includes(`revive.session=${SID2}`) && tried.includes("/usr/bin/env") && tried.some((w) => w.startsWith("PATH=")), tried.join(" "));
   assert.deepEqual(agentWords(tried).slice(-2), ["sh", `--resume=${SID2}`]);
   assert.ok(r.err.includes(`t8 (rev-1) wasn't run again: hc run failed (hc: can't start rev-1). Its conversation is kept; to run it again by hand:\n`
-    + `automagik-herdr:   ${line}\n`) || r.err.includes(`  ${line}\n  # resumes session ${SID2}`), r.err);
-  assert.match(r.err, new RegExp(`# resumes session ${SID2}`));
+    + `automagik-herdr:   ${shown}\n`) || r.err.includes(`  ${shown}\n  # resumes its session by id`), r.err);
+  assert.match(r.err, /# resumes its session by id: put the id where \*\*\* stands; hc get t8 shows it/);
+  assert.equal(`${r.out}${r.err}`.includes(SID2), false, "no session id printed");
   assert.deepEqual(agentWords(runs(s).at(-1)), ["codex", "-m", "gpt-a", "resume", SID3], "helper 3 resumed by its id");
   const state = s.hcState();
   assert.deepEqual(["t5", "t7", "t8", "t10", "t100", "t101", "t102"].map((x) => state.terminals.find((y) => y.address === x).state),
@@ -3020,7 +3030,8 @@ test("restart --tree refuses before anything starts: a gone folder, a helper hc 
   writeFileSync(join(dup.root, "hc.json"), JSON.stringify(st5));
   const d = dup.cli(["restart", "Genie", "--tree"]);
   assert.equal(d.code, 1);
-  assert.match(d.err, new RegExp(`Genie and rev-1 would all resume session ${SID}: one session runs in one pane\\. Nothing was started\\.`));
+  assert.match(d.err, /Genie and rev-1 would all resume one session \(\*\*\*\): one session runs in one pane\. Nothing was started\./);
+  assert.equal(d.err.includes(SID), false);
   assert.equal(runCall(dup.calls()), undefined);
 });
 
@@ -3780,4 +3791,126 @@ test("RFC 0021: a project app home already ignored adds nothing to the exclude f
   // (The briefing hook adds its own settings.local.json line there, as always; nothing for the app home.)
   assert.equal((existsSync(exclude) ? readFileSync(exclude, "utf8") : "").includes(".herdr/app-home"), false);
   assert.equal(r.err.includes("ignore"), false, r.err);
+});
+
+// ---- RFC 0021 delivery 3, review round: the Fixer's and the Herdr Captain's items ----
+
+test("RFC 0021: a ledger git tracks under a project app home is detected and said, with what to do", (t) => {
+  const { s, app, exclude } = projectHomeScene(t);
+  mkdirSync(join(app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(app, "automagik-herdr/workers.jsonl"), "");
+  git(s.project, "add", "-f", ".herdr/app-home/automagik-herdr/workers.jsonl");
+  git(s.project, "commit", "-qm", "a ledger committed by mistake");
+  const r = s.cli(["start", "Genie"], { env: { HERDR_APP_HOME: app } });
+  assert.equal(r.code, 0, r.err);
+  const said = r.err.split("\n").filter((l) => l.includes("is tracked by git"));
+  assert.equal(said.length, 1, r.err);
+  assert.match(said[0], /\.herdr\/app-home\/automagik-herdr\/workers\.jsonl is tracked by git in .*: an exclude can't untrack a file, so it stays in git until you run git rm --cached \.herdr\/app-home\/automagik-herdr\/workers\.jsonl there and commit that/);
+  // The line goes in anyway, once, so the file stays out once untracked.
+  assert.equal(readFileSync(exclude, "utf8").split("\n").filter((l) => l === "/.herdr/app-home/").length, 1);
+  assert.equal(git(s.project, "ls-files", ".herdr/app-home/automagik-herdr/workers.jsonl").trim(), ".herdr/app-home/automagik-herdr/workers.jsonl",
+    "the CLI untracks nothing itself");
+});
+
+test("RFC 0021: an app home at a work tree's root excludes only its ledger folder, never the whole tree", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  mkdirSync(join(s.project, "mods/am-sidebar"), { recursive: true });
+  writeFileSync(join(s.project, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
+  const r = s.cli(["start", "Genie"], { env: { HERDR_APP_HOME: s.project } });
+  assert.equal(r.code, 0, r.err);
+  const lines = readFileSync(join(s.project, ".git/info/exclude"), "utf8").split("\n");
+  assert.equal(lines.includes("/*"), false);
+  assert.equal(lines.filter((l) => l === "/automagik-herdr/").length, 1);
+  assert.equal(git(s.project, "check-ignore", "-q", "automagik-herdr/workers.jsonl"), "");
+});
+
+test("RFC 0021: one end row per launch: restart --tree and the worktree sweep both see the helper end", (t) => {
+  const { s } = treeScene(t);
+  // t7's worker made its worktree and its row has the launch key, so the sweep looks at it too.
+  const rows = ledgerOf(s).map((x) => (x.terminal === "t7" ? { ...x, created: true, core: "fakecore0000", created_ms: 1 } : x));
+  writeFileSync(ledgerPath(s.app), rows.map((x) => `${JSON.stringify(x)}\n`).join(""));
+  assert.equal(s.cli(["restart", "Genie", "--tree"]).code, 0);
+  // Its replacement ends too; both finished long enough ago for the sweep to look.
+  const st = s.hcState();
+  for (const x of st.terminals) if (["t7", "t101"].includes(x.address)) Object.assign(x, { state: "finished", finished_ms: Date.now() - 20 * 60_000 });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  for (let i = 0; i < 2; i += 1) assert.equal(s.cli(["reap"]).code, 0);
+  const ends = (terminal) => ledgerOf(s).filter((x) => x.event === "end" && x.terminal === terminal).map((x) => x.reason);
+  assert.deepEqual(ends("t7"), ["replaced"], "the sweep adds none for a launch --tree ended");
+  assert.deepEqual(ends("t101"), ["finished"], "the replacement's own, once, though the sweep ran twice");
+  assert.deepEqual(ends("t5"), ["replaced"]);
+});
+
+/** Every session id the scene's ledger and hc labels hold. */
+const heldSessions = (s) => new Set([...ledgerOf(s).map((x) => x.session),
+  ...s.hcState().terminals.flatMap((x) => [x.labels?.["agent.session"], x.labels?.["revive.session"]])].filter((x) => typeof x === "string" && x.length >= 6));
+/** Asserts no output `r` (stdout and stderr) holds any of `ids`. */
+const noIdIn = (ids, r, what) => { for (const id of ids) assert.equal(`${r.out}${r.err}`.includes(id), false, `${what} printed a session id: ${r.out}${r.err}`); };
+
+test("RFC 0021: no session id in any output: start, restart (resume, --fresh, --tree, a by-hand line, a refusal), history, worker", (t) => {
+  // start and restart, --json and text.
+  const s = scene(t);
+  s.seed(team());
+  const outs = [];
+  outs.push(["start --json", s.cli(["start", "Genie", "--json"])]);
+  outs.push(["restart --json", s.cli(["restart", "Genie", "--force", "--json"])]);
+  outs.push(["restart", s.cli(["restart", "Genie", "--force"])]);
+  outs.push(["restart --fresh", s.cli(["restart", "Genie", "--fresh", "--force"])]);
+  outs.push(["history --json", s.cli(["history", "Genie", "--json"])]);
+  outs.push(["history", s.cli(["history", "Genie"])]);
+  for (const [what, r] of outs) { assert.equal(r.code, 0, `${what}: ${r.err}`); noIdIn(heldSessions(s), r, what); }
+  assert.ok(heldSessions(s).size >= 2, "the sweep had ids to look for");
+  // --tree, text and --json, a helper resumed by its revive.session id.
+  const tree = treeScene(t).s;
+  const tj = tree.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(tj.code, 0, tj.err);
+  noIdIn(heldSessions(tree), tj, "restart --tree --json");
+  const tt = treeScene(t).s;
+  const tx = tt.cli(["restart", "Genie", "--tree"]);
+  noIdIn(heldSessions(tt), tx, "restart --tree");
+  // A helper that can't run again: its by-hand line, --json and text.
+  for (const json of [true, false]) {
+    const hs = treeScene(t).s;
+    const st = hs.hcState();
+    st.failRun = ["rev-1"];
+    writeFileSync(join(hs.root, "hc.json"), JSON.stringify(st));
+    const r = hs.cli(["restart", "Genie", "--tree", ...(json ? ["--json"] : [])]);
+    if (json) assert.ok(r.json().helpers.some((h) => h.by_hand), r.out);
+    assert.match(r.err, /to run it again by hand/);
+    assert.match(r.err, /put the id where \*\*\* stands/);
+    noIdIn(heldSessions(hs), r, `a by-hand line${json ? " (--json)" : ""}`);
+  }
+  // A refusal naming two runs on one session.
+  const twice = treeScene(t).s;
+  const ts = twice.hcState();
+  ts.terminals.find((x) => x.address === "t8").labels["revive.session"] = SID;
+  writeFileSync(join(twice.root, "hc.json"), JSON.stringify(ts));
+  const refused = twice.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /would all resume one session \(\*\*\*\)/);
+  noIdIn(heldSessions(twice), refused, "the one-session refusal");
+});
+
+test("RFC 0021: an anchored ignore that already covers the ledger adds nothing to the exclude file and says nothing", (t) => {
+  for (const ignore of ["/.herdr/app-home/automagik-herdr/workers.jsonl\n", "/.herdr/app-home/\n"]) {
+    const { s, app, exclude } = projectHomeScene(t, { ignore });
+    const r = s.cli(["start", "Genie"], { env: { HERDR_APP_HOME: app } });
+    assert.equal(r.code, 0, r.err);
+    assert.equal((existsSync(exclude) ? readFileSync(exclude, "utf8") : "").includes(".herdr/app-home"), false, ignore);
+    assert.equal(/ignore|tracked by git/.test(r.err), false, r.err);
+  }
+});
+
+test("RFC 0021: no session id in the codex provider-gone note, on stderr or in --json", (t) => {
+  for (const json of [true, false]) {
+    const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex", "resume", SID], cwd: "/p" }, argv: ["codex", "resume", SID],
+      labels: { bot: ID.cap, "agent.session": SID } } });
+    const st = s.hcState();
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify({ ...st, runQueue: [{ runAs: "exit", screen: CODEX_SCREEN }] }));
+    const r = s.cli(["restart", "Captain", ...(json ? ["--json"] : [])]);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.err, /codex can't resume its thread \(\*\*\*\)/);
+    noIdIn(new Set([SID]), r, `the provider-gone note${json ? " (--json)" : ""}`);
+  }
 });

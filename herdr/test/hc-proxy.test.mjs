@@ -1439,3 +1439,44 @@ test("unbound approved pane refuses proxy.workerTransport", async (t) => {
     /^hc-proxy: proxy\.workerTransport: only an approved bot pane has a worker transport$/);
   assert.deepEqual(fake.log, [], "the transport request is never forwarded upstream");
 });
+
+// RFC 0021 (f) 2: a new Claude worker's session id, as its agent.session label and exactly
+// `--session-id <that id>` before its task. Synthetic ids only.
+test("approved Claude worker: the proxy accepts its chosen session id and refuses every other shape", async (t) => {
+  const SESSION = "00000000-0000-4000-8000-0000000000a1";
+  const OTHER = "00000000-0000-4000-8000-0000000000b2";
+  const withSession = (params, { label = SESSION, argvId = SESSION } = {}) => {
+    const argv = [...params.argv];
+    if (argvId !== null) argv.splice(argv.length - 1, 0, "--session-id", argvId);
+    const labels = { ...params.labels };
+    if (label !== null) labels["agent.session"] = label;
+    return { ...params, argv, labels };
+  };
+  const claude = { agent: "claude", model: "chosen", effort: "high" };
+  const { s, client, fake } = await approvedWorkerScene(t, claude);
+  const params = approvedParams(s, claude);
+  const ok = withSession(params);
+  const accepted = await client.call("terminal.run", ok);
+  assert.ok(accepted.result, JSON.stringify(accepted));
+  assert.deepEqual(fake.calls("terminal.run").at(-1).params, { ...ok, caller: "t100" });
+  const refusals = [
+    ["a different id in argv", withSession(params, { argvId: OTHER }), /approved worker argv refused.*exactly/],
+    ["a label with no id in argv", withSession(params, { argvId: null }), /approved worker argv refused.*exactly/],
+    ["an id in argv with no label", withSession(params, { label: null }), /approved worker argv refused.*exactly/],
+    ["a label that isn't a UUID", withSession(params, { label: "not-a-session", argvId: "not-a-session" }),
+      /approved worker label agent\.session does not match approval/],
+  ];
+  for (const [what, call, why] of refusals) {
+    const answer = await client.call("terminal.run", call);
+    assert.ok(answer.error, what);
+    assert.match(answer.error.message, why, what);
+  }
+  assert.equal(fake.calls("terminal.run").length, 1, "only the matching one was forwarded");
+  // Another agent never takes a session label.
+  const codex = { agent: "codex", model: "chosen", effort: "high" };
+  const other = await approvedWorkerScene(t, codex);
+  const cp = approvedParams(other.s, codex);
+  const answer = await other.client.call("terminal.run", { ...cp, labels: { ...cp.labels, "agent.session": SESSION } });
+  assert.match(answer.error?.message ?? "", /approved worker label agent\.session does not match approval/);
+  assert.equal(other.fake.calls("terminal.run").length, 0);
+});

@@ -2212,3 +2212,27 @@ test("unset caller terminal keeps server.status and the guard route", async (t) 
   assert.equal(s.runs().length, 0, "no unguarded worker route is selected");
   assert.equal(probes, 0, "an unset expected terminal is refused before connecting");
 });
+
+// RFC 0021 (f) 2: a new Claude worker runs on a session id Herdr chose; its row names it, output never.
+test("worker: a new Claude worker's --session-id is its label and its start row's session; --json and text show ***", (t) => {
+  const file = team();
+  delete file.bots[2].worker;
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "write the parser", "--branch", "feat/parser", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const words = after(run);
+  const sid = words[words.indexOf("--session-id") + 1];
+  assert.match(sid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.ok(labelsOf(run).includes(`agent.session=${sid}`));
+  const row = s.ledger().find((x) => x.event === "start" && x.terminal === r.json().terminal);
+  assert.equal(row.session, sid);
+  assert.deepEqual(r.json().argv, ["claude", "--session-id", "***"]);
+  assert.equal(`${r.out}${r.err}`.includes(sid), false, "never printed");
+  // A codex worker: no session id, none in its row.
+  const text = s.cli(["worker", "review it", "--branch", "feat/other", "--agent", "codex"]);
+  assert.equal(text.code, 0, text.err);
+  assert.equal(after(s.runs()[1]).includes("--session-id"), false);
+  assert.equal(s.ledger().filter((x) => x.event === "start").at(-1).session, null);
+  for (const id of s.ledger().map((x) => x.session).filter(Boolean)) assert.equal(`${text.out}${text.err}`.includes(id), false);
+});

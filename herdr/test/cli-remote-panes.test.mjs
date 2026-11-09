@@ -755,8 +755,9 @@ test("restart --machine #413: codex can't resume a thread whose model provider i
   assert.ok(!runs[1].includes("resume"), "then a new thread");
   const out = r.json();
   assert.deepEqual([out.mode, out.terminal, out.replaced], ["fresh", "t101", "t9"]);
-  assert.equal(out.note, `codex can't resume thread ${thread} (vm/t100 said "${gone}"), so it starts on a new one`);
-  assert.ok(out.warnings.some((w) => w.includes(`thread ${thread}`)));
+  assert.equal(out.note, `codex can't resume its thread (***) (vm/t100 said "${gone}"), so it starts on a new one`);
+  assert.ok(out.warnings.some((w) => w.includes("its thread (***)")));
+  assert.equal(`${r.out}${r.err}`.includes(thread), false, "the thread's id is never printed (RFC 0021)");
   assert.equal(s.hcState().terminals.find((x) => x.address === "vm/t101").labels["agent.session"], undefined);
   assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one is up");
 });
