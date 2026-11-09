@@ -99,7 +99,7 @@ const exists = async (path) => { try { await access(path); return true; } catch 
  * own live terminal, whose unlabelled children are its helpers (null: no helpers counted).
  * Shared with the CLI's `automagik-herdr brief`.
  */
-export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask), guard = null }) {
+export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask), guard = null, isGit = true }) {
   const team = directMembers(file, bot.id);
   const leadId = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
   const leadBot = leadId ? file.bots.find((b) => b.id === leadId) : null;
@@ -124,7 +124,7 @@ export async function gatherBriefing({ file, bot, address, ask, locate = (id) =>
   const lead = leadBot
     ? { bot: leadBot, terminal: leadPane?.get?.address ?? "", status: leadPane?.get?.status?.state, unreachable: Boolean(leadPane?.unreachable) }
     : undefined;
-  return briefingText({ self: bot, file, members, lead, helpers, guard });
+  return briefingText({ self: bot, file, members, lead, helpers, guard, isGit });
 }
 
 /**
@@ -202,7 +202,8 @@ async function main(mePending, inputPending, appHome) {
   const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
   const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
   const guard = guardOnPath(process.env.PATH);
-  const now = textHash(launchBriefingText({ self: bot, file, guard }));
+  const isGit = (await git(["rev-parse", "--is-inside-work-tree"], key))?.trim() === "true";
+  const now = textHash(launchBriefingText({ self: bot, file, guard, isGit }));
   const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
   const offset = () => (transcript ? sizeOf(transcript) : 0);
   const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset() });
@@ -210,7 +211,7 @@ async function main(mePending, inputPending, appHome) {
     if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
     return null;
   }
-  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, guard, ...(ledger ? { locate: ledger.locate } : {}) });
+  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, guard, isGit, ...(ledger ? { locate: ledger.locate } : {}) });
   return { text, record };
 }
 

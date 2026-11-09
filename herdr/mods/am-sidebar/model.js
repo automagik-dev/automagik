@@ -166,6 +166,10 @@ export function parseBots(text) {
     if (!isText(b.name)) return warnings.push(`${where}: no name, left out`);
     if (!KINDS.includes(b.kind)) return warnings.push(`${where}: unknown kind ${JSON.stringify(b.kind)}, left out`);
     const bot = { ...b };
+    if (bot.code !== undefined && typeof bot.code !== "boolean") {
+      warnings.push(`${where}: code is not a boolean; ignored`);
+      delete bot.code;
+    }
     if (bot.hcProxy !== undefined && typeof bot.hcProxy !== "boolean") {
       warnings.push(`${where}: hcProxy is not a boolean; ignored`);
       delete bot.hcProxy;
@@ -299,6 +303,7 @@ export function checkBots(file, before = null) {
     if (!KINDS.includes(b.kind)) errors.push(`${at}: unknown kind`);
     if (!isObject(b.look) || !isText(b.look.character) || !isText(b.look.colour)) errors.push(`${at}: no look`);
     if (typeof b.role !== "string") errors.push(`${at}: no role`);
+    if (b.code !== undefined && typeof b.code !== "boolean") errors.push(`${at}: code is not a boolean`);
     if (b.hcProxy !== undefined && typeof b.hcProxy !== "boolean") {
       errors.push(`${at}: hcProxy is not a boolean`);
     }
