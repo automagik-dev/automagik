@@ -77,16 +77,21 @@ android {
         unitTests.isReturnDefaultValues = true
         // Robolectric takes a lock at <user.home>/.robolectric-download-lock and reads its android-all
         // jar from <user.home>/.m2/repository. A sandboxed pane has a read-only home, so the lock fails
-        // ("Couldn't create lock file"). Give the test JVMs a writable home under build/ (the lock
-        // lands there), and point Robolectric's Maven resolver at the real, shared repository so the
-        // cached jar is read in place: a miss still downloads into ~/.m2/repository for CI's cache.
-        val sharedMavenRepository = System.getProperty("maven.repo.local")?.takeIf { it.isNotBlank() }
-            ?: File(System.getProperty("user.home"), ".m2/repository").absolutePath
-        unitTests.all { test ->
-            val robolectricHome = project.layout.buildDirectory.dir("robolectric-home").get().asFile
-            test.doFirst { robolectricHome.mkdirs() }
-            test.systemProperty("user.home", robolectricHome.absolutePath)
-            test.systemProperty("maven.repo.local", sharedMavenRepository)
+        // ("Couldn't create lock file"). Only then give the test JVMs a writable home under build/ (the
+        // lock lands there) and point Robolectric's resolver at the shared repository: a preset
+        // -Dmaven.repo.local wins, otherwise the shared ~/.m2/repository is read in place. In that
+        // sandbox/read-only-home case a settings.xml localRepository is not consulted. A writable home
+        // (developer machine, CI) sets nothing, so the test JVMs keep the real user.home and Robolectric
+        // keeps its normal resolution (~/.m2, a settings.xml localRepository honoured) as before #773.
+        if (!File(System.getProperty("user.home")).canWrite()) {
+            val sharedMavenRepository = System.getProperty("maven.repo.local")?.takeIf { it.isNotBlank() }
+                ?: File(System.getProperty("user.home"), ".m2/repository").absolutePath
+            unitTests.all { test ->
+                val robolectricHome = project.layout.buildDirectory.dir("robolectric-home").get().asFile
+                test.doFirst { robolectricHome.mkdirs() }
+                test.systemProperty("user.home", robolectricHome.absolutePath)
+                test.systemProperty("maven.repo.local", sharedMavenRepository)
+            }
         }
     }
 }
