@@ -240,7 +240,9 @@ impl Store {
     }
 
     /// Drops every row and offset so the next read imports again from `counted_from`, and marks
-    /// the store as the current version.
+    /// the store as the current version. It also forgets when the last run finished and what it
+    /// left: until a run over the new window ends, a reader sees no watermark and an unknown
+    /// backlog, never a partial re-import passed off as complete and fresh.
     pub fn reset(&mut self, counted_from_ms: i64) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute_batch(
@@ -256,7 +258,7 @@ impl Store {
             [SCHEMA_VERSION.to_string()],
         )?;
         tx.execute(
-            "DELETE FROM meta WHERE k IN ('last_success_ms', 'last_pending_bytes',
+            "DELETE FROM meta WHERE k IN ('last_success_ms', 'last_run_ms', 'last_pending_bytes',
              'last_pending_files', 'codex_watermark_ms', 'codex_bad_lines')",
             [],
         )?;
@@ -583,6 +585,10 @@ pub struct Peek {
     pub version: i64,
     /// The start of its window; None until its first sync reset it.
     pub counted_from_ms: Option<i64>,
+    /// Whether `usage`, `files` or `seen` holds a row: a reset would drop something.
+    pub has_rows: bool,
+    /// Whether it has the `usage_repo_branch` index the query reads through.
+    pub has_repo_index: bool,
 }
 
 /// Reads a store's version and window without writing a byte. None when there is no store yet:
@@ -604,9 +610,24 @@ pub fn peek(path: &Path) -> rusqlite::Result<Option<Peek>> {
     } else {
         None
     };
+    let mut has_rows = false;
+    for t in ["usage", "files", "seen"] {
+        if table_exists(&conn, t)? {
+            has_rows |= conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {t})"), [], |r| {
+                r.get::<_, bool>(0)
+            })?;
+        }
+    }
+    let has_repo_index = conn.query_row(
+        "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'index' AND name = 'usage_repo_branch'",
+        [],
+        |r| r.get(0),
+    )?;
     Ok(Some(Peek {
         version,
         counted_from_ms,
+        has_rows,
+        has_repo_index,
     }))
 }
 

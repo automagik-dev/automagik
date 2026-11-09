@@ -145,3 +145,85 @@ fn repo_key_strips_credentials_and_collapses_worktrees() {
     let db = fs::read(env.state().join("meter.db")).unwrap();
     assert!(!String::from_utf8_lossy(&db).contains("FAKE-TOKEN-123"));
 }
+
+/// The Reviewer's H1: a sync killed (SIGKILL) during a reset's re-import leaves a store whose
+/// rows are partial. The query must say so: no watermark, an unknown backlog, not complete, and
+/// stale; never the partial count passed off as complete and fresh.
+#[test]
+fn a_reimport_killed_partway_is_reported_incomplete() {
+    let env = Env::new();
+    let ts = meter::time::format_rfc3339(meter::time::now_ms() - 3_600_000);
+    big_fixture(&env, 8, 4000, &ts);
+    let spawn = || {
+        env.command()
+            .args(["sync", "--force", "--no-publish"])
+            .env("METER_STATE_DIR", env.state())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    assert!(spawn().wait().unwrap().success());
+    let db = env.state().join("meter.db");
+    let ctx = || meter::query::Ctx {
+        state: Some(meter::paths::StateDirs {
+            dir: env.state(),
+            legacy: None,
+        }),
+        overridden: true,
+        now_ms: meter::time::now_ms(),
+        busy: Duration::from_secs(2),
+        meter_version: "0.0.0".into(),
+    };
+    let ask = || -> serde_json::Value {
+        let args: Vec<String> = [
+            "--repo",
+            "example.com/acme/app",
+            "--branch",
+            "feat/x",
+            "--json",
+        ]
+        .map(String::from)
+        .to_vec();
+        serde_json::from_str(&meter::query::run(&args, &ctx()).stdout).unwrap()
+    };
+    assert_eq!(ask()["ingestion"]["complete"], true);
+    // An older meter's store: the next sync keeps a generation, resets, and re-imports.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("UPDATE meta SET v = '1' WHERE k = 'schema_version'", [])
+        .unwrap();
+    let read = |sql: &str| -> Option<String> {
+        let c = meter::store::Store::open_read_only(&db).ok()?;
+        c.conn.query_row(sql, [], |r| r.get::<_, String>(0)).ok()
+    };
+    let mut child = spawn();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() && started.elapsed() < Duration::from_secs(60) {
+        let reset = read("SELECT v FROM meta WHERE k = 'schema_version'").as_deref() == Some("2");
+        let some = read("SELECT CAST(count(*) AS TEXT) FROM files").is_some_and(|n| n != "0");
+        if reset && some {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(
+        read("SELECT v FROM meta WHERE k = 'last_run_ms'"),
+        None,
+        "the kill should land after the reset and before the run ends"
+    );
+    let v = ask();
+    let ing = &v["ingestion"];
+    assert_eq!(v["status"], "ok", "{v}");
+    assert_eq!(ing["complete"], false, "{ing}");
+    assert_eq!(ing["stale"], true, "{ing}");
+    assert!(ing["watermark"].is_null(), "{ing}");
+    assert!(ing["backlog"]["bytes"].is_null(), "{ing}");
+    assert_ne!(v["rows"][0]["state"], "measured", "{v}");
+    assert_ne!(v["rows"][0]["state"], "zero", "{v}");
+    // The next sync finishes the re-import and the answer is complete again.
+    assert!(spawn().wait().unwrap().success());
+    assert_eq!(ask()["ingestion"]["complete"], true);
+}
