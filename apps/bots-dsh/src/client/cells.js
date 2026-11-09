@@ -1124,10 +1124,11 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
     case 'show_view':
       return h(WidgetCell, { sessionId, callId: call.callId, args: { text: arg, value: argValue }, done, isError: call.isError, roster, actions, heldCards })
     case 'generate_image':
-      return h(ImageCell, { callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError })
+      // The chat's own Bot paints (image-cell.js painterOf); a group chat has none, so the mark does.
+      return h(ImageCell, { bot: self, callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError })
     case 'acp_tool':
       return agentImage(call)
-        ? h(ImageCell, { callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError })
+        ? h(ImageCell, { bot: self, callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError })
         : null
     case 'request_secret':
       return h(SecretToolCell, { sessionId, callId: call.callId, name: arg('name'), done, content: call.content, roster, actions, heldCards })
