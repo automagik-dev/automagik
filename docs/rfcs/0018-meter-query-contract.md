@@ -181,7 +181,9 @@ repo has any such usage in the window (`unattributed.tokens_total` above zero):
 - no row of that call is `zero`: a branch with nothing of its own is `missing` with
   `branch_unattributed`;
 - every row's `attribution.coverage` is `partial`, so a measured row is a lower bound. A mixed
-  Claude and OMP session shows its Claude subset, priced, marked partial;
+  Claude and OMP session shows its Claude subset, priced, marked partial. A bot row of a
+  `--by bot` query that names no branch is the exception: it counts that usage itself, so it is
+  `complete` (RFC 0021 (d));
 - the meter never assigns the usage to a branch: not from today's checkout, not from another
   harness's session at the same hour. Only durable evidence may attribute it later: a worker
   launch's start row, which fills the branch with `branch_basis: ledger` (RFC 0021), or M3's
@@ -589,7 +591,7 @@ genie's side of the boundary, built in genie and named here only so the order is
 
 - `envelope.schema.json`, the contract.
 - `repo-normalization.json`, the remote-to-`--repo` cases.
-- `examples/`, one envelope per case. RFC 0021's delivery 2 adds seven, listed there, which are
+- `examples/`, one envelope per case. RFC 0021's delivery 2 adds eight, listed there, which are
   schema-only until its delivery 6: they validate and pass the crate's sum checks, but no meter
   answer is compared with them while the crate writes none of their fields.
 

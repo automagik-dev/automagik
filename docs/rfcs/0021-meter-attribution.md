@@ -331,8 +331,11 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
 - **In the envelope**, `actor_unattributed` beside `unattributed`: the repo's ambiguous, unlinked
   and before-evidence tokens in the window, with their harnesses and a reason for each part
   (delivery 2, D5). A bot row is a lower bound whenever any of it is above zero, and a reader
-  shows "at least". Branch rows' `attribution.coverage` keeps RFC 0018's meaning (usage with no
-  branch) and is never moved by the actor share.
+  shows "at least". `attribution.coverage` keeps RFC 0018's meaning (usage with no branch) and
+  is never moved by the actor share. A bot row of a query that names no branch counts usage with
+  no branch itself (`tokens_by_branch_basis.none`), so it is always `complete`; with a branch
+  filter, that usage could belong to a branch named, so its rows are `partial` while
+  `unattributed` is above zero, as branch rows are.
 
 **A window that straddles `evidence_from`.** Two rules would keep "unknown is never 0":
 
@@ -526,8 +529,11 @@ release.
      at least. M3 adds `task` to `by`, which only a reader that asks for it meets.
    - D2: an answer holds one kind of row, by `query.by`; a branch row is `branch_window` whatever
      `--by` asks.
-   - D3: `attribution.coverage` keeps RFC 0018's meaning on every row, bot rows included; the
-     schema's coverage rule reads only `unattributed`, never `actor_unattributed`.
+   - D3: `attribution.coverage` keeps RFC 0018's meaning, and the schema's coverage rules read
+     only `unattributed`, never `actor_unattributed`. Branch rows, and bot rows of a query that
+     names branches, are `partial` while `unattributed` is above zero. Bot rows of a query that
+     names no branch are always `complete`: they count usage with no branch themselves, so
+     `partial` there would be a false lower bound (genie's F1 on #825).
    - D4: a task row is keyed by repo and task id. A task id the meter ties to more than one
      checkout of the repo (two genie projects of one remote, each minting short ids) is never
      summed: its row is `missing` with the reason `task_ambiguous`. The meter never prints a
@@ -558,7 +564,9 @@ release.
      worktree); `actor-ledger-branch.json` (a dsh-tui worker's branch filled from its start
      row beside a Claude worker's logged one); `actor-straddling-evidence.json` (a window that
      straddles `evidence_from`); `actor-no-evidence.json` and `by-bot-no-evidence.json`
-     (`evidence_from` null, a vouched zero with a zero actor, and a bot answer with no row).
+     (`evidence_from` null, a vouched zero with a zero actor, and a bot answer with no row);
+     `by-bot-unfiltered.json` (a bot query naming no branch beside usage with no branch: an OMP
+     seat's row with its branch basis `none`, every row `complete`).
 
    *Check:* every example validates; the crate's contract test passes on the old ones and checks
    the sums a schema cannot (the four counts, `tokens_by_basis`, `tokens_by_branch_basis`, the
@@ -594,6 +602,8 @@ release.
      its session-to-task contract; bot per session is the ownership map's M3 row.
    - A meter older than a schema 3 store refuses it (exit 12) and writes nothing.
    - Frozen rollup tags (null basis) are never counted as attributed.
+   - The migration backfills `branch_basis` on old rollups: `log` where a branch is recorded,
+     `none` where it is null.
 
    *Check:* RFC 0018's interrupted-backfill and rebuild ceilings hold; a launch learned after its
    usage was ingested moves that usage to its bot on the next sync, and the rollups agree with the
