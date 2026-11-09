@@ -48,7 +48,7 @@ function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   exe(join(bin, "herdr-app"), "#!/bin/sh\necho \"no window in tests\" >&2\nexit 1\n");
   for (const a of ["claude", "omp", "hermes"]) exe(join(bin, a), "#!/bin/sh\nexit 0\n");
   writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");
-  mkdirSync(join(project, ".herdr"));
+  mkdirSync(join(project, ".herdr"), { recursive: true });
   writeFileSync(join(project, ".herdr/pane-env"), "PATH_PREPEND=/opt/node-22/bin\nHERDR_APP_HOME=/srv/bots/herdr-app\n");
   if (override) {
     exe(join(bin, override[0]), "#!/bin/sh\nexit 0\n");

@@ -617,7 +617,7 @@ test("a focused folder under another project's folder is offered both ways, neve
 test("a focused folder with its own bots.json, or in a git worktree, is keyed with no question", async (t) => {
   seed([MAIN]);
   const child = underParent();
-  mkdirSync(join(child, ".herdr"));
+  mkdirSync(join(child, ".herdr"), { recursive: true });
   writeFileSync(join(child, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [] })}\n`);
   state.spaces = [{ id: "s1", name: "child", folder: child }];
   state.focused = { space: "s1" };
@@ -724,7 +724,7 @@ test("a worktree space whose main checkout's bots.json isn't committed: the form
   g("init", "-q");
   g("commit", "-q", "--allow-empty", "-m", "init");
   g("worktree", "add", "-q", "-b", "wt", wt);
-  mkdirSync(join(repo, ".herdr"));
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
   writeFileSync(join(repo, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
   state.spaces = [{ id: "s2", name: "wt", folder: wt }];
   state.focused = { space: "s2" };
@@ -857,7 +857,7 @@ test("the CLI and the form word the pull warning for an uncommitted or changed b
   g("init", "-q");
   g("commit", "-q", "--allow-empty", "-m", "init");
   g("worktree", "add", "-q", "-b", "wt", wt);
-  mkdirSync(join(repo, ".herdr"));
+  mkdirSync(join(repo, ".herdr"), { recursive: true });
   const mainPath = join(repo, ".herdr/bots.json");
   writeFileSync(mainPath, `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
   state.spaces = [{ id: "s2", name: "wt", folder: wt }];
@@ -964,7 +964,7 @@ test("a worktree space whose main checkout never had a bots.json: the form does 
   g(repo, "init", "-q");
   g(repo, "commit", "-q", "--allow-empty", "-m", "init");
   g(repo, "worktree", "add", "-q", "-b", "wt", wt);
-  mkdirSync(join(wt, ".herdr"));
+  mkdirSync(join(wt, ".herdr"), { recursive: true });
   writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN] }, null, 2)}\n`);
   state.spaces = [{ id: "s2", name: "wt", folder: wt }];
   state.focused = { space: "s2" };
@@ -988,7 +988,7 @@ test("a worktree space whose main deleted bots.json before branching: the form d
   g(repo, "rm", "-q", ".herdr/bots.json");
   g(repo, "commit", "-q", "-m", "delete bots");
   g(repo, "worktree", "add", "-q", "-b", "wt", wt);
-  mkdirSync(join(wt, ".herdr"));
+  mkdirSync(join(wt, ".herdr"), { recursive: true });
   writeFileSync(join(wt, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [MAIN, OMP] }, null, 2)}\n`);
   state.spaces = [{ id: "s2", name: "wt", folder: wt }];
   state.focused = { space: "s2" };

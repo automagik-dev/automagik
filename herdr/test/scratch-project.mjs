@@ -23,19 +23,21 @@ const realOrResolved = (dir) => {
  */
 export function findOuterProject(dir = process.env.TMPDIR || tmpdir()) {
   const raw = String(dir || process.env.TMPDIR || tmpdir());
-  const candidates = new Set([resolve(raw), realOrResolved(raw)]);
-  for (const start of candidates) {
-    for (let cur = start; ; cur = dirname(cur)) {
+  let cursors = [...new Set([realOrResolved(raw), resolve(raw)])];
+  while (cursors.length) {
+    const next = [];
+    for (const cur of cursors) {
       let realCur = cur;
       try { realCur = realpathSync(cur); } catch { /* not created yet */ }
-      for (const check of new Set([cur, realCur])) {
+      for (const check of new Set([realCur, cur])) {
         if (existsSync(join(check, BOTS_PATH)) || existsSync(join(check, ".git"))) {
           return { outer: check, raw };
         }
       }
       const parent = dirname(cur);
-      if (parent === cur) break;
+      if (parent !== cur) next.push(parent);
     }
+    cursors = [...new Set(next)];
   }
   return null;
 }
@@ -52,7 +54,7 @@ export function warnTmpdir(
 ) {
   const found = findOuterProject(dir);
   if (!found) return null;
-  const line = `automagik-herdr test warning: TMPDIR (${found.raw}) is inside project/git folder ${found.outer}; relying on scratchProject isolation (#858).\n`;
+  const line = `automagik-herdr test warning: TMPDIR (${found.raw}) is inside project/git folder ${found.outer}; set TMPDIR to a folder outside every project folder (for example TMPDIR=/tmp); relying on scratchProject isolation (#858).\n`;
   if (!once || !warnedTmpdir) {
     if (once) warnedTmpdir = true;
     write(line);

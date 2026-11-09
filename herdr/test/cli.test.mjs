@@ -534,7 +534,7 @@ test("from a worktree branched before a bot was added: edit names both files, re
   git(s.project, "worktree", "add", "-q", wt);
   // The worktree's own file, from before Genie: another main bot only.
   const wtText = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.plan, "main", { name: "Old" })] }, null, 2)}\n`;
-  mkdirSync(join(wt, ".herdr"));
+  mkdirSync(join(wt, ".herdr"), { recursive: true });
   writeFileSync(join(wt, ".herdr/bots.json"), wtText);
   const mainText = readFileSync(s.botsPath, "utf8");
   const e = s.cli(["edit", "Genie", "--role", "x"], { cwd: wt });
@@ -1124,7 +1124,7 @@ test("ls and show (#227): the main checkout's pane is not the clone's; a row wit
   const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
   const clone = join(s.root, "proj-clone");
   git(s.root, "clone", "-q", s.project, clone);
-  mkdirSync(join(clone, ".herdr"));
+  mkdirSync(join(clone, ".herdr"), { recursive: true });
   writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
   const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
   // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
@@ -4094,6 +4094,7 @@ test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr
     assert.equal(lines.length, 1);
     assert.equal(line.trim().split("\n").length, 1, "one-line warning");
     assert.match(line, new RegExp(`TMPDIR .*inside project/git folder ${expectedOuter}`));
+    assert.match(line, /set TMPDIR to a folder outside every project folder \(for example TMPDIR=\/tmp\)/);
   }
 
   const prevTmp = process.env.TMPDIR;
@@ -4121,7 +4122,7 @@ test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr
   const missedGit = join(nestedTmp, "missed-git");
   mkdirSync(missedGit, { recursive: true });
   assert.throws(
-    () => assertScratchProject(missedGit, { env: {} }),
+    () => assertScratchProject(missedGit, { ceiling: box, env: {} }),
     new RegExp(`^Error: Scratch project ${missedGit} resolved to outer project ${outer} instead of itself \\(#858\\)\\.$`),
   );
 
