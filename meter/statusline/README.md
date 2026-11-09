@@ -59,6 +59,26 @@ Each segment is left out when its field is missing. Separators and labels are di
 | `automagik-statusline.mjs` | The status line: stdin JSON in, one line out. Node, no dependencies, never throws. |
 | `claude-limits-statusline.mjs` | The limits logger (imported from the copy the owner ran; since #313 it runs the command's argv directly, no second shell): appends `rate_limits` readings to `claude-limits.jsonl`, then runs the command after `--` with the same stdin. |
 
+## State folder
+
+Both use the meter's own state folder, by usagemeter's rule: `METER_STATE_DIR` when set, else
+`<AM_HOME>/meter` when `AM_HOME` is an absolute path, else `~/.automagik/meter`. It holds
+`claude-limits.jsonl`, `claude-limits.last.json` and the bot cache `statusline-bots.json`.
+
+Before usagemeter moved its store (RFC 0017), the folder was `~/Library/Application
+Support/automagik` on macOS and `$XDG_STATE_HOME/automagik` (else `~/.local/state/automagik`)
+elsewhere. Without `METER_STATE_DIR`:
+
+- The status line reads a `claude-limits.jsonl` still left in the old folder as well, so no reading
+  is lost at the move.
+- The logger moves its two files out of the old folder once, on its next reading, when the new
+  folder has none: a hard link, then the old name removed, never over a file already there (the
+  meter's own rule). The meter's first sync moves the same two files; whichever runs first moves
+  them, and nothing of the logger's is left for the other. A file that cannot be linked (another
+  filesystem) stays in the old folder, and the status line keeps reading it.
+- Nothing else in the old folder is touched: the store is the meter's to move. The old bot cache is
+  left there; the status line builds a new one.
+
 ## Install
 
 Claude Code runs the command with a minimal PATH, so name node by an absolute path. On a host

@@ -5,8 +5,13 @@
 // (or every 5 minutes), then runs the real statusline with the same input and prints its
 // output. It never blocks the statusline: any logging error is ignored.
 //
-// Log: ~/Library/Application Support/automagik/claude-limits.jsonl (Linux:
-// $XDG_STATE_HOME/automagik or ~/.local/state/automagik; METER_STATE_DIR overrides), 0600.
+// Log: claude-limits.jsonl in the meter's state folder, ~/.automagik/meter (<AM_HOME>/meter when
+// AM_HOME is an absolute path; METER_STATE_DIR overrides both), 0600. The old folder (before the
+// meter moved it: ~/Library/Application Support/automagik on macOS, else $XDG_STATE_HOME/automagik
+// or ~/.local/state/automagik) is read once: a log and its last reading still there are moved into
+// the new folder (a hard link, then the old name removed; never over a file already there, the
+// meter's own rule), so the meter's first sync finds nothing of ours left to move. A link that
+// cannot be made (another filesystem) leaves the old file, which the status line still reads.
 // One line: {ts, account, plan, five_hour, seven_day, model, session}. `account` is the
 // first 16 hex of sha256(accountUuid): the same account on two machines matches, and the
 // raw id is never written. No prompt text, no tokens, no email.
@@ -19,16 +24,22 @@
 // written as one: `-- sh -c '<command>'`.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, linkSync, lstatSync, unlinkSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
-const HOME = homedir();
+const HOME = process.env.HOME || homedir();
+// automagik-statusline.mjs stateDir and legacyStateDir, kept equal by a test (this file runs alone).
+const AM_HOME = process.env.AM_HOME;
 const stateDir = process.env.METER_STATE_DIR
-  || (platform() === "darwin" ? join(HOME, "Library/Application Support/automagik")
-    : join(process.env.XDG_STATE_HOME || join(HOME, ".local/state"), "automagik"));
-const LOG = join(stateDir, "claude-limits.jsonl");
-const LAST = join(stateDir, "claude-limits.last.json");
+  || (AM_HOME && isAbsolute(AM_HOME) ? join(AM_HOME, "meter") : join(HOME, ".automagik/meter"));
+const XDG = process.env.XDG_STATE_HOME;
+const oldDir = process.env.METER_STATE_DIR ? null
+  : platform() === "darwin" ? join(HOME, "Library/Application Support/automagik")
+    : join(XDG && isAbsolute(XDG) ? XDG : join(HOME, ".local/state"), "automagik");
+const NAMES = ["claude-limits.jsonl", "claude-limits.last.json"];
+const LOG = join(stateDir, NAMES[0]);
+const LAST = join(stateDir, NAMES[1]);
 const EVERY_MS = 5 * 60 * 1000;
 
 const chunks = [];
@@ -49,9 +60,25 @@ function accountInfo() {
   } catch { return { account: null, plan: null }; }
 }
 
+/** Moves the log and its last reading out of the old folder, once; anything in the way leaves them. */
+function adopt() {
+  if (!oldDir || oldDir === stateDir) return;
+  for (const name of NAMES) {
+    const from = join(oldDir, name);
+    try {
+      if (!lstatSync(from).isFile()) continue;
+      mkdirSync(dirname(stateDir), { recursive: true });
+      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      linkSync(from, join(stateDir, name)); // never replaces: a file already there throws
+      unlinkSync(from);
+    } catch { /* absent, or left where it is */ }
+  }
+}
+
 function record(input) {
   const rl = input?.rate_limits;
   if (!rl || typeof rl !== "object") return;
+  adopt();
   const { account, plan } = accountInfo();
   const pick = (w) => (w && typeof w === "object") ? { used_percentage: w.used_percentage ?? null, resets_at: w.resets_at ?? null } : null;
   const reading = { account, plan, five_hour: pick(rl.five_hour), seven_day: pick(rl.seven_day) };
