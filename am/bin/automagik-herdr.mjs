@@ -49,6 +49,7 @@ import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui } from "../dshTui.mjs";
+import { workerProxyTransport } from "../dshTui.mjs";
 import { approveProject, approvedProxyEnabled, approvedProxyState, parseApprovedRecord,
   projectKey, proxyStateFor, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
@@ -4676,7 +4677,10 @@ async function cmdWorker(opts, rest) {
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
         approvedProxyState({ project: project.key, bot }), process.platform,
         (warning) => warnings.push(warning)) });
-    const r = await hc(args);
+    // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added
+    // flags and working roster edits cannot do so; the same socket still checks terminal.run.
+    const proxied = await workerProxyTransport(process.env.HC_SOCKET, me.address);
+    const r = await (proxied ? hcReal(args) : hc(args));
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }

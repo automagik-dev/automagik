@@ -12,9 +12,12 @@ import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
 import { effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
-import { ENV, GUARD_DIR, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
+import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
+import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
+import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
+import { startFakeCore } from "./fake-hc-core.mjs";
 import { fixturePaneEdit } from "./fixture-pane-edit.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -77,6 +80,9 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   writeFileSync(appLog, "");
   const env = { ...process.env, XDG_DATA_HOME: join(root, "data"), PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
+  // Worker transport discovery must never inherit a host socket into a fixture scene.
+  env.HC_SOCKET = join(root, "unproxied.sock");
+  env.HC_TERMINAL_SOCKET = env.HC_SOCKET;
   delete env.HC_TERMINAL_ID;
   const cli = (args, { from = "t1", cwd = project, env: extra = {} } = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: { ...env, ...extra, ...(from ? { HC_TERMINAL_ID: from } : {}) }, encoding: "utf8" });
@@ -2019,4 +2025,60 @@ test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason i
   assert.equal(asked(), before, "not looked at by the worker call");
   assert.match(s.cli(["reap"], { from: null }).out.trim(), new RegExp(`^kept ${reEsc(w.worktree)}: 1 commit on no remote`));
   assert.equal(asked(), before + 1, "reap looks at it");
+});
+
+// Refs #631: the real PATH guard plus a fake hc that forwards only run to the fixture proxy.
+async function proxyWorkerCli(t) {
+  const s = scene(t);
+  const runtime = join(s.root, "runtime"), paneTmp = join(s.root, "pane-tmp");
+  const stableRoot = join(s.env.XDG_DATA_HOME, "automagik-herdr", "dsh-sandbox");
+  for (const dir of [runtime, paneTmp, join(stableRoot, "guard"), join(stableRoot, "bin"),
+    join(s.env.HOME, ".local", "bin")]) mkdirSync(dir, { recursive: true });
+  exe(join(stableRoot, "bin", "run.sh"), stableRunnerText(process.execPath));
+  writeFileSync(join(stableRoot, "hcPane.mjs"), "// fixture helper\n");
+  const env = { ...s.env, PATH: `${GUARD_DIR}:${s.env.PATH}`, XDG_RUNTIME_DIR: runtime,
+    TMPDIR: paneTmp, HC_FAKE_PROXY_RUN: "1", TERM: "xterm-256color", COLORTERM: "truecolor",
+    TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
+  const fake = await startFakeCore({ socket: join(s.root, "fixture.sock"), terminals: [
+    { address: "t1", labels: { bot: ID.dev }, cwd: s.project, state: "live" },
+  ] });
+  s.approve();
+  const proxy = await startProxy({ terminal: "t1", upstream: fake.socket, appHome: s.app, env,
+    caller: { bot: ID.dev, project: s.project }, bound: true,
+    forbiddenRoots: [["project", s.project], ["app home", s.app], ["temp", paneTmp], ["runtime", runtime]] });
+  t.after(async () => { await proxy.close(); await fake.close(); });
+  return { s, env, fake, proxy };
+}
+
+test("proxied worker CLI skips the guard only for the actual proxy transport", async (t) => {
+  const { s, env, fake, proxy } = await proxyWorkerCli(t);
+  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/proxied", "--json"],
+    { env: { ...env, HC_SOCKET: proxy.socket } });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.calls("terminal.run").length, 1, "spawn reached the proxy then fake core");
+  const params = fake.calls("terminal.run")[0].params;
+  assert.equal(params.caller, "t1");
+  assert.equal(params.parent, "t1");
+  assert.equal(params.labels[WORKER_OF_LABEL], ID.dev);
+  assert.deepEqual(params.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
+    TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0" });
+});
+
+test("proxied worker CLI gets an unapproved agent refusal from the proxy", async (t) => {
+  const { s, env, fake, proxy } = await proxyWorkerCli(t);
+  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/unapproved",
+    "--agent", "claude", "--json"], { env: { ...env, HC_SOCKET: proxy.socket } });
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /hc-proxy: terminal.run: approved worker/);
+  assert.equal(fake.calls("terminal.run").length, 0);
+});
+
+test("unproxied worker CLI keeps the guard refusal with switch off and forged env markers", async (t) => {
+  const s = scene(t);
+  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/plain", "--json"],
+    { env: { PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: "",
+      AM_HC_PROXY: "1", AM_HC_PROXY_SOCKET: join(s.root, "missing.sock"), DSH_SANDBOX_MASK: "1" } });
+  assert.notEqual(r.code, 0);
+  assert.match(r.err, /hc guard: refused run:/);
+  assert.equal(s.runs().length, 0, "no unguarded spawn with the switch off");
 });

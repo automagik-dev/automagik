@@ -12,7 +12,8 @@
 // only by `automagik-herdr proxy approve`; a working-tree roster that differs warns once and
 // the approved one stays in force, and a missing record refuses the pane. The by-hand path
 // (no explicit caller) keeps the attach ledger and the working `.herdr/bots.json` reads. A
-// roster change needs a pane restart (a new proxy is started with the new pane). The caller is
+// roster change needs a pane restart (a new proxy is started with the new pane). Worker starts
+// re-read and verify that approval at spawn time; they never inherit a cached allowance. The caller is
 // the pane this proxy serves, fixed at start, and every forwarded request has its
 // `params.caller` overwritten with it. Targets are resolved with one short upstream
 // `terminal.get`, checked, and forwarded by resolved address, so a rename between the check
@@ -33,9 +34,10 @@ import { pathToFileURL } from "node:url";
 import { readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
+import { commandArgv } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { SHARED_ROLES, SHARED_SEND_RANKS, teamOf } from "./hcGuard.mjs";
-import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
 export const HC_PIN = "0.1.14";
@@ -75,12 +77,14 @@ const CALLER_METHODS = new Set([
   "terminal.get", "terminal.read", "terminal.wait", "terminal.send",
   "terminal.kill", "terminal.rm", "terminal.run",
 ]);
-const ALLOWED = new Set(["terminal.list", "terminal.label", ...CALLER_METHODS]);
+const ALLOWED = new Set(["terminal.list", "terminal.label", "templates.list", "proxy.workerTransport", ...CALLER_METHODS]);
 const OWN_WORKER_METHODS = new Set(["terminal.kill", "terminal.rm", "terminal.label"]);
 const TEAM_METHODS = new Set(["terminal.get", "terminal.read", "terminal.wait", "terminal.send"]);
 /** The exact parameters each method may forward; anything else is an unknown parameter. */
 export const METHOD_PARAMS = new Map([
   ["terminal.list", new Set(["all", "labels"])],
+  ["templates.list", new Set()],
+  ["proxy.workerTransport", new Set()],
   ["terminal.get", new Set(["terminal", "caller"])],
   ["terminal.read", new Set(["terminal", "lines", "caller"])],
   ["terminal.wait", new Set(["terminal", "children", "output", "timeout", "caller"])],
@@ -229,8 +233,79 @@ function underWorktrees(cwd, project) {
   return realCwd !== root && realCwd.startsWith(`${root}${sep}`);
 }
 
+/** Read at each worker request, pinned to this pane's approval digest and approval stamp. */
+function workerApproval(snapshot) {
+  if (!snapshot.approval) throw new Error("worker allowance needs an approved snapshot");
+  const approved = readApprovedRecord({ project: snapshot.caller.project, env: snapshot.approvalEnv });
+  for (const key of ["sha256", "approvedAt", "approvedBy"]) {
+    if (approved.record[key] !== snapshot.approval[key]) {
+      throw new Error(`worker allowance approval ${key} changed; restart the pane after approval`);
+    }
+  }
+  const bot = approved.file.bots.find((row) => row.id === snapshot.caller.bot);
+  if (!bot) throw new Error("worker allowance caller is absent from the approved snapshot");
+  return bot;
+}
+
+/** Rebuild through the CLI's builder; the request contributes only task text and checked metadata. */
+function approvedWorkerProblem(p, snapshot, bot, templates) {
+  if (!bot.worker?.template && !bot.worker?.agent) {
+    return "worker allowance has no worker.template or worker.agent in the approved snapshot";
+  }
+  const plan = workerPlan(bot);
+  if (plan.error) return `approved worker: ${plan.error}`;
+  if (p.env !== undefined) {
+    if (!isObject(p.env)) return "approved worker env is refused; expected a terminal env object";
+    for (const [key, value] of Object.entries(p.env)) {
+      if (!IDENTITY_VARS.has(key) || typeof value !== "string"
+        || !/^[A-Za-z0-9._+-]{1,64}$/.test(value)) {
+        return `approved worker env ${key} override is refused; only bounded terminal variables are allowed`;
+      }
+    }
+  }
+  const task = Array.isArray(p.argv) ? p.argv.at(-1) : null;
+  if (typeof task !== "string" || /^\s*-/.test(task) || task.includes("\0")) {
+    return "approved worker task must be one text word that is not an option";
+  }
+  let templateArgv = null;
+  let login = [];
+  if (plan.template) {
+    const template = templates.find((row) => row?.name === plan.template);
+    if (!template || typeof template.command !== "string" || !template.command.trim()) {
+      return `approved worker template ${plan.template} is not available from the core`;
+    }
+    if (templateAgent(template.command) === "claude") {
+      templateArgv = commandArgv({ shell: template.command }, [task]);
+      if (!templateArgv) return `approved worker template ${plan.template} cannot take a task`;
+      login = ["-u", "CLAUDE_CONFIG_DIR"];
+    }
+  } else if (plan.agent === "claude") {
+    login = ["-u", "CLAUDE_CONFIG_DIR"];
+  }
+  const labels = p.labels;
+  for (const [key, value] of [["worker.template", plan.template],
+    ["worker.model", plan.model], ["worker.effort", plan.effort]]) {
+    if ((labels[key] ?? null) !== value) return `approved worker label ${key} does not match approval`;
+  }
+  const args = workerArgs({ botId: snapshot.caller.bot, branch: labels.branch,
+    role: labels["worker.role"], name: p.name, cwd: p.cwd, parent: snapshot.terminal,
+    agent: plan.agent, model: plan.model, effort: plan.effort, argv: plan.argv,
+    task, template: plan.template, templateArgv, login, path: snapshot.path,
+    taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
+    space: labels["herdr.space"] });
+  const expected = plan.template && !templateArgv ? args.slice(-2)
+    : args.slice(args.indexOf("--") + 1);
+  if (!Array.isArray(p.argv) || p.argv.length !== expected.length
+    || p.argv.some((word, index) => word !== expected[index])) {
+    const named = plan.template ? `template ${plan.template}` : `agent ${plan.agent}`;
+    return `approved worker argv refused: does not match approved ${named} exactly`;
+  }
+  return null;
+}
+
 /**
- * Why `params` is not hcGuard.runProblem's exact dsh-tui worker shape, or null. This is the
+ * Why `params` is not an approved worker start, or null. A named template/agent is rebuilt
+ * through workerArgs and matched exactly. Otherwise this is hcGuard's dsh-tui shape: the
  * argv check ported to the RPC params the CLI sends: the program, its PATH guard word, the one
  * task word, the parent, the worktree cwd, the worker labels, and the identity-only env. It
  * accepts only the per-pane helper shape
@@ -241,7 +316,7 @@ function underWorktrees(cwd, project) {
  * pack's own guard is allowed even inside the app home, where the installed pack lives; any
  * other copy is not.
  */
-export function runProblem(params, snapshot) {
+export function runProblem(params, snapshot, templates = []) {
   const p = isObject(params) ? params : {};
   if (p.on !== undefined && p.on !== null) return "on is not the worker shape";
   if (p.line !== undefined && p.line !== null) return "line is not the worker shape";
@@ -258,13 +333,22 @@ export function runProblem(params, snapshot) {
   if (p.parent !== snapshot.terminal) return "parent is not the caller's pane";
   if (typeof p.cwd !== "string" || !isAbsolute(p.cwd)) return "cwd is not absolute";
   if (!underWorktrees(p.cwd, snapshot.caller.project)) return "cwd is not under the caller's project .claude/worktrees/";
+  let bot = null;
+  if (snapshot.approval) {
+    try { bot = workerApproval(snapshot); }
+    catch (e) { return `approved worker refused: ${oneLine(e.message)}`; }
+  }
+  const namedWorker = bot?.worker?.template || (bot?.worker?.agent && bot.worker.agent !== "dsh-tui");
+  const workerLabels = namedWorker
+    ? new Set([...WORKER_LABELS, "worker.template", "worker.model", "worker.effort"]) : WORKER_LABELS;
   const labels = p.labels;
   if (!isObject(labels)) return "labels are not the worker shape";
   if (labels[WORKER_OF_LABEL] !== snapshot.caller.bot) return `${WORKER_OF_LABEL} is not the caller's bot`;
   for (const [key, value] of Object.entries(labels)) {
-    if (!WORKER_LABELS.has(key)) return `label ${key} is not the worker shape`;
+    if (!workerLabels.has(key)) return `label ${key} is not the worker shape`;
     if (typeof value !== "string") return `label ${key} is not text`;
   }
+  if (namedWorker) return approvedWorkerProblem(p, snapshot, bot, templates);
   if (p.env !== undefined) {
     if (!isObject(p.env)) return "env is not the worker shape";
     for (const [key, value] of Object.entries(p.env)) {
@@ -329,8 +413,8 @@ export function explicitCaller(value) {
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot }) {
-  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv }) {
+  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, team: teamOf(file, caller) };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */
@@ -651,6 +735,7 @@ export async function startProxy(options = {}) {
   const botsPath = join(caller.project, ".herdr", "bots.json");
   let file;
   let rosterPath;
+  let approval;
   if (explicit) {
     const dataWhy = approvedDataRootProblem({ env, project: caller.project, appHome: home,
       forbiddenRoots: options.forbiddenRoots });
@@ -661,6 +746,8 @@ export async function startProxy(options = {}) {
     } catch (e) {
       throw new Error(`the approved roster is not usable: ${oneLine(e.message)}`);
     }
+    approval = Object.fromEntries(["sha256", "approvedAt", "approvedBy"]
+      .map((key) => [key, approved.record[key]]));
     file = approved.file;
     rosterPath = approved.path;
     let working = null;
@@ -711,7 +798,8 @@ export async function startProxy(options = {}) {
       }
     }
   }
-  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home, path: panePath, shim: shimPathOf(env), stableRoot };
+  const snapshot = { terminal, upstream, caller, file, bound: Boolean(bound), appHome: home, path: panePath, shim: shimPathOf(env), stableRoot,
+    approval, approvalEnv: { HOME: env.HOME, XDG_DATA_HOME: env.XDG_DATA_HOME } };
   const policy = policyOf(snapshot);
   log({ ev: "snapshot", caller: caller.bot, project: caller.project, worker: caller.worker, bots: file.bots.length });
 
@@ -906,16 +994,55 @@ class Session {
     }
     if (CALLER_METHODS.has(method)) params.caller = this.policy.terminal;
 
+    if (method === "proxy.workerTransport") {
+      if (!this.policy.approval || !this.policy.bound) {
+        reply("proxy.workerTransport: only an approved bot pane has a worker transport");
+        return;
+      }
+      if (hasId(request)) this.client.write(`${JSON.stringify({ jsonrpc: "2.0", id,
+        result: { v: 1, terminal: this.policy.terminal } })}\n`);
+      return;
+    }
     if (method === "terminal.list") {
       await this.forward(request, method, params);
       return;
     }
-    if (method === "terminal.run") {
-      const why = runProblem(params, this.policy);
+    if (method === "templates.list" || method === "terminal.run") {
+      let templates = [];
+      try {
+        // By-hand proxies retain their helper-only shape. New allowances need explicit approval.
+        const bot = this.policy.approval ? workerApproval(this.policy) : null;
+        const name = bot?.worker?.template;
+        if (method === "templates.list" && (!name || !this.policy.bound)) {
+          reply("templates.list: only a bound bot with an approved worker template may list it");
+          return;
+        }
+        if (name) {
+          const result = await upstreamCall(this.policy.upstream, "templates.list", {});
+          if (result.error || !Array.isArray(result.result?.templates)) {
+            throw new Error("approved worker templates are unavailable from the core");
+          }
+          templates = result.result.templates.filter((row) => row?.name === name);
+        }
+        if (method === "templates.list") {
+          // Recheck after the asynchronous metadata read too; never return a stale allowance.
+          workerApproval(this.policy);
+          if (hasId(request)) this.client.write(`${JSON.stringify({ jsonrpc: "2.0", id,
+            result: { templates } })}\n`);
+          return;
+        }
+      } catch (e) {
+        reply(`${method}: approved worker refused: ${oneLine(e.message)}`);
+        return;
+      }
+      const why = runProblem(params, this.policy, templates);
       if (why) {
         reply(`terminal.run: ${why}`);
         return;
       }
+      // Identity belongs to the verified pane, never a caller-provided replacement.
+      params.parent = this.policy.terminal;
+      params.labels = { ...params.labels, [WORKER_OF_LABEL]: this.policy.caller.bot };
       await this.forward(request, method, params);
       return;
     }

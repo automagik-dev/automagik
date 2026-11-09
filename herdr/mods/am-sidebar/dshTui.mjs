@@ -324,7 +324,7 @@ export const sandboxCapable = (root = packRootOf()) => ["am-sidebar", "dsh-sandb
 /** Every file an unsandboxed worker start can reach, copied byte-equal to the stable folder. */
 export const STABLE_FILES = Object.freeze([
   "hcPane.mjs", "hcProxy.mjs", "approved.js", "dshTui.mjs", "workers.js", "models.js", "model.js",
-  "logins.js", "attach.js", "hcGuard.mjs", "layoutSafe.mjs", "release.js", "retired.js",
+  "logins.js", "attach.js", "hcGuard.mjs", "restart.js", "launchArgs.js", "layoutSafe.mjs", "release.js", "retired.js",
   "bin/dsh-sandbox.mjs", "bin/run.sh",
 ]);
 
@@ -870,6 +870,38 @@ export function uninstallDshTui(options = {}) {
   lines.push(`Kept: DSH sessions (${dshHome}), dsh-TUI's own state (~/${TUI_DATA_DIR}) and the ${PROFILE} profile.`);
   lines.push("Kept the dsh-tui profile's sandbox row and its stable wrapper: without the pack's pane switch the wrapper is a pass-through, and the next install reuses both.");
   return { status: failed ? "failed" : changed ? "removed" : "absent", changed, detail: lines[0], lines };
+}
+
+/** Recognize the actual worker transport, never a switch or an env marker supplied by a pane. */
+export function workerProxyTransport(socketPath, terminal, timeoutMs = 750) {
+  if (!socketPath || !isAbsolute(socketPath)) return Promise.resolve(false);
+  return new Promise((done) => {
+    const socket = net.connect(socketPath);
+    let buffer = "", finished = false;
+    const finish = (isProxy) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      socket.destroy();
+      done(isProxy);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.on("error", () => finish(false));
+    socket.on("close", () => finish(false));
+    socket.on("connect", () => socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1,
+      method: "proxy.workerTransport", params: {} })}\n`));
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer) > 4096) { finish(false); return; }
+      const end = buffer.indexOf("\n");
+      if (end < 0) return;
+      try {
+        const reply = JSON.parse(buffer.slice(0, end));
+        finish(reply.id === 1 && !reply.error && reply.result?.v === 1
+          && reply.result?.terminal === terminal);
+      } catch { finish(false); }
+    });
+  });
 }
 
 /** Probe only an existing per-pane proxy. Never invoke hc or discover a real core socket. */

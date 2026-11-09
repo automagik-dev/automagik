@@ -16,9 +16,10 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
-import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, workerArgs } from "../mods/am-sidebar/workers.js";
+import { approveProject, recordFileOf, sha256Of } from "../mods/am-sidebar/approved.js";
+import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
 import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
+import { commandArgv } from "../mods/am-sidebar/restart.js";
 import { startFakeCore } from "./fake-hc-core.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1119,4 +1120,193 @@ test(
   assert.equal(started.policy.caller.bot, ID.dev, "the explicit caller, not the ledger row");
   assert.equal(started.policy.team.has(ID.other), false, "the team comes from the approved roster");
   assert.deepEqual(started.policy, before.policy, "the entire policy is identical after forgery");
+});
+
+// Refs #631: approved template/agent workers, with every saved switch left off.
+async function approvedWorkerScene(t, worker) {
+  const result = await sceneWithCore(t, { proxy: false });
+  const { s, fake, start } = result;
+  const file = team();
+  file.bots.find((row) => row.id === ID.dev).worker = worker;
+  writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(file));
+  approveProject({ project: s.project, env: s.env, approvedBy: "test",
+    approvedAt: "2026-11-02T00:00:00.000Z" });
+  fake.state.templates = [
+    { name: "dev-sol", command: "codex --model chosen", description: "Approved", body: "Work" },
+    { name: "review-sol", command: "claude --model chosen", description: "Other", body: "Review" },
+  ];
+  const proxy = await start("t100", { caller: { bot: ID.dev, project: s.project }, bound: true });
+  const client = await clientFor(proxy.socket);
+  t.after(() => client.close());
+  return { ...result, proxy, client };
+}
+
+function approvedParams(s, worker, templateCommand = null) {
+  const plan = workerPlan({ agent: "dsh-tui", worker });
+  const task = "do the task";
+  const claude = plan.agent === "claude"
+    || (templateCommand && templateAgent(templateCommand) === "claude");
+  const args = workerArgs({ botId: ID.dev, branch: "feat/worker", role: "dev", name: "worker-one",
+    cwd: s.worktree, parent: "t100", ...plan, task, path: s.env.PATH,
+    project: s.project, taskId: "gn-1", lead: ID.dev,
+    login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [],
+    templateArgv: plan.template && claude ? commandArgv({ shell: templateCommand }, [task]) : null });
+  const labels = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--label") {
+      const [key, ...value] = args[++i].split("=");
+      labels[key] = value.join("=");
+    }
+  }
+  return runParams(s, { argv: plan.template && !claude ? args.slice(-2)
+    : args.slice(args.indexOf("--") + 1), labels, env: {} });
+}
+
+for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
+  { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }]) {
+  test(`approved worker allows named ${worker.agent ?? worker.template} with today's identity`, async (t) => {
+    const { s, client, fake } = await approvedWorkerScene(t, worker);
+    const params = approvedParams(s, worker, fake.state.templates[0].command);
+    const answer = await client.call("terminal.run", params);
+    assert.ok(answer.result, JSON.stringify(answer));
+    const forwarded = fake.calls("terminal.run").at(-1).params;
+    assert.deepEqual(forwarded, { ...params, caller: "t100" },
+      "argv, parent and worker labels match today's plain start; verified caller replaces input");
+    assert.equal(forwarded.argv.includes("--worker"), false, "no dsh-tui wrapper or mask");
+    const other = worker.template ? { ...params, argv: ["review-sol", "do the task"] }
+      : { ...params, argv: params.argv.map((word) => word === worker.agent ? "pi" : word) };
+    const refused = await client.call("terminal.run", other);
+    assert.match(refused.error.message, /approved worker argv refused.*exactly/);
+    assert.equal(fake.calls("terminal.run").length, 1);
+  });
+}
+
+test("approved worker template listing is filtered and a live edit widens neither list nor start", async (t) => {
+  const worker = { template: "dev-sol" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const listed = await client.call("templates.list");
+  assert.deepEqual(listed.result, { templates: [fake.state.templates[0]] }, "metadata is unchanged");
+  const file = team();
+  file.bots.find((row) => row.id === ID.dev).worker = { template: "review-sol" };
+  writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(file));
+  assert.deepEqual((await client.call("templates.list")).result, listed.result);
+  const refused = await client.call("terminal.run", approvedParams(s, { template: "review-sol" }));
+  assert.match(refused.error.message, /approved worker label worker.template does not match/);
+  assert.equal(fake.calls("terminal.run").length, 0);
+  assert.ok((await client.call("terminal.run", approvedParams(s, worker))).result);
+  fake.state.templates = [];
+  assert.match((await client.call("terminal.run", approvedParams(s, worker))).error.message,
+    /template dev-sol is not available/, "a removed template must not become a raw program");
+});
+
+test("approved worker agent allowance never comes from a live roster edit", async (t) => {
+  const worker = { agent: "codex" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const file = team();
+  file.bots.find((row) => row.id === ID.dev).worker = { agent: "claude" };
+  writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(file));
+  assert.ok((await client.call("terminal.run", approvedParams(s, worker))).result);
+  const refused = await client.call("terminal.run", approvedParams(s, { agent: "claude" }));
+  assert.match(refused.error.message, /does not match approved agent codex exactly/);
+  assert.equal(fake.calls("terminal.run").length, 1);
+});
+
+for (const [name, change] of [
+  ["missing", (path) => rmSync(path)],
+  ["unreadable", (path) => chmodSync(path, 0o000)],
+  ["not a regular file", (path) => { rmSync(path); mkdirSync(path); }],
+  ["sha mismatch", (path) => {
+    const record = JSON.parse(readFileSync(path)); record.sha256 = "0".repeat(64);
+    writeFileSync(path, JSON.stringify(record));
+  }],
+  ["different valid snapshot", (path) => {
+    const record = JSON.parse(readFileSync(path));
+    const file = JSON.parse(record.roster); file.bots[0].name = "Changed";
+    record.roster = JSON.stringify(file); record.sha256 = sha256Of(record.roster);
+    writeFileSync(path, JSON.stringify(record));
+  }],
+  ["approve stamp mismatch", (path) => {
+    const record = JSON.parse(readFileSync(path)); record.approvedAt = "2026-11-03T00:00:00.000Z";
+    writeFileSync(path, JSON.stringify(record));
+  }],
+  ["approver mismatch", (path) => {
+    const record = JSON.parse(readFileSync(path)); record.approvedBy = "other";
+    writeFileSync(path, JSON.stringify(record));
+  }],
+]) {
+  test(`approved worker re-reads at spawn time and refuses ${name}`, async (t) => {
+    const worker = { agent: "codex" };
+    const { s, client, fake } = await approvedWorkerScene(t, worker);
+    const params = approvedParams(s, worker);
+    assert.ok((await client.call("terminal.run", params)).result, "allow before outside change");
+    change(recordFileOf(s.project, s.env));
+    fake.clearLog();
+    const answer = await client.call("terminal.run", params);
+    assert.match(answer.error.message, /^hc-proxy: terminal.run: approved worker refused:/);
+    assert.equal(answer.error.message.includes("\n"), false);
+    assert.equal(fake.calls("terminal.run").length, 0, "no cached or live-roster fallback");
+  });
+}
+
+test("approved worker rejects extra argv and nonterminal RPC env overrides", async (t) => {
+  const worker = { agent: "codex", model: "chosen", effort: "high" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  const rows = [
+    ["extra args", { argv: [...params.argv.slice(0, -1), "--unsafe", params.argv.at(-1)] }],
+    ["model override", { argv: params.argv.map((word) => word === "chosen" ? "other" : word) }],
+    ["task option", { argv: [...params.argv.slice(0, -1), "--unsafe"] }],
+    ["PATH override", { argv: params.argv.map((word) => word.startsWith("PATH=") ? "PATH=/bin" : word) }],
+    ...[{ PATH: "/bin" }, { TERM: "bad value" }, { CLAUDE_CONFIG_DIR: "value" },
+      { "-u": "CLAUDE_CONFIG_DIR" }, { CLAUDE_CONFIG_DIR: "value", EXTRA: "value" }]
+      .map((env) => [`env ${Object.keys(env).join(",")}`, { env }]),
+  ];
+  for (const [name, patch] of rows) {
+    const answer = await client.call("terminal.run", { ...params, ...patch });
+    assert.ok(answer.error, name);
+    assert.match(answer.error.message, /^hc-proxy: terminal.run: approved worker /, name);
+    assert.equal(answer.error.message.includes("\n"), false, name);
+  }
+  assert.equal(fake.calls("terminal.run").length, 0);
+});
+
+test("approved Claude template exact rebuild rejects a one-arg change and caller env", async (t) => {
+  const worker = { template: "dev-sol" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const command = "claude --model chosen";
+  fake.state.templates[0].command = command;
+  const params = approvedParams(s, worker, command);
+  assert.deepEqual(params.argv.slice(0, 3), [ENV, "-u", "CLAUDE_CONFIG_DIR"]);
+  assert.ok((await client.call("terminal.run", params)).result);
+  for (const argv of [params.argv.map((word) => word === "sh" ? "bash" : word),
+    params.argv.map((word) => word.includes(command) ? word.replace("chosen", "other") : word),
+    [...params.argv.slice(0, -1), "--unsafe", params.argv.at(-1)],
+    [ENV, "-u", "EXTRA", ...params.argv.slice(3)],
+    [ENV, "-u", "CLAUDE_CONFIG_DIR", "EXTRA=value", ...params.argv.slice(3)]]) {
+    assert.match((await client.call("terminal.run", { ...params, argv })).error.message,
+      /approved worker argv refused.*exactly/);
+  }
+  for (const env of [{ CLAUDE_CONFIG_DIR: "value" }, { "-u": "CLAUDE_CONFIG_DIR" },
+    { TERM: "bad value" }, { "-u": "CLAUDE_CONFIG_DIR", EXTRA: "value" }]) {
+    assert.match((await client.call("terminal.run", { ...params, env })).error.message,
+      /env .* override is refused/);
+  }
+  assert.equal(fake.calls("terminal.run").length, 1);
+});
+
+test("approved worker accepts four bounded terminal vars and refuses bad values or a fifth var", async (t) => {
+  const worker = { agent: "codex" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  const env = { TERM: "xterm-256color", COLORTERM: "truecolor",
+    TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0" };
+  assert.ok((await client.call("terminal.run", { ...params, env })).result);
+  assert.deepEqual(fake.calls("terminal.run").at(-1).params.env, env);
+  for (const bad of [{ ...env, EXTRA: "fixture" }, { ...env, TERMINFO: "fixture" },
+    ...Object.keys(env).map((key) => ({ ...env, [key]: "bad value" })),
+    { COLORTERM: "x".repeat(65) }, { TERM: "" }, { TERM: 1 }]) {
+    const answer = await client.call("terminal.run", { ...params, env: bad });
+    assert.match(answer.error.message, /env .* override is refused/);
+  }
+  assert.equal(fake.calls("terminal.run").length, 1);
 });
