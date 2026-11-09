@@ -82,8 +82,9 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
   prints `another sync is running; nothing to do` and exits 0.
 - **Exit status of `sync`:** 0 when it ran or had nothing to do, 2 on an error, 3 when the state
   move blocks it (files in the new dir must be resolved by hand; one stderr line says which), 4
-  when a migration needs more free space than there is (twice the store's size; nothing was
-  changed), 12 when the store was written by a newer meter (nothing was read or written).
+  when a rebuild, backfill or migration needs more free space than there is (twice the store's
+  size plus what the logs still to import may add; nothing was changed) or ran out of room
+  part-way (the store put back as it was), 12 when the store was written by a newer meter (nothing was read or written).
 - **`query`:** genie's read-only, fork-and-exit answer, contract 1 under `meter.usage@1` (RFC
   0018 in automagik, schema and examples in `meter/schema/query/v1/`). See [Query](#query).
 - **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,

@@ -285,7 +285,13 @@ impl Store {
             .conn
             .transaction()
             .map_err(|e| format!("cannot start the migration: {e}"))?;
-        let db = |e: rusqlite::Error| format!("the migration failed: {e}");
+        let db = |e: rusqlite::Error| {
+            if no_room(&e) {
+                format!("{NO_ROOM}: the migration failed: {e}")
+            } else {
+                format!("the migration failed: {e}")
+            }
+        };
         let before = row_counts(&tx).map_err(db)?;
         add_schema_3(&tx).map_err(db)?;
         let evidence_from = match reset {
@@ -730,6 +736,20 @@ const OBJECTS: [(&str, &str); 11] = [
     ("table", "health"),
     ("table", "codex_threads"),
 ];
+
+/// How an error begins when the store could not be written for want of room.
+pub const NO_ROOM: &str = "no room to write the store";
+
+/// A write SQLite could not make for want of room: the disk is full (`SQLITE_FULL`), or a write
+/// failed outright (`SQLITE_IOERR_WRITE`, as a file-size limit's `EFBIG` gives).
+pub fn no_room(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ErrorCode::DiskFull
+                || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
+    )
+}
 
 /// Adds schema 3's columns and tables where they are missing.
 fn add_schema_3(conn: &Connection) -> rusqlite::Result<()> {

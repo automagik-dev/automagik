@@ -830,9 +830,11 @@ fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
     assert!(r.reimported && r.generation.is_some());
     // A run that keeps the rows counts only what is past each log's offset.
     let read = meter::store::imported_offsets(&env.state().join("meter.db")).unwrap();
+    let o = env.hermetic(&env.opts());
     assert_eq!(
-        meter::sync::projected_growth(&env.hermetic(&env.opts()), 0, Some(&read)),
-        0
+        meter::sync::projected_growth(&o, 0, Some(&read)),
+        meter::sync::wal_allowance(&o),
+        "nothing left to import: the WAL's room alone"
     );
 }
 
@@ -1159,4 +1161,82 @@ fn a_temp_folder_inside_a_project_never_reads_its_ledgers() {
             "log".into()
         )]
     );
+}
+
+// The Reviewer's delta L3 on PR 849: when the generation cannot be put in place, the failed
+// store's files come back from aside, so the store is never left unreadable; the generation
+// stays intact and is named.
+#[test]
+fn a_failed_restore_never_leaves_the_store_unreadable() {
+    let env = Env::new();
+    spread_logs(&env, now(), 20, 10);
+    let mut o = env.opts();
+    o.days = Some(5);
+    env.run(&o);
+    let mut o = env.opts();
+    o.backfill = true;
+    o.chunk_bytes = 4096;
+    o.fail_writes_after = Some(3);
+    o.fail_restore = true;
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
+    };
+    assert!(reason.contains("could not be put back"), "{reason}");
+    let gens = meter::store::generations(&env.state());
+    assert_eq!(gens.len(), 1, "the generation is intact");
+    assert!(reason.contains(&gens[0].display().to_string()), "{reason}");
+    // The store reads: integrity holds and its rows count.
+    let db = env.state().join("meter.db");
+    let c = meter::query::open_read_only(&db, std::time::Duration::from_secs(2)).unwrap();
+    let ok: String = c
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ok, "ok");
+    assert!(meter::store::row_counts(&c).unwrap()["usage"] > 0);
+    let leftovers: Vec<String> = fs::read_dir(env.state())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".failed"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+// The Reviewer's delta L1 on PR 849 (its first-round L2): a store older than schema 2 is rebuilt
+// from the logs, and sync says so, never that every row was kept.
+#[test]
+fn a_schema_1_migration_says_it_rebuilt_the_store() {
+    let env = Env::new();
+    write_lines(
+        &env.claude("-work-app/s-1.jsonl"),
+        &[line(
+            "m1",
+            "s-1",
+            "/work/app",
+            meter::time::now_ms() - 3_600_000,
+        )],
+    );
+    let _serial = serial();
+    let sync = || {
+        env.command()
+            .env("METER_STATE_DIR", env.state())
+            .args(["sync", "--force", "--no-publish"])
+            .output()
+            .unwrap()
+    };
+    assert!(sync().status.success());
+    Store::open(&env.state().join("meter.db"))
+        .unwrap()
+        .set_meta("schema_version", "1")
+        .unwrap();
+    let out = sync();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("rebuilt it from the logs"), "{text}");
+    assert!(!text.contains("every row kept"), "{text}");
+    assert!(text.contains("kept the store before the reset"), "{text}");
 }
