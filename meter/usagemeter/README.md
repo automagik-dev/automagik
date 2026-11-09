@@ -19,8 +19,9 @@ variables did not change, so an existing install keeps its data. Since 0.5.0 the
 ## Privacy
 
 usagemeter records how many tokens were used, never what was said. It stores no prompt text,
-responses, titles, file contents or per-turn rows: only hourly token counts per harness, model,
-repo and branch (see [What it stores](#what-it-stores)). Repo URLs are stripped of credentials.
+responses, titles or file contents: hourly token counts per harness, model, repo and branch, and,
+for a bounded time, each call's token counts with its time, folder and keyed hashes of its session
+and request ids, never the raw ids (see [What it stores](#what-it-stores)). Repo URLs are stripped of credentials.
 The store stays on the machine (0600); the only thing that leaves it is the summary doc, written
 to the local herdr-core. The binary itself opens no network connection.
 
@@ -228,15 +229,41 @@ renders each row as an `ae/1` envelope:
 - `total_only`: `unsplit` (tokens known only as a total, never priced), and none of the split
   fields.
 
-A store written by an older meter (row ids without precision) is rebuilt once from the logs on
-the next `sync`: the old rows are dropped in the same transaction that resets the offsets, so the
-doc never counts a token twice. Until the rebuild finishes, it is published with
-`complete: false`. No prompt text, titles, file contents or
-per-turn rows are stored, and no $ except omp's reported cost.
+A store written by a meter older than schema 2 (row ids without precision) is rebuilt once from
+the logs on the next `sync`: the old rows are dropped in the same transaction that resets the
+offsets, so the doc never counts a token twice. Until the rebuild finishes, it is published with
+`complete: false`. A schema 2 store is migrated to schema 3 in place, every row kept (below). No
+prompt text, titles or file contents are stored, and no $ except omp's reported cost.
+
+**Per-call evidence and links (schema 3, RFC 0021 delivery 5).** Beside the rollups the store keeps,
+per counted call (RFC 0018 (b)): its time in ms, harness, model, machine, repo and branch as
+logged, every token kind and the precision, the reported $, the folder it ran in and the one its
+session started in, and its session, parent session and request ids as keyed 128-bit hashes (an
+HMAC with a random key kept in the store; the raw ids are never written there). Its bot, kind,
+role, squad, task and basis are derived from the `launch` and `link` tables, never typed in.
+`launch` holds one row per Herdr launch (its start row's fields, its validity interval and what
+ended it: an end row, a newer terminal, hc showing it finished, a detach, or `gone`, when a sync
+no longer sees a terminal an earlier sync saw, with `gone_after` the last sync that saw it);
+`link` one row per session in a launch (`session`, `label` or `worktree`), a changed one kept and
+marked superseded. They follow RFC 0018 (b)'s rules without extending its session-to-task
+contract. Each sync reads Herdr's ledgers whole (each at most 16 MiB, counted in the run's
+budget; size, modification time and first bytes tell an unchanged set apart, so its diff is
+skipped), writes what changed, and queues the sessions and start folders whose launches or links
+changed: their calls' attribution is recomputed under the read budget, and a call whose
+attribution changed moves its tokens from the old rollup row to the new one in the same
+transaction (a run stopped by the budget resumes the queue). A schema 3 rollup keys on its squad,
+`kind`, `basis`, `branch_basis` and `actor_state`; rows from before schema 3 keep their bot and
+role for the doc but have no state: they are frozen and never counted as attributed, nor is any
+hour before `evidence_from`. Retention (RFC 0018, proposed): evidence for 90 days or 1 GiB,
+whichever comes first, oldest whole day first (`evidence_from` moves past it); closed launches and
+links for 400 days. The rollups stay as they are.
 
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
-- `branch` is the session's `gitBranch` (Claude Code); null for omp and dsh-tui.
+- `branch` is the session's `gitBranch` (Claude Code), or a Codex thread's (`branch_basis: log`,
+  never replaced). omp and dsh-tui log none: a call of theirs that resolves to a worker launch
+  takes that worker's start-row branch (`branch_basis: ledger`); any other stays null
+  (`branch_basis: none`). Never from git or today's checkout.
 - `bot`, `role`, `squad` come from the start row of the Herdr launch the call belongs to (RFC
   0021, `src/ledger.rs`): read from the global app home's `workers.jsonl` and `attach.jsonl`,
   `$HERDR_WORKERS_LEDGER`, and each project's `.herdr/app-home` above the call's cwd. The launch
@@ -272,11 +299,15 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
   killed run loses at most the chunk it was on and never counts anything twice.
 - A missing `hc` is not an error: the summary is just not published.
 - A store a newer meter wrote is refused (exit 12) before anything is opened for writing.
-- A write to an existing store's schema (a reset, or the query's index on an older store) needs
-  twice the store's size free (else exit 4, nothing changed). Before a reset drops a store's rows
-  (an outdated store rebuilt, or a widened re-import), `sync` also keeps a generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of the store made with
-  `VACUUM INTO`, reopened and checked table by table against the store's row counts. Only one is
-  kept; the next sync that succeeds on the rebuilt store removes it.
+- A write to an existing store's schema (a reset, the schema 3 migration, or the query's index on
+  an older store) needs twice the store's size free (else exit 4, nothing changed). Before a reset
+  drops a store's rows (an outdated store rebuilt, or a widened re-import) and before the schema 3
+  migration, `sync` also keeps a generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of
+  the store made with `VACUUM INTO`, reopened and checked table by table against the store's row
+  counts. Only one is kept; the next sync that succeeds on the migrated store removes it, never
+  the run that made it. The migration itself is one transaction that refuses to commit if any
+  table would lose a row; `query` and `status` never migrate (a schema 2 store gives `query` exit
+  13 until `sync` runs).
 
 ## Query
 

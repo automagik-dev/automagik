@@ -5,9 +5,10 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::event::{Actor, Precision, RollupKey, Tokens, UsageEvent};
+use crate::event::{Precision, Tokens, UsageEvent};
+use crate::evidence::{self, Actor, Dim, Evidence, SessionKey};
 use crate::hc::Hc;
-use crate::ledger::{Call, Resolution, Resolver};
+use crate::ledger::{Call, Resolver};
 use crate::paths;
 use crate::prices::PriceTable;
 use crate::scan::{self, Candidate, Plan, ReadLimits, ReadOutcome};
@@ -174,6 +175,19 @@ pub struct Report {
     pub generation: Option<crate::store::Generation>,
     /// Generations removed because this run succeeded on the migrated store.
     pub generations_removed: Vec<PathBuf>,
+    /// This run migrated the store to the current schema (its generation stays until a later
+    /// successful sync).
+    pub migrated: bool,
+    /// Launch and link rows this run wrote, and the calls it queued for recompute (by session or
+    /// start folder).
+    pub launches_changed: usize,
+    pub links_changed: usize,
+    /// Calls whose attribution a launch or link learned this run changed, moved between rollups.
+    pub calls_moved: u64,
+    /// Sessions and start folders still waiting for recompute (the budget ran out).
+    pub attribution_backlog: i64,
+    /// Evidence rows dropped by the retention bounds.
+    pub evidence_pruned: usize,
 }
 
 #[derive(Debug)]
@@ -216,13 +230,16 @@ impl From<rusqlite::Error> for Error {
     }
 }
 
-/// Attribution: machine, repo per cwd (cached), and bot, role and squad from the resolver.
+/// Attribution: machine, repo per cwd (cached), and the call's evidence and derived attribution
+/// from the resolver. Session and request ids are hashed with the store's key before anything
+/// else sees them.
 struct Attributor {
     machine: String,
     resolver: Resolver,
     repos: HashMap<String, Option<String>>,
     resolve: bool,
     now_ms: i64,
+    key: SessionKey,
 }
 
 impl Attributor {
@@ -247,26 +264,47 @@ impl Attributor {
         Ok(r)
     }
 
-    /// bot, role and squad from the launch the resolver ties the call to (RFC 0021 (a)). An
-    /// ambiguous or unlinked call gives nothing: a bot is never guessed.
-    fn actor(&mut self, e: &UsageEvent) -> Actor {
+    /// The call's attribution, derived from the launch the resolver ties it to (RFC 0021 (a)).
+    /// An ambiguous or unlinked call has no bot: a bot is never guessed.
+    #[allow(clippy::too_many_arguments)]
+    fn actor(
+        &mut self,
+        harness: &str,
+        session: Option<&str>,
+        parent: Option<&str>,
+        cwd: Option<&str>,
+        session_cwd: Option<&str>,
+        at_ms: i64,
+        copied: bool,
+        branch: Option<&str>,
+    ) -> Actor {
         let r = self.resolver.resolve(&Call {
-            harness: e.harness,
-            session: e.session.as_deref(),
-            parent_session: e.parent_session.as_deref(),
-            cwd: e.cwd.as_deref(),
-            session_cwd: e.session_cwd.as_deref(),
-            at_ms: e.ts_ms,
-            copied: e.copied,
+            harness,
+            session,
+            parent_session: parent,
+            cwd,
+            session_cwd,
+            at_ms,
+            copied,
         });
-        match r {
-            Resolution::Tag(tag, _) => Actor {
-                bot: Some(tag.bot),
-                role: tag.role,
-                squad: tag.squad,
-            },
-            Resolution::Ambiguous | Resolution::Unlinked => Actor::default(),
-        }
+        Actor::derive(&r, harness, branch)
+    }
+
+    /// A stored call's attribution, as the resolver gives it now.
+    fn rederive(&mut self, c: &evidence::Stored) -> Actor {
+        let session = c.session.as_deref().map(crate::event::hex);
+        let parent = c.parent.as_deref().map(crate::event::hex);
+        let harness = c.dim.harness.clone();
+        self.actor(
+            &harness,
+            session.as_deref(),
+            parent.as_deref(),
+            c.cwd.as_deref(),
+            c.session_cwd.as_deref(),
+            c.ts_ms,
+            c.copied,
+            c.dim.branch.as_deref(),
+        )
     }
 
     fn attribute(
@@ -284,19 +322,36 @@ impl Attributor {
                 Some(r) => Some(r.clone()),
                 None => self.repo(store, e.cwd.as_deref())?,
             };
-            let actor = self.actor(&e);
+            let scope = evidence::scope(e.harness);
+            let session = e.session.as_deref().map(|s| self.key.hash(scope, s));
+            let parent = e.parent_session.as_deref().map(|s| self.key.hash(scope, s));
+            let (sh, ph) = (
+                session.map(|b| crate::event::hex(&b)),
+                parent.map(|b| crate::event::hex(&b)),
+            );
+            let actor = self.actor(
+                e.harness,
+                sh.as_deref(),
+                ph.as_deref(),
+                e.cwd.as_deref(),
+                e.session_cwd.as_deref(),
+                e.ts_ms,
+                e.copied,
+                e.branch.as_deref(),
+            );
+            let dim = Dim {
+                harness: e.harness.to_string(),
+                model: e.model,
+                machine: self.machine.clone(),
+                repo,
+                branch: e.branch,
+                precision: e.precision.as_str().into(),
+            };
+            let (key, _) = evidence::rollup_key(&dim, &actor, crate::time::hour_start(e.ts_ms));
+            let request = (!e.dedupe_key.is_empty())
+                .then(|| self.key.hash(&format!("req:{}", e.harness), &e.dedupe_key));
             out.push(Attributed {
-                key: RollupKey {
-                    bot: actor.bot,
-                    role: actor.role,
-                    harness: e.harness.to_string(),
-                    model: e.model,
-                    machine: self.machine.clone(),
-                    repo,
-                    branch: e.branch,
-                    hour_ms: crate::time::hour_start(e.ts_ms),
-                },
-                squad: actor.squad,
+                key,
                 dedupe_key: e.dedupe_key,
                 tokens: e.tokens,
                 precision: e.precision,
@@ -304,6 +359,16 @@ impl Attributor {
                 session: e.session,
                 parent_session: e.parent_session,
                 ts_ms: e.ts_ms,
+                evidence: Some(Evidence {
+                    dim,
+                    actor,
+                    session,
+                    parent,
+                    request,
+                    cwd: e.cwd,
+                    session_cwd: e.session_cwd,
+                    copied: e.copied,
+                }),
             });
         }
         Ok(out)
@@ -579,9 +644,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let now = opts.now_ms;
     // The import window. Widening it (or --backfill) re-imports: rows are a projection.
     let stored = peek.as_ref().and_then(|p| p.counted_from_ms);
-    // A store of an older version (row ids without precision) is rebuilt once over its window.
-    // The reset drops every old row in the same transaction, so no doc counts a token twice.
-    let outdated = peek.as_ref().is_some_and(|p| p.version < SCHEMA_VERSION);
+    // A store older than 2 (row ids without precision) is rebuilt once over its window: the reset
+    // drops every old row in the same transaction, so no doc counts a token twice. A schema 2
+    // store is migrated in place, every row kept (RFC 0021 delivery 5).
+    let outdated = peek.as_ref().is_some_and(|p| p.version < 2);
+    let migrate = peek.as_ref().is_some_and(|p| p.version < SCHEMA_VERSION);
     // A store that holds less than the default window (one filled when the default was 14 days)
     // widens once on its own: the installed trigger runs a plain `sync`.
     let wanted = if opts.backfill {
@@ -595,9 +662,10 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         Some(s) if wanted < s || outdated => Some(wanted.min(s)),
         Some(_) => None,
     };
-    // A reset is destructive when the store holds any row, whatever its window says.
+    // A reset, or the evidence tables' first creation over a full store (RFC 0018 (d)), is
+    // destructive when the store holds any row, whatever its window says.
     let holds_rows = peek.as_ref().is_some_and(|p| p.has_rows);
-    let destructive = reset_from.is_some() && holds_rows;
+    let destructive = (reset_from.is_some() || migrate) && holds_rows;
     let reimported = reset_from.is_some() && (stored.is_some() || holds_rows);
     // Writing to an existing store's schema (a reset, or the index an older store lacks) needs at
     // least twice the store's size free; without it nothing changes.
@@ -647,7 +715,15 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     let trace = Trace::new();
     let mut store = Store::open(&db)?;
     let prices = PriceTable::load(&opts.state_dir.join("prices.json")).map_err(Error)?;
+    // One transaction: the schema 3 tables and columns, the branch_basis backfill and the new
+    // version, or (older than 2) the reset with them.
+    if migrate {
+        store
+            .migrate(now, reset_from.filter(|_| outdated))
+            .map_err(Error)?;
+    }
     let counted_from = match reset_from {
+        Some(from) if migrate && outdated => from,
         Some(from) => {
             store.reset(from)?;
             from
@@ -675,18 +751,24 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     };
     let core = hc.as_mut().and_then(|h| h.core_id());
     let machine = machine_id(&store, core.as_deref())?;
-    let snapshot = hc.as_mut().map(|h| h.terminals()).unwrap_or_default();
+    // None when hc did not answer: then no launch is taken for gone.
+    let listed = hc.as_mut().and_then(|h| h.terminals_listed());
+    let answered = listed.is_some();
+    let snapshot = listed.unwrap_or_default();
     // Rows of another core are skipped: with hc away, the core this store last saw stands in.
     let core = match core {
         Some(c) => Some(c),
         None => store.meta("machine")?,
     };
+    let key = store.session_key()?;
+    let snap = Snapshot::of(&store, core.as_deref(), &snapshot, answered, now)?;
     let mut attr = Attributor {
         machine: machine.clone(),
-        resolver: resolver(opts, core, snapshot),
+        resolver: resolver(opts, core, snapshot, key.clone(), &snap, &store)?,
         repos: HashMap::new(),
         resolve: opts.resolve_repos,
         now_ms: now,
+        key,
     };
 
     trace.mark("hc");
@@ -695,6 +777,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         reimported,
         machine,
         generation,
+        migrated: migrate,
         ..Report::default()
     };
     let mut pending_sources: BTreeSet<Source> = BTreeSet::new();
@@ -815,6 +898,36 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     }
 
     trace.mark("read");
+    // The launches and links this run derived, what the snapshot showed, and the calls whose
+    // attribution they change; then the recompute, under what is left of the budget.
+    let cwds = evidence::cwds(&store.conn)?;
+    attr.resolver.look_above(cwds.iter().map(String::as_str));
+    links_pass(&mut store, &mut attr, &snap, now, &mut report)?;
+    let (moved, left) = recompute(&mut store, &mut attr, deadline, now)?;
+    report.calls_moved = moved;
+    report.attribution_backlog = left;
+    if left > 0 {
+        eprintln!(
+            "meter: {left} sessions or folders still wait for their attribution to be \
+             recomputed; the next sync goes on"
+        );
+    }
+    {
+        let tx = store.conn.transaction()?;
+        let p = evidence::prune(&tx, now, evidence::EVIDENCE_DAYS, evidence::EVIDENCE_BYTES)?;
+        tx.commit()?;
+        report.evidence_pruned = p.evidence;
+    }
+    for p in attr.resolver.oversized() {
+        eprintln!(
+            "meter: {} is larger than {} MiB, so it was not read; the usage it would tag has no \
+             bot",
+            p.display(),
+            crate::ledger::LEDGER_CAP >> 20
+        );
+    }
+    report.bytes_read += attr.resolver.bytes_read();
+    trace.mark("attribution");
     // Kept in the store, so status, the doc and the query can say why usage has no bot: the
     // sidebar's background sync drops stderr. A run that resolved nothing and refused nothing
     // looked for no project ledger, so it keeps the last run's count.
@@ -857,7 +970,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     if report.pending_bytes == 0 {
         store.set_meta("last_success_ms", &now.to_string())?;
         // A later sync that succeeded on the migrated store: its generation has done its job.
-        if !reimported {
+        if !reimported && !migrate {
             for g in crate::store::generations(&opts.state_dir) {
                 match std::fs::remove_file(&g) {
                     Ok(()) => report.generations_removed.push(g),
@@ -911,17 +1024,231 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     Ok(Outcome::Ran(Box::new(report)))
 }
 
-/// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, and the
-/// project app homes found above the cwds it is asked about.
-fn resolver(opts: &Options, core: Option<String>, snapshot: Vec<crate::hc::Terminal>) -> Resolver {
-    let mut r = Resolver::new(core, snapshot).walk(opts.project_ledgers);
+/// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, the project
+/// app homes earlier syncs found, those found above the cwds it is asked about, and what earlier
+/// syncs recorded (RFC 0021 (b)). Session ids are hashed with the store's key as they are read.
+fn resolver(
+    opts: &Options,
+    core: Option<String>,
+    snapshot: Vec<crate::hc::Terminal>,
+    key: SessionKey,
+    snap: &Snapshot,
+    store: &Store,
+) -> Result<Resolver, Error> {
+    let mut r = Resolver::new(core, snapshot)
+        .walk(opts.project_ledgers)
+        .keyed(key);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);
     }
     if let Some(p) = &opts.workers_ledger {
         r.load_workers(p);
     }
-    r
+    if opts.project_ledgers {
+        for h in evidence::known_homes(&store.conn)? {
+            r.load_project_home(std::path::Path::new(&h));
+        }
+    }
+    r.add_history(
+        &snap.history,
+        &evidence::label_history(&store.conn)?,
+        &snap.gone_at,
+    );
+    Ok(r)
+}
+
+/// What this sync's hc snapshot says about the launches earlier syncs saw.
+struct Snapshot {
+    history: Vec<evidence::History>,
+    /// Launches an earlier sync saw live that hc no longer lists: launch key to this sync's time,
+    /// when they end (`gone`).
+    gone_at: HashMap<String, i64>,
+    /// The same launches, to the last sync that saw them (`gone_after`).
+    gone_after: HashMap<String, i64>,
+    /// What hc shows live now, per launch key.
+    seen: Vec<evidence::Seen>,
+    /// A fingerprint of what hc showed, for skipping an unchanged diff.
+    print: String,
+}
+
+impl Snapshot {
+    fn of(
+        store: &Store,
+        core: Option<&str>,
+        terminals: &[crate::hc::Terminal],
+        answered: bool,
+        now: i64,
+    ) -> rusqlite::Result<Snapshot> {
+        let history = evidence::history(&store.conn)?;
+        let listed: std::collections::HashSet<(&str, i64)> = terminals
+            .iter()
+            .filter_map(|t| Some((t.terminal.as_str(), t.created_ms?)))
+            .collect();
+        let (mut gone_at, mut gone_after) = (HashMap::new(), HashMap::new());
+        if answered {
+            for h in &history {
+                if let (Some(last), None) = (h.seen_last, h.valid_to)
+                    && !listed.contains(&(h.terminal.as_str(), h.created_ms))
+                {
+                    gone_at.insert(h.lkey.clone(), now);
+                    gone_after.insert(h.lkey.clone(), last);
+                }
+            }
+        }
+        let mut seen = Vec::new();
+        let mut print = sha2::Sha256::new();
+        use sha2::Digest;
+        for t in terminals {
+            print.update(format!(
+                "{}\x1f{:?}\x1f{:?}\x1f{:?}\x1f{:?}\x1f{:?}\x1e",
+                t.terminal, t.created_ms, t.finished_ms, t.harness, t.cwd, t.labels
+            ));
+            let (Some(created), Some(h), true) = (t.created_ms, t.harness, t.live()) else {
+                continue;
+            };
+            let agent = crate::ledger::agent_of(h).map(str::to_owned);
+            for c in [core, None] {
+                seen.push(evidence::Seen {
+                    lkey: crate::ledger::launch_key(c, &t.terminal, created),
+                    cwd: t.cwd.clone(),
+                    agent: agent.clone(),
+                });
+            }
+        }
+        for k in gone_at.keys() {
+            print.update(format!("gone\x1f{k}\x1e"));
+        }
+        Ok(Snapshot {
+            history,
+            gone_at,
+            gone_after,
+            seen,
+            print: crate::event::hex(&print.finalize()),
+        })
+    }
+}
+
+/// The `meta` key of the last attribution inputs' fingerprint.
+const INPUTS_META: &str = "attribution_inputs";
+
+/// Writes the launches and links this sync derived and queues the calls they change (RFC 0021
+/// (b)), in one transaction. When no ledger changed (its size, modification time and first bytes)
+/// and hc showed the same terminals, the diff is skipped: only what the snapshot saw is touched.
+fn links_pass(
+    store: &mut Store,
+    attr: &mut Attributor,
+    snap: &Snapshot,
+    now: i64,
+    report: &mut Report,
+) -> Result<(), Error> {
+    use sha2::Digest;
+    let mut print = sha2::Sha256::new();
+    print.update(snap.print.as_bytes());
+    for f in attr.resolver.files() {
+        print.update(f.to_string_lossy().as_bytes());
+        if let Ok(m) = f.metadata() {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            print.update(format!("\x1f{}\x1f{mtime}", m.len()));
+        }
+        if let Ok(mut fh) = std::fs::File::open(&f) {
+            use std::io::Read;
+            let mut head = [0u8; 4096];
+            let n = fh.read(&mut head).unwrap_or(0);
+            print.update(&head[..n]);
+        }
+        print.update([0x1e]);
+    }
+    let homes: Vec<String> = attr
+        .resolver
+        .homes()
+        .iter()
+        .map(|h| h.to_string_lossy().into_owned())
+        .collect();
+    for h in &homes {
+        print.update(h.as_bytes());
+    }
+    let print = crate::event::hex(&print.finalize());
+    let same = store.meta(INPUTS_META)?.as_deref() == Some(print.as_str());
+    let tx = store.conn.transaction()?;
+    if same {
+        evidence::touch_seen(&tx, &snap.seen, now)?;
+    } else {
+        let (launches, links) = attr.resolver.records();
+        let p = evidence::persist(
+            &tx,
+            &launches,
+            &links,
+            &snap.seen,
+            &snap.gone_after,
+            &homes,
+            now,
+        )?;
+        report.launches_changed = p.launches;
+        report.links_changed = p.links;
+        tx.execute(
+            "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            [INPUTS_META, print.as_str()],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// The calls in the recompute queue per transaction, at most.
+const RECOMPUTE_KEYS: usize = 64;
+
+/// Recomputes the attribution of the calls whose sessions or start folders are queued, moving
+/// each changed call's tokens between rollups with its evidence row, one transaction per batch,
+/// until the queue is empty or `deadline` passes. Returns the calls moved and what is left.
+fn recompute(
+    store: &mut Store,
+    attr: &mut Attributor,
+    deadline: Instant,
+    now: i64,
+) -> Result<(u64, i64), Error> {
+    let mut moved = 0u64;
+    while Instant::now() < deadline {
+        let keys = evidence::dirty_batch(&store.conn, RECOMPUTE_KEYS)?;
+        if keys.is_empty() {
+            break;
+        }
+        let mut done = std::collections::HashSet::new();
+        let mut changes = Vec::new();
+        for k in &keys {
+            for c in evidence::calls_of(&store.conn, k)? {
+                if !done.insert(c.id) {
+                    continue;
+                }
+                let to = attr.rederive(&c);
+                if to != c.actor {
+                    changes.push((c, to));
+                }
+            }
+        }
+        let r = (|| -> rusqlite::Result<()> {
+            let tx = store.conn.transaction()?;
+            for (c, to) in &changes {
+                evidence::reattribute(&tx, &mut store.intern, c, to, now)?;
+            }
+            {
+                let mut del = tx.prepare_cached("DELETE FROM ev_dirty WHERE k = ?1")?;
+                for k in &keys {
+                    del.execute([k])?;
+                }
+            }
+            tx.commit()
+        })();
+        if let Err(e) = r {
+            store.intern.clear();
+            return Err(e.into());
+        }
+        moved += changes.len() as u64;
+    }
+    Ok((moved, evidence::dirty_count(&store.conn)?))
 }
 
 /// Moves dsh-tui forks behind every other log, oldest fork first, keeping the rest in order: a

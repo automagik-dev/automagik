@@ -24,7 +24,7 @@ use common::schema::{Schema, same};
 use common::{Env, serial};
 use meter::paths::StateDirs;
 use meter::query::{self, Ctx};
-use meter::store::Store;
+use meter::store::{SCHEMA_VERSION, Store};
 use meter::sync::{Outcome, Report};
 use meter::time::{HOUR_MS, format_rfc3339, parse_rfc3339};
 use rusqlite::{Connection, params};
@@ -633,7 +633,12 @@ fn scenario_raw(name: &str) -> (u8, String) {
         }
         "newer-schema" | "outdated-store" => {
             let fx = plain_store();
-            let v = if name == "newer-schema" { "3" } else { "1" };
+            let newer = (SCHEMA_VERSION + 1).to_string();
+            let v = if name == "newer-schema" {
+                newer.as_str()
+            } else {
+                "1"
+            };
             Store::open(&fx.db())
                 .unwrap()
                 .set_meta("schema_version", v)
@@ -2143,7 +2148,7 @@ fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     );
     let st: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(st["rows"].as_i64().unwrap() > 0);
-    assert_eq!(st["schema_version"], 2);
+    assert_eq!(st["schema_version"], SCHEMA_VERSION);
     same_folder(&folder(&fx.env.state()), &before, "status");
 
     // A sync that stopped without closing left a row in the wal: the query counts it, and the
@@ -2180,14 +2185,15 @@ fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     Store::open(&fx.db()).unwrap();
 
     // Every refusal leaves it as it was too, a newer and an outdated store included.
-    for v in ["3", "1"] {
+    let newer = (SCHEMA_VERSION + 1).to_string();
+    for v in [newer.as_str(), "2", "1"] {
         Store::open(&fx.db())
             .unwrap()
             .set_meta("schema_version", v)
             .unwrap();
         let before = folder(&fx.env.state());
         let out = bin(&fx, &a);
-        assert_eq!(out.status.code(), Some(if v == "3" { 12 } else { 13 }));
+        assert_eq!(out.status.code(), Some(if v == newer { 12 } else { 13 }));
         let out = bin(&fx, &["status"]);
         assert_eq!(
             out.status.code(),
@@ -2413,13 +2419,15 @@ fn set_version(fx: &Fx, v: &str) {
 #[test]
 fn sync_refuses_a_newer_store_and_writes_nothing() {
     let fx = plain_store();
-    set_version(&fx, "3");
+    set_version(&fx, &(SCHEMA_VERSION + 1).to_string());
     let state = fx.env.state();
     let before = folder(&state);
     {
         let _g = serial();
         let o = sync_opts(&fx, t(GENERATED));
-        assert!(matches!(fx.env.sync(&o), Outcome::NewerSchema { store: 3 }));
+        assert!(
+            matches!(fx.env.sync(&o), Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1)
+        );
     }
     strictly_same_folder(&folder(&state), &before, "sync on a newer store");
 
@@ -2524,7 +2532,7 @@ fn before_a_reset_sync_keeps_a_generation_whose_row_counts_match() {
             .meta("schema_version")
             .unwrap()
             .as_deref(),
-        Some("2")
+        Some(SCHEMA_VERSION.to_string().as_str())
     );
     assert_eq!(
         meter::store::generations(&fx.env.state()),
@@ -2871,7 +2879,7 @@ fn a_read_only_state_folder_is_read_with_companions_and_refused_without() {
 #[test]
 fn a_newer_store_is_refused_before_the_move_runs() {
     let fx = plain_store();
-    set_version(&fx, "3");
+    set_version(&fx, &(SCHEMA_VERSION + 1).to_string());
     let old = fx.env.dir.path().join("old-state");
     fs::create_dir_all(&old).unwrap();
     fs::copy(fx.db(), old.join("meter.db")).unwrap();
@@ -2879,7 +2887,10 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     let mut o = sync_opts(&fx, t(GENERATED));
     o.migrate_from = Some(old.clone());
     let out = fx.env.sync(&o);
-    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    assert!(
+        matches!(out, Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1),
+        "{out:?}"
+    );
     strictly_same_folder(&folder(&fx.env.state()), &before_new, "the state folder");
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
 
@@ -2895,7 +2906,10 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     o.now_ms = t(GENERATED);
     o.migrate_from = Some(old.clone());
     let out = fresh.sync(&o);
-    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    assert!(
+        matches!(out, Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1),
+        "{out:?}"
+    );
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
     assert!(!new.join("meter.db").exists() && !new.join(".meter-moved").exists());
 }

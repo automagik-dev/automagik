@@ -7,14 +7,14 @@
   "error": {
     "code": "newer_schema",
     "message": "the store was written by a newer usagemeter; update the meter",
-    "store_schema_version": 3,
-    "supported_schema_version": 2
+    "store_schema_version": 4,
+    "supported_schema_version": 3
   },
   "generated_at": "2026-11-08T20:00:05Z",
   "as_of": null,
   "machine": null,
   "store": {
-    "schema_version": 3,
+    "schema_version": 4,
     "location": "current"
   },
   "ingestion": null,

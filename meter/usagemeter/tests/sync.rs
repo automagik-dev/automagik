@@ -632,14 +632,15 @@ fn a_chunk_commits_its_rows_keys_and_offset_together() {
             repo: None,
             branch: None,
             hour_ms: 0,
+            ..RollupKey::default()
         },
-        squad: None,
         tokens: U1.tokens(),
         precision: Precision::Exact,
         reported_usd: None,
         session: None,
         parent_session: None,
         ts_ms: 0,
+        evidence: None,
     };
     store
         .apply_chunk(&file, std::slice::from_ref(&event), Health::default(), 1)

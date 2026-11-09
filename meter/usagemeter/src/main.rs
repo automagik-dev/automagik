@@ -161,13 +161,25 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             if let Some(g) = &r.generation {
                 let rows: i64 = g.counts.values().sum();
                 println!(
-                    "meter: kept the store before the reset as {} ({rows} rows, every table's \
-                     count checked)",
+                    "meter: kept the store before the migration as {} ({rows} rows, every \
+                     table's count checked)",
                     g.path.display()
                 );
             }
             for g in &r.generations_removed {
                 println!("meter: removed the generation {}", g.display());
+            }
+            if r.migrated {
+                println!(
+                    "meter: migrated the store to schema {SCHEMA_VERSION}: every row kept, \
+                     per-call evidence from the next hour on"
+                );
+            }
+            if r.launches_changed + r.links_changed > 0 || r.calls_moved > 0 {
+                println!(
+                    "meter: attribution: {} launch and {} link rows changed, {} calls moved",
+                    r.launches_changed, r.links_changed, r.calls_moved
+                );
             }
             if r.reimported {
                 println!(
@@ -267,6 +279,19 @@ fn cmd_status() -> Result<ExitCode, String> {
         "files": store.count("files").unwrap_or(0),
         "dedupe_keys": store.count("seen").unwrap_or(0),
         "sessions": store.count("sessions").unwrap_or(0),
+        // Schema 3 (RFC 0021 delivery 5): counts only, never an id. Tokens before the evidence
+        // (rows written before schema 3 included) are never counted as attributed.
+        "evidence": current.then(|| serde_json::json!({
+            "evidence_from": get(meter::evidence::FROM_META).map(format_rfc3339),
+            "calls": store.count("evidence").unwrap_or(0),
+            "launches": store.count("launch").unwrap_or(0),
+            "links": store.count("link").unwrap_or(0),
+            "attribution_backlog": meter::evidence::dirty_count(&store.conn).unwrap_or(0),
+            "tokens_by_harness": meter::evidence::actor_totals(
+                &store.conn,
+                get("counted_from_ms").unwrap_or(0),
+            ).unwrap_or_default(),
+        })),
         "sources": sources.iter().map(|s| serde_json::json!({
             "harness": s.harness, "status": s.status, "reason": s.reason,
             "last_success": s.last_success_ms.map(format_rfc3339),

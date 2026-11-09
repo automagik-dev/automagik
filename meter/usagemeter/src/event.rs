@@ -100,8 +100,26 @@ pub struct Actor {
     pub squad: Option<String>,
 }
 
-/// (bot, role, harness, model, machine, repo, branch, hour): one `agent.usage` row.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// How a schema 3 row's calls were attributed (RFC 0021 (c)): part of its key, so a row holds
+/// calls whose derived attribution is equal. A row written before schema 3 has none: its bot and
+/// role are frozen tags, never counted as attributed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RollupAttr {
+    /// `attributed`, `ambiguous` or `unlinked`.
+    pub state: String,
+    /// `worker` or `seat`, for an attributed call.
+    pub kind: Option<String>,
+    /// `session`, `label` or `worktree`, for an attributed call.
+    pub basis: Option<String>,
+    /// `log` (the harness logged it), `ledger` (filled from a worker's start row) or `none`.
+    pub branch_basis: String,
+    /// The key fields the launch's start row did not record (`role`, `squad`), comma-separated.
+    pub unrecorded: Option<String>,
+}
+
+/// (bot, role, harness, model, machine, repo, branch, hour): one `agent.usage` row. Schema 3 rows
+/// also key on their squad and [`RollupAttr`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RollupKey {
     pub bot: Option<String>,
     pub role: Option<String>,
@@ -111,14 +129,29 @@ pub struct RollupKey {
     pub repo: Option<String>,
     pub branch: Option<String>,
     pub hour_ms: i64,
+    /// In the key only with `attr`; a row written before schema 3 keeps it outside its id.
+    pub squad: Option<String>,
+    pub attr: Option<RollupAttr>,
 }
 
 impl RollupKey {
     /// `idempotency_key` = hash of the rollup key + hour + precision (`ae/1` revision 3). The same
-    /// hour maps to at most one exact row and one total_only row.
+    /// hour maps to at most one exact row and one total_only row per key. A schema 3 key (one with
+    /// `attr`) hashes its squad and attribution after the precision, so it never takes the id of a
+    /// row written before schema 3.
     pub fn id(&self, precision: Precision) -> String {
         let mut h = Sha256::new();
-        for part in [
+        let part = |h: &mut Sha256, p: Option<&str>| {
+            match p {
+                Some(s) => {
+                    h.update([1u8]);
+                    h.update(s.as_bytes());
+                }
+                None => h.update([0u8]),
+            }
+            h.update([0x1f]);
+        };
+        for p in [
             self.bot.as_deref(),
             self.role.as_deref(),
             Some(self.harness.as_str()),
@@ -127,18 +160,24 @@ impl RollupKey {
             self.repo.as_deref(),
             self.branch.as_deref(),
         ] {
-            match part {
-                Some(s) => {
-                    h.update([1u8]);
-                    h.update(s.as_bytes());
-                }
-                None => h.update([0u8]),
-            }
-            h.update([0x1f]);
+            part(&mut h, p);
         }
         h.update(self.hour_ms.to_be_bytes());
         h.update([0x1f]);
         h.update(precision.as_str().as_bytes());
+        if let Some(a) = &self.attr {
+            h.update(b"\x1eattr/3\x1f");
+            for p in [
+                self.squad.as_deref(),
+                Some(a.state.as_str()),
+                a.kind.as_deref(),
+                a.basis.as_deref(),
+                Some(a.branch_basis.as_str()),
+                a.unrecorded.as_deref(),
+            ] {
+                part(&mut h, p);
+            }
+        }
         hex(&h.finalize()[..16])
     }
 }
@@ -175,6 +214,7 @@ mod tests {
             repo: Some("example.com/acme/app".into()),
             branch: branch.map(Into::into),
             hour_ms,
+            ..RollupKey::default()
         }
     }
 
@@ -185,6 +225,25 @@ mod tests {
         assert_ne!(id(key(Some("main"), 0)), id(key(Some("main"), 3_600_000)));
         assert_ne!(id(key(None, 0)), id(key(Some(""), 0)));
         assert_ne!(id(key(None, 0)), key(None, 0).id(Precision::TotalOnly));
+    }
+
+    #[test]
+    fn a_schema_3_key_never_takes_an_older_rows_id() {
+        let old = key(Some("main"), 0);
+        let mut new = old.clone();
+        new.attr = Some(RollupAttr {
+            state: "unlinked".into(),
+            branch_basis: "log".into(),
+            ..RollupAttr::default()
+        });
+        assert_ne!(old.id(Precision::Exact), new.id(Precision::Exact));
+        // Squad is part of a schema 3 id, and outside an older row's.
+        let mut squad = new.clone();
+        squad.squad = Some("b-squad".into());
+        assert_ne!(new.id(Precision::Exact), squad.id(Precision::Exact));
+        let mut old_squad = old.clone();
+        old_squad.squad = Some("b-squad".into());
+        assert_eq!(old.id(Precision::Exact), old_squad.id(Precision::Exact));
     }
 
     #[test]

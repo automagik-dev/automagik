@@ -235,7 +235,8 @@ fn a_reimport_killed_partway_is_reported_incomplete() {
     let mut child = spawn();
     let started = std::time::Instant::now();
     while child.try_wait().unwrap().is_none() && started.elapsed() < Duration::from_secs(60) {
-        let reset = read("SELECT v FROM meta WHERE k = 'schema_version'").as_deref() == Some("2");
+        let reset = read("SELECT v FROM meta WHERE k = 'schema_version'")
+            == Some(meter::store::SCHEMA_VERSION.to_string());
         let some = read("SELECT CAST(count(*) AS TEXT) FROM files").is_some_and(|n| n != "0");
         if reset && some {
             break;

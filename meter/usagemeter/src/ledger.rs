@@ -71,6 +71,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use crate::evidence::{History, LaunchRecord, LinkRecord, SessionKey};
 use crate::hc::Terminal;
 
 pub const LEDGER_ENV: &str = "HERDR_WORKERS_LEDGER";
@@ -84,6 +85,9 @@ const LEDGER_RELATIVE: &str = "automagik-herdr/workers.jsonl";
 const ATTACH_RELATIVE: &str = "automagik-herdr/attach.jsonl";
 /// A project's app home, relative to the project folder.
 pub const PROJECT_APP_HOME: &str = ".herdr/app-home";
+/// A ledger larger than this is not read (RFC 0021 delivery 5: ledgers are read whole each sync,
+/// so their size is bounded).
+pub const LEDGER_CAP: u64 = 16 << 20;
 
 /// What launched the terminal: a worker on a task, or a long-lived seat (never a task).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -111,6 +115,9 @@ pub struct Tag {
     /// The head of the launching bot's lead chain, frozen at launch; None for the main bot and
     /// for rows written before RFC 0021.
     pub squad: Option<String>,
+    /// The key fields the start row did not record at all (`role`, `squad`): a row written before
+    /// RFC 0021 delivery 3. Such a field is None and unknown, never "none".
+    pub unrecorded: Vec<&'static str>,
     /// Short task id such as `gh-45`. Always None for seats, and for old rows whose `task` field
     /// held the branch.
     pub task: Option<String>,
@@ -155,6 +162,7 @@ impl Tag {
             && self.kind == o.kind
             && self.role == o.role
             && self.squad == o.squad
+            && self.unrecorded == o.unrecorded
             && self.task == o.task
             && self.project == o.project
             && self.branch == o.branch
@@ -278,6 +286,8 @@ struct StartRow {
     kind: Option<Kind>,
     session: Option<String>,
     tag: Option<Tag>,
+    /// Where the row is: a hash of its ledger's path and its byte offset.
+    src: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -294,6 +304,8 @@ struct SessionRow {
 struct EndRow {
     key: Key,
     at_ms: i64,
+    /// `end_row`, or, read back from the store, the basis an earlier sync recorded.
+    basis: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -340,11 +352,52 @@ struct Launch {
     /// A launch with no usable time shares its terminal: it may have replaced this one at any
     /// moment.
     unsure: bool,
+    /// What ended it first: `end_row`, `replaced`, `finished`, `detached` or `gone`.
+    end_basis: Option<&'static str>,
+    /// Its first start row's place in its ledger.
+    src: Option<String>,
 }
 
 impl Launch {
     fn covers(&self, t: i64) -> bool {
         self.from.is_none_or(|f| f <= t) && self.to.is_none_or(|e| t < e)
+    }
+
+    /// Ends it at `at` when that is earlier than what ended it so far.
+    fn end(&mut self, at: i64, basis: &'static str) {
+        if self.to.is_none_or(|e| at < e) {
+            self.to = Some(at);
+            self.end_basis = Some(basis);
+        }
+    }
+
+    /// The `launch` table's key: `(core, terminal, created_ms)`, or the start row's place for a
+    /// row written before RFC 0021 (no `created_ms`).
+    fn lkey(&self) -> Option<String> {
+        match (&self.key, &self.src) {
+            (Some((core, t, c)), _) => Some(launch_key(core.as_deref(), t, *c)),
+            (None, Some(src)) => Some(format!("row\x1f{src}")),
+            _ => None,
+        }
+    }
+}
+
+/// The `launch` table's key of a keyed launch.
+pub fn launch_key(core: Option<&str>, terminal: &str, created_ms: i64) -> String {
+    format!(
+        "key\x1f{}\x1f{terminal}\x1f{created_ms}",
+        core.unwrap_or("")
+    )
+}
+
+/// The end bases the store records, as the resolver names them.
+fn end_basis(s: Option<&str>) -> &'static str {
+    match s {
+        Some("replaced") => "replaced",
+        Some("finished") => "finished",
+        Some("detached") => "detached",
+        Some("gone") => "gone",
+        _ => "end_row",
     }
 }
 
@@ -408,6 +461,13 @@ pub struct Resolver {
     walk: bool,
     index: Option<Index>,
     resolved: u64,
+    /// Sessions are hashed with this key as they are read, so the index holds no raw id.
+    key: Option<SessionKey>,
+    /// Session labels earlier snapshots saw: (agent, session hash, launch key).
+    label_history: Vec<(String, String, String)>,
+    oversized: Vec<PathBuf>,
+    homes: Vec<PathBuf>,
+    bytes_read: u64,
 }
 
 impl Resolver {
@@ -431,6 +491,186 @@ impl Resolver {
         self
     }
 
+    /// Hashes every session id it reads (ledger rows, the snapshot's labels) with `key`, so the
+    /// index holds keyed hashes only, as the evidence does: a call is then resolved by its
+    /// session's hash ([`SessionKey::hex`] with [`crate::evidence::scope`]). Call it before any
+    /// ledger is added.
+    pub fn keyed(mut self, key: SessionKey) -> Resolver {
+        for t in &mut self.snapshot {
+            let Some(h) = t.harness else { continue };
+            let agent = agent_of(h).unwrap_or(h);
+            let s = t.labels.session_for(h).map(|s| key.hex(agent, s));
+            t.labels.session = s;
+            t.labels.revive_session = None;
+            t.labels.revive_agent = None;
+        }
+        self.key = Some(key);
+        self
+    }
+
+    /// Adds what earlier syncs recorded (RFC 0021 (b)): the ends they derived, launches the hc
+    /// snapshot showed then (unlogged ones, and the folder and harness hc showed a launch in),
+    /// session labels they saw, and launches gone since (`gone`: launch key to this sync's time,
+    /// for a launch an earlier sync saw live that hc no longer lists).
+    pub fn add_history(
+        &mut self,
+        launches: &[History],
+        labels: &[(String, String, String)],
+        gone: &HashMap<String, i64>,
+    ) {
+        for h in launches {
+            let key = (h.core.clone(), h.terminal.clone(), h.created_ms);
+            if let Some(at) = h.valid_to {
+                self.rows.ends.push(EndRow {
+                    key: key.clone(),
+                    at_ms: at,
+                    basis: end_basis(h.end_basis.as_deref()),
+                });
+            }
+            if let Some(&at) = gone.get(&h.lkey) {
+                self.rows.ends.push(EndRow {
+                    key: key.clone(),
+                    at_ms: at,
+                    basis: "gone",
+                });
+            }
+            let shown = self
+                .snapshot
+                .iter()
+                .any(|t| t.terminal == h.terminal && t.created_ms == Some(h.created_ms));
+            if h.seen_last.is_none() || shown {
+                continue;
+            }
+            // A launch hc showed at an earlier sync: as that sync saw it, its end aside.
+            let harness = h.live_agent.as_deref().and_then(crate::hc::harness_of);
+            self.snapshot.push(Terminal {
+                terminal: h.terminal.clone(),
+                created_ms: Some(h.created_ms),
+                finished_ms: None,
+                harness,
+                cwd: h.live_cwd.clone().or_else(|| h.worktree.clone()),
+                labels: crate::hc::Labels::default(),
+            });
+        }
+        self.label_history.extend(labels.iter().cloned());
+        self.index = None;
+    }
+
+    /// Ledgers not read because they are larger than [`LEDGER_CAP`].
+    pub fn oversized(&self) -> &[PathBuf] {
+        &self.oversized
+    }
+
+    /// The project app homes found so far (walked up to, or loaded with
+    /// [`Resolver::load_project_home`]).
+    pub fn homes(&self) -> &[PathBuf] {
+        &self.homes
+    }
+
+    /// The ledger bytes read so far.
+    pub fn bytes_read(&self) -> u64 {
+        self.bytes_read
+    }
+
+    /// Every ledger file read so far, sorted.
+    pub fn files(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = self.files.iter().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// Reads a project app home an earlier sync found, when it is still there.
+    pub fn load_project_home(&mut self, home: &Path) {
+        if home.is_dir() {
+            if !self.homes.iter().any(|h| h == home) {
+                self.homes.push(home.to_path_buf());
+            }
+            self.load_app_home(home);
+        }
+    }
+
+    /// The launches and links this resolver derives, as the `launch` and `link` tables keep them.
+    /// Links of a launch no start row records, and of a launch with no key, are left out.
+    pub fn records(&mut self) -> (Vec<LaunchRecord>, Vec<LinkRecord>) {
+        if self.index.is_none() {
+            self.index = Some(build(
+                &self.rows,
+                self.core.as_deref(),
+                &self.snapshot,
+                &self.label_history,
+            ));
+        }
+        let Some(ix) = self.index.as_ref() else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut launches = Vec::new();
+        let keys: Vec<Option<String>> = ix.launches.iter().map(Launch::lkey).collect();
+        for (l, lkey) in ix.launches.iter().zip(&keys) {
+            let Some(lkey) = lkey else { continue };
+            let tag = l.tags.first();
+            launches.push(LaunchRecord {
+                lkey: lkey.clone(),
+                core: l.core.clone(),
+                terminal: l.terminal.clone(),
+                created_ms: l.key.as_ref().map(|k| k.2),
+                kind: l.kind.map(|k| match k {
+                    Kind::Worker => "worker".to_string(),
+                    Kind::Seat => "seat".to_string(),
+                }),
+                bot: tag.map(|t| t.bot.clone()),
+                role: tag.and_then(|t| t.role.clone()),
+                squad: tag.and_then(|t| t.squad.clone()),
+                lead: tag.and_then(|t| t.lead.clone()),
+                task: tag.and_then(|t| t.task.clone()),
+                project: tag.and_then(|t| t.project.clone()),
+                branch: tag.and_then(|t| t.branch.clone()),
+                worktree: l.worktree.clone(),
+                agent: l.agent.clone(),
+                valid_from: l.from,
+                valid_to: l.to,
+                end_basis: l.end_basis.map(str::to_owned),
+                source: if l.logged { "ledger" } else { "snapshot" }.into(),
+                source_ref: l.src.clone(),
+                bound: l.key.as_ref().and_then(|k| ix.bindings.get(k)).map(|b| {
+                    let mut v: Vec<String> = b
+                        .iter()
+                        .map(|(from, to, bot)| {
+                            format!(
+                                "{from}-{}:{bot}",
+                                to.map_or(String::new(), |t| t.to_string())
+                            )
+                        })
+                        .collect();
+                    v.sort();
+                    v.join(";")
+                }),
+            });
+        }
+        let mut links = Vec::new();
+        for (agent, by) in &ix.links {
+            for (session, ls) in by {
+                for k in ls {
+                    let Some(Some(lkey)) = k.launch.map(|i| &keys[i]) else {
+                        continue;
+                    };
+                    links.push(LinkRecord {
+                        harness: agent.clone(),
+                        session: session.clone(),
+                        lkey: lkey.clone(),
+                        basis: k.basis.as_str().into(),
+                        valid_from: k.from,
+                        valid_to: k.to,
+                    });
+                }
+            }
+        }
+        links.sort_by(|a, b| {
+            (&a.harness, &a.session, &a.lkey, &a.basis)
+                .cmp(&(&b.harness, &b.session, &b.lkey, &b.basis))
+        });
+        (launches, links)
+    }
+
     /// Ledgers not read because anyone but their owner could write them.
     pub fn refused(&self) -> &[PathBuf] {
         &self.refused
@@ -447,7 +687,12 @@ impl Resolver {
     /// Reads one workers ledger, once.
     pub fn load_workers(&mut self, path: &Path) {
         if let Some(b) = self.read_file(path) {
-            self.add_workers(&b);
+            let src = crate::event::hex(
+                &sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(
+                    path.to_string_lossy().as_bytes(),
+                ))[..8],
+            );
+            self.add_workers_from(&b, Some(&src));
         }
     }
 
@@ -459,6 +704,10 @@ impl Resolver {
         if !meta.is_file() {
             return None;
         }
+        if meta.len() > LEDGER_CAP {
+            self.oversized.push(path.to_path_buf());
+            return None;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -467,17 +716,30 @@ impl Resolver {
                 return None;
             }
         }
-        std::fs::read(path).ok()
+        let b = std::fs::read(path).ok()?;
+        self.bytes_read += b.len() as u64;
+        Some(b)
     }
 
     /// Adds a workers ledger's rows (`start`, `session`, `end`).
     pub fn add_workers(&mut self, bytes: &[u8]) {
+        self.add_workers_from(bytes, None);
+    }
+
+    /// [`Resolver::add_workers`], recording each start row's place as `<src>:<offset>`.
+    fn add_workers_from(&mut self, bytes: &[u8], src: Option<&str>) {
+        let mut offset = 0usize;
         for line in bytes.split(|b| *b == b'\n') {
+            let at = offset;
+            offset += line.len() + 1;
             let Ok(Value::Object(row)) = serde_json::from_slice::<Value>(line) else {
                 continue;
             };
             let parsed = match str_field(&row, "event") {
-                Some("start") => parse_start(&row).map(Parsed::Start),
+                Some("start") => parse_start(&row).map(|mut r| {
+                    r.src = src.map(|s| format!("{s}:{at}"));
+                    Parsed::Start(r)
+                }),
                 Some("session") => parse_session(&row).map(Parsed::Session),
                 Some("end") => parse_end(&row).map(Parsed::End),
                 _ => None,
@@ -509,12 +771,34 @@ impl Resolver {
             return;
         }
         match p {
-            Parsed::Start(r) => self.rows.starts.push(r),
-            Parsed::Session(r) => self.rows.sessions.push(r),
+            Parsed::Start(mut r) => {
+                if let (Some(k), Some(s)) = (&self.key, &r.session) {
+                    let agent = r.agent.as_deref().unwrap_or("claude");
+                    r.session = Some(k.hex(agent_of(agent).unwrap_or(agent), s));
+                }
+                self.rows.starts.push(r)
+            }
+            Parsed::Session(mut r) => {
+                if let Some(k) = &self.key {
+                    r.session = k.hex(agent_of(&r.agent).unwrap_or(&r.agent), &r.session);
+                }
+                self.rows.sessions.push(r)
+            }
             Parsed::End(r) => self.rows.ends.push(r),
             Parsed::Attach(r) => self.rows.attach.push(r),
         }
         self.index = None;
+    }
+
+    /// Looks for project app homes above each folder a stored call ran in or started in, when
+    /// walking is on: a project app home made after its usage was read is found by the next sync
+    /// even when no new call comes from there. Only those folders' ancestry, never a scan.
+    pub fn look_above<'a>(&mut self, cwds: impl IntoIterator<Item = &'a str>) {
+        if self.walk {
+            for c in cwds {
+                self.discover(c);
+            }
+        }
     }
 
     /// Looks for project app homes in `cwd` and every folder above it, each folder once.
@@ -530,6 +814,9 @@ impl Resolver {
             }
             let home = dir.join(PROJECT_APP_HOME);
             if home.is_dir() {
+                if !self.homes.contains(&home) {
+                    self.homes.push(home.clone());
+                }
                 self.load_app_home(&home);
             }
         }
@@ -551,7 +838,12 @@ impl Resolver {
             }
         }
         if self.index.is_none() {
-            self.index = Some(build(&self.rows, self.core.as_deref(), &self.snapshot));
+            self.index = Some(build(
+                &self.rows,
+                self.core.as_deref(),
+                &self.snapshot,
+                &self.label_history,
+            ));
         }
         let Some(ix) = self.index.as_ref() else {
             return Resolution::Unlinked;
@@ -718,7 +1010,12 @@ fn same_core(a: Option<&str>, b: Option<&str>) -> bool {
     }
 }
 
-fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
+fn build(
+    rows: &Rows,
+    core: Option<&str>,
+    snapshot: &[Terminal],
+    label_history: &[(String, String, String)],
+) -> Index {
     let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
     let mut ix = Index::default();
     // Launches: start rows grouped by key; a row with no key (written before RFC 0021) is its own.
@@ -774,6 +1071,8 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
             complete,
             logged: true,
             unsure: false,
+            end_basis: None,
+            src: group.iter().find_map(|s| s.src.clone()),
         });
     }
     let mut by_tc: HashMap<(String, i64), Vec<usize>> = HashMap::new();
@@ -819,23 +1118,24 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
             complete: false,
             logged: false,
             unsure: false,
+            end_basis: t.finished_ms.map(|_| "finished"),
+            src: None,
         });
     }
     // Ends: end rows, and the attach ledger's end and detach rows.
-    let end_at = |key: &Key, at: i64, launches: &mut Vec<Launch>| {
+    let end_at = |key: &Key, at: i64, basis: &'static str, launches: &mut Vec<Launch>| {
         if let Some(i) = find(&by_tc, launches, key.0.as_deref(), &key.1, key.2) {
-            let l = &mut launches[i];
-            l.to = Some(l.to.map_or(at, |e| e.min(at)));
+            launches[i].end(at, basis);
         }
     };
     for e in &rows.ends {
         if !foreign(&e.key.0) {
-            end_at(&e.key, e.at_ms, &mut ix.launches);
+            end_at(&e.key, e.at_ms, e.basis, &mut ix.launches);
         }
     }
     for a in &rows.attach {
         if !foreign(&a.key.0) && matches!(a.event, AttachEvent::Detach | AttachEvent::End) {
-            end_at(&a.key, a.at_ms, &mut ix.launches);
+            end_at(&a.key, a.at_ms, "detached", &mut ix.launches);
         }
     }
     // The snapshot: a terminal that finished ends its launch (a newer terminal at its address
@@ -845,8 +1145,7 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
             continue;
         };
         if let Some(i) = find(&by_tc, &ix.launches, core, &t.terminal, created) {
-            let l = &mut ix.launches[i];
-            l.to = Some(l.to.map_or(done, |e| e.min(done)));
+            ix.launches[i].end(done, "finished");
         }
     }
     // A terminal runs one launch at a time: a later launch on it ended the one before.
@@ -879,7 +1178,7 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
     for (i, next, unsure) in ends {
         let l = &mut ix.launches[i];
         if let Some(n) = next {
-            l.to = Some(l.to.map_or(n, |e| e.min(n)));
+            l.end(n, "replaced");
         }
         l.unsure |= unsure;
     }
@@ -892,7 +1191,7 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
         for &i in by_terminal.get(&t.terminal).into_iter().flatten() {
             let l = &mut ix.launches[i];
             if same_core(l.core.as_deref(), core) && l.from.is_some_and(|f| f < created) {
-                l.to = Some(l.to.map_or(created, |e| e.min(created)));
+                l.end(created, "replaced");
             }
         }
     }
@@ -1001,6 +1300,32 @@ fn build(rows: &Rows, core: Option<&str>, snapshot: &[Terminal]) -> Index {
                 to: None,
                 basis: Basis::Label,
             });
+    }
+    // Session labels earlier syncs saw: the same second witness, for launches since gone.
+    let by_lkey: HashMap<String, usize> = ix
+        .launches
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| Some((l.lkey()?, i)))
+        .collect();
+    for (agent, session, lkey) in label_history {
+        let Some(&i) = by_lkey.get(lkey) else {
+            continue;
+        };
+        let links = raw.entry((agent.clone(), session.clone())).or_default();
+        if links
+            .iter()
+            .any(|l| l.basis == Basis::Label && l.launch == Some(i))
+        {
+            continue;
+        }
+        links.push(Link {
+            launch: Some(i),
+            at: ix.launches[i].from,
+            from: None,
+            to: None,
+            basis: Basis::Label,
+        });
     }
     for ((agent, session), mut links) in raw {
         place(&mut links, &ix.launches);
@@ -1149,6 +1474,7 @@ fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
         agent: owned(row, "agent"),
         kind,
         session: owned(row, "session"),
+        src: None,
     })
 }
 
@@ -1162,11 +1488,16 @@ fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
         (None, owned(row, "task"))
     };
     let task = if kind == Kind::Seat { None } else { task };
+    let unrecorded = ["role", "squad"]
+        .into_iter()
+        .filter(|k| !row.contains_key(*k))
+        .collect();
     Some(Tag {
         bot,
         kind,
         role: owned(row, "role"),
         squad: owned(row, "squad"),
+        unrecorded,
         task,
         project: owned(row, "project"),
         branch,
@@ -1195,6 +1526,7 @@ fn parse_end(row: &Map<String, Value>) -> Option<EndRow> {
     Some(EndRow {
         key: (owned(row, "core"), owned(row, "terminal")?, created(row)?),
         at_ms: at(row)?,
+        basis: "end_row",
     })
 }
 
