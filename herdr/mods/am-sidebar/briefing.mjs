@@ -21,7 +21,7 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
+import { closeSync, existsSync, fchmodSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
   from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -32,7 +32,7 @@ import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAt
 import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
   from "./briefingText.mjs";
 import { briefingFileOf, resumedSessionOf } from "./models.js";
-import { SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow }
+import { LEDGER_MODE, SESSION_LABEL, TRANSCRIPT_LABEL, ledgerLine, ledgerPath, readLedger, sessionChange, sessionRow }
   from "./workers.js";
 import { transcriptRealPath } from "./transcriptFolder.mjs";
 
@@ -372,9 +372,13 @@ export async function joinSession(self, me, input, appHome, home = homedir()) {
       // Once per session: when the terminal's last session row already names it (the entry point's
       // first attempt joined, then failed; or a label that did not stick), no second row. The read
       // and the append are one synchronous step, so two attempts in one hook cannot both append.
-      const fd = openSync(path, "a+");
+      // The owner's alone (RFC 0021 (f) 6): made 0600, and set so again on every append.
+      const fd = openSync(path, "a+", LEDGER_MODE);
       const row = sessionRow({ terminal, session: change.session, transcript: change.transcript });
-      try { if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(row)); } finally { closeSync(fd); }
+      try {
+        try { fchmodSync(fd, LEDGER_MODE); } catch { /* not ours: the row still goes in */ }
+        if (lastSessionOf(fd, terminal) !== change.session) writeSync(fd, ledgerLine(row));
+      } finally { closeSync(fd); }
     }
     const labels = [
       ...(change.fresh ? [`${SESSION_LABEL}=${change.session}`] : []),

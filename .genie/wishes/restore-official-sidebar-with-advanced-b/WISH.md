@@ -81,7 +81,7 @@ Expected handwritten sizes (stop and split a group before exceeding hard25files/
 
 Group4 is a parent integration wave, not one unbounded executor: **4a UI/API/accounting-oracle integration** owns18 app files including generated clients (lead, native tasks6/7/8 plus task10 locale dependency repair; original16 plus pt-BR dictionary/generated client required by CI); **4b isolated native fixture** owns10 app files (fixture, native task5; the extra no-op host entry is required by the verified public client loader). Each unit independently remains below25 files/2000 handwritten insertions. 4b may prepare against frozen interfaces independently, but actual execution depends on source1–3 and4a built/green; final parent verification/publication depends on both. Documentary provenance/planning is recorded separately. This splits execution only, never drops a deliverable or reopens product scope; one real Genie group4 card coordinates the parent, actual native child IDs remain recorded rather than invented.
 
-Shared checkout; writers do not move HEAD/index or build shared generated client. Lead alone owns git, endpoint/client integration and the Bot generated build. For CI repair1, the explicitly assigned locale-fix writer owns only the separate pt-BR dictionary and its locale generated bundle build; no shared Bot artifact or source is touched. Generated client is reviewed as a generated artifact and not hidden in handwritten size estimates. Required aggregate checks remain required; group checks do not replace them. All commands run in the supplied checkout with absolute paths. Validation shell must prepend `/Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/.tools/bun-darwin-aarch64` to PATH for pinned Bun1.4.2 and unset inherited OMNI_CLIENT_ID, DS_BOT_APP, AUTOMAGIK_HOST, AUTOMAGIK_PRELOAD only in the test subprocess. The plugin-scoped validation blocks below describe package-relative arguments: execute each via `node --import <absolute-checkout>/apps/bots-dsh/test/harness-resolve.mjs --test <absolute-checkout>/apps/bots-dsh/test/<named-test>` with workdir at the supplied root, preserving the same declared test set. Aggregate commands use `bun run --cwd <absolute-checkout>` / `--cwd <absolute-checkout>/apps/bots-dsh`; build uses the absolute script path. No installed environment/config is modified. Only authorized existing wish branch is published.
+Shared checkout; writers do not move HEAD/index or build shared generated client. Lead alone owns git, endpoint/client integration and the Bot generated build. For CI repair1, the explicitly assigned locale-fix writer owns only the separate pt-BR dictionary and its locale generated bundle build; no shared Bot artifact or source is touched. Generated client is reviewed as a generated artifact and not hidden in handwritten size estimates. Required aggregate checks remain required; group checks do not replace them. All commands run in the supplied checkout with absolute paths. Validation shell must prepend `~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/.tools/bun-darwin-aarch64` to PATH for pinned Bun1.4.2 and unset inherited OMNI_CLIENT_ID, DS_BOT_APP, AUTOMAGIK_HOST, AUTOMAGIK_PRELOAD only in the test subprocess. The plugin-scoped validation blocks below describe package-relative arguments: execute each via `node --import <absolute-checkout>/apps/bots-dsh/test/harness-resolve.mjs --test <absolute-checkout>/apps/bots-dsh/test/<named-test>` with workdir at the supplied root, preserving the same declared test set. Aggregate commands use `bun run --cwd <absolute-checkout>` / `--cwd <absolute-checkout>/apps/bots-dsh`; build uses the absolute script path. No installed environment/config is modified. Only authorized existing wish branch is published.
 
 ## Execution Groups
 
@@ -105,7 +105,7 @@ Shared checkout; writers do not move HEAD/index or build shared generated client
 
 **Validation:**
 ```bash
-node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/native-sidebar.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/live-rail.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/header.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/right-panel.test.js
+node --import ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/native-sidebar.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/live-rail.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/header.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/right-panel.test.js
 ```
 
 **depends-on:** none
@@ -130,7 +130,7 @@ node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automag
 
 **Validation:**
 ```bash
-node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/context-policy.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/context-checkpoint.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/steward.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/roster.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/session-identity.test.js
+node --import ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/context-policy.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/context-checkpoint.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/steward.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/roster.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/session-identity.test.js
 ```
 
 **depends-on:** none
@@ -155,7 +155,7 @@ node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automag
 
 **Validation:**
 ```bash
-node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/usage.test.js /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/usage-stats.test.js
+node --import ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/harness-resolve.mjs --test ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/usage.test.js ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/test/usage-stats.test.js
 ```
 
 **depends-on:** none
@@ -181,13 +181,13 @@ node --import /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automag
 
 **Validation:**
 ```bash
-export PATH="/Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/.tools/bun-darwin-aarch64:$PATH"
+export PATH="$HOME/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/.tools/bun-darwin-aarch64:$PATH"
 unset OMNI_CLIENT_ID DS_BOT_APP AUTOMAGIK_HOST AUTOMAGIK_PRELOAD
-bun run --cwd /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta check
-bun run --cwd /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh test
-bun run --cwd /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh lint
-node /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/scripts/build-client.mjs --check
-node /Users/feliperosa/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/dev/advanced-check.mjs
+bun run --cwd ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta check
+bun run --cwd ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh test
+bun run --cwd ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh lint
+node ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/scripts/build-client.mjs --check
+node ~/.automagik/desktop/bots/workspace/wishes/automagik/finish-approved-sidebar-and-advanced-sta/apps/bots-dsh/dev/advanced-check.mjs
 ```
 The named advanced-check.mjs fixture must use isolated synthetic native/sidebar and Bot settings data on disposable loopback only and assert actual click/tab/toggle/persistence/keyboard/narrow behavior; no screenshots-only pass. It substitutes initiative-specific rendered/native integration, not the full existing smoke/web suite. Existing dev/check.sh smoke/web need a full DSH checkout absent here, and desktop needs Linux/Xvfb unavailable on macOS; these gates are explicitly UNAVAILABLE/BLOCKING for any merge-ready claim until equivalent relevant integration evidence is independently accepted. Do not invoke its cleanup against unknown shared bench paths, reduce tests, or claim unrun steps passed.
 

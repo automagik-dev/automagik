@@ -464,7 +464,9 @@ export async function latestReport(get, ask) {
 //
 // io: { git(args, cwd) -> Promise<{ code, stdout, stderr } | null> (null: no git),
 //       read(path) -> Promise<string | null> (null: no file),
-//       write(path, text, before) -> Promise (rejects when the file no longer holds `before`),
+//       write(path, text, before, { mode }?) -> Promise (rejects when the file no longer holds `before`;
+//         `mode`: a new file's mode, where the io can set one),
+//       private(path)? -> Promise (optional: makes the file 0600),
 //       mkdir(dir) -> Promise (like mkdir -p; rejects on failure) }
 
 /**
@@ -518,7 +520,9 @@ async function entryCommand(appHome, io) {
   if (source === null) return directHookCommand(appHome);
   try {
     await io.mkdir(entry.slice(0, entry.lastIndexOf("/")));
-    await io.write(entry, source, null);
+    // Created the owner's alone (0600, as placeEntry makes it); io.private narrows it, never widens.
+    await io.write(entry, source, null, { mode: 0o600 });
+    if (io.private) await io.private(entry);
     return hookCommand(appHome);
   } catch {
     return directHookCommand(appHome);

@@ -34,8 +34,8 @@ import { pathToFileURL } from "node:url";
 import { readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsFile } from "./models.js";
-import { commandArgv } from "./restart.js";
+import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsFile, choosesSession, sessionIdArgs } from "./models.js";
+import { commandArgv, sessionId } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
 import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan, WORKER_OF_LABEL } from "./workers.js";
@@ -305,9 +305,17 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     ["worker.model", plan.model], ["worker.effort", plan.effort], ["worker.agyMode", agyModeLabel]]) {
     if ((labels[key] ?? null) !== value) return `approved worker label ${key} does not match approval`;
   }
+  // RFC 0021 (f) 2: a new Claude worker runs on the session id its CLI chose, as its
+  // agent.session label (a UUID) and exactly `--session-id <that id>` after the approved argv;
+  // never on a template or another agent.
+  const session = labels["agent.session"] ?? null;
+  if (session !== null && (plan.template || !choosesSession(plan.agent) || sessionId(session) !== session)) {
+    return "approved worker label agent.session does not match approval";
+  }
   const args = workerArgs({ botId: snapshot.caller.bot, branch: labels.branch,
     role: labels["worker.role"], name: p.name, cwd: p.cwd, parent: snapshot.terminal,
-    agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: plan.argv,
+    agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode,
+    argv: session ? [...plan.argv, ...sessionIdArgs(plan.agent, session)] : plan.argv, session,
     task, template: plan.template, templateArgv, login, path: snapshot.path,
     taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
     space: labels["herdr.space"], agySettingsPath });
@@ -358,7 +366,7 @@ export function runProblem(params, snapshot, templates = []) {
   }
   const namedWorker = bot?.worker?.template || (bot?.worker?.agent && bot.worker.agent !== "dsh-tui");
   const workerLabels = namedWorker
-    ? new Set([...WORKER_LABELS, "worker.template", "worker.model", "worker.effort", "worker.agyMode"]) : WORKER_LABELS;
+    ? new Set([...WORKER_LABELS, "worker.template", "worker.model", "worker.effort", "worker.agyMode", "agent.session"]) : WORKER_LABELS;
   const labels = p.labels;
   if (!isObject(labels)) return "labels are not the worker shape";
   if (labels[WORKER_OF_LABEL] !== snapshot.caller.bot) return `${WORKER_OF_LABEL} is not the caller's bot`;

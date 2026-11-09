@@ -141,6 +141,8 @@ export async function afterBind(bot, sessionFolder, claude = bot?.agent === "cla
     git: async (args, cwd) => { try { return await exec("git", args, { cwd }); } catch { return null; } },
     read: (path) => readTextFile(path),
     write: (path, text, before) => writeTextFile(path, text, before),
+    // The stable briefing entry, made the owner's alone (briefingText.mjs entryCommand).
+    private: async (path) => { await exec("chmod", ["600", path]); },
     mkdir: async (dir) => {
       const r = await exec("mkdir", ["-p", dir]);
       if (r.code !== 0) throw new Error(`couldn't make ${dir}: ${r.stderr.trim()}`);

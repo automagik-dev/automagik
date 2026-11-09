@@ -25,10 +25,12 @@ describe('the desktop build adding its files to an existing release', () => {
   test('keeps the cut\'s own files and its signed lane, and lets the rest go', () => {
     expect(step).toBeGreaterThan(-1);
     expect(keep).toBeDefined();
-    const names = ['lane.json', 'lane.json.sig', 'automagik-bots-dsh-9.9.9.tgz', 'plugins.json', 'PLUGINS.SHA256SUMS', 'Automagik-9.9.9-arm64.dmg', 'lane.json.old'];
+    const names = ['lane.json', 'lane.json.sig', 'automagik-bots-dsh-9.9.9.tgz', 'plugins.json', 'PLUGINS.SHA256SUMS', 'Automagik-9.9.9-arm64.dmg', 'lane.json.old',
+      'usagemeter-darwin-arm64', 'usagemeter-darwin-x86_64', 'usagemeter-linux-x86_64', 'usagemeter-linux-aarch64', 'usagemeter.SHA256SUMS', 'meter.json', 'meter.json.sig', 'SHA256SUMS'];
     const run = bash(`for name in "$@"; do\n${keep}\necho "\${name}"\ndone`, names);
     expect(run.status).toBe(0);
-    expect(run.out.trim().split('\n')).toEqual(['Automagik-9.9.9-arm64.dmg', 'lane.json.old']);
+    // The meter's binaries, their sums and signed pointer are the meter jobs' own (release.yml): spared.
+    expect(run.out.trim().split('\n')).toEqual(['Automagik-9.9.9-arm64.dmg', 'lane.json.old', 'SHA256SUMS']);
   });
 });
 
@@ -229,6 +231,12 @@ describe('the cut choosing how to publish its release', () => {
     expect(flags({ PRERELEASE: '', KIND: 'am' })).toEqual(['--latest=false']);
     expect(flags({ PRERELEASE: 'true', KIND: 'am' })).toEqual(['--prerelease', '--latest=false']);
   });
+
+  test('a meter patch is not Latest, and a prerelease one stays a prerelease', () => {
+    expect(flags({ PRERELEASE: 'false', KIND: 'meter' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: '', KIND: 'meter' })).toEqual(['--latest=false']);
+    expect(flags({ PRERELEASE: 'true', KIND: 'meter' })).toEqual(['--prerelease', '--latest=false']);
+  });
 });
 
 describe('the cut reading the posted herdr-lane pointer before it posts its own', () => {
@@ -425,6 +433,252 @@ describe('every release carries am (RFC 0012)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('the meter lane posting its signed pointer', () => {
+  const lines = workflow('release.yml');
+  const start = lines.findIndex(line => line.trim() === 'mkdir -p meter-lane/posted');
+  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('bun scripts/meter-lane.ts posted '));
+  const block = start > -1 && end > start ? lines.slice(start, end + 1).join('\n') : '';
+
+  function read(status: number, stderr = '') {
+    const dir = mkdtempSync(join(tmpdir(), 'meter-lane-posted-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/gh.log"\nprintf '%s\\n' '${stderr}' >&2\nexit ${status}\n`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\n`);
+    chmodSync(join(bin, 'gh'), 0o755);
+    chmodSync(join(bin, 'bun'), 0o755);
+    const run = bash(`cd "${dir}"\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo' });
+    const log = (name: string) => { try { return readFileSync(join(dir, name), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    const result = { ...run, gh: log('gh.log'), bun: log('bun.log') };
+    rmSync(dir, { recursive: true, force: true });
+    return result;
+  }
+  const checked = ['scripts/meter-lane.ts posted meter-lane/meter.json meter-lane/posted'];
+
+  test('is found as the step writes it, with no error swallowed', () => {
+    expect(block).not.toBe('');
+    expect(block).not.toContain('|| true');
+    expect(block).not.toContain('2>/dev/null');
+  });
+
+  test('a posted pointer downloads: the downgrade check runs on it', () => {
+    const run = read(0);
+    expect(run.status).toBe(0);
+    expect(run.gh).toEqual(['release download meter-lane --repo owner/repo -p meter.json -p meter.json.sig -D meter-lane/posted --clobber']);
+    expect(run.bun).toEqual(checked);
+  }, 30_000);
+
+  test('no pointer posted yet (the first post): the run goes on to post', () => {
+    for (const message of ['no assets match the file pattern', 'no assets to download', 'release not found']) {
+      const run = read(1, message);
+      expect(run.status).toBe(0);
+      expect(run.out).toContain('meter lane: nothing posted on meter-lane yet');
+      expect(run.bun).toEqual(checked);
+    }
+  }, 30_000);
+
+  test('any other error reading it stops the run', () => {
+    for (const message of ['HTTP 502: Bad Gateway', 'HTTP 401: Bad credentials', 'error connecting to api.github.com']) {
+      const run = read(1, message);
+      expect(run.status).toBe(1);
+      expect(run.err).toContain(message);
+      expect(run.out).toContain('::error::meter lane: could not read the posted pointer; refusing to post blind');
+      expect(run.bun).toEqual([]);
+    }
+  }, 30_000);
+});
+
+describe('the meter lane (RFC 0017 delivery 4)', () => {
+  const lines = workflow('release.yml');
+  const text = lines.join('\n');
+  const at = (name: string) => lines.findIndex(line => line.trim() === `- name: ${name}`);
+  const jobAt = (name: string) => lines.findIndex(line => line === `  ${name}:`);
+  const jobEnds = (name: string) => { const i = lines.findIndex((line, n) => n > jobAt(name) && /^  [a-z-]+:$/.test(line)); return i < 0 ? lines.length : i; };
+  const job = (name: string) => lines.slice(jobAt(name), jobEnds(name));
+  const ROOT = join(import.meta.dir, '..');
+  const ARTIFACTS: Record<string, string> = JSON.parse(readFileSync(join(ROOT, 'meter', 'usagemeter', 'part.json'), 'utf8')).artifact;
+
+  test('the build matrix builds exactly the four assets part.json names, Intel Mac included, on CI runners', () => {
+    const built = job('meter').map(line => /asset: (usagemeter-[a-z0-9_-]+)/.exec(line)?.[1]).filter(Boolean).sort();
+    expect(built).toEqual(Object.values(ARTIFACTS).sort());
+    expect(built).toContain('usagemeter-darwin-x86_64');
+    const header = job('meter').map(line => line.trim());
+    expect(header).toContain('needs: cut');
+    // Never without the key: check-key said sign=yes, which it says only for a listed key and its secret.
+    expect(header).toContain("if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes'");
+    expect(header).toContain('ref: v${{ needs.cut.outputs.version }}');
+    expect(header).toContain('run: cargo build --release --locked --target "${TARGET}"');
+    // Linux builds are checked to be static, and a runnable one to say the tag's version.
+    const check = job('meter').join('\n');
+    expect(check).toContain("grep -Eq 'statically linked|static-pie linked'");
+    expect(check).toContain('[[ "${said}" == "usagemeter ${VERSION}" ]]');
+  });
+
+  test('the meter\'s gates and key check run before the tag, only when the release builds the meter', () => {
+    for (const name of ['The meter\'s gates', 'The meter lane\'s signing key']) {
+      expect(at(name)).toBeGreaterThan(-1);
+      expect(at(name)).toBeLessThan(at('Version, commit and tag'));
+      expect(at(name)).toBeGreaterThan(at('Which lane'));
+    }
+    expect(lines[at('The meter\'s gates') + 1].trim()).toBe("if: steps.new.outputs.release == 'true' && steps.lane.outputs.meter == 'yes'");
+    expect(lines[at('The meter lane\'s signing key') + 1].trim()).toBe('id: meterkey');
+    expect(lines[at('The meter lane\'s signing key') + 2].trim()).toBe("if: steps.new.outputs.release == 'true' && steps.lane.outputs.meter == 'yes'");
+    const key = lines.slice(at('The meter lane\'s signing key'), at('The meter lane\'s signing key') + 6).join('\n');
+    expect(key).toContain("METER_LANE_KEY: ${{ vars.METER_LANE_SIGNER == 'METER_LANE_KEY_NEXT' && secrets.METER_LANE_KEY_NEXT || secrets.METER_LANE_KEY }}");
+    expect(key).toContain('run: bun scripts/meter-lane.ts check-key');
+    const cut = job('cut').map(line => line.trim());
+    expect(cut).toContain('meter: ${{ steps.lane.outputs.meter }}');
+    expect(cut).toContain('meter_sign: ${{ steps.meterkey.outputs.sign }}');
+  });
+
+  test('the meter is signed with its own key alone, in two places only; the posting job holds no key', () => {
+    const attach = job('meter-attach').join('\n');
+    expect(attach).toContain('METER_LANE_KEY:');
+    for (const other of ['PLUGIN_LANE_KEY', 'HERDR_PACK_KEY', 'AM_LANE_KEY']) expect(attach).not.toContain(other);
+    expect(job('meter-lane').join('\n')).not.toMatch(/LANE_KEY|PACK_KEY/);
+    // The meter's key reaches no other step: only the key check and the attach step name it.
+    const named = lines.map((line, i) => [line, i] as const).filter(([line]) => /secrets\.METER_LANE_KEY/.test(line)).map(([, i]) => i);
+    expect(named.length).toBe(2);
+    expect(named[0]).toBeGreaterThan(at('The meter lane\'s signing key'));
+    expect(named[0]).toBeLessThan(at('The meter lane\'s signing key') + 5);
+    expect(named[1]).toBeGreaterThan(at('Attach the binaries, usagemeter.SHA256SUMS and the signed pointer'));
+    expect(named[1]).toBeLessThan(jobEnds('meter-attach'));
+    // The attach job is gated on the key too, and signs before anything goes up.
+    expect(job('meter-attach').map(line => line.trim())).toContain("if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes'");
+    expect(attach.indexOf('bun scripts/meter-lane.ts verify')).toBeLessThan(attach.indexOf('gh release upload'));
+  });
+
+  // The Reviewer's L2: the prerelease list is read (never guessed) and passed to meter-since.
+  test('meter-since is told which releases are prereleases, and a failure to list them stops the run', () => {
+    const first = lines.findIndex(line => line.trim().startsWith('prerelease_tags=$(gh release list'));
+    const call = lines.findIndex(line => line.trim().startsWith('meter_since=$(bun scripts/lane.ts meter-since'));
+    expect(first).toBeGreaterThan(-1);
+    expect(call).toBe(first + 2);
+    expect(lines[first]).toContain('select(.isPrerelease)');
+    const block = lines.slice(first, call + 1).join('\n');
+    expect(block).not.toContain('|| true');
+    const run = (gh: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'meter-since-'));
+      mkdirSync(join(dir, 'bin'));
+      writeFileSync(join(dir, 'bin', 'gh'), `#!/usr/bin/env bash\n${gh}\n`);
+      writeFileSync(join(dir, 'bin', 'bun'), `#!/usr/bin/env bash\nprintf '[%s]' "$@"\n`);
+      chmodSync(join(dir, 'bin', 'gh'), 0o755);
+      chmodSync(join(dir, 'bin', 'bun'), 0o755);
+      const result = bash(`${block}\necho "\${meter_since}"`, [], { PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo', last: 'v3.110.2', meter_version: '' });
+      rmSync(dir, { recursive: true, force: true });
+      return result;
+    };
+    expect(run("printf 'v3.110.2\\nv3.110.1\\n'").out.trim()).toBe('[scripts/lane.ts][meter-since][v3.110.2][][v3.110.2][v3.110.1]');
+    // None a prerelease: one empty argument, which matches no tag.
+    expect(run('true').out.trim()).toBe('[scripts/lane.ts][meter-since][v3.110.2][][]');
+    // gh fails: the run stops, it never guesses a base.
+    const failed = run('echo "HTTP 502" >&2; exit 1');
+    expect(failed.status).not.toBe(0);
+    expect(failed.out).toBe('');
+  });
+
+  test('meter-lane is posted in a job of its own after the binaries, never on a prerelease, and nothing waits on it', () => {
+    const header = job('meter-lane').map(line => line.trim());
+    expect(header).toContain('needs: [cut, meter-attach]');
+    expect(header).toContain("if: needs.cut.outputs.version != '' && needs.cut.outputs.meter == 'yes' && needs.cut.outputs.meter_sign == 'yes' && inputs.prerelease != true");
+    expect(header).toContain('group: meter-lane');
+    expect(header).toContain('METER_LANE_REPLACE_UNVERIFIED: ${{ inputs.replace_unverified_meter_pointer }}');
+    expect(lines.filter(line => /needs: .*meter-lane/.test(line))).toEqual([]);
+    // It posts the pointer the release holds, checked against its key list and its binaries first.
+    const step = job('meter-lane').join('\n');
+    expect(step.indexOf('sha256sum -c usagemeter.SHA256SUMS')).toBeGreaterThan(-1);
+    for (const check of ['sha256sum -c', 'bun scripts/meter-lane.ts verify release/meter.json', 'bun scripts/meter-lane.ts matches release/meter.json release', 'bun scripts/meter-lane.ts posted']) {
+      expect(step.indexOf(check)).toBeGreaterThan(-1);
+      expect(step.indexOf(check)).toBeLessThan(step.indexOf('gh release upload meter-lane'));
+    }
+    // Both entry points take the dispatch input.
+    expect(text.match(/^      replace_unverified_meter_pointer:$/gm)?.length).toBe(2);
+  });
+
+  test('a meter patch packs no plugins, posts no plugin lane, builds no app and lists nothing', () => {
+    const ifOf = (name: string) => lines[at(name) + 1]?.trim() ?? '';
+    for (const name of ['Pack the add-ons the lane carries', 'Pack the plugins', 'Sign and post the plugin lane']) expect(ifOf(name)).toContain("steps.lane.outputs.kind != 'meter'");
+    expect(text).toContain("needs.cut.outputs.lane != 'meter'");
+    expect(text).toContain("if: env.LANE != 'herdr' && env.LANE != 'pocket' && env.LANE != 'am' && env.LANE != 'meter'");
+    // Wherever a herdr patch is told apart, a meter patch is too.
+    const herdrOnly = lines.filter(line => /kind != 'herdr'|lane != 'herdr'|LANE != 'herdr'/.test(line));
+    for (const line of herdrOnly) expect(line).toMatch(/!= 'meter'/);
+    // And it is a patch: 3.N.P on the newest 3.N.
+    expect(text).toContain('|| "${KIND}" == "meter" ]]; then version=$(bun scripts/lane.ts next-patch)');
+  });
+
+  // The dry run: the attach step as written, with the four binaries the matrix uploads, part.json and
+  // meter-keys.json from the tag, and a fake gh and bun. The first meter release carries all four,
+  // usagemeter.SHA256SUMS and the signed pointer; with no key listed it attaches nothing.
+  describe('a dry run of the attach step', () => {
+    const step = at('Attach the binaries, usagemeter.SHA256SUMS and the signed pointer');
+    const start = lines.findIndex((line, i) => i > step && line.trim() === 'set -euo pipefail');
+    const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('gh release upload "v${VERSION}"'));
+    const block = step > -1 && start > step && end > start ? lines.slice(start, end + 1).join('\n') : '';
+    const LISTED = '{"keys":[{"keyId":"meter-test","publicKey":"x"}]}';
+
+    function attach(names: string[], keys = LISTED) {
+      const dir = mkdtempSync(join(tmpdir(), 'meter-attach-'));
+      const bin = join(dir, 'bin');
+      mkdirSync(bin);
+      mkdirSync(join(dir, 'meter', 'usagemeter'), { recursive: true });
+      mkdirSync(join(dir, 'meter-assets'));
+      writeFileSync(join(dir, 'meter', 'usagemeter', 'part.json'), readFileSync(join(ROOT, 'meter', 'usagemeter', 'part.json')));
+      writeFileSync(join(dir, 'meter', 'usagemeter', 'meter-keys.json'), keys);
+      for (const name of names) writeFileSync(join(dir, 'meter-assets', name), `${name} binary`);
+      writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/gh.log"\n`);
+      writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\n`);
+      chmodSync(join(bin, 'gh'), 0o755);
+      chmodSync(join(bin, 'bun'), 0o755);
+      const run = bash(`cd "${dir}"\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, VERSION: '3.109.1', SHA: 'a'.repeat(40), GITHUB_REPOSITORY: 'owner/repo' });
+      const read = (name: string) => { try { return readFileSync(join(dir, name), 'utf8'); } catch { return ''; } };
+      const result = { ...run, gh: read('gh.log').trim().split('\n').filter(Boolean), bun: read('bun.log').trim().split('\n').filter(Boolean), sums: read('meter-assets/usagemeter.SHA256SUMS') };
+      rmSync(dir, { recursive: true, force: true });
+      return result;
+    }
+    const four = Object.values(ARTIFACTS);
+
+    test('is found as the step writes it', () => {
+      expect(block).not.toBe('');
+      expect(lines[step + 1]?.trim()).toBe('env:');
+    });
+
+    test('the first meter release carries the four binaries, darwin-x86_64 included, their sums and the signed pointer', () => {
+      const run = attach(four);
+      expect(run.status).toBe(0);
+      // One upload, --clobber: a re-run after a partial upload completes it (the Reviewer's L3).
+      expect(run.gh).toEqual([
+        `release upload v3.109.1 ${four.map(name => `meter-assets/${name}`).join(' ')} meter-assets/usagemeter.SHA256SUMS meter-assets/meter.json.sig meter-assets/meter.json --clobber --repo owner/repo`,
+      ]);
+      expect(run.gh[0]).toContain('meter-assets/usagemeter-darwin-x86_64');
+      // Signed and verified before the upload.
+      expect(run.bun.map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(['scripts/meter-lane.ts manifest', 'scripts/meter-lane.ts sign', 'scripts/meter-lane.ts verify']);
+      const listed = run.sums.trim().split('\n').map(line => line.split(/\s+/)[1]).sort();
+      expect(listed).toEqual([...four].sort());
+      for (const line of run.sums.trim().split('\n')) expect(line).toMatch(/^[0-9a-f]{64}  usagemeter-[a-z0-9_-]+$/);
+    });
+
+    test('no key listed in the tag\'s meter-keys.json: nothing signed, nothing attached', () => {
+      for (const keys of ['{"keys":[]}', '{}']) {
+        const run = attach(four, keys);
+        expect(run.status).toBe(1);
+        expect(run.out).toContain('::error::meter/usagemeter/meter-keys.json lists no key: the meter lane is held, nothing is attached');
+        expect(run.gh).toEqual([]);
+        expect(run.bun).toEqual([]);
+      }
+    });
+
+    test('a binary missing, or one more than part.json names, attaches nothing', () => {
+      for (const names of [four.filter(name => name !== 'usagemeter-darwin-x86_64'), [...four, 'usagemeter-windows-x86_64'], []]) {
+        const run = attach(names);
+        expect(run.status).toBe(1);
+        expect(run.out).toContain('::error::the meter jobs built');
+        expect(run.gh).toEqual([]);
+      }
+    });
+  });
 });
 
 describe("the release's plugin set", () => {

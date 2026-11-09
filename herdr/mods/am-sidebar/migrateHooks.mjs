@@ -560,7 +560,8 @@ export function placeEntry(appHome, sidebar) {
   if (st?.isSymbolicLink() && intoAmStore(path)) return false;
   if (st && (st.isSymbolicLink() || !st.isFile())) throw new Error(`${path} is a link or not a file: left as it is`);
   if (st && readFileSync(path).equals(body)) return false;
-  writeAtomic(path, body, 0o644);
+  // The owner's alone, as the ledgers beside it (RFC 0021 delivery 3): run through sh and node, never executed.
+  writeAtomic(path, body, 0o600);
   return true;
 }
 

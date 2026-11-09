@@ -20,7 +20,7 @@ phone's new Pocket Link route. RFC 0014's deliveries 8 and 9 build on it.
 
 ## Motivation
 
-Felipe decided one conversation per Bot, seen from every window (D29), and two chat backends
+The owner decided one conversation per Bot, seen from every window (D29), and two chat backends
 (D30): work Bots keep DSH's structured (ACP) sessions; Herdr's code Bots stay terminal agents
 and get a live chat view. Today:
 
@@ -46,7 +46,7 @@ pins `e1dfc022`, as 0014 and the decision log do.
 
 ## Decided and proposed
 
-Decided by Felipe (handoff `bot-system-unification.md`):
+Decided by the owner (handoff `bot-system-unification.md`):
 
 - **D29: one live agent, every window.** An exposed Bot's chat in Automagik is the same live
   Herdr agent the terminal shows; Code shows the same session as a terminal.
@@ -68,7 +68,7 @@ text or sanitized markdown only; `transcript_path` is accepted only inside the a
 transcript folders, here and through `hc file read --on`; pasted text loses `ESC[200~`,
 `ESC[201~` and every other control sequence; the briefing hook passes the transcript path on.
 
-Decided by Felipe on this RFC (2026-11-03, relayed by t2ws), each as recommended:
+Decided by the owner on this RFC (2026-11-03, relayed by t2ws), each as recommended:
 
 - **Q1: where the module lives.** Source in `herdr/mods/pocket-link/chat/`, so a copied Pocket
   Link carries what its bridge runs; a byte-equal copy in `apps/bots-dsh/src/host/live-chat/`,
@@ -507,7 +507,7 @@ delivery 7. Its check gains the window's half of "Rendering, both clients": a ro
 
 ## Open questions
 
-No open questions. Felipe answered all five on 2026-11-03, each as recommended (see Decided);
+No open questions. The owner answered all five on 2026-11-03, each as recommended (see Decided);
 they stay below as the record.
 
 1. **Where the module sits, and how the Automagik window gets it.** *Decided, as recommended:*
@@ -519,7 +519,7 @@ they stay below as the record.
    *Decided, as recommended:* the message is pasted after the draft and both are sent as one
    message; the chat says so before the tap ("Sends your half-typed terminal text with it").
    Nothing is cleared or retyped. Without a tap, the held message goes once the input row is
-   empty (also part of the recommendation Felipe accepted).
+   empty (also part of the recommendation the owner accepted).
 3. **Plain Claude panes.** *Decided, as recommended:* the pack offers once, in Herdr, "Show every
    Claude pane as a chat", and on yes adds a small hook to the person's Claude user settings that
    only sets `agent.session` and `agent.transcript` (no briefing, no output, fail-open). Until

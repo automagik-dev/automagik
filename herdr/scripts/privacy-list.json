@@ -133,63 +133,350 @@
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/SpendTest.kt",
       "text": "git@github.com",
       "why": "a deliberate SpendTest fixture: a git remote URL"
+    },
+    {
+      "file": "docs/rfcs/0012-am-cli-and-parts.md",
+      "text": "/home/automagik",
+      "why": "the documented home of the WSL container guest, a public product path"
+    },
+    {
+      "file": "docs/rfcs/0016-windows-wslc.md",
+      "text": "/home/automagik",
+      "why": "the documented volume path of the WSL container guest, a public product path"
+    },
+    {
+      "file": "apps/acp-dsh/test/redact.test.js",
+      "text": "AKIAABCDEFGHIJKLMNOP",
+      "why": "a synthetic credential in a redaction test, not a real key"
+    },
+    {
+      "file": "apps/acp-dsh/test/redact.test.js",
+      "text": "xoxb-12345678-abcd",
+      "why": "a synthetic credential in a redaction test, not a real key"
+    },
+    {
+      "file": "apps/bots-dsh/dev/art/genie-pet-v1/spritesheet.webp",
+      "text": "P@CP.XH",
+      "why": "binary image bytes that coincidentally read as an address"
+    },
+    {
+      "file": "apps/bots-dsh/src/host/pets/genie-clay/spritesheet.webp",
+      "text": "P@CP.XH",
+      "why": "binary image bytes that coincidentally read as an address"
+    },
+    {
+      "file": "apps/bots-dsh/src/host/pets/unfold/spritesheet.webp",
+      "text": "~g9~]2_t",
+      "why": "binary image bytes that coincidentally read as a deny-listed short name"
+    },
+    {
+      "file": "apps/bots-dsh/src/host/pets/wisp/spritesheet.webp",
+      "text": "p@J.lD",
+      "why": "binary image bytes that coincidentally read as an address"
+    },
+    {
+      "file": "apps/bots-dsh/test/diagnostics.test.js",
+      "text": "/home/user",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/bots-dsh/test/diagnostics.test.js",
+      "text": "/Users/Shared",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/bots-dsh/test/groups.test.js",
+      "text": "a@K.com",
+      "why": "a test fixture address that must not be read as a mention"
+    },
+    {
+      "file": "apps/bots-dsh/test/mention-rule.test.js",
+      "text": "a@K.com",
+      "why": "a test fixture address that must not be read as a mention"
+    },
+    {
+      "file": "apps/bots-dsh/test/mentions.test.js",
+      "text": "me@Omni.dev",
+      "why": "a test fixture address that must not be linked"
+    },
+    {
+      "file": "apps/bots-dsh/test/update.test.js",
+      "text": "/home/user",
+      "why": "a test fixture package path, not a host account"
+    },
+    {
+      "file": "apps/desktop/electron-builder.yml",
+      "text": "dev@namastex.ai",
+      "why": "the app's published organisation contact address"
+    },
+    {
+      "file": "apps/desktop/package-lock.json",
+      "text": "i@izs.me",
+      "why": "a vendored npm package author's public address"
+    },
+    {
+      "file": "apps/desktop/package.json",
+      "text": "dev@namastex.ai",
+      "why": "the app's published organisation contact address"
+    },
+    {
+      "file": "apps/desktop/test/dsh.test.js",
+      "text": "dev@namastex.ai",
+      "why": "the app's published organisation contact address, a navigation fixture"
+    },
+    {
+      "file": "apps/desktop/test/fixtures/client-connection-cookie-lax/index.js",
+      "text": "user@harness.internal",
+      "why": "a test fixture host address, not a real one"
+    },
+    {
+      "file": "apps/desktop/test/herdr-space.test.js",
+      "text": "/home/ana",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/desktop/test/herdr-space.test.js",
+      "text": "/Users/ana",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/desktop/test/herdr-update.test.js",
+      "text": "user@releases.herdr.dev",
+      "why": "a test fixture release URL user, not a real one"
+    },
+    {
+      "file": "apps/desktop/test/herdr.test.js",
+      "text": "/home/ana",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/desktop/test/herdr.test.js",
+      "text": "/Users/ana",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/desktop/wslc/Dockerfile",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/desktop/wslc/README.md",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/desktop/wslc/smoke/fake-dsh.mjs",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/desktop/wslc/smoke/smoke.mjs",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/desktop/wslc/test/launcher.test.mjs",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/desktop/wslc/test/redact.test.mjs",
+      "text": "/home/automagik",
+      "why": "the documented home of the container guest, a public product path"
+    },
+    {
+      "file": "apps/dsh-sandbox/test/profile.test.mjs",
+      "text": "/home/a'",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/dsh-sandbox/test/profile.test.mjs",
+      "text": "/home/a/",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "apps/unfold-events-dsh/test/presence.test.js",
+      "text": "sk-proofCANARY0123456789abcdefABCDEF",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-events-dsh/test/redact-sk.test.js",
+      "text": "sk-ant-api03-Synth3tic_AntKey-4Value5abcDEF6ghiJKL7mnoPQR8AA",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-events-dsh/test/redact-sk.test.js",
+      "text": "sk-proj-Synth3tic_Proj-Key4Value5abcDEF6ghiJKL7mno",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-events-dsh/test/redact-sk.test.js",
+      "text": "sk-proofCANARY0123456789abcdefABCDEF",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-admin-Synth3ticAdminKey4Value5abcDEF6",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-ant-admin01-Synth3ticAdminKey4Value5abcDEF6",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-ant-api03-Synth3tic_AntKey-4Value5abcDEF6ghiJKL7mnoPQR8AA",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-ant-oat01-Synth3ticOatKey4Value5abcDEF6ghi",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-proj-Synth3tic_Proj-Key4Value5abcDEF6ghiJKL7mno",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-proofCANARY0123456789abcdefABCDEF",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-svcacct-Synth3ticSvcKey4Value5abcDEF6ghi",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-mind-dsh/test/redact-sk.test.js",
+      "text": "sk-Synthetic0Legacy1Key2Value3Here4Abcdef5Ghijkl6",
+      "why": "a synthetic redaction canary, not a real key"
+    },
+    {
+      "file": "apps/unfold-trajectory-dsh/client.js",
+      "text": "kpdecker@gmail.com",
+      "why": "the bundled diff package's upstream public address"
+    },
+    {
+      "file": "apps/unfold-trajectory-dsh/NOTICE.md",
+      "text": "kpdecker@gmail.com",
+      "why": "the bundled diff package's upstream public address"
+    },
+    {
+      "file": "apps/unfold-trajectory-dsh/third_party/diff-9.0.0/LICENSE",
+      "text": "kpdecker@gmail.com",
+      "why": "the bundled diff package's upstream public address"
+    },
+    {
+      "file": "apps/welcome-dsh/test/acp.test.js",
+      "text": "secretpass@registry.npmjs.org",
+      "why": "a synthetic URL credential in a redaction test, not a real one"
+    },
+    {
+      "file": "meter/statusline/test/fixtures/fresh-session.json",
+      "text": "/home/user",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "meter/statusline/test/fixtures/mid-session-quota.json",
+      "text": "/home/user",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "meter/statusline/test/fixtures/quota-near-limit.json",
+      "text": "/home/user",
+      "why": "a test fixture home path, not a host account"
+    },
+    {
+      "file": "meter/usagemeter/src/ledger.rs",
+      "text": "/home/.config",
+      "why": "a test fixture path, not a host account"
+    },
+    {
+      "file": "meter/usagemeter/src/repo.rs",
+      "text": "ghp_FAKESECRET123@github.com",
+      "why": "a synthetic URL credential in a test, not a real one"
+    },
+    {
+      "file": "meter/usagemeter/src/repo.rs",
+      "text": "git@github.com",
+      "why": "a test fixture git remote address, not a host account"
+    },
+    {
+      "file": "server/README.md",
+      "text": "/home/iojs",
+      "why": "the Node project's public build account, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/alice",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/CLI",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/cloudtest",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/eric",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/iojs",
+      "why": "the Node project's public build account, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/pwuser",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/user",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/web_user",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/home/ys",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/secrecy-allowlist.json",
+      "text": "/Users/name",
+      "why": "a documented example path in a vendored package, not a host account"
+    },
+    {
+      "file": "server/test/secrecy.test.mjs",
+      "text": "-----BEGIN PRIVATE KEY-----",
+      "why": "a PEM header fixture, not key material"
+    },
+    {
+      "file": "server/test/secrecy.test.mjs",
+      "text": "/home/iojs",
+      "why": "the Node project's public build account, not a host account"
     }
   ],
   "pending": [
-    {
-      "folder": ".genie",
-      "issue": "#795"
-    },
     {
       "folder": "apps/bots-dsh",
       "issue": "#795"
     },
     {
       "folder": "apps/desktop",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/unfold-trajectory-dsh",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/unfold-events-dsh",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/welcome-dsh",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/unfold-mind-dsh",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/landing",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/dsh-sandbox",
-      "issue": "#795"
-    },
-    {
-      "folder": "apps/acp-dsh",
-      "issue": "#795"
-    },
-    {
-      "folder": "docs",
-      "issue": "#795"
-    },
-    {
-      "folder": "meter",
-      "issue": "#795"
-    },
-    {
-      "folder": "scripts",
-      "issue": "#795"
-    },
-    {
-      "folder": "server",
       "issue": "#795"
     }
   ]

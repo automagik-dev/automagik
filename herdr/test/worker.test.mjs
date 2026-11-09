@@ -131,6 +131,17 @@ const templateArgv = (args) => {
  * The agent's argv: after `--`, past the `env PATH=…` every agent worker starts with, and a Claude
  * worker's `-u CLAUDE_CONFIG_DIR` before it (the default login, #453; any other agent has none).
  */
+/**
+ * A new Claude worker's words with the `--session-id <uuid>` RFC 0021 adds checked and taken out
+ * (exactly one, a UUID, before the task); any other worker's as they are.
+ */
+const freshClaude = (words) => {
+  const i = words.indexOf("--session-id");
+  if (i < 0) return words;
+  assert.match(words[i + 1] ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(words.lastIndexOf("--session-id"), i, "one --session-id");
+  return [...words.slice(0, i), ...words.slice(i + 2)];
+};
 const after = (args) => {
   const argv = runArgv(args);
   assert.equal(argv[0], "/usr/bin/env", `an agent worker runs under /usr/bin/env PATH=…: ${JSON.stringify(argv)}`);
@@ -277,7 +288,7 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
-  assert.deepEqual(after(s.runs()[1]), ["claude", "--model", "opus", "--effort", "max", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--model", "opus", "--effort", "max", "review it"]);
 });
 
 test("worker: a bot with no worker field runs its own agent, with that agent's default model and effort", (t) => {
@@ -288,7 +299,7 @@ test("worker: a bot with no worker field runs its own agent, with that agent's d
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().agent, r.json().model, r.json().effort], ["claude", null, null]);
   const run = s.runs()[0];
-  assert.deepEqual(after(run), ["claude", "write the parser"]);
+  assert.deepEqual(freshClaude(after(run)), ["claude", "write the parser"]);
   assert.equal(labelsOf(run).some((l) => l.startsWith("worker.model=") || l.startsWith("worker.effort=")), false);
 });
 
@@ -298,7 +309,7 @@ test("worker: a codex captain starts a Claude reviewer with --agent claude-code;
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["claude", null, "high"]);
-  assert.deepEqual(after(s.runs()[0]), ["claude", "--effort", "high", "review PR 12"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--effort", "high", "review PR 12"]);
   assert.match(r.err, /worker model gpt-5\.5 is for codex; claude runs its own default/);
   assert.ok(labelsOf(s.runs()[0]).includes(`worker.of=${ID.cap}`));
 });
@@ -484,7 +495,8 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
   assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
     task: null, worktree: wt, agent: "codex", model: "gpt-5.5", effort: "medium", template: null, role: "dev",
     branch: "feat/login", project: s.project, lead: ID.dev, base: git(s.project, "rev-parse", "main").trim(), created: true,
-    swap: false, override: false, override_requested: null, at: undefined });
+    swap: false, override: false, override_requested: null,
+    core: "fakecore0000", created_ms: s.hcState().terminals.find((x) => x.address === "t100").created_ms, squad: ID.dev, session: null, at: undefined });
   assert.ok(!Number.isNaN(Date.parse(row.at)));
 });
 
@@ -688,7 +700,8 @@ test("worker --template: hc's template form, a child of the bot's pane in the wo
   assert.deepEqual({ ...row, at: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: 5100, botId: ID.dev,
     task: null, worktree: wt, agent: null, model: null, effort: null, template: "dev-sol", role: "dev",
     branch: "feat/login", project: s.project, lead: ID.dev, base: git(s.project, "rev-parse", "main").trim(), created: true,
-    swap: false, override: true, override_requested: null, at: undefined });
+    swap: false, override: true, override_requested: null,
+    core: "fakecore0000", created_ms: s.hcState().terminals.find((x) => x.address === "t100").created_ms, squad: ID.dev, session: null, at: undefined });
   // A codex template: no Claude hook in the worktree, and no warning about one.
   assert.equal(existsSync(join(wt, ".claude/settings.local.json")), false);
   assert.doesNotMatch(r.err, /session hook/);
@@ -730,7 +743,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // The captain picks Claude for a reviewer: the template default steps aside.
   const o = s.cli(["worker", "review it", "--branch", "review/x", "--agent", "claude", "--json"], { from: "t4" });
   assert.equal(o.code, 0, o.err);
-  assert.deepEqual(after(s.runs()[1]), ["claude", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "review it"]);
   assert.deepEqual([o.json().template, o.json().agent], [null, "claude"]);
   assert.equal(labelsOf(s.runs()[1]).some((l) => l.startsWith("worker.template=")), false);
   assert.deepEqual(s.ledger().map((row) => row.template), ["dev-sol", null]);
@@ -1159,7 +1172,7 @@ test("worker: a model starting with a dash is refused, from --model, --worker-mo
   assert.match(parseBots(JSON.stringify(file)).warnings.join("\n"), /worker model starts with a dash/);
   const r = s.cli(["worker", "x", "--branch", "feat/x", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(after(s.runs()[0]), ["claude", "x"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"]);
 });
 
 test("worker: task worktrees are excluded from the main checkout; master is the last base; colliding folders are named", (t) => {
@@ -1357,7 +1370,7 @@ test("worker --task: the ledger row's task, project, lead, worktree, base, creat
   assert.deepEqual({ ...row, at: undefined, pid: undefined }, { event: "start", kind: "worker", terminal: "t100", pid: undefined,
     botId: ID.dev, task: "gl-231", worktree: realpathSync(wt), agent: "codex", model: "gpt-5.5", effort: "medium", template: null,
     role: "dev", branch: "fix/gl-231-login", project: s.project, lead: ID.cap, base, created: false, swap: false, override: false,
-    override_requested: null, at: undefined });
+    override_requested: null, core: "fakecore0000", created_ms: s.hcState().terminals.find((x) => x.address === "t100").created_ms, squad: ID.dev, session: null, at: undefined });
   assert.notEqual(row.base, git(wt, "rev-parse", "HEAD").trim(), "the base the worktree started from, not its head");
   // --branch making the worktree: created, and the base ref as a SHA; a per-task model is an override.
   git(s.project, "commit", "-q", "--allow-empty", "-m", "later");
@@ -1638,7 +1651,7 @@ test("worker #225: the calling bot's bots.json warnings go to stderr at once, re
   assert.match(r.err, mine);
   assert.doesNotMatch(r.err, /b-bbbbbbbbbb/, "only the calling bot's warnings");
   assert.ok(r.json().warnings.includes(said), r.out);
-  assert.deepEqual(after(s.runs()[0]), ["claude", "x"], "the defaults are dropped, as before");
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"], "the defaults are dropped, as before");
   // Printed once, and before a refusal too.
   assert.equal(r.err.split("worker model starts with a dash").length, 2);
   // Refused once the bot is known (the main checkout is no task worktree): the warning comes first.
@@ -1899,7 +1912,10 @@ test("worker #567 (fail-before): an ended worker's created worktree is gone at t
   assert.ok(two.warnings.includes(`removed ${one.worktree}: its workers ended`), JSON.stringify(two.warnings));
   assert.match(second.err, new RegExp(`automagik-herdr: removed ${reEsc(one.worktree)}: its workers ended`));
   assert.deepEqual(reapFile(s).map((r) => [r.worktree, r.result, r.why]), [[one.worktree, "removed", null]]);
-  assert.equal(s.ledger().some((r) => r.event !== "start"), false, "the workers ledger gets no cleanup rows");
+  // The ledger gets no cleanup rows; the sweep found the first worker finished: its end row (RFC 0021 (f) 4), once.
+  const firstRow = s.ledger().find((r) => r.event === "start" && r.terminal === one.terminal);
+  assert.deepEqual(s.ledger().filter((r) => r.event !== "start").map((r) => [r.event, r.kind, r.terminal, r.core, r.created_ms, r.reason]),
+    [["end", "worker", one.terminal, "fakecore0000", firstRow.created_ms, "finished"]]);
   const again = s.cli(["reap"], { from: null });
   assert.equal(again.code, 0, again.err);
   assert.equal(again.out.trim(), "No finished worker's worktree to remove.", "a removed worktree is done with");
@@ -2255,4 +2271,28 @@ test("unset caller terminal keeps server.status and the guard route", async (t) 
   assert.match(result.stderr, /hc guard: refused a command without HC_TERMINAL_ID/);
   assert.equal(s.runs().length, 0, "no unguarded worker route is selected");
   assert.equal(probes, 0, "an unset expected terminal is refused before connecting");
+});
+
+// RFC 0021 (f) 2: a new Claude worker runs on a session id Herdr chose; its row names it, output never.
+test("worker: a new Claude worker's --session-id is its label and its start row's session; --json and text show ***", (t) => {
+  const file = team();
+  delete file.bots[2].worker;
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "write the parser", "--branch", "feat/parser", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const words = after(run);
+  const sid = words[words.indexOf("--session-id") + 1];
+  assert.match(sid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.ok(labelsOf(run).includes(`agent.session=${sid}`));
+  const row = s.ledger().find((x) => x.event === "start" && x.terminal === r.json().terminal);
+  assert.equal(row.session, sid);
+  assert.deepEqual(r.json().argv, ["claude", "--session-id", "***"]);
+  assert.equal(`${r.out}${r.err}`.includes(sid), false, "never printed");
+  // A codex worker: no session id, none in its row.
+  const text = s.cli(["worker", "review it", "--branch", "feat/other", "--agent", "codex"]);
+  assert.equal(text.code, 0, text.err);
+  assert.equal(after(s.runs()[1]).includes("--session-id"), false);
+  assert.equal(s.ledger().filter((x) => x.event === "start").at(-1).session, null);
+  for (const id of s.ledger().map((x) => x.session).filter(Boolean)) assert.equal(`${text.out}${text.err}`.includes(id), false);
 });
