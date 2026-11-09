@@ -1,7 +1,8 @@
 //! Read-only tagging from Herdr's worker ledger: which worker, bot and task a session belongs to.
 //!
 //! Herdr appends one JSON row per event to `workers.jsonl` (`$HERDR_WORKERS_LEDGER`, else
-//! `~/.config/herdr-app/automagik-herdr/workers.jsonl`). Two events matter here:
+//! `<app home>/automagik-herdr/workers.jsonl`, where the app home is `$HERDR_APP_HOME`, else
+//! `~/.config/herdr-app`, the way Herdr resolves it). Two events matter here:
 //!
 //! - `start`: a worker or seat was launched in a terminal, on a worktree, for a bot.
 //! - `session`: a Claude pane in a terminal opened a session id (Claude panes only).
@@ -53,7 +54,12 @@ use serde_json::{Map, Value};
 use crate::sources::Source;
 
 pub const LEDGER_ENV: &str = "HERDR_WORKERS_LEDGER";
-const DEFAULT_RELATIVE: &str = ".config/herdr-app/automagik-herdr/workers.jsonl";
+/// Herdr's app home. Its writers put the ledger under it.
+pub const APP_HOME_ENV: &str = "HERDR_APP_HOME";
+/// The app home when `HERDR_APP_HOME` is unset, relative to the user's home.
+const DEFAULT_APP_HOME: &str = ".config/herdr-app";
+/// The ledger, relative to the app home.
+const LEDGER_RELATIVE: &str = "automagik-herdr/workers.jsonl";
 
 /// What launched the terminal: a worker on a task, or a long-lived seat (never a task).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -206,18 +212,33 @@ pub struct Ledger {
     sessions: HashMap<String, BTreeSet<(String, Option<i64>)>>,
 }
 
-/// `$HERDR_WORKERS_LEDGER` when set and non-empty, else the default under `home`.
-pub fn ledger_path(env: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    match env.filter(|p| !p.is_empty()) {
-        Some(p) => Some(PathBuf::from(p)),
-        None => home.map(|h| h.join(DEFAULT_RELATIVE)),
+/// Where the ledger is: `$HERDR_WORKERS_LEDGER` when set and non-empty, else
+/// `<app home>/automagik-herdr/workers.jsonl`. The app home is `$HERDR_APP_HOME` when set and
+/// non-empty, else `~/.config/herdr-app` under `home`, as Herdr resolves it.
+pub fn ledger_path(
+    ledger_env: Option<OsString>,
+    app_home_env: Option<OsString>,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(p) = ledger_env.filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
     }
+    let app_home = match app_home_env.filter(|p| !p.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => home?.join(DEFAULT_APP_HOME),
+    };
+    Some(app_home.join(LEDGER_RELATIVE))
 }
 
 impl Ledger {
     /// Loads the ledger from its usual place. Never fails: no file means no tags.
     pub fn load() -> Ledger {
-        match ledger_path(std::env::var_os(LEDGER_ENV), crate::paths::home()) {
+        let path = ledger_path(
+            std::env::var_os(LEDGER_ENV),
+            std::env::var_os(APP_HOME_ENV),
+            crate::paths::home(),
+        );
+        match path {
             Some(p) => Ledger::load_from(&p),
             None => Ledger::default(),
         }
@@ -598,17 +619,58 @@ mod tests {
     #[test]
     fn ledger_path_prefers_env_then_home() {
         let home = Some(PathBuf::from("/work/home"));
+        let default = Some(PathBuf::from(
+            "/work/home/.config/herdr-app/automagik-herdr/workers.jsonl",
+        ));
         assert_eq!(
-            ledger_path(Some("/work/ledger.jsonl".into()), home.clone()),
+            ledger_path(Some("/work/ledger.jsonl".into()), None, home.clone()),
             Some(PathBuf::from("/work/ledger.jsonl"))
         );
+        assert_eq!(ledger_path(Some("".into()), None, home.clone()), default);
+        assert_eq!(ledger_path(None, Some("".into()), home.clone()), default);
+        assert_eq!(ledger_path(None, None, None), None);
+    }
+
+    #[test]
+    fn ledger_path_honours_the_herdr_app_home() {
+        let home = Some(PathBuf::from("/work/home"));
+        let in_app_home = Some(PathBuf::from(
+            "/work/app-home/automagik-herdr/workers.jsonl",
+        ));
         assert_eq!(
-            ledger_path(Some("".into()), home.clone()),
-            Some(PathBuf::from(
-                "/work/home/.config/herdr-app/automagik-herdr/workers.jsonl"
-            ))
+            ledger_path(None, Some("/work/app-home".into()), home.clone()),
+            in_app_home
         );
-        assert_eq!(ledger_path(None, None), None);
+        // No user home is needed once the app home is known.
+        assert_eq!(
+            ledger_path(None, Some("/work/app-home".into()), None),
+            in_app_home
+        );
+        // An explicit ledger still wins over the app home.
+        assert_eq!(
+            ledger_path(
+                Some("/work/ledger.jsonl".into()),
+                Some("/work/app-home".into()),
+                home
+            ),
+            Some(PathBuf::from("/work/ledger.jsonl"))
+        );
+        // And the resolved path is the one loaded.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("automagik-herdr/workers.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let rows = [
+            start("t1", WT_A, "claude", "2026-01-01T09:00:00Z"),
+            session("t1", "s-1"),
+        ];
+        let text: Vec<String> = rows.iter().map(Value::to_string).collect();
+        std::fs::write(&file, text.join("\n")).unwrap();
+        let path = ledger_path(None, Some(dir.path().into()), None).unwrap();
+        assert_eq!(path, file);
+        assert_eq!(
+            tag(Ledger::load_from(&path).resolve(&claude("s-1"))).bot,
+            "b-example"
+        );
     }
 
     #[test]
