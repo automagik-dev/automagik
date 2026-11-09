@@ -4080,7 +4080,7 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
   }
 });
 
-test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support --lead-project and --no-lead-project", (t) => {
+test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support reciprocal --lead-project and --cross-member", (t) => {
   const s = scene(t);
   s.seed(team());
 
@@ -4091,6 +4091,7 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
   git(spoke, "commit", "-q", "--allow-empty", "-m", "start");
 
   // Create SpokeMain in spoke reporting to Genie in s.project via --lead and --lead-project.
+  // Before Genie reciprocates with --cross-member, the CLI warns that the link is one-sided.
   const createdMain = s.cli([
     "create",
     "--project", spoke,
@@ -4103,6 +4104,7 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
     "--json",
   ]);
   assert.equal(createdMain.code, 0, createdMain.err);
+  assert.match(createdMain.err, /is one-sided/);
   const spokeMainId = createdMain.json().id;
   assert.equal(createdMain.json().bot.lead, ID.main);
   assert.equal(createdMain.json().bot.leadProject, s.project);
@@ -4119,8 +4121,25 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
     "--json",
   ]);
   assert.equal(createdMem.code, 0, createdMem.err);
+  assert.match(createdMem.err, /is one-sided/);
   assert.equal(createdMem.json().bot.lead, ID.cap);
   assert.equal(createdMem.json().bot.leadProject, s.project);
+
+  // While one-sided, dsh-tui doctor flags the lead checks as not ok (is one-sided).
+  const docOneSided = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const oneSidedChecks = docOneSided.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(oneSidedChecks.length, 2);
+  assert.equal(oneSidedChecks.every((c) => !c.ok && /is one-sided/.test(c.detail)), true);
+
+  // Reciprocate from s.project on Genie and Captain via --cross-member <bot>@<dir>.
+  const recGenie = s.cli(["edit", "Genie", "--project", s.project, "--cross-member", `SpokeMain@${spoke}`, "--json"]);
+  assert.equal(recGenie.code, 0, recGenie.err);
+  assert.equal(recGenie.err, "");
+  assert.deepEqual(recGenie.json().bot.crossMembers, [{ id: spokeMainId, project: spoke }]);
+
+  const recCap = s.cli(["edit", "Captain", "--project", s.project, "--cross-member", `SpokeMember@${spoke}`, "--json"]);
+  assert.equal(recCap.code, 0, recCap.err);
+  assert.equal(recCap.err, "");
 
   // Refusals: missing folder, folder with no .herdr/bots.json, missing bot, planned lead, or cross-project cycle.
   const missingDir = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", join(s.root, "nope")]);
@@ -4146,7 +4165,7 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
   assert.equal(cycle.code, 1);
   assert.match(cycle.err, /reports to Captain, so it can't be its lead/);
 
-  // ls, show, brief, and dsh-tui doctor in spoke and s.project.
+  // ls, show, brief, and dsh-tui doctor in spoke and s.project once reciprocal.
   const lsOut = s.cli(["ls", "--project", spoke]);
   assert.equal(lsOut.code, 0, lsOut.err);
   assert.match(lsOut.out, new RegExp(`main → Genie \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
@@ -4161,6 +4180,10 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
   assert.equal(showText.code, 0, showText.err);
   assert.match(showText.out, new RegExp(`lead\\s+Genie \\(${ID.main}\\) in ${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 
+  const showGenie = s.cli(["show", "Genie", "--project", s.project]);
+  assert.equal(showGenie.code, 0, showGenie.err);
+  assert.match(showGenie.out, /cross members\s+SpokeMain/);
+
   const briefSpoke = s.cli(["brief", "SpokeMain", "--project", spoke]);
   assert.equal(briefSpoke.code, 0, briefSpoke.err);
   assert.match(briefSpoke.out, /Your lead: Genie \(bot b-aaaaaaaaaa\)/);
@@ -4174,7 +4197,7 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
   assert.equal(docChecks.length, 2);
   assert.equal(docChecks.every((c) => c.ok), true);
 
-  // Clearing with --no-lead-project and --lead-project="".
+  // Clearing with --no-lead-project, --lead-project="", and --no-cross-members.
   const clearMain = s.cli(["edit", "SpokeMain", "--project", spoke, "--no-lead-project", "--json"]);
   assert.equal(clearMain.code, 0, clearMain.err);
   assert.equal(clearMain.json().bot.lead, undefined);
@@ -4184,4 +4207,8 @@ test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui docto
   assert.equal(clearMem.code, 0, clearMem.err);
   assert.equal(clearMem.json().bot.lead, undefined);
   assert.equal(clearMem.json().bot.leadProject, undefined);
+
+  const clearGenieCm = s.cli(["edit", "Genie", "--project", s.project, "--no-cross-members", "--json"]);
+  assert.equal(clearGenieCm.code, 0, clearGenieCm.err);
+  assert.equal(clearGenieCm.json().bot.crossMembers, undefined);
 });

@@ -4,7 +4,7 @@
 // goes in the sidebar (A8), the rows a fold state leaves showing (A7) and the machines' order.
 // Pure: no `herdr`, `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
 
-import { BOT_LABEL, RANKS, cleanProjectPath, mainBotOf, effectiveLead } from "./model.js";
+import { BOT_LABEL, RANKS, cleanProjectPath, crossMemberWarnings, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
 import { AGENTS, detectModel, defaultModelFrom, resolveAgent } from "./models.js";
 import { workerBranch, workerTaskId } from "./workers.js";
@@ -273,8 +273,11 @@ export function buildTree({ projects, live = {}, terminals = [], now = Date.now(
         status: l?.status ?? null, program: l?.program ?? null, argv: l?.argv ?? null,
         helpers: l ? helpersOf(terminals, l.terminal, known) : [],
       };
-      const warning = eff?.warning;
-      if (warning && (bot !== main || bot.leadProject)) n.warning = warning;
+      const crossWarn = (bot.crossMembers?.length || bot.members?.length)
+        ? crossMemberWarnings(file, bot.id, { project: p.key, projects: sameMachine })[0] ?? null
+        : null;
+      const warning = (eff?.warning && (bot !== main || bot.leadProject) ? eff.warning : null) ?? crossWarn;
+      if (warning) n.warning = warning;
       // A row's mark when its pane's hc parent is not its lead's pane (#231): two map reads.
       const leadId = l && (bot !== main || eff?.leadProject) ? eff?.lead : null;
       const targetProj = eff?.leadProject ? sameMachine.get(eff.leadProject) ?? p : p;

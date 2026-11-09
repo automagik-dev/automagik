@@ -1265,7 +1265,17 @@ test("cross-project lead (#850): directMembers, launchBriefingText, briefingText
   const hubFile = {
     version: 1,
     categories: [],
-    bots: [bot(coordId, "main", { name: "Coord", role: "Runs all projects", instructions: "Coordinate." })],
+    bots: [
+      bot(coordId, "main", {
+        name: "Coord",
+        role: "Runs all projects",
+        instructions: "Coordinate.",
+        crossMembers: [
+          { id: spokeMainId, project: "/work/spoke" },
+          { id: spokeCapId, project: "/work/spoke" },
+        ],
+      }),
+    ],
   };
   const spokeFile = {
     version: 1,
@@ -1315,6 +1325,10 @@ test("cross-project lead (#850): directMembers, launchBriefingText, briefingText
   // End-to-end briefing.mjs hook: SpokeMain in a second repo sees its cross-project lead Genie in main.
   const sc = await scratch(t);
   const spokeDir = join(sc.root, "spoke");
+  const mainBotsPath = join(sc.main, ".herdr", "bots.json");
+  const mainBots = JSON.parse(readFileSync(mainBotsPath, "utf8"));
+  mainBots.bots[0].crossMembers = [{ id: spokeMainId, project: spokeDir }];
+  writeFileSync(mainBotsPath, JSON.stringify(mainBots));
   mkdirSync(join(spokeDir, ".herdr"), { recursive: true });
   writeFileSync(
     join(spokeDir, ".herdr", "bots.json"),

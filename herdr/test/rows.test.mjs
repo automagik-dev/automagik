@@ -680,11 +680,17 @@ test("#231: a lead with two live panes: a parent that is either is no mark; a th
   assert.deepEqual(remote("t9").parentMark.leadPanes, ["box/t5", "box/t2"]);
 });
 
-test("cross-project lead (#850): buildTree nests a cross-project main or member under its lead in the other project and tags projectName", () => {
+test("cross-project lead (#850): buildTree nests a cross-project main or member under its lead in the other project only when reciprocal and tags projectName", () => {
   const hubFile = parseBots(JSON.stringify({
     version: 1,
     categories: [],
-    bots: [bot("b-coordcoord", { kind: "main", name: "Coord" })],
+    bots: [
+      bot("b-coordcoord", {
+        kind: "main",
+        name: "Coord",
+        crossMembers: [{ id: "b-spokemainm", project: "/work/spoke" }],
+      }),
+    ],
   })).file;
   const spokeFile = parseBots(JSON.stringify({
     version: 1,
@@ -728,6 +734,25 @@ test("cross-project lead (#850): buildTree nests a cross-project main or member 
   assert.equal(spokeMainRow.projectName, "spoke");
   assert.equal(spokeDevRow.project, "/work/spoke");
   assert.match(secondLine(spokeMainRow), / · spoke$/);
+
+  // One-sided declaration: when Coord does not list SpokeMain in crossMembers, SpokeMain stays in spokeTree with a warning.
+  const oneSidedHub = parseBots(JSON.stringify({
+    version: 1,
+    categories: [],
+    bots: [bot("b-coordcoord", { kind: "main", name: "Coord" })],
+  })).file;
+  const oneSidedTrees = buildTree({
+    projects: [
+      { key: "/work/hub", file: oneSidedHub, spaces: ["s1"] },
+      { key: "/work/spoke", file: spokeFile, spaces: ["s2"] },
+    ],
+    live: {},
+    terminals: [],
+    now: NOW,
+  });
+  const oneSidedSpoke = oneSidedTrees.find((t) => t.key === "/work/spoke");
+  assert.equal(oneSidedSpoke.main.bot.id, "b-spokemainm");
+  assert.match(oneSidedSpoke.main.warning, /is one-sided/);
 
   // When the target leadProject is not loaded, the bot stays in its own project tree with a warning.
   const loneSpoke = buildTree({

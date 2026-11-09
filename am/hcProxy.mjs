@@ -475,8 +475,12 @@ export function explicitCaller(value) {
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId }) {
-  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId, projects }) {
+  const env = approvalEnv ?? process.env;
+  return {
+    terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId,
+    team: teamOf(file, caller, { project: caller?.project, projects, env }),
+  };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */

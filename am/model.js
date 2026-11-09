@@ -263,6 +263,34 @@ export function parseBots(text) {
       warnings.push(`${where}: a main bot has no lead; ignored`);
       delete bot.lead;
     }
+    if (bot.crossMembers !== undefined || bot.members !== undefined) {
+      const rawCross = bot.crossMembers !== undefined ? bot.crossMembers : bot.members;
+      delete bot.members;
+      if (!Array.isArray(rawCross)) {
+        warnings.push(`${where}: crossMembers is not a list; ignored`);
+        delete bot.crossMembers;
+      } else {
+        const keptCross = [];
+        const seenCross = new Set();
+        rawCross.forEach((m, idx) => {
+          if (!isObject(m) || !isText(m.id) || !ID_SHAPE.test(m.id)) {
+            warnings.push(`${where}: crossMembers[${idx}] entry must have a bot id (b- plus 10 base32 characters); ignored`);
+            return;
+          }
+          const cleanProj = cleanProjectPath(m.project);
+          if (!cleanProj.startsWith("/")) {
+            warnings.push(`${where}: crossMembers[${idx}] entry must have an absolute folder path; ignored`);
+            return;
+          }
+          const key = `${cleanProj}\0${m.id}`;
+          if (seenCross.has(key)) return;
+          seenCross.add(key);
+          keptCross.push({ id: m.id, project: cleanProj });
+        });
+        if (keptCross.length) bot.crossMembers = keptCross;
+        else delete bot.crossMembers;
+      }
+    }
     if (bot.category !== undefined && !categories.some((c) => c.id === bot.category)) warnings.push(`${where}: unknown category ${bot.category}`);
     bots.push(bot);
   });
@@ -271,7 +299,13 @@ export function parseBots(text) {
   if (mains.length > 1) warnings.push(`${mains.length} main bots; ${mains[0].id} counts`);
   const file = { ...raw, version: 1, categories, bots };
   for (const b of bots) {
-    if (b.kind !== "member" && !b.leadProject) continue;
+    if (b.leadProject) {
+      const tail = b.kind === "main" || !mains[0] ? "" : "; reports to the main bot";
+      if (!ID_SHAPE.test(b.lead)) warnings.push(`${b.id}: lead ${b.lead} in ${b.leadProject} is missing${tail}`);
+      else if (b.lead === b.id) warnings.push(`${b.id}: lead ${b.lead} in ${b.leadProject} leads back to this bot${tail}`);
+      continue;
+    }
+    if (b.kind !== "member") continue;
     const { warning } = effectiveLead(file, b.id);
     if (warning) warnings.push(`${b.id}: ${warning}`);
   }
@@ -285,6 +319,70 @@ export function mainBotOf(file) {
 
 /** A normalized project folder path (without trailing slash, except "/"), or "". */
 export const cleanProjectPath = (p) => (typeof p === "string" && p.trim() ? trimSlash(p.trim()) : "");
+
+/** Normalized `{ id, project }` cross-project members listed on `bot` (`crossMembers` or `members`). */
+export function crossMembersOf(bot) {
+  if (!isObject(bot)) return [];
+  const raw = Array.isArray(bot.crossMembers)
+    ? bot.crossMembers
+    : Array.isArray(bot.members) ? bot.members : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (!isObject(item) || !ID_SHAPE.test(item.id ?? "")) continue;
+    const proj = cleanProjectPath(item.project);
+    if (!proj.startsWith("/")) continue;
+    const key = `${proj}\0${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ id: item.id, project: proj });
+  }
+  return out;
+}
+
+/** Whether `leadBot` reciprocally lists `{ id: memberId, project: memberProject }` in `crossMembers`. */
+export function hasCrossMember(leadBot, memberId, memberProject) {
+  const cleanProj = cleanProjectPath(memberProject);
+  if (!leadBot || !isText(memberId) || !cleanProj) return false;
+  return crossMembersOf(leadBot).some((m) => m.id === memberId && m.project === cleanProj);
+}
+
+/** Warnings for one-sided or unresolvable `crossMembers` entries on `botId` in `file`. */
+export function crossMemberWarnings(file, botId, { project = null, projects = null } = {}) {
+  const bot = file?.bots?.find((b) => b.id === botId);
+  const list = crossMembersOf(bot);
+  if (!bot || !list.length) return [];
+  const ownProject = inferProjectOf(file, botId, project, projects);
+  if (!projects) {
+    return list.map((m) => `crossMember ${m.id} in ${m.project} is unverified (project ${m.project} has no roster)`);
+  }
+  const out = [];
+  for (const m of list) {
+    if (ownProject && m.project === ownProject) {
+      out.push(`crossMember ${m.id} in ${m.project} is in this bot's own project`);
+      continue;
+    }
+    const memberFile = projectFileOf(projects, m.project);
+    if (!memberFile) {
+      out.push(`crossMember ${m.id} in ${m.project} is missing (project ${m.project} has no roster)`);
+      continue;
+    }
+    const memberBot = memberFile.bots?.find((b) => b.id === m.id);
+    if (!memberBot) {
+      out.push(`crossMember ${m.id} in ${m.project} is missing`);
+      continue;
+    }
+    if (memberBot.planned) {
+      out.push(`crossMember ${m.id} in ${m.project} is planned`);
+      continue;
+    }
+    const memberLeadProj = isText(memberBot.leadProject) ? cleanProjectPath(memberBot.leadProject) : "";
+    if (memberBot.lead !== bot.id || !ownProject || memberLeadProj !== ownProject) {
+      out.push(`crossMember ${m.id} in ${m.project} is one-sided (${m.id} in ${m.project} does not name ${bot.id} in ${ownProject || "this project"} as its lead)`);
+    }
+  }
+  return out;
+}
 
 /** All `[cleanKey, BotsFile]` entries from a `projects` Map, array, or plain object. */
 export function projectEntriesOf(projects) {
@@ -388,12 +486,9 @@ export function effectiveLead(file, botId, { project = null, projects = null } =
     const crossFallback = (why) => (bot === main || bot.kind === "main" || !main
       ? { lead: "", warning: `lead ${bot.lead} in ${targetProject} ${why}` }
       : { lead: main.id, warning: `lead ${bot.lead} in ${targetProject} ${why}; reports to the main bot` });
-    if (!targetProject.startsWith("/") || !isText(bot.lead)) return crossFallback("is missing");
-    if (!projects) {
-      if (!ID_SHAPE.test(bot.lead)) return crossFallback("is missing");
-      if (bot.lead === bot.id) return crossFallback("leads back to this bot");
-      return { lead: bot.lead, leadProject: targetProject, leadBot: null };
-    }
+    if (!targetProject.startsWith("/") || !isText(bot.lead) || !ID_SHAPE.test(bot.lead)) return crossFallback("is missing");
+    if (bot.lead === bot.id) return crossFallback("leads back to this bot");
+    if (!projects) return crossFallback(`is unverified (project ${targetProject} has no roster)`);
     const targetFile = projectFileOf(projects, targetProject);
     if (!targetFile) return crossFallback(`is missing (project ${targetProject} has no roster)`);
     const targetBot = targetFile.bots?.find((b) => b.id === bot.lead);
@@ -403,6 +498,9 @@ export function effectiveLead(file, botId, { project = null, projects = null } =
     if (targetBot.kind === "main" && targetBot !== targetMain) return crossFallback("is not the counting main bot");
     if (leadsBackTo(targetProject, targetFile, targetBot, ownProject, bot.id, projects)) {
       return crossFallback("leads back to this bot");
+    }
+    if (!ownProject || !hasCrossMember(targetBot, bot.id, ownProject)) {
+      return crossFallback(`is one-sided (${targetBot.id} in ${targetProject} does not list ${bot.id}${ownProject ? ` from ${ownProject}` : ""} in crossMembers)`);
     }
     return { lead: targetBot.id, leadProject: targetProject, leadBot: targetBot };
   }
@@ -532,6 +630,23 @@ export function checkBots(file, before = null, { project = null, projects = null
       }
     }
     if (b.kind === "main" && b.lead !== undefined && !isText(b.leadProject)) errors.push(`${at}: a main bot has no lead`);
+    const rawCross = b.crossMembers !== undefined ? b.crossMembers : b.members;
+    if (rawCross !== undefined) {
+      if (!Array.isArray(rawCross)) {
+        errors.push(`${at}: crossMembers is not a list`);
+      } else {
+        const ownProj = cleanProjectPath(project);
+        for (const m of rawCross) {
+          if (!isObject(m) || !ID_SHAPE.test(m.id ?? "")) {
+            errors.push(`${at}: crossMembers entry needs a bot id (b- plus 10 base32 characters)`);
+          } else if (!isText(m.project) || !cleanProjectPath(m.project).startsWith("/")) {
+            errors.push(`${at}: crossMembers ${m.id} project must be an absolute folder path`);
+          } else if (ownProj && cleanProjectPath(m.project) === ownProj) {
+            errors.push(`${at}: crossMembers ${m.id} cannot name this bot's own project`);
+          }
+        }
+      }
+    }
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
     if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
   }
@@ -546,7 +661,9 @@ export function checkBots(file, before = null, { project = null, projects = null
       if (isCross && !projects) continue;
       const { warning } = effectiveLead(file, b.id, { project, projects });
       const target = !isCross ? byId.get(b.lead) : null;
-      if (warning && (isCross || b.lead === b.id || !target?.planned)) errors.push(`${b.id}: ${warning}`);
+      if (warning && !/is one-sided/.test(warning) && (isCross || b.lead === b.id || !target?.planned)) {
+        errors.push(`${b.id}: ${warning}`);
+      }
     }
   }
   return errors;
@@ -733,10 +850,20 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   const main = out.bots.find((b) => b?.kind === "main" && b.id !== bot.id);
   if (!bot.leadProject && (bot.kind === "main" || (main && bot.lead === main.id))) delete bot.lead;
   if (bot.kind === "main" || bot.lead) delete bot.category;
+  if ("crossMembers" in bot || "members" in bot) {
+    const normalizedCross = crossMembersOf(bot);
+    delete bot.members;
+    if (normalizedCross.length) bot.crossMembers = normalizedCross;
+    else delete bot.crossMembers;
+  }
   const i = out.bots.findIndex((b) => b?.id === bot.id);
   const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
   for (const k of ["planned", "lead", "leadProject", "category", "agent", "model", "agyMode", "agyPermissions"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
+  }
+  if (("crossMembers" in entry || "members" in entry) && !bot.crossMembers) {
+    delete merged.crossMembers;
+    delete merged.members;
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
   if ("code" in bot && (bot.code === undefined || bot.code === null || bot.code === "")) delete merged.code;
@@ -770,9 +897,9 @@ export function withListedProject(text, key, max = MAX_LISTED_PROJECTS) {
 
 /**
  * Known projects on this machine for cross-project lead / team resolution (`project -> BotsFile`).
- * Reads `project`, any `leadProject` referenced by loaded bots (transitively), `extraKeys`,
- * `<appHome>/am-sidebar-projects.json`, `<appHome>/shared.json`, and immediate sibling folders of
- * `project` when `listDir` is supplied.
+ * Reads `project`, any `leadProject` or `crossMembers` referenced by loaded bots (transitively),
+ * `extraKeys`, `<appHome>/am-sidebar-projects.json`, `<appHome>/shared.json`, and immediate sibling
+ * folders of `project` when `listDir` is supplied.
  */
 export function collectProjectMap({
   project = null,
@@ -791,17 +918,23 @@ export function collectProjectMap({
     seen.add(clean);
     queue.push(clean);
   };
+  const enqueueBots = (bots) => {
+    for (const b of bots ?? []) {
+      if (b?.leadProject) enqueue(b.leadProject);
+      for (const m of crossMembersOf(b)) enqueue(m.project);
+    }
+  };
   const ownKey = cleanProjectPath(project);
   if (ownKey) {
     seen.add(ownKey);
     if (file && Array.isArray(file.bots)) {
       map.set(ownKey, file);
-      for (const b of file.bots) if (b?.leadProject) enqueue(b.leadProject);
+      enqueueBots(file.bots);
     } else {
       queue.push(ownKey);
     }
   } else if (file && Array.isArray(file.bots)) {
-    for (const b of file.bots) if (b?.leadProject) enqueue(b.leadProject);
+    enqueueBots(file.bots);
   }
   for (const k of extraKeys ?? []) enqueue(k);
   if (appHome) {
@@ -837,7 +970,7 @@ export function collectProjectMap({
     try {
       const parsed = parseBots(text).file;
       map.set(key, parsed);
-      for (const b of parsed.bots) if (b?.leadProject) enqueue(b.leadProject);
+      enqueueBots(parsed.bots);
     } catch { /* skip invalid project */ }
   }
   return map;

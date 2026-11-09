@@ -552,24 +552,30 @@ test("pane key (#227): a folder that names no project gives null; a bots.json ab
   await assert.rejects(paneKeyOf("/srv/x", unreachable, async () => false), /unreachable/);
 });
 
-// ---- #850: cross-project lead (leadProject) ----
-import { collectProjectMap, descendantsOf } from "../mods/am-sidebar/model.js";
+// ---- #850: cross-project lead (leadProject + reciprocal crossMembers) ----
+import { collectProjectMap, crossMemberWarnings, descendantsOf } from "../mods/am-sidebar/model.js";
 import { parentArgs, leadIdOf, roleOf } from "../mods/am-sidebar/launchArgs.js";
 
-test("cross-project lead (#850): member and main bots resolve across projects, and fall back when missing, planned or cyclic", () => {
+test("cross-project lead (#850): member and main bots resolve across projects only when reciprocal, and fall back when one-sided, missing, planned or cyclic", () => {
   const leadId = "b-7777777777";
   const plannedLeadId = "b-6666666666";
+  const subMain = "b-5555555555";
+  const subCap = "b-4444444444";
+  const subDev = "b-3333333333";
   const hubFile = parseBots(text({
     version: 1,
     categories: [],
     bots: [
-      bot(leadId, "main", { name: "Coord" }),
+      bot(leadId, "main", {
+        name: "Coord",
+        crossMembers: [
+          { id: subMain, project: "/work/sub" },
+          { id: subCap, project: "/work/sub" },
+        ],
+      }),
       bot(plannedLeadId, "member", { name: "FutureLead", agent: undefined, planned: { wave: 2 } }),
     ],
   })).file;
-  const subMain = "b-5555555555";
-  const subCap = "b-4444444444";
-  const subDev = "b-3333333333";
   const subFile = parseBots(text({
     version: 1,
     categories: [],
@@ -581,7 +587,7 @@ test("cross-project lead (#850): member and main bots resolve across projects, a
   })).file;
   const projects = new Map([["/work/hub", hubFile], ["/work/sub", subFile]]);
 
-  // Valid cross-project lead for both main and member bots.
+  // Valid reciprocal cross-project lead for both main and member bots.
   const mainEff = effectiveLead(subFile, subMain, { project: "/work/sub", projects });
   assert.equal(mainEff.lead, leadId);
   assert.equal(mainEff.leadProject, "/work/hub");
@@ -599,6 +605,41 @@ test("cross-project lead (#850): member and main bots resolve across projects, a
     [...descendantsOf(hubFile, leadId, { project: "/work/hub", projects })].sort(),
     [subMain, subCap, subDev].sort(),
   );
+  assert.deepEqual(crossMemberWarnings(hubFile, leadId, { project: "/work/hub", projects }), []);
+
+  // One-sided declaration (member names lead, lead does NOT list member in crossMembers):
+  // fails closed to same-project graph (main -> "", member -> subMain) with one clear warning.
+  const oneSidedHub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [bot(leadId, "main", { name: "Coord" })],
+  })).file;
+  const oneSidedProjects = new Map([["/work/hub", oneSidedHub], ["/work/sub", subFile]]);
+  const oneSidedMain = effectiveLead(subFile, subMain, { project: "/work/sub", projects: oneSidedProjects });
+  assert.equal(oneSidedMain.lead, "");
+  assert.equal(oneSidedMain.leadProject, undefined);
+  assert.match(oneSidedMain.warning, /is one-sided/);
+  const oneSidedCap = effectiveLead(subFile, subCap, { project: "/work/sub", projects: oneSidedProjects });
+  assert.equal(oneSidedCap.lead, subMain);
+  assert.equal(oneSidedCap.leadProject, undefined);
+  assert.match(oneSidedCap.warning, /is one-sided/);
+  assert.deepEqual([...descendantsOf(oneSidedHub, leadId, { project: "/work/hub", projects: oneSidedProjects })], []);
+
+  // One-sided declaration on the lead side (lead lists member in crossMembers, member does not name lead):
+  // fails closed and surfaces a crossMemberWarnings entry on the lead.
+  const unlinkedSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", { name: "SubCap" }),
+    ],
+  })).file;
+  const leadOnlyProjects = new Map([["/work/hub", hubFile], ["/work/sub", unlinkedSub]]);
+  assert.deepEqual([...descendantsOf(hubFile, leadId, { project: "/work/hub", projects: leadOnlyProjects })], []);
+  const cmWarns = crossMemberWarnings(hubFile, leadId, { project: "/work/hub", projects: leadOnlyProjects });
+  assert.equal(cmWarns.length, 2);
+  assert.ok(cmWarns.every((w) => /is one-sided/.test(w)));
 
   // Target project missing: member falls back to same-project main, main falls back to "".
   const onlySub = new Map([["/work/sub", subFile]]);
@@ -642,21 +683,41 @@ test("cross-project lead (#850): member and main bots resolve across projects, a
   assert.equal(plannedEff.lead, subMain);
   assert.match(plannedEff.warning, /in \/work\/hub is planned/);
 
-  // Cross-project cycle: hub's Coord reports to sub's SubCap, which reports to hub's Coord.
+  // Cross-project cycle: hub's Coord reports to sub's SubCap, which reports to hub's Coord (both reciprocal).
   const cyclicHub = parseBots(text({
     version: 1,
     categories: [],
-    bots: [bot(leadId, "main", { name: "Coord", lead: subCap, leadProject: "/work/sub" })],
+    bots: [
+      bot(leadId, "main", {
+        name: "Coord",
+        lead: subCap,
+        leadProject: "/work/sub",
+        crossMembers: [{ id: subCap, project: "/work/sub" }],
+      }),
+    ],
   })).file;
-  const cyclicProjects = new Map([["/work/hub", cyclicHub], ["/work/sub", subFile]]);
-  const cycCap = effectiveLead(subFile, subCap, { project: "/work/sub", projects: cyclicProjects });
+  const cyclicSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", {
+        name: "SubCap",
+        lead: leadId,
+        leadProject: "/work/hub",
+        crossMembers: [{ id: leadId, project: "/work/hub" }],
+      }),
+    ],
+  })).file;
+  const cyclicProjects = new Map([["/work/hub", cyclicHub], ["/work/sub", cyclicSub]]);
+  const cycCap = effectiveLead(cyclicSub, subCap, { project: "/work/sub", projects: cyclicProjects });
   assert.equal(cycCap.lead, subMain);
   assert.match(cycCap.warning, /leads back to this bot/);
   const cycHub = effectiveLead(cyclicHub, leadId, { project: "/work/hub", projects: cyclicProjects });
   assert.equal(cycHub.lead, "");
   assert.match(cycHub.warning, /leads back to this bot/);
   assert.ok(
-    checkBots(subFile, null, { project: "/work/sub", projects: cyclicProjects })
+    checkBots(cyclicSub, null, { project: "/work/sub", projects: cyclicProjects })
       .some((e) => /leads back to this bot/.test(e)),
   );
 });
@@ -671,19 +732,55 @@ test("cross-project lead (#850): schema validation, applyBotEdit, and collectPro
   assert.ok(parseBots(text(noLeadRaw)).warnings.some((w) => /leadProject without lead/.test(w)));
   assert.ok(checkBots(noLeadRaw).some((e) => /leadProject needs a lead/.test(e)));
 
-  // applyBotEdit sets, preserves, and clears lead + leadProject on both main and member bots.
+  // Malformed crossMembers entries are warned by parseBots and refused by checkBots.
+  const badCmRaw = sample((f) => { f.bots[0].crossMembers = [{ id: "bad", project: "rel" }]; return f; });
+  assert.ok(parseBots(text(badCmRaw)).warnings.some((w) => /crossMembers.*entry must have/.test(w)));
+  assert.ok(checkBots(badCmRaw).some((e) => /crossMembers entry needs a bot id/.test(e)));
+
+  // applyBotEdit sets, preserves, and clears lead + leadProject + crossMembers on bots.
   const start = sample();
-  const withCrossMain = applyBotEdit(start, { ...start.bots[0], lead: "b-7777777777", leadProject: "/work/hub/" });
+  const withCrossMain = applyBotEdit(start, {
+    ...start.bots[0],
+    lead: "b-7777777777",
+    leadProject: "/work/hub/",
+    crossMembers: [{ id: "b-5555555555", project: "/work/spoke/" }],
+  });
   assert.equal(withCrossMain.bots[0].lead, "b-7777777777");
   assert.equal(withCrossMain.bots[0].leadProject, "/work/hub");
-  const clearedMain = applyBotEdit(withCrossMain, { ...withCrossMain.bots[0], lead: undefined, leadProject: undefined });
+  assert.deepEqual(withCrossMain.bots[0].crossMembers, [{ id: "b-5555555555", project: "/work/spoke" }]);
+  const clearedMain = applyBotEdit(withCrossMain, {
+    ...withCrossMain.bots[0],
+    lead: undefined,
+    leadProject: undefined,
+    crossMembers: [],
+  });
   assert.equal("lead" in clearedMain.bots[0], false);
   assert.equal("leadProject" in clearedMain.bots[0], false);
+  assert.equal("crossMembers" in clearedMain.bots[0], false);
 
-  // collectProjectMap discovers projects from leadProject chains and PROJECTS_FILE.
+  // collectProjectMap discovers projects from leadProject, crossMembers, and PROJECTS_FILE.
   const files = new Map([
-    ["/work/hub/.herdr/bots.json", text({ version: 1, categories: [], bots: [bot("b-7777777777", "main", { name: "Coord" })] })],
-    ["/work/spoke/.herdr/bots.json", text({ version: 1, categories: [], bots: [bot("b-5555555555", "main", { name: "Spoke", lead: "b-7777777777", leadProject: "/work/hub" })] })],
+    [
+      "/work/hub/.herdr/bots.json",
+      text({
+        version: 1,
+        categories: [],
+        bots: [
+          bot("b-7777777777", "main", {
+            name: "Coord",
+            crossMembers: [{ id: "b-5555555555", project: "/work/spoke" }],
+          }),
+        ],
+      }),
+    ],
+    [
+      "/work/spoke/.herdr/bots.json",
+      text({
+        version: 1,
+        categories: [],
+        bots: [bot("b-5555555555", "main", { name: "Spoke", lead: "b-7777777777", leadProject: "/work/hub" })],
+      }),
+    ],
     ["/app/am-sidebar-projects.json", JSON.stringify(["/work/spoke"])],
   ]);
   const hubParsed = parseBots(files.get("/work/hub/.herdr/bots.json")).file;
@@ -695,7 +792,7 @@ test("cross-project lead (#850): schema validation, applyBotEdit, and collectPro
   });
   assert.deepEqual([...map.keys()].sort(), ["/work/hub", "/work/spoke"]);
 
-  // launchArgs: parentArgs, leadIdOf, and roleOf resolve cross-project leads and reports.
+  // launchArgs: parentArgs, leadIdOf, and roleOf resolve reciprocal cross-project leads and reports.
   const spokeParsed = map.get("/work/spoke");
   assert.equal(leadIdOf(spokeParsed, spokeParsed.bots[0], { project: "/work/spoke", projects: map }), "b-7777777777");
   assert.deepEqual(
@@ -707,7 +804,10 @@ test("cross-project lead (#850): schema validation, applyBotEdit, and collectPro
     categories: [],
     bots: [
       bot("b-8888888888", "main", { name: "Main" }),
-      bot("b-7777777777", "member", { name: "Coord" }),
+      bot("b-7777777777", "member", {
+        name: "Coord",
+        crossMembers: [{ id: "b-5555555555", project: "/work/spoke" }],
+      }),
     ],
   })).file;
   const map2 = new Map([["/work/hub", hubWithMemberLead], ["/work/spoke", spokeParsed]]);

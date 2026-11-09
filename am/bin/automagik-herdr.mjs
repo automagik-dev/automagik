@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
-  CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
+  CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, crossMemberWarnings, crossMembersOf, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
   botsText, parseBots, plannedOf, projectKeyOf, projectOf, squadOf, withListedProject, writeFolderOf } from "../model.js";
 import { UNANSWERED, agentInForeground, attachRefusal, attachWords, detachWords, hcName, isClaude, leadIdOf, leadPane, newest,
   paneLabels, paneOf, parentArgs, placementFrom, relabel, relabelPlan, relabelWarning, relabelWords, rowsOf, spaceOnly, spacePlace,
@@ -1012,6 +1012,7 @@ function describe(project, bot, view, hcError, projects = null) {
     id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
     lead: lead.lead || null, leadName,
     ...(lead.leadProject ? { leadProject: lead.leadProject } : (bot.leadProject ? { leadProject: bot.leadProject } : {})),
+    ...(bot.crossMembers?.length ? { crossMembers: bot.crossMembers } : {}),
     category: bot.kind === "member" && !lead.leadProject && lead.lead === mainBotOf(file)?.id ? (bot.category ?? null) : null,
     planned: bot.planned ?? null, agent: bot.agent ?? null,
     model: shown.model, modelSource: shown.source, pinnedModel: bot.model ?? null,
@@ -1023,7 +1024,11 @@ function describe(project, bot, view, hcError, projects = null) {
     ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
     ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
   };
-  if (lead.warning) out.warning = lead.warning;
+  const crossWarns = bot.crossMembers?.length
+    ? crossMemberWarnings(file, bot.id, { project: project.key, projects: projectsMap })
+    : [];
+  const warning = [lead.warning, ...crossWarns].filter(Boolean).join("; ");
+  if (warning) out.warning = warning;
   if (hcError && !bot.planned) out.hcError = hcError;
   return out;
 }
@@ -1145,6 +1150,7 @@ const OPTIONS = {
   role: { type: "string" }, instructions: { type: "string" }, "instructions-file": { type: "string" },
   code: { type: "string" },
   lead: { type: "string" }, "lead-project": { type: "string" }, "no-lead-project": { type: "boolean" },
+  "cross-member": { type: "string", multiple: true }, "no-cross-members": { type: "boolean" },
   category: { type: "string" }, "no-category": { type: "boolean" },
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
@@ -1179,6 +1185,7 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   create --name N --agent A [--kind main|member] [--role R]
          [--code true|false]            false omits the worker instruction; default true
          [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
+         [--cross-member BOT@DIR]...   reciprocal cross-project member(s) reporting to this lead
          [--character C --colour K | --omni] [--model M] [--rank R]
          [--agy-mode accept-edits|auto|plan]   Antigravity's --mode; default auto
          [--agy-allow RULE]... [--agy-deny RULE]...
@@ -1191,10 +1198,10 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--hc-proxy on|off]            per-bot Linux proxy; default off. Edit, proxy approve
                                        (review the diff), then restart to apply or roll back
          [--worker-template T]          (an hc template: owns the command, so it wins)
-  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--rank=]
+  edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
              [--worker-agent=] [--worker-model=] [--worker-effort=] [--worker-template=]
              [--agy-mode=auto] [--worker-agy-mode=auto]   (empty: cleared; auto is the default)
-             [--agy-allow=] [--agy-deny=] [--no-agy-permissions]   (empty: that list cleared)
+             [--agy-allow=] [--agy-deny=] [--no-agy-permissions] [--cross-member=]   (empty: cleared)
   rm <bot>
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
@@ -1626,6 +1633,63 @@ export function entryFrom(opts, base, project, { creating }) {
   }
   if (entry.kind === "main" && !entry.leadProject) delete entry.lead;
   if (!entry.lead) delete entry.leadProject;
+  // Reciprocal cross-project members (--cross-member <bot>@<dir>, --no-cross-members).
+  if (opts["no-cross-members"] && opts["cross-member"] !== undefined && opts["cross-member"].some((v) => v.trim() !== "")) {
+    throw new CliError("Give --cross-member or --no-cross-members, not both.", 2);
+  }
+  if (opts["no-cross-members"]) {
+    delete entry.crossMembers;
+    delete entry.members;
+  } else if (opts["cross-member"] !== undefined) {
+    const specs = opts["cross-member"].map((s) => s.trim()).filter(Boolean);
+    if (!specs.length) {
+      delete entry.crossMembers;
+      delete entry.members;
+    } else {
+      const nextCross = [];
+      const seenCross = new Set();
+      for (const spec of specs) {
+        const sepIdx = spec.includes("@") ? spec.indexOf("@") : spec.indexOf(":");
+        if (sepIdx <= 0 || sepIdx === spec.length - 1) {
+          throw new CliError("--cross-member takes <bot>@<dir> (or --cross-member= to clear).", 2);
+        }
+        const botRef = spec.slice(0, sepIdx).trim();
+        const dirRef = spec.slice(sepIdx + 1).trim();
+        const targetDir = project.machine ? cleanProjectPath(dirRef) : cleanProjectPath(resolvePath(dirRef));
+        if (!targetDir.startsWith("/")) throw new CliError("--cross-member: project must be a folder path.", 2);
+        if (targetDir === cleanProjectPath(project.key)) {
+          throw new CliError(`--cross-member: ${targetDir} is this project; set --lead on the member instead.`, 2);
+        }
+        if (project.machine) {
+          const key = `${targetDir}\0${botRef}`;
+          if (!seenCross.has(key)) {
+            seenCross.add(key);
+            nextCross.push({ id: botRef, project: targetDir });
+          }
+        } else {
+          let isDir = false;
+          try { isDir = statSync(targetDir).isDirectory(); } catch { /* not there */ }
+          if (!isDir) throw new CliError(`--cross-member: ${targetDir} is not a folder.`, 2);
+          const targetProject = loadProject(targetDir);
+          if (targetProject.text === null) throw new CliError(`No ${BOTS_PATH} in ${targetDir}.`);
+          let memberBot;
+          try {
+            memberBot = findBot(targetProject.file, botRef);
+          } catch (e) {
+            throw new CliError(String(e?.message ?? e).replace("in this project.", `in ${targetDir}.`), e?.code ?? 1);
+          }
+          if (memberBot.planned) throw new CliError(`${memberBot.name} is planned in ${targetDir}, so it can't be a cross-project member yet.`);
+          const key = `${targetDir}\0${memberBot.id}`;
+          if (!seenCross.has(key)) {
+            seenCross.add(key);
+            nextCross.push({ id: memberBot.id, project: targetDir });
+          }
+        }
+      }
+      entry.crossMembers = nextCross;
+      delete entry.members;
+    }
+  }
   // Category (A2): only for a bot whose lead is the main bot.
   if (opts.category !== undefined && opts["no-category"]) throw new CliError("Give --category or --no-category, not both.", 2);
   if (opts["no-category"]) delete entry.category;
@@ -1910,10 +1974,15 @@ async function cmdShow(opts, [ref]) {
   info.hcProxyState = project.machine ? await proxyStateOn(project, bot)
     : approvedProxyState({ project: project.key, bot });
   if (opts.json) return info;
+  const crossProjects = info.crossMembers?.length ? localProjectsFor(project) : null;
   return [
     `${info.name} (${info.id})`, `  project      ${info.project}${info.machine ? ` on ${info.machine}` : ""}`, `  kind         ${info.kind}`,
     ...(info.lead ? [`  lead         ${info.leadName ?? info.lead} (${info.lead})${info.leadProject ? ` in ${info.leadProject}` : ""}`] : []),
     ...(info.leadProject && !info.lead ? [`  lead project ${info.leadProject}`] : []),
+    ...(info.crossMembers?.length ? [`  cross members ${info.crossMembers.map((m) => {
+      const mName = crossProjects?.get(m.project)?.bots?.find((x) => x.id === m.id)?.name;
+      return `${mName ? `${mName} (${m.id})` : m.id} in ${m.project}`;
+    }).join(", ")}`] : []),
     ...(info.category ? [`  category     ${info.category}`] : []),
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
@@ -1957,13 +2026,40 @@ async function relabelAfter(beforeFile, afterRaw) {
   return out.done;
 }
 
+function warnCrossLinkAfterSave(project, raw, botId) {
+  if (project?.machine) return;
+  try {
+    const file = parseBots(JSON.stringify(raw)).file;
+    const bot = file.bots.find((b) => b.id === botId);
+    if (!bot || (!bot.leadProject && !bot.crossMembers?.length)) return;
+    const extraKeys = [
+      ...(bot.leadProject ? [bot.leadProject] : []),
+      ...crossMembersOf(bot).map((m) => m.project),
+    ];
+    const projects = localProjectsFor({ key: project.key, file }, appHome(), extraKeys);
+    const warnings = [];
+    if (bot.leadProject) {
+      const eff = effectiveLead(file, bot.id, { project: project.key, projects });
+      if (eff.warning) warnings.push(`Warning: ${bot.id}: ${eff.warning}`);
+    }
+    for (const w of crossMemberWarnings(file, bot.id, { project: project.key, projects })) {
+      warnings.push(`Warning: ${bot.id}: ${w}`);
+    }
+    if (warnings.length) report(warnings);
+  } catch { /* non-fatal warning */ }
+}
+
 async function cmdCreate(opts) {
   const project = await editProjectFor(opts);
   const id = newBotId();
   const entry = entryFrom(opts, { id, kind: mainBotOf(project.file) ? "member" : "main" }, project, { creating: true });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
-  if (!project.machine && entry.leadProject) listProject(entry.leadProject);
+  if (!project.machine) {
+    if (entry.leadProject) listProject(entry.leadProject);
+    for (const m of crossMembersOf(entry)) listProject(m.project);
+  }
+  warnCrossLinkAfterSave(project, raw, id);
   // A lead that becomes a captain; another machine's panes are left as they are.
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id, ...placeOf(project), bot: entry, relabelled } : id;
@@ -1976,7 +2072,11 @@ async function cmdEdit(opts, [ref]) {
   const entry = entryFrom(opts, stored, project, { creating: false });
   const raw = applyBotEdit(project.raw, entry);
   await saveProject(project, raw);
-  if (!project.machine && entry.leadProject) listProject(entry.leadProject);
+  if (!project.machine) {
+    if (entry.leadProject) listProject(entry.leadProject);
+    for (const m of crossMembersOf(entry)) listProject(m.project);
+  }
+  warnCrossLinkAfterSave(project, raw, bot.id);
   const relabelled = project.machine ? [] : await relabelAfter(project.file, raw);
   return opts.json ? { id: bot.id, ...placeOf(project), bot: entry, relabelled } : `${entry.name} (${bot.id}) saved.`;
 }
@@ -5547,7 +5647,7 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       r.code = 1;
     }
     const byId = new Map(roster.map((b) => [b.id, b]));
-    const projects = projectKey && projectFile && roster.some((b) => b.leadProject)
+    const projects = projectKey && projectFile && roster.some((b) => b.leadProject || b.crossMembers?.length)
       ? collectProjectMap({
         project: projectKey,
         file: projectFile,
@@ -5616,6 +5716,18 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
           fix: eff.warning ? `automagik-herdr edit ${bot.id} --lead <bot> --lead-project <dir>` : null,
         });
         if (eff.warning) r.code = 1;
+      }
+      if (agent?.crossMembers?.length && projectFile) {
+        const warns = crossMemberWarnings(projectFile, bot.id, { project: projectKey, projects });
+        for (const w of warns) {
+          r.checks.push({
+            check: `cross-member:${bot.id}`,
+            ok: false,
+            detail: `${bot.name}: ${w}`,
+            fix: `automagik-herdr edit <member> --project <dir> --lead ${bot.id} --lead-project ${projectKey}`,
+          });
+          r.code = 1;
+        }
       }
     }
     exitAfter.code = r.code;
