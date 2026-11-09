@@ -42,18 +42,22 @@ test("restartPlan resume: claude with the pane's session and the bot's pin; --co
   assert.deepEqual(pi.argv, ["pi", "--continue"]);
 });
 
-test("agy 1.5.3 restart (#793): a session resumes by --conversation, else --continue; --fresh starts new", () => {
+test("agy 1.5.3 restart (#793): --mode auto by default, a session resumes by --conversation, else --continue; --fresh starts new", () => {
   const agy = { agent: "antigravity", model: "gemini-4-argon-high" };
   const resume = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID });
-  assert.deepEqual([resume.mode, resume.argv], ["resume", ["agy", "--conversation", SID, "--model", "gemini-4-argon-high"]]);
+  assert.deepEqual([resume.mode, resume.argv], ["resume", ["agy", "--mode", "auto", "--conversation", SID, "--model", "gemini-4-argon-high"]]);
   assert.equal(planText(resume, SID), "resuming its session by id (--conversation ***)");
   const latest = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity" });
-  assert.deepEqual(latest.argv, ["agy", "--continue", "--model", "gemini-4-argon-high"]);
+  assert.deepEqual(latest.argv, ["agy", "--mode", "auto", "--continue", "--model", "gemini-4-argon-high"]);
   const fresh = restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: SID, fresh: true });
-  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["agy", "--model", "gemini-4-argon-high"]]);
+  assert.deepEqual([fresh.mode, fresh.argv], ["fresh", ["agy", "--mode", "auto", "--model", "gemini-4-argon-high"]]);
+  // The roster's mode is the one the replacement runs, and it is in the source launchChange compares.
+  const plan = restartPlan({ bot: { ...agy, agyMode: "plan" }, run: ["agy"], runningAgent: "antigravity", session: SID });
+  assert.deepEqual(plan.argv, ["agy", "--mode", "plan", "--conversation", SID, "--model", "gemini-4-argon-high"]);
+  assert.deepEqual(plan.source, ["agy", "--mode", "plan", "--model", "gemini-4-argon-high"]);
   // A session id that isn't one safe word never reaches --conversation.
   assert.deepEqual(restartPlan({ bot: agy, run: ["agy"], runningAgent: "antigravity", session: "--dangerously-skip-permissions" }).argv,
-    ["agy", "--continue", "--model", "gemini-4-argon-high"]);
+    ["agy", "--mode", "auto", "--continue", "--model", "gemini-4-argon-high"]);
 });
 
 test("restartPlan fresh: --fresh, an agent with no resume, a pane running another agent (each says why)", () => {
@@ -400,6 +404,17 @@ test("helperPlan: a worker rebuilt from its ledger row (its task not sent again)
   assert.match(none.error, /t10 can't be run again: hc gave no command this pack can reuse/);
   const plain = helperPlan({ get: { address: "t11", cwd: "/h", foreground: { argv: ["amp"] }, argv: ["amp"] }, agents: AGENTS });
   assert.deepEqual([plain.mode, plain.argv, plain.note], ["fresh", ["amp"], "amp has no resume this pack knows"]);
+  // An Antigravity worker runs again with its mode: the label it was started with, else auto.
+  const agyWorker = { agent: "antigravity", model: null, effort: null, template: null };
+  const agy = helperPlan({ get: { address: "t12", cwd: "/w", labels: { "worker.of": "b-1", "worker.agyMode": "plan" },
+    foreground: { argv: ["agy"] } }, worker: agyWorker, agents: AGENTS });
+  assert.deepEqual(agy.argv, ["agy", "--mode", "plan", "--continue"]);
+  const agyAuto = helperPlan({ get: { address: "t13", cwd: "/w", labels: { "worker.of": "b-1" },
+    foreground: { argv: ["agy"] } }, worker: agyWorker, agents: AGENTS });
+  assert.deepEqual(agyAuto.argv, ["agy", "--mode", "auto", "--continue"]);
+  const agyBad = helperPlan({ get: { address: "t14", cwd: "/w", labels: { "worker.of": "b-1", "worker.agyMode": "yolo" },
+    foreground: { argv: ["agy"] } }, worker: agyWorker, agents: AGENTS });
+  assert.match(agyBad.error, /can't be run again: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
   assert.deepEqual(helperArgs({ name: "fix-dev", cwd: "/w", labels: { a: "1", gone: "" }, parent: "t100", argv: ["omp"], path: "/p" }),
     ["run", "--bg", "--json", "--name", "fix-dev", "--cwd", "/w", "--label", "a=1", "--parent", "t100", "--", "/usr/bin/env", "PATH=/p", "omp"]);
 });

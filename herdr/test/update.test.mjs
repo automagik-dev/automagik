@@ -196,7 +196,7 @@ test("applyUpdate swaps the pack in, keeps the old one outside mods/, and rollba
   try {
     const project = join(home, "project", ".herdr");
     mkdirSync(project, { recursive: true });
-    const roster = '{"version":1,"bots":[{"id":"b-aaaaaaaaaa","code":false}]}\n';
+    const roster = '{"version":1,"bots":[{"id":"b-aaaaaaaaaa","code":false,"agyMode":"plan"}]}\n';
     writeFileSync(join(project, "bots.json"), roster);
     const done = await applyUpdate({ tgzPath: t.path, version: "0.2.0", modsDir: mods });
     assert.equal(readFileSync(join(project, "bots.json"), "utf8"), roster);

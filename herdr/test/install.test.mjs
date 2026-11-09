@@ -436,7 +436,7 @@ test("--uninstall puts the adopted pack back and removes the command; bots and s
   writeFileSync(join(s.appHome, "settings.json"), "{\"theme\":\"mine\"}\n");
   const project = join(s.home, "proj", ".herdr");
   mkdirSync(project, { recursive: true });
-  const roster = '{"version":1,"bots":[{"id":"b-aaaaaaaaaa","code":false}]}\n';
+  const roster = '{"version":1,"bots":[{"id":"b-aaaaaaaaaa","code":false,"agyMode":"plan"}]}\n';
   writeFileSync(join(project, "bots.json"), roster);
   s.publish("9.9.0");
   assert.equal(s.run("--yes", "--adopt").code, 0);

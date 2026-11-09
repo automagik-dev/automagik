@@ -1035,6 +1035,14 @@ export class BotForm {
     const pin = Popover.new("bot-models").anchor("top_right").trigger(trigger).open(open)
       .on_open_change((o, cx) => { this.pop = o ? "models" : null; cx.notify(); })
       .when(open, (el) => el.content(list));
+    const modeChoice = (value, text) => {
+      const on = state.agyMode === value;
+      return h_flex().id(`bot-agy-mode-${value}`).px(12).py(5).rounded(7).text_size(12).cursor_pointer()
+        .bg(on ? t.selected : CLEAR).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold())
+        .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+        .on_click((_e, cx) => { this.pop = null; this.set({ agyMode: value }, cx); })
+        .child(text);
+    };
     return v_flex().gap(10)
       .child(this.label(t, "Runs on"))
       .child(v_flex().gap(6).children(rows.length ? rows : [div().text_size(12).text_color(this.agentsError ? t.ansi1 : t.muted)
@@ -1045,7 +1053,16 @@ export class BotForm {
           .child(h_flex().gap(4).text_size(13).font_medium().child("Model:")
             .child(div().min_w(0).truncate().font_family(v.mono).text_color(t.accent).child(model.shown)))
           .child(div().text_size(11).text_color(t.muted).child(model.note)))
-        .when(info.models.length > 0 || Boolean(state.pin), (el) => el.child(pin)));
+        .when(info.models.length > 0 || Boolean(state.pin), (el) => el.child(pin)))
+      .when(state.agent === "antigravity", (el) => el.child(v_flex().gap(6)
+        .child(this.label(t, "Antigravity mode"))
+        .child(h_flex().items_center().gap(10)
+          .child(h_flex().p(3).rounded(9).bg(t.surface ?? t.background).border_1().border_color(t.border)
+            .child(modeChoice("auto", "Auto"))
+            .child(modeChoice("accept-edits", "Accept edits"))
+            .child(modeChoice("plan", "Plan")))
+          .child(div().flex_1().min_w(0).text_size(11).text_color(t.muted)
+            .child("Passed to agy as --mode at this bot's start and restart (auto is the default). agy's own settings are never written.")))));
   }
 
   // "Place in the team": kind, lead, category (A1, A2) and planned (A3).

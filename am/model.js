@@ -3,7 +3,7 @@
 // default look. Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so `node --test` runs it.
 // Apache-2.0.
 
-import { LEGACY_AGENTS } from "./models.js";
+import { AGY_MODES, LEGACY_AGENTS } from "./models.js";
 
 /** The hc label key that ties a terminal to a bot; its value is the bot id (A9). */
 export const BOT_LABEL = "bot";
@@ -71,14 +71,15 @@ const isWave = (x) => Number.isInteger(x) && x > 0;
 /** An hc template name (a file in herdr-core's templates folder): no dash first, no spaces. */
 export const TEMPLATE_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-/** The worker fields a bot may set (`worker: { agent?, model?, effort?, template? }`), each optional text. */
-export const WORKER_FIELDS = ["agent", "model", "effort", "template"];
+/** The worker fields a bot may set (`worker: { agent?, model?, effort?, template?, agyMode? }`), each optional text. */
+export const WORKER_FIELDS = ["agent", "model", "effort", "template", "agyMode"];
 
 /**
  * Why a bot's `worker` (its workers' defaults) can't be used, or null when it is absent or
- * fine: an object whose agent, model, effort and template, where given, are non-empty text,
- * none starting with a dash, and whose template is an hc template name (TEMPLATE_SHAPE). Other keys
- * in it are kept as they are.
+ * fine: an object whose agent, model, effort, template and agyMode, where given, are non-empty
+ * text, none starting with a dash, and whose template is an hc template name (TEMPLATE_SHAPE).
+ * An agyMode value is checked by checkBots and at a worker's start (workers.js workerPlan),
+ * never silently defaulted. Other keys in it are kept as they are.
  */
 export function workerProblem(worker) {
   if (worker === undefined) return null;
@@ -192,8 +193,17 @@ export function parseBots(text) {
     if (bot.agent !== undefined && !isText(bot.agent)) delete bot.agent;
     if (!bot.agent && !bot.planned) warnings.push(`${where}: no coding agent`);
     if (bot.model !== undefined && typeof bot.model !== "string") delete bot.model;
+    // Antigravity's launch mode: kept when it is text, even an unknown one, so a start refuses
+    // it by name instead of silently launching on the default.
+    if (bot.agyMode !== undefined) {
+      if (typeof bot.agyMode !== "string") { warnings.push(`${where}: agyMode is not text; ignored`); delete bot.agyMode; }
+      else if (!AGY_MODES.includes(bot.agyMode)) warnings.push(`${where}: agyMode ${JSON.stringify(bot.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
+    }
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
+    else if (isObject(bot.worker) && typeof bot.worker.agyMode === "string" && !AGY_MODES.includes(bot.worker.agyMode)) {
+      warnings.push(`${where}: worker agyMode ${JSON.stringify(bot.worker.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
+    }
     const retired = (k) => (typeof k === "string" && Object.hasOwn(LEGACY_AGENTS, k) ? k : null);
     const seatOld = retired(bot.agent);
     const workerOld = isObject(bot.worker) ? retired(bot.worker.agent) ?? (bot.worker.agent ? null : seatOld) : null;
@@ -336,6 +346,12 @@ export function checkBots(file, before = null) {
     else if (b.instructions.length > MAX_INSTRUCTIONS) errors.push(`${at}: instructions longer than ${MAX_INSTRUCTIONS} characters`);
     if (b.planned !== undefined && (!isObject(b.planned) || !isWave(b.planned.wave))) errors.push(`${at}: planned needs a positive whole wave`);
     if (!b.planned && !isText(b.agent)) errors.push(`${at}: no coding agent`);
+    if (b.agyMode !== undefined && !AGY_MODES.includes(b.agyMode)) {
+      errors.push(`${at}: agyMode ${JSON.stringify(b.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
+    }
+    if (isObject(b.worker) && b.worker.agyMode !== undefined && !AGY_MODES.includes(b.worker.agyMode)) {
+      errors.push(`${at}: worker agyMode ${JSON.stringify(b.worker.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
+    }
     if (b.kind === "main" && b.lead !== undefined) errors.push(`${at}: a main bot has no lead`);
     if (b.category !== undefined && !catIds.has(b.category)) errors.push(`${at}: unknown category ${b.category}`);
     if (b.rank !== undefined && !RANKS.includes(b.rank)) errors.push(`${at}: unknown rank ${JSON.stringify(b.rank)}`);
@@ -477,7 +493,7 @@ export function newCategoryId(title, categories = []) {
 /**
  * A copy of `raw` (parseBots' raw file, or a new one) with one bot created or edited, the
  * Create form's write-back. `entry` holds every field the form edits; an optional one it
- * leaves out or empty is removed (planned, lead, category, agent, model); other keys the
+ * leaves out or empty is removed (planned, lead, category, agent, model, agyMode); other keys the
  * stored entry had are kept. `rank` (A16) and `worker` are removed only when `entry` names
  * them empty, so a front end that doesn't edit them (the form has no worker fields) keeps the
  * stored ones; a `worker` with none of its fields left is removed too.
@@ -501,7 +517,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   if (bot.kind === "main" || bot.lead) delete bot.category;
   const i = out.bots.findIndex((b) => b?.id === bot.id);
   const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
-  for (const k of ["planned", "lead", "category", "agent", "model"]) {
+  for (const k of ["planned", "lead", "category", "agent", "model", "agyMode"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
