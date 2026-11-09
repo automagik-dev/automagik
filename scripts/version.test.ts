@@ -109,4 +109,16 @@ describe('one version for the repository', () => {
     expect(() => setVersion('3.7.2', root)).toThrow(/no package\[usagemeter\]\.version line in meter\/usagemeter\/Cargo\.lock/);
     expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
   });
+
+  test("a crate's lock entry with no version line stops set, never borrows the next entry's", () => {
+    const lock = ['version = 4', '', '[[package]]', 'name = "usagemeter"', 'dependencies = [', ' "memchr",', ']', '', '[[package]]', 'name = "memchr"', 'version = "2.8.3"', ''];
+    expect(cargoVersionLine(lock, 'lock', 'usagemeter')).toBe(-1);
+    const root = copyRoot();
+    writeFileSync(join(root, 'meter/usagemeter/Cargo.lock'), lock.join('\n'));
+    const pkg = readFileSync(join(root, 'package.json'), 'utf8');
+    expect(() => setVersion('3.7.2', root)).toThrow(/no package\[usagemeter\]\.version line in meter\/usagemeter\/Cargo\.lock/);
+    // Nothing was written: the root keeps its version and memchr keeps its own.
+    expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
+    expect(readFileSync(join(root, 'meter/usagemeter/Cargo.lock'), 'utf8')).toBe(lock.join('\n'));
+  });
 });

@@ -76,7 +76,8 @@ Proposed here: everything else. Where a sentence proposes rather than records, i
 ### Where the crate lives
 
 Decided: `meter/usagemeter/`, the crate as it is upstream (`Cargo.toml`, `Cargo.lock`, `src/`,
-`tests/`, its `install.sh` and `scripts/`), with its own `part.json` at its root.
+`tests/` and its `install.sh`), with its own `part.json` at its root. Upstream's `scripts/` held
+only `version.sh`, which the import drops: `scripts/version.ts` sets the crate's version instead.
 
 - `meter/` is already Meter's folder: `meter/statusline` (the Claude Code status line and the
   limits logger) sits there, and the Meter Captain owns both. One folder per product keeps
