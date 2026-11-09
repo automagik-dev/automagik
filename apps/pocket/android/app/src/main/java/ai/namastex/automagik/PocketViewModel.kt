@@ -93,7 +93,7 @@ fun PocketState.withMachine(id: String, transform: (MachineState) -> MachineStat
     if (id !in machines && hosts.none { it.id == id }) this
     else copy(machines = machines + (id to transform(machines[id] ?: MachineState())))
 
-class PocketViewModel(application: Application) : AndroidViewModel(application) {
+class PocketViewModel(application: Application, private val initDispatcher: CoroutineDispatcher = Dispatchers.IO) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("pocket", 0)
     /** Null when the saved list couldn't be read: it then shows empty, but its SSH entries may still be in the preferences. */
     private val savedHosts = LegacySsh.loadHosts(prefs.getString("hosts", "[]"))
@@ -171,10 +171,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         /** The live instance, for notification actions that arrive outside the activity. */
         @Volatile var current: PocketViewModel? = null
     }
+    /** The app on screen: Teams sync waits for it ([Background.whileShown]). */
+    private val onScreen = MutableStateFlow(false)
     init {
         current = this
         Notify.channels(application)
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(initDispatcher) {
             for ((target, bytes) in keystrokes) {
                 if (activeChannel === target) runCatching { target.first.send(target.second, Wire.inputKind(bytes, target.first.automaticInput(target.second)), bytes) }
                     .onFailure { e -> _state.update { it.copy(terminalStatus = "Input not sent: ${e.message}") } }
@@ -190,7 +192,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // on screen ([Background.whileShown]): the latest reading syncs when it comes back.
         // At most one reading every 400 ms, each of the latest state: readings arrive many times a second while a desktop
         // starts, and restarting a delay on each (collectLatest) could put the cache write and pets off indefinitely.
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(initDispatcher) {
             state.map { s -> if (s.demo) null else s.machines.filterValues { it.connected } }.distinctUntilChanged().whileShown(onScreen).conflate().collect { live ->
                 live ?: return@collect
                 val now = System.currentTimeMillis()
@@ -204,7 +206,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 delay(400)
             }
         }
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(initDispatcher) {
             while (true) {
                 withTimeoutOrNull(15_000) { gitWake.receive() }
                 if (foreground) for ((id, client) in clients.entries.toList()) runCatching { gitPass(id, client) }
@@ -497,8 +499,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         watchText = ""
     }
     private val alertBase = ConcurrentHashMap<String, Pair<CoreClient, List<CoreTerminal>>>()
-    /** The app on screen: Teams sync waits for it ([Background.whileShown]). */
-    private val onScreen = MutableStateFlow(false)
     private val foreground get() = onScreen.value
     fun setForeground(shown: Boolean) {
         onScreen.value = shown
@@ -957,17 +957,27 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     val botWrites = _botWrites.asStateFlow()
     private var chatJob: Job? = null
     @Volatile private var chatRef: TerminalRef? = null
-    @Volatile private var chatLink: ChatClient? = null
+    @Volatile private var chatLink: ChatLink? = null
     @Volatile private var chatGen = 0
+    /**
+     * How [openChatLink] reaches a chat route. It is the production Pocket Link route by default; a unit test points
+     * it at a fake bridge to drive the chat wiring without a device (#754). The app never sets it.
+     */
+    internal var chatOpener: suspend (hostId: String, scope: CoroutineScope, lost: (String) -> Unit) -> ChatLink =
+        { hostId, scope, lost -> connectChatLink(hostId, scope, lost) }
     /** Automatic reconnects of the open DSH chat since its last snapshot (main thread only); see [Chat.RESUMABLE]. */
     private var resumeAttempt = 0
     private var resumeJob: Job? = null
 
-    private suspend fun openChatLink(hostId: String, scope: CoroutineScope, lost: (String) -> Unit): ChatClient {
+    private suspend fun openChatLink(hostId: String, scope: CoroutineScope, lost: (String) -> Unit): ChatLink =
+        chatOpener(hostId, scope, lost)
+
+    /** The production chat route: Iroh to the paired desktop, then Pocket Link's chat version 1 ([ChatClient]). */
+    private suspend fun connectChatLink(hostId: String, scope: CoroutineScope, lost: (String) -> Unit): ChatLink {
         val profile = state.value.hosts.find { it.id == hostId && it.paired } ?: error("This machine isn’t paired with Pocket Link.")
         val t = try { IrohLink.open(getApplication(), profile.ticket, profile.session, scope, IrohLink.CHAT) }
             catch (e: Exception) { if (e !is CancellationException && ChatClient.refusedRoute(e)) throw ChatUnsupported() else throw e }
-        return withTimeout(20_000) { ChatClient.start(CoreClient(t.input, t.output, t, scope, lost)) }
+        return withTimeout(20_000) { PocketLinkChat(ChatClient.start(CoreClient(t.input, t.output, t, scope, lost))) }
     }
 
     private fun chatUpdate(gen: Int, change: (Chat.State) -> Chat.State) {
@@ -998,7 +1008,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
-            var link: ChatClient? = null
+            var link: ChatLink? = null
             try {
                 link = openChatLink(ref.hostId, scope) { reason -> chatUpdate(gen) { it.copy(connected = false, error = "Chat disconnected: $reason",
                     messages = it.messages.map { m -> if (m.state == "sending") m.copy(state = "maybe") else m }) } }
@@ -1054,7 +1064,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun chatSubscribe(link: ChatClient, terminal: String, after: String?, gen: Int) {
+    private suspend fun chatSubscribe(link: ChatLink, terminal: String, after: String?, gen: Int) {
         link.subscribe(terminal, after, { e ->
             val before = _chat.value?.takeIf { gen == chatGen }?.receipts.orEmpty()
             chatUpdate(gen) { Chat.reduce(it, e) }
@@ -1109,7 +1119,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /** Connects the open chat again after it dropped. */
     fun reconnectChat() { val ref = chatRef ?: return; chatJob?.cancel(); chatJob = null; openChat(ref) }
 
-    private fun chatAct(block: suspend (ChatClient, Chat.State, Int) -> Unit) {
+    private fun chatAct(block: suspend (ChatLink, Chat.State, Int) -> Unit) {
         val link = chatLink ?: return
         val s = _chat.value ?: return
         val gen = chatGen

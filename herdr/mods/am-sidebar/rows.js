@@ -1,8 +1,8 @@
 // The bot view over plain data: which bots are live (DESIGN Decision 3, counting every
 // machine), each bot's pose (Decision 7, A6), the tree of a project (A1 nesting, A2
 // categories, A3 planned, helpers from herdr-core's parent field), where each project's tree
-// goes in the sidebar (A8), and the rows a fold state leaves showing (A7). Pure: no `herdr`,
-// `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
+// goes in the sidebar (A8), the rows a fold state leaves showing (A7) and the machines' order.
+// Pure: no `herdr`, `gpui-kit` or `gpui-base`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, RANKS, mainBotOf, effectiveLead } from "./model.js";
 import { agentInForeground, rowIsAgent } from "./launchArgs.js";
@@ -298,6 +298,32 @@ export function withSpaceless(orderedSpaceIds, spaceless, last = new Map()) {
     if (s < n) out.push({ space: orderedSpaceIds[s] });
   }
   return out;
+}
+
+/**
+ * The machines' header order: the saved order first (the person's "Move to top", kept in the
+ * sidebar's localStorage as machines.order; null is this computer), then every other machine
+ * in its drawn place. `drawn` is the order without a saved one (this computer, then the
+ * others by name); a saved name not drawn is skipped, so a removed machine takes no place.
+ */
+export function orderMachines(drawn, saved = []) {
+  const here = new Set(drawn);
+  const first = [...new Set(saved)].filter((m) => here.has(m));
+  const set = new Set(first);
+  return [...first, ...drawn.filter((m) => !set.has(m))];
+}
+
+/** The saved order after "Move to top" on machine `m`: it first, the rest kept in order. */
+export function movedToTop(saved, m) {
+  return [m, ...saved.filter((x) => x !== m)];
+}
+
+/** machines.order as read back: a list of names (null for this computer), else none. */
+export function readMachineOrder(text) {
+  try {
+    const list = JSON.parse(text ?? "[]");
+    return Array.isArray(list) ? list.filter((m) => m === null || (typeof m === "string" && m)) : [];
+  } catch { return []; }
 }
 
 /** The fold id of a bot row, or of a project's category. */
