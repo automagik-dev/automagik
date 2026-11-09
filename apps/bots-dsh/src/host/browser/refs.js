@@ -16,7 +16,11 @@ export const toolDefs = [
   {
     name: 'browser_open',
     needsBrowser: true,
-    description: 'Open a URL and return the page snapshot.',
+    // The model reads this before it reports a page to the person: this browser is the Bot's,
+    // on the host, and nothing here opens a tab in the user's right-panel Browser.
+    description: 'Open a URL in this Bot\'s own Chromium, on the host, and return the page snapshot. '
+      + 'It is not a tab in the user\'s right-panel Browser: the page opens for this Bot alone, and the '
+      + 'person sees nothing of it unless you call browser_handoff.',
     parameters: {
       url: { type: 'string', required: true, description: 'URL to open' },
     },
@@ -128,7 +132,11 @@ export const toolDefs = [
   {
     name: 'browser_handoff',
     needsBrowser: true,
-    description: 'Hand the browser to the user for a login, payment, or captcha.',
+    // The person gets a card in this chat and takes over this same Bot browser; no tab is
+    // opened for them in DSH's right-panel Browser.
+    description: 'Hand this Bot\'s browser to the person for a login, payment, or captcha. They get a '
+      + 'handoff card in this chat and take over the Bot\'s Chromium in its browser panel; nothing opens '
+      + 'in the user\'s right-panel Browser. Call browser_resume when they are done.',
     parameters: {
       reason: { type: 'string', required: true, enum: ['login', 'payment', 'captcha', 'other'], description: 'Why the user must take over' },
       note: { type: 'string', description: 'What the user should do' },

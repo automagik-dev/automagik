@@ -528,6 +528,19 @@ test('refs exposes the ARIA snapshot tool contract', () => {
   assert.ok(refsPrompt.includes('Posting, uploading, downloading, or deleting may need approval;'))
 })
 
+// #1447: the model reads these before it tells the person what it did. The browser is the
+// Bot's, on the host; the right-panel Browser is a client-only panel these tools never open.
+test('browser_open and browser_handoff say whose browser they drive, and whose panel they do not open', () => {
+  for (const name of ['browser_open', 'browser_handoff']) {
+    const description = refsTools.find(tool => tool.name === name).description
+    assert.match(description, /Bot's (?:own Chromium|browser)/, name)
+    assert.match(description, /right-panel Browser/, name)
+    assert.doesNotMatch(description, /in the user's browser panel|opens? a tab for the user/, name)
+  }
+  assert.match(refsTools.find(tool => tool.name === 'browser_open').description, /on the host/)
+  assert.match(refsTools.find(tool => tool.name === 'browser_handoff').description, /handoff card in this chat/)
+})
+
 test('browserExecutablePath must be a string when configured', () => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-browser-plugin-'))
   try {
