@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { PART_IDS, contextOf, doctor, install, packSource, partOf, runCommand, sidebarCarries, uninstall } from "../mods/am-sidebar/parts.mjs";
 import { main, parseArgs } from "../mods/am-sidebar/pack/part.mjs";
 import { ownHook, withoutHooks } from "../mods/am-sidebar/migrateHooks.mjs";
-import { directHookCommand, hookCommand } from "../mods/am-sidebar/briefingText.mjs";
+import { directHookCommand, hookCommand, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { OFF_BY_DEFAULT, PACK_MODS } from "../mods/am-sidebar/release.js";
 import { placeLayout, readMarker, readVersion, writeMarker } from "../mods/am-sidebar/update.mjs";
 
@@ -48,7 +48,7 @@ function amEntry(m) {
   symlinkSync(join(store, "briefing.mjs"), entry);
   return entry;
 }
-const doctorOf = (m, id, extra) => doctor(contextOf({ env: { ...m.env, ...extra }, exec: noExec, log: () => {}, platform: "darwin" }), P(id));
+const doctorOf = (m, id, extra) => doctor(contextOf({ env: { ...m.env, ...extra }, exec: noExec, log: () => {}, platform: "darwin", project: join(m.dir, "project") }), P(id));
 const failed = (r) => r.checks.filter((c) => !c.ok).map((c) => c.check);
 const ls = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : []);
 
@@ -173,7 +173,7 @@ test("herdr.pack links automagik-herdr as install.sh does, leaves someone else's
   assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
   const d = doctorOf(m, "herdr.pack");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "command", "path", "node", "agent-antigravity"]);
+  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "briefing-hook", "command", "path", "node", "agent-antigravity"]);
   const noPath = doctorOf(m, "herdr.pack", { PATH: "/usr/bin" });
   assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
   assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
@@ -764,4 +764,42 @@ test("am uninstall herdr.am-tabs with a linked mods/: refused, it stays in mods/
   assert.throws(() => uninstall(m.ctx(), P("herdr.am-tabs")), (e) => e.message === linkedLine(m.mods, ext));
   assert.ok(existsSync(join(ext, "am-tabs", "main.js")));
   assert.equal(existsSync(join(m.off, "am-tabs")), false);
+});
+
+test("doctor reports which briefing a project's hook runs: the pack's stable entry, am's entry, or none", (t) => {
+  const m = machine(t);
+  writeFileSync(join(m.app, "keys.json"), "{}\n");
+  install(m.ctx(), P("herdr.pack"), packSource);
+  const project = join(m.dir, "project");
+  mkdirSync(join(project, ".claude"), { recursive: true });
+  const file = join(project, ".claude", "settings.local.json");
+  const settings = (command) => writeFileSync(file, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command, timeout: 10 }] }] } }, null, 2));
+  const check = () => doctor(contextOf({ env: m.env, exec: noExec, log: () => {}, platform: "darwin", project }), P("herdr.pack"))
+    .checks.find((c) => c.check === "briefing-hook");
+  settings(hookCommand(m.app));
+  const packHook = check();
+  assert.equal(packHook.ok, true, packHook.detail);
+  assert.match(packHook.detail, /the pack's stable entry \(.*briefing\.mjs\) in .*settings\.local\.json$/);
+  // A CLI-only hook: am's own entry, named with its path.
+  const store = join(m.home, ".automagik", "parts", "automagik.am");
+  mkdirSync(join(store, "current", "bin"), { recursive: true });
+  writeFileSync(join(store, "current", "bin", "run.sh"), "#!/bin/sh\n");
+  writeFileSync(join(store, "current", "briefingEntry.mjs"), "// am's entry\n");
+  settings(amPartHookCommand(m.app, store));
+  const amHook = check();
+  assert.equal(amHook.ok, true, amHook.detail);
+  assert.match(amHook.detail, /am's entry \(.*briefingEntry\.mjs\) in .*settings\.local\.json$/);
+  rmSync(join(store, "current", "briefingEntry.mjs"));
+  const broken = check();
+  assert.equal(broken.ok, false);
+  assert.equal(broken.fix, "am self install");
+  // No briefing hook at all: none; with neither installed, the detail says so plainly.
+  writeFileSync(file, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo mine" }] }] } }, null, 2));
+  const none = check();
+  assert.equal(none.ok, true);
+  assert.match(none.detail, /none: .*settings\.local\.json has no briefing hook$/);
+  rmSync(join(m.app, "automagik-herdr", "briefing.mjs"));
+  rmSync(join(m.mods, "am-sidebar", "briefing.mjs"));
+  const neither = check();
+  assert.match(neither.detail, /; neither the pack's entry \(.*\) nor am's entry \(.*\) is installed$/);
 });

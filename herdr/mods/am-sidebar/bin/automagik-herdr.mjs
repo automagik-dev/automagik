@@ -156,6 +156,11 @@ async function hcGet(terminal, { timeout } = {}) {
 const local = (address) => typeof address === "string" && !address.includes("/");
 
 function appHome(env = process.env) { return (env.HERDR_APP_HOME || `${homedir()}/.config/herdr-app`).replace(/\/+$/, ""); }
+/**
+ * The am part's installed store (am/lib/self.mjs storeOf): <AM_HOME, else ~/.automagik>/
+ * parts/automagik.am. A CLI-only host's hook goes through it (briefingText.mjs installHook).
+ */
+const amStore = (env = process.env) => `${(env.AM_HOME || `${env.HOME || homedir()}/.automagik`).replace(/\/+$/, "")}/parts/automagik.am`;
 const home = () => process.env.HOME || homedir();
 /** The agent a launch argv runs: a `sh -c <command>` (a template's) by its command, else by its program. */
 const launchAgent = (argv, agents = agentTable()) => (Array.isArray(argv) && /(^|\/)(ba|z|da)?sh$/.test(argv[0] ?? "") && argv[1] === "-c"
@@ -1014,9 +1019,12 @@ const hookIo = {
   mkdir: async (dir) => { mkdirSync(dir, { recursive: true }); },
 };
 
-/** Merges the briefing hook for a Claude bot (the session ledger, the once-only fallback); never throws: { written, warnings }. */
+/**
+ * Merges the briefing hook for a Claude bot (the session ledger, the once-only fallback); never throws: { written, warnings }.
+ * With no pack under the app home, it names the am part's own entry and runner instead (CLI-only host).
+ */
 export function writeBriefingHook(bot, folder, appHomeDir = appHome(), options = {}) {
-  return installHook(bot.name, folder, appHomeDir, hookIo, options);
+  return installHook(bot.name, folder, appHomeDir, hookIo, { amStore: amStore(), ...options });
 }
 
 // ---- the briefing at launch (models.js briefingLaunch): the agent's system prompt ----
