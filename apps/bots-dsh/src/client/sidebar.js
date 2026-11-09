@@ -836,9 +836,12 @@ html[data-automagik-desktop] .bt-side-top .bt-brand{display:none}
    (apps/desktop frame.js TRAFFIC_LIGHTS), which also moves the window. */
 html[data-automagik-desktop=darwin]:not([data-automagik-fullscreen]) .bt-side-top{padding-left:64px}
 html[data-automagik-desktop=darwin] .bt-side-top{-webkit-app-region:drag}
-html[data-automagik-desktop=darwin] .bt-side-top>*{-webkit-app-region:no-drag}
+/* The row is the window's title bar: empty space moves the window, while every control in it
+   takes clicks. The list is the shell bar's, so a control a builder adds here is covered
+   without another rule; the brand is hidden in the app but kept sane. */
+html[data-automagik-desktop=darwin] .bt-side-top :is(.bt-brand,.bt-code-switch,a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
 html[data-automagik-desktop=darwin] header[class*="_header"]{-webkit-app-region:drag}
-html[data-automagik-desktop=darwin] header[class*="_header"] :is(button,a,input,textarea,select,[role=button],[tabindex]){-webkit-app-region:no-drag}
+html[data-automagik-desktop=darwin] header[class*="_header"] :is(a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
 /* The fixed details panel overlaps that header but is not its descendant. Native drag
    regions ignore DOM z-index/pointer-events: subtract the panel so its top actions click. */
 html[data-automagik-desktop=darwin] .bt-panel{-webkit-app-region:no-drag}
