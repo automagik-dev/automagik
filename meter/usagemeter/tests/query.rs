@@ -1228,7 +1228,7 @@ fn every_measured_row_keeps_three_questions_apart() {
 /// 6 (the query), so until then they are schema-only: they validate against the schema and pass
 /// the sum checks below, but no store is built for them and no meter answer is compared with
 /// them. Delivery 6 empties this list and adds a scenario for each.
-const SCHEMA_ONLY: [&str; 7] = [
+const SCHEMA_ONLY: [&str; 8] = [
     "actor-ambiguous",
     "actor-ledger-branch",
     "actor-no-evidence",
@@ -1236,6 +1236,7 @@ const SCHEMA_ONLY: [&str; 7] = [
     "by-bot",
     "by-bot-lower-bound",
     "by-bot-no-evidence",
+    "by-bot-unfiltered",
 ];
 
 /// Whether an answer carries any field of the attribution contract.
@@ -1533,7 +1534,7 @@ fn request_sha256_covers_by_on_every_example() {
         }
         assert_eq!(q["request_sha256"], meter::event::hex(&h.finalize()), "{n}");
     }
-    assert_eq!(by, 3, "the bot examples");
+    assert_eq!(by, 4, "the bot examples");
 }
 
 #[test]
@@ -1610,6 +1611,21 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
     let mut v = example("by-bot");
     v["rows"][0]["state"] = json!("zero");
     bad.push(("a zero bot row", v));
+
+    // Coverage (genie's F1): a bot query that names no branch counts usage with no branch in its
+    // rows itself, so they are complete beside it; filtered by branch, they are partial.
+    let mut v = example("by-bot-unfiltered");
+    v["rows"][1]["attribution"]["coverage"] = json!("partial");
+    bad.push(("a partial row in a bot answer that names no branch", v));
+    let mut v = example("by-bot-lower-bound");
+    v["rows"][0]["attribution"]["coverage"] = json!("complete");
+    bad.push((
+        "a complete row in a filtered bot answer beside usage with no branch",
+        v,
+    ));
+    let mut v = example("actor-ledger-branch");
+    v["unattributed"] = json!({"tokens_total": 1, "harnesses": ["omp"]});
+    bad.push(("a complete branch row beside usage with no branch", v));
 
     // actor_unattributed: present with actors, on every row with tokens, and nowhere else.
     let mut v = example("by-bot");

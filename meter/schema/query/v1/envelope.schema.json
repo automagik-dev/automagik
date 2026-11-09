@@ -298,8 +298,32 @@
       },
       "then": {
         "properties": {
-          "unattributed": { "type": "object", "properties": { "harnesses": { "type": "array", "minItems": 1 } } },
-          "rows": { "type": "array", "items": { "type": "object", "properties": { "attribution": { "type": "object", "properties": { "coverage": { "const": "partial" } } } } } }
+          "unattributed": { "type": "object", "properties": { "harnesses": { "type": "array", "minItems": 1 } } }
+        }
+      }
+    },
+    {
+      "description": "Coverage (RFC 0018, RFC 0021 D3): usage with no branch could belong to any branch named, so above 0 every branch row, and every bot row of a query filtered by branch, is partial. A bot query that names no branch counts that usage in its rows itself, so its rows are always complete.",
+      "if": {
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "object", "required": ["by"], "properties": { "branches": { "type": "array", "maxItems": 0 } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "rows": { "type": "array", "items": { "type": "object", "properties": { "attribution": { "type": "object", "properties": { "coverage": { "const": "complete" } } } } } }
+        }
+      },
+      "else": {
+        "if": {
+          "required": ["unattributed"],
+          "properties": { "unattributed": { "type": "object", "properties": { "tokens_total": { "type": "integer", "minimum": 1 } } } }
+        },
+        "then": {
+          "properties": {
+            "rows": { "type": "array", "items": { "type": "object", "properties": { "attribution": { "type": "object", "properties": { "coverage": { "const": "partial" } } } } } }
+          }
         }
       }
     },
@@ -403,9 +427,9 @@
           "rows": {
             "items": {
               "properties": {
+                "bot": false,
                 "attribution": {
                   "properties": {
-                    "precision": { "enum": ["branch_window", "task_interval"] },
                     "actor": {
                       "properties": {
                         "tokens_attributed": { "const": 0 },
@@ -674,7 +698,7 @@
         "shared": { "type": "boolean" },
         "coverage": {
           "enum": ["complete", "partial"],
-          "description": "partial when the repo has usage with no branch in the window (envelope unattributed): the row's numbers are then a lower bound. Separate from source health, from price coverage and from the actor share, which attribution.actor and actor_unattributed report and which never moves this (RFC 0021 D3)."
+          "description": "partial when the repo has usage with no branch in the window (envelope unattributed) and the row could be owed some of it: every branch row, and every bot row of a --by bot query that names branches. The row's numbers are then a lower bound. A bot row of a --by bot query that names no branch counts usage with no branch itself (tokens_by_branch_basis.none), so it is always complete. Separate from source health, from price coverage and from the actor share, which attribution.actor and actor_unattributed report and which never moves this (RFC 0021 D3)."
         },
         "actor": { "$ref": "#/$defs/actor" }
       }
@@ -717,7 +741,7 @@
       }
     },
     "botRow": {
-      "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, harness). Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0.",
+      "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, harness). Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0. While ingestion.complete is false (a sync stopped at its budget, or a re-import, left usage unread), a bot row's numbers are a lower bound and a reader shows \"at least\", as for a branch row (RFC 0018).",
       "type": "object",
       "additionalProperties": false,
       "required": [
