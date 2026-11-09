@@ -15,7 +15,7 @@ profile under `~/.automagik/web/dsh/profiles/web`, and the `automagik-web.servic
 ## TL;DR
 
 ```sh
-# from an SSH shell on the host, as the service user (namastex)
+# from an SSH shell on the host, as the service user
 cd ~/workspace/repos/automagik
 bun scripts/upgrade.ts --check      # read-only: current vs latest, signature, tarballs, engines
 bun scripts/upgrade.ts --dry-run    # print every step and command; change nothing
@@ -58,7 +58,7 @@ in `cordis.yml`. See [Configuration layers](#configuration-layers-and-cordisyml)
 
 ## Prerequisites
 
-- Run as the service user (`namastex`), from an SSH shell — **not** from an agent inside the Web
+- Run as the service user, from an SSH shell — **not** from an agent inside the Web
   GUI. Restarting `automagik-web` stops the whole unit cgroup, including GUI sessions and agent
   jobs running inside it.
 - `gh` authenticated (`gh auth status`), `node`, `curl`, `tar`, `systemctl`, passwordless `sudo`.
