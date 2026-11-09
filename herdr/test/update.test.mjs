@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2346,14 +2346,14 @@ test("#839: tightenLedgers refuses symlinks without changing the target and warn
   chmodSync(attachFile, 0o644);
 
   const logs = [];
-  const chmodCalls = [];
+  const fchmodCalls = [];
   const r = tightenLedgers(home, {
     getuid: () => 999999,
-    chmod: (p, m) => { chmodCalls.push([p, m]); chmodSync(p, m); },
+    fchmod: (fd, m) => { fchmodCalls.push([fd, m]); fchmodSync(fd, m); },
     log: (l) => logs.push(l),
   });
   assert.deepEqual(r.tightened, []);
-  assert.deepEqual(chmodCalls, [], "neither symlink nor unowned file is chmodded");
+  assert.deepEqual(fchmodCalls, [], "neither symlink nor unowned file is fchmodded");
   assert.equal(lstatSync(workersLink).isSymbolicLink(), true);
   assert.equal(lstatSync(target).mode & 0o777, 0o644, "symlink target mode is untouched");
   assert.equal(lstatSync(attachFile).mode & 0o777, 0o644, "unowned file mode is untouched");
@@ -2363,16 +2363,19 @@ test("#839: tightenLedgers refuses symlinks without changing the target and warn
   assert.equal(logs.filter((l) => l.startsWith("warning: ")).length, 2);
 });
 
-test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspection and chmod/open, and tightens 0444/0464 to 0400 without widening to 0600", (t) => {
+test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspection and open/fchmod, skips owner-unreadable ledgers, and tightens 0444/0464 to 0400 with truthful logging", (t) => {
   const home = mkdtempSync(join(tmpdir(), "ledgers-race-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(join(home, "automagik-herdr"), { recursive: true });
   const targetA = join(home, "target-a.jsonl");
   const targetB = join(home, "target-b.jsonl");
+  const targetC = join(home, "target-c.jsonl");
   writeFileSync(targetA, '{"session":"target-a"}\n');
   chmodSync(targetA, 0o644);
   writeFileSync(targetB, '{"session":"target-b"}\n');
   chmodSync(targetB, 0o644);
+  writeFileSync(targetC, '{"session":"target-c"}\n');
+  chmodSync(targetC, 0o644);
 
   const workersFile = join(home, "automagik-herdr", "workers.jsonl");
   const attachFile = join(home, "automagik-herdr", "attach.jsonl");
@@ -2381,9 +2384,8 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   writeFileSync(attachFile, '{"session":"plain-a"}\n');
   chmodSync(attachFile, 0o644);
 
-  // (a1) Injected stat + chmod path: swap workers.jsonl for a symlink right after the first stat.
+  // (a1) Swap workers.jsonl for a symlink right after the first stat (before openSync).
   let seenWorkers = false;
-  const chmodCalls = [];
   const rSwapStat = tightenLedgers(home, {
     stat: (p) => {
       const st = lstatSync(p);
@@ -2394,13 +2396,9 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
       }
       return st;
     },
-    chmod: (p, m) => {
-      chmodCalls.push([p, m]);
-      chmodSync(p, m);
-    },
   });
   assert.deepEqual(rSwapStat.tightened, [attachFile]);
-  assert.deepEqual(chmodCalls, [[attachFile, 0o600]], "swapped workers.jsonl is never passed to chmod");
+  assert.equal(lstatSync(attachFile).mode & 0o777, 0o600, "attach.jsonl tightened to 0600");
   assert.equal(lstatSync(workersFile).isSymbolicLink(), true);
   assert.equal(lstatSync(targetA).mode & 0o777, 0o644, "symlink targetA stays 0644");
   assert.equal(rSwapStat.warnings.length, 1);
@@ -2426,20 +2424,69 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   assert.equal(rSwapOpen.warnings.length, 1);
   assert.match(rSwapOpen.warnings[0], /attach\.jsonl became a symlink: left as it is/);
 
-  // (b) Fixer L2: 0444 and 0464 ledgers tighten to 0400 (owner read-only kept, group/other stripped, never widened to 0600).
+  // (a3) Open-then-swap: openSync opens the regular ledger, and before open returns fd, the path
+  // is replaced with a symlink to victim targetC (0644). fchmod tightens only the open fd,
+  // leaving targetC at 0644 untouched (kills Mutant MB: replacing fchmod with path chmod).
+  unlinkSync(attachFile);
+  writeFileSync(attachFile, '{"session":"plain-a3"}\n');
+  chmodSync(attachFile, 0o644);
+  const origLink = join(home, "attach-orig.jsonl");
+  linkSync(attachFile, origLink);
+  const rOpenThenSwap = tightenLedgers(home, {
+    open: (p, flags) => {
+      const fd = openSync(p, flags);
+      if (p === attachFile) {
+        unlinkSync(attachFile);
+        symlinkSync(targetC, attachFile);
+      }
+      return fd;
+    },
+  });
+  assert.deepEqual(rOpenThenSwap.tightened, [attachFile]);
+  assert.equal(rOpenThenSwap.warnings.length, 0);
+  assert.equal(lstatSync(origLink).mode & 0o777, 0o600, "fchmod tightened the opened descriptor");
+  assert.equal(lstatSync(targetC).mode & 0o777, 0o644, "victim symlink targetC stays 0644 untouched");
+  unlinkSync(origLink);
+
+  // (b) 0444 and 0464 ledgers tighten to 0400 (never widened to 0600) and log 'to 0400'.
   unlinkSync(attachFile);
   writeFileSync(workersFile, '{"session":"ro-444"}\n');
   chmodSync(workersFile, 0o444);
   writeFileSync(attachFile, '{"session":"ro-464"}\n');
   chmodSync(attachFile, 0o464);
 
-  const rRo = tightenLedgers(home);
+  const roLogs = [];
+  const rRo = tightenLedgers(home, { log: (l) => roLogs.push(l) });
   assert.deepEqual(rRo.tightened, [workersFile, attachFile]);
   assert.equal(rRo.warnings.length, 0);
   assert.equal(lstatSync(workersFile).mode & 0o777, 0o400, "0444 tightened to 0400, not widened to 0600");
   assert.equal(lstatSync(attachFile).mode & 0o777, 0o400, "0464 tightened to 0400, not widened to 0600");
+  assert.deepEqual(roLogs, [`tightened Herdr ledger(s) to 0400: ${workersFile}, ${attachFile}`]);
+
+  // Mixed target modes (0644 -> 0600 and 0444 -> 0400) log without a single-mode claim.
+  chmodSync(workersFile, 0o644);
+  chmodSync(attachFile, 0o444);
+  const mixedLogs = [];
+  const rMixed = tightenLedgers(home, { log: (l) => mixedLogs.push(l) });
+  assert.deepEqual(rMixed.tightened, [workersFile, attachFile]);
+  assert.deepEqual(mixedLogs, [`tightened Herdr ledger(s): ${workersFile}, ${attachFile}`]);
   chmodSync(workersFile, 0o600);
   chmodSync(attachFile, 0o600);
+
+  // (b2) Owner-unreadable ledger (0070): skipped untouched (remains 0070, not 0000) with one warning naming chmod 600.
+  chmodSync(attachFile, 0o070);
+  try {
+    const unreadLogs = [];
+    const rUnread = tightenLedgers(home, { log: (l) => unreadLogs.push(l) });
+    assert.deepEqual(rUnread.tightened, []);
+    assert.equal(lstatSync(attachFile).mode & 0o777, 0o070, "0070 ledger stays 0070 untouched");
+    assert.equal(rUnread.warnings.length, 1);
+    assert.match(rUnread.warnings[0], /attach\.jsonl is not readable by its owner \(mode 0070\): left as it is; run chmod 600 /);
+    assert.ok(rUnread.warnings[0].includes(attachFile));
+    assert.equal(unreadLogs.length, 1);
+  } finally {
+    chmodSync(attachFile, 0o600);
+  }
 
   // (c) M1 + M2: a FIFO ledger never blocks, and 2,000 repeated rows deduplicate before git resolution.
   const projDir = join(home, "proj-dedup");

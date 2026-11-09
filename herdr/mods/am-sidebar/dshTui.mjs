@@ -40,6 +40,7 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from "node:url";
 import { checkRow, installRow } from "./bin/dsh-sandbox.mjs";
 import { approvedProxyState, approvedRootOf } from "./approved.js";
+import { PROJECTS_FILE, listedProjects } from "./model.js";
 import { LEDGER_FILE, dataRootOf, stableRootOf } from "./workers.js";
 import { removePath } from "./layoutSafe.mjs";
 
@@ -964,15 +965,7 @@ export async function doctorBotProxies({ bots, project, bindings, env = process.
 }
 
 const ATTACH_LEDGER_FILE = "automagik-herdr/attach.jsonl";
-const PROJECTS_LIST_FILE = "am-sidebar-projects.json";
 const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-
-function listedProjectKeys(text) {
-  let list;
-  try { list = typeof text === "string" && text ? JSON.parse(text) : []; } catch { return []; }
-  if (!Array.isArray(list)) return [];
-  return [...new Set(list.filter((k) => typeof k === "string" && k.startsWith("/")))];
-}
 
 function readSafeLedgerForDoctor(path, uid) {
   const flags = (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
@@ -1010,9 +1003,9 @@ export function doctorLedgers({ env = process.env, project = null, getuid = proc
       }
     }
   } catch { /* none */ }
-  for (const name of [PROJECTS_LIST_FILE, "spaces-agents-projects.json"]) {
+  for (const name of [PROJECTS_FILE, "spaces-agents-projects.json"]) {
     try {
-      for (const k of listedProjectKeys(readFileSync(join(appHome, name), "utf8"))) projects.add(k);
+      for (const k of listedProjects(readFileSync(join(appHome, name), "utf8"))) projects.add(k);
     } catch { /* none */ }
   }
   for (const rel of [LEDGER_FILE, ATTACH_LEDGER_FILE]) {

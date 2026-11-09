@@ -274,16 +274,18 @@ function ledgerProjectFolders(appHome, git = runGit, uid = typeof process.getuid
   return [...out];
 }
 
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
 /**
  * Tightens existing Herdr ledgers (`automagik-herdr/workers.jsonl` and `automagik-herdr/attach.jsonl`)
- * to 0600 in `appHome` and in `<project>/.herdr/app-home` for every project in `knownProjects` and
- * `ledgerFolders` (#839). Never follows symlinks, never creates missing files, never widens a
- * stricter mode (0400/0000), and leaves unowned files alone with a warning.
+ * to 0600 (or 0400 when owner read-only) in `appHome` and in `<project>/.herdr/app-home` for every
+ * project in `knownProjects` and `ledgerFolders` (#839). Never follows symlinks, never creates
+ * missing files, never widens a stricter mode (0400/0000), and leaves unowned or owner-unreadable
+ * files alone with a warning.
  */
 export function tightenLedgers(appHome, {
   extra = [], git = runGit, getuid = process.getuid,
-  stat = lstatSync, chmod = chmodSync,
-  open = openSync, fstat = fstatSync, fchmod = fchmodSync, close = closeSync,
+  stat = lstatSync, open = openSync, fstat = fstatSync, fchmod = fchmodSync, close = closeSync,
   log = () => {}, warn = true,
 } = {}) {
   const uid = typeof getuid === "function" ? getuid() : null;
@@ -302,31 +304,11 @@ export function tightenLedgers(appHome, {
   const seenResolved = new Set();
   const seenCanonical = new Set();
   const tightened = [];
+  const modes = new Set();
   const warnings = [];
-  const useFd = typeof constants?.O_NOFOLLOW === "number"
-    && ((stat === lstatSync && chmod === chmodSync)
-      || open !== openSync || fstat !== fstatSync || fchmod !== fchmodSync);
   const noteWarn = (w) => {
     warnings.push(w);
     if (warn) log(`warning: ${w}`);
-  };
-  const restatAndChmod = (file, st) => {
-    const after = stat(file);
-    if (!after || after.isSymbolicLink() || !after.isFile()
-      || after.dev !== st.dev || after.ino !== st.ino) {
-      const kind = after?.isSymbolicLink?.() ? "became a symlink" : "changed during inspection";
-      noteWarn(`${file} ${kind}: left as it is (Herdr ledgers must be plain files)`);
-      return false;
-    }
-    if (uid !== null && typeof after.uid === "number" && after.uid !== uid) {
-      noteWarn(`${file} is owned by uid ${after.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
-      return false;
-    }
-    const afterMode = after.mode & 0o777;
-    if ((afterMode & 0o177) === 0) return false;
-    const target = afterMode & 0o600;
-    chmod(file, target);
-    return true;
   };
   for (const home of homes) {
     for (const rel of HERDR_LEDGERS) {
@@ -356,56 +338,64 @@ export function tightenLedgers(appHome, {
       }
       const mode = st.mode & 0o777;
       if ((mode & 0o177) !== 0) {
+        const oct = `0${mode.toString(8).padStart(3, "0")}`;
+        if ((mode & 0o400) === 0) {
+          noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+          continue;
+        }
         try {
-          let changed = false;
-          if (useFd) {
-            let fd = null;
-            try {
-              fd = open(file, (constants.O_RDONLY ?? 0) | constants.O_NOFOLLOW | (constants.O_NONBLOCK ?? 0));
-            } catch (e) {
-              if (e?.code === "ELOOP" || e?.code === "EFTYPE") {
-                noteWarn(`${file} became a symlink: left as it is (Herdr ledgers must be plain files)`);
-                continue;
-              }
-              if ((e?.code === "EACCES" || e?.code === "EPERM") && (mode & 0o400) === 0) {
-                changed = restatAndChmod(file, st);
-              } else {
-                throw e;
-              }
+          let fd = null;
+          try {
+            fd = open(file, (constants.O_RDONLY ?? 0) | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+          } catch (e) {
+            if (e?.code === "ELOOP" || e?.code === "EFTYPE") {
+              noteWarn(`${file} became a symlink: left as it is (Herdr ledgers must be plain files)`);
+              continue;
             }
-            if (fd !== null) {
-              try {
-                const fst = fstat(fd);
-                if (!fst || fst.isSymbolicLink?.() || !fst.isFile()
-                  || fst.dev !== st.dev || fst.ino !== st.ino) {
-                  noteWarn(`${file} changed during inspection: left as it is (Herdr ledgers must be plain files)`);
-                  continue;
-                }
-                if (uid !== null && typeof fst.uid === "number" && fst.uid !== uid) {
-                  noteWarn(`${file} is owned by uid ${fst.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
-                  continue;
-                }
-                const fmode = fst.mode & 0o777;
-                if ((fmode & 0o177) !== 0) {
-                  const target = fmode & 0o600;
-                  fchmod(fd, target);
-                  changed = true;
-                }
-              } finally {
-                close(fd);
-              }
+            if (e?.code === "EACCES" || e?.code === "EPERM") {
+              noteWarn(`${file} is not readable by its owner (mode ${oct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              continue;
             }
-          } else {
-            changed = restatAndChmod(file, st);
+            throw e;
           }
-          if (changed) tightened.push(file);
+          try {
+            const fst = fstat(fd);
+            if (!fst || fst.isSymbolicLink?.() || !fst.isFile()
+              || fst.dev !== st.dev || fst.ino !== st.ino) {
+              noteWarn(`${file} changed during inspection: left as it is (Herdr ledgers must be plain files)`);
+              continue;
+            }
+            if (uid !== null && typeof fst.uid === "number" && fst.uid !== uid) {
+              noteWarn(`${file} is owned by uid ${fst.uid}, not ${uid}: left as it is (chmod 600 requires the owner)`);
+              continue;
+            }
+            const fmode = fst.mode & 0o777;
+            if ((fmode & 0o400) === 0) {
+              const foct = `0${fmode.toString(8).padStart(3, "0")}`;
+              noteWarn(`${file} is not readable by its owner (mode ${foct}): left as it is; run chmod 600 ${shQuote(file)}`);
+              continue;
+            }
+            if ((fmode & 0o177) !== 0) {
+              const target = fmode & 0o600;
+              fchmod(fd, target);
+              tightened.push(file);
+              modes.add(`0${target.toString(8).padStart(3, "0")}`);
+            }
+          } finally {
+            close(fd);
+          }
         } catch (e) {
-          noteWarn(`${file} could not be tightened to 0600 (${e?.message ?? e})`);
+          noteWarn(`${file} could not be tightened (${e?.message ?? e})`);
         }
       }
     }
   }
-  if (tightened.length) log(`tightened Herdr ledger(s) to 0600: ${tightened.join(", ")}`);
+  if (tightened.length) {
+    const onlyMode = modes.size === 1 ? [...modes][0] : null;
+    log(onlyMode
+      ? `tightened Herdr ledger(s) to ${onlyMode}: ${tightened.join(", ")}`
+      : `tightened Herdr ledger(s): ${tightened.join(", ")}`);
+  }
   return { tightened, warnings };
 }
 
