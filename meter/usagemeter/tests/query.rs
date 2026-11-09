@@ -2205,6 +2205,22 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
     strictly_same_folder(&folder(&fx.env.state()), &before_new, "the state folder");
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
+
+    // Only the old folder holds a store, a newer one: it is not moved in.
+    let fresh = Env::new();
+    let new = fresh.state();
+    meter::paths::ensure_dir(&new).unwrap();
+    let before_old = folder(&old);
+    let mut o = fresh.opts();
+    o.now_ms = t(GENERATED);
+    o.migrate_from = Some(old.clone());
+    let out = {
+        let _g = serial();
+        meter::sync::run(&o).unwrap()
+    };
+    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    strictly_same_folder(&folder(&old), &before_old, "the old folder");
+    assert!(!new.join("meter.db").exists() && !new.join(".meter-moved").exists());
 }
 
 /// The Fixer's L2: the generation is guarded by whether the store holds rows, not by whether its
