@@ -1742,7 +1742,8 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
     let mut v = example("by-bot");
     v["sources"][1]["status"] = json!("degraded");
     bad.push(("an absent bot as 0 beside a degraded source", v));
-    let mut v = example("by-bot-lower-bound");
+    // Unfiltered, so only the rule that the flag needs tokens_total 0 refuses this one.
+    let mut v = example("by-bot-unfiltered");
     v["actor_unattributed"]["absent_bot_is_zero"] = json!(true);
     bad.push(("an absent bot as 0 beside unattributed usage", v));
     let mut v = example("by-bot");
@@ -1751,6 +1752,33 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
         "actor_unattributed that does not say what an absent bot is",
         v,
     ));
+    // genie's A1: under a branch filter, usage with no branch could be an absent bot's on a
+    // branch named, so the flag also needs unattributed at 0. The second case has nothing
+    // unattributed to any bot, so only that rule refuses it.
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["absent_bot_is_zero"] = json!(true);
+    bad.push((
+        "an absent bot as 0 in a filtered answer beside unattributed usage",
+        v,
+    ));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"] = example("by-bot")["actor_unattributed"].clone();
+    assert_eq!(v["actor_unattributed"]["absent_bot_is_zero"], true);
+    bad.push((
+        "an absent bot as 0 in a filtered answer beside usage with no branch",
+        v,
+    ));
+    // The Reviewer's L1 on 198cdd00: complete ingestion means an empty backlog.
+    let mut v = example("priced");
+    v["ingestion"]["backlog"]["bytes"] = json!(5);
+    bad.push(("complete ingestion with backlog bytes", v));
+    let mut v = example("priced");
+    v["ingestion"]["backlog"]["files"] = json!(1);
+    bad.push(("complete ingestion with a backlog file", v));
+    // genie's A2: only a bot answer has bot rows to be absent from.
+    let mut v = example("actor-ledger-branch");
+    v["actor_unattributed"]["absent_bot_is_zero"] = json!(true);
+    bad.push(("an absent bot as 0 in a branch answer", v));
 
     // While evidence_from is null, every token is before evidence (RFC 0021 (d)).
     for k in ["tokens_attributed", "tokens_ambiguous", "tokens_unlinked"] {

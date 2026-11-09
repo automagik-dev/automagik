@@ -108,7 +108,14 @@
               { "properties": { "backlog": { "properties": { "files": { "type": "null" } } } } }
             ]
           },
-          "then": { "properties": { "complete": { "const": false } } }
+          "then": { "properties": { "complete": { "const": false } } },
+          "allOf": [
+            {
+              "description": "Complete ingestion left nothing unread: an empty backlog (the Reviewer's L1 on #825).",
+              "if": { "properties": { "complete": { "const": true } } },
+              "then": { "properties": { "backlog": { "properties": { "bytes": { "const": 0 }, "files": { "const": 0 } } } } }
+            }
+          ]
         }
       ]
     },
@@ -462,15 +469,24 @@
         "properties": { "actor_unattributed": { "type": "object", "properties": { "absent_bot_is_zero": { "const": true } } } }
       },
       "then": {
+        "required": ["query"],
         "properties": {
           "status": { "const": "ok" },
+          "query": { "type": "object", "required": ["by"], "properties": { "by": { "const": "bot" } } },
           "ingestion": {
             "type": "object",
             "properties": { "complete": { "const": true }, "stale": { "const": false }, "watermark": { "type": "string" } }
           },
           "window": { "type": "object", "properties": { "clipped": { "const": false } } },
           "sources": { "items": { "properties": { "status": { "enum": ["ok", "absent"] } } } }
-        }
+        },
+        "allOf": [
+          {
+            "description": "Under a branch filter, usage with no branch could be an absent bot's on a branch named (RFC 0018's zero conditions).",
+            "if": { "properties": { "query": { "type": "object", "properties": { "branches": { "type": "array", "minItems": 1 } } } } },
+            "then": { "properties": { "unattributed": { "type": "object", "properties": { "tokens_total": { "const": 0 } } } } }
+          }
+        ]
       }
     }
   ],
@@ -835,7 +851,7 @@
       "properties": {
         "absent_bot_is_zero": {
           "type": "boolean",
-          "description": "Whether a bot with no row in this answer had no usage in the repo and window (a real 0). True only when tokens_total is 0 and RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a watermark, the window not clipped, every source ok or absent (no legacy-store), and the repo seen in this store. Otherwise false, and a bot with no row is unknown, never 0 (RFC 0021 (d))."
+          "description": "Whether a bot with no row in this answer had no usage in the repo and window (a real 0). Always false unless query.by is bot: only a bot answer has bot rows to be absent from. True only when tokens_total is 0 and RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a watermark, the window not clipped, every source ok or absent (no legacy-store), the repo seen in this store (the meter's own responsibility, which no schema can see, as for a zero branch row), and, under a branch filter, no usage with no branch (unattributed.tokens_total 0), since that usage could be an absent bot's on a branch named. Otherwise false, and a bot with no row is unknown, never 0 (RFC 0021 (d))."
         },
         "tokens_total": { "type": "integer", "minimum": 0, "description": "tokens_ambiguous + tokens_unlinked + tokens_before_evidence." },
         "tokens_ambiguous": { "type": "integer", "minimum": 0 },

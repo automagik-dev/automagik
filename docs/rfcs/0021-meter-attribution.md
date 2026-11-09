@@ -335,10 +335,13 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
   (delivery 2, D5). A bot row is a lower bound whenever any of it is above zero, and a reader
   shows "at least". **A bot with no row** is 0 only when nothing is in `actor_unattributed` and
   RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a
-  watermark, the window not clipped, every source `ok` or `absent` (no `legacy-store`), and the
-  repo seen in the store. Otherwise it is unknown, never 0. The meter says which in
-  `actor_unattributed.absent_bot_is_zero`, so a reader never works it out, and the schema
-  refuses `true` whenever one of those conditions it can see fails (the Fixer's M1 on #825).
+  watermark, the window not clipped, every source `ok` or `absent` (no `legacy-store`), the
+  repo seen in the store, and, under a branch filter, no usage with no branch (`unattributed` 0),
+  since that usage could be an absent bot's on a branch named. Otherwise it is unknown, never 0.
+  The meter says which in `actor_unattributed.absent_bot_is_zero`, so a reader never works it
+  out; the flag is always false outside a `--by bot` answer, which alone has bot rows to be
+  absent from. The schema refuses `true` whenever one of those conditions it can see fails (the
+  Fixer's M1 and genie's A1 and A2 on #825).
   `attribution.coverage` keeps RFC 0018's meaning (usage with no branch) and
   is never moved by the actor share. A bot row of a query that names no branch counts usage with
   no branch itself (`tokens_by_branch_basis.none`), so it is always `complete`; with a branch
@@ -555,8 +558,9 @@ release.
      where this machine's hc or ledgers show the terminal was started from another computer,
      else `no_record`; `before_evidence`. Each part carries its state, so a reader that meets a
      reason added later still knows which count it is in.
-   - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: nothing
-     unattributed and RFC 0018's zero conditions for the whole answer ((d)); else unknown.
+   - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: a
+     `--by bot` answer, nothing unattributed to a bot, and RFC 0018's zero conditions for the
+     whole answer, `unattributed` 0 included under a branch filter ((d)); else unknown.
    - Actors are reported on every row with tokens or on none: `actor_unattributed` is present
      exactly when they are, and a row with no tokens has no `attribution.actor`.
    - The order, enforced on both sides. RFC 0017's delivery 4 (#822) holds the meter lane

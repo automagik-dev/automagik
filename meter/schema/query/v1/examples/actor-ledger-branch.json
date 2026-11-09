@@ -74,7 +74,7 @@
     "tokens_unlinked": 0,
     "tokens_before_evidence": 0,
     "parts": [],
-    "absent_bot_is_zero": true
+    "absent_bot_is_zero": false
   },
   "pricing": {
     "table": {
