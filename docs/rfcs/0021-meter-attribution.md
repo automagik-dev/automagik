@@ -150,10 +150,13 @@ overwrite what the start row recorded.
   `ledger.rs` does. Today no start row carries one. Task intervals from genie's `tasks.jsonl` and
   link events stay RFC 0018 M2 and M3's; this RFC adds the start row as one more piece of evidence
   and nothing else.
-- **Branch for dsh-tui (and omp)** is filled from the worker's start row when the call resolves to
-  a worker launch by worktree, with `branch_basis: ledger`. Never from git on today's checkout and
-  never from another harness's session at the same hour. Calls that resolve to no worker (seats,
-  ambiguous worktrees) keep the branch null and stay in RFC 0018's `unattributed`.
+- **Branch for dsh-tui (and omp)**, whose logs carry none, is filled from the worker's start row
+  when the call resolves to a worker launch, on any basis, with `branch_basis: ledger`. A branch
+  the harness logged (Claude, a Codex thread) is `branch_basis: log` and is never replaced. Never
+  from git on today's checkout and never from another harness's session at the same hour. Calls
+  that resolve to no worker (seats, ambiguous worktrees) keep the branch null and stay in RFC
+  0018's `unattributed`. This amends RFC 0018 (a), which matched branches only against the log or
+  the Codex thread; its matching sentence and its "Usage with no branch" rule say so too.
 
 **What stays unknown.** A call with no claimant is `unlinked`; one with two claimants that differ
 is `ambiguous`. Both are kept as such, counted, and never given a bot.
@@ -243,7 +246,9 @@ another link of the same session covers part of that span, the overlap is ambigu
   `worker.role`, `bot`, `role`, `squad`, `agent.session` and `revive.session` too. A snapshot only
   extends rows it already has, so the tables grow per launch and per session, not per sync.
 - **Retention**, RFC 0018's: links and launches 400 days; per-call evidence 90 days or 1 GiB,
-  whichever comes first. Before `evidence_from`, attribution is the rollups' frozen columns.
+  whichever comes first. Before `evidence_from`, the rollups keep their frozen columns for the
+  doc and `status`, but a query counts that usage as `tokens_before_evidence`, never as attributed
+  (d).
 
 ### (c) The store change
 
@@ -264,10 +269,11 @@ another link of the same session covers part of that span, the overlap is ambigu
   reads it without a join.
 - `sync` recomputes attribution only for the sessions whose links or launches changed in that run,
   in the same chunked transactions as ingestion, under the read budget.
-- The hourly rollups keep their key. Their `bot`, `role` and `squad` (and new `kind` and `basis`)
-  become a cache of the evidence: when a call's attribution changes, `sync` moves its tokens from
-  the old rollup key to the new one in the same transaction. Before `evidence_from` the rollups
-  are frozen, and an empty actor there means unknown.
+- The hourly rollups keep their key, extended with `kind`, `basis` and `branch_basis`. Their actor
+  columns become a cache of the evidence: when a call's attribution changes, `sync` moves its
+  tokens from the old rollup key to the new one in the same transaction. Before `evidence_from`
+  the rollups are frozen, and an empty actor there means unknown. `branch_basis` stays on them
+  after the evidence is pruned, so a filled branch is still told apart from a logged one.
 - The store's `schema_version` goes from 2 to 3 for the evidence, `launch` and `link` tables, with
   RFC 0018 (d)'s migration rules: a generation first, the free-space refusal, one transaction.
 
@@ -287,14 +293,38 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
   (branches optional as a filter), with `squad`, the same `tokens`, `cost`, `activity` and
   `incomplete_sources` as a branch row, and `attribution.precision: actor_interval`. This is the
   row that compares bots across agents.
-- **Per row, on every row kind**, an optional `attribution.actor` object: `tokens_attributed`,
-  `tokens_ambiguous`, `tokens_unlinked`, which add up to `tokens.total`, and `tokens_by_basis`
-  (`session`, `label`, `worktree`). Before `evidence_from` all of it is null, never 0.
-- **In the envelope**, `actor_unattributed` beside `unattributed`: the repo's ambiguous and
-  unlinked tokens in the window, with their harnesses. A `--by bot` answer with any of it marks
-  every row `attribution.coverage: partial`: a bot row is then a lower bound.
-- **Branch filled from the ledger** (dsh-tui, omp) counts in branch rows as recorded usage, and
-  `attribution.actor` tells how much of a row came that way through `tokens_by_basis.worktree`.
+- **Per row, on every row kind**, an optional `attribution.actor` object with four counts that
+  add up to `tokens.total`: `tokens_attributed`, `tokens_ambiguous`, `tokens_unlinked` and
+  `tokens_before_evidence` (below). Then `tokens_by_basis` (`session`, `label`, `worktree`),
+  which adds up to `tokens_attributed`: how calls were tied to a launch. A bot row holds only
+  attributed usage, so its other three counts are 0; the rest is in the envelope (below).
+- **Where the branch came from** is its own count, apart from how the call was tied:
+  `tokens_by_branch_basis` (`log`, `ledger`, `none`), which adds up to `tokens.total`. On a branch
+  row `none` is always 0, and `ledger` is the usage whose branch was filled from a start row.
+  A Claude call tied by worktree still has its branch from its log, and a dsh-tui call tied by
+  session still has its branch from the ledger, so neither basis stands in for the other.
+- **In the envelope**, `actor_unattributed` beside `unattributed`: the repo's ambiguous, unlinked
+  and before-evidence tokens in the window, with their harnesses and a reason for each part
+  (delivery 2, D5). A bot row is a lower bound whenever any of it is above zero, and a reader
+  shows "at least". Branch rows' `attribution.coverage` keeps RFC 0018's meaning (usage with no
+  branch) and is never moved by the actor share.
+
+**A window that straddles `evidence_from`.** Two rules would keep "unknown is never 0":
+
+| | A. A fourth count, `tokens_before_evidence` | B. The whole `actor` object null |
+|---|---|---|
+| The sum | holds: four counts add up to `tokens.total` | no sum: nothing is reported |
+| d30 in M3's first 30 days | the attributed part shows, as a lower bound | no actor data at all |
+| After the 1 GiB bound prunes | the same, the pruned part counted | none until the window clears |
+| Reader's rule | "at least", as for any partial row | unknown |
+
+**Recommended: A.** Every d30 window straddles `evidence_from` for the first 30 days after M3
+lands, and again whenever the size bound prunes evidence, so B would hide all actor data exactly
+when the owner first compares bots. A keeps the sum exact and says how much is unvouched. The
+part before `evidence_from` is never counted as attributed, even where frozen rollup columns
+name a bot, because it can no longer be replayed. A window wholly before `evidence_from` has
+every token in `tokens_before_evidence` and 0 in each other count, which is a measured 0, not an
+unknown one.
 
 `attribution.precision` is `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
 type is breaking once a release carries contract 1, and M3 already plans `task_interval`. No
@@ -372,10 +402,14 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
 - Herdr starts a fresh Claude launch with a session id it chooses (`--session-id`).
 - The meter reads `worker.of`, `worker.role`, `agent.session` and `revive.session` from hc and
   reads the attach ledger. `workers.js`'s label contract is unchanged; the ledger outranks it.
-- The meter's store: `schema_version` 3, with evidence, `launch` and `link` tables, and `kind` and
-  `basis` on the rollups. Private to the meter, migrated by `sync` alone under RFC 0018 (d).
-- Query contract 1, additive: `--by bot`, `attribution.actor`, `actor_unattributed`, and the
+- The meter's store: `schema_version` 3, with evidence, `launch` and `link` tables, and `kind`,
+  `basis` and `branch_basis` on the rollups. Private to the meter, migrated by `sync` alone under
+  RFC 0018 (d).
+- Query contract 1, additive: `--by bot`, `attribution.actor` (its four counts,
+  `tokens_by_basis`, `tokens_by_branch_basis`), `actor_unattributed`, and the
   `attribution.precision` enum widened before the first release that carries contract 1.
+- Amends RFC 0018 (a): a branch may come from a worker launch's start row, with
+  `branch_basis: ledger`, for a harness that logs none.
 - Unchanged: the `herdr-meter` doc stays `schema_version` 2; its `tasks[].bots` simply fills in.
 
 ## Threat model
@@ -404,9 +438,26 @@ release.
 1. **This RFC** (docs; cuts nothing).
    *Check:* `bun scripts/lane.ts ships` on the merge says no.
 2. **The contract** (`meter/schema/query/v1/`; ships nothing). The widened
-   `attribution.precision`, `attribution.actor`, `actor_unattributed` and `--by bot`, with
-   examples: a bot row, an ambiguous share, a vouched lower bound. Merges before RFC 0017's
-   delivery 4. genie reviews.
+   `attribution.precision`, `attribution.actor` with its four counts, `tokens_by_basis` and
+   `tokens_by_branch_basis`, `actor_unattributed` and `--by bot`, with examples: a bot row, an
+   ambiguous share, a window straddling `evidence_from`, a ledger-filled branch. Merges before RFC
+   0017's delivery 4. genie reviews.
+   *Acceptance (genie's D1 to D5, required):* this is the last schema change before the first
+   meter release, so D1 to D5 are settled here; any one left open costs a contract 2 later.
+   - D1: v1 rows are keyed by branch, so a `--by bot` row fits none of them. The schema picks
+     one, before the first release: a second row definition chosen by `attribution.precision`
+     (`oneOf`), or a nullable `branch` (a widening, allowed only now). `by` is added to the query
+     echo and to `request_sha256`.
+   - D2: branch rows always carry `attribution.precision: branch_window`, whatever `--by` asks.
+   - D3: `attribution.coverage` keeps RFC 0018's meaning (usage with no branch). The actor share
+     is reported through `attribution.actor` and `actor_unattributed` only, never through
+     branch-row coverage or its vouched zero.
+   - D4: task rows get a join key that keeps same-id tasks from different checkouts of one repo
+     apart (genie mints its short ids per clone): such tasks are refused or marked ambiguous, or
+     genie makes its ids unique per repo. Delivery 2's enum and M3's task row agree on it.
+   - D5: `actor_unattributed` gives distinct reasons for usage whose launch row is on another
+     machine (Decided, 6) and for dsh-tui seats (Decided, 5), so a card can say why.
+
    *Check:* every example validates, and the crate's contract test passes on the old ones.
 3. **The Herdr rows** (herdr patch). (f) 1 to 7. The Herdr Captain reviews.
    *Check:* on a temp app home with a fake hc: a seat start row carries `core`, `created_ms`,
@@ -429,8 +480,10 @@ release.
    evidence; no session id appears in any output.
 6. **The query** (crate). (d): `--by bot`, `attribution.actor`, `actor_unattributed`, and the
    backfill recomputing attribution.
-   *Check:* the delivery 2 examples are reproduced from synthetic stores; a store before
-   `evidence_from` gives null actor fields, never 0.
+   *Check:* the delivery 2 examples are reproduced from synthetic stores; a window straddling
+   `evidence_from` puts the part before it in `tokens_before_evidence`, and the four counts add up
+   to `tokens.total`; a dsh-tui worker's filled branch counts under `ledger`, a Claude worker's
+   logged branch under `log`.
 7. **Reaching machines** (RFC 0017's deliveries 4 to 6). Deliveries 4 to 6 here ship nowhere until
    RFC 0017's delivery 4 (the meter lane) cuts a meter release and delivery 6's first step moves
    the pack's pin to it. Its delivery 5 (keys) and the rest of 6 (the signed pointer) follow on
