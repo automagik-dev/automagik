@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -547,6 +547,17 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes(`write_file(${cwd})`), "it writes in its worktree");
   assert.equal(data.permissions.allow.some((rule) => rule.startsWith("write_file(") && rule !== `write_file(${cwd})`), false);
+  assert.ok(data.permissions.allow.includes("command(hc)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `worker allow ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(data.permissions.allow.includes(`command(${tool})`), `worker allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(data.permissions.allow.includes(bad), false, `worker never allows ${bad}`);
+  }
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the bot's roster reaches its worker");
   assert.ok(data.permissions.deny.includes("command(git stash)"));
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
@@ -563,7 +574,21 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const review = JSON.parse(readFileSync(path2, "utf8"));
   assert.equal(review.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "a review worker writes nothing");
   assert.equal(review.permissions.allow.includes("command(git)"), false, "no writer shell at all");
+  for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+    assert.ok(review.permissions.allow.includes(rule), `review worker allow ${rule}`);
+  }
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)",
+    "command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(review.permissions.allow.includes(rule), false, `review worker excludes ${rule}`);
+  }
   assert.ok(review.permissions.allow.includes("command(git diff)"));
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(review.permissions.allow.includes(`command(${tool})`), `review worker allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
+  }
 });
 
 test("worker #823: a template that runs agy is rebuilt with --settings and its task, or says it can't take the list", (t) => {

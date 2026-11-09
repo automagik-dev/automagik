@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
-import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -790,6 +790,16 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.equal(statSync(join(s.app, "automagik-herdr/agy-settings")).mode & 0o777, 0o700, "in a private folder");
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes("command(hc)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `writer seat allow ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(data.permissions.allow.includes(`command(${tool})`), `seat allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(data.permissions.allow.includes(bad), false, `seat never allows ${bad}`);
+  }
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's allow is added");
   assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "a bot writes in its project");
   for (const rule of ["command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)"]) {
@@ -804,6 +814,8 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(data.permissions.deny.includes("command(git stash)"), "the roster's deny is added");
   // Restart: the same file, rewritten from the source as it is now, and resumed with it.
   f.bots[0].agyPermissions = { allow: ["command(npm publish)", "command(bun publish)"], deny: [] };
+  f.bots[2].agent = "antigravity";
+  f.bots[2].rank = "reviewer";
   s.seed(f);
   const restarted = s.cli(["restart", "Genie", "--force", "--json"]);
   assert.equal(restarted.code, 0, restarted.err);
@@ -814,6 +826,27 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(again.permissions.allow.includes("command(bun publish)"));
   assert.equal(statSync(path).mode & 0o777, 0o600);
   for (const rule of AGY_FIXED_DENY) assert.ok(again.permissions.deny.includes(rule));
+  // A reviewer seat (#840) gets all 24 read-only shell tools, no write_file, no writer-only tools, no launchers.
+  const revStarted = s.cli(["start", "Dev"]);
+  assert.equal(revStarted.code, 0, revStarted.err);
+  const revData = JSON.parse(readFileSync(agySettingsPath(s, ID.dev), "utf8"));
+  for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+    assert.ok(revData.permissions.allow.includes(rule), `reviewer seat allow ${rule}`);
+  }
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(revData.permissions.allow.includes(`command(${tool})`), `reviewer seat allow command(${tool})`);
+  }
+  assert.equal(revData.permissions.allow.some((r) => r.startsWith("write_file(")), false);
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(revData.permissions.allow.includes(bad), false, `reviewer seat never allows ${bad}`);
+  }
 });
 
 test("Antigravity #823: a symlinked permission folder or file is refused, never followed", (t) => {
