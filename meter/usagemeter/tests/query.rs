@@ -1228,12 +1228,13 @@ fn every_measured_row_keeps_three_questions_apart() {
 /// 6 (the query), so until then they are schema-only: they validate against the schema and pass
 /// the sum checks below, but no store is built for them and no meter answer is compared with
 /// them. Delivery 6 empties this list and adds a scenario for each.
-const SCHEMA_ONLY: [&str; 8] = [
+const SCHEMA_ONLY: [&str; 9] = [
     "actor-ambiguous",
     "actor-ledger-branch",
     "actor-no-evidence",
     "actor-straddling-evidence",
     "by-bot",
+    "by-bot-backlog",
     "by-bot-lower-bound",
     "by-bot-no-evidence",
     "by-bot-unfiltered",
@@ -1534,7 +1535,7 @@ fn request_sha256_covers_by_on_every_example() {
         }
         assert_eq!(q["request_sha256"], meter::event::hex(&h.finalize()), "{n}");
     }
-    assert_eq!(by, 4, "the bot examples");
+    assert_eq!(by, 5, "the bot examples");
 }
 
 #[test]
@@ -1684,6 +1685,39 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
     let mut v = example("by-bot-lower-bound");
     v["actor_unattributed"]["parts"][1]["tokens_total"] = json!(0);
     bad.push(("an empty part", v));
+
+    // A bot with no row is 0 only when nothing is unattributed and RFC 0018's zero conditions hold
+    // for the whole answer (the Fixer's M1): otherwise absent_bot_is_zero is false, and it is
+    // unknown.
+    let mut v = example("by-bot");
+    v["ingestion"]["complete"] = json!(false);
+    v["ingestion"]["backlog"] = json!({"bytes": null, "files": null});
+    bad.push(("an absent bot as 0 beside an unknown backlog", v));
+    let mut v = example("by-bot-backlog");
+    v["actor_unattributed"]["absent_bot_is_zero"] = json!(true);
+    bad.push(("an absent bot as 0 beside a backlog", v));
+    let mut v = example("by-bot");
+    v["ingestion"]["stale"] = json!(true);
+    v["rows"].as_array_mut().unwrap().iter_mut().for_each(|r| {
+        r["state"] = json!("stale");
+        r["reason"] = json!("ingestion_stale");
+    });
+    bad.push(("an absent bot as 0 while ingestion is stale", v));
+    let mut v = example("by-bot");
+    v["window"]["clipped"] = json!(true);
+    bad.push(("an absent bot as 0 in a clipped window", v));
+    let mut v = example("by-bot");
+    v["sources"][1]["status"] = json!("degraded");
+    bad.push(("an absent bot as 0 beside a degraded source", v));
+    let mut v = example("by-bot-lower-bound");
+    v["actor_unattributed"]["absent_bot_is_zero"] = json!(true);
+    bad.push(("an absent bot as 0 beside unattributed usage", v));
+    let mut v = example("by-bot");
+    remove(&mut v["actor_unattributed"], "absent_bot_is_zero");
+    bad.push((
+        "actor_unattributed that does not say what an absent bot is",
+        v,
+    ));
 
     // While evidence_from is null, every token is before evidence (RFC 0021 (d)).
     for k in ["tokens_attributed", "tokens_ambiguous", "tokens_unlinked"] {

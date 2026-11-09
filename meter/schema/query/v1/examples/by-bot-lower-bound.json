@@ -109,7 +109,8 @@
           "claude-code"
         ]
       }
-    ]
+    ],
+    "absent_bot_is_zero": false
   },
   "pricing": {
     "table": {

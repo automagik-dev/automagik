@@ -161,7 +161,7 @@
       ]
     },
     "actor_unattributed": {
-      "description": "RFC 0021 (d): the repo's usage in the window that no bot row holds, whatever the branches named: ambiguous, unlinked, and before evidence_from, each part with its reason and harnesses. Present exactly when the meter reports actors (every --by bot answer, and every answer whose rows carry attribution.actor); absent from a meter that does not (contract 1 before RFC 0021 delivery 6). Above 0, every bot row is a lower bound (\"at least\"), and a bot with no row is unknown, never 0. Never moves a branch row's attribution.coverage (RFC 0021 D3).",
+      "description": "RFC 0021 (d): the repo's usage in the window that no bot row holds, whatever the branches named: ambiguous, unlinked, and before evidence_from, each part with its reason and harnesses. Present exactly when the meter reports actors (every --by bot answer, and every answer whose rows carry attribution.actor); absent from a meter that does not (contract 1 before RFC 0021 delivery 6). Above 0, every bot row is a lower bound (\"at least\"). A bot with no row is 0 only when absent_bot_is_zero is true; otherwise it is unknown, never 0. Never moves a branch row's attribution.coverage (RFC 0021 D3).",
       "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/actorUnattributed" }]
     },
     "pricing": {
@@ -206,7 +206,7 @@
             "window": { "enum": ["d1", "d7", "d30"] },
             "by": {
               "enum": ["bot"],
-              "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)). Absent for branch rows, whether or not --by branch was passed. M3 adds task (RFC 0018, --by task), which only a reader that asks for it meets."
+              "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)); a bot with no row is 0 only when actor_unattributed.absent_bot_is_zero is true, else unknown. Absent for branch rows, whether or not --by branch was passed. M3 adds task (RFC 0018, --by task), which only a reader that asks for it meets."
             },
             "branch_count": { "type": "integer", "minimum": 0, "description": "Branches named, duplicates counted." },
             "branches": {
@@ -452,6 +452,24 @@
               "parts": { "items": { "properties": { "state": { "const": "before_evidence" } } } }
             }
           }
+        }
+      }
+    },
+    {
+      "description": "RFC 0021 (d), the Fixer's M1 on #825: an absent bot is 0 only when RFC 0018's zero conditions hold for the whole answer, as they must for a zero branch row.",
+      "if": {
+        "required": ["actor_unattributed"],
+        "properties": { "actor_unattributed": { "type": "object", "properties": { "absent_bot_is_zero": { "const": true } } } }
+      },
+      "then": {
+        "properties": {
+          "status": { "const": "ok" },
+          "ingestion": {
+            "type": "object",
+            "properties": { "complete": { "const": true }, "stale": { "const": false }, "watermark": { "type": "string" } }
+          },
+          "window": { "type": "object", "properties": { "clipped": { "const": false } } },
+          "sources": { "items": { "properties": { "status": { "enum": ["ok", "absent"] } } } }
         }
       }
     }
@@ -810,8 +828,15 @@
     "actorUnattributed": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tokens_total", "tokens_ambiguous", "tokens_unlinked", "tokens_before_evidence", "parts"],
+      "required": [
+        "tokens_total", "tokens_ambiguous", "tokens_unlinked", "tokens_before_evidence", "parts",
+        "absent_bot_is_zero"
+      ],
       "properties": {
+        "absent_bot_is_zero": {
+          "type": "boolean",
+          "description": "Whether a bot with no row in this answer had no usage in the repo and window (a real 0). True only when tokens_total is 0 and RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a watermark, the window not clipped, every source ok or absent (no legacy-store), and the repo seen in this store. Otherwise false, and a bot with no row is unknown, never 0 (RFC 0021 (d))."
+        },
         "tokens_total": { "type": "integer", "minimum": 0, "description": "tokens_ambiguous + tokens_unlinked + tokens_before_evidence." },
         "tokens_ambiguous": { "type": "integer", "minimum": 0 },
         "tokens_unlinked": { "type": "integer", "minimum": 0 },
@@ -854,6 +879,11 @@
           "if": { "properties": { "tokens_total": { "const": 0 } } },
           "then": { "properties": { "parts": { "maxItems": 0 } } },
           "else": { "properties": { "parts": { "minItems": 1 } } }
+        },
+        {
+          "description": "An absent bot is 0 only when no usage is left unattributed.",
+          "if": { "properties": { "absent_bot_is_zero": { "const": true } } },
+          "then": { "properties": { "tokens_total": { "const": 0 } } }
         }
       ]
     }
