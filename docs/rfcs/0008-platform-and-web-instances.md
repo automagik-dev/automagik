@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md): questions 2, 6 and 7, and the threat model's Authentication line) |
+| Status | Draft (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md): the Summary, Web instances, the desktop client, Contracts, the threat model's Authentication and Undo lines, and questions 2, 6 and 7) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); release tooling |
 | Created | 2026-10-30 |
@@ -12,7 +12,10 @@
 Four platform pieces: an `install.sh` for Linux (headless or desktop) and WSL, Windows builds,
 official web instances, and the desktop app as a client of a web instance with OIDC sign-in.
 Every major choice is an open question with a recommendation. Nothing is scheduled until the
-questions are answered.
+questions are answered. *Amended by RFC 0024 (2026-11-09):* a self-hosted web instance's
+sign-in is its owner's local claim and passkeys behind an Automagik gate, not an OIDC provider;
+OIDC is Automagik Cloud's, and the desktop signs in to a remote instance or to Cloud through the
+system browser (RFC 8252).
 
 ## Motivation
 
@@ -45,13 +48,22 @@ remote server.
   SSH tunnel.
 - With sign-in: TLS in front, OIDC with PKCE, `state` and `nonce`, issuer and audience checks,
   and session cookies set `HttpOnly`, `Secure` and `SameSite`.
+- *Amended by RFC 0024 (2026-11-09), the two bullets above:* the instance listens on loopback
+  only until its owner claims it, with a one-time code shown only on the host; then an
+  Automagik gate in front of a loopback DSH signs the owner in with passkeys, on `localhost` or
+  a stable HTTPS name (TLS in front for anything off the machine), with `__Host-` session
+  cookies bound to their origin. OIDC with PKCE, `state`, `nonce`, issuer and audience checks is
+  how Automagik Cloud signs people in, not a self-hosted instance.
 - Features that act like a shell relay stay off on a web instance until sign-in is reviewed.
   The Herdr relay (RFC 0006) is the first.
 
 ### The desktop app as a client
 
 - Settings get "Connect to a web instance": the user enters its address and signs in in the
-  browser flow. The app then opens that instance instead of starting a local DSH.
+  browser flow. The app then opens that instance instead of starting a local DSH. *Amended by
+  RFC 0024 (2026-11-09):* the app keeps its local DSH beside remote instances, as the "This
+  computer" tile of the Cloud rail, with one tile active at a time (question 7); a remote
+  sign-in goes through the system browser and a loopback redirect (RFC 8252).
 - Tokens are stored with the OS's secure storage, never in a plain file.
 - The "where it runs" strip (RFC 0004) shows the instance name instead of "This computer".
 
@@ -60,7 +72,9 @@ remote server.
 - `install.sh` flags and install paths. Compatibility: a host installed by hand keeps working;
   the script adopts it only when asked.
 - The desktop setting for a remote instance. Compatibility: off for every existing install.
-- The OIDC client registration for web instances. New.
+- The OIDC client registration for web instances. New. *Amended by RFC 0024 (2026-11-09):* no
+  OIDC client for self-hosted web instances; their sign-in is the gate's claim and passkeys. The
+  one OIDC client is Automagik Cloud's, registered with its identity service.
 
 ## Threat model
 
@@ -80,7 +94,9 @@ boundary in the roadmap.
   connected to.
 - **install.sh.** Pinned versions, checksum and signature checks, no unchecked download.
 - **Windows.** Signed builds, or an explicit unsigned label.
-- **Undo.** Stop the service, revoke the OIDC client, remove the desktop setting.
+- **Undo.** Stop the service, revoke the OIDC client, remove the desktop setting. *Amended by
+  RFC 0024 (2026-11-09):* for a self-hosted web instance, the gate's host reset or a release
+  without the gate replaces revoking an OIDC client; revoking a client is Cloud's undo.
 
 ## Deliveries
 
@@ -91,7 +107,8 @@ and a rollback when this RFC is accepted.
 ## Open questions
 
 1. **Who hosts official web instances?** Recommended: self-hosted first, on the user's own
-   server through `install.sh --headless`. A hosted offer later, as its own RFC.
+   server through `install.sh --headless`. A hosted offer later, as its own RFC. *That RFC is
+   [0024](0024-automagik-cloud.md), Automagik Cloud (2026-11-09).*
 2. **Which sign-in provider?** Recommended: any standard OIDC provider the instance owner
    configures, with one documented default. *Amended by RFC 0024 (2026-11-09):* a self-hosted
    web instance signs its one owner in with a local claim and passkeys, checked by the instance
