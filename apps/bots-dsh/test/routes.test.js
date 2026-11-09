@@ -11,8 +11,6 @@ test('each provider id has one route', () => {
     deepseek: { harness: 'dsh', connectedBy: 'native' },
     'deepseek-account': { harness: 'dsh', connectedBy: 'native' },
     'openai-codex': { harness: 'dsh', connectedBy: 'pi-ai' },
-    codex: { harness: 'dsh', connectedBy: 'pi-ai' },
-    claude: { harness: 'dsh', connectedBy: 'pi-ai' },
     'claude-code': { harness: 'claude-code', connectedBy: 'claude-code-plugin' },
     'claude-code-devbox': { harness: 'claude-code', connectedBy: 'claude-code-plugin' },
     'acp-claude': { harness: 'claude-code', connectedBy: 'acp' },
@@ -27,6 +25,8 @@ test('each provider id has one route', () => {
   for (const id of ['acp-claude', 'acp-codex', 'acp-gemini']) assert.ok(HARNESSES.includes(routeOf(id).harness))
   // Without a directory, dsh-subscriptions' own plans still read as pi-ai.
   assert.equal(routeOf('grok').connectedBy, 'pi-ai')
+  // dsh-subscriptions no longer ships codex or claude: those plans are their CLIs' (acp-*).
+  for (const id of ['codex', 'claude']) assert.equal(routeOf(id).connectedBy, 'native', id)
 })
 
 test('every model in the catalog carries its route, and nothing about the ref changes', async () => {

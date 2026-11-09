@@ -49,27 +49,13 @@ export const POCKET_LINK = "pocket-link";
  */
 export const OFF_BY_DEFAULT = Object.freeze(["am-automations", "am-quota"]);
 /**
- * The usagemeter release install.sh installs to ~/.local/bin/usagemeter (Group 6c): the binary for
- * `<os>-<arch>`, checked against that release's SHA256SUMS and against the sha256 pinned here (the
- * release's SHA256SUMS proves the download is whole, `sha256` that it is the build this pack
- * pinned). install.sh carries the same version and hashes (a test keeps them equal), and
- * `node scripts/usagemeter-pin.mjs` (CI) checks them against the release itself. The binary is
- * shared with Pocket Link: never downgraded.
+ * Where install.sh and `automagik-herdr meter install` get usagemeter, the shared binary at
+ * ~/.local/bin/usagemeter (Group 6c; Pocket Link runs it too, so it is never downgraded): the
+ * signed pointer on this repository's rolling `lane` release names the newest build, per target
+ * with its sha256 (meterLane.mjs checks it against meter-keys.json; RFC 0017 delivery 6). No version
+ * or hash is pinned here any more.
  */
-export const USAGEMETER = Object.freeze({
-  repo: "automagik-dev/usagemeter",
-  version: "0.3.0",
-  assets: Object.freeze({
-    "darwin-arm64": "usagemeter-darwin-arm64", "darwin-x86_64": "usagemeter-darwin-x86_64",
-    "linux-x86_64": "usagemeter-linux-x86_64", "linux-aarch64": "usagemeter-linux-aarch64",
-  }),
-  sha256: Object.freeze({
-    "usagemeter-darwin-arm64": "80542d40e71369359cc1048c2d3a00b5703a10657651ca36e4207dfcf7d9824f",
-    "usagemeter-darwin-x86_64": "f44107b3b5482b58e8592d482a01299c559ab71ded4d68a5c76b597c96ae6670",
-    "usagemeter-linux-aarch64": "fa08460ebba5f4670bfa5777340c9ac20c89788f560bfadd24aeb30babdcfff4",
-    "usagemeter-linux-x86_64": "25094c783abf14081d03547596e109b8601b7b47b8efccf76fa4473141cc26c6",
-  }),
-});
+export const USAGEMETER = Object.freeze({ repo: "automagik-dev/automagik", lane: "meter-lane" });
 /** The one layout the pack ships, beside the mod folders in the tarball. */
 export const PACK_LAYOUT = "layouts/automagik.json";
 
@@ -171,7 +157,8 @@ export const sumsName = (version) => `${tarballName(version)}.sha256`;
  * (install.sh refuses an older pointer), `off=<mods>` in a kept set's .pack only: the folders it
  * holds that were switched off (mods-disabled/) when kept, so a rollback puts them back off,
  * `usagemeter=<version>` when install.sh put the usagemeter binary in ~/.local/bin (--uninstall
- * removes only that one), `usagemeter-machines=<machine>:<version>,…` for the linked machines the
+ * removes only that one), `usagemeter-sequence=<n>` the highest meter-lane pointer sequence this
+ * install took (a lower one is refused), `usagemeter-machines=<machine>:<version>,…` for the linked machines the
  * pack put it on (meterFleet.js), and `usagemeter-scope=all|local|none`, what the person chose
  * (install.sh: all by default, local with --usagemeter-local-only, none with --no-usagemeter;
  * `automagik-herdr meter install` sets all, or local with --local). An older install.sh wrote no
@@ -197,6 +184,7 @@ export function parseMarker(text) {
     migrated: list(get("migrated")).filter((p) => ADOPTED_PATH.test(p)),
     installed: ISO_TIME.test(get("installed")) ? get("installed") : null,
     usagemeter: /^\d+\.\d+\.\d+$/.test(get("usagemeter")) ? get("usagemeter") : null,
+    usagemeterSequence: /^\d{1,15}$/.test(get("usagemeter-sequence")) ? Number(get("usagemeter-sequence")) : null,
     usagemeterOn: Object.fromEntries(list(get("usagemeter-machines")).map((e) => [e.slice(0, e.lastIndexOf(":")), e.slice(e.lastIndexOf(":") + 1)])
       .filter(([m, v]) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(m) && /^\d+\.\d+\.\d+$/.test(v))),
     usagemeterScope: ["all", "local", "none"].includes(get("usagemeter-scope")) ? get("usagemeter-scope") : null,
@@ -209,7 +197,7 @@ export function parseMarker(text) {
 export const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 export const formatMarker = ({ version, mods, layout, before = "none", adopted = [], migrated = [], installed = null, sequence = null,
-  usagemeter = null, usagemeterOn = {}, usagemeterScope = null, off = [] }) =>
+  usagemeter = null, usagemeterSequence = null, usagemeterOn = {}, usagemeterScope = null, off = [] }) =>
   [`version=${version}`, `mods=${mods.join(",")}`, ...(layout ? [`layout=${layout}`] : []), `before=${before}`,
     ...(adopted.length ? [`adopted=${adopted.map((a) => `${a.mod}:${a.path}`).join(",")}`] : []),
     ...(migrated.length ? [`migrated=${migrated.join(",")}`] : []),
@@ -218,6 +206,7 @@ export const formatMarker = ({ version, mods, layout, before = "none", adopted =
     ...(Number.isSafeInteger(sequence) ? [`sequence=${sequence}`] : []),
     ...(off?.length ? [`off=${off.join(",")}`] : []),
     ...(usagemeter ? [`usagemeter=${usagemeter}`] : []),
+    ...(Number.isSafeInteger(usagemeterSequence) ? [`usagemeter-sequence=${usagemeterSequence}`] : []),
     ...(Object.keys(usagemeterOn ?? {}).length ? [`usagemeter-machines=${Object.entries(usagemeterOn).map(([m, v]) => `${m}:${v}`).join(",")}`] : []),
     ...(usagemeterScope ? [`usagemeter-scope=${usagemeterScope}`] : [])].join("\n") + "\n";
 /** Set to 1 to never ask GitHub (the CLI's update --check, the mod's notice). */

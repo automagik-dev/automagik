@@ -16,8 +16,10 @@ export const HARNESSES = Object.freeze(['dsh', 'claude-code', 'codex', 'gemini']
 // The settings namespace DSH's pi-ai adapter (dsh-llm-pi-ai) declares its routes under.
 export const PI_AI_NS = 'llm-pi-ai'
 // dsh-subscriptions registers its plans straight on the adapter registry, with no directory
-// entry: its own route ids (adapter-manager.js, 0.7.21).
-export const SUBSCRIPTION_ROUTES = Object.freeze(['codex', 'claude', 'grok', 'antigravity'])
+// entry: its own route ids (adapter-manager.js, 0.7.21). It no longer ships `codex` or `claude`
+// (0.7.21-omni.1's BUILTIN_PROVIDERS): ChatGPT and Claude plans run on their CLIs (acp-codex,
+// acp-claude), so an id of those is not a plan route here.
+export const SUBSCRIPTION_ROUTES = Object.freeze(['grok', 'antigravity'])
 
 // The agent an ACP route runs, and the harness that agent is. ACP ids never start with
 // claude-code: those are the Claude Code plugin's.

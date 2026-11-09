@@ -95,13 +95,15 @@ test('the model line names the model and its provider, and "change" opens the mo
   const [trigger] = nodes(closed, node => node.type === 'button')
   assert.equal(trigger.children[0], 'change')
   assert.equal(trigger.props['aria-haspopup'], 'menu')
-  // Open, the menu lists the models and leads to the providers.
+  // Open, the menu lists the connections and leads to the providers.
   menuOpen = true
   try {
     const open = drawMenu({ ...menu.props, actions: { openHarnessSettings: () => {} } })
-    const items = nodes(open, node => node.type === 'button').map(button => button.children.map(child => (typeof child === 'string' ? child : nodes(child, n => n.props.className === 'bt-menu-label')[0]?.children[0] ?? '')).join(''))
-    assert.equal(nodes(open, node => node.type?.name === 'ModelRows')[0].props.current, 'anthropic/claude-opus-5-5')
-    assert.ok(items.includes('Models and providers…'))
+    const steps = nodes(open, node => node.type?.name === 'ModelSteps')[0]
+    assert.equal(steps.props.current, 'anthropic/claude-opus-5-5')
+    const drawn = steps.type(steps.props)
+    const items = nodes(drawn, node => node.type === 'button').map(button => nodes(button, n => n.props.className === 'bt-menu-label')[0]?.children[0] ?? '')
+    assert.deepEqual(items, ['Anthropic', 'DeepSeek', 'Ollama', 'Models and providers…'])
   } finally {
     menuOpen = false
   }
@@ -311,4 +313,227 @@ test('the menu leaves out a superseded model, unless the Bot is on it', () => {
   // A Bot saved on an older Claude still sees, and keeps, the model it is on.
   assert.deepEqual(Array.from(offeredModels(models, 'anthropic/claude-opus-4-7'), model => model.ref), ['anthropic/claude-opus-5-5', 'anthropic/claude-opus-4-7', 'acp-claude/default'])
   assert.equal(offeredModels(undefined, undefined).length, 0)
+})
+
+// A Bot's settings say what its model really did (model-state.js): a failed switch and the
+// model it stays on, a model that needs a sign-in, a switch not answered yet. A pick or a
+// started request never reads as an answer.
+test('the model hint is honest about a switch: failed and kept, needs a sign-in, not answered yet', () => {
+  const { modelHint, modelStateLine } = module.exports
+  const models = [
+    { ref: 'deepseek/v4', provider: 'deepseek', providerName: 'DeepSeek', name: 'DeepSeek V4' },
+    { ref: 'acp-codex/default', provider: 'acp-codex', providerName: 'Codex', name: 'Codex' },
+  ]
+  const roster = { ready: true, byId: {}, models }
+  const bot = { id: 'b1', name: 'Ops', model: 'deepseek/v4', appliedModel: 'deepseek/v4' }
+  const kept = code => ({ selected: 'deepseek/v4', previousModel: 'deepseek/v4', pending: false, answered: false, lastFailure: { code, ref: 'acp-codex/default', kept: 'deepseek/v4' } })
+  assert.equal(modelHint(bot, roster, kept('MODEL_SWITCH_COMPACTION_FAILED')), 'Codex could not take over this conversation. This Bot stays on DeepSeek V4.')
+  assert.equal(modelHint(bot, roster, kept('MODEL_ACCESS_REQUIRED')), 'Codex needs a sign-in before it can answer. This Bot stays on DeepSeek V4.')
+  assert.equal(modelHint(bot, roster, kept('INVALID_REQUEST')), 'Codex did not answer. This Bot stays on DeepSeek V4.')
+  const onCodex = { ...bot, model: 'acp-codex/default', appliedModel: 'acp-codex/default' }
+  assert.equal(modelHint(onCodex, roster, { selected: 'acp-codex/default', previousModel: 'deepseek/v4', pending: true, answered: false }), 'Switching to this model. It has not answered yet.')
+  assert.equal(modelHint(onCodex, roster, { selected: 'acp-codex/default', previousModel: null, pending: false, answered: false, lastFailure: { code: 'MODEL_ACCESS_REQUIRED', ref: 'acp-codex/default' } }), 'Codex needs a sign-in before it can answer.')
+  // Nothing to say: the hint it always had.
+  assert.equal(modelHint(bot, roster, { selected: 'deepseek/v4', previousModel: null, pending: false, answered: true }), 'Every message of this Bot runs on it.')
+  assert.equal(modelHint(bot, roster, undefined), 'Every message of this Bot runs on it.')
+  assert.equal(modelStateLine(undefined, roster), undefined)
+  // A failure that did not go back (a provider error on a confirmed model) is not a switch line.
+  assert.equal(modelStateLine({ selected: 'deepseek/v4', pending: false, lastFailure: { code: 'NETWORK', ref: 'deepseek/v4' } }, roster), undefined)
+})
+
+// The menu's connections (D-d): only what is set up, named by connection, then model, then
+// level; the Bot's own model always shows, and says when it cannot run.
+const lineup = [
+  { ref: 'deepseek/flash', provider: 'deepseek', providerName: 'DeepSeek', name: 'DeepSeek Flash' },
+  { ref: 'anthropic/claude-opus-5-5', provider: 'anthropic', providerName: 'Anthropic', via: 'key', name: 'Claude Opus 5.5' },
+  { ref: 'openai/gpt-5.6', provider: 'openai', providerName: 'OpenAI', via: 'key', name: 'GPT-5.6', needsKey: true },
+  { ref: 'openai-codex/gpt-5.6-sol', provider: 'openai-codex', providerName: 'ChatGPT', via: 'signin', name: '5.6 Sol', covered: true },
+  { ref: 'openai-codex/gpt-5.6-luna', provider: 'openai-codex', providerName: 'ChatGPT', via: 'signin', name: '5.6 Luna', covered: true },
+  { ref: 'acp-codex/gpt-5.6-sol', provider: 'acp-codex', providerName: 'Codex', via: 'cli', name: '5.6 Sol' },
+  { ref: 'acp-claude/default', provider: 'acp-claude', providerName: 'Claude Code', via: 'cli', name: 'Claude Code', needsSignIn: true },
+]
+
+test('a connection is named by its brand and how it is connected', () => {
+  const { connectionOf } = module.exports
+  assert.deepEqual(lineup.map(connectionOf), ['DeepSeek', 'Anthropic · API key', 'OpenAI · API key', 'ChatGPT · sign-in', 'ChatGPT · sign-in', 'Codex', 'Claude Code'])
+  assert.equal(connectionOf({ ref: 'custom/flash' }), 'custom')
+})
+
+test('the menu offers only what is set up, and never the same model twice', () => {
+  const groups = refs => Array.from(groupModels(offeredModels(lineup, refs)), ([label, list]) => [label, Array.from(list, model => model.ref)])
+  assert.deepEqual(groups('deepseek/flash'), [
+    ['DeepSeek', ['deepseek/flash']],
+    ['Anthropic · API key', ['anthropic/claude-opus-5-5']],
+    ['Codex', ['acp-codex/gpt-5.6-sol']],
+  ])
+  // DSH's own ChatGPT sign-in is no connection: Codex serves that plan (D-a, D-c).
+  // The Bot's own model stays, set up or not.
+  assert.deepEqual(groups('acp-claude/default').at(-1), ['Claude Code', ['acp-claude/default']])
+  // A Bot still on it sees only its own model there, marked as not available.
+  assert.deepEqual(groups('openai-codex/gpt-5.6-sol')[2], ['ChatGPT · sign-in', ['openai-codex/gpt-5.6-sol']])
+  assert.equal(module.exports.unavailableModel(lineup[3]), true)
+  // One no longer served shows too, first, under its provider id.
+  assert.deepEqual(groups('gone/model')[0], ['gone', ['gone/model']])
+})
+
+test('the Bot\'s model that cannot run is marked in the menu, its trigger and its hint', () => {
+  const { modelHint } = module.exports
+  const bot = { id: 'b1', name: 'Ops', model: 'acp-claude/default', appliedModel: 'acp-claude/default' }
+  const roster = { ready: true, byId: { b1: bot }, models: lineup, defaultModel: 'deepseek/flash' }
+  const props = { bot, roster, actions: { updateBot: () => Promise.resolve() }, run: promise => promise }
+  const trigger = drawMenu(props)
+  const button = nodes(trigger, node => node.props.className === 'bt-model-trigger')[0]
+  assert.equal(button.props['data-missing'], '')
+  assert.equal(nodes(button, node => node.props.className === 'bt-model-provider')[0].children[0], 'Claude Code · not available')
+  assert.equal(modelHint(bot, roster, undefined), 'Claude Code needs a sign-in before it can answer.')
+  menuOpen = true
+  try {
+    const open = drawMenu(props)
+    const steps = nodes(open, node => node.type?.name === 'ModelSteps')[0]
+    // Step 1: the set-up connections, and the Bot's own one, which says it cannot run.
+    const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+    const hint = row => nodes(row, node => node.props.className === 'bt-menu-hint')[0]?.children[0]
+    const label = row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0]
+    assert.deepEqual(first.map(row => [label(row), hint(row) ?? null]), [
+      ['DeepSeek', null], ['Anthropic · API key', null], ['Codex', null], ['Claude Code', 'Default · Not available'],
+    ])
+    assert.equal(first.at(-1).props['aria-label'], 'Claude Code, current model Default · Not available')
+    // Step 2: that connection's models; the agent's own default is no second "Claude Code".
+    const second = steps.type({ ...steps.props, view: { step: 'models', provider: 'acp-claude' } })
+    const rows = nodes(second, node => node.props.role === 'menuitemradio')
+    assert.deepEqual(rows.map(row => [row.props.title, label(row), hint(row) ?? null]), [['acp-claude/default', 'Default', 'Not available']])
+    assert.equal(rows[0].props['aria-label'], 'Default · Not available')
+    const deepseek = nodes(steps.type({ ...steps.props, view: { step: 'models', provider: 'deepseek' } }), node => node.props.role === 'menuitemradio')
+    assert.deepEqual(deepseek.map(row => [row.props.title, hint(row)]), [['deepseek/flash', 'Default']])
+  } finally {
+    menuOpen = false
+  }
+  // Set up: the trigger names the connection, nothing is marked.
+  const fine = { ...bot, model: 'anthropic/claude-opus-5-5', appliedModel: 'anthropic/claude-opus-5-5' }
+  const ok = nodes(drawMenu({ ...props, bot: fine, roster: { ...roster, byId: { b1: fine } } }), node => node.props.className === 'bt-model-trigger')[0]
+  assert.equal(ok.props['data-missing'], undefined)
+  assert.equal(nodes(ok, node => node.props.className === 'bt-model-provider')[0].children[0], 'Anthropic · API key')
+})
+
+test('the dock offers only what is set up, and a missing sign-in never asks for a key', () => {
+  const buttons = tree => nodes(tree, node => node.type === 'button').map(button => button.children[0])
+  // Lost model: the choices are the set-up connections only.
+  const { tree } = dock(lineup, { model: 'gone/flash', harness: false })
+  assert.deepEqual(nodes(tree, node => node.props.className === 'bt-model-choice-group').map(group => group.props['aria-label']), ['DeepSeek', 'Anthropic · API key', 'Codex'])
+  // Only sign-ins missing, no key missing: setup choices, no key card.
+  const signedOut = lineup.filter(model => model.needsSignIn)
+  const bot = { id: 'chief', name: 'Omni' }
+  const bare = ModelChoiceDock({ sessionId: bot.id, useRoster: select => select({ ready: true, byId: { chief: bot }, models: signedOut }), actions: { setProviderKey: () => {}, openHarnessOnboarding: () => {} } })
+  assert.equal(nodes(bare, node => node.props.model !== undefined).length, 0)
+  assert.deepEqual(buttons(bare), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key'])
+})
+
+// The menu goes in steps (connection, then model, then level): the connections set up with the
+// current one marked, a connection's models, and a model's levels when it has them.
+const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }
+const cascade = [
+  { ref: 'deepseek/flash', provider: 'deepseek', providerName: 'DeepSeek', name: 'DeepSeek Flash' },
+  { ref: 'deepseek/pro', provider: 'deepseek', providerName: 'DeepSeek', name: 'DeepSeek Pro', reasoning: levels },
+  { ref: 'acp-codex/default', id: 'default', provider: 'acp-codex', providerName: 'Codex', via: 'cli', name: 'Codex', resolvesTo: '6.1 Sol', reasoning: levels },
+  { ref: 'acp-codex/gpt-6.1-sol', id: 'gpt-6.1-sol', provider: 'acp-codex', providerName: 'Codex', via: 'cli', name: '6.1 Sol' },
+]
+
+function openMenu({ bot = { id: 'b1', name: 'Ops', model: 'acp-codex/default', appliedModel: 'acp-codex/default', effort: 'high' }, chat = false, onPick, onPickEffort } = {}) {
+  const updates = []
+  const chosen = []
+  const actions = {
+    updateBot: (id, patch) => { updates.push([id, { ...patch }]); return Promise.resolve() },
+    chooseModelInChat: (id, ref, patch) => { chosen.push([id, ref, { ...patch }]); return Promise.resolve() },
+    openHarnessSettings: () => {},
+  }
+  const roster = { ready: true, byId: { [bot.id]: bot }, models: cascade, defaultModel: 'deepseek/flash' }
+  menuOpen = true
+  try {
+    const open = drawMenu({ bot, roster, actions, run: promise => promise, chat, onPick, onPickEffort })
+    const steps = nodes(open, node => node.type?.name === 'ModelSteps')[0]
+    const step = view => steps.type({ ...steps.props, view: view ?? steps.props.view })
+    return { steps, step, updates, chosen, open }
+  } finally {
+    menuOpen = false
+  }
+}
+const labelOf = row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0]
+const hintOf = row => nodes(row, node => node.props.className === 'bt-menu-hint')[0]?.children[0] ?? null
+
+test('step 1 lists the connections, marks the current one with its model and level, and ends on the providers', () => {
+  const { step, steps } = openMenu()
+  assert.equal(steps.props.view.step, 'connections')
+  const tree = step()
+  const rows = nodes(tree, node => node.type === 'button')
+  assert.deepEqual(rows.map(row => [labelOf(row), hintOf(row)]), [
+    ['DeepSeek', null], ['Codex', 'Default (6.1 Sol) · High'], ['Models and providers…', null],
+  ])
+  assert.deepEqual(rows.slice(0, 2).map(row => [row.props.role, row.props['aria-haspopup'], row.props['data-current'] ?? null]), [['menuitem', 'menu', null], ['menuitem', 'menu', '']])
+  assert.equal(rows[1].props['aria-label'], 'Codex, current model Default (6.1 Sol) · High')
+  // The current connection carries the tick; no model row and no level row on this step.
+  assert.deepEqual(rows.slice(0, 2).map(row => nodes(row, node => node.type?.name === 'Tick')[0].props.on), [false, true])
+  assert.equal(nodes(tree, node => node.props.role === 'menuitemradio').length, 0)
+})
+
+test('step 2 is one connection\'s models with a way back; a model with levels says another step follows', () => {
+  const { step } = openMenu()
+  const tree = step({ step: 'models', provider: 'acp-codex' })
+  const [backRow] = nodes(tree, node => node.props.className === 'bt-model-back')
+  assert.equal(backRow.props['aria-label'], 'Back to connections')
+  assert.equal(labelOf(backRow), 'Codex')
+  const rows = nodes(tree, node => node.props.role === 'menuitemradio')
+  // The agent's own default names what it runs on, not "Codex" under "Codex".
+  assert.deepEqual(rows.map(row => [labelOf(row), row.props['aria-checked'], row.props['aria-haspopup'] ?? null]), [
+    ['Default (6.1 Sol)', true, 'menu'], ['6.1 Sol', false, null],
+  ])
+  // Without the catalog's word on it, it is just "Default".
+  const { modelLabel } = module.exports
+  assert.equal(modelLabel({ ...cascade[2], resolvesTo: undefined }), 'Default')
+  assert.equal(modelLabel({ ref: 'acp-claude/default', id: 'default', provider: 'acp-claude', providerName: 'Claude Code', name: 'Default (recommended)' }), 'Default (recommended)')
+  assert.equal(modelLabel(cascade[0]), 'DeepSeek Flash')
+  // An unknown connection (a refreshed list dropped it) falls back to step 1.
+  assert.equal(nodes(step({ step: 'models', provider: 'gone' }), node => node.props['aria-label'] === 'Back to connections').length, 0)
+})
+
+test('step 3 is a model\'s levels with Default first; the Bot\'s level is ticked only on its own model', () => {
+  const { step } = openMenu()
+  const own = step({ step: 'levels', provider: 'acp-codex', ref: 'acp-codex/default' })
+  assert.equal(nodes(own, node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to Codex')
+  const rows = nodes(own, node => node.props.role === 'menuitemradio')
+  assert.deepEqual(rows.map(row => [labelOf(row), row.props['aria-checked']]), [['Default', false], ['Low', false], ['High', true]])
+  const other = nodes(step({ step: 'levels', provider: 'deepseek', ref: 'deepseek/pro' }), node => node.props.role === 'menuitemradio')
+  assert.deepEqual(other.map(row => row.props['aria-checked']), [false, false, false])
+  // A model with no levels has no level step: its connection's models show instead.
+  assert.ok(nodes(step({ step: 'levels', provider: 'deepseek', ref: 'deepseek/flash' }), node => node.props['aria-label'] === 'Back to connections').length === 1)
+})
+
+test('a model without levels applies at once; a level applies with its model in one update', async () => {
+  const { steps, updates } = openMenu()
+  steps.props.onModel(cascade[0])
+  // A model with levels opens its level step, saving nothing yet.
+  steps.props.onModel(cascade[1])
+  await Promise.resolve()
+  assert.deepEqual(updates, [['b1', { model: 'deepseek/flash' }]])
+  steps.props.onLevel(cascade[1], 'high')
+  steps.props.onLevel(cascade[1], undefined)
+  // On the Bot's own model a level changes the level only, and the one it runs on changes nothing.
+  steps.props.onLevel(cascade[2], 'low')
+  steps.props.onLevel(cascade[2], 'high')
+  assert.deepEqual(updates.slice(1), [
+    ['b1', { model: 'deepseek/pro', effort: 'high' }],
+    ['b1', { model: 'deepseek/pro', effort: null }],
+    ['b1', { effort: 'low' }],
+  ])
+})
+
+test('in a Bot\'s chat the level goes with the model through the chat pick, and a new Bot keeps both', async () => {
+  const inChat = openMenu({ chat: true })
+  inChat.steps.props.onLevel(cascade[1], 'low')
+  assert.deepEqual(inChat.chosen, [['b1', 'deepseek/pro', { effort: 'low' }]])
+  const picks = []
+  const fresh = openMenu({ bot: { id: 'new-bot', name: 'New' }, onPick: (ref) => { picks.push(['model', ref]) }, onPickEffort: (effort) => { picks.push(['effort', effort]) } })
+  fresh.steps.props.onLevel(cascade[1], 'high')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(picks, [['model', 'deepseek/pro'], ['effort', 'high']])
+  assert.deepEqual(fresh.updates, [])
 })

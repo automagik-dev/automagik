@@ -476,6 +476,8 @@ pub struct Resolver {
     oversized: Vec<PathBuf>,
     homes: Vec<PathBuf>,
     bytes_read: u64,
+    /// The walk for project app homes stays inside this folder (tests: their own temp folder).
+    walk_stop: Option<PathBuf>,
 }
 
 impl Resolver {
@@ -497,6 +499,13 @@ impl Resolver {
     /// Whether project app homes are looked for above each call's cwd.
     pub fn walk(mut self, on: bool) -> Resolver {
         self.walk = on;
+        self
+    }
+
+    /// Keeps the walk for project app homes inside `stop` (tests: so a temp folder inside a real
+    /// project never reads that project's ledgers).
+    pub fn walk_within(mut self, stop: Option<PathBuf>) -> Resolver {
+        self.walk_stop = stop;
         self
     }
 
@@ -818,6 +827,9 @@ impl Resolver {
             return;
         }
         for dir in p.ancestors() {
+            if self.walk_stop.as_ref().is_some_and(|s| !dir.starts_with(s)) {
+                break;
+            }
             // Every folder above one already looked at was looked at with it.
             if !self.checked.insert(dir.to_path_buf()) {
                 break;

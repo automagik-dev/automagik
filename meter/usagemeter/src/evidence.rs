@@ -1412,6 +1412,16 @@ mod tests {
         assert_eq!(format!("{a:?}"), "SessionKey(..)");
     }
 
+    // The Reviewer's delta L4 on PR 849: keys come from the random source, so keys made in one
+    // instant differ (a time seed would repeat them).
+    #[test]
+    fn keys_made_at_once_all_differ() {
+        let keys: std::collections::HashSet<String> = (0..64)
+            .map(|_| SessionKey::random().unwrap().to_hex())
+            .collect();
+        assert_eq!(keys.len(), 64);
+    }
+
     #[test]
     fn a_filled_branch_comes_only_from_a_worker_of_a_harness_that_logs_none() {
         use crate::ledger::Tag;

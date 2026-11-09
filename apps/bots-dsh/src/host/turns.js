@@ -352,7 +352,7 @@ export function install(rt) {
 
   // The Bots whose last turn failed, for their pets (a sad face until their next turn starts):
   // per Bot, when it failed and the short reason. Process-local, like activity.
-  /** @type {Record<string, { at: number, text: string }>} */
+  /** @type {Record<string, { at: number, text: string, code?: string }>} */
   let failedBots = {}
   const ownerOf = id => rt.groupOwners.get(id)?.botId ?? rt.chatOwners.get(id)
   const setFailed = (id, failure) => {
@@ -360,7 +360,7 @@ export function install(rt) {
     if (botId === undefined || (failure === undefined && failedBots[botId] === undefined)) return
     const next = { ...failedBots }
     if (failure === undefined) delete next[botId]
-    else next[botId] = { at: Date.now(), text: String(failure.message || 'the model call failed').slice(0, 200) }
+    else next[botId] = { at: Date.now(), text: String(failure.message || 'the model call failed').slice(0, 200), ...(failure.code ? { code: failure.code } : {}) }
     failedBots = next
   }
   const failedView = () => failedBots

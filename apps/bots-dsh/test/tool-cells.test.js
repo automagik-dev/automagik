@@ -22,13 +22,16 @@ const { outputFiles } = await build({
 })
 let effects = []
 const sets = []
+// A test can stand in a state value for a render, keyed by its initial value (React's own
+// re-render after a set is not modelled here).
+let stateFor = initial => initial
 const Fragment = Symbol('Fragment')
 const h = (type, props, ...children) => ({ type, props: { ...props, children } })
 const react = {
   createElement: h, Fragment,
   useEffect: (effect) => { effects.push(effect) },
   useLayoutEffect: (effect) => { effects.push(effect) },
-  useState: initial => [typeof initial === 'function' ? initial() : initial, value => sets.push(value)],
+  useState: initial => [stateFor(typeof initial === 'function' ? initial() : initial), value => sets.push(value)],
   useMemo: make => make(), useRef: current => ({ current }), useId: () => 'card-id',
   useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
 }
@@ -866,4 +869,91 @@ test('a view works its formulas out, draws a chart, and keeps html in a sandboxe
   assert.match(frame.props.srcDoc, /Content-Security-Policy" content="default-src 'none'/)
   assert.ok(frame.props.srcDoc.indexOf('Content-Security-Policy') < frame.props.srcDoc.indexOf('<b>hi</b>'), 'the policy comes before the markup')
   assert.equal(frame.props.title, 'A greeting')
+})
+
+// An image a Bot's agent makes with its own tool (acp-dsh's mirror call of Codex's image tool):
+// the image card shows Omni painting while it is made, then the image, or why it was not made.
+const omniPaints = (node) => {
+  const paint = find(node, child => child.props?.className === 'bt-img-paint')
+  if (!paint) return undefined
+  const kids = paint.props.children.flat()
+  return {
+    paint,
+    dabs: kids.filter(child => child?.props?.className === 'bt-img-dab').length,
+    omni: find(paint, child => child.props?.className === 'bt-img-omni'),
+    clay: find(paint, child => child.props?.className === 'bt-clay bt-clay-omni'),
+  }
+}
+
+test('an agent\'s image call draws the image card: Omni paints, then the image, or the failure', () => {
+  const args = { id: 'ig-1', title: 'Image generation', kind: 'other', input: { id: 'ig-1' }, image: true }
+  const running = show(call('acp_tool', 'acp_1', { args, running: true }))
+  const card = find(running, node => node.type === 'figure')
+  assert.ok(card, 'the image card is drawn while the agent makes the image')
+  assert.equal(card.props['data-state'], 'drawing')
+  // No card behind Omni while it paints: the frame takes no image shape yet.
+  const frame = find(running, node => node.props?.className === 'bt-img-frame')
+  assert.equal(frame.props.style, undefined)
+  const painting = omniPaints(running)
+  assert.ok(painting, 'Omni paints in the card')
+  assert.equal(painting.paint.props['aria-hidden'], true)
+  assert.equal(painting.dabs, 4, 'four dabs of colour pop around Omni')
+  assert.equal(painting.omni.props['data-face'], 'focused')
+  assert.equal(painting.clay.props.style['--bt-face-at'], 3, 'Omni\'s focused face in the team\'s own clay atlas')
+  const caption = find(running, node => node.props?.className === 'bt-img-caption')
+  assert.equal(text(caption), 'Painting your image…')
+  assert.match(text(find(running, node => node.props?.className === 'bt-img-time')), /^\d+s$/)
+  assert.equal(find(running, node => node.props?.role === 'status').type, 'figcaption')
+
+  // The image is kept: it loads where Omni is, and Omni stays until it has loaded.
+  const kept = show(call('acp_tool', 'acp_1', { args, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png. It is on screen in the chat, so do not describe it back.' }))
+  assert.equal(find(kept, node => node.type === 'figure').props['data-state'], 'arriving')
+  const image = find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final')
+  assert.equal(image.props.src, 'api/omni-ui/image?id=img-1234abcd-ef')
+  assert.equal(typeof image.props.onLoad, 'function')
+  assert.ok(omniPaints(kept), 'Omni holds the place until the image has loaded')
+
+  const failed = show(call('acp_tool', 'acp_1', { args, content: 'Codex could not make this image. Try again, or describe it differently.' }))
+  assert.match(text(failed), /The image was not made.*Codex could not make this image/)
+  assert.equal(omniPaints(failed), undefined)
+  const stopped = show(call('acp_tool', 'acp_1', { args, content: 'The image was stopped before it was finished.', isError: true }))
+  assert.match(text(stopped), /The image was not made.*stopped before it was finished/)
+
+  // Another agent's call that answered with an image draws once it ends; its other calls do not.
+  const other = { id: 'c-1', title: 'Render chart', kind: 'other', input: {} }
+  assert.ok(find(show(call('acp_tool', 'acp_2', { args: other, content: 'Image generated and saved as /team/images/img-abcdef12.png.' })), node => node.type === 'figure'))
+  assert.equal(shown(call('acp_tool', 'acp_3', { args: other, running: true })), '')
+  assert.equal(shown(call('acp_tool', 'acp_4', { args: { ...other, title: 'Run ls' }, content: 'images/img-abcdef12.png' })), '')
+})
+
+test('a finished image that does not load says it is gone, and Omni stops painting', () => {
+  const args = { id: 'ig-1', title: 'Image generation', kind: 'other', input: { id: 'ig-1' }, image: true }
+  const kept = call('acp_tool', 'acp_1', { args, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png.' })
+  const image = find(show(kept), node => node.type === 'img' && node.props.className === 'bt-img-final')
+  sets.length = 0
+  image.props.onError()
+  assert.deepEqual(sets, ['lost'], 'an image that fails to load marks the card lost')
+
+  stateFor = initial => (initial === 'loading' ? 'lost' : initial)
+  effects = []
+  let lost
+  try { lost = expand(ToolCell(props(kept))) } finally { stateFor = initial => initial }
+  // The face timer stays off: this context has no setInterval, so a running timer would throw.
+  mount()()
+  const card = find(lost, node => node.props?.role === 'status')
+  assert.equal(card.props['data-state'], 'lost')
+  assert.match(text(card), /The image could not be shown.*no longer in the team folder/)
+  assert.equal(omniPaints(lost), undefined, 'Omni no longer paints')
+  assert.equal(find(lost, node => node.props?.className === 'bt-img-caption'), undefined, 'no painting caption')
+  assert.equal(find(lost, node => node.props?.className === 'bt-img-time'), undefined, 'no running time')
+  assert.equal(find(lost, node => node.type === 'img'), undefined)
+})
+
+test('a generate_image call paints with the same Omni card', () => {
+  const running = show(call('generate_image', 'gi_1', { args: { prompt: 'A black octopus', size: '1024x1024' }, running: true }))
+  assert.equal(find(running, node => node.type === 'figure').props['data-state'], 'drawing')
+  assert.equal(omniPaints(running).dabs, 4)
+  assert.equal(text(find(running, node => node.props?.className === 'bt-img-caption')), 'Painting your image…')
+  const kept = show(call('generate_image', 'gi_1', { args: { prompt: 'A black octopus', size: '1536x1024' }, content: 'Drew the image and saved it as /w/images/img-1234abcd-ef.png.' }))
+  assert.equal(find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final').props.alt, 'A black octopus')
 })

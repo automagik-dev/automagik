@@ -2,7 +2,7 @@
 // an agent replays the transcript into `session/prompt` content, in order, and moving back leaves
 // what the agent streamed in DSH's log. The redactor runs at each crossing only — the replay out
 // to an agent, and the transcript handed back to a native provider — never at ingest. Each
-// crossing writes a visible provider-boundary row, so the chat says who answered.
+// crossing writes a visible provider-boundary row, so the chat says where it is moving.
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SYNTHETIC_KIND } from './names.js'
 
@@ -10,6 +10,8 @@ import { SYNTHETIC_KIND } from './names.js'
 export const BOUNDARY_KIND = 'acp-boundary'
 const REPLAY_LIMIT = 120_000
 const PART_LIMIT = 8_000
+// A handoff package is sized by the Bot team for the part's model; it still fits the replay cap.
+const HANDOFF_LIMIT = 60_000
 
 /** Where this turn's user messages start: the transcript before it is replay material. */
 export function turnStart(messages) {
@@ -34,7 +36,8 @@ export function lastProviderOf(messages) {
  * The chat row that says the conversation crossed to another provider: a user-role notice DSH
  * draws as a one-line row outside the reply, never reply text (the mirror of the new-session
  * notice, `adapter.js`).
- * @param {string} summary e.g. "Now answered by Claude Code (acp-claude)"
+ * @param {string} summary e.g. "Switching to Claude Code (acp-claude)": written before the reply,
+ *   so it never claims an answer
  */
 export function boundaryNotice(summary) {
   return createUserMessage({
@@ -217,7 +220,48 @@ const textOf = (content) => (typeof content === 'string' ? content : (content ??
   .map(block => block.text)
   .join('\n'))
 
-const clip = (text) => (text.length > PART_LIMIT ? `${text.slice(0, PART_LIMIT)}…` : text)
+const clipTo = (text, limit) => (text.length > limit ? `${text.slice(0, limit)}…` : text)
+const clip = text => clipTo(text, PART_LIMIT)
+
+/**
+ * Whether a message is a Bot part's handoff package: a user-role relay the Bot team writes when
+ * it opens a fresh part (`source.handoff`), carrying the note and the latest messages.
+ * @param {any} message
+ */
+export function isHandoff(message) {
+  return message?.role === 'user' && message?.source?.handoff === true
+}
+
+/** Whether `messages` hold an answer: an assistant turn that is not a bridge's synthetic block. */
+export function answered(messages) {
+  return (messages ?? []).some(message =>
+    message?.role === 'assistant' && message.source?.synthetic !== SYNTHETIC_KIND)
+}
+
+/**
+ * What a live agent session missed while the chat ran on another provider: the messages after
+ * that agent's own last answer, when another provider answered among them. Undefined when it
+ * missed nothing (no other answer since its own). With no answer of its own in `messages`, all
+ * of them are what it missed.
+ * @param {any[]} messages the transcript before this turn
+ * @param {string} provider the live agent's route
+ * @returns {any[] | undefined}
+ */
+export function missedBy(messages, provider) {
+  let since = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message?.role !== 'assistant' || message.source?.synthetic === SYNTHETIC_KIND) continue
+    if (message.source?.provider === provider) {
+      since = i + 1
+      break
+    }
+  }
+  const missed = messages.slice(since)
+  const foreign = missed.some(message => message?.role === 'assistant'
+    && message.source?.synthetic !== SYNTHETIC_KIND && message.source?.provider !== provider)
+  return foreign ? missed : undefined
+}
 
 /**
  * Render one message of the transcript for replay: the person's words, the model's words, a tool
@@ -231,6 +275,13 @@ export function renderMessage(message) {
   if (message?.source?.synthetic === SYNTHETIC_KIND) return undefined
   const kind = message?.source?.kind
   if (message?.role === 'user') {
+    // A Bot part opens with its handoff package (a relay the Bot team writes, `handoff: true`):
+    // not the person's words, but the record the part carries on from, so it crosses too. It is
+    // labelled as what it is and kept whole up to its own cap: the note is what the part needs.
+    if (isHandoff(message)) {
+      const text = textOf(message.content)
+      return text === '' ? undefined : `Handoff (not from the user): ${clipTo(text, HANDOFF_LIMIT)}`
+    }
     if (kind !== 'user' && kind !== undefined) return undefined
     const text = textOf(message.content)
     return text === '' ? undefined : `User: ${clip(text)}`
@@ -255,14 +306,21 @@ export function renderMessage(message) {
  * The blocks that replay the chat before this turn into a prompt: a header naming the move, then
  * every message in order, each already redacted. When the transcript is longer than the cap the
  * oldest messages are dropped, with a marker, so the most recent context survives.
+ * The header says which replay it is: a move from another provider (`from`), a new session of
+ * the same agent in a chat that already has answers (`renewed`: a restart, a session that was
+ * ended), or what a resumed session missed while another provider answered (`missed`).
  * @param {any[]} messages the whole model input (this turn's user message included; it is rendered here too)
- * @param {{ redact: (text: string) => string, from?: string, to: string }} options
+ * @param {{ redact: (text: string) => string, from?: string, to: string, renewed?: boolean, missed?: boolean }} options
  * @returns {Array<{ type: 'text', text: string }>}
  */
-export function replayBlocks(messages, { redact, from, to }) {
-  const header = from === undefined
-    ? `The chat so far, moved to ${to}:`
-    : `The chat so far, moved from ${from} to ${to}:`
+export function replayBlocks(messages, { redact, from, to, renewed = false, missed = false }) {
+  const header = missed
+    ? `The chat since your last answer here, while ${from ?? 'another model'} answered:`
+    : renewed
+      ? `The chat so far, before this new ${to} session:`
+      : from === undefined
+        ? `The chat so far, moved to ${to}:`
+        : `The chat so far, moved from ${from} to ${to}:`
   const rendered = []
   for (const message of messages) {
     const line = renderMessage(message)

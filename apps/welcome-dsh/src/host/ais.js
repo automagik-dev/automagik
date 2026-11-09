@@ -13,22 +13,32 @@
 //                        in that plugin's own picker settings, on shows them again; the
 //                        account stays signed in either way
 //
-// One source per vendor, through DSH's own sign-ins and keys. Claude is pi-ai's anthropic
-// route, on a Claude Pro or Max sign-in or an Anthropic API key: one row, one route, and
-// dsh-subscriptions' claude is a duplicate of it whose models are hidden when Claude is on.
-// dsh-subscriptions keeps the vendors nothing else covers.
+// One sign-in per vendor. Claude and ChatGPT sign in only through their own CLIs, Claude Code
+// and Codex (acp-dsh's acp-claude and acp-codex, signed in from a Bot's chat): their rows are on
+// when that agent can answer, and their switch is acp-dsh's own `claude` or `codex` setting,
+// which every Bot on that agent shares. Claude also takes an Anthropic API key, on pi-ai's
+// anthropic route, exactly as before. A pi-ai route still on DSH's own sign-in for them
+// (openai-codex, or anthropic with no key named) is a duplicate of the CLI: turning the row on
+// unsets that route and keeps its sign-in record (images still read openai-codex's), but only
+// once no Bot runs on it. The Bot team (bots-dsh's `omniTeam`) first moves its Bots on that
+// route to the CLI's (`moveSubscriptionBots`); a Bot still on it afterwards (or a team that
+// cannot be read) keeps the route, listed as a duplicate, so no Bot is left on a provider that
+// no longer exists.
+// Everything else connects through DSH's own sign-ins and keys; dsh-subscriptions keeps the
+// vendors nothing else covers.
 //
 // Replies carry names and states only: never a key, a token or an account's credential.
 import { z } from 'zod'
-import { PI_AI, SIGNIN_ROUTES, keyRefOf } from './providers.js'
+import { PI_AI, keyRefOf } from './providers.js'
+import { acpService, agentRunning, agentView, setAgent } from './acp.js'
 
 const RECORD_SCOPE = 'llm-pi-ai'
 export const DEEPSEEK_REF = 'DEEPSEEK_API_KEY'
 export const DEEPSEEK_ACCOUNT = 'deepseek-account-platform/default'
-export const SUBSCRIPTIONS = 'dsh-subscriptions'
-export const CLIPROXY_ROUTE = 'cliproxy'
-export const OLLAMA_ROUTE = 'ollama'
-export const OLLAMA_URL = 'http://127.0.0.1:11434'
+const SUBSCRIPTIONS = 'dsh-subscriptions'
+const CLIPROXY_ROUTE = 'cliproxy'
+const OLLAMA_ROUTE = 'ollama'
+const OLLAMA_URL = 'http://127.0.0.1:11434'
 // Ollama ignores the key; pi-ai's OpenAI route still sends one, so the route names this.
 export const OLLAMA_KEY_REF = 'OMNI_AI_OLLAMA_API_KEY'
 const OLLAMA_PROBE_MS = 800
@@ -36,8 +46,8 @@ const OLLAMA_PROBE_MS = 800
 // The rows, in the order "Add another" lists them. `envRefs` are the variables pi-ai reads
 // for that provider, so a key already in the environment is found.
 export const VENDORS = [
-  { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan, or an Anthropic API key', kind: 'signin', provider: 'anthropic', envRefs: ['ANTHROPIC_API_KEY'], keyUrl: 'https://console.anthropic.com/settings/keys' },
-  { id: 'chatgpt', name: 'ChatGPT', via: 'Your ChatGPT Plus or Pro plan, through Codex', kind: 'signin', provider: 'openai-codex' },
+  { id: 'claude', name: 'Claude', via: 'Your Claude Pro or Max plan through Claude Code, or an Anthropic API key', kind: 'signin', cli: 'acp-claude', provider: 'anthropic', envRefs: ['ANTHROPIC_API_KEY'], keyUrl: 'https://console.anthropic.com/settings/keys' },
+  { id: 'chatgpt', name: 'ChatGPT', via: 'Your ChatGPT Plus or Pro plan, through Codex', kind: 'signin', cli: 'acp-codex', provider: 'openai-codex' },
   { id: 'deepseek', name: 'DeepSeek', via: 'With your API key, or your DeepSeek account', kind: 'key', provider: 'deepseek', ref: DEEPSEEK_REF, route: false, keyUrl: 'https://platform.deepseek.com/api_keys' },
   { id: 'kimi', name: 'Kimi', via: 'Your Kimi Code plan', kind: 'signin', provider: 'kimi-coding' },
   { id: 'copilot', name: 'GitHub Copilot', via: 'Your Copilot plan', kind: 'signin', provider: 'github-copilot' },
@@ -52,7 +62,9 @@ export const VENDORS = [
 ]
 
 // dsh-subscriptions' vendors that another row covers (Omni never offers them), and the row.
-export const COVERED = { claude: 'claude', codex: 'chatgpt', kimi: 'kimi', copilot: 'copilot', grok: 'grok', ollama: 'ollama' }
+// Its claude and codex are gone: dsh-subscriptions no longer ships them (0.7.21-omni.1 lists
+// none), and Claude and ChatGPT are their CLIs now.
+export const COVERED = { kimi: 'kimi', copilot: 'copilot', grok: 'grok', ollama: 'ollama' }
 // The dsh-subscriptions vendors Omni offers: nothing else reaches them.
 export const SUBSCRIPTION_ONLY = ['antigravity', 'glm', 'cursor', 'kiro', 'qwen', 'ernie', 'spark', 'jetbrains', 'perplexity', 'replit', 'cody']
 
@@ -72,6 +84,13 @@ const quietly = async (read, fallback) => {
     return (await read()) ?? fallback
   } catch {
     return fallback
+  }
+}
+const quietlySync = (read) => {
+  try {
+    return read()
+  } catch {
+    return undefined
   }
 }
 const describeAll = (ctx) => {
@@ -141,6 +160,7 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
       const keyed = vendor.route === false || routes[vendor.provider]?.apiKeyEnv !== undefined || (key?.source === 'env' && routed)
       return { ...base, ready, on: ready && routed && (keyed || account), found, keyUrl: vendor.keyUrl }
     }
+    if (vendor.cli) return cliRowFor(vendor, seen, base)
     if (vendor.kind === 'signin') {
       const signedIn = (await quietly(() => ctx.credentials.describeRecord(recordKeyOf(vendor.provider)), {}))?.configured === true
       const key = vendor.envRefs ? await keyOf(ctx, vendor) : null
@@ -162,17 +182,74 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
     return { ...base, ready: running, on: routed, found: running ? 'Running on this computer' : null, ...(routed && !running ? { needs: 'start' } : {}) }
   }
 
+  // Claude or ChatGPT: the CLI's sign-in (acp-dsh's agent), or for Claude an Anthropic API key
+  // on pi-ai's anthropic route. On when the agent can answer, or when the key's route runs.
+  async function cliRowFor(vendor, seen, base) {
+    const agent = seen.agents?.find(row => row?.id === vendor.cli)
+    const cliSignedIn = agent?.cli?.found === true && agent.signedIn === true
+    const key = vendor.envRefs ? await keyOf(ctx, vendor) : null
+    const legacy = legacyRoute(vendor, seen)
+    const route = seen.routes[vendor.provider]
+    // A key's route: one that names the key, or (no DSH sign-in under it) one pi-ai reads an
+    // environment key for.
+    const keyOn = key !== null && route !== undefined && !legacy && (route.apiKeyEnv !== undefined || key.source === 'env')
+    const ready = cliSignedIn || key !== null
+    const found = cliSignedIn ? `Signed in to ${agent.name}` : key?.source === 'env' ? `${key.ref} found` : key ? 'Key saved' : null
+    return {
+      ...base,
+      ready,
+      on: agentRunning(agent) || keyOn,
+      found,
+      signIn: agent !== undefined,
+      ...(agent ? { cli: agentView(agent) } : {}),
+      ...(vendor.keyUrl ? { keyUrl: vendor.keyUrl } : {}),
+    }
+  }
+
   async function look() {
-    const [subscriptions, ollama] = await Promise.all([
+    const [subscriptions, ollama, agents] = await Promise.all([
       subscriptionAccounts(ctx),
       ollamaRunning(fetchImpl),
+      quietly(async () => (await acpService(ctx)?.status())?.agents, undefined),
     ])
-    return { routes: routesOf(ctx), subscriptions, ollama }
+    const routes = routesOf(ctx)
+    const anthropic = routes.anthropic
+    const anthropicSignIn = anthropic !== undefined && anthropic.apiKeyEnv === undefined && await claudePlanRoute()
+    return { routes, subscriptions, ollama, agents: Array.isArray(agents) ? agents : undefined, anthropicSignIn }
+  }
+
+  // Whether pi-ai's anthropic route (no key named) runs on DSH's own Claude Pro/Max sign-in: the
+  // one rule the Bot team moves Bots and builds its model menu by (bots-dsh subscription-move.js
+  // runsOnSignIn), asked of it when it is here. Without it, the same rule: the stored record is
+  // a sign-in grant (a pasted key is stored as a record too, of kind `api-key`) and no
+  // ANTHROPIC_API_KEY is found for pi-ai to read instead. Only descriptions, never a value.
+  async function claudePlanRoute() {
+    const team = service(ctx, 'omniTeam')
+    if (typeof team?.anthropicSubscription === 'function') {
+      const answer = await quietly(() => team.anthropicSubscription(), undefined)
+      if (typeof answer === 'boolean') return answer
+    }
+    const record = await quietly(() => ctx.credentials.describeRecord(recordKeyOf('anthropic')), {})
+    if (record?.configured !== true || record.kind !== 'grant') return false
+    return await keyOf(ctx, VENDORS.find(vendor => vendor.provider === 'anthropic')) === null
+  }
+
+  // The pi-ai route a CLI row's AI still has on DSH's own sign-in, if any: openai-codex's
+  // route, or anthropic's when it names no key. Never a route that names a key.
+  function legacyRoute(vendor, seen) {
+    if (!vendor.cli) return null
+    const route = seen.routes[vendor.provider]
+    if (route === undefined || route.apiKeyEnv !== undefined) return null
+    if (vendor.provider === 'anthropic' && !seen.anthropicSignIn) return null
+    return vendor.provider
   }
 
   // The other ways a row's AI is connected right now, and whether their models still show.
   function duplicatesOf(row, seen) {
     const out = []
+    const vendor = VENDORS.find(item => item.id === row.id)
+    const legacy = vendor ? legacyRoute(vendor, seen) : null
+    if (legacy) out.push({ via: 'DSH sign-in', provider: legacy, hidden: false })
     const subs = seen.subscriptions
     for (const [vendor, rowId] of Object.entries(COVERED)) {
       if (rowId !== row.id || !subs) continue
@@ -193,9 +270,40 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
     return { rows: out, seen }
   }
 
+  // Whether anything still runs on `provider` once the Bot team has moved its subscription Bots
+  // to their CLI: a Bot (its model, the model a pending switch goes back to), the jobs beside
+  // the chats (memory review, notes, steward, checkpoint: the team's pick, else the model the
+  // team resolves for them, which falls back to DSH's default; D-g leaves them as they are), or
+  // DSH's own default model. A team that cannot be read counts as one still on it.
+  async function teamStillOn(provider) {
+    const on = ref => typeof ref === 'string' && ref.startsWith(`${provider}/`)
+    const selection = quietlySync(() => service(ctx, 'agentDefaultModel')?.currentSelection?.())
+    if (typeof selection?.provider === 'string' && selection.provider === provider) return true
+    const team = service(ctx, 'omniTeam')
+    if (team === undefined) return false
+    try {
+      if (typeof team.moveSubscriptionBots === 'function') await team.moveSubscriptionBots()
+      else await team.load?.()
+      const bots = Object.values(team.state?.bots ?? {})
+      if (bots.some(bot => on(bot?.model) || on(bot?.previousModel)) || on(team.state?.prefs?.backgroundModel)) return true
+      return typeof team.backgroundModel === 'function' && on(await team.backgroundModel())
+    } catch (error) {
+      ctx.logger?.warn?.('omni-ai: the Bots on %s were not checked: %s', provider, error?.message ?? error)
+      return true
+    }
+  }
+
   // Hides the models of the other ways this row's AI is connected; their accounts stay.
   async function dedupe(rowId, seen) {
     const done = []
+    // A CLI row that is on stops the pi-ai route on DSH's own sign-in: the route only, never
+    // its record, never a route that names a key, and never while a Bot still runs on it.
+    const vendor = VENDORS.find(item => item.id === rowId)
+    const legacy = vendor ? legacyRoute(vendor, seen) : null
+    if (legacy && (await rowFor(vendor, seen)).on && !(await teamStillOn(legacy))) {
+      await unsetRoute(legacy)
+      done.push(legacy)
+    }
     const subs = seen.subscriptions
     const vendors = Object.entries(COVERED).filter(([, id]) => id === rowId).map(([vendor]) => vendor)
     if (subs && vendors.some(vendor => subs.accounts.some(account => account.provider === vendor))) {
@@ -214,6 +322,7 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
   }
 
   async function turn(vendor, on, seen) {
+    if (vendor.cli) return turnCli(vendor, on, seen)
     if (vendor.kind === 'key') {
       if (vendor.route === false) {
         if (!on) throw refused('DeepSeek is DSH\'s own route. Remove its key in Settings → Models to stop using it.')
@@ -232,9 +341,7 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
         const { apiKeyEnv, ...rest } = seen.routes[vendor.provider] ?? {}
         if (apiKeyEnv !== undefined && await keyOf(ctx, vendor) !== null) return
         if (apiKeyEnv !== undefined) await unsetRoute(vendor.provider)
-        // A route on the sign-in holds what the sign-in's route does (a Claude plan's 429 is
-        // not retried), also when the row is turned off and on again.
-        return saveRoute(vendor.provider, { ...SIGNIN_ROUTES[vendor.provider], ...rest })
+        return saveRoute(vendor.provider, rest)
       }
       const key = await keyOf(ctx, vendor)
       return saveRoute(vendor.provider, { apiKeyEnv: key.ref })
@@ -245,6 +352,35 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
     }
     if (!on) return unsetRoute(OLLAMA_ROUTE)
     return turnOnOllama()
+  }
+
+  // On: the signed-in CLI's switch, and the Anthropic key's route as before whenever a key is
+  // there (key-based Bots never move, D-c), so off and on again brings back what off stopped.
+  // Off: the CLI's switch (for every Bot on it) and the pi-ai route, keeping the key and any
+  // sign-in.
+  async function turnCli(vendor, on, seen) {
+    const agent = seen.agents?.find(row => row?.id === vendor.cli)
+    if (!on) {
+      if (agent?.on === true) await setAgent(ctx, vendor.cli, false)
+      if (Object.hasOwn(seen.routes, vendor.provider)) await unsetRoute(vendor.provider)
+      return
+    }
+    const key = vendor.envRefs ? await keyOf(ctx, vendor) : null
+    const keyRoute = async () => {
+      // A route already there is left as it is: one that names this key, or one on DSH's sign-in
+      // (a duplicate the dedupe handles).
+      if (key === null || Object.hasOwn(seen.routes, vendor.provider)) return
+      await saveRoute(vendor.provider, { apiKeyEnv: key.ref })
+    }
+    if (agent?.cli?.found === true && agent.signedIn === true) {
+      const acp = agent.on === true ? acpService(ctx) : await setAgent(ctx, vendor.cli, true)
+      await keyRoute()
+      // Its connector and sign-in looked at again, so the row says where it stands.
+      await quietly(() => acp?.refresh?.(), undefined)
+      return
+    }
+    if (seen.routes[vendor.provider]?.apiKeyEnv === key.ref) return
+    return saveRoute(vendor.provider, { apiKeyEnv: key.ref })
   }
 
   async function turnOnOllama() {
@@ -314,8 +450,8 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
       const row = await rowFor(vendor, seen)
       if (parsed.data.on && !row.ready) throw refused(`${vendor.name} is not set up yet.`)
       await turn(vendor, parsed.data.on, seen)
-      // Turning an AI on stops the duplicates of it Omni does not offer.
-      if (parsed.data.on) await dedupe(vendor.id, seen).catch(error => ctx.logger?.warn?.('omni-ai: duplicates of %s stay: %s', vendor.id, error?.message ?? error))
+      // Turning an AI on stops the duplicates of it Omni does not offer, as things stand now.
+      if (parsed.data.on) await look().then(now => dedupe(vendor.id, now)).catch(error => ctx.logger?.warn?.('omni-ai: duplicates of %s stay: %s', vendor.id, error?.message ?? error))
       const after = await look()
       const next = await rowFor(vendor, after)
       const duplicates = duplicatesOf(next, after)

@@ -830,16 +830,18 @@ fn a_backfill_that_would_fill_the_disk_refuses_up_front() {
     assert!(r.reimported && r.generation.is_some());
     // A run that keeps the rows counts only what is past each log's offset.
     let read = meter::store::imported_offsets(&env.state().join("meter.db")).unwrap();
+    let o = env.hermetic(&env.opts());
     assert_eq!(
-        meter::sync::projected_growth(&env.hermetic(&env.opts()), 0, Some(&read)),
-        0
+        meter::sync::projected_growth(&o, 0, Some(&read)),
+        meter::sync::wal_allowance(&o),
+        "nothing left to import: the WAL's room alone"
     );
 }
 
 // The Reviewer's M2 on PR 849, through the real statvfs and the binary: a widening backfill
 // whose logs still to import would grow the store past the free space refuses up front, exit 4,
 // before any rebuild starts: no generation, no reset, the folder byte for byte as it was. The log
-// is sparse (16 TiB that take no disk), so its projected growth passes any real free space.
+// is sparse (up to 16 TiB that take no disk), so its projected growth passes any real free space.
 #[cfg(unix)]
 #[test]
 fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
@@ -859,8 +861,20 @@ fn a_widening_backfill_refuses_up_front_with_exit_4_and_changes_nothing() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // 1 TiB first (ext4 allows it, and its projection passes a CI runner's free space), larger
+    // only where the disk has more free: the smallest size the filesystem takes whose projected
+    // growth passes the free space.
     let sparse = env.claude("-work-app/s-sparse.jsonl");
-    fs::File::create(&sparse).unwrap().set_len(1 << 44).unwrap();
+    let free = meter::paths::free_bytes(&env.state()).unwrap();
+    let f = fs::File::create(&sparse).unwrap();
+    let Some(_) = [1u64 << 40, 1 << 42, 1 << 43, 1 << 44]
+        .into_iter()
+        .find(|&n| n / meter::sync::GROWTH_PER_LOG_BYTE > free && f.set_len(n).is_ok())
+    else {
+        eprintln!("skipped: no sparse file this filesystem takes projects past {free} B free");
+        return;
+    };
+    drop(f);
     let before = folder(&env.state());
     let out = sync(&["sync", "--force", "--no-publish", "--backfill"]);
     let err = String::from_utf8_lossy(&out.stderr);
@@ -1107,4 +1121,122 @@ fn a_generation_never_takes_or_removes_another_files_name() {
     );
     meter::store::remove_generation(&first.path).unwrap();
     assert!(!journal.exists() && !first.path.exists());
+}
+
+// The Tester's hermeticity point on PR 849: with the temp folder inside a project (TMPDIR under a
+// repository), the walk for project app homes stops at the test's own folder, so the project's
+// ledger (a worker that would claim this test's worktree) is never read.
+#[test]
+fn a_temp_folder_inside_a_project_never_reads_its_ledgers() {
+    let outer = tempfile::tempdir().unwrap();
+    let project = outer.path().join("project");
+    let tmp = project.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    let env = Env::new_in(&tmp);
+    let wt = env.dir.path().join("work/.worktrees/gh-48");
+    fs::create_dir_all(&wt).unwrap();
+    let wt = wt.to_string_lossy().into_owned();
+    write_ledger(
+        &project.join(".herdr/app-home/automagik-herdr/workers.jsonl"),
+        &[worker("t1", "b-outsider", "claude", &wt, now() - 7_200_000)],
+    );
+    write_lines(
+        &env.claude("-work/s-in.jsonl"),
+        &[line("m1", "s-in", &wt, now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    let store = env.store();
+    assert_eq!(
+        store.count("launch").unwrap(),
+        0,
+        "the project's ledger was read"
+    );
+    assert_eq!(
+        rows(&store),
+        [(
+            None,
+            "unlinked".into(),
+            None,
+            Some("feat/x".into()),
+            "log".into()
+        )]
+    );
+}
+
+// The Reviewer's delta L3 on PR 849: when the generation cannot be put in place, the failed
+// store's files come back from aside, so the store is never left unreadable; the generation
+// stays intact and is named.
+#[test]
+fn a_failed_restore_never_leaves_the_store_unreadable() {
+    let env = Env::new();
+    spread_logs(&env, now(), 20, 10);
+    let mut o = env.opts();
+    o.days = Some(5);
+    env.run(&o);
+    let mut o = env.opts();
+    o.backfill = true;
+    o.chunk_bytes = 4096;
+    o.fail_writes_after = Some(3);
+    o.fail_restore = true;
+    let reason = match env.sync(&o) {
+        Outcome::RanOutOfRoom { reason } => reason,
+        other => panic!("expected the run to stop for want of room, got {other:?}"),
+    };
+    assert!(reason.contains("could not be put back"), "{reason}");
+    let gens = meter::store::generations(&env.state());
+    assert_eq!(gens.len(), 1, "the generation is intact");
+    assert!(reason.contains(&gens[0].display().to_string()), "{reason}");
+    // The store reads: integrity holds and its rows count.
+    let db = env.state().join("meter.db");
+    let c = meter::query::open_read_only(&db, std::time::Duration::from_secs(2)).unwrap();
+    let ok: String = c
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(ok, "ok");
+    assert!(meter::store::row_counts(&c).unwrap()["usage"] > 0);
+    let leftovers: Vec<String> = fs::read_dir(env.state())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".failed"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+// The Reviewer's delta L1 on PR 849 (its first-round L2): a store older than schema 2 is rebuilt
+// from the logs, and sync says so, never that every row was kept.
+#[test]
+fn a_schema_1_migration_says_it_rebuilt_the_store() {
+    let env = Env::new();
+    write_lines(
+        &env.claude("-work-app/s-1.jsonl"),
+        &[line(
+            "m1",
+            "s-1",
+            "/work/app",
+            meter::time::now_ms() - 3_600_000,
+        )],
+    );
+    let _serial = serial();
+    let sync = || {
+        env.command()
+            .env("METER_STATE_DIR", env.state())
+            .args(["sync", "--force", "--no-publish"])
+            .output()
+            .unwrap()
+    };
+    assert!(sync().status.success());
+    Store::open(&env.state().join("meter.db"))
+        .unwrap()
+        .set_meta("schema_version", "1")
+        .unwrap();
+    let out = sync();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("rebuilt it from the logs"), "{text}");
+    assert!(!text.contains("every row kept"), "{text}");
+    assert!(text.contains("kept the store before the reset"), "{text}");
 }

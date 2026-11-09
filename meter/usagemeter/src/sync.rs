@@ -112,6 +112,12 @@ pub struct Options {
     /// resolver and the launch table read, with the store's machine id as the core.
     #[doc(hidden)]
     pub snapshot: Option<Vec<crate::hc::Terminal>>,
+    /// Look for project app homes only inside this folder (tests: their temp folder).
+    #[doc(hidden)]
+    pub walk_within: Option<PathBuf>,
+    /// Make putting a generation back fail once the failed store is moved aside (tests).
+    #[doc(hidden)]
+    pub fail_restore: bool,
 }
 
 impl Options {
@@ -165,6 +171,8 @@ impl Options {
             free_bytes: None,
             fail_writes_after: None,
             snapshot: None,
+            walk_within: None,
+            fail_restore: false,
         }
     }
 }
@@ -276,20 +284,6 @@ impl std::fmt::Display for StoreWrite {
     }
 }
 
-/// How a run's error begins when the store could not be written for want of room.
-const NO_ROOM: &str = "no room to write the store";
-
-/// A write SQLite could not make for want of room: the disk is full (`SQLITE_FULL`), or a write
-/// failed outright (`SQLITE_IOERR_WRITE`, as a file-size limit's `EFBIG` gives).
-fn no_room(e: &rusqlite::Error) -> bool {
-    matches!(
-        e,
-        rusqlite::Error::SqliteFailure(f, _)
-            if f.code == rusqlite::ErrorCode::DiskFull
-                || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
-    )
-}
-
 impl std::error::Error for StoreWrite {}
 
 fn store_write(e: rusqlite::Error) -> io::Error {
@@ -302,6 +296,8 @@ fn store_failure(e: &io::Error) -> Option<Error> {
         .and_then(|x| x.downcast_ref::<StoreWrite>())
         .map(|w| Error(w.to_string()))
 }
+
+use crate::store::{NO_ROOM, no_room};
 
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Error {
@@ -1160,7 +1156,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         Ok(o) => Ok(o),
         Err(e) => {
             let full = e.0.starts_with(NO_ROOM);
-            let e = rollback(&opts.state_dir, made.as_deref(), e);
+            let e = rollback(&opts.state_dir, made.as_deref(), e, opts.fail_restore);
             if full {
                 Ok(Outcome::RanOutOfRoom { reason: e.0 })
             } else {
@@ -1172,9 +1168,15 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
 
 /// After a failed run, the store as it was before it: the generation this run kept, else one kept
 /// beside a re-import that has not finished (a store with no watermark), replaces the store, its
-/// wal and shm removed first so no frame of the failed store is replayed onto it. Otherwise the
+/// failed store's files moved aside first (and back, should the generation not go in place) so no
+/// frame of the failed store is replayed onto it. Otherwise the
 /// store keeps every chunk it committed, each whole, and the next sync goes on.
-fn rollback(dir: &std::path::Path, made: Option<&std::path::Path>, e: Error) -> Error {
+fn rollback(
+    dir: &std::path::Path,
+    made: Option<&std::path::Path>,
+    e: Error,
+    fail_restore: bool,
+) -> Error {
     let db = dir.join("meter.db");
     let reimporting = || {
         crate::query::open_read_only(&db, Duration::from_secs(2))
@@ -1199,14 +1201,34 @@ fn rollback(dir: &std::path::Path, made: Option<&std::path::Path>, e: Error) -> 
             "{e}; the store keeps what earlier chunks committed, and the next sync goes on"
         ));
     };
+    // The failed store's files are moved aside, never deleted, until the generation is in place:
+    // if that fails, they come back, so the store is never left unreadable.
+    let unit = ["meter.db", "meter.db-wal", "meter.db-shm"];
+    let aside = |f: &str| dir.join(format!(".{f}.failed"));
     let put_back = (|| -> io::Result<()> {
-        for f in ["meter.db-wal", "meter.db-shm"] {
-            match std::fs::remove_file(dir.join(f)) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-                _ => {}
+        let mut moved = Vec::new();
+        let r = (|| -> io::Result<()> {
+            for f in unit {
+                match std::fs::rename(dir.join(f), aside(f)) {
+                    Ok(()) => moved.push(f),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e),
+                }
             }
+            if fail_restore {
+                return Err(io::Error::other("the generation could not be put in place"));
+            }
+            std::fs::rename(&g, &db)
+        })();
+        if let Err(e) = r {
+            for f in moved {
+                let _ = std::fs::rename(aside(f), dir.join(f));
+            }
+            return Err(e);
         }
-        std::fs::rename(&g, &db)?;
+        for f in moved {
+            let _ = std::fs::remove_file(aside(f));
+        }
         std::fs::File::open(dir)?.sync_all()
     })();
     match put_back {
@@ -1222,12 +1244,19 @@ fn rollback(dir: &std::path::Path, made: Option<&std::path::Path>, e: Error) -> 
 }
 
 /// What the store is assumed to grow by per byte of log still to import, evidence included: 1/8,
-/// far above what was measured (a full rebuild of 2.0 GB of logs made a 14.7 MB store, about
-/// 1/137), so a projection never falls short.
+/// far above what was measured here (a full rebuild of 2.0 GB of logs made a 14.7 MB store, about
+/// 1/137). It is an estimate: denser logs can grow the store more, and a run that still runs out
+/// of room stops with exit 4 and puts the store back.
 pub const GROWTH_PER_LOG_BYTE: u64 = 8;
 
+/// Room for the write-ahead log at its high point: SQLite's checkpoint threshold (1,000 pages)
+/// plus two chunks' worth of rows.
+pub fn wal_allowance(opts: &Options) -> u64 {
+    1000 * 4096 + 2 * opts.chunk_bytes as u64
+}
+
 /// The bytes a run that starts at `from_ms` may add to the store: the log bytes it still has to
-/// import, divided by [`GROWTH_PER_LOG_BYTE`]. With `offsets` (a run that keeps the store's rows),
+/// import, divided by [`GROWTH_PER_LOG_BYTE`], plus the [`wal_allowance`]. With `offsets` (a run that keeps the store's rows),
 /// a log counts from the offset the store already read it to; without (a reset), every log in the
 /// window counts whole. Codex rollouts count by their files. Only file sizes are read.
 pub fn projected_growth(
@@ -1252,7 +1281,9 @@ pub fn projected_growth(
         };
         bytes = bytes.saturating_add(left);
     }
-    bytes.div_ceil(GROWTH_PER_LOG_BYTE)
+    bytes
+        .div_ceil(GROWTH_PER_LOG_BYTE)
+        .saturating_add(wal_allowance(opts))
 }
 
 /// The resolver for one sync: the global app home's ledgers, `$HERDR_WORKERS_LEDGER`, the project
@@ -1268,6 +1299,7 @@ fn resolver(
 ) -> Result<Resolver, Error> {
     let mut r = Resolver::new(core, snapshot)
         .walk(opts.project_ledgers)
+        .walk_within(opts.walk_within.clone())
         .keyed(key);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);
