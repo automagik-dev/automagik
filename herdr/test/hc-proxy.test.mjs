@@ -1328,6 +1328,22 @@ for (const [name, change] of [
   });
 }
 
+test("approved helper worker re-reads at spawn time and refuses after re-approval", async (t) => {
+  // The wrapped dsh-tui shape (`workerArgs` with sandbox: true): no named template or agent.
+  const { s, client, fake } = await approvedWorkerScene(t, { agent: "dsh-tui" });
+  const params = runParams(s);
+  assert.equal(params.argv.length, 14, params.argv.join(" "));
+  assert.ok((await client.call("terminal.run", params)).result, "the helper is allowed before change");
+  approveProject({ project: s.project, env: s.env, approvedBy: "test",
+    approvedAt: "2026-11-03T00:00:00.000Z" });
+  fake.clearLog();
+  const answer = await client.call("terminal.run", params);
+  assert.equal(answer.result, undefined, "the start is refused after the re-approval");
+  assert.match(answer.error.message,
+    /^hc-proxy: terminal\.run: approved worker refused: worker allowance approval approvedAt changed; restart the pane after approval$/);
+  assert.equal(fake.calls("terminal.run").length, 0, "the core never received the start");
+});
+
 test("approved worker rejects extra argv and nonterminal RPC env overrides", async (t) => {
   const worker = { agent: "codex", model: "chosen", effort: "high" };
   const { s, client, fake } = await approvedWorkerScene(t, worker);
