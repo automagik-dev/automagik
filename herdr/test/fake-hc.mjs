@@ -16,6 +16,7 @@
 // (exit 2), and state.connectHang answers nothing and runs on (its pid in state.connectPid).
 // state.connectBefore: raw lines printed before any answer (a notification, a broken line);
 // state.connectAnswer: a raw line printed in place of every answer.
+import net from "node:net";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { appendLine, readJsonLines } from "./log-lines.mjs";
@@ -108,6 +109,46 @@ function foregroundOf(launch) {
     return [...cmd.split(/\s+/).filter(Boolean), ...w.slice(4)];
   }
   return launch;
+}
+
+// Worker routing integration: this stand-in's run uses the fixture proxy's real RPC path.
+// Every other command keeps the existing file-backed fake; no real core is ever contacted.
+if (process.env.HC_FAKE_PROXY_RUN === "1" && words[0] === "run") {
+  const params = { argv: [], env: {}, labels: {}, caller: process.env.HC_TERMINAL_ID,
+    die_with_parent: true };
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    if (word === "--") { params.argv = words.slice(i + 1); break; }
+    if (word === "--bg") continue;
+    if (["--name", "--cwd", "--parent"].includes(word)) {
+      params[word.slice(2)] = words[++i]; continue;
+    }
+    if (word === "--label") {
+      const value = words[++i], eq = value.indexOf("=");
+      params.labels[value.slice(0, eq)] = value.slice(eq + 1); continue;
+    }
+    params.argv = words.slice(i); break;
+  }
+  for (const key of ["TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"]) {
+    if (process.env[key]) params.env[key] = process.env[key];
+  }
+  const reply = await new Promise((done, reject) => {
+    const socket = net.connect(process.env.HC_SOCKET);
+    let buffer = "";
+    socket.setTimeout(3000, () => socket.destroy(new Error("fixture proxy did not answer")));
+    socket.on("error", reject);
+    socket.on("connect", () => socket.write(JSON.stringify({ jsonrpc: "2.0", id: 1,
+      method: "terminal.run", params }) + "\n"));
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      if (!buffer.includes("\n")) return;
+      socket.destroy(); done(JSON.parse(buffer.split("\n")[0]));
+    });
+  });
+  if (reply.error) fail(reply.error.message);
+  const terminal = { ...reply.result.terminal, cwd: params.cwd, labels: params.labels,
+    parent: params.parent, foreground: { argv: params.argv, pid: 5000 }, pid: 5000 };
+  state.terminals.push(terminal); save(); out(terminal); process.exit(0);
 }
 
 switch (words[0]) {

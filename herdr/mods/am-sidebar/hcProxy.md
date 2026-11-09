@@ -1,6 +1,6 @@
 # The per-pane hc proxy (#631)
 
-**Status: C2b-1 preparation, off by default.** The effective rollout setting is the bot entry's
+**Status: C2b-2 preparation, off by default.** The effective rollout setting is the bot entry's
 `hcProxy` boolean in the project's **approved roster snapshot**, read afresh at each start,
 restart and worker start. Edit the working value with
 `automagik-herdr edit <bot> --hc-proxy on|off`, then run `automagik-herdr proxy approve`
@@ -28,11 +28,10 @@ start never launches the child; a listening proxy that errors or closes ends the
 returns failure. There is no fallback launch against the real core. A stale execution copy or
 profile row refuses startup and names `automagik-herdr dsh-tui install` as the repair.
 
-C2b-1 leaves the managed sandbox profile row unchanged. It prepares approval controls only; the
-socket boundary is not enabled by this slice. Approved template/agent worker allowance follows
-in C2b-2; the coordinated profile-row enablement and mask review fixes follow in C2c. Keep every
-bot's switch off until those slices have shipped. Localhost administration endpoints remain
-outside this work.
+C2b-2 adds approved-worker allowance through the proxy. Every switch stays off; the managed
+sandbox profile row and socket mask are unchanged. The coordinated profile-row enablement
+and mask review follow in C2c. No bot is opted in by this preparation. Administration endpoints
+remain outside this work.
 
 ## Rollout and rollback
 
@@ -50,6 +49,8 @@ terminal on the computer running that bot:
 2. Run `automagik-herdr edit <bot> --hc-proxy on`, then
    `automagik-herdr proxy approve --project <project>`. Review the printed roster diff,
    including the switch change. A **roster change needs a pane restart** after approval.
+   After a re-approval, every worker start from an approved pane is refused until that pane
+   restarts, including dsh-tui helper workers. Restart before asking the pane to start workers.
 3. Run `automagik-herdr restart <bot>`. Check that bot before opting in the next.
 4. To roll back, run `automagik-herdr edit <bot> --hc-proxy off`, then
    `automagik-herdr proxy approve --project <project>` (review the diff), then
@@ -125,7 +126,9 @@ ids are never reused, so a rename between the check and the call cannot redirect
 | `terminal.get`, `terminal.read`, `terminal.wait` | the caller itself, hcGuard's `teamOf` graph, and its own workers |
 | `terminal.send` | the same, plus hcGuard's shared send rules: pm/integrator/fixer callers may send to any listed bot; captain callers may send to other captains; tester/reviewer/fixer targets serve every squad. Ranks come from the approved roster. Workers inherit no caller-rank widening |
 | `terminal.kill`, `terminal.rm`, `terminal.label` | the caller's **own workers only**: the target's `parent` is the caller's pane, or its `worker.of` is the caller's bot. A team member, another bot's worker and a worker caller are refused |
-| `terminal.run` | the helper worker shape below, started only by a bound bot pane |
+| `terminal.run` | the helper shape, or the exact approved template/agent shape below; bound bot panes only |
+| `templates.list` | only the approved worker template, with its metadata unchanged |
+| `proxy.workerTransport` | local transport identification for the wrapper's verified bot pane; never forwarded |
 
 The guard and proxy use the same shared send check. Tester targets require a roster rank;
 `role=tester` alone grants nothing. The existing reviewer/fixer label path remains.
@@ -163,6 +166,58 @@ worker's tab label: `workerArgs` sets `worker.of`, `branch`, `worker.role`, `tas
 `herdr.space`, and the sidebar's `keptSteps` sets `herdr.space`/`herdr.tab` with a later
 `hc label` once the pane is in the window. Without that call the worker's tab marker could not be
 written from the pane.
+
+## Approved template and agent workers
+
+At each worker spawn the proxy calls `readApprovedRecord` again. A missing, unreadable or
+invalid record refuses the allowance. Its digest, approval time and approver must still match
+the record with which this pane started. After re-approval, all worker starts from an approved
+pane are refused until that pane restarts, including helper workers.
+Neither the live `bots.json` nor the cached team graph supplies worker allowance.
+
+Only the snapshot's `worker.template` or `worker.agent` is allowed. The proxy derives the plan
+from the approved defaults and rebuilds argv through the same `workerArgs` function the CLI
+uses. It checks exact equality, including the approved model and effort; the task remains one
+text argument and cannot be an option. Extra args, changed programs, environment assignments
+and unapproved templates or agents are refused with one `hc-proxy:` line explaining why.
+For templates the proxy reads metadata from the core, and `templates.list` returns only the
+approved name, preserving that entry's metadata. A missing template cannot become a program.
+
+Only dsh-tui workers take the helper wrapper and mask. Approved template workers and workers
+using other agents run unsandboxed by the owner's choice and keep their existing plain launch.
+The single generated env exception is the default Claude login wrapper,
+`/usr/bin/env -u CLAUDE_CONFIG_DIR`: trusted code rebuilds it from the approved plan and core
+template text. The caller cannot add or change an unset or assignment. Separately, the real
+worker CLI wire carries `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`; only
+those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,64}`. All other
+keys and bad values refuse. Only `caller` is overwritten with the verified pane's identity.
+A forged `parent` or `worker.of` is refused before forwarding; neither is overwritten.
+
+The proxy refuses these starts:
+
+- Every worker start after re-approval until the pane restarts, including helper workers.
+- A template or agent name absent from the approved snapshot.
+- An env override outside the four bounded terminal variables or the exact generated login wrapper.
+- Any argv that differs from the command rebuilt from the approved snapshot and core template text.
+
+The CLI skips the PATH guard only when the actual transport answers the proxy's local
+`proxy.workerTransport` request for this pane. That single reply supplies both the verified
+terminal and the core id verified when the proxy started; the CLI uses it for core identity
+and the worker route. A missing, failed or wrong-terminal reply keeps the existing
+`server.status` identity lookup and guard route. It then uses the real hc on that same proxy
+transport for a verified reply, so the proxy checks the approved start. A working roster edit or caller-added env
+marker cannot select this route. Without that proxy response, it keeps today's guard route
+and its refusal. This is necessary because the old guard accepts only its plain dsh-tui shape.
+
+**Known limit next to this allowance:** a bot approved on whose working switch was turned off,
+while its record is also invalid, starts plain with the loud warning. Only an outside change
+can make the record invalid; the sandbox binds the whole data root read-only.
+
+The fixture test `approved snapshot write and rename are refused inside the sandbox wrapper`
+runs real bwrap with a fixture data root, never live resources. Its unmasked control allows
+both operations; its masked run refuses both. It reports a capability skip when bwrap or
+namespaces are unavailable. The required local Herdr gate runs this proof without a skip;
+CI without those capabilities skips this proof.
 
 ## Team data is a start-time snapshot
 
@@ -211,17 +266,16 @@ pane with it.
 
 ## C1 and C2
 
-**C1 (this change) has no enablement.** It adds the approved roster and moves the explicit
-caller off the attach ledger. The per-bot `hcProxy` switch stays off by default.
+C1 added the approved roster and moved the explicit caller off the attach ledger. C2b-1
+made the approved snapshot authoritative for the per-bot switch. C2b-2 adds the worker
+allowance above. Every switch stays off in this preparation.
 
 Residual, recorded for the person who approves: a sandboxed bot can ask an in-team unsandboxed
 pane to run `automagik-herdr proxy approve`. The printed diff is the check, and approving is the
 person's act. The record is outside the sandbox; the command that writes it is not automatically
 trusted because it ran in an unsandboxed pane.
 
-**C2, after C1 merges:** the opt-in list in the approved record; `AM_HC_PROXY=1` read only from
-the outside start command's own process env; restarts keep the list; the box PM is the first
-enable target. `proxy approve --disable` is C2.
+C2c coordinates the later sandbox profile change and mask review. This slice changes neither.
 
 ## Limits and the real hc 0.1.14 params
 
