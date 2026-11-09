@@ -2236,6 +2236,7 @@ var nav = registry();
 var badges = registry();
 var botChildren = registry();
 var headerButtons = registry();
+var sidebarTools = registry();
 var botSettings = registry();
 var chatSuggestions = registry();
 var composerPacks = registry();
@@ -12621,6 +12622,7 @@ function TeamSidebar(props) {
     event.preventDefault();
     actions.openPalette(event.key);
   };
+  const toolProps = { wide, roster, actions: rowActions, useRoster };
   return (0, import_react28.createElement)(
     "div",
     { className: wide ? "bt-side" : "bt-side bt-rail", onKeyDown: typeToSearch },
@@ -12630,6 +12632,7 @@ function TeamSidebar(props) {
       (0, import_react28.createElement)("span", { className: "bt-brand" }, (0, import_react28.createElement)(Lockup, { height: 27 })),
       (0, import_react28.createElement)(WorkCodeSwitch, { roster, useSessions }),
       (0, import_react28.createElement)(UpdateButton, { useUpdate: props.useUpdate, actions }),
+      (0, import_react28.createElement)(SidebarTools, toolProps),
       (0, import_react28.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("Search"), title: t("Search"), onClick: () => actions.openPalette() }, (0, import_react28.createElement)(SearchIcon)),
       (0, import_react28.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("New…"), title: t("New…"), onClick: () => actions.openNewChat("new") }, (0, import_react28.createElement)(PlusIcon)),
       (0, import_react28.createElement)("button", { type: "button", className: "bt-round bt-side-collapse", "aria-label": t("Collapse sidebar"), title: t("Collapse sidebar"), onClick: () => actions.toggleSidebar() }, (0, import_react28.createElement)(SidebarIcon))
@@ -12637,6 +12640,7 @@ function TeamSidebar(props) {
       import_react28.Fragment,
       null,
       (0, import_react28.createElement)(UpdateButton, { useUpdate: props.useUpdate, actions }),
+      (0, import_react28.createElement)(SidebarTools, toolProps),
       (0, import_react28.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("New…"), title: t("New…"), onClick: () => actions.openNewChat("new") }, (0, import_react28.createElement)(PlusIcon))
     ),
     wide && roster.readOnly ? (0, import_react28.createElement)("div", { className: "bt-hint bt-read-only", role: "status" }, hostText(roster.readOnly)) : null,
@@ -12661,6 +12665,26 @@ function TeamSidebar(props) {
       ) : entry.kind === "room" ? (0, import_react28.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react28.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     )
   );
+}
+var ToolBoundary = null;
+var toolBoundary = () => ToolBoundary ??= class SidebarTool extends import_react28.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.warn("[ds-bot] sidebar tool", this.props.entry.id, error);
+  }
+  render() {
+    return this.state.failed ? null : (0, import_react28.createElement)(this.props.entry.Component, this.props.tool);
+  }
+};
+function SidebarTools(props) {
+  const entries2 = useEntries(sidebarTools);
+  return entries2.map((entry) => (0, import_react28.createElement)(toolBoundary(), { key: entry.id, entry, tool: props }));
 }
 function UpdateButton({ useUpdate, actions }) {
   const update = useUpdate((value) => value);
@@ -13160,6 +13184,14 @@ body[data-bt-motion=quiet] .bt-thread-spin{animation-duration:3s}
 .bt-update-go:disabled{opacity:.6;cursor:default}
 .bt-update-dsh:not(:first-child){margin-top:12px;padding-top:12px;border-top:.5px solid var(--bt-line-2)}
 @media (prefers-reduced-motion:reduce){.bt-round.bt-update,.bt-update-pop,.bt-update .bt-cloud-arrow{animation:none}}
+/* A sidebar tool (extend.js sidebarTools) wears these same pieces: .bt-round with the cloud's
+   .bt-update-dot, a card of .bt-update-* rows, and .bt-update-notes as a button. */
+.bt-side-tool{position:relative}
+.bt-update-pop button.bt-update-notes{padding:0;border:0;background:none;font-family:inherit;cursor:pointer}
+/* A card row may lead with its product's mark (BotMark), beside its name and status. */
+.bt-power-who{display:flex;align-items:center;gap:10px}
+.bt-power-who>.bt-mark{flex:none}
+.bt-power-what{min-width:0}
 
 /* A DSH bot's row and its expanding Session list. It wears DSH's own whale, the mark a
    Bot with no look of its own wears too. */
@@ -25218,6 +25250,7 @@ var omni = Object.freeze({
   badges,
   botChildren,
   headerButtons,
+  sidebarTools,
   botSettings,
   chatSuggestions,
   registerComposerPack,

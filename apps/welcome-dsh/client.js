@@ -477,21 +477,21 @@ function sl(s15, t2, e, i, r, n) {
   for (let l = 0; l < s15.length - 1; l++) {
     let a = l, u = s15.get(++a);
     if (!u.isWrapped) continue;
-    let h9 = [s15.get(l)];
-    for (; a < s15.length && u.isWrapped; ) h9.push(u), u = s15.get(++a);
+    let h10 = [s15.get(l)];
+    for (; a < s15.length && u.isWrapped; ) h10.push(u), u = s15.get(++a);
     if (!n && i >= l && i < a) {
-      l += h9.length - 1;
+      l += h10.length - 1;
       continue;
     }
-    let c = 0, d = ri(h9, c, t2), _ = 1, p = 0;
-    for (; _ < h9.length; ) {
-      let f = ri(h9, _, t2), A = f - p, R = e - d, O = Math.min(A, R);
-      h9[c].copyCellsFrom(h9[_], p, d, O, false), d += O, d === e && (c++, d = 0), p += O, p === f && (_++, p = 0), d === 0 && c !== 0 && h9[c - 1].getWidth(e - 1) === 2 && (h9[c].copyCellsFrom(h9[c - 1], e - 1, d++, 1, false), h9[c - 1].setCell(e - 1, r));
+    let c = 0, d = ri(h10, c, t2), _ = 1, p = 0;
+    for (; _ < h10.length; ) {
+      let f = ri(h10, _, t2), A = f - p, R = e - d, O = Math.min(A, R);
+      h10[c].copyCellsFrom(h10[_], p, d, O, false), d += O, d === e && (c++, d = 0), p += O, p === f && (_++, p = 0), d === 0 && c !== 0 && h10[c - 1].getWidth(e - 1) === 2 && (h10[c].copyCellsFrom(h10[c - 1], e - 1, d++, 1, false), h10[c - 1].setCell(e - 1, r));
     }
-    h9[c].replaceCells(d, e, r);
+    h10[c].replaceCells(d, e, r);
     let m = 0;
-    for (let f = h9.length - 1; f > 0 && (f > c || h9[f].getTrimmedLength() === 0); f--) m++;
-    m > 0 && (o.push(l + h9.length - m), o.push(m)), l += h9.length - 1;
+    for (let f = h10.length - 1; f > 0 && (f > c || h10[f].getTrimmedLength() === 0); f--) m++;
+    m > 0 && (o.push(l + h10.length - m), o.push(m)), l += h10.length - 1;
   }
   return o;
 }
@@ -521,8 +521,8 @@ function al(s15, t2, e) {
     n > a && (n -= a, o++);
     let u = s15[o].getWidth(n - 1) === 2;
     u && n--;
-    let h9 = u ? e - 1 : e;
-    i.push(h9), l += h9;
+    let h10 = u ? e - 1 : e;
+    i.push(h10), l += h10;
   }
   return i;
 }
@@ -811,23 +811,23 @@ var init_xterm = __esm({
       decode(t2, e) {
         let i = t2.length;
         if (!i) return 0;
-        let r = 0, n, o, l, a, u = 0, h9 = 0;
+        let r = 0, n, o, l, a, u = 0, h10 = 0;
         if (this.interim[0]) {
           let _ = false, p = this.interim[0];
           p &= (p & 224) === 192 ? 31 : (p & 240) === 224 ? 15 : 7;
           let m = 0, f;
           for (; (f = this.interim[++m] & 63) && m < 4; ) p <<= 6, p |= f;
           let A = (this.interim[0] & 224) === 192 ? 2 : (this.interim[0] & 240) === 224 ? 3 : 4, R = A - m;
-          for (; h9 < R; ) {
-            if (h9 >= i) return 0;
-            if (f = t2[h9++], (f & 192) !== 128) {
-              h9--, _ = true;
+          for (; h10 < R; ) {
+            if (h10 >= i) return 0;
+            if (f = t2[h10++], (f & 192) !== 128) {
+              h10--, _ = true;
               break;
             } else this.interim[m++] = f, p <<= 6, p |= f & 63;
           }
-          _ || (A === 2 ? p < 128 ? h9-- : e[r++] = p : A === 3 ? p < 2048 || p >= 55296 && p <= 57343 || p === 65279 || (e[r++] = p) : p < 65536 || p > 1114111 || (e[r++] = p)), this.interim.fill(0);
+          _ || (A === 2 ? p < 128 ? h10-- : e[r++] = p : A === 3 ? p < 2048 || p >= 55296 && p <= 57343 || p === 65279 || (e[r++] = p) : p < 65536 || p > 1114111 || (e[r++] = p)), this.interim.fill(0);
         }
-        let c = i - 4, d = h9;
+        let c = i - 4, d = h10;
         for (; d < i; ) {
           for (; d < c && !((n = t2[d]) & 128) && !((o = t2[d + 1]) & 128) && !((l = t2[d + 2]) & 128) && !((a = t2[d + 3]) & 128); ) e[r++] = n, e[r++] = o, e[r++] = l, e[r++] = a, d += 4;
           if (n = t2[d++], n < 128) e[r++] = n;
@@ -1112,17 +1112,17 @@ var init_xterm = __esm({
           e(void 0);
           return;
         }
-        let r = [], n = this._optionsService.rawOptions.linkHandler, o = new q(), l = i.getTrimmedLength(), a = -1, u = -1, h9 = false;
+        let r = [], n = this._optionsService.rawOptions.linkHandler, o = new q(), l = i.getTrimmedLength(), a = -1, u = -1, h10 = false;
         for (let c = 0; c < l; c++) if (!(u === -1 && !i.hasContent(c))) {
           if (i.loadCell(c, o), o.hasExtendedAttrs() && o.extended.urlId) if (u === -1) {
             u = c, a = o.extended.urlId;
             continue;
-          } else h9 = o.extended.urlId !== a;
-          else u !== -1 && (h9 = true);
-          if (h9 || u !== -1 && c === l - 1) {
+          } else h10 = o.extended.urlId !== a;
+          else u !== -1 && (h10 = true);
+          if (h10 || u !== -1 && c === l - 1) {
             let d = this._oscLinkService.getLinkData(a)?.uri;
             if (d) {
-              let _ = { start: { x: u + 1, y: t2 }, end: { x: c + (!h9 && c === l - 1 ? 1 : 0), y: t2 } }, p = false;
+              let _ = { start: { x: u + 1, y: t2 }, end: { x: c + (!h10 && c === l - 1 ? 1 : 0), y: t2 } }, p = false;
               if (!n?.allowNonHttpProtocols) try {
                 let m = new URL(d);
                 ["http:", "https:"].includes(m.protocol) || (p = true);
@@ -1131,7 +1131,7 @@ var init_xterm = __esm({
               }
               p || r.push({ text: d, range: _, activate: (m, f) => n ? n.activate(m, f, _) : Ol(m, f), hover: (m, f) => n?.hover?.(m, f, _), leave: (m, f) => n?.leave?.(m, f, _) });
             }
-            h9 = false, o.hasExtendedAttrs() && o.extended.urlId ? (u = c, a = o.extended.urlId) : (u = -1, a = -1);
+            h10 = false, o.hasExtendedAttrs() && o.extended.urlId ? (u = c, a = o.extended.urlId) : (u = -1, a = -1);
           }
         }
         e(r);
@@ -1374,10 +1374,10 @@ var init_xterm = __esm({
         return false;
       }
       O.some = u;
-      function h9(I, k) {
+      function h10(I, k) {
         for (let P of I) if (k(P)) return P;
       }
-      O.find = h9;
+      O.find = h10;
       function* c(I, k) {
         for (let P of I) k(P) && (yield P);
       }
@@ -1465,29 +1465,29 @@ var init_xterm = __esm({
         else {
           let a = /* @__PURE__ */ new Map(), u = [...this.livingDisposables.values()].filter((c) => c.source !== null && !this.getRootParent(c, a).isSingleton);
           if (u.length === 0) return;
-          let h9 = new Set(u.map((c) => c.value));
-          if (i = u.filter((c) => !(c.parent && h9.has(c.parent))), i.length === 0) throw new Error("There are cyclic diposable chains!");
+          let h10 = new Set(u.map((c) => c.value));
+          if (i = u.filter((c) => !(c.parent && h10.has(c.parent))), i.length === 0) throw new Error("There are cyclic diposable chains!");
         }
         if (!i) return;
         function r(a) {
           function u(c, d) {
             for (; c.length > 0 && d.some((_) => typeof _ == "string" ? _ === c[0] : c[0].match(_)); ) c.shift();
           }
-          let h9 = a.source.split(`
+          let h10 = a.source.split(`
 `).map((c) => c.trim().replace("at ", "")).filter((c) => c !== "");
-          return u(h9, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), h9.reverse();
+          return u(h10, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), h10.reverse();
         }
         let n = new ur();
         for (let a of i) {
           let u = r(a);
-          for (let h9 = 0; h9 <= u.length; h9++) n.add(u.slice(0, h9).join(`
+          for (let h10 = 0; h10 <= u.length; h10++) n.add(u.slice(0, h10).join(`
 `), a);
         }
         i.sort(no((a) => a.idx, so));
         let o = "", l = 0;
         for (let a of i.slice(0, t2)) {
           l++;
-          let u = r(a), h9 = [];
+          let u = r(a), h10 = [];
           for (let c = 0; c < u.length; c++) {
             let d = u[c];
             d = `(shared with ${n.get(u.slice(0, c + 1).join(`
@@ -1495,14 +1495,14 @@ var init_xterm = __esm({
             let p = n.get(u.slice(0, c).join(`
 `)), m = co([...p].map((f) => r(f)[c]), (f) => f);
             delete m[u[c]];
-            for (let [f, A] of Object.entries(m)) h9.unshift(`    - stacktraces of ${A.length} other leaks continue with ${f}`);
-            h9.unshift(d);
+            for (let [f, A] of Object.entries(m)) h10.unshift(`    - stacktraces of ${A.length} other leaks continue with ${f}`);
+            h10.unshift(d);
           }
           o += `
 
 
 ==================== Leaking disposable ${l}/${i.length}: ${a.value.constructor.name} ====================
-${h9.join(`
+${h10.join(`
 `)}
 ============================================================
 
@@ -1731,17 +1731,17 @@ ${h9.join(`
       }
       Qe.once = i;
       function r(y, T, g) {
-        return h9((w, E = null, x) => y((N) => w.call(E, T(N)), null, x), g);
+        return h10((w, E = null, x) => y((N) => w.call(E, T(N)), null, x), g);
       }
       Qe.map = r;
       function n(y, T, g) {
-        return h9((w, E = null, x) => y((N) => {
+        return h10((w, E = null, x) => y((N) => {
           T(N), w.call(E, N);
         }, null, x), g);
       }
       Qe.forEach = n;
       function o(y, T, g) {
-        return h9((w, E = null, x) => y((N) => T(N) && w.call(E, N), null, x), g);
+        return h10((w, E = null, x) => y((N) => T(N) && w.call(E, N), null, x), g);
       }
       Qe.filter = o;
       function l(y) {
@@ -1760,7 +1760,7 @@ ${h9.join(`
         return r(y, (x) => (E = T(E, x), E), w);
       }
       Qe.reduce = u;
-      function h9(y, T) {
+      function h10(y, T) {
         let g, w = { onWillAddFirstListener() {
           g = y(E.fire, E);
         }, onDidRemoveLastListener() {
@@ -2065,8 +2065,8 @@ ${h9.join(`
           if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
             let a = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
             console.warn(a);
-            let u = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], h9 = new Yn(`${a}. HINT: Stack shows most frequent listener (${u[1]}-times)`, u[0]);
-            return (this._options?.onListenerError || Lt)(h9), D.None;
+            let u = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], h10 = new Yn(`${a}. HINT: Stack shows most frequent listener (${u[1]}-times)`, u[0]);
+            return (this._options?.onListenerError || Lt)(h10), D.None;
           }
           if (this._disposed) return D.None;
           e && (t2 = t2.bind(e));
@@ -2686,8 +2686,8 @@ ${h9.join(`
         let t2 = Cr2._bigBlock32, e = this._buffDV;
         for (let c = 0; c < 64; c += 4) t2.setUint32(c, e.getUint32(c, false), false);
         for (let c = 64; c < 320; c += 4) t2.setUint32(c, rs(t2.getUint32(c - 12, false) ^ t2.getUint32(c - 32, false) ^ t2.getUint32(c - 56, false) ^ t2.getUint32(c - 64, false), 1), false);
-        let i = this._h0, r = this._h1, n = this._h2, o = this._h3, l = this._h4, a, u, h9;
-        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h9 = rs(i, 5) + a + l + u + t2.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h9;
+        let i = this._h0, r = this._h1, n = this._h2, o = this._h3, l = this._h4, a, u, h10;
+        for (let c = 0; c < 80; c++) c < 20 ? (a = r & n | ~r & o, u = 1518500249) : c < 40 ? (a = r ^ n ^ o, u = 1859775393) : c < 60 ? (a = r & n | r & o | n & o, u = 2400959708) : (a = r ^ n ^ o, u = 3395469782), h10 = rs(i, 5) + a + l + u + t2.getUint32(c * 4, false) & 4294967295, l = o, o = n, n = rs(r, 30), r = i, i = h10;
         this._h0 = this._h0 + i & 4294967295, this._h1 = this._h1 + r & 4294967295, this._h2 = this._h2 + n & 4294967295, this._h3 = this._h3 + o & 4294967295, this._h4 = this._h4 + l & 4294967295;
       }
     };
@@ -2772,13 +2772,13 @@ ${h9.join(`
         i.set(n, false);
       };
       mt = (n, o, l = 0) => {
-        let a = Oo(n), u = new Di(o, l), h9 = s15.get(a);
-        return h9 || (h9 = [], s15.set(a, h9)), h9.push(u), e.get(a) || (e.set(a, true), n.requestAnimationFrame(() => r(a))), u;
+        let a = Oo(n), u = new Di(o, l), h10 = s15.get(a);
+        return h10 || (h10 = [], s15.set(a, h10)), h10.push(u), e.get(a) || (e.set(a, true), n.requestAnimationFrame(() => r(a))), u;
       }, wa = (n, o, l) => {
         let a = Oo(n);
         if (i.get(a)) {
-          let u = new Di(o, l), h9 = t2.get(a);
-          return h9 || (h9 = [], t2.set(a, h9)), h9.push(u), u;
+          let u = new Di(o, l), h10 = t2.get(a);
+          return h10 || (h10 = [], t2.set(a, h10)), h10.push(u), u;
         } else return mt(n, o, l);
       };
     })();
@@ -3065,11 +3065,11 @@ ${h9.join(`
             console.warn("move of an UNKNOWN touch", a);
             continue;
           }
-          let u = this.activeTouches[a.identifier], h9 = Date.now() - u.initialTimeStamp;
-          if (h9 < Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
+          let u = this.activeTouches[a.identifier], h10 = Date.now() - u.initialTimeStamp;
+          if (h10 < Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
             let c = this.newGestureEvent(He.Tap, u.initialTarget);
             c.pageX = Se(u.rollingPageX), c.pageY = Se(u.rollingPageY), this.dispatchEvent(c);
-          } else if (h9 >= Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
+          } else if (h10 >= Q2.HOLD_DELAY && Math.abs(u.initialPageX - Se(u.rollingPageX)) < 30 && Math.abs(u.initialPageY - Se(u.rollingPageY)) < 30) {
             let c = this.newGestureEvent(He.Contextmenu, u.initialTarget);
             c.pageX = Se(u.rollingPageX), c.pageY = Se(u.rollingPageY), this.dispatchEvent(c);
           } else if (n === 1) {
@@ -3101,12 +3101,12 @@ ${h9.join(`
           for (let [r, n] of i) n.dispatchEvent(e), this.dispatched = true;
         }
       }
-      inertia(e, i, r, n, o, l, a, u, h9) {
+      inertia(e, i, r, n, o, l, a, u, h10) {
         this.handle = mt(e, () => {
           let c = Date.now(), d = c - r, _ = 0, p = 0, m = true;
           n += Q2.SCROLL_FRICTION * d, a += Q2.SCROLL_FRICTION * d, n > 0 && (m = false, _ = o * n * d), a > 0 && (m = false, p = u * a * d);
           let f = this.newGestureEvent(He.Change);
-          f.translationX = _, f.translationY = p, i.forEach((A) => A.dispatchEvent(f)), m || this.inertia(e, i, c, n, o, l + _, a, u, h9 + p);
+          f.translationX = _, f.translationY = p, i.forEach((A) => A.dispatchEvent(f)), m || this.inertia(e, i, c, n, o, l + _, a, u, h10 + p);
         });
       }
       onTouchMove(e) {
@@ -3452,8 +3452,8 @@ ${h9.join(`
       static _computeValues(t2, e, i, r, n) {
         let o = Math.max(0, i - t2), l = Math.max(0, o - 2 * e), a = r > 0 && r > i;
         if (!a) return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(l), computedSliderRatio: 0, computedSliderPosition: 0 };
-        let u = Math.round(Math.max(20, Math.floor(i * l / r))), h9 = (l - u) / (r - i), c = n * h9;
-        return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(u), computedSliderRatio: h9, computedSliderPosition: Math.round(c) };
+        let u = Math.round(Math.max(20, Math.floor(i * l / r))), h10 = (l - u) / (r - i), c = n * h10;
+        return { computedAvailableSize: Math.round(o), computedIsNeeded: a, computedSliderSize: Math.round(u), computedSliderRatio: h10, computedSliderPosition: Math.round(c) };
       }
       _refreshComputedValues() {
         let t2 = s11._computeValues(this._oppositeScrollbarSize, this._arrowSize, this._visibleSize, this._scrollSize, this._scrollPosition);
@@ -3596,8 +3596,8 @@ ${h9.join(`
         if (Math.abs(t2.deltaX) > 0 && Math.abs(t2.deltaY) > 0) return 1;
         let i = 0.5;
         if ((!this._isAlmostInt(t2.deltaX) || !this._isAlmostInt(t2.deltaY)) && (i += 0.25), e) {
-          let r = Math.abs(t2.deltaX), n = Math.abs(t2.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h9 = Math.max(r, o), c = Math.max(n, l);
-          h9 % a === 0 && c % u === 0 && (i -= 0.5);
+          let r = Math.abs(t2.deltaX), n = Math.abs(t2.deltaY), o = Math.abs(e.deltaX), l = Math.abs(e.deltaY), a = Math.max(Math.min(r, o), 1), u = Math.max(Math.min(n, l), 1), h10 = Math.max(r, o), c = Math.max(n, l);
+          h10 % a === 0 && c % u === 0 && (i -= 0.5);
         }
         return Math.min(Math.max(i, 0), 1);
       }
@@ -3670,16 +3670,16 @@ ${h9.join(`
           this._options.scrollPredominantAxis && (this._options.scrollYToX && l + o === 0 ? l = o = 0 : Math.abs(o) >= Math.abs(l) ? l = 0 : o = 0), this._options.flipAxes && ([o, l] = [l, o]);
           let a = !Te && e.browserEvent && e.browserEvent.shiftKey;
           (this._options.scrollYToX || a) && !l && (l = o, o = 0), e.browserEvent && e.browserEvent.altKey && (l = l * this._options.fastScrollSensitivity, o = o * this._options.fastScrollSensitivity);
-          let u = this._scrollable.getFutureScrollPosition(), h9 = {};
+          let u = this._scrollable.getFutureScrollPosition(), h10 = {};
           if (o) {
             let c = Ko * o, d = u.scrollTop - (c < 0 ? Math.floor(c) : Math.ceil(c));
-            this._verticalScrollbar.writeScrollPosition(h9, d);
+            this._verticalScrollbar.writeScrollPosition(h10, d);
           }
           if (l) {
             let c = Ko * l, d = u.scrollLeft - (c < 0 ? Math.floor(c) : Math.ceil(c));
-            this._horizontalScrollbar.writeScrollPosition(h9, d);
+            this._horizontalScrollbar.writeScrollPosition(h10, d);
           }
-          h9 = this._scrollable.validateScrollPosition(h9), (u.scrollLeft !== h9.scrollLeft || u.scrollTop !== h9.scrollTop) && (zo && this._options.mouseWheelSmoothScroll && i.isPhysicalMouseWheel() ? this._scrollable.setScrollPositionSmooth(h9) : this._scrollable.setScrollPositionNow(h9), r = true);
+          h10 = this._scrollable.validateScrollPosition(h10), (u.scrollLeft !== h10.scrollLeft || u.scrollTop !== h10.scrollTop) && (zo && this._options.mouseWheelSmoothScroll && i.isPhysicalMouseWheel() ? this._scrollable.setScrollPositionSmooth(h10) : this._scrollable.setScrollPositionNow(h10), r = true);
         }
         let n = r;
         !n && this._options.alwaysConsumeMouseWheel && (n = true), !n && this._options.consumeMouseWheelIfScrollbarIsNeeded && (this._verticalScrollbar.isNeeded() || this._horizontalScrollbar.isNeeded()) && (n = true), n && (e.preventDefault(), e.stopPropagation());
@@ -3741,10 +3741,10 @@ ${h9.join(`
         this._isSyncing = false;
         this._isHandlingScroll = false;
         this._suppressOnScrollHandler = false;
-        let h9 = this._register(new Ri({ forceIntegerValues: false, smoothScrollDuration: this._optionsService.rawOptions.smoothScrollDuration, scheduleAtNextAnimationFrame: (c) => mt(n.window, c) }));
+        let h10 = this._register(new Ri({ forceIntegerValues: false, smoothScrollDuration: this._optionsService.rawOptions.smoothScrollDuration, scheduleAtNextAnimationFrame: (c) => mt(n.window, c) }));
         this._register(this._optionsService.onSpecificOptionChange("smoothScrollDuration", () => {
-          h9.setSmoothScrollDuration(this._optionsService.rawOptions.smoothScrollDuration);
-        })), this._scrollableElement = this._register(new Kr(i, { vertical: 1, horizontal: 2, useShadows: false, mouseWheelSmoothScroll: true, ...this._getChangeOptions() }, h9)), this._register(this._optionsService.onMultipleOptionChange(["scrollSensitivity", "fastScrollSensitivity", "overviewRuler"], () => this._scrollableElement.updateOptions(this._getChangeOptions()))), this._register(o.onProtocolChange((c) => {
+          h10.setSmoothScrollDuration(this._optionsService.rawOptions.smoothScrollDuration);
+        })), this._scrollableElement = this._register(new Kr(i, { vertical: 1, horizontal: 2, useShadows: false, mouseWheelSmoothScroll: true, ...this._getChangeOptions() }, h10)), this._register(this._optionsService.onMultipleOptionChange(["scrollSensitivity", "fastScrollSensitivity", "overviewRuler"], () => this._scrollableElement.updateOptions(this._getChangeOptions()))), this._register(o.onProtocolChange((c) => {
           this._scrollableElement.updateOptions({ handleMouseWheel: !(c & 16) });
         })), this._scrollableElement.setScrollDimensions({ height: 0, scrollHeight: 0 }), this._register($.runAndSubscribe(l.onChangeColors, () => {
           this._scrollableElement.getDomNode().style.backgroundColor = l.colors.background.css;
@@ -3896,8 +3896,8 @@ ${h9.join(`
         this._shouldUpdateAnchor = true;
         this._lastKnownBufferLength = 0;
         this._canvas = this._coreBrowserService.mainDocument.createElement("canvas"), this._canvas.classList.add("xterm-decoration-overview-ruler"), this._refreshCanvasDimensions(), this._viewportElement.parentElement?.insertBefore(this._canvas, this._viewportElement), this._register(C(() => this._canvas?.remove()));
-        let h9 = this._canvas.getContext("2d");
-        if (h9) this._ctx = h9;
+        let h10 = this._canvas.getContext("2d");
+        if (h10) this._ctx = h10;
         else throw new Error("Ctx cannot be null");
         this._register(this._decorationService.onDecorationRegistered(() => this._queueRefresh(void 0, true))), this._register(this._decorationService.onDecorationRemoved(() => this._queueRefresh(void 0, true))), this._register(this._renderService.onRenderedViewportChange(() => this._queueRefresh())), this._register(this._bufferService.buffers.onBufferActivate(() => {
           this._canvas.style.display = this._bufferService.buffer === this._bufferService.buffers.alt ? "none" : "block";
@@ -4038,8 +4038,8 @@ ${h9.join(`
     ((l) => {
       function s15(a, u) {
         if (J = (u.rgba & 255) / 255, J === 1) return { css: u.css, rgba: u.rgba };
-        let h9 = u.rgba >> 24 & 255, c = u.rgba >> 16 & 255, d = u.rgba >> 8 & 255, _ = a.rgba >> 24 & 255, p = a.rgba >> 16 & 255, m = a.rgba >> 8 & 255;
-        ue = _ + Math.round((h9 - _) * J), he = p + Math.round((c - p) * J), de = m + Math.round((d - m) * J);
+        let h10 = u.rgba >> 24 & 255, c = u.rgba >> 16 & 255, d = u.rgba >> 8 & 255, _ = a.rgba >> 24 & 255, p = a.rgba >> 16 & 255, m = a.rgba >> 8 & 255;
+        ue = _ + Math.round((h10 - _) * J), he = p + Math.round((c - p) * J), de = m + Math.round((d - m) * J);
         let f = j.toCss(ue, he, de), A = j.toRgba(ue, he, de);
         return { css: f, rgba: A };
       }
@@ -4048,8 +4048,8 @@ ${h9.join(`
         return (a.rgba & 255) === 255;
       }
       l.isOpaque = t2;
-      function e(a, u, h9) {
-        let c = $r.ensureContrastRatio(a.rgba, u.rgba, h9);
+      function e(a, u, h10) {
+        let c = $r.ensureContrastRatio(a.rgba, u.rgba, h10);
         if (c) return j.toColor(c >> 24 & 255, c >> 16 & 255, c >> 8 & 255);
       }
       l.ensureContrastRatio = e;
@@ -4106,22 +4106,22 @@ ${h9.join(`
       }
       e.relativeLuminance = s15;
       function t2(i, r, n) {
-        let o = i / 255, l = r / 255, a = n / 255, u = o <= 0.03928 ? o / 12.92 : Math.pow((o + 0.055) / 1.055, 2.4), h9 = l <= 0.03928 ? l / 12.92 : Math.pow((l + 0.055) / 1.055, 2.4), c = a <= 0.03928 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
-        return u * 0.2126 + h9 * 0.7152 + c * 0.0722;
+        let o = i / 255, l = r / 255, a = n / 255, u = o <= 0.03928 ? o / 12.92 : Math.pow((o + 0.055) / 1.055, 2.4), h10 = l <= 0.03928 ? l / 12.92 : Math.pow((l + 0.055) / 1.055, 2.4), c = a <= 0.03928 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
+        return u * 0.2126 + h10 * 0.7152 + c * 0.0722;
       }
       e.relativeLuminance2 = t2;
     })(ve ||= {});
     ((n) => {
       function s15(o, l) {
         if (J = (l & 255) / 255, J === 1) return l;
-        let a = l >> 24 & 255, u = l >> 16 & 255, h9 = l >> 8 & 255, c = o >> 24 & 255, d = o >> 16 & 255, _ = o >> 8 & 255;
-        return ue = c + Math.round((a - c) * J), he = d + Math.round((u - d) * J), de = _ + Math.round((h9 - _) * J), j.toRgba(ue, he, de);
+        let a = l >> 24 & 255, u = l >> 16 & 255, h10 = l >> 8 & 255, c = o >> 24 & 255, d = o >> 16 & 255, _ = o >> 8 & 255;
+        return ue = c + Math.round((a - c) * J), he = d + Math.round((u - d) * J), de = _ + Math.round((h10 - _) * J), j.toRgba(ue, he, de);
       }
       n.blend = s15;
       function t2(o, l, a) {
-        let u = ve.relativeLuminance(o >> 8), h9 = ve.relativeLuminance(l >> 8);
-        if (Xe(u, h9) < a) {
-          if (h9 < u) {
+        let u = ve.relativeLuminance(o >> 8), h10 = ve.relativeLuminance(l >> 8);
+        if (Xe(u, h10) < a) {
+          if (h10 < u) {
             let p = e(o, l, a), m = Xe(u, ve.relativeLuminance(p >> 8));
             if (m < a) {
               let f = i(o, l, a), A = Xe(u, ve.relativeLuminance(f >> 8));
@@ -4139,14 +4139,14 @@ ${h9.join(`
       }
       n.ensureContrastRatio = t2;
       function e(o, l, a) {
-        let u = o >> 24 & 255, h9 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
-        for (; m < a && (d > 0 || _ > 0 || p > 0); ) d -= Math.max(0, Math.ceil(d * 0.1)), _ -= Math.max(0, Math.ceil(_ * 0.1)), p -= Math.max(0, Math.ceil(p * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
+        let u = o >> 24 & 255, h10 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
+        for (; m < a && (d > 0 || _ > 0 || p > 0); ) d -= Math.max(0, Math.ceil(d * 0.1)), _ -= Math.max(0, Math.ceil(_ * 0.1)), p -= Math.max(0, Math.ceil(p * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
         return (d << 24 | _ << 16 | p << 8 | 255) >>> 0;
       }
       n.reduceLuminance = e;
       function i(o, l, a) {
-        let u = o >> 24 & 255, h9 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
-        for (; m < a && (d < 255 || _ < 255 || p < 255); ) d = Math.min(255, d + Math.ceil((255 - d) * 0.1)), _ = Math.min(255, _ + Math.ceil((255 - _) * 0.1)), p = Math.min(255, p + Math.ceil((255 - p) * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h9, c));
+        let u = o >> 24 & 255, h10 = o >> 16 & 255, c = o >> 8 & 255, d = l >> 24 & 255, _ = l >> 16 & 255, p = l >> 8 & 255, m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
+        for (; m < a && (d < 255 || _ < 255 || p < 255); ) d = Math.min(255, d + Math.ceil((255 - d) * 0.1)), _ = Math.min(255, _ + Math.ceil((255 - _) * 0.1)), p = Math.min(255, p + Math.ceil((255 - p) * 0.1)), m = Xe(ve.relativeLuminance2(d, _, p), ve.relativeLuminance2(u, h10, c));
         return (d << 24 | _ << 16 | p << 8 | 255) >>> 0;
       }
       n.increaseLuminance = i;
@@ -4200,19 +4200,19 @@ ${h9.join(`
         let e = this._bufferService.buffer.lines.get(t2);
         if (!e || e.length === 0) return [];
         let i = [], r = e.translateToString(true), n = 0, o = 0, l = 0, a = e.getFg(0), u = e.getBg(0);
-        for (let h9 = 0; h9 < e.getTrimmedLength(); h9++) if (e.loadCell(h9, this._workCell), this._workCell.getWidth() !== 0) {
+        for (let h10 = 0; h10 < e.getTrimmedLength(); h10++) if (e.loadCell(h10, this._workCell), this._workCell.getWidth() !== 0) {
           if (this._workCell.fg !== a || this._workCell.bg !== u) {
-            if (h9 - n > 1) {
+            if (h10 - n > 1) {
               let c = this._getJoinedRanges(r, l, o, e, n);
               for (let d = 0; d < c.length; d++) i.push(c[d]);
             }
-            n = h9, l = o, a = this._workCell.fg, u = this._workCell.bg;
+            n = h10, l = o, a = this._workCell.fg, u = this._workCell.bg;
           }
           o += this._workCell.getChars().length || we.length;
         }
         if (this._bufferService.cols - n > 1) {
-          let h9 = this._getJoinedRanges(r, l, o, e, n);
-          for (let c = 0; c < h9.length; c++) i.push(h9[c]);
+          let h10 = this._getJoinedRanges(r, l, o, e, n);
+          for (let c = 0; c < h10.length; c++) i.push(h10[c]);
         }
         return i;
       }
@@ -4225,7 +4225,7 @@ ${h9.join(`
         }
         for (let a = 1; a < this._characterJoiners.length; a++) try {
           let u = this._characterJoiners[a].handler(o);
-          for (let h9 = 0; h9 < u.length; h9++) ct._mergeRanges(l, u[h9]);
+          for (let h10 = 0; h10 < u.length; h10++) ct._mergeRanges(l, u[h10]);
         } catch (u) {
           console.error(u);
         }
@@ -4235,13 +4235,13 @@ ${h9.join(`
         let r = 0, n = false, o = 0, l = t2[r];
         if (l) {
           for (let a = i; a < this._bufferService.cols; a++) {
-            let u = e.getWidth(a), h9 = e.getString(a).length || we.length;
+            let u = e.getWidth(a), h10 = e.getString(a).length || we.length;
             if (u !== 0) {
               if (!n && l[0] <= o && (l[0] = a, n = true), l[1] <= o) {
                 if (l[1] = a, l = t2[++r], !l) break;
                 l[0] <= o ? (l[0] = a, n = true) : n = false;
               }
-              o += h9;
+              o += h10;
             }
           }
           l && (l[1] = this._bufferService.cols);
@@ -4282,10 +4282,10 @@ ${h9.join(`
       handleSelectionChanged(t2, e, i) {
         this._selectionStart = t2, this._selectionEnd = e, this._columnSelectMode = i;
       }
-      createRow(t2, e, i, r, n, o, l, a, u, h9, c) {
+      createRow(t2, e, i, r, n, o, l, a, u, h10, c) {
         let d = [], _ = this._characterJoinerService.getJoinedCharacters(e), p = this._themeService.colors, m = t2.getNoBgTrimmedLength();
         i && m < o + 1 && (m = o + 1);
-        let f, A = 0, R = "", O = 0, I = 0, k = 0, P = 0, oe = false, Me = 0, Pe = false, Ke = 0, di = 0, V = [], Qe = h9 !== -1 && c !== -1;
+        let f, A = 0, R = "", O = 0, I = 0, k = 0, P = 0, oe = false, Me = 0, Pe = false, Ke = 0, di = 0, V = [], Qe = h10 !== -1 && c !== -1;
         for (let y = 0; y < m; y++) {
           t2.loadCell(y, this._workCell);
           let T = this._workCell.getWidth();
@@ -4296,7 +4296,7 @@ ${h9.join(`
             for (O = W[0] + 1; O < W[1]; O++) w &&= An === this._isCellInSelection(O, e);
             w &&= !i || o < W[0] || o >= W[1], w ? (g = true, x = new Vr(this._workCell, t2.translateToString(true, W[0], W[1]), W[1] - W[0]), E = W[1] - 1, T = x.getWidth()) : di = W[1];
           }
-          let N = this._isCellInSelection(y, e), Z = i && y === o, te = Qe && y >= h9 && y <= c, Oe = false;
+          let N = this._isCellInSelection(y, e), Z = i && y === o, te = Qe && y >= h10 && y <= c, Oe = false;
           this._decorationService.forEachDecorationAtCell(y, e, void 0, (W) => {
             Oe = true;
           });
@@ -4465,7 +4465,7 @@ ${h9.join(`
       }
     };
     _s = "xterm-dom-renderer-owner-", Le = "xterm-rows", jr = "xterm-fg-", jo = "xterm-bg-", ki = "xterm-focus", Xr = "xterm-selection", Na = 1, Yt = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9, c, d, _, p, m) {
+      constructor(e, i, r, n, o, l, a, u, h10, c, d, _, p, m) {
         super();
         this._terminal = e;
         this._document = i;
@@ -4474,7 +4474,7 @@ ${h9.join(`
         this._viewportElement = o;
         this._helperContainer = l;
         this._linkifier2 = a;
-        this._charSizeService = h9;
+        this._charSizeService = h10;
         this._optionsService = c;
         this._bufferService = d;
         this._coreService = _;
@@ -4535,11 +4535,11 @@ ${h9.join(`
         if (this._selectionContainer.replaceChildren(), this._rowFactory.handleSelectionChanged(e, i, r), this.renderRows(0, this._bufferService.rows - 1), !e || !i || (this._selectionRenderModel.update(this._terminal, e, i, r), !this._selectionRenderModel.hasSelection)) return;
         let n = this._selectionRenderModel.viewportStartRow, o = this._selectionRenderModel.viewportEndRow, l = this._selectionRenderModel.viewportCappedStartRow, a = this._selectionRenderModel.viewportCappedEndRow, u = this._document.createDocumentFragment();
         if (r) {
-          let h9 = e[0] > i[0];
-          u.appendChild(this._createSelectionElement(l, h9 ? i[0] : e[0], h9 ? e[0] : i[0], a - l + 1));
+          let h10 = e[0] > i[0];
+          u.appendChild(this._createSelectionElement(l, h10 ? i[0] : e[0], h10 ? e[0] : i[0], a - l + 1));
         } else {
-          let h9 = n === l ? e[0] : 0, c = l === o ? i[0] : this._bufferService.cols;
-          u.appendChild(this._createSelectionElement(l, h9, c));
+          let h10 = n === l ? e[0] : 0, c = l === o ? i[0] : this._bufferService.cols;
+          u.appendChild(this._createSelectionElement(l, h10, c));
           let d = a - l - 1;
           if (u.appendChild(this._createSelectionElement(l + 1, 0, this._bufferService.cols, d)), l !== a) {
             let _ = o === a ? i[0] : this._bufferService.cols;
@@ -4562,8 +4562,8 @@ ${h9.join(`
       }
       renderRows(e, i) {
         let r = this._bufferService.buffer, n = r.ybase + r.y, o = Math.min(r.x, this._bufferService.cols - 1), l = this._coreService.decPrivateModes.cursorBlink ?? this._optionsService.rawOptions.cursorBlink, a = this._coreService.decPrivateModes.cursorStyle ?? this._optionsService.rawOptions.cursorStyle, u = this._optionsService.rawOptions.cursorInactiveStyle;
-        for (let h9 = e; h9 <= i; h9++) {
-          let c = h9 + r.ydisp, d = this._rowElements[h9], _ = r.lines.get(c);
+        for (let h10 = e; h10 <= i; h10++) {
+          let c = h10 + r.ydisp, d = this._rowElements[h10], _ = r.lines.get(c);
           if (!d || !_) break;
           d.replaceChildren(...this._rowFactory.createRow(_, c, c === n, a, u, o, l, this.dimensions.css.cell.width, this._widthCache, -1, -1));
         }
@@ -4581,11 +4581,11 @@ ${h9.join(`
         r < 0 && (e = 0), n < 0 && (i = 0);
         let a = this._bufferService.rows - 1;
         r = Math.max(Math.min(r, a), 0), n = Math.max(Math.min(n, a), 0), o = Math.min(o, this._bufferService.cols);
-        let u = this._bufferService.buffer, h9 = u.ybase + u.y, c = Math.min(u.x, o - 1), d = this._optionsService.rawOptions.cursorBlink, _ = this._optionsService.rawOptions.cursorStyle, p = this._optionsService.rawOptions.cursorInactiveStyle;
+        let u = this._bufferService.buffer, h10 = u.ybase + u.y, c = Math.min(u.x, o - 1), d = this._optionsService.rawOptions.cursorBlink, _ = this._optionsService.rawOptions.cursorStyle, p = this._optionsService.rawOptions.cursorInactiveStyle;
         for (let m = r; m <= n; ++m) {
           let f = m + u.ydisp, A = this._rowElements[m], R = u.lines.get(f);
           if (!A || !R) break;
-          A.replaceChildren(...this._rowFactory.createRow(R, f, f === h9, _, p, c, d, this.dimensions.css.cell.width, this._widthCache, l ? m === r ? e : 0 : -1, l ? (m === n ? i : o) - 1 : -1));
+          A.replaceChildren(...this._rowFactory.createRow(R, f, f === h10, _, p, c, d, this.dimensions.css.cell.width, this._widthCache, l ? m === r ? e : 0 : -1, l ? (m === n ? i : o) - 1 : -1));
         }
       }
     };
@@ -4818,7 +4818,7 @@ ${h9.join(`
       }
     };
     Qt = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9) {
+      constructor(e, i, r, n, o, l, a, u, h10) {
         super();
         this._rowCount = e;
         this._optionsService = r;
@@ -4845,7 +4845,7 @@ ${h9.join(`
         this.onRefreshRequest = this._onRefreshRequest.event;
         this._renderDebouncer = new en((c, d) => this._renderRows(c, d), this._coreBrowserService), this._register(this._renderDebouncer), this._syncOutputHandler = new xs(this._coreBrowserService, this._coreService, () => this._fullRefresh()), this._register(C(() => this._syncOutputHandler.dispose())), this._register(this._coreBrowserService.onDprChange(() => this.handleDevicePixelRatioChange())), this._register(a.onResize(() => this._fullRefresh())), this._register(a.buffers.onBufferActivate(() => this._renderer.value?.clear())), this._register(this._optionsService.onOptionChange(() => this._handleOptionsChanged())), this._register(this._charSizeService.onCharSizeChange(() => this.handleCharSizeChanged())), this._register(l.onDecorationRegistered(() => this._fullRefresh())), this._register(l.onDecorationRemoved(() => this._fullRefresh())), this._register(this._optionsService.onMultipleOptionChange(["customGlyphs", "drawBoldTextInBrightColors", "letterSpacing", "lineHeight", "fontFamily", "fontSize", "fontWeight", "fontWeightBold", "minimumContrastRatio", "rescaleOverlappingGlyphs"], () => {
           this.clear(), this.handleResize(a.cols, a.rows), this._fullRefresh();
-        })), this._register(this._optionsService.onMultipleOptionChange(["cursorBlink", "cursorStyle"], () => this.refreshRows(a.buffer.y, a.buffer.y, true))), this._register(h9.onChangeColors(() => this._fullRefresh())), this._registerIntersectionObserver(this._coreBrowserService.window, i), this._register(this._coreBrowserService.onWindowChange((c) => this._registerIntersectionObserver(c, i)));
+        })), this._register(this._optionsService.onMultipleOptionChange(["cursorBlink", "cursorStyle"], () => this.refreshRows(a.buffer.y, a.buffer.y, true))), this._register(h10.onChangeColors(() => this._fullRefresh())), this._registerIntersectionObserver(this._coreBrowserService.window, i), this._register(this._coreBrowserService.onWindowChange((c) => this._registerIntersectionObserver(c, i)));
       }
       get dimensions() {
         return this._renderer.value.dimensions;
@@ -4989,7 +4989,7 @@ ${h9.join(`
     };
     Ds = 50, Ya = 15, ja = 50, Xa = 500, Za = " ", Ja = new RegExp(Za, "g");
     ei = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9) {
+      constructor(e, i, r, n, o, l, a, u, h10) {
         super();
         this._element = e;
         this._screenElement = i;
@@ -4999,7 +4999,7 @@ ${h9.join(`
         this._mouseService = l;
         this._optionsService = a;
         this._renderService = u;
-        this._coreBrowserService = h9;
+        this._coreBrowserService = h10;
         this._dragScrollAmount = 0;
         this._enabled = true;
         this._workCell = new q();
@@ -5050,15 +5050,15 @@ ${h9.join(`
           if (e[0] === i[0]) return "";
           let l = e[0] < i[0] ? e[0] : i[0], a = e[0] < i[0] ? i[0] : e[0];
           for (let u = e[1]; u <= i[1]; u++) {
-            let h9 = r.translateBufferLineToString(u, true, l, a);
-            n.push(h9);
+            let h10 = r.translateBufferLineToString(u, true, l, a);
+            n.push(h10);
           }
         } else {
           let l = e[1] === i[1] ? i[0] : void 0;
           n.push(r.translateBufferLineToString(e[1], true, e[0], l));
           for (let a = e[1] + 1; a <= i[1] - 1; a++) {
-            let u = r.lines.get(a), h9 = r.translateBufferLineToString(a, true);
-            u?.isWrapped ? n[n.length - 1] += h9 : n.push(h9);
+            let u = r.lines.get(a), h10 = r.translateBufferLineToString(a, true);
+            u?.isWrapped ? n[n.length - 1] += h10 : n.push(h10);
           }
           if (e[1] !== i[1]) {
             let a = r.lines.get(i[1]), u = r.translateBufferLineToString(i[1], true, 0, i[0]);
@@ -5215,28 +5215,28 @@ ${h9.join(`
         if (e[0] >= this._bufferService.cols) return;
         let o = this._bufferService.buffer, l = o.lines.get(e[1]);
         if (!l) return;
-        let a = o.translateBufferLineToString(e[1], false), u = this._convertViewportColToCharacterIndex(l, e[0]), h9 = u, c = e[0] - u, d = 0, _ = 0, p = 0, m = 0;
+        let a = o.translateBufferLineToString(e[1], false), u = this._convertViewportColToCharacterIndex(l, e[0]), h10 = u, c = e[0] - u, d = 0, _ = 0, p = 0, m = 0;
         if (a.charAt(u) === " ") {
           for (; u > 0 && a.charAt(u - 1) === " "; ) u--;
-          for (; h9 < a.length && a.charAt(h9 + 1) === " "; ) h9++;
+          for (; h10 < a.length && a.charAt(h10 + 1) === " "; ) h10++;
         } else {
           let R = e[0], O = e[0];
           l.getWidth(R) === 0 && (d++, R--), l.getWidth(O) === 2 && (_++, O++);
           let I = l.getString(O).length;
-          for (I > 1 && (m += I - 1, h9 += I - 1); R > 0 && u > 0 && !this._isCharWordSeparator(l.loadCell(R - 1, this._workCell)); ) {
+          for (I > 1 && (m += I - 1, h10 += I - 1); R > 0 && u > 0 && !this._isCharWordSeparator(l.loadCell(R - 1, this._workCell)); ) {
             l.loadCell(R - 1, this._workCell);
             let k = this._workCell.getChars().length;
             this._workCell.getWidth() === 0 ? (d++, R--) : k > 1 && (p += k - 1, u -= k - 1), u--, R--;
           }
-          for (; O < l.length && h9 + 1 < a.length && !this._isCharWordSeparator(l.loadCell(O + 1, this._workCell)); ) {
+          for (; O < l.length && h10 + 1 < a.length && !this._isCharWordSeparator(l.loadCell(O + 1, this._workCell)); ) {
             l.loadCell(O + 1, this._workCell);
             let k = this._workCell.getChars().length;
-            this._workCell.getWidth() === 2 ? (_++, O++) : k > 1 && (m += k - 1, h9 += k - 1), h9++, O++;
+            this._workCell.getWidth() === 2 ? (_++, O++) : k > 1 && (m += k - 1, h10 += k - 1), h10++, O++;
           }
         }
-        h9++;
-        let f = u + c - d + p, A = Math.min(this._bufferService.cols, h9 - u + d + _ - p - m);
-        if (!(!i && a.slice(u, h9).trim() === "")) {
+        h10++;
+        let f = u + c - d + p, A = Math.min(this._bufferService.cols, h10 - u + d + _ - p - m);
+        if (!(!i && a.slice(u, h10).trim() === "")) {
           if (r && f === 0 && l.getCodePoint(0) !== 32) {
             let R = o.lines.get(e[1] - 1);
             if (R && l.isWrapped && R.getCodePoint(this._bufferService.cols - 1) !== 32) {
@@ -5847,7 +5847,7 @@ ${h9.join(`
             let I = this.ybase + this.y;
             if (I >= l && I < l + u.length) continue;
           }
-          let h9 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t2), d = c.length - u.length, _;
+          let h10 = u[u.length - 1].getTrimmedLength(), c = al(u, this._cols, t2), d = c.length - u.length, _;
           this.ybase === 0 && this.y !== this.lines.length - 1 ? _ = Math.max(0, this.y - this.lines.maxLength + d) : _ = Math.max(0, this.lines.length - this.lines.maxLength + d);
           let p = [];
           for (let I = 0; I < d; I++) {
@@ -5857,7 +5857,7 @@ ${h9.join(`
           p.length > 0 && (n.push({ start: l + u.length + o, newLines: p }), o += p.length), u.push(...p);
           let m = c.length - 1, f = c[m];
           f === 0 && (m--, f = c[m]);
-          let A = u.length - d - 1, R = h9;
+          let A = u.length - d - 1, R = h10;
           for (; A >= 0; ) {
             let I = Math.min(R, f);
             if (u[m] === void 0) break;
@@ -5875,13 +5875,13 @@ ${h9.join(`
         if (n.length > 0) {
           let l = [], a = [];
           for (let f = 0; f < this.lines.length; f++) a.push(this.lines.get(f));
-          let u = this.lines.length, h9 = u - 1, c = 0, d = n[c];
+          let u = this.lines.length, h10 = u - 1, c = 0, d = n[c];
           this.lines.length = Math.min(this.lines.maxLength, this.lines.length + o);
           let _ = 0;
-          for (let f = Math.min(this.lines.maxLength - 1, u + o - 1); f >= 0; f--) if (d && d.start > h9 + _) {
+          for (let f = Math.min(this.lines.maxLength - 1, u + o - 1); f >= 0; f--) if (d && d.start > h10 + _) {
             for (let A = d.newLines.length - 1; A >= 0; A--) this.lines.set(f--, d.newLines[A]);
-            f++, l.push({ index: h9 + 1, amount: d.newLines.length }), _ += d.newLines.length, d = n[++c];
-          } else this.lines.set(f, a[h9--]);
+            f++, l.push({ index: h10 + 1, amount: d.newLines.length }), _ += d.newLines.length, d = n[++c];
+          } else this.lines.set(f, a[h10--]);
           let p = 0;
           for (let f = l.length - 1; f >= 0; f--) l[f].index += p, this.lines.onInsertEmitter.fire(l[f]), p += l[f].amount;
           let m = Math.max(0, u + o - this.lines.maxLength);
@@ -6671,17 +6671,17 @@ ${h9.join(`
         if (this._parseStack.state) if (this._parseStack.state === 2) this._parseStack.state = 0, l = this._parseStack.chunkPos + 1;
         else {
           if (r === void 0 || this._parseStack.state === 1) throw this._parseStack.state = 1, new Error("improper continuation due to previous async handler, giving up parsing");
-          let u = this._parseStack.handlers, h9 = this._parseStack.handlerPos - 1;
+          let u = this._parseStack.handlers, h10 = this._parseStack.handlerPos - 1;
           switch (this._parseStack.state) {
             case 3:
-              if (r === false && h9 > -1) {
-                for (; h9 >= 0 && (a = u[h9](this._params), a !== true); h9--) if (a instanceof Promise) return this._parseStack.handlerPos = h9, a;
+              if (r === false && h10 > -1) {
+                for (; h10 >= 0 && (a = u[h10](this._params), a !== true); h10--) if (a instanceof Promise) return this._parseStack.handlerPos = h10, a;
               }
               this._parseStack.handlers = [];
               break;
             case 4:
-              if (r === false && h9 > -1) {
-                for (; h9 >= 0 && (a = u[h9](), a !== true); h9--) if (a instanceof Promise) return this._parseStack.handlerPos = h9, a;
+              if (r === false && h10 > -1) {
+                for (; h10 >= 0 && (a = u[h10](), a !== true); h10--) if (a instanceof Promise) return this._parseStack.handlerPos = h10, a;
               }
               this._parseStack.handlers = [];
               break;
@@ -6791,7 +6791,7 @@ ${h9.join(`
     dc = /^([\da-f])\/([\da-f])\/([\da-f])$|^([\da-f]{2})\/([\da-f]{2})\/([\da-f]{2})$|^([\da-f]{3})\/([\da-f]{3})\/([\da-f]{3})$|^([\da-f]{4})\/([\da-f]{4})\/([\da-f]{4})$/, fc = /^[\da-f]+$/;
     mc = { "(": 0, ")": 1, "*": 2, "+": 3, "-": 1, ".": 2 }, ut = 131072, _l = 10;
     vl = 5e3, gl = 0, vn = class extends D {
-      constructor(e, i, r, n, o, l, a, u, h9 = new bn()) {
+      constructor(e, i, r, n, o, l, a, u, h10 = new bn()) {
         super();
         this._bufferService = e;
         this._charsetService = i;
@@ -6801,7 +6801,7 @@ ${h9.join(`
         this._oscLinkService = l;
         this._coreMouseService = a;
         this._unicodeService = u;
-        this._parser = h9;
+        this._parser = h10;
         this._parseBuffer = new Uint32Array(4096);
         this._stringDecoder = new er();
         this._utf8Decoder = new tr();
@@ -6883,11 +6883,11 @@ ${h9.join(`
           if (r = this._parser.parse(this._parseBuffer, c)) return this._preserveStack(n, o, c, 0), this._logSlowResolvingAsync(r), r;
         }
         (this._activeBuffer.x !== n || this._activeBuffer.y !== o) && this._onCursorMove.fire();
-        let u = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), h9 = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
-        h9 < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(h9, this._bufferService.rows - 1), end: Math.min(u, this._bufferService.rows - 1) });
+        let u = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), h10 = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
+        h10 < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(h10, this._bufferService.rows - 1), end: Math.min(u, this._bufferService.rows - 1) });
       }
       print(e, i, r) {
-        let n, o, l = this._charsetService.charset, a = this._optionsService.rawOptions.screenReaderMode, u = this._bufferService.cols, h9 = this._coreService.decPrivateModes.wraparound, c = this._coreService.modes.insertMode, d = this._curAttrData, _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        let n, o, l = this._charsetService.charset, a = this._optionsService.rawOptions.screenReaderMode, u = this._bufferService.cols, h10 = this._coreService.decPrivateModes.wraparound, c = this._coreService.modes.insertMode, d = this._curAttrData, _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
         this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._activeBuffer.x && r - i > 0 && _.getWidth(this._activeBuffer.x - 1) === 2 && _.setCellFromCodepoint(this._activeBuffer.x - 1, 0, 1, d);
         let p = this._parser.precedingJoinState;
         for (let m = i; m < r; ++m) {
@@ -6899,7 +6899,7 @@ ${h9.join(`
           o = Ae.extractWidth(f);
           let A = Ae.extractShouldJoin(f), R = A ? Ae.extractWidth(p) : 0;
           if (p = f, a && this._onA11yChar.fire(Ce(n)), this._getCurrentLinkId() && this._oscLinkService.addLineToLink(this._getCurrentLinkId(), this._activeBuffer.ybase + this._activeBuffer.y), this._activeBuffer.x + o - R > u) {
-            if (h9) {
+            if (h10) {
               let O = _, I = this._activeBuffer.x - R;
               for (this._activeBuffer.x = R, this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData(), true)) : (this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = true), _ = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y), R > 0 && _ instanceof Ze && _.copyCellsFrom(O, I, 0, R, false); I < u; ) O.setCellFromCodepoint(I++, 0, 1, d);
             } else if (this._activeBuffer.x = u - 1, o === 2) continue;
@@ -7156,13 +7156,13 @@ ${h9.join(`
       repeatPrecedingCharacter(e) {
         let i = this._parser.precedingJoinState;
         if (!i) return true;
-        let r = e.params[0] || 1, n = Ae.extractWidth(i), o = this._activeBuffer.x - n, a = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(o), u = new Uint32Array(a.length * r), h9 = 0;
+        let r = e.params[0] || 1, n = Ae.extractWidth(i), o = this._activeBuffer.x - n, a = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(o), u = new Uint32Array(a.length * r), h10 = 0;
         for (let d = 0; d < a.length; ) {
           let _ = a.codePointAt(d) || 0;
-          u[h9++] = _, d += _ > 65535 ? 2 : 1;
+          u[h10++] = _, d += _ > 65535 ? 2 : 1;
         }
-        let c = h9;
-        for (let d = 1; d < r; ++d) u.copyWithin(c, 0, h9), c += h9;
+        let c = h10;
+        for (let d = 1; d < r; ++d) u.copyWithin(c, 0, h10), c += h10;
         return this.print(u, 0, c), true;
       }
       sendDeviceAttributesPrimary(e) {
@@ -7337,8 +7337,8 @@ ${h9.join(`
       requestMode(e, i) {
         let r;
         ((P) => (P[P.NOT_RECOGNIZED = 0] = "NOT_RECOGNIZED", P[P.SET = 1] = "SET", P[P.RESET = 2] = "RESET", P[P.PERMANENTLY_SET = 3] = "PERMANENTLY_SET", P[P.PERMANENTLY_RESET = 4] = "PERMANENTLY_RESET"))(r ||= {});
-        let n = this._coreService.decPrivateModes, { activeProtocol: o, activeEncoding: l } = this._coreMouseService, a = this._coreService, { buffers: u, cols: h9 } = this._bufferService, { active: c, alt: d } = u, _ = this._optionsService.rawOptions, p = (A, R) => (a.triggerDataEvent(`${b.ESC}[${i ? "" : "?"}${A};${R}$y`), true), m = (A) => A ? 1 : 2, f = e.params[0];
-        return i ? f === 2 ? p(f, 4) : f === 4 ? p(f, m(a.modes.insertMode)) : f === 12 ? p(f, 3) : f === 20 ? p(f, m(_.convertEol)) : p(f, 0) : f === 1 ? p(f, m(n.applicationCursorKeys)) : f === 3 ? p(f, _.windowOptions.setWinLines ? h9 === 80 ? 2 : h9 === 132 ? 1 : 0 : 0) : f === 6 ? p(f, m(n.origin)) : f === 7 ? p(f, m(n.wraparound)) : f === 8 ? p(f, 3) : f === 9 ? p(f, m(o === "X10")) : f === 12 ? p(f, m(_.cursorBlink)) : f === 25 ? p(f, m(!a.isCursorHidden)) : f === 45 ? p(f, m(n.reverseWraparound)) : f === 66 ? p(f, m(n.applicationKeypad)) : f === 67 ? p(f, 4) : f === 1e3 ? p(f, m(o === "VT200")) : f === 1002 ? p(f, m(o === "DRAG")) : f === 1003 ? p(f, m(o === "ANY")) : f === 1004 ? p(f, m(n.sendFocus)) : f === 1005 ? p(f, 4) : f === 1006 ? p(f, m(l === "SGR")) : f === 1015 ? p(f, 4) : f === 1016 ? p(f, m(l === "SGR_PIXELS")) : f === 1048 ? p(f, 1) : f === 47 || f === 1047 || f === 1049 ? p(f, m(c === d)) : f === 2004 ? p(f, m(n.bracketedPasteMode)) : f === 2026 ? p(f, m(n.synchronizedOutput)) : p(f, 0);
+        let n = this._coreService.decPrivateModes, { activeProtocol: o, activeEncoding: l } = this._coreMouseService, a = this._coreService, { buffers: u, cols: h10 } = this._bufferService, { active: c, alt: d } = u, _ = this._optionsService.rawOptions, p = (A, R) => (a.triggerDataEvent(`${b.ESC}[${i ? "" : "?"}${A};${R}$y`), true), m = (A) => A ? 1 : 2, f = e.params[0];
+        return i ? f === 2 ? p(f, 4) : f === 4 ? p(f, m(a.modes.insertMode)) : f === 12 ? p(f, 3) : f === 20 ? p(f, m(_.convertEol)) : p(f, 0) : f === 1 ? p(f, m(n.applicationCursorKeys)) : f === 3 ? p(f, _.windowOptions.setWinLines ? h10 === 80 ? 2 : h10 === 132 ? 1 : 0 : 0) : f === 6 ? p(f, m(n.origin)) : f === 7 ? p(f, m(n.wraparound)) : f === 8 ? p(f, 3) : f === 9 ? p(f, m(o === "X10")) : f === 12 ? p(f, m(_.cursorBlink)) : f === 25 ? p(f, m(!a.isCursorHidden)) : f === 45 ? p(f, m(n.reverseWraparound)) : f === 66 ? p(f, m(n.applicationKeypad)) : f === 67 ? p(f, 4) : f === 1e3 ? p(f, m(o === "VT200")) : f === 1002 ? p(f, m(o === "DRAG")) : f === 1003 ? p(f, m(o === "ANY")) : f === 1004 ? p(f, m(n.sendFocus)) : f === 1005 ? p(f, 4) : f === 1006 ? p(f, m(l === "SGR")) : f === 1015 ? p(f, 4) : f === 1016 ? p(f, m(l === "SGR_PIXELS")) : f === 1048 ? p(f, 1) : f === 47 || f === 1047 || f === 1049 ? p(f, m(c === d)) : f === 2004 ? p(f, m(n.bracketedPasteMode)) : f === 2026 ? p(f, m(n.synchronizedOutput)) : p(f, 0);
       }
       _updateAttrColor(e, i, r, n, o) {
         return i === 2 ? (e |= 50331648, e &= -16777216, e |= De.fromColorRGB([r, n, o])) : i === 5 && (e &= -50331904, e |= 33554432 | r & 255), e;
@@ -8008,8 +8008,8 @@ ${h9.join(`
       _renderRows(e, i) {
         let r = this._terminal.buffer, n = r.lines.length.toString();
         for (let o = e; o <= i; o++) {
-          let l = r.lines.get(r.ydisp + o), a = [], u = l?.translateToString(true, void 0, void 0, a) || "", h9 = (r.ydisp + o + 1).toString(), c = this._rowElements[o];
-          c && (u.length === 0 ? (c.textContent = " ", this._rowColumns.set(c, [0, 1])) : (c.textContent = u, this._rowColumns.set(c, a)), c.setAttribute("aria-posinset", h9), c.setAttribute("aria-setsize", n), this._alignRowWidth(c));
+          let l = r.lines.get(r.ydisp + o), a = [], u = l?.translateToString(true, void 0, void 0, a) || "", h10 = (r.ydisp + o + 1).toString(), c = this._rowElements[o];
+          c && (u.length === 0 ? (c.textContent = " ", this._rowColumns.set(c, [0, 1])) : (c.textContent = u, this._rowColumns.set(c, a)), c.setAttribute("aria-posinset", h10), c.setAttribute("aria-setsize", n), this._alignRowWidth(c));
         }
         this._announceCharacters();
       }
@@ -8021,11 +8021,11 @@ ${h9.join(`
         if (o === l || e.relatedTarget !== n) return;
         let a, u;
         if (i === 0 ? (a = r, u = this._rowElements.pop(), this._rowContainer.removeChild(u)) : (a = this._rowElements.shift(), u = r, this._rowContainer.removeChild(a)), a.removeEventListener("focus", this._topBoundaryFocusListener), u.removeEventListener("focus", this._bottomBoundaryFocusListener), i === 0) {
-          let h9 = this._createAccessibilityTreeNode();
-          this._rowElements.unshift(h9), this._rowContainer.insertAdjacentElement("afterbegin", h9);
+          let h10 = this._createAccessibilityTreeNode();
+          this._rowElements.unshift(h10), this._rowContainer.insertAdjacentElement("afterbegin", h10);
         } else {
-          let h9 = this._createAccessibilityTreeNode();
-          this._rowElements.push(h9), this._rowContainer.appendChild(h9);
+          let h10 = this._createAccessibilityTreeNode();
+          this._rowElements.push(h10), this._rowContainer.appendChild(h10);
         }
         this._rowElements[0].addEventListener("focus", this._topBoundaryFocusListener), this._rowElements[this._rowElements.length - 1].addEventListener("focus", this._bottomBoundaryFocusListener), this._terminal.scrollLines(i === 0 ? -1 : 1), this._rowElements[i === 0 ? 1 : this._rowElements.length - 2].focus(), e.preventDefault(), e.stopImmediatePropagation();
       }
@@ -8045,12 +8045,12 @@ ${h9.join(`
         if ((i.node.compareDocumentPosition(r.node) & Node.DOCUMENT_POSITION_PRECEDING || i.node === r.node && i.offset > r.offset) && ([i, r] = [r, i]), i.node.compareDocumentPosition(this._rowElements[0]) & (Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_FOLLOWING) && (i = { node: this._rowElements[0].childNodes[0], offset: 0 }), !this._rowContainer.contains(i.node)) return;
         let n = this._rowElements.slice(-1)[0];
         if (r.node.compareDocumentPosition(n) & (Node.DOCUMENT_POSITION_CONTAINED_BY | Node.DOCUMENT_POSITION_PRECEDING) && (r = { node: n, offset: n.textContent?.length ?? 0 }), !this._rowContainer.contains(r.node)) return;
-        let o = ({ node: u, offset: h9 }) => {
+        let o = ({ node: u, offset: h10 }) => {
           let c = u instanceof Text ? u.parentNode : u, d = parseInt(c?.getAttribute("aria-posinset"), 10) - 1;
           if (isNaN(d)) return console.warn("row is invalid. Race condition?"), null;
           let _ = this._rowColumns.get(c);
           if (!_) return console.warn("columns is null. Race condition?"), null;
-          let p = h9 < _.length ? _[h9] : _.slice(-1)[0] + 1;
+          let p = h10 < _.length ? _[h10] : _.slice(-1)[0] + 1;
           return p >= this._terminal.cols && (++d, p = 0), { row: d, column: p };
         }, l = o(i), a = o(r);
         if (!(!l || !a)) {
@@ -8151,8 +8151,8 @@ ${h9.join(`
         for (let n = 0; n < i.size; n++) {
           let o = i.get(n);
           if (o) for (let l = 0; l < o.length; l++) {
-            let a = o[l], u = a.link.range.start.y < e ? 0 : a.link.range.start.x, h9 = a.link.range.end.y > e ? this._bufferService.cols : a.link.range.end.x;
-            for (let c = u; c <= h9; c++) {
+            let a = o[l], u = a.link.range.start.y < e ? 0 : a.link.range.start.x, h10 = a.link.range.end.y > e ? this._bufferService.cols : a.link.range.end.x;
+            for (let c = u; c <= h10; c++) {
               if (r.has(c)) {
                 o.splice(l--, 1);
                 break;
@@ -8393,27 +8393,27 @@ ${h9.join(`
         function r(l) {
           let a = e._mouseService.getMouseReportCoords(l, e.screenElement);
           if (!a) return false;
-          let u, h9;
+          let u, h10;
           switch (l.overrideType || l.type) {
             case "mousemove":
-              h9 = 32, l.buttons === void 0 ? (u = 3, l.button !== void 0 && (u = l.button < 3 ? l.button : 3)) : u = l.buttons & 1 ? 0 : l.buttons & 4 ? 1 : l.buttons & 2 ? 2 : 3;
+              h10 = 32, l.buttons === void 0 ? (u = 3, l.button !== void 0 && (u = l.button < 3 ? l.button : 3)) : u = l.buttons & 1 ? 0 : l.buttons & 4 ? 1 : l.buttons & 2 ? 2 : 3;
               break;
             case "mouseup":
-              h9 = 0, u = l.button < 3 ? l.button : 3;
+              h10 = 0, u = l.button < 3 ? l.button : 3;
               break;
             case "mousedown":
-              h9 = 1, u = l.button < 3 ? l.button : 3;
+              h10 = 1, u = l.button < 3 ? l.button : 3;
               break;
             case "wheel":
               if (e._customWheelEventHandler && e._customWheelEventHandler(l) === false) return false;
               let c = l.deltaY;
               if (c === 0 || e.coreMouseService.consumeWheelEvent(l, e._renderService?.dimensions?.device?.cell?.height, e._coreBrowserService?.dpr) === 0) return false;
-              h9 = c < 0 ? 0 : 1, u = 4;
+              h10 = c < 0 ? 0 : 1, u = 4;
               break;
             default:
               return false;
           }
-          return h9 === void 0 || u === void 0 || u > 4 ? false : e.coreMouseService.triggerMouseEvent({ col: a.col, row: a.row, x: a.x, y: a.y, button: u, action: h9, ctrl: l.ctrlKey, alt: l.altKey, shift: l.shiftKey });
+          return h10 === void 0 || u === void 0 || u > 4 ? false : e.coreMouseService.triggerMouseEvent({ col: a.col, row: a.row, x: a.x, y: a.y, button: u, action: h10, ctrl: l.ctrlKey, alt: l.altKey, shift: l.shiftKey });
         }
         let n = { mouseup: null, wheel: null, mousedrag: null, mousemove: null }, o = { mouseup: (l) => (r(l), l.buttons || (this._document.removeEventListener("mouseup", n.mouseup), n.mousedrag && this._document.removeEventListener("mousemove", n.mousedrag)), this.cancel(l)), wheel: (l) => (r(l), this.cancel(l, true)), mousedrag: (l) => {
           l.buttons && r(l);
@@ -8430,8 +8430,8 @@ ${h9.join(`
             if (!this.buffer.hasScrollback) {
               if (l.deltaY === 0) return false;
               if (e.coreMouseService.consumeWheelEvent(l, e._renderService?.dimensions?.device?.cell?.height, e._coreBrowserService?.dpr) === 0) return this.cancel(l, true);
-              let h9 = b.ESC + (this.coreService.decPrivateModes.applicationCursorKeys ? "O" : "[") + (l.deltaY < 0 ? "A" : "B");
-              return this.coreService.triggerDataEvent(h9, true), this.cancel(l, true);
+              let h10 = b.ESC + (this.coreService.decPrivateModes.applicationCursorKeys ? "O" : "[") + (l.deltaY < 0 ? "A" : "B");
+              return this.coreService.triggerDataEvent(h10, true), this.cancel(l, true);
             }
           }
         }, { passive: false }));
@@ -9114,6 +9114,27 @@ var PT_BR = {
   "The Omni plugins": "Os plugins do Omni",
   "Power {name} off": "Desligar {name}",
   "Power {name} on": "Ligar {name}",
+  // The power shortcut in the Bot team's sidebar (power-shortcut.js)
+  "Omni and Genie": "Omni e Genie",
+  "Omni, Genie and Unfold": "Omni, Genie e Unfold",
+  "Try again": "Tentar de novo",
+  "Choose where Omni lives": "Escolher onde o Omni fica",
+  "Add Omni": "Adicionar o Omni",
+  "Open Plugins": "Abrir Plugins",
+  "Open team setup": "Abrir configuração da equipe",
+  "{name} on": "{name}: energia ligada",
+  "{name} off": "{name}: energia desligada",
+  "{name} working": "{name}: trabalhando",
+  "{name} needs you": "{name}: precisa de você",
+  "{a}, {b}": "{a}, {b}",
+  "On · {status}": "Ligado · {status}",
+  "{name} stays on once it joins your team.": "O {name} fica ligado depois que entra na sua equipe.",
+  "Adds the Omni plugins to this DSH, then looks for your Omni.": "Adiciona os plugins do Omni a este DSH e depois procura o seu Omni.",
+  "Adds the Genie plugin to this DSH. Genie then joins your team.": "Adiciona o plugin do Genie a este DSH. Depois, o Genie entra na sua equipe.",
+  "Installing {name} · {at} of {count} · {step}": "Instalando o {name} · {at} de {count} · {step}",
+  "Checking git": "Verificando o git",
+  "Genie plugin": "Plugin do Genie",
+  "You can close this. The install keeps going.": "Pode fechar isto. A instalação continua.",
   "What Omni's installer printed": "A saída do instalador do Omni",
   "What went wrong is above. Power Omni on to try again.": "O que deu errado está acima. Ligue o Omni para tentar de novo.",
   "In your menu": "No seu menu",
@@ -9493,10 +9514,10 @@ function bodyOf(def, paint, flat = false) {
   }
 }
 var PUPIL = "#0a0f1f";
-var pupilMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h9 / 2}" width="${w}" height="${h9}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h9 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h9 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
-var blushMarkup = ([cx, cy, w, h9, tilt]) => `<ellipse cx="${cx}" cy="${cy + h9 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
-var eyeMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h9 / 2}" width="${w}" height="${h9}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h9, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h9 * 0.14}Q0 ${-h9 * 0.42} ${w * 0.62} ${h9 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var pupilMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><g class="bt-eye"><rect x="${-w / 2}" y="${-h10 / 2}" width="${w}" height="${h10}" rx="${w / 2}" fill="${PUPIL}"/><circle cx="${w * 0.12}" cy="${-h10 * 0.24}" r="${w * 0.3}" fill="#fff"/><circle cx="${-w * 0.16}" cy="${h10 * 0.22}" r="${w * 0.12}" fill="#fff" fill-opacity=".7"/></g></g>`;
+var blushMarkup = ([cx, cy, w, h10, tilt]) => `<ellipse cx="${cx}" cy="${cy + h10 * 0.56}" rx="${w * 0.78}" ry="${w * 0.4}" transform="rotate(${tilt} ${cx} ${cy})" fill="#ff5fb8" fill-opacity=".42"/>`;
+var eyeMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h10 / 2}" width="${w}" height="${h10}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h10, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h10 * 0.14}Q0 ${-h10 * 0.42} ${w * 0.62} ${h10 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -10465,8 +10486,78 @@ var TERMINAL_CSS = xterm_default + `
 .oai-mini-term .oai-term-screen{min-height:0;padding:8px 10px}
 `;
 
-// src/client/team.js
+// src/client/power-store.js
 var import_react5 = require("react");
+var WORKING = /* @__PURE__ */ new Set(["waking", "installing", "starting", "looking", "sandbox"]);
+var ASLEEP = Object.freeze({ phase: "asleep", detail: null });
+var states = /* @__PURE__ */ new Map();
+var runs = /* @__PURE__ */ new Map();
+var listeners = /* @__PURE__ */ new Set();
+var powerOf = (kind) => states.get(kind) ?? ASLEEP;
+function showPower(kind, phase, detail = null) {
+  states.set(kind, { phase, detail });
+  for (const listener of Array.from(listeners)) listener();
+}
+function subscribePower(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+var usePowerState = (kind) => (0, import_react5.useSyncExternalStore)(subscribePower, () => powerOf(kind), () => powerOf(kind));
+var powerSignal = (kind) => runs.get(kind)?.signal ?? null;
+function runPower(kind, run) {
+  runs.get(kind)?.abort();
+  const controller = new AbortController();
+  runs.set(kind, controller);
+  const latest = () => runs.get(kind) === controller && !controller.signal.aborted;
+  const show = (phase, detail = null) => {
+    if (latest()) showPower(kind, phase, detail);
+  };
+  let running;
+  try {
+    running = Promise.resolve(run({ show, signal: controller.signal }));
+  } catch (error) {
+    running = Promise.reject(error);
+  }
+  running.catch((error) => {
+    if (error?.name !== "AbortError" && latest()) showPower(kind, "failed", { message: error?.message ?? String(error) });
+  });
+  return controller;
+}
+var startPower = (kind, run) => WORKING.has(powerOf(kind).phase) ? null : runPower(kind, run);
+function stopPower(kind) {
+  runs.get(kind)?.abort();
+}
+var INTENT_KEY = "automagik.welcome.team-intent";
+var INTENT_MS = 6e4;
+var intent = null;
+function setTeamIntent(power = null, now = Date.now()) {
+  intent = { power, at: now };
+  try {
+    globalThis.sessionStorage?.setItem(INTENT_KEY, JSON.stringify(intent));
+  } catch {
+  }
+}
+function takeTeamIntent(now = Date.now()) {
+  let value = intent;
+  intent = null;
+  try {
+    const stored = globalThis.sessionStorage?.getItem(INTENT_KEY);
+    globalThis.sessionStorage?.removeItem(INTENT_KEY);
+    if (value === null && stored) value = JSON.parse(stored);
+  } catch {
+  }
+  return value !== null && typeof value?.at === "number" && now - value.at >= 0 && now - value.at < INTENT_MS ? value : null;
+}
+function resetPower() {
+  for (const controller of runs.values()) controller.abort();
+  runs.clear();
+  states.clear();
+  intent = null;
+  for (const listener of Array.from(listeners)) listener();
+}
+
+// src/client/team.js
+var import_react6 = require("react");
 var WAKE_MS = 1100;
 var LOOK_MS = 1800;
 var POLL_MS = 900;
@@ -10481,7 +10572,7 @@ var sleep = (ms2, signal) => new Promise((resolve, reject) => {
     reject(abortError());
   }, { once: true });
 });
-async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait = sleep, quick = reducedMotion() }) {
+async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait = sleep, quick = reducedMotion(), resume = null }) {
   const check = () => {
     if (signal?.aborted) throw abortError();
   };
@@ -10491,11 +10582,14 @@ async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait 
     show(phase, detail);
     return phase;
   };
-  show("waking");
-  await pause(WAKE_MS);
-  check();
-  let plugins = await omniAi("omni-plugins");
-  check();
+  let plugins = resume;
+  if (plugins === null) {
+    show("waking");
+    await pause(WAKE_MS);
+    check();
+    plugins = await omniAi("omni-plugins");
+    check();
+  }
   if (!plugins.ready) {
     show("installing", { plugins });
     if (plugins.install?.phase !== "installing") {
@@ -10537,7 +10631,7 @@ async function powerOn({ show, signal, omniAi = call, omniUi = callOmniUi, wait 
 }
 var geniePowerOn = ({ genieAi = call, ...options }) => botPowerOn("genie", { ...options, ai: genieAi });
 var unfoldPowerOn = ({ unfoldAi = call, ...options }) => botPowerOn("unfold", { ...options, ai: unfoldAi });
-async function botPowerOn(kind, { show, signal, ai: ai2, wait = sleep, quick = reducedMotion() }) {
+async function botPowerOn(kind, { show, signal, ai: ai2, wait = sleep, quick = reducedMotion(), resume = null }) {
   const check = () => {
     if (signal?.aborted) throw abortError();
   };
@@ -10546,11 +10640,14 @@ async function botPowerOn(kind, { show, signal, ai: ai2, wait = sleep, quick = r
     show(phase, detail);
     return phase;
   };
-  show("waking");
-  await wait(quick ? 0 : WAKE_MS, signal);
-  check();
-  let reply = await ai2(`${kind}-plugin`);
-  check();
+  let reply = resume;
+  if (reply === null) {
+    show("waking");
+    await wait(quick ? 0 : WAKE_MS, signal);
+    check();
+    reply = await ai2(`${kind}-plugin`);
+    check();
+  }
   if (reply.ready) return end("ready", { bot: reply.bot });
   show("installing", { [kind]: reply });
   if (reply.install?.phase !== "installing") {
@@ -10705,7 +10802,7 @@ function shortPath(path, keep = 2) {
   const tail = parts.slice(-keep).filter(Boolean);
   return parts.length - (head ? 1 : 0) > keep + 1 ? `${head}/…/${tail.join("/")}` : path;
 }
-var Check = () => (0, import_react5.createElement)("svg", { viewBox: "0 0 16 16", width: 12, height: 12, "aria-hidden": true }, (0, import_react5.createElement)("path", { d: "M3 8.5l3 3 7-7", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }));
+var Check = () => (0, import_react6.createElement)("svg", { viewBox: "0 0 16 16", width: 12, height: 12, "aria-hidden": true }, (0, import_react6.createElement)("path", { d: "M3 8.5l3 3 7-7", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }));
 var HOST_ROWS = [
   [/^(.+) · you confirm it in Omni's first chat$/, (ref) => t("{ref} · you confirm it in Omni's first chat", { ref })],
   [/^(.+) \(DSH's default\)$/, (preset) => t("{preset} (DSH's default)", { preset })]
@@ -10719,27 +10816,27 @@ function rowText(text) {
   return t(text);
 }
 function Capabilities({ type, abilities = {}, onToggle, disabled = false }) {
-  if (!type) return (0, import_react5.createElement)("p", { className: "oai-muted oai-caps-wait" }, t("Reading what it starts with…"));
-  return (0, import_react5.createElement)("div", { className: "oai-caps" }, type.groups.map((group) => (0, import_react5.createElement)(
+  if (!type) return (0, import_react6.createElement)("p", { className: "oai-muted oai-caps-wait" }, t("Reading what it starts with…"));
+  return (0, import_react6.createElement)("div", { className: "oai-caps" }, type.groups.map((group) => (0, import_react6.createElement)(
     "section",
     { key: group.id, className: "oai-cap-group", "aria-label": rowText(group.label) },
-    (0, import_react5.createElement)("h3", null, rowText(group.label)),
-    group.rows.length === 0 ? (0, import_react5.createElement)("p", { className: "oai-muted oai-cap-empty" }, group.empty ? rowText(group.empty) : t("None")) : (0, import_react5.createElement)("ul", null, group.rows.map((row) => {
+    (0, import_react6.createElement)("h3", null, rowText(group.label)),
+    group.rows.length === 0 ? (0, import_react6.createElement)("p", { className: "oai-muted oai-cap-empty" }, group.empty ? rowText(group.empty) : t("None")) : (0, import_react6.createElement)("ul", null, group.rows.map((row) => {
       const on2 = typeof row.on === "boolean" ? abilities[row.id] ?? row.on : null;
-      return (0, import_react5.createElement)(
+      return (0, import_react6.createElement)(
         "li",
         { key: row.id, className: `oai-cap${on2 === false ? " oai-off" : ""}`, "data-cap": row.id },
-        (0, import_react5.createElement)(
+        (0, import_react6.createElement)(
           "span",
           { className: "oai-cap-what" },
-          (0, import_react5.createElement)("strong", null, rowText(row.label)),
-          row.detail ? (0, import_react5.createElement)("small", row.path ? { title: row.detail } : null, row.path ? shortPath(row.detail) : rowText(row.detail)) : null,
-          row.installed === false ? (0, import_react5.createElement)("small", null, t("Installs when Omni powers on")) : null,
-          row.tools ? (0, import_react5.createElement)("code", null, row.tools.join(" · ")) : null
+          (0, import_react6.createElement)("strong", null, rowText(row.label)),
+          row.detail ? (0, import_react6.createElement)("small", row.path ? { title: row.detail } : null, row.path ? shortPath(row.detail) : rowText(row.detail)) : null,
+          row.installed === false ? (0, import_react6.createElement)("small", null, t("Installs when Omni powers on")) : null,
+          row.tools ? (0, import_react6.createElement)("code", null, row.tools.join(" · ")) : null
         ),
-        row.version ? (0, import_react5.createElement)("span", { className: `oai-version${row.installed === false ? " oai-pending" : ""}` }, `v${row.version}`) : null,
-        row.installed === true ? (0, import_react5.createElement)("span", { className: "oai-tick", title: t("Installed") }, (0, import_react5.createElement)(Check)) : null,
-        row.locked ? (0, import_react5.createElement)("span", { className: "oai-core", title: t("What this Bot is for: always on") }, t("Always on")) : on2 !== null && onToggle ? (0, import_react5.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2, "aria-label": t("{label} for this Bot", { label: rowText(row.label) }), disabled, onClick: () => onToggle(row.id, !on2) }) : null
+        row.version ? (0, import_react6.createElement)("span", { className: `oai-version${row.installed === false ? " oai-pending" : ""}` }, `v${row.version}`) : null,
+        row.installed === true ? (0, import_react6.createElement)("span", { className: "oai-tick", title: t("Installed") }, (0, import_react6.createElement)(Check)) : null,
+        row.locked ? (0, import_react6.createElement)("span", { className: "oai-core", title: t("What this Bot is for: always on") }, t("Always on")) : on2 !== null && onToggle ? (0, import_react6.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2, "aria-label": t("{label} for this Bot", { label: rowText(row.label) }), disabled, onClick: () => onToggle(row.id, !on2) }) : null
       );
     }))
   )));
@@ -10761,13 +10858,13 @@ function genieExpressionOf(phase) {
   if (["waking", "installing", "starting"].includes(phase)) return "focused";
   return "curious";
 }
-var GeniePet = ({ expression }) => (0, import_react5.createElement)("div", { className: "oai-genie-pet oai-clay oai-clay-genie", "data-face": expression, style: { "--oai-face-at": faceAt(expression) } });
-var UnfoldPet = ({ expression }) => (0, import_react5.createElement)("div", { className: "oai-unfold-pet oai-clay oai-clay-unfold", "data-face": expression, style: { "--oai-face-at": faceAt(expression) } });
-var PowerIcon = () => (0, import_react5.createElement)(
+var GeniePet = ({ expression }) => (0, import_react6.createElement)("div", { className: "oai-genie-pet oai-clay oai-clay-genie", "data-face": expression, style: { "--oai-face-at": faceAt(expression) } });
+var UnfoldPet = ({ expression }) => (0, import_react6.createElement)("div", { className: "oai-unfold-pet oai-clay oai-clay-unfold", "data-face": expression, style: { "--oai-face-at": faceAt(expression) } });
+var PowerIcon = ({ size = 18, stroke = 2.4 } = {}) => (0, import_react6.createElement)(
   "svg",
-  { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": true },
-  (0, import_react5.createElement)("path", { d: "M12 3v8", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" }),
-  (0, import_react5.createElement)("path", { d: "M6.4 6.6a8 8 0 1 0 11.2 0", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" })
+  { viewBox: "0 0 24 24", width: size, height: size, "aria-hidden": true },
+  (0, import_react6.createElement)("path", { d: "M12 3v8", fill: "none", stroke: "currentColor", strokeWidth: stroke, strokeLinecap: "round" }),
+  (0, import_react6.createElement)("path", { d: "M6.4 6.6a8 8 0 1 0 11.2 0", fill: "none", stroke: "currentColor", strokeWidth: stroke, strokeLinecap: "round" })
 );
 var titleOf = (plugins, name) => rowText(plugins?.plugins?.find((row) => row.name === name)?.title ?? "Omni");
 function statusOf(phase, detail) {
@@ -10834,54 +10931,54 @@ function lightsOf(phase) {
 function InstallProgress({ plugins }) {
   const install = plugins?.install;
   const done = new Set(install?.done ?? []);
-  return (0, import_react5.createElement)("ol", { className: "oai-install", "aria-label": t("The Omni plugins") }, (plugins?.plugins ?? []).map((row) => {
+  return (0, import_react6.createElement)("ol", { className: "oai-install", "aria-label": t("The Omni plugins") }, (plugins?.plugins ?? []).map((row) => {
     const state = done.has(row.name) || row.installed && row.enabled !== false ? "done" : install?.current === row.name ? "now" : "next";
-    return (0, import_react5.createElement)(
+    return (0, import_react6.createElement)(
       "li",
       { key: row.name, className: `oai-install-${state}` },
-      (0, import_react5.createElement)("span", { className: "oai-install-dot", "aria-hidden": true }, state === "done" ? (0, import_react5.createElement)(Check) : null),
+      (0, import_react6.createElement)("span", { className: "oai-install-dot", "aria-hidden": true }, state === "done" ? (0, import_react6.createElement)(Check) : null),
       t(row.title.replace(/^Omni /, ""))
     );
   }));
 }
 function Pairing({ pairing, onCancel }) {
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "div",
     { className: "oai-pairing", "aria-live": "polite" },
-    (0, import_react5.createElement)("code", { className: "oai-pair-code" }, pairing.code),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)("code", { className: "oai-pair-code" }, pairing.code),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-row" },
-      pairing.waLink ? (0, import_react5.createElement)("a", { className: "oai-pill oai-pill-primary", href: pairing.waLink, target: "_blank", rel: "noreferrer" }, t("Open WhatsApp")) : null,
-      pairing.approveUrl ? (0, import_react5.createElement)("a", { className: `oai-pill${pairing.waLink ? "" : " oai-pill-primary"}`, href: pairing.approveUrl, target: "_blank", rel: "noreferrer" }, t("Approve")) : null,
-      (0, import_react5.createElement)("button", { type: "button", className: "oai-pill", onClick: onCancel }, t("Cancel"))
+      pairing.waLink ? (0, import_react6.createElement)("a", { className: "oai-pill oai-pill-primary", href: pairing.waLink, target: "_blank", rel: "noreferrer" }, t("Open WhatsApp")) : null,
+      pairing.approveUrl ? (0, import_react6.createElement)("a", { className: `oai-pill${pairing.waLink ? "" : " oai-pill-primary"}`, href: pairing.approveUrl, target: "_blank", rel: "noreferrer" }, t("Approve")) : null,
+      (0, import_react6.createElement)("button", { type: "button", className: "oai-pill", onClick: onCancel }, t("Cancel"))
     ),
-    pairing.waLink ? null : (0, import_react5.createElement)("small", { className: "oai-pair-hint" }, ...around(t("No WhatsApp on that Omni? Run {command} on its server."), "command", (0, import_react5.createElement)("code", null, `omni approve ${pairing.code}`)))
+    pairing.waLink ? null : (0, import_react6.createElement)("small", { className: "oai-pair-hint" }, ...around(t("No WhatsApp on that Omni? Run {command} on its server."), "command", (0, import_react6.createElement)("code", null, `omni approve ${pairing.code}`)))
   );
 }
 var connectCommand = (url) => `omni connect --url ${url}`;
 function Unowned({ url, claimUrl, busy, onRemote, onBack }) {
-  const [copied, setCopied] = (0, import_react5.useState)(false);
+  const [copied, setCopied] = (0, import_react6.useState)(false);
   const command = connectCommand(url);
   let host = url;
   try {
     host = new URL(url).host;
   } catch {
   }
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "div",
     { className: "oai-remote oai-unowned" },
-    (0, import_react5.createElement)("strong", null, t("{host} has no owner yet", { host })),
-    (0, import_react5.createElement)("small", null, t("Make it yours on its server, then paste the link it prints below:")),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)("strong", null, t("{host} has no owner yet", { host })),
+    (0, import_react6.createElement)("small", null, t("Make it yours on its server, then paste the link it prints below:")),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-cmd" },
-      (0, import_react5.createElement)("code", null, command),
-      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: () => navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {
+      (0, import_react6.createElement)("code", null, command),
+      (0, import_react6.createElement)("button", { type: "button", className: "oai-copy", onClick: () => navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {
       }) }, copied ? t("Copied") : t("Copy"))
     ),
-    claimUrl ? (0, import_react5.createElement)("small", null, ...around(t("Or {link}, click Claim this Omni, then connect its address again."), "link", (0, import_react5.createElement)("a", { className: "oai-link", href: claimUrl, target: "_blank", rel: "noreferrer" }, t("open its claim page")))) : (0, import_react5.createElement)("small", null, t("Or open the claim link from its server log in your browser, then connect its address again.")),
-    (0, import_react5.createElement)(Remote, { busy, onRemote, onBack, label: t("The link it printed") })
+    claimUrl ? (0, import_react6.createElement)("small", null, ...around(t("Or {link}, click Claim this Omni, then connect its address again."), "link", (0, import_react6.createElement)("a", { className: "oai-link", href: claimUrl, target: "_blank", rel: "noreferrer" }, t("open its claim page")))) : (0, import_react6.createElement)("small", null, t("Or open the claim link from its server log in your browser, then connect its address again.")),
+    (0, import_react6.createElement)(Remote, { busy, onRemote, onBack, label: t("The link it printed") })
   );
 }
 var ICONS = {
@@ -10892,7 +10989,7 @@ var ICONS = {
   // A globe: an Omni somewhere else.
   remote: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7"
 };
-var Icon = ({ name }) => (0, import_react5.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react5.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
+var Icon = ({ name }) => (0, import_react6.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react6.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
 function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
   const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { mac }) }));
   const tiles = rows.filter((row) => row.choice.action).map(({ omni, choice }) => ({
@@ -10907,14 +11004,14 @@ function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
   return { tiles, waiting: rows.filter((row) => !row.choice.action).map((row) => row.choice) };
 }
 function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
-  const [remote, setRemote] = (0, import_react5.useState)(false);
-  if (remote) return (0, import_react5.createElement)(Remote, { busy, onRemote, onBack: () => setRemote(false) });
+  const [remote, setRemote] = (0, import_react6.useState)(false);
+  if (remote) return (0, import_react6.createElement)(Remote, { busy, onRemote, onBack: () => setRemote(false) });
   const { tiles, waiting } = destinyOf(omnis, { mac: onMac(), newOmni: typeof onLocal === "function" });
   const pick = (tile) => tile.id === "remote" ? setRemote(true) : tile.id === "local" ? onLocal() : onUse(tile.omni);
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "div",
     { className: "oai-destiny-box" },
-    (0, import_react5.createElement)("div", { className: "oai-destiny", role: "group", "aria-label": t("Where your Omni is") }, tiles.map((tile) => (0, import_react5.createElement)(
+    (0, import_react6.createElement)("div", { className: "oai-destiny", role: "group", "aria-label": t("Where your Omni is") }, tiles.map((tile) => (0, import_react6.createElement)(
       "button",
       {
         key: tile.id,
@@ -10923,201 +11020,203 @@ function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
         disabled: busy !== null,
         onClick: () => pick(tile)
       },
-      (0, import_react5.createElement)("span", { className: "oai-destiny-icon" }, (0, import_react5.createElement)(Icon, { name: tile.icon })),
-      (0, import_react5.createElement)("strong", null, busy === tile.id ? t("Connecting…") : tile.title),
-      (0, import_react5.createElement)("small", null, tile.sub)
+      (0, import_react6.createElement)("span", { className: "oai-destiny-icon" }, (0, import_react6.createElement)(Icon, { name: tile.icon })),
+      (0, import_react6.createElement)("strong", null, busy === tile.id ? t("Connecting…") : tile.title),
+      (0, import_react6.createElement)("small", null, tile.sub)
     ))),
-    waiting.length > 0 ? (0, import_react5.createElement)("ul", { className: "oai-destiny-waiting" }, waiting.map((row) => (0, import_react5.createElement)("li", { key: row.id }, (0, import_react5.createElement)("strong", null, row.title), ` · ${row.note}`))) : null
+    waiting.length > 0 ? (0, import_react6.createElement)("ul", { className: "oai-destiny-waiting" }, waiting.map((row) => (0, import_react6.createElement)("li", { key: row.id }, (0, import_react6.createElement)("strong", null, row.title), ` · ${row.note}`))) : null
   );
 }
 function Remote({ busy, onRemote, onBack, label = t("Where is your Omni?") }) {
-  const [text, setText] = (0, import_react5.useState)("");
+  const [text, setText] = (0, import_react6.useState)("");
   const wanted = readRemote(text);
   const submit = (event) => {
     event.preventDefault();
     if (wanted !== null && wanted.kind !== "bad-link") onRemote(wanted);
   };
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "form",
     { className: "oai-remote", onSubmit: submit },
-    (0, import_react5.createElement)("label", { htmlFor: "oai-remote-url" }, label),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)("label", { htmlFor: "oai-remote-url" }, label),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-remote-row" },
-      (0, import_react5.createElement)("input", { id: "oai-remote-url", type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, autoFocus: true, value: text, placeholder: "omni.example.com", onChange: (event) => setText(event.target.value) }),
-      (0, import_react5.createElement)("button", { type: "submit", className: "oai-pill oai-pill-primary", disabled: busy !== null || wanted === null || wanted.kind === "bad-link" }, busy === "remote" ? t("Connecting…") : t("Connect"))
+      (0, import_react6.createElement)("input", { id: "oai-remote-url", type: "text", inputMode: "url", autoComplete: "off", spellCheck: false, autoFocus: true, value: text, placeholder: "omni.example.com", onChange: (event) => setText(event.target.value) }),
+      (0, import_react6.createElement)("button", { type: "submit", className: "oai-pill oai-pill-primary", disabled: busy !== null || wanted === null || wanted.kind === "bad-link" }, busy === "remote" ? t("Connecting…") : t("Connect"))
     ),
-    (0, import_react5.createElement)("small", null, wanted?.kind === "bad-link" ? t("That link is cut short. Copy the whole link Omni sent you.") : wanted?.kind === "claim" ? t("Its claim link: Omni opens it in your browser to make it yours.") : t("Its address, or paste the link Omni sent you on WhatsApp.")),
-    (0, import_react5.createElement)("button", { type: "button", className: "oai-textlink", onClick: onBack }, t("Back to the choices"))
+    (0, import_react6.createElement)("small", null, wanted?.kind === "bad-link" ? t("That link is cut short. Copy the whole link Omni sent you.") : wanted?.kind === "claim" ? t("Its claim link: Omni opens it in your browser to make it yours.") : t("Its address, or paste the link Omni sent you on WhatsApp.")),
+    (0, import_react6.createElement)("button", { type: "button", className: "oai-textlink", onClick: onBack }, t("Back to the choices"))
   );
 }
 function Inside({ phase, detail, power, live }) {
   const channels = live?.configured ? live.channels ?? [] : [];
-  if (phase === "installing") return (0, import_react5.createElement)(InstallProgress, { plugins: detail?.plugins });
-  if (phase === "pairing") return (0, import_react5.createElement)(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing });
-  if (phase === "sandbox") return (0, import_react5.createElement)(InstallLog, { text: detail?.log ?? "", label: t("What Omni's installer printed") });
-  if (phase === "failed" && detail?.log) return (0, import_react5.createElement)("div", null, (0, import_react5.createElement)(InstallLog, { text: detail.log, label: t("What Omni's installer printed") }), (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, t("What went wrong is above. Power Omni on to try again.")));
-  if ((phase === "none" || phase === "found") && power.unowned) return (0, import_react5.createElement)(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned });
-  if (phase === "none" || phase === "found") return (0, import_react5.createElement)(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
+  if (phase === "installing") return (0, import_react6.createElement)(InstallProgress, { plugins: detail?.plugins });
+  if (phase === "pairing") return (0, import_react6.createElement)(Pairing, { pairing: detail.pairing, onCancel: power.cancelPairing });
+  if (phase === "sandbox") return (0, import_react6.createElement)(InstallLog, { text: detail?.log ?? "", label: t("What Omni's installer printed") });
+  if (phase === "failed" && detail?.log) return (0, import_react6.createElement)("div", null, (0, import_react6.createElement)(InstallLog, { text: detail.log, label: t("What Omni's installer printed") }), (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, t("What went wrong is above. Power Omni on to try again.")));
+  if ((phase === "none" || phase === "found") && power.unowned) return (0, import_react6.createElement)(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned });
+  if (phase === "none" || phase === "found") return (0, import_react6.createElement)(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
   if (phase === "linked" && channels.length > 0) {
-    return (0, import_react5.createElement)(
+    return (0, import_react6.createElement)(
       "div",
       { className: "oai-menu" },
-      (0, import_react5.createElement)("span", { className: "oai-menu-label" }, t("In your menu")),
-      (0, import_react5.createElement)("ul", { className: "oai-menu-preview" }, channels.slice(0, 3).map((channel) => (0, import_react5.createElement)("li", { key: channel.id }, (0, import_react5.createElement)("span", { className: `oai-dot ${channel.status === "connected" ? "ok" : "warn"}` }), `${channelLabel(channel)} · ${channel.name}`)))
+      (0, import_react6.createElement)("span", { className: "oai-menu-label" }, t("In your menu")),
+      (0, import_react6.createElement)("ul", { className: "oai-menu-preview" }, channels.slice(0, 3).map((channel) => (0, import_react6.createElement)("li", { key: channel.id }, (0, import_react6.createElement)("span", { className: `oai-dot ${channel.status === "connected" ? "ok" : "warn"}` }), `${channelLabel(channel)} · ${channel.name}`)))
     );
   }
-  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Omni on again."));
-  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add the Omni plugins on DSH's Plugins page."));
+  if (phase === "restart") return (0, import_react6.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Omni on again."));
+  if (phase === "failed") return (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add the Omni plugins on DSH's Plugins page."));
   return null;
+}
+var powerLocked = (kind, phase) => phase === "installing" || phase === "starting" || kind !== "omni" && phase === "ready";
+function powerOff(kind, { phase, detail } = powerOf(kind), omniUi = callOmniUi) {
+  stopPower(kind);
+  if (kind === "omni" && phase === "pairing") void omniUi("omni-pair-cancel").catch(() => {
+  });
+  if (kind === "omni" && phase === "sandbox" && detail?.terminal) void omniUi("omni-terminal-write", { terminal: detail.terminal, data: "" }).catch(() => {
+  });
+  showPower(kind, "asleep", { removed: true });
 }
 function Machine({ kind = "omni", phase, detail, power, live, onPower, children }) {
   const awake = phase !== "asleep";
   const omni = kind === "omni";
   const unfold = kind === "unfold";
   const title = omni ? "Omni" : unfold ? "Unfold" : "Genie";
-  const locked = phase === "installing" || phase === "starting" || !omni && phase === "ready";
-  return (0, import_react5.createElement)(
+  const locked = powerLocked(kind, phase);
+  return (0, import_react6.createElement)(
     "div",
     { className: `oai-box oai-box-${kind} oai-is-${phase}`, "data-phase": phase },
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-box-top" },
-      (0, import_react5.createElement)("span", { className: "oai-lights", "aria-hidden": true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => (0, import_react5.createElement)("i", { key: id, className: `oai-light oai-light-${state}`, title: t(id) }))),
-      (0, import_react5.createElement)("button", { type: "button", className: `oai-power${awake ? " on" : ""}`, "aria-pressed": awake, "aria-label": awake ? t("Power {name} off", { name: title }) : t("Power {name} on", { name: title }), onClick: onPower, disabled: locked }, (0, import_react5.createElement)(PowerIcon))
+      (0, import_react6.createElement)("span", { className: "oai-lights", "aria-hidden": true }, (omni ? lightsOf(phase) : genieLightsOf(phase)).map(([id, state]) => (0, import_react6.createElement)("i", { key: id, className: `oai-light oai-light-${state}`, title: t(id) }))),
+      (0, import_react6.createElement)("button", { type: "button", className: `oai-power${awake ? " on" : ""}`, "aria-pressed": awake, "aria-label": awake ? t("Power {name} off", { name: title }) : t("Power {name} on", { name: title }), onClick: onPower, disabled: locked }, (0, import_react6.createElement)(PowerIcon))
     ),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-screen", "aria-hidden": "true" },
-      phase === "looking" ? (0, import_react5.createElement)("div", { className: "oai-scan" }, (0, import_react5.createElement)("i"), (0, import_react5.createElement)("i"), (0, import_react5.createElement)("i")) : null,
-      phase === "asleep" ? (0, import_react5.createElement)("div", { className: "oai-zzz" }, (0, import_react5.createElement)("i", null, "z"), (0, import_react5.createElement)("i", null, "z"), (0, import_react5.createElement)("i", null, "z")) : null,
+      phase === "looking" ? (0, import_react6.createElement)("div", { className: "oai-scan" }, (0, import_react6.createElement)("i"), (0, import_react6.createElement)("i"), (0, import_react6.createElement)("i")) : null,
+      phase === "asleep" ? (0, import_react6.createElement)("div", { className: "oai-zzz" }, (0, import_react6.createElement)("i", null, "z"), (0, import_react6.createElement)("i", null, "z"), (0, import_react6.createElement)("i", null, "z")) : null,
       children
     ),
-    (0, import_react5.createElement)("p", { className: `oai-status${["waking", "installing", "starting", "looking", "sandbox"].includes(phase) ? " oai-working" : ""}`, role: "status", "aria-live": "polite" }, omni ? statusOf(phase, detail) : unfold ? unfoldStatusOf(phase, detail) : genieStatusOf(phase, detail)),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)("p", { className: `oai-status${["waking", "installing", "starting", "looking", "sandbox"].includes(phase) ? " oai-working" : ""}`, role: "status", "aria-live": "polite" }, omni ? statusOf(phase, detail) : unfold ? unfoldStatusOf(phase, detail) : genieStatusOf(phase, detail)),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-inside" },
-      omni ? (0, import_react5.createElement)(Inside, { phase, detail, power, live }) : unfold ? (0, import_react5.createElement)(UnfoldInside, { phase, detail }) : (0, import_react5.createElement)(GenieInside, { phase, detail }),
-      omni && power?.problem ? (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", role: "alert" }, power.problem) : null
+      omni ? (0, import_react6.createElement)(Inside, { phase, detail, power, live }) : unfold ? (0, import_react6.createElement)(UnfoldInside, { phase, detail }) : (0, import_react6.createElement)(GenieInside, { phase, detail }),
+      omni && power?.problem ? (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", role: "alert" }, power.problem) : null
     )
   );
 }
 var genieLogOf = (phase, detail) => ["installing", "starting", "restart", "failed"].includes(phase) ? detail?.genie?.install?.log || null : null;
 function GenieInside({ phase, detail }) {
-  if (phase === "ready" && detail?.genie?.skills === false && detail.genie.cli && detail.genie.cliBundled !== true) return (0, import_react5.createElement)(GenieSkillsOffer, { line: detail.genie.cli });
+  if (phase === "ready" && detail?.genie?.skills === false && detail.genie.cli && detail.genie.cliBundled !== true) return (0, import_react6.createElement)(GenieSkillsOffer, { line: detail.genie.cli });
   const log = genieLogOf(phase, detail);
-  const terminal = log === null ? null : (0, import_react5.createElement)(InstallLog, { text: log, label: t("What the Genie install printed") });
-  if (phase === "restart") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Genie on again.")));
-  if (phase === "failed") return (0, import_react5.createElement)("div", null, terminal, (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, terminal === null ? detail?.message ?? t("Add @automagik/genie-dsh on DSH's Plugins page.") : t("What went wrong is above. Power Genie on to try again.")));
+  const terminal = log === null ? null : (0, import_react6.createElement)(InstallLog, { text: log, label: t("What the Genie install printed") });
+  if (phase === "restart") return (0, import_react6.createElement)("div", null, terminal, (0, import_react6.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Genie on again.")));
+  if (phase === "failed") return (0, import_react6.createElement)("div", null, terminal, (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, terminal === null ? detail?.message ?? t("Add @automagik/genie-dsh on DSH's Plugins page.") : t("What went wrong is above. Power Genie on to try again.")));
   return terminal;
 }
 function UnfoldInside({ phase, detail }) {
-  if (phase === "restart") return (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Unfold on again."));
-  if (phase === "failed") return (0, import_react5.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add @automagik/unfold-bot-dsh on DSH's Plugins page."));
+  if (phase === "restart") return (0, import_react6.createElement)("p", { className: "oai-inside-note" }, t("Restart DSH, then power Unfold on again."));
+  if (phase === "failed") return (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", title: detail?.message }, detail?.message ?? t("Add @automagik/unfold-bot-dsh on DSH's Plugins page."));
   return null;
 }
 function GenieSkillsOffer({ line }) {
-  const [copied, setCopied] = (0, import_react5.useState)(false);
+  const [copied, setCopied] = (0, import_react6.useState)(false);
   const copy = () => {
     void navigator.clipboard?.writeText(line).then(() => setCopied(true), () => {
     });
   };
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "div",
     { className: "oai-genie-skills" },
-    (0, import_react5.createElement)("p", { className: "oai-inside-note" }, t("Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:")),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)("p", { className: "oai-inside-note" }, t("Genie is ready for wishes. For its skills too, like /wish, install its command line once, in a terminal:")),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-cli-line" },
-      (0, import_react5.createElement)("code", null, line),
-      (0, import_react5.createElement)("button", { type: "button", className: "oai-copy", onClick: copy }, copied ? t("Copied") : t("Copy"))
+      (0, import_react6.createElement)("code", null, line),
+      (0, import_react6.createElement)("button", { type: "button", className: "oai-copy", onClick: copy }, copied ? t("Copied") : t("Copy"))
     )
   );
 }
-var StartsWith = (props) => (0, import_react5.createElement)("details", { className: "oai-starts" }, (0, import_react5.createElement)("summary", null, t("What it starts with")), (0, import_react5.createElement)(Capabilities, props));
+var StartsWith = (props) => (0, import_react6.createElement)("details", { className: "oai-starts" }, (0, import_react6.createElement)("summary", null, t("What it starts with")), (0, import_react6.createElement)(Capabilities, props));
 function OmniCard({ power, onPower, type, abilities, onToggle, live }) {
   const { phase, detail } = power;
   const awake = phase !== "asleep";
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "article",
     { className: `oai-fighter oai-omni${awake ? " oai-chosen" : ""}`, "data-phase": phase },
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       Machine,
       { phase, detail, power, live, onPower },
-      (0, import_react5.createElement)("div", { className: "oai-octo-wrap", dangerouslySetInnerHTML: { __html: portraitOf(phase) } })
+      (0, import_react6.createElement)("div", { className: "oai-octo-wrap", dangerouslySetInnerHTML: { __html: portraitOf(phase) } })
     ),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "header",
       null,
-      (0, import_react5.createElement)("h2", null, "Omni"),
-      awake && phase !== "failed" ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team")), (0, import_react5.createElement)("button", { type: "button", className: "oai-remove", onClick: onPower, disabled: phase === "installing" || phase === "starting" }, t("Remove"))) : null
+      (0, import_react6.createElement)("h2", null, "Omni"),
+      awake && phase !== "failed" ? (0, import_react6.createElement)("span", { className: "oai-team-line" }, (0, import_react6.createElement)("span", { className: "oai-on-team" }, (0, import_react6.createElement)(Check), t("On your team")), (0, import_react6.createElement)("button", { type: "button", className: "oai-remove", onClick: onPower, disabled: phase === "installing" || phase === "starting" }, t("Remove"))) : null
     ),
-    (0, import_react5.createElement)("p", { className: "oai-about" }, t("Every chat on every channel, answered by your team.")),
-    (0, import_react5.createElement)(StartsWith, { type, abilities, onToggle, disabled: !awake })
+    (0, import_react6.createElement)("p", { className: "oai-about" }, t("Every chat on every channel, answered by your team.")),
+    (0, import_react6.createElement)(StartsWith, { type, abilities, onToggle, disabled: !awake })
   );
 }
 function GenieCard({ power, host = null }) {
   const { phase, detail } = power;
   const joined = phase === "ready" || phase === "restart";
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "article",
     { className: `oai-fighter oai-genie${joined ? " oai-chosen" : ""}`, "data-phase": phase },
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       Machine,
       { kind: "genie", phase, detail, onPower: power.toggle },
-      (0, import_react5.createElement)("div", { className: "oai-genie-wrap" }, (0, import_react5.createElement)(GeniePet, { expression: genieExpressionOf(phase) }))
+      (0, import_react6.createElement)("div", { className: "oai-genie-wrap" }, (0, import_react6.createElement)(GeniePet, { expression: genieExpressionOf(phase) }))
     ),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "header",
       null,
-      (0, import_react5.createElement)("h2", null, "Genie"),
-      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team"))) : null
+      (0, import_react6.createElement)("h2", null, "Genie"),
+      joined ? (0, import_react6.createElement)("span", { className: "oai-team-line" }, (0, import_react6.createElement)("span", { className: "oai-on-team" }, (0, import_react6.createElement)(Check), t("On your team"))) : null
     ),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "p",
       { className: "oai-about oai-wish" },
-      (0, import_react5.createElement)("img", { className: "oai-wish-lamp", src: LAMP, alt: "", draggable: false }),
+      (0, import_react6.createElement)("img", { className: "oai-wish-lamp", src: LAMP, alt: "", draggable: false }),
       t("Give it a wish, get one delivery.")
     ),
-    (0, import_react5.createElement)(StartsWith, { type: genieTypeOf(host) })
+    (0, import_react6.createElement)(StartsWith, { type: genieTypeOf(host) })
   );
 }
 function UnfoldCard({ power, host = null }) {
   const { phase, detail } = power;
   const joined = phase === "ready" || phase === "restart";
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     "article",
     { className: `oai-fighter oai-unfold${joined ? " oai-chosen" : ""}`, "data-phase": phase },
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       Machine,
       { kind: "unfold", phase, detail, onPower: power.toggle },
-      (0, import_react5.createElement)("div", { className: "oai-unfold-wrap" }, (0, import_react5.createElement)(UnfoldPet, { expression: genieExpressionOf(phase) }))
+      (0, import_react6.createElement)("div", { className: "oai-unfold-wrap" }, (0, import_react6.createElement)(UnfoldPet, { expression: genieExpressionOf(phase) }))
     ),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(
       "header",
       null,
-      (0, import_react5.createElement)("h2", null, "Unfold"),
-      joined ? (0, import_react5.createElement)("span", { className: "oai-team-line" }, (0, import_react5.createElement)("span", { className: "oai-on-team" }, (0, import_react5.createElement)(Check), t("On your team"))) : null
+      (0, import_react6.createElement)("h2", null, "Unfold"),
+      joined ? (0, import_react6.createElement)("span", { className: "oai-team-line" }, (0, import_react6.createElement)("span", { className: "oai-on-team" }, (0, import_react6.createElement)(Check), t("On your team"))) : null
     ),
-    (0, import_react5.createElement)("p", { className: "oai-about" }, t("Unfold itself, working inside DSH.")),
-    (0, import_react5.createElement)(StartsWith, { type: unfoldTypeOf(host) })
+    (0, import_react6.createElement)("p", { className: "oai-about" }, t("Unfold itself, working inside DSH.")),
+    (0, import_react6.createElement)(StartsWith, { type: unfoldTypeOf(host) })
   );
 }
 var useGeniePower = () => useBotPower("genie", geniePowerOn);
 var useUnfoldPower = () => useBotPower("unfold", unfoldPowerOn);
 function useBotPower(kind, powerOnOf) {
-  const [phase, setPhase] = (0, import_react5.useState)("asleep");
-  const [detail, setDetail] = (0, import_react5.useState)(null);
-  const run = (0, import_react5.useRef)(null);
-  (0, import_react5.useEffect)(() => () => run.current?.abort(), []);
-  const show = (next, value = null) => {
-    setPhase(next);
-    setDetail(value);
-  };
-  (0, import_react5.useEffect)(() => {
+  const { phase, detail } = usePowerState(kind);
+  (0, import_react6.useEffect)(() => {
     let alive = true;
     call(`${kind}-plugin`).then((reply) => {
-      if (alive && reply?.ready && run.current === null) show("ready", { bot: reply.bot });
+      if (alive && reply?.ready && !WORKING.has(powerOf(kind).phase)) showPower(kind, "ready", { bot: reply.bot });
     }, () => {
     });
     return () => {
@@ -11125,57 +11224,33 @@ function useBotPower(kind, powerOnOf) {
     };
   }, []);
   const on2 = () => {
-    run.current?.abort();
-    const controller = new AbortController();
-    run.current = controller;
-    powerOnOf({ show, signal: controller.signal }).catch((error) => {
-      if (error?.name !== "AbortError") show("failed", { message: error.message });
-    });
+    runPower(kind, powerOnOf);
   };
-  const off = () => {
-    run.current?.abort();
-    show("asleep", { removed: true });
-  };
+  const off = () => powerOff(kind);
   return { phase, detail, toggle: () => phase === "asleep" ? on2() : off() };
 }
 function usePower() {
-  const [phase, setPhase] = (0, import_react5.useState)("asleep");
-  const [detail, setDetail] = (0, import_react5.useState)(null);
-  const [busy, setBusy] = (0, import_react5.useState)(null);
-  const [problem, setProblem] = (0, import_react5.useState)(null);
-  const [unowned, setUnowned] = (0, import_react5.useState)(null);
-  const run = (0, import_react5.useRef)(null);
-  const back = (0, import_react5.useRef)(null);
-  (0, import_react5.useEffect)(() => () => run.current?.abort(), []);
-  const show = (next, value = null) => {
-    setPhase(next);
-    setDetail(value);
-  };
+  const { phase, detail } = usePowerState("omni");
+  const [busy, setBusy] = (0, import_react6.useState)(null);
+  const [problem, setProblem] = (0, import_react6.useState)(null);
+  const [unowned, setUnowned] = (0, import_react6.useState)(null);
+  const back = (0, import_react6.useRef)(null);
+  const show = (next, value = null) => showPower("omni", next, value);
   const on2 = () => {
-    run.current?.abort();
-    const controller = new AbortController();
-    run.current = controller;
     setProblem(null);
-    powerOn({ show, signal: controller.signal }).catch((error) => {
-      if (error?.name !== "AbortError") show("failed", { message: error.message });
-    });
+    runPower("omni", powerOn);
   };
   const off = () => {
-    run.current?.abort();
-    if (phase === "pairing") void callOmniUi("omni-pair-cancel").catch(() => {
-    });
-    if (phase === "sandbox" && detail?.terminal) void callOmniUi("omni-terminal-write", { terminal: detail.terminal, data: "" }).catch(() => {
-    });
     setProblem(null);
     setBusy(null);
-    show("asleep", { removed: true });
+    powerOff("omni", { phase, detail });
   };
   const connect = async (row, endpoint, payload) => {
     setBusy(row);
     setProblem(null);
     try {
       const reply = await callOmniUi(endpoint, payload);
-      if (run.current?.signal.aborted) return;
+      if (powerSignal("omni")?.aborted) return;
       if (reply.status === "paired" || reply.pairing) setUnowned(null);
       if (reply.status === "paired") show("linked", { origin: reply.origin ?? null });
       else if (reply.pairing) {
@@ -11189,7 +11264,7 @@ function usePower() {
       setBusy(null);
     }
   };
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     if (phase !== "pairing") return void 0;
     let timer = 0;
     let alive = true;
@@ -11223,14 +11298,9 @@ function usePower() {
     toggle: () => phase === "asleep" ? on2() : off(),
     use: (omni) => connect(omni.id, "omni-discover-use", { id: omni.id }),
     sandbox: () => {
-      run.current?.abort();
-      const controller = new AbortController();
-      run.current = controller;
       setProblem(null);
       back.current = { phase, detail };
-      sandboxInstall({ show, signal: controller.signal }).catch((error) => {
-        if (error?.name !== "AbortError") show("failed", { message: error.message });
-      });
+      runPower("omni", sandboxInstall);
     },
     remote: (wanted) => wanted.kind === "bad-link" ? setProblem(t("That is not a link your Omni sends. It looks like https://your-omni/api/login/app?grant=…")) : wanted.kind === "claim" ? (setProblem(null), setUnowned({ url: wanted.url, claimUrl: wanted.claimUrl }), window.open(wanted.claimUrl, "_blank", "noreferrer")) : wanted.kind === "grant" ? connect("remote", "omni-connect-grant", { url: wanted.url, grant: wanted.grant }) : connect("remote", "omni-pair-start", { url: wanted.url }),
     cancelPairing: () => {
@@ -11281,58 +11351,62 @@ var genieSpeechOf = (phase) => ({
   restart: t("Genie is installed. Restart DSH to wake it."),
   failed: t("Genie could not be installed here.")
 })[phase];
-var TeamLede = ({ name }) => (0, import_react5.createElement)(
+var TeamLede = ({ name }) => (0, import_react6.createElement)(
   "p",
   { className: "oai-lede" },
   t("{name} leads. Who comes along?", { name }),
-  (0, import_react5.createElement)("br"),
-  (0, import_react5.createElement)("span", { className: "oai-lede-rule" }, t("Code work goes to a Bot with Computer."))
+  (0, import_react6.createElement)("br"),
+  (0, import_react6.createElement)("span", { className: "oai-lede-rule" }, t("Code work goes to a Bot with Computer."))
 );
+var explicitOf = (props, intent2) => props?.explicit === true || intent2 !== null;
 function TeamStep(props) {
-  const state = useGate(props);
+  const [intent2] = (0, import_react6.useState)(() => takeTeamIntent());
+  const explicit = explicitOf(props, intent2);
+  const state = useGate(explicit ? { ...props, explicit: true } : props);
   const finish2 = useFinish(props);
   const [glitching, glitch] = useGlitch();
   const power = usePower();
   const geniePower = useGeniePower();
   const unfoldPower = useUnfoldPower();
-  const [lastPressed, setLastPressed] = (0, import_react5.useState)("omni");
-  const [omniType, setOmniType] = (0, import_react5.useState)(null);
-  const [abilities, setAbilities] = (0, import_react5.useState)({});
-  const [live, setLive] = (0, import_react5.useState)(void 0);
-  const [saving, setSaving] = (0, import_react5.useState)(false);
-  const [problem, setProblem] = (0, import_react5.useState)(null);
-  const autoPowered = (0, import_react5.useRef)(false);
-  const genieAutoPowered = (0, import_react5.useRef)(false);
-  const unfoldAutoPowered = (0, import_react5.useRef)(false);
+  const [lastPressed, setLastPressed] = (0, import_react6.useState)("omni");
+  const [omniType, setOmniType] = (0, import_react6.useState)(null);
+  const [abilities, setAbilities] = (0, import_react6.useState)({});
+  const [live, setLive] = (0, import_react6.useState)(void 0);
+  const [saving, setSaving] = (0, import_react6.useState)(false);
+  const [problem, setProblem] = (0, import_react6.useState)(null);
+  const autoPowered = (0, import_react6.useRef)(false);
+  const genieAutoPowered = (0, import_react6.useRef)(false);
+  const unfoldAutoPowered = (0, import_react6.useRef)(false);
   const { phase } = power;
   const awakeNow = phase === "looking" || phase === "linked";
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     call("bot-type", { type: "omni" }).then(setOmniType, () => {
     });
   }, [awakeNow]);
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     callOmniUi("omni-overview", {}).then(setLive, () => setLive(null));
   }, []);
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     if (phase !== "linked") return;
     callOmniUi("omni-overview", {}).then(setLive, () => setLive(null));
     glitch();
   }, [phase, glitch]);
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     if (state) glitch();
   }, [state, glitch]);
-  (0, import_react5.useEffect)(() => {
-    if (!state || !powersOnByItself(state.preload, power.phase, power.detail, autoPowered.current)) return;
+  (0, import_react6.useEffect)(() => {
+    const asked = intent2?.power === "omni" && !autoPowered.current && power.phase === "asleep";
+    if (!state || !(asked || powersOnByItself(state.preload, power.phase, power.detail, autoPowered.current))) return;
     autoPowered.current = true;
     power.toggle();
   }, [state]);
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     if (!state || !powersOnByItself(state.preload, geniePower.phase, geniePower.detail, genieAutoPowered.current, "genie")) return;
     genieAutoPowered.current = true;
     setLastPressed("genie");
     geniePower.toggle();
   }, [state]);
-  (0, import_react5.useEffect)(() => {
+  (0, import_react6.useEffect)(() => {
     if (!state || !powersOnByItself(state.preload, unfoldPower.phase, unfoldPower.detail, unfoldAutoPowered.current, "unfold")) return;
     unfoldAutoPowered.current = true;
     setLastPressed("unfold");
@@ -11347,6 +11421,10 @@ function TeamStep(props) {
   const unfoldWorking = ["waking", "installing", "starting"].includes(unfoldPower.phase);
   const working = ["waking", "installing", "starting", "looking", "sandbox"].includes(phase);
   async function go2({ omni: joined = omni } = {}) {
+    if (explicit) {
+      props.complete?.();
+      return;
+    }
     setSaving(true);
     setProblem(null);
     try {
@@ -11361,7 +11439,7 @@ function TeamStep(props) {
   }
   const omniPower = { ...power, local: state.host === "unfold" ? void 0 : power.sandbox };
   const speech = lastPressed === "genie" && genieSpeechOf(geniePower.phase) || lastPressed === "unfold" && unfoldSpeechOf(unfoldPower.phase) || speechOf(phase, name, power.detail?.origin);
-  return (0, import_react5.createElement)(
+  return (0, import_react6.createElement)(
     Stage,
     {
       title: t("Grow your team"),
@@ -11370,26 +11448,26 @@ function TeamStep(props) {
       glitching,
       wide: true
     },
-    (0, import_react5.createElement)(TeamLede, { name }),
-    (0, import_react5.createElement)(
+    (0, import_react6.createElement)(TeamLede, { name }),
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-select" },
-      ...cardsOf(state.preload).map((id) => id === "omni" ? (0, import_react5.createElement)(OmniCard, { key: "omni", power: omniPower, onPower: () => {
+      ...cardsOf(state.preload).map((id) => id === "omni" ? (0, import_react6.createElement)(OmniCard, { key: "omni", power: omniPower, onPower: () => {
         setLastPressed("omni");
         power.toggle();
-      }, type: omniType, abilities, onToggle: (row, on2) => setAbilities((rows) => ({ ...rows, [row]: on2 })), live }) : id === "genie" ? (0, import_react5.createElement)(GenieCard, { key: "genie", host: state.host ?? null, power: { ...geniePower, toggle: () => {
+      }, type: omniType, abilities, onToggle: (row, on2) => setAbilities((rows) => ({ ...rows, [row]: on2 })), live }) : id === "genie" ? (0, import_react6.createElement)(GenieCard, { key: "genie", host: state.host ?? null, power: { ...geniePower, toggle: () => {
         setLastPressed("genie");
         geniePower.toggle();
-      } } }) : (0, import_react5.createElement)(UnfoldCard, { key: "unfold", host: state.host ?? null, power: { ...unfoldPower, toggle: () => {
+      } } }) : (0, import_react6.createElement)(UnfoldCard, { key: "unfold", host: state.host ?? null, power: { ...unfoldPower, toggle: () => {
         setLastPressed("unfold");
         unfoldPower.toggle();
       } } }))
     ),
-    problem ? (0, import_react5.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    (0, import_react5.createElement)(
+    problem ? (0, import_react6.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    (0, import_react6.createElement)(
       "div",
       { className: "oai-actions" },
-      (0, import_react5.createElement)(
+      (0, import_react6.createElement)(
         "button",
         { type: "button", className: "oai-primary oai-big", disabled: saving || working || genieWorking || unfoldWorking, onClick: () => go2() },
         saving ? t("Bringing them in…") : phase === "sandbox" ? t("Omni is moving in…") : working ? t("Omni is waking…") : genieWorking ? t("Genie is waking…") : unfoldWorking ? t("Unfold is waking…") : joinedLabel({ omni, genie, unfold }, name)
@@ -11599,7 +11677,7 @@ body[data-ds-dark-theme] .oai-box.oai-is-asleep{${recessed("var(--oai-niche)")}}
 `;
 
 // src/client/subscriptions.js
-var import_react6 = require("react");
+var import_react7 = require("react");
 var BASE = "dsh-subscriptions";
 var SUBSCRIPTION_TILES = [
   { id: "perplexity", provider: "perplexity", name: "Perplexity", note: "Perplexity Pro", kind: "browser" },
@@ -11638,12 +11716,12 @@ function nextIndex(accounts, provider) {
 }
 var signedInCount = (accounts, provider) => (accounts ?? []).filter((account) => account.provider === provider && account.configured).length;
 function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
-  const [step, setStep] = (0, import_react6.useState)(null);
-  const [problem, setProblem] = (0, import_react6.useState)(null);
-  const [value, setValue] = (0, import_react6.useState)("");
-  const [busy, setBusy] = (0, import_react6.useState)(false);
-  const [index, setIndex] = (0, import_react6.useState)(null);
-  (0, import_react6.useEffect)(() => {
+  const [step, setStep] = (0, import_react7.useState)(null);
+  const [problem, setProblem] = (0, import_react7.useState)(null);
+  const [value, setValue] = (0, import_react7.useState)("");
+  const [busy, setBusy] = (0, import_react7.useState)(false);
+  const [index, setIndex] = (0, import_react7.useState)(null);
+  (0, import_react7.useEffect)(() => {
     let live = true;
     let timer = 0;
     const done = () => {
@@ -11714,25 +11792,25 @@ function SubscriptionSignIn({ tile, onBack, onSaved, glitch }) {
       setBusy(false);
     }
   };
-  return (0, import_react6.createElement)(
+  return (0, import_react7.createElement)(
     "div",
     { className: "oai-signin" },
-    !step && !problem ? (0, import_react6.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: tile.name })) : null,
-    step?.code ? (0, import_react6.createElement)("p", null, t("Open {name}, sign in, and enter this code:", { name: tile.name })) : null,
-    step?.code ? (0, import_react6.createElement)("div", { className: "oai-code" }, (0, import_react6.createElement)("code", null, step.code)) : null,
-    step?.url && tile.kind !== "token" ? (0, import_react6.createElement)("a", { className: "oai-primary oai-button", href: step.url, target: "_blank", rel: "noreferrer" }, t("Open {name} to sign in", { name: tile.name })) : null,
-    tile.kind === "device" && step ? (0, import_react6.createElement)("p", { className: "oai-muted oai-waiting" }, t("Waiting for you to finish signing in…")) : null,
-    tile.kind === "browser" && step ? (0, import_react6.createElement)("p", { className: "oai-muted" }, step.autoCatch ? t("Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.") : t("Sign in on their page, then paste the address it ends on here.")) : null,
-    tile.kind === "token" && step ? (0, import_react6.createElement)("p", null, t("Copy your {what} from ", { what: t(tile.what) }), (0, import_react6.createElement)("a", { className: "oai-link", href: tile.where, target: "_blank", rel: "noreferrer" }, tile.name), t(" and paste it here. It stays in DSH's credential store on this computer.")) : null,
-    step && tile.kind !== "device" ? (0, import_react6.createElement)(
+    !step && !problem ? (0, import_react7.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: tile.name })) : null,
+    step?.code ? (0, import_react7.createElement)("p", null, t("Open {name}, sign in, and enter this code:", { name: tile.name })) : null,
+    step?.code ? (0, import_react7.createElement)("div", { className: "oai-code" }, (0, import_react7.createElement)("code", null, step.code)) : null,
+    step?.url && tile.kind !== "token" ? (0, import_react7.createElement)("a", { className: "oai-primary oai-button", href: step.url, target: "_blank", rel: "noreferrer" }, t("Open {name} to sign in", { name: tile.name })) : null,
+    tile.kind === "device" && step ? (0, import_react7.createElement)("p", { className: "oai-muted oai-waiting" }, t("Waiting for you to finish signing in…")) : null,
+    tile.kind === "browser" && step ? (0, import_react7.createElement)("p", { className: "oai-muted" }, step.autoCatch ? t("Sign in on their page; this finishes on its own. If it ends on a page that does not load, paste its address here.") : t("Sign in on their page, then paste the address it ends on here.")) : null,
+    tile.kind === "token" && step ? (0, import_react7.createElement)("p", null, t("Copy your {what} from ", { what: t(tile.what) }), (0, import_react7.createElement)("a", { className: "oai-link", href: tile.where, target: "_blank", rel: "noreferrer" }, tile.name), t(" and paste it here. It stays in DSH's credential store on this computer.")) : null,
+    step && tile.kind !== "device" ? (0, import_react7.createElement)(
       "form",
       { onSubmit: submit },
-      (0, import_react6.createElement)("label", { htmlFor: "oai-sub-value" }, tile.kind === "token" ? t(tile.what) : t("The address you landed on")),
-      (0, import_react6.createElement)("input", { id: "oai-sub-value", type: tile.kind === "token" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, value, onChange: (e) => setValue(e.target.value) }),
-      (0, import_react6.createElement)("button", { type: "submit", className: tile.kind === "token" ? "oai-primary" : "", disabled: busy }, busy ? t("Connecting…") : t("Connect"))
+      (0, import_react7.createElement)("label", { htmlFor: "oai-sub-value" }, tile.kind === "token" ? t(tile.what) : t("The address you landed on")),
+      (0, import_react7.createElement)("input", { id: "oai-sub-value", type: tile.kind === "token" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, value, onChange: (e) => setValue(e.target.value) }),
+      (0, import_react7.createElement)("button", { type: "submit", className: tile.kind === "token" ? "oai-primary" : "", disabled: busy }, busy ? t("Connecting…") : t("Connect"))
     ) : null,
-    problem ? (0, import_react6.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    (0, import_react6.createElement)("button", { type: "button", className: "oai-quiet", onClick: onBack }, t("Back"))
+    problem ? (0, import_react7.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    (0, import_react7.createElement)("button", { type: "button", className: "oai-quiet", onClick: onBack }, t("Back"))
   );
 }
 
@@ -11792,7 +11870,7 @@ function redactorFor(ctx) {
 }
 
 // src/client/acp-agents.js
-var import_react7 = require("react");
+var import_react8 = require("react");
 var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex" };
 var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX" };
 var SIGN_IN_OF = { "acp-claude": "claude auth login", "acp-codex": "codex login" };
@@ -11882,31 +11960,31 @@ function agentLines(agent) {
   return lines;
 }
 function useAcp(request2 = call, { onLoginOpen, open = openChatLogin } = {}) {
-  const [view, setView] = (0, import_react7.useState)(null);
-  const [busy, setBusy] = (0, import_react7.useState)(null);
-  const [problems, setProblems] = (0, import_react7.useState)({});
-  const [wanted, setWanted] = (0, import_react7.useState)({});
-  const live = (0, import_react7.useRef)(true);
-  (0, import_react7.useEffect)(() => () => {
+  const [view, setView] = (0, import_react8.useState)(null);
+  const [busy, setBusy] = (0, import_react8.useState)(null);
+  const [problems, setProblems] = (0, import_react8.useState)({});
+  const [wanted, setWanted] = (0, import_react8.useState)({});
+  const live = (0, import_react8.useRef)(true);
+  (0, import_react8.useEffect)(() => () => {
     live.current = false;
   }, []);
-  const show = (0, import_react7.useCallback)((next) => {
+  const show = (0, import_react8.useCallback)((next) => {
     if (!live.current) return;
     setView(next ?? { available: false, agents: [] });
     setWanted((previous) => Object.fromEntries(Object.entries(previous).filter(([id, on2]) => next?.agents?.find((agent) => agent.id === id)?.on !== on2)));
   }, []);
-  const load = (0, import_react7.useCallback)(async (refresh) => {
+  const load = (0, import_react8.useCallback)(async (refresh) => {
     try {
       show(await request2("acp", refresh ? { refresh: true } : null));
     } catch {
       if (live.current) setView((previous) => previous ?? { available: false, agents: [] });
     }
   }, [request2, show]);
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     void load(true);
   }, [load]);
   const settling = view?.agents?.some((agent) => cliBusy(agent) || agent.on && agent.cli.found && agent.connector.state === "installing" || wanted[agent.id] !== void 0 && wanted[agent.id] !== agent.on) === true;
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     if (!settling) return void 0;
     const timer = setInterval(() => {
       void load(false);
@@ -11958,24 +12036,24 @@ function useAcp(request2 = call, { onLoginOpen, open = openChatLogin } = {}) {
   };
 }
 function AcpLine({ line, agent, acp, busy }) {
-  return (0, import_react7.createElement)(
+  return (0, import_react8.createElement)(
     "div",
     { className: "oai-acp-line-block" },
-    (0, import_react7.createElement)(
+    (0, import_react8.createElement)(
       "p",
       { className: `oai-acp-line oai-acp-${line.tone}${line.tone === "wait" ? " oai-waiting" : ""}`, ...line.tone === "bad" ? { role: "status" } : {} },
       line.text,
-      line.link ? [" ", (0, import_react7.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
-      line.action === "retry" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
-      line.action === "login" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.login(agent) }, t("Sign in")) : null,
-      line.action === "check" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
+      line.link ? [" ", (0, import_react8.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
+      line.action === "retry" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
+      line.action === "login" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.login(agent) }, t("Sign in")) : null,
+      line.action === "check" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
     ),
-    line.details ? (0, import_react7.createElement)(
+    line.details ? (0, import_react8.createElement)(
       "details",
       { className: "oai-acp-details" },
-      (0, import_react7.createElement)("summary", null, t("Install details")),
-      (0, import_react7.createElement)("pre", { className: "oai-acp-diagnostic" }, line.details.diagnostic),
-      line.details.logPath ? (0, import_react7.createElement)("p", { className: "oai-acp-log" }, t("Log: {path}", { path: line.details.logPath })) : null
+      (0, import_react8.createElement)("summary", null, t("Install details")),
+      (0, import_react8.createElement)("pre", { className: "oai-acp-diagnostic" }, line.details.diagnostic),
+      line.details.logPath ? (0, import_react8.createElement)("p", { className: "oai-acp-log" }, t("Log: {path}", { path: line.details.logPath })) : null
     ) : null
   );
 }
@@ -11984,50 +12062,50 @@ function AcpAgentRow({ agent, acp }) {
   const busy = acp.busy !== null;
   const badge = badgeOf({ ...agent, on: on2 });
   const lines = agentLines(agent);
-  return (0, import_react7.createElement)(
+  return (0, import_react8.createElement)(
     "div",
     { className: `oai-ai oai-acp${on2 ? " oai-ai-on" : ""}`, "data-acp": agent.id, "data-state": stateOf({ ...agent, on: on2 }) },
-    (0, import_react7.createElement)(
+    (0, import_react8.createElement)(
       "div",
       { className: "oai-ai-row" },
-      (0, import_react7.createElement)("div", { className: "oai-logo", "aria-hidden": true }, LOGO_OF[agent.id] ?? agent.name.slice(0, 1)),
-      (0, import_react7.createElement)(
+      (0, import_react8.createElement)("div", { className: "oai-logo", "aria-hidden": true }, LOGO_OF[agent.id] ?? agent.name.slice(0, 1)),
+      (0, import_react8.createElement)(
         "div",
         { className: "oai-ai-what" },
-        (0, import_react7.createElement)("strong", null, agent.name),
-        (0, import_react7.createElement)("span", null, t("Your own {cli} CLI, as a model in DSH", { cli: CLI_OF[agent.id] ?? agent.key }))
+        (0, import_react8.createElement)("strong", null, agent.name),
+        (0, import_react8.createElement)("span", null, t("Your own {cli} CLI, as a model in DSH", { cli: CLI_OF[agent.id] ?? agent.key }))
       ),
-      badge ? (0, import_react7.createElement)("em", { className: "oai-found" }, badge) : null,
-      (0, import_react7.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2 ? "true" : "false", "aria-label": agent.name, disabled: busy, onClick: () => acp.flip(agent) })
+      badge ? (0, import_react8.createElement)("em", { className: "oai-found" }, badge) : null,
+      (0, import_react8.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2 ? "true" : "false", "aria-label": agent.name, disabled: busy, onClick: () => acp.flip(agent) })
     ),
-    (0, import_react7.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react7.createElement)(AcpLine, { key: i, line, agent, acp, busy }))),
-    acp.problems[agent.id] ? (0, import_react7.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, acp.problems[agent.id]) : null
+    (0, import_react8.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react8.createElement)(AcpLine, { key: i, line, agent, acp, busy }))),
+    acp.problems[agent.id] ? (0, import_react8.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, acp.problems[agent.id]) : null
   );
 }
 function AcpAgents({ acp }) {
   if (acp.view?.available !== true || acp.view.agents.length === 0) return null;
-  return (0, import_react7.createElement)(
+  return (0, import_react8.createElement)(
     "section",
     { className: "oai-group oai-acp-group", "aria-label": t("Claude Code and Codex") },
-    (0, import_react7.createElement)("div", { className: "oai-list" }, acp.view.agents.map((agent) => (0, import_react7.createElement)(AcpAgentRow, { key: agent.id, agent, acp })))
+    (0, import_react8.createElement)("div", { className: "oai-list" }, acp.view.agents.map((agent) => (0, import_react8.createElement)(AcpAgentRow, { key: agent.id, agent, acp })))
   );
 }
 function AcpSettingsSection({ close } = {}) {
   const acp = useAcp(void 0, { onLoginOpen: () => close?.() });
-  return (0, import_react7.createElement)(
+  return (0, import_react8.createElement)(
     "div",
     { className: "oai-acp-page" },
-    (0, import_react7.createElement)(
+    (0, import_react8.createElement)(
       "div",
       { className: "oai-card" },
-      (0, import_react7.createElement)("h1", null, t("Claude Code and Codex")),
-      (0, import_react7.createElement)("p", null, t("Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.")),
-      acp.view === null ? (0, import_react7.createElement)("p", { className: "oai-muted oai-waiting" }, t("Looking at what this computer has…")) : acp.view.available ? (0, import_react7.createElement)(AcpAgents, { acp }) : (0, import_react7.createElement)("p", { className: "oai-muted" }, t("The ACP agents plugin is not running in this DSH."))
+      (0, import_react8.createElement)("h1", null, t("Claude Code and Codex")),
+      (0, import_react8.createElement)("p", null, t("Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.")),
+      acp.view === null ? (0, import_react8.createElement)("p", { className: "oai-muted oai-waiting" }, t("Looking at what this computer has…")) : acp.view.available ? (0, import_react8.createElement)(AcpAgents, { acp }) : (0, import_react8.createElement)("p", { className: "oai-muted" }, t("The ACP agents plugin is not running in this DSH."))
     )
   );
 }
 function AcpSectionIcon({ size = 16 }) {
-  return (0, import_react7.createElement)(
+  return (0, import_react8.createElement)(
     "svg",
     {
       width: size,
@@ -12040,8 +12118,8 @@ function AcpSectionIcon({ size = 16 }) {
       strokeLinejoin: "round",
       "aria-hidden": "true"
     },
-    (0, import_react7.createElement)("rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2.5 }),
-    (0, import_react7.createElement)("path", { d: "M4.6 6.2 6.8 8l-2.2 1.8M8.3 10.2h3.1" })
+    (0, import_react8.createElement)("rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2.5 }),
+    (0, import_react8.createElement)("path", { d: "M4.6 6.2 6.8 8l-2.2 1.8M8.3 10.2h3.1" })
   );
 }
 function installAcpSection(ctx) {
@@ -12077,7 +12155,7 @@ var ACP_CSS = `
 `;
 
 // src/client/connect-ai.js
-var import_react8 = require("react");
+var import_react9 = require("react");
 var VENDOR_TERMS = "Personal use under the vendor's terms";
 var FIRST_OTHERS = 4;
 var LOGOS = { claude: "C", chatgpt: "G", deepseek: "D", kimi: "K", copilot: "P", grok: "X", openai: "O", openrouter: "R", zai: "Z", moonshot: "M", opencode: "OC", cliproxy: "⇄", ollama: "L" };
@@ -12115,9 +12193,9 @@ function flipAction(row) {
   return row.ready ? "on" : "setup";
 }
 function KeyForm({ row, provider, onSaved }) {
-  const [apiKey, setApiKey] = (0, import_react8.useState)("");
-  const [busy, setBusy] = (0, import_react8.useState)(false);
-  const [problem, setProblem] = (0, import_react8.useState)(null);
+  const [apiKey, setApiKey] = (0, import_react9.useState)("");
+  const [busy, setBusy] = (0, import_react9.useState)(false);
+  const [problem, setProblem] = (0, import_react9.useState)(null);
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
@@ -12131,25 +12209,25 @@ function KeyForm({ row, provider, onSaved }) {
       setBusy(false);
     }
   };
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "form",
     { onSubmit: submit, className: "oai-setup-form" },
-    (0, import_react8.createElement)(
+    (0, import_react9.createElement)(
       "div",
       { className: "oai-field" },
-      (0, import_react8.createElement)("input", { type: "password", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: t("Paste your {name} key", { name: row.name }), "aria-label": t("{name} key", { name: row.name }), value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
+      (0, import_react9.createElement)("input", { type: "password", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: t("Paste your {name} key", { name: row.name }), "aria-label": t("{name} key", { name: row.name }), value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
+      (0, import_react9.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
     ),
-    (0, import_react8.createElement)("p", { className: "oai-muted" }, t("It stays on this computer, in DSH's own credential store."), row.keyUrl ? [" ", (0, import_react8.createElement)("a", { key: "k", className: "oai-link", href: row.keyUrl, target: "_blank", rel: "noreferrer" }, t("Get a {name} key", { name: row.name }))] : null),
-    problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
+    (0, import_react9.createElement)("p", { className: "oai-muted" }, t("It stays on this computer, in DSH's own credential store."), row.keyUrl ? [" ", (0, import_react9.createElement)("a", { key: "k", className: "oai-link", href: row.keyUrl, target: "_blank", rel: "noreferrer" }, t("Get a {name} key", { name: row.name }))] : null),
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
 function SignIn({ row, provider, onSaved, onCancel }) {
-  const [attempt, setAttempt] = (0, import_react8.useState)(null);
-  const [problem, setProblem] = (0, import_react8.useState)(null);
-  const [answer, setAnswer] = (0, import_react8.useState)("");
-  const [copied, setCopied] = (0, import_react8.useState)(false);
-  (0, import_react8.useEffect)(() => {
+  const [attempt, setAttempt] = (0, import_react9.useState)(null);
+  const [problem, setProblem] = (0, import_react9.useState)(null);
+  const [answer, setAnswer] = (0, import_react9.useState)("");
+  const [copied, setCopied] = (0, import_react9.useState)(false);
+  (0, import_react9.useEffect)(() => {
     let live = true;
     let timer = 0;
     const poll = async (first) => {
@@ -12191,45 +12269,45 @@ function SignIn({ row, provider, onSaved, onCancel }) {
     cancelled: () => t("The sign-in was cancelled. Nothing was turned on."),
     none: () => t("The sign-in stopped before it finished. Flip the switch to start again.")
   };
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "div",
     { className: "oai-signin" },
-    !attempt && !problem ? (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: row.name })) : null,
-    notice?.message ? (0, import_react8.createElement)("p", null, notice.message) : null,
-    notice?.code ? (0, import_react8.createElement)(
+    !attempt && !problem ? (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Starting the {name} sign-in…", { name: row.name })) : null,
+    notice?.message ? (0, import_react9.createElement)("p", null, notice.message) : null,
+    notice?.code ? (0, import_react9.createElement)(
       "div",
       { className: "oai-code" },
-      (0, import_react8.createElement)("code", null, notice.code),
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? t("Copied") : t("Copy code"))
+      (0, import_react9.createElement)("code", null, notice.code),
+      (0, import_react9.createElement)("button", { type: "button", className: "oai-ghost", onClick: () => navigator.clipboard?.writeText(notice.code).then(() => setCopied(true)) }, copied ? t("Copied") : t("Copy code"))
     ) : null,
-    notice?.url ? (0, import_react8.createElement)("a", { className: "oai-primary oai-button", href: notice.url, target: "_blank", rel: "noreferrer" }, t("Sign in with {name}", { name: row.name })) : null,
-    prompt?.kind === "select" ? (0, import_react8.createElement)(
+    notice?.url ? (0, import_react9.createElement)("a", { className: "oai-primary oai-button", href: notice.url, target: "_blank", rel: "noreferrer" }, t("Sign in with {name}", { name: row.name })) : null,
+    prompt?.kind === "select" ? (0, import_react9.createElement)(
       "div",
       { className: "oai-choices", role: "group", "aria-label": prompt.message },
-      (0, import_react8.createElement)("p", null, prompt.message),
-      prompt.options.map((option) => (0, import_react8.createElement)("button", { key: option.id, type: "button", onClick: () => reply(option.id) }, (0, import_react8.createElement)("strong", null, option.label), option.description ? (0, import_react8.createElement)("span", null, option.description) : null))
+      (0, import_react9.createElement)("p", null, prompt.message),
+      prompt.options.map((option) => (0, import_react9.createElement)("button", { key: option.id, type: "button", onClick: () => reply(option.id) }, (0, import_react9.createElement)("strong", null, option.label), option.description ? (0, import_react9.createElement)("span", null, option.description) : null))
     ) : null,
-    prompt && prompt.kind !== "select" ? (0, import_react8.createElement)(
+    prompt && prompt.kind !== "select" ? (0, import_react9.createElement)(
       "form",
       { onSubmit: (event) => {
         event.preventDefault();
         reply(answer);
       } },
-      (0, import_react8.createElement)("label", { htmlFor: `oai-answer-${row.id}` }, prompt.message),
-      (0, import_react8.createElement)("input", { id: `oai-answer-${row.id}`, type: prompt.kind === "secret" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: prompt.placeholder, value: answer, onChange: (e) => setAnswer(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary" }, t("Continue"))
+      (0, import_react9.createElement)("label", { htmlFor: `oai-answer-${row.id}` }, prompt.message),
+      (0, import_react9.createElement)("input", { id: `oai-answer-${row.id}`, type: prompt.kind === "secret" ? "password" : "text", required: true, autoComplete: "off", spellCheck: false, autoFocus: true, placeholder: prompt.placeholder, value: answer, onChange: (e) => setAnswer(e.target.value) }),
+      (0, import_react9.createElement)("button", { type: "submit", className: "oai-primary" }, t("Continue"))
     ) : null,
-    attempt?.status === "running" && !prompt ? (0, import_react8.createElement)("p", { className: "oai-muted oai-waiting" }, t("Finish signing in on their page…")) : null,
-    ended ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, endedText[attempt.status]()) : null,
-    problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    !ended && !problem ? (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: cancel }, t("Cancel")) : null
+    attempt?.status === "running" && !prompt ? (0, import_react9.createElement)("p", { className: "oai-muted oai-waiting" }, t("Finish signing in on their page…")) : null,
+    ended ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, endedText[attempt.status]()) : null,
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    !ended && !problem ? (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: cancel }, t("Cancel")) : null
   );
 }
 function CliproxyForm({ onSaved }) {
-  const [baseURL, setBaseURL] = (0, import_react8.useState)("");
-  const [apiKey, setApiKey] = (0, import_react8.useState)("");
-  const [busy, setBusy] = (0, import_react8.useState)(false);
-  const [problem, setProblem] = (0, import_react8.useState)(null);
+  const [baseURL, setBaseURL] = (0, import_react9.useState)("");
+  const [apiKey, setApiKey] = (0, import_react9.useState)("");
+  const [busy, setBusy] = (0, import_react9.useState)(false);
+  const [problem, setProblem] = (0, import_react9.useState)(null);
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
@@ -12243,29 +12321,29 @@ function CliproxyForm({ onSaved }) {
       setBusy(false);
     }
   };
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "form",
     { onSubmit: submit, className: "oai-setup-form" },
-    (0, import_react8.createElement)("input", { type: "url", required: true, placeholder: "http://localhost:8317/v1", "aria-label": t("Gateway address"), autoComplete: "off", value: baseURL, onChange: (e) => setBaseURL(e.target.value) }),
-    (0, import_react8.createElement)(
+    (0, import_react9.createElement)("input", { type: "url", required: true, placeholder: "http://localhost:8317/v1", "aria-label": t("Gateway address"), autoComplete: "off", value: baseURL, onChange: (e) => setBaseURL(e.target.value) }),
+    (0, import_react9.createElement)(
       "div",
       { className: "oai-field" },
-      (0, import_react8.createElement)("input", { type: "password", required: true, placeholder: t("Gateway key"), "aria-label": t("Gateway key"), autoComplete: "off", spellCheck: false, value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
-      (0, import_react8.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
+      (0, import_react9.createElement)("input", { type: "password", required: true, placeholder: t("Gateway key"), "aria-label": t("Gateway key"), autoComplete: "off", spellCheck: false, value: apiKey, onChange: (e) => setApiKey(e.target.value) }),
+      (0, import_react9.createElement)("button", { type: "submit", className: "oai-primary", disabled: busy }, busy ? t("Turning on…") : t("Turn on"))
     ),
-    (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Omni lists the gateway's models with your key and keeps the key in DSH's credential store.")),
-    problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
+    (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Omni lists the gateway's models with your key and keeps the key in DSH's credential store.")),
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null
   );
 }
 function SignInOrKey({ row, provider, onSaved, onClose }) {
-  const [way, setWay] = (0, import_react8.useState)(null);
-  if (way === "signin") return (0, import_react8.createElement)(SignIn, { row, provider, onSaved, onCancel: onClose });
-  if (way === "key") return (0, import_react8.createElement)(KeyForm, { row, provider, onSaved });
-  return (0, import_react8.createElement)(
+  const [way, setWay] = (0, import_react9.useState)(null);
+  if (way === "signin") return (0, import_react9.createElement)(SignIn, { row, provider, onSaved, onCancel: onClose });
+  if (way === "key") return (0, import_react9.createElement)(KeyForm, { row, provider, onSaved });
+  return (0, import_react9.createElement)(
     "div",
     { className: "oai-choices", role: "group", "aria-label": t("How to connect {name}", { name: row.name }) },
-    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("signin") }, (0, import_react8.createElement)("strong", null, t("Sign in to {name}", { name: row.name })), (0, import_react8.createElement)("span", null, t("With your plan, in the browser"))),
-    (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use")))
+    (0, import_react9.createElement)("button", { type: "button", onClick: () => setWay("signin") }, (0, import_react9.createElement)("strong", null, t("Sign in to {name}", { name: row.name })), (0, import_react9.createElement)("span", null, t("With your plan, in the browser"))),
+    (0, import_react9.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react9.createElement)("strong", null, t("Use an API key")), (0, import_react9.createElement)("span", null, t("Billed per use")))
   );
 }
 var CLI_ROWS = { claude: "acp-claude", chatgpt: "acp-codex" };
@@ -12277,38 +12355,38 @@ function cliAgentOf(row, acp) {
 var acpBusy = (acp) => acp ? acp.busy !== null : false;
 var canSignIn = (agent) => agent.cli.found === true && agent.cli.state !== "installing" && agent.cli.state !== "failed" && agent.cli.updating !== true;
 function CliSetup({ row, agent, acp, onSaved, onClose }) {
-  const [way, setWay] = (0, import_react8.useState)(null);
-  if (way === "key" || agent === void 0 && row.keyUrl) return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
-  if (agent === void 0) return (0, import_react8.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
+  const [way, setWay] = (0, import_react9.useState)(null);
+  if (way === "key" || agent === void 0 && row.keyUrl) return (0, import_react9.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
+  if (agent === void 0) return (0, import_react9.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
   const busy = acpBusy(acp);
   const lines = canSignIn(agent) ? [] : agentLines(agent);
   const problem = acp?.problems?.[agent.id];
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "div",
     { className: "oai-signin" },
-    (0, import_react8.createElement)(
+    (0, import_react9.createElement)(
       "div",
       { className: "oai-choices", role: "group", "aria-label": t("How to connect {name}", { name: row.name }) },
-      canSignIn(agent) ? (0, import_react8.createElement)("button", { type: "button", disabled: busy || !acp, onClick: () => acp?.login(agent) }, (0, import_react8.createElement)("strong", null, t("Sign in to {name}", { name: agent.name })), (0, import_react8.createElement)("span", null, t("With your plan, in a Bot's chat"))) : null,
-      row.keyUrl ? (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use"))) : null
+      canSignIn(agent) ? (0, import_react9.createElement)("button", { type: "button", disabled: busy || !acp, onClick: () => acp?.login(agent) }, (0, import_react9.createElement)("strong", null, t("Sign in to {name}", { name: agent.name })), (0, import_react9.createElement)("span", null, t("With your plan, in a Bot's chat"))) : null,
+      row.keyUrl ? (0, import_react9.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react9.createElement)("strong", null, t("Use an API key")), (0, import_react9.createElement)("span", null, t("Billed per use"))) : null
     ),
-    lines.length ? (0, import_react8.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react8.createElement)(AcpLine, { key: i, line, agent, acp, busy }))) : null,
-    problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
-    (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Cancel"))
+    lines.length ? (0, import_react9.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react9.createElement)(AcpLine, { key: i, line, agent, acp, busy }))) : null,
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Cancel"))
   );
 }
 function Setup({ row, acp, onSaved, onClose }) {
-  if (Object.hasOwn(CLI_ROWS, row.id)) return (0, import_react8.createElement)(CliSetup, { row, agent: cliAgentOf(row, acp), acp, onSaved, onClose });
-  if (row.kind === "key") return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
+  if (Object.hasOwn(CLI_ROWS, row.id)) return (0, import_react9.createElement)(CliSetup, { row, agent: cliAgentOf(row, acp), acp, onSaved, onClose });
+  if (row.kind === "key") return (0, import_react9.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
   if (row.kind === "signin") {
-    if (row.signIn && row.keyUrl) return (0, import_react8.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
-    if (row.signIn) return (0, import_react8.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose });
-    if (row.keyUrl) return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
-    return (0, import_react8.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
+    if (row.signIn && row.keyUrl) return (0, import_react9.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
+    if (row.signIn) return (0, import_react9.createElement)(SignIn, { row, provider: providerOf(row), onSaved, onCancel: onClose });
+    if (row.keyUrl) return (0, import_react9.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
+    return (0, import_react9.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
   }
-  if (row.kind === "gateway") return (0, import_react8.createElement)(CliproxyForm, { onSaved });
-  if (row.kind === "local") return (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Ollama is not running on this computer. Start it, then flip this again."));
-  if (row.kind === "subscription") return (0, import_react8.createElement)(SubscriptionSignIn, { tile: row.tile, onBack: onClose, onSaved, glitch: () => {
+  if (row.kind === "gateway") return (0, import_react9.createElement)(CliproxyForm, { onSaved });
+  if (row.kind === "local") return (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Ollama is not running on this computer. Start it, then flip this again."));
+  if (row.kind === "subscription") return (0, import_react9.createElement)(SubscriptionSignIn, { tile: row.tile, onBack: onClose, onSaved, glitch: () => {
   } });
   return null;
 }
@@ -12317,71 +12395,71 @@ var providerOf = (row) => PROVIDER_OF[row.id] ?? row.id;
 function Duplicates({ row, onDedupe }) {
   if (!row.duplicates?.length) return null;
   const shown = row.duplicates.filter((duplicate) => !duplicate.hidden);
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "div",
     { className: "oai-dupes" },
-    row.duplicates.map((duplicate) => (0, import_react8.createElement)(
+    row.duplicates.map((duplicate) => (0, import_react9.createElement)(
       "p",
       { key: `${duplicate.via}:${duplicate.provider}`, className: "oai-muted" },
       t("Also connected through {via}; Omni uses {name} here.", { via: t(duplicate.via), name: row.name }),
       duplicate.hidden ? t(" Its models are hidden.") : null
     )),
-    shown.length && row.on ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, t("Use only this {name}", { name: row.name })) : null
+    shown.length && row.on ? (0, import_react9.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, t("Use only this {name}", { name: row.name })) : null
   );
 }
 function Row({ row, acp, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
   const logo = LOGOS[row.id] ?? row.name.slice(0, 1);
   const agent = cliAgentOf(row, acp);
   const settling = !row.on && !open && agent?.on === true && agent.signedIn === true && agent.cli.found === true;
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     "div",
     { className: `oai-ai${row.on ? " oai-ai-on" : ""}` },
-    (0, import_react8.createElement)(
+    (0, import_react9.createElement)(
       "div",
       { className: "oai-ai-row" },
-      (0, import_react8.createElement)("div", { className: "oai-logo", "aria-hidden": true }, logo),
-      (0, import_react8.createElement)(
+      (0, import_react9.createElement)("div", { className: "oai-logo", "aria-hidden": true }, logo),
+      (0, import_react9.createElement)(
         "div",
         { className: "oai-ai-what" },
-        (0, import_react8.createElement)("strong", null, row.name),
-        (0, import_react8.createElement)("span", null, aiText(row.detail ? `${row.via} · ${row.detail}` : row.via))
+        (0, import_react9.createElement)("strong", null, row.name),
+        (0, import_react9.createElement)("span", null, aiText(row.detail ? `${row.via} · ${row.detail}` : row.via))
       ),
-      row.found ? (0, import_react8.createElement)("em", { className: "oai-found" }, aiText(row.found)) : null,
-      (0, import_react8.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": row.on ? "true" : "false", "aria-label": row.name, disabled: busy, onClick: onFlip })
+      row.found ? (0, import_react9.createElement)("em", { className: "oai-found" }, aiText(row.found)) : null,
+      (0, import_react9.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": row.on ? "true" : "false", "aria-label": row.name, disabled: busy, onClick: onFlip })
     ),
-    open && !row.on ? (0, import_react8.createElement)("div", { className: "oai-ai-setup" }, (0, import_react8.createElement)(Setup, { row, acp, onSaved, onClose })) : null,
-    settling ? (0, import_react8.createElement)("div", { className: "oai-acp-lines" }, agentLines(agent).map((line, i) => (0, import_react8.createElement)(AcpLine, { key: i, line, agent, acp, busy: busy || acpBusy(acp) }))) : null,
-    problem ? (0, import_react8.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, problem) : null,
-    (0, import_react8.createElement)(Duplicates, { row, onDedupe })
+    open && !row.on ? (0, import_react9.createElement)("div", { className: "oai-ai-setup" }, (0, import_react9.createElement)(Setup, { row, acp, onSaved, onClose })) : null,
+    settling ? (0, import_react9.createElement)("div", { className: "oai-acp-lines" }, agentLines(agent).map((line, i) => (0, import_react9.createElement)(AcpLine, { key: i, line, agent, acp, busy: busy || acpBusy(acp) }))) : null,
+    problem ? (0, import_react9.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, problem) : null,
+    (0, import_react9.createElement)(Duplicates, { row, onDedupe })
   );
 }
 function ConnectAiStep(props) {
   const state = useGate(props);
   const finish2 = useFinish(props);
-  const proceed = useFinish((0, import_react8.useMemo)(() => ({ ...props, connected: true }), [props]));
+  const proceed = useFinish((0, import_react9.useMemo)(() => ({ ...props, connected: true }), [props]));
   const [glitching, glitch] = useGlitch();
-  const [rows, setRows] = (0, import_react8.useState)(null);
-  const [subs, setSubs] = (0, import_react8.useState)(null);
-  const [open, setOpen] = (0, import_react8.useState)(null);
-  const [busy, setBusy] = (0, import_react8.useState)(null);
-  const [problems, setProblems] = (0, import_react8.useState)({});
-  const [showAll, setShowAll] = (0, import_react8.useState)(false);
-  const [aside, setAside] = (0, import_react8.useState)(false);
+  const [rows, setRows] = (0, import_react9.useState)(null);
+  const [subs, setSubs] = (0, import_react9.useState)(null);
+  const [open, setOpen] = (0, import_react9.useState)(null);
+  const [busy, setBusy] = (0, import_react9.useState)(null);
+  const [problems, setProblems] = (0, import_react9.useState)({});
+  const [showAll, setShowAll] = (0, import_react9.useState)(false);
+  const [aside, setAside] = (0, import_react9.useState)(false);
   const acp = useAcp(void 0, { onLoginOpen: () => setAside(true) });
-  const refresh = (0, import_react8.useCallback)(async () => {
+  const refresh = (0, import_react9.useCallback)(async () => {
     const reply = await call("ais").catch(() => ({ rows: [], subscriptions: null }));
     setRows(reply.rows ?? []);
     setSubs(reply.subscriptions ?? null);
   }, []);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     void refresh();
   }, [refresh, acp.view]);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     if (state) glitch();
   }, [state, glitch]);
   if (!state) return null;
   if (aside) {
-    return (0, import_react8.createElement)(StepAside, {
+    return (0, import_react9.createElement)(StepAside, {
       text: t("Sign in from the Bot's chat, then come back to finish setting up."),
       back: t("Back to setup"),
       onBack: () => {
@@ -12426,7 +12504,7 @@ function ConnectAiStep(props) {
       say(row.id, error.message);
     }
   };
-  return (0, import_react8.createElement)(ConnectAiView, {
+  return (0, import_react9.createElement)(ConnectAiView, {
     state,
     rows,
     subscriptions: subs,
@@ -12445,9 +12523,9 @@ function ConnectAiView({ state, rows, subscriptions, open, showAll, glitching, r
   const count = all ? onCount(all) : 0;
   const { found, others } = sections(all ?? []);
   const visible = showAll ? others : others.slice(0, FIRST_OTHERS);
-  const rowOf = (row) => (0, import_react8.createElement)(Row, { key: row.id, row, open: open === row.id, ...rowProps(row) });
+  const rowOf = (row) => (0, import_react9.createElement)(Row, { key: row.id, row, open: open === row.id, ...rowProps(row) });
   const another = found.length ? t("Add another") : t("Your AIs");
-  return (0, import_react8.createElement)(
+  return (0, import_react9.createElement)(
     Stage,
     {
       title: t("Turn on your AIs"),
@@ -12455,33 +12533,33 @@ function ConnectAiView({ state, rows, subscriptions, open, showAll, glitching, r
       at: "omni-connect-ai",
       glitching
     },
-    all === null ? (0, import_react8.createElement)("p", { className: "oai-muted" }, t("Looking at what this computer has…")) : [
-      found.length ? (0, import_react8.createElement)(
+    all === null ? (0, import_react9.createElement)("p", { className: "oai-muted" }, t("Looking at what this computer has…")) : [
+      found.length ? (0, import_react9.createElement)(
         "section",
         { key: "found", className: "oai-group", "aria-label": t("Found on this computer") },
-        (0, import_react8.createElement)("h2", null, t("Found on this computer")),
-        (0, import_react8.createElement)("div", { className: "oai-list" }, found.map(rowOf))
+        (0, import_react9.createElement)("h2", null, t("Found on this computer")),
+        (0, import_react9.createElement)("div", { className: "oai-list" }, found.map(rowOf))
       ) : null,
-      (0, import_react8.createElement)(
+      (0, import_react9.createElement)(
         "section",
         { key: "others", className: "oai-group", "aria-label": another },
-        (0, import_react8.createElement)("h2", null, another),
-        (0, import_react8.createElement)("p", { className: "oai-terms oai-muted" }, t("Subscriptions: {terms}.", { terms: t(VENDOR_TERMS).toLowerCase() })),
-        (0, import_react8.createElement)(
+        (0, import_react9.createElement)("h2", null, another),
+        (0, import_react9.createElement)("p", { className: "oai-terms oai-muted" }, t("Subscriptions: {terms}.", { terms: t(VENDOR_TERMS).toLowerCase() })),
+        (0, import_react9.createElement)(
           "div",
           { className: "oai-list" },
           visible.map(rowOf),
-          !showAll && others.length > FIRST_OTHERS ? (0, import_react8.createElement)("button", { type: "button", className: "oai-more", onClick: onShowAll }, t("Show {count} more", { count: others.length - FIRST_OTHERS })) : null
+          !showAll && others.length > FIRST_OTHERS ? (0, import_react9.createElement)("button", { type: "button", className: "oai-more", onClick: onShowAll }, t("Show {count} more", { count: others.length - FIRST_OTHERS })) : null
         )
       ),
-      (0, import_react8.createElement)("p", { key: "more", className: "oai-muted oai-every" }, t("Every other provider DSH knows is in "), (0, import_react8.createElement)("button", { type: "button", className: "oai-inline", onClick: onModels }, t("Settings → Models")), ".")
+      (0, import_react9.createElement)("p", { key: "more", className: "oai-muted oai-every" }, t("Every other provider DSH knows is in "), (0, import_react9.createElement)("button", { type: "button", className: "oai-inline", onClick: onModels }, t("Settings → Models")), ".")
     ],
-    (0, import_react8.createElement)(
+    (0, import_react9.createElement)(
       "div",
       { className: "oai-actions" },
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: onSkip }, t("Skip for now")),
-      (0, import_react8.createElement)("span", { className: "oai-count" }, count > 0 ? t("{count} on", { count }) : t("Turn on at least one")),
-      (0, import_react8.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: onContinue }, count > 0 ? t("Continue →") : t("Continue"))
+      (0, import_react9.createElement)("button", { type: "button", className: "oai-quiet", onClick: onSkip }, t("Skip for now")),
+      (0, import_react9.createElement)("span", { className: "oai-count" }, count > 0 ? t("{count} on", { count }) : t("Turn on at least one")),
+      (0, import_react9.createElement)("button", { type: "button", className: "oai-primary", disabled: count === 0, onClick: onContinue }, count > 0 ? t("Continue →") : t("Continue"))
     )
   );
 }
@@ -12526,6 +12604,337 @@ function installVeil({ doc = globalThis.document, scope = globalThis, request: r
   };
 }
 
+// src/client/power-shortcut.js
+var import_react10 = require("react");
+var import_react_dom2 = require("react-dom");
+var NAMES2 = { omni: "Omni", genie: "Genie", unfold: "Unfold" };
+var CHOOSE = /* @__PURE__ */ new Set(["found", "none"]);
+var FOCUSABLE = 'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+var LOOKS = {
+  omni: { id: "omni", kind: "omni", color: "deepseek", avatar: { shape: "octopus" } },
+  genie: { id: "genie", kind: "genie" },
+  unfold: { id: "unfold", kind: "unfold" }
+};
+var MARK_SIZE = 28;
+var statusText = (kind, phase, detail) => kind === "omni" ? statusOf(phase, detail) : kind === "unfold" ? unfoldStatusOf(phase, detail) : genieStatusOf(phase, detail);
+var GENIE_STEPS = { git: () => t("Checking git"), team: () => t("Bot team"), genie: () => t("Genie plugin") };
+function installStepOf(kind, detail) {
+  if (kind === "omni") {
+    const rows = detail?.plugins?.plugins ?? [];
+    const install2 = detail?.plugins?.install;
+    const title = rows.find((row) => row.name === install2?.current)?.title;
+    if (!title || rows.length === 0) return null;
+    return { at: Math.min(rows.length, (install2.done?.length ?? 0) + 1), count: rows.length, step: t(title) };
+  }
+  const install = detail?.[kind]?.install;
+  const steps = Array.isArray(install?.steps) ? install.steps : [];
+  if (!install?.current || steps.length === 0 || !GENIE_STEPS[install.current]) return null;
+  return { at: Math.min(steps.length, (install.done?.length ?? 0) + 1), count: steps.length, step: GENIE_STEPS[install.current]() };
+}
+function workingText(kind, phase, detail) {
+  const at2 = phase === "installing" ? installStepOf(kind, detail) : null;
+  return at2 ? t("Installing {name} · {at} of {count} · {step}", { name: NAMES2[kind], ...at2 }) : statusText(kind, phase, detail);
+}
+var notInstalled = (kind, status) => kind === "omni" ? status?.installed === false : status?.plugin?.installed === false;
+var INSTALL_NOTE = {
+  omni: () => t("Adds the Omni plugins to this DSH, then looks for your Omni."),
+  genie: () => t("Adds the Genie plugin to this DSH. Genie then joins your team.")
+};
+function botOf(roster, kind) {
+  const bots = (roster?.bots ?? []).filter((bot) => bot.kind === kind);
+  return bots.find((bot) => bot.id === roster?.mainBotId) ?? bots[0] ?? null;
+}
+function powerRow(kind, power, { roster = {}, status = null } = {}) {
+  const { phase, detail } = power ?? { phase: "asleep", detail: null };
+  const name = NAMES2[kind];
+  const bot = botOf(roster, kind);
+  const readOnly = Boolean(roster?.readOnly);
+  const row = (state, text, action = null, extra = {}) => ({
+    kind,
+    name,
+    state,
+    text,
+    action: null,
+    secondary: null,
+    alert: null,
+    note: null,
+    pressed: false,
+    locked: false,
+    bot,
+    ...extra,
+    ...readOnly ? { action: null, secondary: null } : { action, secondary: extra.secondary ?? null }
+  });
+  if (kind === "unfold") return { ...row(bot ? "on" : "off", statusText(kind, bot ? "ready" : "asleep")), action: null };
+  if (WORKING.has(phase)) {
+    const held = powerLocked(kind, phase);
+    return row("working", workingText(kind, phase, detail), held ? null : "off", { working: true, pressed: true, note: held ? t("You can close this. The install keeps going.") : null });
+  }
+  if (phase === "failed") return row("attention", statusText(kind, "failed"), "retry", { alert: detail?.message ?? null });
+  if (phase === "restart") return row("attention", statusText(kind, "restart"));
+  if (kind === "omni" && CHOOSE.has(phase)) return row("attention", statusText(kind, phase, detail), "choose");
+  if (kind === "omni" && phase === "pairing") return row("attention", statusText(kind, phase, detail), "off", { pressed: true });
+  const removed = phase === "asleep" && detail?.removed === true;
+  const on2 = kind === "omni" ? !removed && (roster?.omniLinked === true || phase === "linked") : bot !== null || phase === "ready";
+  if (on2) {
+    const text = t("On · {status}", { status: kind === "omni" ? statusText(kind, "linked", phase === "linked" ? detail : null) : statusText(kind, "ready") });
+    const secondary = bot === null && kind === "omni" && roster?.omniAddable === true ? "add" : null;
+    const locked = powerLocked(kind, "ready");
+    return row("on", text, "off", { secondary, pressed: true, locked, note: locked ? t("{name} stays on once it joins your team.", { name }) : null });
+  }
+  const asleep = statusText(kind, "asleep", removed ? detail : null);
+  if (status && status.canInstall === false && status.ready !== true) return row("off", asleep, "plugins");
+  if (notInstalled(kind, status)) return row("off", t("Not installed"), "install", { note: INSTALL_NOTE[kind]() });
+  return row("off", asleep, "power");
+}
+function cardRows(kinds, powers, { roster = {}, read = {}, problems = {}, teamSetup = true } = {}) {
+  return kinds.map((kind) => powerRow(kind, powers[kind], { roster, status: read[kind] ?? null })).map((row) => (row.action === "power" || row.action === "install") && read.checked !== true ? { ...row, action: null, note: null } : row).map((row) => row.action === "choose" && !teamSetup ? { ...row, action: null } : row).map((row) => problems[row.kind] ? { ...row, alert: problems[row.kind] } : row);
+}
+var ACTION_LABEL = {
+  power: (name) => t("Power {name} on", { name }),
+  off: (name) => t("Power {name} off", { name }),
+  install: (name) => t("Install {name}", { name }),
+  retry: () => t("Try again"),
+  choose: () => t("Choose where Omni lives"),
+  add: () => t("Add Omni"),
+  plugins: () => t("Open Plugins")
+};
+var actionLabel = (row) => row.action ? ACTION_LABEL[row.action](row.name) : null;
+var secondaryLabel = (row) => row.secondary ? ACTION_LABEL[row.secondary](row.name) : null;
+var STATE_LABEL = {
+  on: (name) => t("{name} on", { name }),
+  off: (name) => t("{name} off", { name }),
+  working: (name) => t("{name} working", { name }),
+  attention: (name) => t("{name} needs you", { name })
+};
+var buttonLabel = (rows) => rows.map((row) => STATE_LABEL[row.state](row.name)).reduce((a, b2) => t("{a}, {b}", { a, b: b2 }));
+function badgeOf2(phases) {
+  if (phases.some((phase) => WORKING.has(phase))) return "working";
+  if (phases.some((phase) => phase === "failed" || phase === "restart")) return "error";
+  return null;
+}
+var kindsOf = ({ host = null, preload = null } = {}) => teamOrder(host === "unfold" ? "unfold" : preload).filter((kind) => kind !== "unfold" || host === "unfold");
+function focusAfter(trigger) {
+  const all = [...document.querySelectorAll(FOCUSABLE)].filter((node) => node === trigger || node.getClientRects().length > 0);
+  const next = all[all.indexOf(trigger) + 1];
+  if (next) next.focus();
+  else trigger?.focus();
+}
+var canOpenTeamSetup = (actions) => typeof actions?.openHarnessOnboarding === "function";
+function openTeamSetup({ actions, close }, power = null) {
+  close();
+  if (!canOpenTeamSetup(actions)) return;
+  setTeamIntent(power);
+  actions.openHarnessOnboarding("omni-team");
+}
+function actOn(row, { actions, close, onProblem, start = startPower, stop = powerOff }, action = row.action) {
+  onProblem(row.kind, null);
+  if (action === "power" || action === "install" || action === "retry") {
+    start(row.kind, row.kind === "omni" ? powerOn : geniePowerOn);
+  } else if (action === "off") {
+    if (!row.locked) stop(row.kind);
+  } else if (action === "choose") {
+    openTeamSetup({ actions, close }, "omni");
+  } else if (action === "add") {
+    return Promise.resolve(actions.addOmni?.()).then((bot) => {
+      if (!bot?.id) return;
+      close();
+      actions.openSession(bot.id);
+    }, (error) => onProblem(row.kind, error?.message ?? String(error)));
+  } else if (action === "plugins") {
+    close();
+    actions.selectPanel?.("plugins");
+  }
+  return void 0;
+}
+var installRunning = (status) => status?.install?.phase === "installing";
+function resumeInstall(kind, status, start = startPower) {
+  if (!installRunning(status) || kind !== "omni" && kind !== "genie") return null;
+  const on2 = kind === "omni" ? powerOn : geniePowerOn;
+  return start(kind, (options) => on2({ ...options, resume: status }));
+}
+var readPlugins = (ask = call) => Promise.all([ask("omni-plugins"), ask("genie-plugin")].map((request2) => Promise.resolve(request2).catch(() => null)));
+function RowMark({ Mark, row }) {
+  if (typeof Mark !== "function") return null;
+  return (0, import_react10.createElement)(Mark, { bot: row.bot ?? LOOKS[row.kind], size: MARK_SIZE, live: false });
+}
+function PowerShortcut({ roster, actions, Mark = null }) {
+  const omni = usePowerState("omni");
+  const genie = usePowerState("genie");
+  const unfold = usePowerState("unfold");
+  const [open, setOpen] = (0, import_react10.useState)(false);
+  const [box, setBox] = (0, import_react10.useState)(null);
+  const [read, setRead] = (0, import_react10.useState)({ host: null, preload: null, omni: null, genie: null, checked: false });
+  const [problems, setProblems] = (0, import_react10.useState)({});
+  const button = (0, import_react10.useRef)(null);
+  const card = (0, import_react10.useRef)(null);
+  const title = (0, import_react10.useRef)(null);
+  const id = (0, import_react10.useId)();
+  const powers = { omni, genie, unfold };
+  (0, import_react10.useEffect)(() => {
+    let alive = true;
+    void call("state").catch(() => null).then((state) => {
+      if (alive) setRead((current) => ({ ...current, host: state?.host ?? null, preload: state?.preload ?? null }));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const mounted = (0, import_react10.useRef)(false);
+  (0, import_react10.useEffect)(() => {
+    if (!open && mounted.current) return void 0;
+    mounted.current = true;
+    let alive = true;
+    void readPlugins().then(([omniStatus, genieStatus]) => {
+      if (!alive) return;
+      setRead((current) => ({ ...current, omni: omniStatus, genie: genieStatus, checked: true }));
+      resumeInstall("omni", omniStatus);
+      resumeInstall("genie", genieStatus);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+  (0, import_react10.useEffect)(() => {
+    if (!open) return void 0;
+    const onDown = (event) => {
+      if (event.target instanceof Node && (card.current?.contains(event.target) || button.current?.contains(event.target))) return;
+      setOpen(false);
+    };
+    const onKey = (event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+      button.current?.focus();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+  (0, import_react10.useLayoutEffect)(() => {
+    if (!open) return void 0;
+    const place = () => {
+      const rect = button.current?.getBoundingClientRect();
+      if (rect) setBox({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 288)), top: rect.bottom + 6 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open]);
+  const placed = open && box !== null;
+  (0, import_react10.useEffect)(() => {
+    if (!placed) return;
+    const at2 = document.activeElement;
+    if (card.current?.contains(at2) && at2 !== title.current) return;
+    const first = card.current?.querySelector(".bt-update-dsh button:not(:disabled)");
+    (first ?? title.current)?.focus();
+  }, [placed, read.checked]);
+  (0, import_react10.useEffect)(() => {
+    if (placed && card.current && !card.current.contains(document.activeElement) && document.activeElement === document.body) title.current?.focus();
+  });
+  const kinds = kindsOf(read);
+  const teamSetup = canOpenTeamSetup(actions);
+  const rows = cardRows(kinds, powers, { roster, read, problems, teamSetup });
+  const badge = badgeOf2(kinds.map((kind) => powers[kind].phase));
+  const label = buttonLabel(rows);
+  const readOnly = Boolean(roster?.readOnly);
+  const close = () => setOpen(false);
+  const onProblem = (kind, message) => setProblems((current) => ({ ...current, [kind]: message }));
+  const run = (row, action) => actOn(row, { actions, close, onProblem }, action);
+  const onKeyDown = (event) => {
+    if (event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey && !event.altKey) event.preventDefault();
+    if (event.key !== "Tab") return;
+    const items = [...card.current.querySelectorAll(FOCUSABLE)];
+    const at2 = document.activeElement;
+    if (!event.shiftKey && (items.length === 0 || at2 === items[items.length - 1])) {
+      event.preventDefault();
+      close();
+      focusAfter(button.current);
+    } else if (event.shiftKey && (at2 === items[0] || at2 === title.current)) {
+      event.preventDefault();
+      close();
+      button.current?.focus();
+    }
+  };
+  const heading = kinds.includes("unfold") ? t("Omni, Genie and Unfold") : t("Omni and Genie");
+  return (0, import_react10.createElement)(
+    import_react10.Fragment,
+    null,
+    (0, import_react10.createElement)(
+      "button",
+      {
+        ref: button,
+        type: "button",
+        className: "bt-round bt-side-tool bt-power",
+        "aria-label": label,
+        title: label,
+        "aria-haspopup": "dialog",
+        "aria-expanded": open,
+        "aria-controls": open ? id : void 0,
+        onClick: () => setOpen((value) => !value)
+      },
+      badge === "working" ? (0, import_react10.createElement)("span", { className: "bt-thread-spin", "aria-hidden": true }) : (0, import_react10.createElement)(PowerIcon, { size: 16, stroke: 2 }),
+      badge === "error" ? (0, import_react10.createElement)("span", { className: "bt-update-dot", "aria-hidden": true }) : null
+    ),
+    placed ? (0, import_react_dom2.createPortal)((0, import_react10.createElement)(
+      "div",
+      { ref: card, id, className: "bt-update-pop bt-power-pop", role: "dialog", "aria-label": heading, style: box, onKeyDown },
+      (0, import_react10.createElement)("div", { ref: title, className: "bt-update-title", tabIndex: -1 }, heading),
+      rows.map((row) => (0, import_react10.createElement)(
+        "div",
+        { key: row.kind, className: "bt-update-dsh", "data-power": row.kind, "data-state": row.state },
+        (0, import_react10.createElement)(
+          "div",
+          { className: "bt-power-who" },
+          (0, import_react10.createElement)(RowMark, { Mark, row }),
+          (0, import_react10.createElement)(
+            "div",
+            { className: "bt-power-what" },
+            (0, import_react10.createElement)("div", { className: "bt-update-title" }, row.name),
+            (0, import_react10.createElement)("div", { className: "bt-update-text", role: "status", "aria-live": "polite" }, row.text)
+          )
+        ),
+        row.note ? (0, import_react10.createElement)("div", { className: "bt-update-text" }, row.note) : null,
+        row.alert ? (0, import_react10.createElement)("div", { className: "bt-update-error", role: "alert" }, row.alert) : null,
+        row.working || row.action || row.secondary ? (0, import_react10.createElement)(
+          "div",
+          { className: "bt-update-actions" },
+          row.secondary ? (0, import_react10.createElement)("button", { type: "button", className: "bt-update-notes", onClick: () => run(row, row.secondary) }, secondaryLabel(row)) : null,
+          row.working ? (0, import_react10.createElement)("span", { className: "bt-thread-spin", "aria-hidden": true }) : null,
+          row.action ? (0, import_react10.createElement)("button", {
+            type: "button",
+            className: "bt-update-go",
+            disabled: row.locked,
+            onClick: () => run(row, row.action),
+            ...row.action === "off" || row.action === "power" ? { "aria-pressed": row.action === "off" } : {}
+          }, actionLabel(row)) : null
+        ) : null
+      )),
+      readOnly || !teamSetup ? null : (0, import_react10.createElement)(
+        "div",
+        { className: "bt-update-actions" },
+        (0, import_react10.createElement)("button", { type: "button", className: "bt-update-notes", onClick: () => openTeamSetup({ actions, close }) }, t("Open team setup"))
+      )
+    ), document.body) : null
+  );
+}
+function installPowerShortcut(load = () => require("@automagik/bots-dsh/client")) {
+  let tools = null;
+  let bots = null;
+  try {
+    bots = load();
+    tools = bots?.omni?.sidebarTools ?? null;
+  } catch {
+    tools = null;
+  }
+  if (typeof tools?.register !== "function") return () => {
+  };
+  const Mark = typeof bots?.omni?.ui?.BotMark === "function" ? bots.omni.ui.BotMark : null;
+  return tools.register({ id: "welcome-power", order: 0, Component: (props) => (0, import_react10.createElement)(PowerShortcut, { ...props, Mark }) });
+}
+
 // src/client/index.js
 var STEPS = [
   { id: "omni-companion", order: -300, component: CompanionStep },
@@ -12549,6 +12958,7 @@ function apply(ctx) {
     ctx.slots.inject("settings.onboarding", () => ctx.slots.register({ name: "settings.onboarding", id: step.id, order: step.order }, step.component));
   }
   ctx.effect(() => installAcpSection(ctx), "omni-ai: Claude Code and Codex in Settings");
+  ctx.effect(() => installPowerShortcut(), "omni-ai: power shortcut in the Bot team sidebar");
 }
 /*! Bundled license information:
 
