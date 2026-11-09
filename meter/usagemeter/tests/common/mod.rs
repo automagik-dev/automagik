@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use meter::event::Tokens;
 use meter::store::Store;
@@ -53,8 +54,26 @@ impl Env {
         p
     }
 
+    /// The binary with an empty environment but PATH, HOME (the temp home) and METER_HC (an
+    /// hc that does not exist): no harness home, state directory or ledger of the machine running
+    /// the tests (DSH_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, HERDR_*, AM_HOME, XDG_STATE_HOME,
+    /// METER_*) can reach it. Callers add what a test needs, such as METER_STATE_DIR.
+    pub fn command(&self) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_usagemeter"));
+        c.env_clear()
+            .env("HOME", self.home())
+            .env("METER_HC", self.dir.path().join("no-hc"));
+        if let Some(path) = std::env::var_os("PATH") {
+            c.env("PATH", path);
+        }
+        c
+    }
+
+    /// Options for an in-process sync: every harness root is under the temp home, whatever the
+    /// environment of the machine running the tests says.
     pub fn opts(&self) -> Options {
         let mut o = Options::new(self.home(), self.state(), now());
+        o.omp_root = self.home().join(".omp/agent/sessions");
         o.claude_root = self.home().join(".claude/projects");
         o.codex_home = self.home().join(".codex");
         o.dsh_root = self.home().join(".dsh/sessions");
