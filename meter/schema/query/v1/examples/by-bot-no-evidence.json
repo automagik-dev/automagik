@@ -1,0 +1,110 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "ok",
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": "2026-11-08T19:52:41Z",
+  "machine": {
+    "id": "machine-a1b2c3",
+    "scope": "local"
+  },
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "ingestion": {
+    "watermark": "2026-11-08T19:52:41Z",
+    "counted_from": "2026-09-10T00:00:00Z",
+    "evidence_from": null,
+    "complete": true,
+    "backlog": {
+      "bytes": 0,
+      "files": 0
+    },
+    "stale": false,
+    "stale_after_s": 7200
+  },
+  "window": {
+    "name": "d30",
+    "requested_start": "2026-10-09T20:00:00Z",
+    "start": "2026-10-09T20:00:00Z",
+    "end": "2026-11-08T20:00:00Z",
+    "clipped": false
+  },
+  "sources": [
+    {
+      "harness": "claude-code",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "codex",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "dsh-tui",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "omp",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    }
+  ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
+  "actor_unattributed": {
+    "tokens_total": 1641000,
+    "tokens_ambiguous": 0,
+    "tokens_unlinked": 0,
+    "tokens_before_evidence": 1641000,
+    "parts": [
+      {
+        "state": "before_evidence",
+        "reason": "before_evidence",
+        "tokens_total": 1641000,
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ]
+      }
+    ],
+    "absent_bot_is_zero": false
+  },
+  "pricing": {
+    "table": {
+      "origin": "bundled",
+      "date": "2026-10-06",
+      "source": "usagemeter bundled list prices",
+      "label": "list prices, an estimate",
+      "sha256": null
+    },
+    "reported_wins": true,
+    "long_prompt_tiers": false
+  },
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "by": "bot",
+    "branch_count": 0,
+    "branches": [],
+    "branches_complete": true,
+    "request_sha256": "8fc7e8155a4cb9960a0c399f83c6c507eaa5498f061697df6df5a071a1fde7c7"
+  },
+  "rows": []
+}

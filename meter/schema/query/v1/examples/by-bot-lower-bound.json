@@ -1,0 +1,330 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.107.0",
+  "status": "ok",
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "as_of": "2026-11-08T19:52:41Z",
+  "machine": {
+    "id": "machine-a1b2c3",
+    "scope": "local"
+  },
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "ingestion": {
+    "watermark": "2026-11-08T19:52:41Z",
+    "counted_from": "2026-09-10T00:00:00Z",
+    "evidence_from": "2026-09-12T00:00:00Z",
+    "complete": true,
+    "backlog": {
+      "bytes": 0,
+      "files": 0
+    },
+    "stale": false,
+    "stale_after_s": 7200
+  },
+  "window": {
+    "name": "d30",
+    "requested_start": "2026-10-09T20:00:00Z",
+    "start": "2026-10-09T20:00:00Z",
+    "end": "2026-11-08T20:00:00Z",
+    "clipped": false
+  },
+  "sources": [
+    {
+      "harness": "claude-code",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "codex",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "dsh-tui",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    },
+    {
+      "harness": "omp",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-08T19:52:41Z",
+      "stale": false
+    }
+  ],
+  "unattributed": {
+    "tokens_total": 282000,
+    "harnesses": [
+      "dsh-tui",
+      "omp"
+    ]
+  },
+  "actor_unattributed": {
+    "tokens_total": 407000,
+    "tokens_ambiguous": 84000,
+    "tokens_unlinked": 323000,
+    "tokens_before_evidence": 0,
+    "parts": [
+      {
+        "state": "ambiguous",
+        "reason": "claimants_differ",
+        "tokens_total": 84000,
+        "harnesses": [
+          "claude-code"
+        ]
+      },
+      {
+        "state": "unlinked",
+        "reason": "no_record",
+        "tokens_total": 52000,
+        "harnesses": [
+          "omp"
+        ]
+      },
+      {
+        "state": "unlinked",
+        "reason": "dsh_tui_seat",
+        "tokens_total": 230000,
+        "harnesses": [
+          "dsh-tui"
+        ]
+      },
+      {
+        "state": "unlinked",
+        "reason": "other_machine",
+        "tokens_total": 41000,
+        "harnesses": [
+          "claude-code"
+        ]
+      }
+    ],
+    "absent_bot_is_zero": false
+  },
+  "pricing": {
+    "table": {
+      "origin": "bundled",
+      "date": "2026-10-06",
+      "source": "usagemeter bundled list prices",
+      "label": "list prices, an estimate",
+      "sha256": null
+    },
+    "reported_wins": true,
+    "long_prompt_tiers": false
+  },
+  "query": {
+    "repo": "example.com/acme/widgets",
+    "window": "d30",
+    "by": "bot",
+    "branch_count": 1,
+    "branches": [
+      "feat/gn-31-sync"
+    ],
+    "branches_complete": true,
+    "request_sha256": "c26d075913d1e0628868972489b5463681ebc618606cd04112e6ffc5bccfb939"
+  },
+  "rows": [
+    {
+      "bot": "heron",
+      "kind": "worker",
+      "role": "review",
+      "squad": null,
+      "unrecorded": [
+        "squad"
+      ],
+      "harness": "codex",
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 30000,
+        "cache_read": 240000,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 18000,
+        "reasoning": 7000,
+        "unsplit": 0,
+        "total": 288000
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 0.2592,
+        "usd_reported": 0,
+        "usd_estimated": 0.2592,
+        "tokens_priced": 288000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "actor_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "partial",
+        "actor": {
+          "tokens_attributed": 288000,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 0,
+            "label": 0,
+            "worktree": 288000
+          },
+          "tokens_by_branch_basis": {
+            "log": 288000,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-10-15T10:00:00Z",
+        "last_hour": "2026-10-21T17:00:00Z",
+        "hours": 5,
+        "harnesses": [
+          "codex"
+        ]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "bot": "otter",
+      "kind": "worker",
+      "role": "dev",
+      "squad": "lark",
+      "unrecorded": [],
+      "harness": "claude-code",
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 80000,
+        "cache_read": 1500000,
+        "cache_write_5m": 110000,
+        "cache_write_1h": 0,
+        "output": 41000,
+        "reasoning": 8000,
+        "unsplit": 0,
+        "total": 1731000
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 1.9041,
+        "usd_reported": 0,
+        "usd_estimated": 1.9041,
+        "tokens_priced": 1731000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "actor_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "partial",
+        "actor": {
+          "tokens_attributed": 1731000,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 1731000,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 1731000,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-10-28T09:00:00Z",
+        "last_hour": "2026-11-08T18:00:00Z",
+        "hours": 14,
+        "harnesses": [
+          "claude-code"
+        ]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "bot": "otter",
+      "kind": "worker",
+      "role": "dev",
+      "squad": "lark",
+      "unrecorded": [],
+      "harness": "dsh-tui",
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 150000,
+        "cache_read": 1300000,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 52000,
+        "reasoning": null,
+        "unsplit": 0,
+        "total": 1502000
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 0.4506,
+        "usd_reported": 0,
+        "usd_estimated": 0.4506,
+        "tokens_priced": 1502000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "actor_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "partial",
+        "actor": {
+          "tokens_attributed": 1502000,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 400000,
+            "label": 0,
+            "worktree": 1102000
+          },
+          "tokens_by_branch_basis": {
+            "log": 0,
+            "ledger": 1502000,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-10-29T10:00:00Z",
+        "last_hour": "2026-11-07T15:00:00Z",
+        "hours": 9,
+        "harnesses": [
+          "dsh-tui"
+        ]
+      },
+      "incomplete_sources": []
+    }
+  ]
+}

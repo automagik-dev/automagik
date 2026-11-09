@@ -308,10 +308,18 @@ no record names.
 
 Contract 1's branch rows keep their meaning. Additive, so genie reads them only when it asks:
 
-- **`--by bot`.** One row per `(bot, kind, role, harness)` with usage in the repo and window
-  (branches optional as a filter), with `squad`, the same `tokens`, `cost`, `activity` and
-  `incomplete_sources` as a branch row, and `attribution.precision: actor_interval`. This is the
-  row that compares bots across agents.
+- **`--by bot`.** One row per `(bot, kind, role, squad, unrecorded, harness)` with attributed usage
+  in the repo and window (branches optional as a filter), with the same `tokens`, `cost`, `activity`
+  and `incomplete_sources` as a branch row, and `attribution.precision: actor_interval`. This is the
+  row that compares bots across agents. **Squad is part of the key** (decided in delivery 2): a row
+  sums usage whose launches carry equal tags, and squad is one of those tags, frozen per launch (e).
+  Outside the key, a bot re-led within the window would need one squad value for launches that
+  recorded two, and null cannot say "mixed": it already means the main bot, which heads no squad.
+  With it in the key, the owner's "per squad" comparison is a plain group-by. A key field a launch's
+  start row did not record (rows written before delivery 3) is null and listed in the row's
+  `unrecorded`, so an unknown squad or role is never read as none; `unrecorded` is in the key, so a
+  main-bot launch (squad none) and one whose squad was not recorded never share a row. Rows come in
+  key order: byte order, null first, `unrecorded` in its enum's order.
 - **Per row, on every row kind**, an optional `attribution.actor` object with four counts that
   add up to `tokens.total`: `tokens_attributed`, `tokens_ambiguous`, `tokens_unlinked` and
   `tokens_before_evidence` (below). Then `tokens_by_basis` (`session`, `label`, `worktree`),
@@ -325,8 +333,20 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
 - **In the envelope**, `actor_unattributed` beside `unattributed`: the repo's ambiguous, unlinked
   and before-evidence tokens in the window, with their harnesses and a reason for each part
   (delivery 2, D5). A bot row is a lower bound whenever any of it is above zero, and a reader
-  shows "at least". Branch rows' `attribution.coverage` keeps RFC 0018's meaning (usage with no
-  branch) and is never moved by the actor share.
+  shows "at least". **A bot with no row** is 0 only when nothing is in `actor_unattributed` and
+  RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a
+  watermark, the window not clipped, every source `ok` or `absent` (no `legacy-store`), the
+  repo seen in the store, and, under a branch filter, no usage with no branch (`unattributed` 0),
+  since that usage could be an absent bot's on a branch named. Otherwise it is unknown, never 0.
+  The meter says which in `actor_unattributed.absent_bot_is_zero`, so a reader never works it
+  out; the flag is always false outside a `--by bot` answer, which alone has bot rows to be
+  absent from. The schema refuses `true` whenever one of those conditions it can see fails (the
+  Fixer's M1 and genie's A1 and A2 on #825).
+  `attribution.coverage` keeps RFC 0018's meaning (usage with no branch) and
+  is never moved by the actor share. A bot row of a query that names no branch counts usage with
+  no branch itself (`tokens_by_branch_basis.none`), so it is always `complete`; with a branch
+  filter, that usage could belong to a branch named, so its rows are `partial` while
+  `unattributed` is above zero, as branch rows are.
 
 **A window that straddles `evidence_from`.** Two rules would keep "unknown is never 0":
 
@@ -345,18 +365,28 @@ name a bot, because it can no longer be replayed. A window wholly before `eviden
 every token in `tokens_before_evidence` and 0 in each other count, which is a measured 0, not an
 unknown one.
 
+**While `evidence_from` is null** (no evidence at all: before M3, or a schema 3 store that has
+kept none yet), `attribution.actor` is reported, not omitted: every token is in
+`tokens_before_evidence`, and every other count, `tokens_by_basis` included, is 0 (decided in
+delivery 2). That is the rule for a window wholly before `evidence_from`, so a reader needs no
+second one; the sum still holds; and an answer from a meter that reports actors stays apart from
+one from a meter that does not, which omits `attribution.actor` and `actor_unattributed`
+altogether. A `--by bot` answer then has no row, and `actor_unattributed` holds the repo's whole
+window as before evidence. The schema enforces the zeros, and the crate's contract test the
+sums (`actor-no-evidence.json`, `by-bot-no-evidence.json`).
+
 A `--by bot` row keeps `actor_interval` precision on a straddling window because it holds only
 the evidence-backed part. Frozen rollup tags, including those written by today's live-terminal
 rule, never enter it. A branch row keeps `branch_window` and its full total, the part before
 `evidence_from` included, which is RFC 0018 (b)'s fallback; only its `attribution.actor` counts
 split that total.
 
-`attribution.precision` is `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
-type is breaking once a release carries contract 1, and M3 already plans `task_interval`. No
-release carries the meter yet (`NEVER_SHIPPED` holds `meter/`), so **recommended**: widen the
-enum to `branch_window`, `task_interval`, `actor_interval` and add the optional fields above in
-one schema pull request now (delivery 2), before RFC 0017's delivery 4 cuts the first meter
-release. Otherwise the same change makes contract 2. Either way genie reviews it.
+`attribution.precision` was `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
+type is breaking once a release ships the meter, and M3 already plans `task_interval`. No
+release ships the meter yet (`NEVER_SHIPPED` holds `meter/`), so delivery 2 widens the enum **in
+place** to `branch_window`, `task_interval`, `actor_interval` and adds the optional fields above
+in one schema pull request, before RFC 0017's delivery 4 cuts the first meter release.
+Otherwise the same change would make contract 2. genie reviews it.
 
 ### (e) Squad
 
@@ -435,11 +465,18 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
 - The meter's store: `schema_version` 3, with evidence, `launch` and `link` tables, and `kind`,
   `basis` and `branch_basis` on the rollups. Private to the meter, migrated by `sync` alone under
   RFC 0018 (d).
-- Query contract 1, additive: `--by bot`, `attribution.actor` (its four counts,
-  `tokens_by_basis`, `tokens_by_branch_basis`), `actor_unattributed`, and the
-  `attribution.precision` enum widened before the first release that carries contract 1.
-- Amends RFC 0018 (a): a branch may come from a worker launch's start row, with
-  `branch_basis: ledger`, for a harness that logs none.
+- Query contract 1, additive: `--by bot` with its bot row and `query.by` (and `by bot` in
+  `request_sha256`), `attribution.actor` (its four counts, `tokens_by_basis`,
+  `tokens_by_branch_basis`), `actor_unattributed`; and, widened in place, which only a contract
+  no release ships may be (RFC 0018, Versioning): the `attribution.precision` enum, and the
+  rule that an answer names a branch, which a bot query need not.
+- Amends RFC 0018 in three places, so a branch may come from a worker launch's start row, with
+  `branch_basis: ledger`, for a harness that logs none: (a)'s matching sentence (the branch
+  "recorded from the log or the Codex thread"); its "Usage with no branch" rule, which let only
+  M3's validity intervals attribute such usage; and (b)'s list of what stays unknown (OMP
+  branches). Delivery 2 also updates RFC 0018's envelope and row tables for the fields above.
+- RFC 0017's delivery 4 Check gains "RFC 0021 delivery 2 merged (enum widened)", amended by that
+  delivery (#822) with the lane's hold.
 - Unchanged: the `herdr-meter` doc stays `schema_version` 2; its `tasks[].bots` simply fills in.
 
 ## Threat model
@@ -492,7 +529,64 @@ release.
      (enum widened)", or a schema test in the crate fails while `attribution.precision` lacks
      `actor_interval`.
 
-   *Check:* every example validates, and the crate's contract test passes on the old ones.
+   *Settled by delivery 2* (`meter/schema/query/v1/envelope.schema.json`):
+   - D1: a second row definition. `rows` items are `oneOf` a branch row (`branch_window`) and a
+     bot row (`actor_interval`): `bot`, `kind` (`worker`, `seat`), `role`, `squad`,
+     `unrecorded`, `harness`, then a branch row's fields less `branch` and `requested`. `branch`
+     is not made nullable. `query.by` (`bot`) is echoed when the request passed `--by` with a
+     value other than `branch`, and `request_sha256` then adds the line `by bot` after the
+     window: it holds a space, which no branch can, so it never reads as a branch, and a branch
+     request hashes as before. A bot query may name no branch; a branch query still names one
+     at least. M3 adds `task` to `by`, which only a reader that asks for it meets.
+   - D2: an answer holds one kind of row, by `query.by`; a branch row is `branch_window` whatever
+     `--by` asks.
+   - D3: `attribution.coverage` keeps RFC 0018's meaning, and the schema's coverage rules read
+     only `unattributed`, never `actor_unattributed`. Branch rows, and bot rows of a query that
+     names branches, are `partial` while `unattributed` is above zero. Bot rows of a query that
+     names no branch are always `complete`: they count usage with no branch themselves, so
+     `partial` there would be a false lower bound (genie's F1 on #825).
+   - D4: a task row is keyed by repo and task id. A task id the meter ties to more than one
+     checkout of the repo (two genie projects of one remote, each minting short ids) is never
+     summed: its row is `missing` with the reason `task_ambiguous`. The meter never prints a
+     checkout path, and does not wait for genie to make ids unique per repo. M3 adds that reason
+     and the task row; a new reason is additive (RFC 0018, Versioning), and the widened enum's
+     `task_interval` says so.
+   - D5: `actor_unattributed` has `tokens_total`, `tokens_ambiguous`, `tokens_unlinked`,
+     `tokens_before_evidence` and `parts`, one per reason with usage, each with its `state`
+     (`ambiguous`, `unlinked`, `before_evidence`), `tokens_total` and `harnesses`. The reasons:
+     `claimants_differ`; `no_record`; `dsh_tui_seat` (Decided, 5); `other_machine` (Decided, 6),
+     where this machine's hc or ledgers show the terminal was started from another computer,
+     else `no_record`; `before_evidence`. Each part carries its state, so a reader that meets a
+     reason added later still knows which count it is in.
+   - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: a
+     `--by bot` answer, nothing unattributed to a bot, and RFC 0018's zero conditions for the
+     whole answer, `unattributed` 0 included under a branch filter ((d)); else unknown.
+   - Actors are reported on every row with tokens or on none: `actor_unattributed` is present
+     exactly when they are, and a row with no tokens has no `attribution.actor`.
+   - The order, enforced on both sides. RFC 0017's delivery 4 (#822) holds the meter lane
+     (`lane.ts` `meterHeld`: no meter release, the crate ships nothing) while
+     `attribution.precision` lacks `actor_interval`, and amends its own Check to say so; so
+     whichever of the two merges first, the first meter release carries this contract. Here, the
+     crate's `contract_1_carries_the_attribution_contract` fails while `attribution.precision`
+     lacks `actor_interval`, so the contract cannot leave contract 1 unnoticed once merged.
+   - Examples, schema-only until delivery 6 (the crate's `SCHEMA_ONLY`): they validate and pass
+     the sum checks, but no meter answer is compared with them while the crate writes none of
+     their fields. `by-bot.json` (exact bot rows: one dev bot on two harnesses, a reviewer
+     re-led within the window); `by-bot-lower-bound.json` (a branch filter, an `unrecorded`
+     squad, a part per unlinked and ambiguous reason, and usage with no branch keeping
+     coverage partial on its own); `actor-ambiguous.json` (a dev and a reviewer on one
+     worktree); `actor-ledger-branch.json` (a dsh-tui worker's branch filled from its start
+     row beside a Claude worker's logged one); `actor-straddling-evidence.json` (a window that
+     straddles `evidence_from`); `actor-no-evidence.json` and `by-bot-no-evidence.json`
+     (`evidence_from` null, a vouched zero with a zero actor, and a bot answer with no row);
+     `by-bot-backlog.json` (nothing unattributed, but a budget-stopped sync left a backlog: an
+     absent bot is unknown and the rows are a lower bound); `by-bot-unfiltered.json` (a bot
+     query naming no branch beside usage with no branch: an OMP
+     seat's row with its branch basis `none`, every row `complete`).
+
+   *Check:* every example validates; the crate's contract test passes on the old ones and checks
+   the sums a schema cannot (the four counts, `tokens_by_basis`, `tokens_by_branch_basis`, the
+   parts, and the before-evidence share the window fixes) on the new ones.
 3. **The Herdr rows** (herdr patch). (f) 1 to 7. The Herdr Captain reviews.
    *Acceptance (the Reviewer's items, required):*
    - (f) 5 is built as worded: session rows where the pack sets `agent.session` or carries a
@@ -524,6 +618,8 @@ release.
      its session-to-task contract; bot per session is the ownership map's M3 row.
    - A meter older than a schema 3 store refuses it (exit 12) and writes nothing.
    - Frozen rollup tags (null basis) are never counted as attributed.
+   - The migration backfills `branch_basis` on old rollups: `log` where a branch is recorded,
+     `none` where it is null.
 
    *Check:* RFC 0018's interrupted-backfill and rebuild ceilings hold; a launch learned after its
    usage was ingested moves that usage to its bot on the next sync, and the rollups agree with the
