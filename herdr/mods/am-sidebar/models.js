@@ -411,11 +411,32 @@ export function agyModeArgs(agentKey, mode = null) {
 // `write_file(<an absolute folder>)` (the files inside it). A deny rule wins over an allow rule.
 // agy replaces its saved list field by field, so every launch carries both arrays in full.
 
-/** The rules every Antigravity launch carries; a roster adds rules and can never drop one. */
+/**
+ * The rules every Antigravity launch carries; a roster adds rules and can never drop one.
+ *
+ * This list is a guardrail against accidents, not a security boundary. A deny rule matches the
+ * words' prefix only, so a quoted or reordered command, an absolute path or an interpreter call
+ * can go around it; a reset form that reaches `--hard` after other words (`git reset HEAD~1
+ * --hard`) is not caught, only the leading-word form is. Allowing `node`, `bun` or `git` with any
+ * arguments already lets a determined agent do anything. The real boundary is the sandbox
+ * (hcProxy). The list covers the common ways a bot would lose work or land something it shouldn't.
+ */
 export const AGY_FIXED_DENY = Object.freeze([
   "command(git push --force)",
+  "command(git push --force-with-lease)",
   "command(git push -f)",
+  "command(git push origin --force)",
+  "command(git push origin -f)",
+  "command(git push origin +)",
+  "command(git push --mirror)",
+  "command(git push --delete)",
   "command(git reset --hard)",
+  "command(git branch -D)",
+  "command(git clean)",
+  "command(git rebase -)",
+  "command(git stash)",
+  "command(git checkout --)",
+  "command(git -C)",
   "command(rm -rf)",
   "command(gh pr merge)",
   "command(gh release)",
@@ -461,10 +482,15 @@ export function normalizeAgyPermissions(value) {
   return { ...out, problems };
 }
 
-// The read-only gh verbs a bot needs to read its task's pull request, checks and issues.
+// The read-only gh verbs a bot needs to read its task's pull request, checks and issues. No
+// release verb is here: the fixed deny `command(gh release)` wins over every one of them, so an
+// allow could never take effect.
 const AGY_GH_READ = ["gh pr view", "gh pr list", "gh pr diff", "gh pr checks", "gh pr status", "gh issue view",
   "gh issue list", "gh issue status", "gh repo view", "gh run list", "gh run view", "gh workflow list",
-  "gh workflow view", "gh release view", "gh label list", "gh search repos", "gh search prs", "gh search issues"];
+  "gh workflow view", "gh label list", "gh search repos", "gh search prs", "gh search issues"];
+// The PR-writing verbs a writer needs to open and update its own PR; a read-only launch gets none.
+// `gh pr merge` stays out of both: the fixed deny names it.
+const AGY_GH_WRITE = ["gh pr create", "gh pr edit", "gh pr comment"];
 
 // The repository's own gates (AGENTS.md, the pack's gate): checks and tests that don't write.
 const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/privacy-check.mjs", "node scripts/am-copies.mjs",
@@ -472,8 +498,10 @@ const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/priv
   "node scripts/lane.ts", "node scripts/test-guard.mjs", "node ../scripts/privacy-check.mjs", "node ../scripts/am-copies.mjs"];
 
 // A seat or worker that writes: the shell tools the task needs, and the gates to prove it.
-const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GATES].map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): reads and runs the gates, writes nothing.
+const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES]
+  .map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): reads and runs the test checks, writes
+// nothing. `hc` and the test runners stay: they read (and hc is how a worker reports).
 const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "git status", "git rev-parse",
   "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
   ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
@@ -484,7 +512,9 @@ const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "
  * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
  * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
  * `write_file` opens to a writer. The fixed deny rules are always there; nothing drops them.
- * Returns { allow, deny, warnings }.
+ * These lists are a guardrail against accidents, not a security boundary: a rule matches word
+ * prefixes only, and allowing `node`, `bun` or `git` with any arguments lets a determined agent
+ * do anything. Returns { allow, deny, warnings }.
  */
 export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null }) {
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
@@ -512,30 +542,38 @@ function agyFolderTag(folder) {
   return h.toString(16).padStart(8, "0");
 }
 
+/** The folder a launch's permission file goes in, under an app home (`<app home>`). */
+export function agySettingsDir(appHomeDir) {
+  return `${String(appHomeDir).replace(/\/+$/, "")}/automagik-herdr/agy-settings`;
+}
+
 /**
- * The per-launch settings file of `botId`'s launch under `appHomeDir`, deterministic from the
- * approved data a linked worker's plan has too (the bot id, the role and the worktree), so an
- * approved plan and the argv it approves name the same file. `scope`: "seat", "worker" (whose
- * role and worktree tag the name), or "helper" (a tree helper that is no worker, tagged by its
- * folder so it never rewrites the bot's own seat file).
+ * The per-launch settings file of `botId`'s launch under the settings folder `dir` (agySettingsDir
+ * for a local launch, the proxy's private folder otherwise), deterministic from the approved data
+ * an approved-worker plan has too (the bot id, the role and the worktree), so the plan and the
+ * argv it approves name the same file. `scope`: "seat", "worker" (whose role and worktree tag the
+ * name), or "helper" (a tree helper that is no worker, tagged by its folder so it never rewrites
+ * the bot's own seat file).
  */
-export function agySettingsFile(appHomeDir, botId, scope = "seat", role = null, folder = null) {
-  const root = String(appHomeDir).replace(/\/+$/, "");
+export function agySettingsFile(dir, botId, scope = "seat", role = null, folder = null) {
+  const root = String(dir).replace(/\/+$/, "");
   const safeRole = /^[a-z][a-z0-9-]{0,31}$/.test(String(role ?? "")) ? role : "dev";
   const tail = scope === "worker" ? `worker-${safeRole}${folder ? `-${agyFolderTag(folder)}` : ""}`
     : scope === "seat" ? "seat" : `${String(scope).replace(/[^a-z0-9-]/g, "") || "helper"}${folder ? `-${agyFolderTag(folder)}` : ""}`;
-  return `${root}/automagik-herdr/agy-settings/${botId}-${tail}.json`;
+  return `${root}/${botId}-${tail}.json`;
 }
 
 /**
  * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny, warnings },
- * or null for a bot with no id. `text` is the JSON agy reads from `--settings`: permissions.allow
- * and permissions.deny, both arrays in full (agy replaces its saved lists field by field).
+ * or null for a bot with no id. `settingsDir` is the folder it goes in (agySettingsDir under the
+ * app home; the proxy's own folder under the data root for an approved worker). `text` is the JSON
+ * agy reads from `--settings`: permissions.allow and permissions.deny, both arrays in full (agy
+ * replaces its saved lists field by field).
  */
-export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, appHomeDir }) {
-  if (!bot?.id || !appHomeDir) return null;
+export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir }) {
+  if (!bot?.id || !settingsDir) return null;
   const plan = agyPermissionPlan({ bot, scope, role, folder });
-  const path = agySettingsFile(appHomeDir, bot.id, scope, role, folder);
+  const path = agySettingsFile(settingsDir, bot.id, scope, role, folder);
   const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny } }, null, 2)}\n`;
   return { path, text, allow: plan.allow, deny: plan.deny, warnings: plan.warnings };
 }

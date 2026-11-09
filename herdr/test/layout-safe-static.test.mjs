@@ -161,6 +161,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/spaceIcon.js", "fs.unlink(`${appHome()}/${drop}`)", 2, "a space icon the sidebar wrote under <app home>/space-icons/ (spaceIconModel.js leftover) or its scratch file"],
   ["herdr/mods/am-sidebar/hcProxy.mjs", "unlinkSync(path)", 1, "the proxy's own stale per-pane socket under $XDG_RUNTIME_DIR/automagik-hc-proxy/<terminal>/hc.sock: never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/hcProxy.mjs", "unlinkSync(socketPath)", 2, "the proxy's own per-pane socket when it closes or a start fails after listen: never mods/ or layouts/"],
+  ["herdr/mods/am-sidebar/hcProxy.mjs", "renameSync(tmp, plan.path)", 1, "the proxy's write of an approved worker's Antigravity permission file under the data root's approved/agy-settings (bound read-only to the sandbox): never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/approved.js", "renameSync(tmp, path)", 1,
     "the 0600 roster record under <data root>/approved: never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/approved.js", "unlinkSync(tmp)", 1,

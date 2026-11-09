@@ -3,7 +3,7 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsPlan, canResume, effortArgs, modelArgs, ownsSession,
+import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsDir, agySettingsPlan, canResume, effortArgs, modelArgs, ownsSession,
   resumeArgs, resumesById, sessionIdArgs, withoutAgySettings, withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
@@ -124,7 +124,7 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   // Antigravity always gets its mode (auto unless the roster names one); [] for every other agent.
   const modeWords = agyModeArgs(key, bot.agyMode ?? null);
   const settings = agy && key === "antigravity"
-    ? agySettingsPlan({ bot, scope: "seat", folder: agy.folder ?? "", appHomeDir: agy.appHomeDir }) : null;
+    ? agySettingsPlan({ bot, scope: "seat", folder: agy.folder ?? "", settingsDir: agySettingsDir(agy.appHomeDir) }) : null;
   const settingsWords = agySettingsArgs(key, settings?.path);
   // The source a pane's launch is compared with names no settings file: that one is this
   // launch's own, never a change a restart should report.
@@ -443,7 +443,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
   if (command.shell === undefined) command = { argv: withoutAgySettings(agent, command.argv) };
   let settings = agy?.bot && agent === "antigravity"
     ? agySettingsPlan({ bot: agy.bot, scope: isWorker ? "worker" : "helper",
-      role: worker?.role ?? labels[WORKER_ROLE_LABEL] ?? "dev", folder: cwd, appHomeDir: agy.appHomeDir })
+      role: worker?.role ?? labels[WORKER_ROLE_LABEL] ?? "dev", folder: cwd, settingsDir: agySettingsDir(agy.appHomeDir) })
     : null;
   const settingsWords = agySettingsArgs(agent, settings?.path);
   const id = agent ? sessionFor(agent, session) : null;

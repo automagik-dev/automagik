@@ -1096,9 +1096,9 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   list every launch carries (#823). `{ "allow": ["command(npm publish)"], "deny": ["command(git stash)"] }`,
   each list optional. A rule is `command(<the words it starts with>)` or
   `write_file(<an absolute folder>)`; anything else is dropped with a warning and never reaches
-  agy. The launch's own allow list (its scope and rank or role) and the fixed deny rules
-  (`git push --force`, `git push -f`, `git reset --hard`, `rm -rf`, `gh pr merge`, `gh release`)
-  are always there, so this field only ever adds rules: it cannot drop a fixed deny.
+  agy. The launch's own allow list (its scope and rank or role) and the fixed deny rules (the
+  force-push, history-rewrite and release escapes listed below) are always there, so this field
+  only ever adds rules: it cannot drop a fixed deny.
   `create|edit --agy-allow RULE` and `--agy-deny RULE` (repeatable) set a list; one empty value
   clears that list and `--no-agy-permissions` clears both. The form keeps the field as it is.
   `show` prints the effective lists, `ls` their counts, and `dsh-tui doctor` the lists per bot
@@ -1133,17 +1133,34 @@ person's.
 The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
 time (agy replaces its saved list field by field). The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
-`bun`, the read-only `gh` verbs, and the repository's own gates (`node --test`,
+`bun`, the read-only `gh` verbs, the PR-writing `gh pr create`/`gh pr edit`/`gh pr comment` (a
+dev worker opens and updates its own PR), and the repository's own gates (`node --test`,
 `node --check`, `bun test`, `scripts/privacy-check.mjs`, `scripts/am-copies.mjs`, the
-`version`/`entries`/`parts`/`catalog` checks, …). A read-only seat (rank `reviewer`) or worker
-(role `review`) gets no `write_file`, no plain `git`/`node`, and only read verbs and the test
-checks. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
-`git push --force`, `git push -f`, `git reset --hard`, `rm -rf`, `gh pr merge`, `gh release`.
+`version`/`entries`/`parts`/`catalog` checks, …). No release verb is offered to any launch:
+the fixed `gh release` deny wins over every one of them. A read-only seat (rank `reviewer`) or
+worker (role `review`) gets no `write_file`, no plain `git`/`node`, and only read verbs and
+the test checks; `hc` and the test runners stay, because they read. `gh pr merge` is out of both
+lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
+`git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
+`git push origin -f`, `git push origin +`, `git push --mirror`, `git push --delete`,
+`git reset --hard`, `git branch -D`, `git clean`, `git rebase -`, `git stash`,
+`git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`.
+
+These lists are a guardrail against accidents, not a security boundary. A deny rule matches the
+words' prefix only, so a quoted or reordered command, an absolute path or an interpreter can get
+past it; a reset form that reaches `--hard` after other words (`git reset HEAD~1 --hard`) is not
+caught, only the leading-word form is. Allowing `node`, `bun` or `git` with any arguments already
+lets a determined agent do anything. The boundary is the sandbox (the per-pane hc proxy), never
+this list. `dsh-tui doctor` prints the same reminder beside the lists.
 
 The settings file's path is deterministic from the bot, the scope, the role and the worktree,
 so an approved-worker proxy plan and the argv it approves name the same file: the approved
 worker's `--settings` path is part of the exact argv the proxy checks, and another path is
-refused. A template whose command runs agy is rebuilt with the file and its task; one whose
+refused. For a proxied worker the proxy writes that file itself, from the approved snapshot's
+entry (its defaults, the approved `agyPermissions` and the fixed denies), 0600 in its own folder
+under the approved root, which the sandbox binds read-only; the pane only names the path. A file
+planted in the app home, or an unapproved rule added to the working roster, never reaches an
+approved start. A template whose command runs agy is rebuilt with the file and its task; one whose
 command ends in a separator or a comment can't take either, so it runs without the list with a
 plain warning. A linked machine's start writes the file under that machine's app home, through
 `hc`; with no app home there the start is refused rather than launched without its list.

@@ -5,14 +5,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
-import { AGY_FIXED_DENY, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -792,6 +792,12 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(data.permissions.allow.includes("command(hc)"));
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's allow is added");
   assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "a bot writes in its project");
+  for (const rule of ["command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `a writer opens and updates its PR: ${rule}`);
+  }
+  assert.equal(data.permissions.allow.includes("command(gh release view)"), false,
+    "the fixed gh release deny would shadow it");
+  for (const rule of AGY_FIXED_DENY) assert.equal(data.permissions.allow.includes(rule), false);
   assert.equal(data.permissions.allow.some((r) => r.startsWith("write_file(") && !r.endsWith(`${s.project})`)), false,
     "and nowhere else");
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule), `fixed deny ${rule}`);
@@ -808,6 +814,36 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(again.permissions.allow.includes("command(bun publish)"));
   assert.equal(statSync(path).mode & 0o777, 0o600);
   for (const rule of AGY_FIXED_DENY) assert.ok(again.permissions.deny.includes(rule));
+});
+
+test("Antigravity #823: a symlinked permission folder or file is refused, never followed", (t) => {
+  // A symlinked folder: the writer refuses and writes nothing through it.
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  s.seed(f);
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  const elsewhere = join(s.root, "elsewhere");
+  mkdirSync(elsewhere);
+  symlinkSync(elsewhere, join(s.app, "automagik-herdr/agy-settings"));
+  const folder = s.cli(["start", "Genie"]);
+  assert.equal(folder.code, 1);
+  assert.match(folder.err, /is a symlink/);
+  assert.deepEqual(readdirSync(elsewhere), [], "nothing written through the link");
+  assert.equal(s.calls().filter((c) => c[0] === "run").length, 0, "nothing started");
+  // A symlinked file: refused too, and its target is untouched.
+  const s2 = scene(t);
+  const f2 = team();
+  f2.bots[0].agent = "antigravity";
+  s2.seed(f2);
+  mkdirSync(join(s2.app, "automagik-herdr/agy-settings"), { recursive: true });
+  const target = join(s2.root, "target.json");
+  writeFileSync(target, "{}\n");
+  symlinkSync(target, agySettingsPath(s2, ID.main));
+  const file = s2.cli(["start", "Genie"]);
+  assert.equal(file.code, 1);
+  assert.match(file.err, /is a symlink/);
+  assert.equal(readFileSync(target, "utf8"), "{}\n", "the link's target is untouched");
 });
 
 test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty value, and show, ls and doctor print the lists", (t) => {
@@ -875,7 +911,7 @@ test("Antigravity #823: restart --tree writes the permission file of a worker he
   const runs = s.calls().filter((c) => c[0] === "run");
   assert.equal(runs.length, 2, "the bot and its helper");
   const seatPath = agySettingsPath(s, ID.main);
-  const helperPath = agySettingsFile(s.app, ID.main, "worker", "dev", wt);
+  const helperPath = agySettingsFile(agySettingsDir(s.app), ID.main, "worker", "dev", wt);
   assert.deepEqual(plain(agentWords(runs[0])), ["agy", "--settings", seatPath, "--mode", "auto", "--conversation", SID]);
   assert.deepEqual(plain(agentWords(runs[1])), ["agy", "--mode", "auto", "--settings", helperPath, "--continue"]);
   assert.equal(statSync(helperPath).mode & 0o777, 0o600);

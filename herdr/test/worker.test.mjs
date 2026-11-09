@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { AGY_FIXED_DENY, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -508,7 +508,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   assert.equal(r.code, 0, r.err);
   const cwdOf = (run) => run[run.indexOf("--cwd") + 1];
   assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "--settings",
-    agySettingsFile(s.app, ID.dev, "worker", "dev", cwdOf(s.runs()[0])), "-i", "fix the login form"]);
+    agySettingsFile(agySettingsDir(s.app), ID.dev, "worker", "dev", cwdOf(s.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r.json().agyMode, "auto");
   assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("worker.agyMode=")), false, "the default isn't a label");
 
@@ -518,7 +518,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const r2 = s2.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r2.code, 0, r2.err);
   assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "--settings",
-    agySettingsFile(s2.app, ID.dev, "worker", "dev", cwdOf(s2.runs()[0])), "-i", "fix the login form"]);
+    agySettingsFile(agySettingsDir(s2.app), ID.dev, "worker", "dev", cwdOf(s2.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r2.json().agyMode, "plan");
   assert.ok(labelsOf(s2.runs()[0]).includes("worker.agyMode=plan"));
 
@@ -541,7 +541,7 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   assert.equal(r.code, 0, r.err);
   const run = s.runs()[0];
   const cwd = run[run.indexOf("--cwd") + 1];
-  const path = agySettingsFile(s.app, ID.dev, "worker", "dev", cwd);
+  const path = agySettingsFile(agySettingsDir(s.app), ID.dev, "worker", "dev", cwd);
   assert.ok(after(run).includes(path), "the task argv carries the file");
   assert.equal(statSync(path).mode & 0o777, 0o600, "private");
   const data = JSON.parse(readFileSync(path, "utf8"));
@@ -558,7 +558,7 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   assert.equal(r2.code, 0, r2.err);
   const run2 = s2.runs()[0];
   const cwd2 = run2[run2.indexOf("--cwd") + 1];
-  const path2 = agySettingsFile(s2.app, ID.dev, "worker", "review", cwd2);
+  const path2 = agySettingsFile(agySettingsDir(s2.app), ID.dev, "worker", "review", cwd2);
   assert.ok(after(run2).includes(path2));
   const review = JSON.parse(readFileSync(path2, "utf8"));
   assert.equal(review.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "a review worker writes nothing");
@@ -575,7 +575,7 @@ test("worker #823: a template that runs agy is rebuilt with --settings and its t
   assert.equal(r.code, 0, r.err);
   const run = s.runs()[0];
   const cwd = run[run.indexOf("--cwd") + 1];
-  const path = agySettingsFile(s.app, ID.dev, "worker", "dev", cwd);
+  const path = agySettingsFile(agySettingsDir(s.app), ID.dev, "worker", "dev", cwd);
   assert.deepEqual(runArgv(run), ["/usr/bin/env", "sh", "-c", 'agy --mode auto "$@"', "sh", "--settings", path, "do the task"]);
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.ok(JSON.parse(readFileSync(path, "utf8")).permissions.allow.includes(`write_file(${cwd})`));

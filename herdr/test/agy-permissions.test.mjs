@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  AGY_FIXED_DENY, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsFile, agySettingsPlan,
+  AGY_FIXED_DENY, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsFile, agySettingsPlan,
   normalizeAgyPermissions, withAgySettings, withoutAgySettings,
 } from "../mods/am-sidebar/models.js";
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
@@ -15,6 +15,7 @@ import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
 const BOT = Object.freeze({ id: "b-aaaaaaaaaa", name: "Genie", agent: "antigravity" });
 const SEAT = "/work/proj";
 const APP = "/home/u/.config/herdr-app";
+const SETTINGS = agySettingsDir(APP);
 
 test("agyRuleProblem: command and write_file rules, never junk", () => {
   for (const rule of ["command(hc)", "command(gh pr view)", "write_file(/work/proj)", "write_file(/)"]) {
@@ -43,17 +44,24 @@ test("normalizeAgyPermissions: trims, dedupes, keeps the good rules and says wha
   assert.match(normalizeAgyPermissions(null).problems[0], /not an object/);
 });
 
-test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gates, gh reads and every fixed deny", () => {
+test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gates, PR-writing gh verbs and every fixed deny", () => {
   const plan = agyPermissionPlan({ bot: BOT, scope: "seat", folder: SEAT });
   for (const rule of ["command(hc)", "command(git)", "command(node)", "command(bun)", "command(gh pr view)",
+    "command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)",
     "command(node --test)", "command(node --check)", "command(bun test)", "command(node scripts/privacy-check.mjs)",
     "command(node ../scripts/am-copies.mjs)", `write_file(${SEAT})`]) {
     assert.ok(plan.allow.includes(rule), rule);
   }
   assert.ok(!plan.allow.includes("command(gh pr merge)"), "merge is never allowed by the defaults");
+  assert.ok(!plan.allow.includes("command(gh release view)"), "the fixed gh release deny would shadow it");
+  for (const rule of AGY_FIXED_DENY) assert.equal(plan.allow.includes(rule), false, `no allow shadowed by ${rule}`);
   assert.deepEqual(plan.deny, [...AGY_FIXED_DENY], "the fixed denies, all of them");
-  for (const rule of ["command(git push --force)", "command(git push -f)", "command(git reset --hard)", "command(rm -rf)",
-    "command(gh pr merge)", "command(gh release)"]) assert.ok(plan.deny.includes(rule), rule);
+  for (const rule of ["command(git push --force)", "command(git push --force-with-lease)", "command(git push -f)",
+    "command(git push origin --force)", "command(git push origin -f)", "command(git push origin +)",
+    "command(git push --mirror)", "command(git push --delete)", "command(git reset --hard)",
+    "command(git branch -D)", "command(git clean)", "command(git rebase -)", "command(git stash)",
+    "command(git checkout --)", "command(git -C)", "command(rm -rf)", "command(gh pr merge)",
+    "command(gh release)"]) assert.ok(plan.deny.includes(rule), rule);
   assert.deepEqual(plan.warnings, []);
 });
 
@@ -62,16 +70,31 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
   const worker = agyPermissionPlan({ bot: BOT, scope: "worker", role: "review", folder: "/work/wt" });
   for (const plan of [seat, worker]) {
     assert.equal(plan.allow.some((r) => r.startsWith("write_file(")), false, "nothing writable");
-    assert.ok(plan.allow.includes("command(hc)"));
+    assert.ok(plan.allow.includes("command(hc)"), "hc stays: it reads");
     assert.ok(plan.allow.includes("command(git diff)"));
     assert.ok(!plan.allow.includes("command(git)"), "no git subcommand at all");
     assert.ok(!plan.allow.includes("command(node)"), "no generic node");
-    assert.ok(plan.allow.includes("command(node --test)"));
+    assert.ok(plan.allow.includes("command(node --test)"), "the test runners stay: they read");
+    assert.ok(plan.allow.includes("command(bun test)"));
+    assert.ok(plan.allow.includes("command(gh pr view)"), "reads stay");
+    for (const rule of ["command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)", "command(gh release view)"]) {
+      assert.equal(plan.allow.includes(rule), false, `a read-only launch never gets ${rule}`);
+    }
     assert.deepEqual(plan.deny, [...AGY_FIXED_DENY]);
   }
   // The writer roles keep the write_file, the review role (and only it) doesn't.
   for (const role of ["dev", "test", "fix"]) {
     assert.ok(agyPermissionPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt" }).allow.includes("write_file(/work/wt)"), role);
+  }
+});
+
+test("agySettingsPlan: a roster allow identical to a fixed deny never cancels the deny", () => {
+  const bot = { ...BOT, agyPermissions: { allow: ["command(git stash)", "command(git clean)"], deny: [] } };
+  const plan = agySettingsPlan({ bot, scope: "seat", folder: SEAT, settingsDir: SETTINGS });
+  const data = JSON.parse(plan.text).permissions;
+  for (const rule of ["command(git stash)", "command(git clean)"]) {
+    assert.ok(data.deny.includes(rule), `the fixed deny stays: ${rule}`);
+    assert.ok(data.allow.includes(rule), "the roster's allow is carried beside it (agy's deny still wins)");
   }
 });
 
@@ -92,21 +115,21 @@ test("agyPermissionPlan: a folder a rule can't hold leaves the write_file out wi
   assert.match(plan.warnings.join("\n"), /Genie: .*can't hold/);
 });
 
-test("agySettingsFile: deterministic from the bot, scope, role and worktree; the app home's slash isn't doubled", () => {
-  const seat = agySettingsFile(`${APP}/`, BOT.id);
-  assert.equal(seat, `${APP}/automagik-herdr/agy-settings/${BOT.id}-seat.json`);
-  assert.equal(agySettingsFile(APP, BOT.id, "seat"), seat, "same inputs, same path");
-  const one = agySettingsFile(APP, BOT.id, "worker", "dev", "/work/a");
-  assert.equal(agySettingsFile(APP, BOT.id, "worker", "dev", "/work/a"), one, "a restart of the same worker names the same file");
-  assert.notEqual(agySettingsFile(APP, BOT.id, "worker", "dev", "/work/b"), one, "another worktree, another file");
-  assert.notEqual(agySettingsFile(APP, BOT.id, "worker", "review", "/work/a"), one, "another role, another file");
+test("agySettingsFile: deterministic from the bot, scope, role and worktree; the folder's slash isn't doubled", () => {
+  const seat = agySettingsFile(`${SETTINGS}/`, BOT.id);
+  assert.equal(seat, `${SETTINGS}/${BOT.id}-seat.json`);
+  assert.equal(agySettingsFile(SETTINGS, BOT.id, "seat"), seat, "same inputs, same path");
+  const one = agySettingsFile(SETTINGS, BOT.id, "worker", "dev", "/work/a");
+  assert.equal(agySettingsFile(SETTINGS, BOT.id, "worker", "dev", "/work/a"), one, "a restart of the same worker names the same file");
+  assert.notEqual(agySettingsFile(SETTINGS, BOT.id, "worker", "dev", "/work/b"), one, "another worktree, another file");
+  assert.notEqual(agySettingsFile(SETTINGS, BOT.id, "worker", "review", "/work/a"), one, "another role, another file");
   assert.ok(!one.includes("/work/a"), "the worktree is a tag, not a path in the name");
 });
 
 test("agySettingsPlan: the JSON agy reads, both arrays in full, private path under the app home", () => {
   const bot = { ...BOT, agyPermissions: { allow: ["command(npm publish)"], deny: [] } };
-  const plan = agySettingsPlan({ bot, scope: "seat", folder: SEAT, appHomeDir: APP });
-  assert.equal(plan.path, agySettingsFile(APP, bot.id));
+  const plan = agySettingsPlan({ bot, scope: "seat", folder: SEAT, settingsDir: SETTINGS });
+  assert.equal(plan.path, agySettingsFile(SETTINGS, bot.id));
   const data = JSON.parse(plan.text);
   assert.deepEqual(Object.keys(data), ["permissions"]);
   assert.deepEqual(Object.keys(data.permissions), ["allow", "deny"]);
@@ -114,8 +137,8 @@ test("agySettingsPlan: the JSON agy reads, both arrays in full, private path und
   assert.ok(data.permissions.allow.includes(`write_file(${SEAT})`));
   assert.deepEqual(data.permissions.deny, [...AGY_FIXED_DENY]);
   assert.equal(plan.allow.length, data.permissions.allow.length);
-  assert.equal(agySettingsPlan({ bot: BOT, appHomeDir: null }), null, "no app home, no file");
-  assert.equal(agySettingsPlan({ bot: { name: "no id" }, appHomeDir: APP }), null);
+  assert.equal(agySettingsPlan({ bot: BOT, settingsDir: null }), null, "no folder, no file");
+  assert.equal(agySettingsPlan({ bot: { name: "no id" }, settingsDir: SETTINGS }), null);
 });
 
 test("agySettingsArgs, withoutAgySettings, withAgySettings: only agy changes, right after its program", () => {
@@ -180,7 +203,7 @@ test("parseBots and checkBots: agyPermissions is normalized on load, refused by 
 test("restartPlan with the launch's file: --settings on the agent's row, its text in agySettings", () => {
   const bot = { id: BOT.id, agent: "antigravity", rank: "dev", agyPermissions: { allow: ["command(npm)"], deny: [] } };
   const plan = restartPlan({ bot, run: ["agy"], runningAgent: "antigravity", session: null, agy: { appHomeDir: APP, folder: SEAT } });
-  const path = agySettingsFile(APP, BOT.id);
+  const path = agySettingsFile(SETTINGS, BOT.id);
   assert.deepEqual(plan.argv, ["agy", "--mode", "auto", "--settings", path, "--continue"]);
   assert.equal(plan.agySettings.path, path);
   assert.deepEqual(plan.source, ["agy", "--mode", "auto"], "the comparison source names no settings file");
@@ -196,7 +219,7 @@ test("helperPlan with the launch's file: a worker gets its worktree rule and fil
   const worker = helperPlan({ get: { address: "t7", name: "w", cwd: SEAT, labels: { "worker.of": BOT.id, "worker.role": "dev" } },
     worker: { botId: BOT.id, worktree: SEAT, agent: "antigravity" }, session: null, agents,
     agy: { appHomeDir: APP, bot } });
-  const path = agySettingsFile(APP, BOT.id, "worker", "dev", SEAT);
+  const path = agySettingsFile(SETTINGS, BOT.id, "worker", "dev", SEAT);
   assert.deepEqual(worker.argv, ["agy", "--mode", "auto", "--settings", path, "--continue"]);
   assert.equal(worker.agySettings.path, path);
   assert.ok(JSON.parse(worker.agySettings.text).permissions.allow.includes(`write_file(${SEAT})`));
@@ -204,8 +227,8 @@ test("helperPlan with the launch's file: a worker gets its worktree rule and fil
   const old = ["agy", "--mode", "plan", "--settings", "/old.json", "--continue"];
   const pane = helperPlan({ get: { address: "t9", name: "p", cwd: SEAT, argv: old, foreground: { argv: old } },
     session: null, agents, agy: { appHomeDir: APP, bot } });
-  assert.deepEqual(pane.argv, ["agy", "--mode", "plan", "--settings", agySettingsFile(APP, BOT.id, "helper", null, SEAT), "--continue"]);
-  assert.equal(pane.agySettings.path, agySettingsFile(APP, BOT.id, "helper", null, SEAT), "its own file, never the seat's");
+  assert.deepEqual(pane.argv, ["agy", "--mode", "plan", "--settings", agySettingsFile(SETTINGS, BOT.id, "helper", null, SEAT), "--continue"]);
+  assert.equal(pane.agySettings.path, agySettingsFile(SETTINGS, BOT.id, "helper", null, SEAT), "its own file, never the seat's");
   // A shell template that can't take words runs without the list, and the note says so.
   const shell = ["sh", "-c", "agy --mode auto; # no words"];
   const broken = helperPlan({ get: { address: "t10", name: "t", cwd: SEAT, argv: shell, foreground: { argv: ["agy"] } },
@@ -219,7 +242,7 @@ test("restartPlan: a template that can take the words gets the permission list; 
   const bot = { id: BOT.id, agent: "antigravity" };
   const template = { name: "agy-sol", command: "agy --mode auto" };
   const plan = restartPlan({ bot, run: ["agy"], runningAgent: "antigravity", fresh: true, template, agy: { appHomeDir: APP, folder: SEAT } });
-  const path = agySettingsFile(APP, BOT.id);
+  const path = agySettingsFile(SETTINGS, BOT.id);
   assert.deepEqual(plan.argv, ["sh", "-c", `agy --mode auto "$@"`, "sh", "--settings", path]);
   assert.equal(plan.agySettings.path, path);
   const blocked = restartPlan({ bot, run: ["agy"], runningAgent: "antigravity", fresh: false,

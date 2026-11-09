@@ -10,7 +10,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsPlan, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -50,7 +50,7 @@ import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui, workerProxyTransport } from "../dshTui.mjs";
-import { approveProject, approvedProxyEnabled, approvedProxyState, parseApprovedRecord,
+import { approveProject, approvedProxyEnabled, approvedProxyState, approvedSettingsDir, parseApprovedRecord,
   projectKey, proxyStateFor, recordFileOf } from "../approved.js";
 import { hooksNotice } from "../migrateHooks.mjs";
 import { SPACE_LABEL, plan as tidyPlan, planText } from "../tidy.js";
@@ -1089,11 +1089,25 @@ export async function briefedLaunch(project, bot, agentKey, argv, appHomeDir = a
  */
 function writeAgySettingsFile(settings, bot) {
   try {
-    mkdirSync(dirname(settings.path), { recursive: true, mode: 0o700 });
-    const tmp = `${settings.path}.${process.pid}.tmp`;
-    writeFileSync(tmp, settings.text, { mode: 0o600 });
+    const dir = dirname(settings.path);
+    // Never follow a symlinked folder or file: this file decides what agy may do. A temp in the
+    // real folder (created O_EXCL) renamed onto the path replaces a link, never its target.
+    let st = null;
+    try { st = lstatSync(dir); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+    if (st) {
+      if (st.isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+      if (!st.isDirectory()) throw new Error(`${dir} is not a folder`);
+    } else {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (lstatSync(dir).isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+    }
+    try { if (lstatSync(settings.path).isSymbolicLink()) throw new Error(`${settings.path} is a symlink`); }
+    catch (e) { if (e?.code !== "ENOENT") throw e; }
+    const tmp = `${settings.path}.${randomUUID()}.tmp`;
+    writeFileSync(tmp, settings.text, { mode: 0o600, flag: "wx" });
     chmodSync(tmp, 0o600);
     renameSync(tmp, settings.path);
+    chmodSync(settings.path, 0o600);
   } catch (e) {
     throw new CliError(`${bot?.name ?? "The bot"} wasn't started: its Antigravity permission list couldn't be written `
       + `(${settings.path}: ${e?.message ?? e}).`);
@@ -2594,7 +2608,7 @@ async function seatOnMachine(project, bot, over = {}) {
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
     if (!agyHome.dir) throw new CliError(`${agyHome.warning}. Nothing was started.`);
-    agySettings = agySettingsPlan({ bot, scope: "seat", folder: key, appHomeDir: agyHome.dir });
+    agySettings = agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(agyHome.dir) });
     try { await ownFileOn(machine, agySettings.path, agySettings.text); }
     catch (e) {
       throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
@@ -2913,7 +2927,7 @@ async function launchSeat(project, bot, over = {}) {
   // #823: the session's permission list, written private under the app home before the launch;
   // a restart's plan names the same file, so it is written again with the roster as it is now.
   const agySettings = agentKey === "antigravity"
-    ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: key, appHomeDir: appHome() })) : null;
+    ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(appHome()) })) : null;
   if (agySettings) writeAgySettingsFile(agySettings, bot);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
@@ -5097,13 +5111,21 @@ async function cmdWorker(opts, rest) {
     }
     worktree = realDir(place.worktree) ?? place.worktree;
     base = await baseCommit(place, project.key);
+    // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added flags
+    // and working roster edits cannot do so; the same socket still checks terminal.run.
+    const transport = await workerTransport();
+    const proxied = transport && transport.terminal === me.address;
     // #823: an Antigravity worker's permission file, written before it starts; a template that
     // runs agy is rebuilt with `--settings` (hc's template form takes no extra words), or runs
-    // without the list with a plain warning when its command can't take them.
+    // without the list with a plain warning when its command can't take them. H1: for a proxied
+    // start the proxy writes the file from the approved snapshot under the data root, which the
+    // sandbox binds read-only; this pane only names that path and never writes it.
+    const settingsDir = proxied ? approvedSettingsDir() : agySettingsDir(appHome());
     let agySettings = null;
     if (plan.agent === "antigravity" || (plan.template && runs === "antigravity")) {
-      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: place.worktree, appHomeDir: appHome() });
-      if (agySettings) { writeAgySettingsFile(agySettings, bot); warnings.push(...agySettings.warnings); }
+      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: place.worktree, settingsDir });
+      if (agySettings?.warnings.length) warnings.push(...agySettings.warnings);
+      if (agySettings && !proxied) writeAgySettingsFile(agySettings, bot);
       if (plan.template && runs === "antigravity") {
         const built = templateCommand
           ? commandArgv({ shell: templateCommand }, [...agySettingsArgs("antigravity", agySettings?.path), task]) : null;
@@ -5135,10 +5157,6 @@ async function cmdWorker(opts, rest) {
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
         approvedProxyState({ project: project.key, bot }), process.platform,
         (warning) => warnings.push(warning)) });
-    // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added
-    // flags and working roster edits cannot do so; the same socket still checks terminal.run.
-    const transport = await workerTransport();
-    const proxied = transport && transport.terminal === me.address;
     const r = await (proxied ? hcReal(args) : hc(args));
     if (r.code !== 0) throw new CliError(`hc run failed: ${(r.stderr || r.stdout).trim()}`);
     let address = null;
@@ -5459,8 +5477,12 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         seatAgy ? `agy allow ${seatAgy.allow.join(", ")}; agy deny ${seatAgy.deny.join(", ")}` : "",
         workerAgy ? `worker agy allow ${workerAgy.allow.join(", ")}; worker agy deny ${workerAgy.deny.join(", ")}` : "",
       ].filter(Boolean).join("; ");
+      // The lists are a guardrail against accidents, never the boundary: say so wherever they print.
+      const guardrail = perms ? "these lists are a guardrail against accidents, not a security boundary: "
+        + "a rule matches word prefixes only (a reset reaching --hard after other words isn't caught), "
+        + "and allowing node, bun or git with any arguments lets a determined agent do anything" : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
-        detail: `${bot.name}: ${agy}${perms ? `${perms}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
+        detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
         ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
         ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
