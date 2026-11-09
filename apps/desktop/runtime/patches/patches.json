@@ -78,7 +78,7 @@
   },
   {
     "patch": "acp-bridge-tool-lifecycle.patch",
-    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result must still close it, an orphan result or a repeated call still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
+    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result must still close it, an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -86,14 +86,14 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "2f7ba42e79072b2674be9f28d051665e006732fa6cc5de474f783b823bdfb0a9",
-        "after": "754b130e0ebd59a6d4bbc7b94c001623602b32dcc5ff2a21e8870e1a077968a7"
+        "after": "0260e5141007711d26b3bfdc414c811480ee7845973cbe96868cbd2663ef8e94"
       },
       {
         "package": "@deepseek-ai/dsh-session-persistence-jsonl",
         "version": "0.2.2-rc.1",
         "file": "lib/worker.cjs",
         "before": "c5c8ccb7a661ef343e9d0c792d8d5cba376ed783ea48c6489fe90eab264ae321",
-        "after": "d845fd3923559cc084416ff512433b4767a1211f7b572cefbd50f740b4b45ed9"
+        "after": "1ce9ef61e1c8b7390eb821dde804b22cbd95c5911bb7bacb39f8fadf9820d01f"
       }
     ]
   }

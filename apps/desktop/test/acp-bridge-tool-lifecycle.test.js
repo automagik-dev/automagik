@@ -119,7 +119,35 @@ const EVENTS = [
 ]
 const HEADER = { version: 4, id: 'synthetic-842', createdAt: 0, isSeeded: false, delegationDepth: 0 }
 const KNOWN = new Set(EVENTS.map(event => event.type))
-const artifactOf = () => ({ header: HEADER, events: structuredClone(EVENTS), inheritedEventCount: 0 })
+const artifactOf = (events = EVENTS) => ({ header: HEADER, events: structuredClone(events), inheritedEventCount: 0 })
+
+// Turn 1 and the start of turn 2 as in EVENTS, then the given rows: ['call', id] is an
+// unadvertised bridged tool/call, ['result', id] its tool/result citing that id's latest call.
+function turnTwo(rows) {
+  const events = structuredClone(EVENTS.slice(0, 7))
+  const calls = new Map()
+  for (const [kind, id] of rows) {
+    const seq = events.length
+    if (kind === 'call') {
+      events.push({ type: 'tool/call', seq, time: 0, data: { turn: 2, step: 1, callId: id, name: 'bash', arguments: '{}' } })
+      calls.set(id, seq)
+      continue
+    }
+    const result = structuredClone(EVENTS[8])
+    result.seq = seq
+    result.data.message = { ...result.data.message, id: `result-${seq}`, toolCallId: id, source: { kind: 'tool', callId: id } }
+    result.sourceEventSeqs = calls.has(id) ? [calls.get(id)] : []
+    events.push(result)
+  }
+  events.push({ ...structuredClone(EVENTS[9]), seq: events.length })
+  events.push({ ...structuredClone(EVENTS[10]), seq: events.length })
+  return events
+}
+const REPEATED = turnTwo([['call', 'bridge_synthetic'], ['result', 'bridge_synthetic'], ['call', 'bridge_synthetic'], ['result', 'bridge_synthetic']])
+const DISTINCT = turnTwo([['call', 'bridge_synthetic'], ['result', 'bridge_synthetic'], ['call', 'bridge_other'], ['result', 'bridge_other']])
+const ORPHAN = turnTwo([['result', 'bridge_synthetic']])
+const ORPHAN_ERROR = 'tool/result bridge_synthetic has no advertised tool lifecycle'
+const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // The unmodified worker needs its package's manifest one directory up; the fixtures keep only
 // the file the patch names, so the test runtime supplies the same package around it.
@@ -168,15 +196,15 @@ function loadWarnings(module, artifact) {
 
 // A synthetic current-generation log, plaintext so no Zstandard codec is needed: one header
 // line, then one event per line.
-function writeSyntheticLog(file) {
+function writeSyntheticLog(file, events = EVENTS) {
   const header = { type: 'session', ...HEADER }
-  writeFileSync(file, [JSON.stringify(header), ...EVENTS.map(event => JSON.stringify(event))].join('\n') + '\n')
+  writeFileSync(file, [JSON.stringify(header), ...events.map(event => JSON.stringify(event))].join('\n') + '\n')
 }
 
-function verifyWithWorker(workerPath, logPath) {
+function verifyWithWorker(workerPath, logPath, eventCount = EVENTS.length) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(pathToFileURL(workerPath), {
-      workerData: { path: logPath, compression: 'none', expectedId: HEADER.id, expectedEventCount: EVENTS.length },
+      workerData: { path: logPath, compression: 'none', expectedId: HEADER.id, expectedEventCount: eventCount },
       stderr: true,
     })
     let stderr = ''
@@ -207,7 +235,7 @@ test('patches.json pins the real 0.2.2-rc.1 loader and verifier to the desktop r
   assert.match(readFileSync(LICENSE, 'utf8'), /^MIT License\n/)
   const text = readFileSync(join(PATCHES, PATCH), 'utf8')
   assert.ok(text.startsWith(`--- a/${FORMAT}/${FORMAT_FILE}\n+++ b/${FORMAT}/${FORMAT_FILE}\n`), text.slice(0, 120))
-  assert.match(text, /^\+\t\tif \(pending === void 0 && message === void 0\) \{$/m)
+  assert.match(text, /^\+\t\tif \(pending === void 0 && message === void 0 && !this\.called\.has\(id\)\) \{$/m)
   assert.match(text, /^\+\tif \(state\.unadvertised > 0\) console\.warn\(/m)
   assert.ok(text.includes(`+++ b/${PERSIST}/${WORKER_FILE}\n`))
 })
@@ -275,4 +303,41 @@ test('the unpatched verifier refuses the synthetic session file, the patched one
   assert.equal(existsSync(`${log}.bak`), false)
   assert.equal(existsSync(`${log}.pre-repair`), false)
   assert.equal(readdirSync(runtime.root).some(name => name.startsWith('session.v4.jsonl.')), false, 'no backup is written when nothing is repaired')
+})
+
+test('a call repeated after its result still fails on the patched loader and verifier', async (t) => {
+  const runtime = makeRuntime(t)
+  assert.deepEqual(patchRuntime(runtime.modules, runtime.patches).map(result => result.state), ['patched', 'patched'])
+  const patched = await import(`${pathToFileURL(runtime.format).href}?repeated`)
+
+  // Control: the same shape with two distinct ids is two tolerated first calls.
+  const { warnings } = loadWarnings(patched, artifactOf(DISTINCT))
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /tolerated 2 tool call\(s\) with no advertised lifecycle/)
+
+  assert.throws(
+    () => loadWarnings(patched, artifactOf(REPEATED)),
+    error => error.name === 'SessionFormatError' && error.message === ERROR,
+  )
+
+  const distinct = join(runtime.root, 'distinct.v4.jsonl')
+  writeSyntheticLog(distinct, DISTINCT)
+  const accepted = await verifyWithWorker(runtime.worker, distinct, DISTINCT.length)
+  assert.equal(accepted.message.ok, true, accepted.message.message)
+
+  const repeated = join(runtime.root, 'repeated.v4.jsonl')
+  writeSyntheticLog(repeated, REPEATED)
+  const refused = await verifyWithWorker(runtime.worker, repeated, REPEATED.length)
+  assert.equal(refused.message.ok, false)
+  assert.match(refused.message.message, new RegExp(escape(ERROR)))
+})
+
+test('an orphan tool/result still fails on the patched verifier', async (t) => {
+  const runtime = makeRuntime(t)
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[1].state, 'patched')
+  const log = join(runtime.root, 'orphan.v4.jsonl')
+  writeSyntheticLog(log, ORPHAN)
+  const refused = await verifyWithWorker(runtime.worker, log, ORPHAN.length)
+  assert.equal(refused.message.ok, false)
+  assert.match(refused.message.message, new RegExp(escape(ORPHAN_ERROR)))
 })

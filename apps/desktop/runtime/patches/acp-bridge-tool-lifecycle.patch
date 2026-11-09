@@ -1,25 +1,28 @@
 --- a/@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js
 +++ b/@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js
-@@ -548,6 +548,8 @@
+@@ -548,6 +548,10 @@
  	protectedHead;
  	compaction;
  	tools = /* @__PURE__ */ new Map();
 +	/** Tool calls recovered without an assistant advertisement (#842). */
 +	unadvertised = 0;
++	/** Every tool/call id seen, so only a first unadvertised call is tolerated (#842). */
++	called = /* @__PURE__ */ new Set();
  	dispatches = /* @__PURE__ */ new Map();
  	retries = [];
  	startedRetries = /* @__PURE__ */ new Set();
-@@ -638,7 +640,20 @@
+@@ -638,7 +642,22 @@
  		}
  		const message = event.type === "tool/result" ? record(data["message"], "tool result message") : void 0;
  		const id = text(message === void 0 ? data["callId"] : message["toolCallId"], "tool call id");
 -		const pending = this.tools.get(id);
 +		let pending = this.tools.get(id);
-+		if (pending === void 0 && message === void 0) {
++		if (pending === void 0 && message === void 0 && !this.called.has(id)) {
 +			// A bridged tool call is recorded out of band, and a session written before the
-+			// bridge always advertised it has no assistant/message for this call. Treat the
-+			// call as its own advertisement: its result must still close it, and an orphan
-+			// result or a repeated call still fails. Nothing is rewritten or discarded.
++			// bridge always advertised it has no assistant/message for this call. Treat a
++			// first call of an id as its own advertisement: its result must still close it,
++			// and an orphan result or a repeated call (before or after its result) still
++			// fails. Nothing is rewritten or discarded.
 +			this.unadvertised += 1;
 +			pending = {
 +				name: data["name"],
@@ -28,10 +31,11 @@
 +			};
 +			this.tools.set(id, pending);
 +		}
++		if (message === void 0) this.called.add(id);
  		if (pending === void 0) throw new SessionFormatError(`${event.type} ${id} has no advertised tool lifecycle`);
  		if (message === void 0) {
  			if (pending.started || pending.name !== data["name"] || pending.arguments !== data["arguments"]) throw new SessionFormatError(`tool/call ${id} does not match one advertised tool call`);
-@@ -858,6 +873,7 @@
+@@ -858,6 +877,7 @@
  function assertV4LifecycleRelationships(artifact, knownEventTypes) {
  	const state = new Relationships(artifact, knownEventTypes);
  	for (const event of artifact.events) state.accept(event);
@@ -41,26 +45,29 @@
  //#region lib/types/facts.js
 --- a/@deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs
 +++ b/@deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs
-@@ -12130,6 +12130,8 @@
+@@ -12130,6 +12130,10 @@
  	protectedHead;
  	compaction;
  	tools = /* @__PURE__ */ new Map();
 +	/** Tool calls recovered without an assistant advertisement (#842). */
 +	unadvertised = 0;
++	/** Every tool/call id seen, so only a first unadvertised call is tolerated (#842). */
++	called = /* @__PURE__ */ new Set();
  	dispatches = /* @__PURE__ */ new Map();
  	retries = [];
  	startedRetries = /* @__PURE__ */ new Set();
-@@ -12220,7 +12222,20 @@
+@@ -12220,7 +12224,22 @@
  		}
  		const message = event.type === "tool/result" ? record(data["message"], "tool result message") : void 0;
  		const id = text(message === void 0 ? data["callId"] : message["toolCallId"], "tool call id");
 -		const pending = this.tools.get(id);
 +		let pending = this.tools.get(id);
-+		if (pending === void 0 && message === void 0) {
++		if (pending === void 0 && message === void 0 && !this.called.has(id)) {
 +			// A bridged tool call is recorded out of band, and a session written before the
-+			// bridge always advertised it has no assistant/message for this call. Treat the
-+			// call as its own advertisement: its result must still close it, and an orphan
-+			// result or a repeated call still fails. Nothing is rewritten or discarded.
++			// bridge always advertised it has no assistant/message for this call. Treat a
++			// first call of an id as its own advertisement: its result must still close it,
++			// and an orphan result or a repeated call (before or after its result) still
++			// fails. Nothing is rewritten or discarded.
 +			this.unadvertised += 1;
 +			pending = {
 +				name: data["name"],
@@ -69,10 +76,11 @@
 +			};
 +			this.tools.set(id, pending);
 +		}
++		if (message === void 0) this.called.add(id);
  		if (pending === void 0) throw new SessionFormatError(`${event.type} ${id} has no advertised tool lifecycle`);
  		if (message === void 0) {
  			if (pending.started || pending.name !== data["name"] || pending.arguments !== data["arguments"]) throw new SessionFormatError(`tool/call ${id} does not match one advertised tool call`);
-@@ -12440,6 +12455,7 @@
+@@ -12440,6 +12459,7 @@
  function assertV4LifecycleRelationships(artifact, knownEventTypes) {
  	const state = new Relationships(artifact, knownEventTypes);
  	for (const event of artifact.events) state.accept(event);
