@@ -672,3 +672,65 @@ fn a_corrupted_block_size_holding_back_a_tail_is_degraded_never_ok() {
     let r = env.run(&env.opts());
     assert_eq!(dsh_source(&r)["status"], "ok");
 }
+
+/// Sessions the real zstd CLI wrote (`zstd --check -19`, one call per frame, then
+/// concatenated): `session-a` is three frames, `session-b` two, every frame with its content
+/// checksum. Synthetic content only. Committed in tests/fixtures/dsh-zstd-cli.
+const CLI_A_FRAMES: [usize; 3] = [232, 162, 161];
+const CLI_B_FRAMES: [usize; 2] = [228, 161];
+
+fn cli_fixture(name: &str) -> Vec<u8> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dsh-zstd-cli");
+    fs::read(dir.join(name)).unwrap()
+}
+
+/// The reader verifies the checksums the zstd CLI wrote, and a copy with one checksum byte
+/// flipped loses that frame alone: refused whole, counted as one skipped frame, the source
+/// degraded, the frames around it still read.
+#[test]
+fn zstd_cli_frames_have_their_checksums_verified() {
+    let (a, b) = (
+        cli_fixture("session-a.v4.jsonl.zstd"),
+        cli_fixture("session-b.v4.jsonl.zstd"),
+    );
+    for (bytes, frames) in [(&a, &CLI_A_FRAMES[..]), (&b, &CLI_B_FRAMES[..])] {
+        assert_eq!(bytes.len(), frames.iter().sum::<usize>());
+        let mut at = 0;
+        for n in frames {
+            assert_eq!(bytes[at..at + 4], [0x28, 0xB5, 0x2F, 0xFD]);
+            assert_ne!(bytes[at + 4] & 0x04, 0, "the frame at {at} has a checksum");
+            at += n;
+        }
+    }
+    let all = [
+        tokens(11, 22, 333),
+        tokens(44, 55, 666),
+        tokens(7, 8, 900),
+        tokens(1, 2, 3),
+        tokens(10, 20, 30),
+    ];
+    let sum = |picked: &[usize]| {
+        picked.iter().fold(Tokens::default(), |mut t, i| {
+            t.add(&all[*i]);
+            t
+        })
+    };
+    let env = Env::new();
+    append(&file_of(&env, "sess-cli-a", "session.v4.jsonl.zstd"), &a);
+    append(&file_of(&env, "sess-cli-b", "session.v4.jsonl.zstd"), &b);
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.skipped_lines), (5, 0));
+    assert_eq!(dsh_totals(&env), sum(&[0, 1, 2, 3, 4]));
+    assert_eq!(dsh_source(&r)["status"], "ok");
+
+    // The last byte of session-a's second frame is its checksum's: flipped, that frame alone
+    // is refused.
+    let mut bad = a.clone();
+    bad[CLI_A_FRAMES[0] + CLI_A_FRAMES[1] - 1] ^= 0xFF;
+    let env = Env::new();
+    append(&file_of(&env, "sess-cli-a", "session.v4.jsonl.zstd"), &bad);
+    let r = env.run(&env.opts());
+    assert_eq!((r.health.events, r.health.skipped_lines), (2, 1));
+    assert_eq!(dsh_totals(&env), sum(&[0, 2]));
+    assert_eq!(dsh_source(&r)["status"], "degraded");
+}
