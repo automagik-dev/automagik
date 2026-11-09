@@ -161,7 +161,7 @@
       ]
     },
     "actor_unattributed": {
-      "description": "RFC 0021 (d): the repo's usage in the window that no bot row holds, whatever the branches named: ambiguous, unlinked, and before evidence_from, each part with its reason and harnesses. Present exactly when the meter reports actors (every --by bot answer, and every answer whose rows carry attribution.actor); absent from a meter that does not (contract 1 before RFC 0021 delivery 6). Above 0, every bot row is a lower bound (\"at least\"). A bot with no row is 0 only when absent_bot_is_zero is true; otherwise it is unknown, never 0. Never moves a branch row's attribution.coverage (RFC 0021 D3).",
+      "description": "RFC 0021 (d): the repo's usage in the window given to no bot, whatever the branches named (under a branch filter, usage given to a bot on another branch is in neither a row nor here): ambiguous, unlinked, and before evidence_from, each part with its reason and harnesses. Present exactly when the meter reports actors (every --by bot answer, and every answer whose rows carry attribution.actor); absent from a meter that does not (contract 1 before RFC 0021 delivery 6). Above 0, every bot row is a lower bound (\"at least\"). A bot with no row is 0 only when absent_bot_is_zero is true; otherwise it is unknown, never 0. Never moves a branch row's attribution.coverage (RFC 0021 D3).",
       "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/actorUnattributed" }]
     },
     "pricing": {
@@ -227,7 +227,7 @@
     },
     "rows": {
       "type": "array",
-      "description": "Branch rows in request order (one per distinct branch named), or, with query.by bot, bot rows: one per bot key with attributed usage, ordered by bot, kind, role, squad and harness (byte order, null first). A row's kind is its attribution.precision (RFC 0021 D1).",
+      "description": "Branch rows in request order (one per distinct branch named), or, with query.by bot, bot rows: one per bot key with attributed usage, ordered by bot, kind, role, squad, unrecorded (in its enum's order) and harness (byte order, null first). A row's kind is its attribution.precision (RFC 0021 D1).",
       "items": { "oneOf": [{ "$ref": "#/$defs/branchRow" }, { "$ref": "#/$defs/botRow" }] }
     }
   },
@@ -759,7 +759,7 @@
       }
     },
     "botRow": {
-      "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, harness). Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0. While ingestion.complete is false (a sync stopped at its budget, or a re-import, left usage unread), a bot row's numbers are a lower bound and a reader shows \"at least\", as for a branch row (RFC 0018).",
+      "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, unrecorded, harness): unrecorded is in the key because a null squad is the main bot's when recorded and unknown when not, and the two never share a row. Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0. While ingestion.complete is false (a sync stopped at its budget, or a re-import, left usage unread), a bot row's numbers are a lower bound and a reader shows \"at least\", as for a branch row (RFC 0018).",
       "type": "object",
       "additionalProperties": false,
       "required": [

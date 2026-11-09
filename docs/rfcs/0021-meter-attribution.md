@@ -308,16 +308,18 @@ no record names.
 
 Contract 1's branch rows keep their meaning. Additive, so genie reads them only when it asks:
 
-- **`--by bot`.** One row per `(bot, kind, role, squad, harness)` with attributed usage in the
-  repo and window (branches optional as a filter), with the same `tokens`, `cost`, `activity` and
-  `incomplete_sources` as a branch row, and `attribution.precision: actor_interval`. This is the
-  row that compares bots across agents. **Squad is part of the key** (decided in delivery 2): a
-  row sums usage whose launches carry equal tags, and squad is one of those tags, frozen per
-  launch (e). Outside the key, a bot re-led within the window would need one squad value for
-  launches that recorded two, and null cannot say "mixed": it already means the main bot, which
-  heads no squad. With it in the key, the owner's "per squad" comparison is a plain group-by. A
-  key field a launch's start row did not record (rows written before delivery 3) is null and
-  listed in the row's `unrecorded`, so an unknown squad or role is never read as none.
+- **`--by bot`.** One row per `(bot, kind, role, squad, unrecorded, harness)` with attributed usage
+  in the repo and window (branches optional as a filter), with the same `tokens`, `cost`, `activity`
+  and `incomplete_sources` as a branch row, and `attribution.precision: actor_interval`. This is the
+  row that compares bots across agents. **Squad is part of the key** (decided in delivery 2): a row
+  sums usage whose launches carry equal tags, and squad is one of those tags, frozen per launch (e).
+  Outside the key, a bot re-led within the window would need one squad value for launches that
+  recorded two, and null cannot say "mixed": it already means the main bot, which heads no squad.
+  With it in the key, the owner's "per squad" comparison is a plain group-by. A key field a launch's
+  start row did not record (rows written before delivery 3) is null and listed in the row's
+  `unrecorded`, so an unknown squad or role is never read as none; `unrecorded` is in the key, so a
+  main-bot launch (squad none) and one whose squad was not recorded never share a row. Rows come in
+  key order: byte order, null first, `unrecorded` in its enum's order.
 - **Per row, on every row kind**, an optional `attribution.actor` object with four counts that
   add up to `tokens.total`: `tokens_attributed`, `tokens_ambiguous`, `tokens_unlinked` and
   `tokens_before_evidence` (below). Then `tokens_by_basis` (`session`, `label`, `worktree`),

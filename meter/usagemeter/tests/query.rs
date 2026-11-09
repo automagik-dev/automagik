@@ -1312,7 +1312,8 @@ fn actor_reasons() -> Vec<String> {
 /// - In `actor_unattributed`, the three counts add up to `tokens_total`, the parts come one per
 ///   reason in the schema's order, and add up, by state, to the count of that name; branch rows,
 ///   which never overlap, hold no more of each than the repo does.
-/// - A bot row's activity names its own harness alone.
+/// - A bot row's activity names its own harness alone, and bot rows come in strict key order
+///   (bot, kind, role, squad, unrecorded, harness; byte order, null first), so no key repeats.
 fn actor_errors(v: &Value) -> Vec<String> {
     let mut e = Vec::new();
     let evidence = v["ingestion"]["evidence_from"].as_str();
@@ -1329,6 +1330,24 @@ fn actor_errors(v: &Value) -> Vec<String> {
             _ => None,
         }
     };
+    let unrecorded = [
+        json!([]),
+        json!(["role"]),
+        json!(["squad"]),
+        json!(["role", "squad"]),
+    ];
+    let text = |x: &Value| x.as_str().map(String::from);
+    let key = |r: &Value| {
+        (
+            text(&r["bot"]),
+            text(&r["kind"]),
+            text(&r["role"]),
+            text(&r["squad"]),
+            unrecorded.iter().position(|u| *u == r["unrecorded"]),
+            text(&r["harness"]),
+        )
+    };
+    let mut last_key = None;
     let mut in_rows = [0i64; 3];
     let rows = v["rows"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     for (i, r) in rows.iter().enumerate() {
@@ -1338,6 +1357,13 @@ fn actor_errors(v: &Value) -> Vec<String> {
             e.push(format!(
                 "rows[{i}]: a bot row on {h} with activity on others"
             ));
+        }
+        if r.get("bot").is_some() {
+            let k = key(r);
+            if last_key.as_ref().is_some_and(|l| *l >= k) {
+                e.push(format!("rows[{i}]: a bot key out of order or repeated"));
+            }
+            last_key = Some(k);
         }
         let Some(a) = r["attribution"].get("actor") else {
             continue;
@@ -1499,6 +1525,13 @@ fn the_sum_check_refuses_counts_that_do_not_add_up() {
     let mut v = example("by-bot");
     v["rows"][0]["activity"]["harnesses"] = json!(["codex", "omp"]);
     bad.push(("a bot row with activity on another harness", v));
+    let mut v = example("by-bot");
+    v["rows"].as_array_mut().unwrap().swap(0, 1);
+    bad.push(("bot rows out of key order", v));
+    let mut v = example("by-bot-lower-bound");
+    let row = v["rows"][1].clone();
+    v["rows"].as_array_mut().unwrap().insert(1, row);
+    bad.push(("a bot key given twice", v));
     for (what, v) in bad {
         assert!(s.valid(&v), "{what}: {:#?}", s.errors(&v));
         assert!(!actor_errors(&v).is_empty(), "the sum check accepts {what}");
