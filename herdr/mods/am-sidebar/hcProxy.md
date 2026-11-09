@@ -1,20 +1,36 @@
 # The per-pane hc proxy (#631)
 
-**Status: C2a preparation, off by default.** The one rollout setting is the bot entry's
-`hcProxy` boolean, changed with `automagik-herdr edit <bot> --hc-proxy on|off`.
-Missing or `false` keeps the existing command byte for byte. Only `true` on Linux wraps a
+**Status: C2b-1 preparation, off by default.** The effective rollout setting is the bot entry's
+`hcProxy` boolean in the project's **approved roster snapshot**, read afresh at each start,
+restart and worker start. Edit the working value with
+`automagik-herdr edit <bot> --hc-proxy on|off`, then run `automagik-herdr proxy approve`
+and review the diff before restarting. A valid approved on stays on if a pane changes or removes
+the working key. Working on with approval off or missing refuses and names `proxy approve`;
+an invalid approval refuses only when the working switch is on. With working off, an invalid
+record starts plain with the existing argv byte for byte and a loud STDERR warning naming
+the record, the problem and `automagik-herdr proxy approve`. An invalid record cannot be
+trusted to say on. This applies to starts, restarts, tree helpers, workers and linked starts.
+Doctor prints a project WARN row for invalid approval, whatever the switches.
+Approved off (or no record with working off)
+keeps the existing command byte for byte. Only approved `true` on Linux wraps a
 pack-started dsh-tui bot or dsh-tui worker in `hcPane.mjs`. Other agents and templates keep their
 existing launch. `AM_HC_PROXY` no longer enables anything: the saved setting belongs to one bot.
-`automagik-herdr show <bot>` reports it. Editing it never restarts a running pane.
+`automagik-herdr show <bot>` reports both working and approved values, including missing
+approval. Editing it never restarts a running pane.
+
+**Known limit:** if a bot was approved on, its working switch was turned off, and the approved
+record is also invalid, it starts plain with that warning. A sandboxed pane cannot write the
+approved record, so only an outside change can cause this combination. Repair the record and
+review `proxy approve` before restarting to restore the intended setting.
 
 The helper starts the proxy **before DSH** and closes it when the child ends. A failed proxy
 start never launches the child; a listening proxy that errors or closes ends the child and
 returns failure. There is no fallback launch against the real core. A stale execution copy or
 profile row refuses startup and names `automagik-herdr dsh-tui install` as the repair.
 
-C2a leaves the managed sandbox profile row unchanged. It prepares rollout and lifecycle only; the
+C2b-1 leaves the managed sandbox profile row unchanged. It prepares approval controls only; the
 socket boundary is not enabled by this slice. Approved template/agent worker allowance follows
-in C2b; the coordinated profile-row enablement and mask review fixes follow in C2c. Keep every
+in C2b-2; the coordinated profile-row enablement and mask review fixes follow in C2c. Keep every
 bot's switch off until those slices have shipped. Localhost administration endpoints remain
 outside this work.
 
@@ -26,21 +42,29 @@ terminal on the computer running that bot:
 1. Run `automagik-herdr dsh-tui update`, then `automagik-herdr dsh-tui doctor`.
    Install and update refresh the stable helper, proxy, guard and wrapper together. Doctor
    checks the stable execution copy and managed profile row without changing either.
-   `dsh-tui doctor --project <project>` also shows every bot's saved `hcProxy` value and
+   `dsh-tui doctor --project <project>` also shows every bot's working and approved `hcProxy` and
    whether its attached local pane's proxy answers. Off with a proxy still up means the pane
-   has not completed rollback. A missing proxy is reported down; doctor never starts a core,
+   has not completed rollback and prints a warning. A malformed roster adds one failed row
+   while install checks still print. A missing proxy is reported down; doctor never starts a core,
    proxy or pane. Install and update preserve every saved switch, including an absent value.
-2. Run `automagik-herdr proxy approve --project <project>` after reviewing the roster diff.
-   A **roster change needs a pane restart** after approval so the new proxy reads it.
-3. Run `automagik-herdr edit <bot> --hc-proxy on`, then
-   `automagik-herdr restart <bot>`. Check that bot before opting in the next.
+2. Run `automagik-herdr edit <bot> --hc-proxy on`, then
+   `automagik-herdr proxy approve --project <project>`. Review the printed roster diff,
+   including the switch change. A **roster change needs a pane restart** after approval.
+3. Run `automagik-herdr restart <bot>`. Check that bot before opting in the next.
 4. To roll back, run `automagik-herdr edit <bot> --hc-proxy off`, then
-   `automagik-herdr restart <bot>`. Existing workers keep their launch until restarted;
+   `automagik-herdr proxy approve --project <project>` (review the diff), then
+   `automagik-herdr restart <bot>`. With a valid approved-on record, off without approval
+   keeps the pane proxied; the invalid-record exception above starts plain with a warning.
+   Existing workers keep their launch until restarted;
    end and relaunch any workers that also need rollback.
 
-An opted-in dsh-tui bot cannot be started or restarted through `--machine` yet: that path
-cannot verify the stable proxy execution path and refuses rather than launch without it.
-Start it locally on the target computer. The saved setting is ignored on non-Linux systems.
+Linked starts and restarts check the target platform first. Non-Linux ignores the switch.
+On Linux they read the target's approved record and refuse an unapproved opt-in; approved on
+refuses because that path cannot verify the stable proxy execution path. Start it locally
+on the target computer instead.
+If checking the target platform fails, working off starts plain with a loud STDERR warning;
+working on refuses. An unreadable or invalid linked approval follows the same on/off rule
+as a local start.
 
 ## Run
 

@@ -9,7 +9,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { approveProject, approvedRootOf, projectKey, readApprovedRecord, recordFileOf,
+import { approveProject, approvedProxyEnabled, approvedProxyState, approvedRootOf,
+  projectKey, readApprovedRecord, recordFileOf,
   sha256Of } from "../mods/am-sidebar/approved.js";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -90,6 +91,7 @@ test("G1 (e): approve prints added, removed, rank, lead and kind changes through
   const next = team();
   next.bots = next.bots.filter((b) => b.id !== ID.dev);
   next.bots.find((b) => b.id === ID.cap).rank = "pm";
+  next.bots.find((b) => b.id === ID.cap).hcProxy = true;
   next.bots.find((b) => b.id === ID.jun).lead = ID.cap;
   next.bots.find((b) => b.id === ID.rev).kind = "main";
   next.bots.push(bot("b-zzzzzzzzzz", "member", { name: "Injected" }));
@@ -100,6 +102,7 @@ test("G1 (e): approve prints added, removed, rank, lead and kind changes through
   assert.match(r.out, /^- b-cccccccccc Dev \(removed\)$/m);
   assert.match(r.out, /^\+ b-zzzzzzzzzz Injected \(added\)$/m);
   assert.match(r.out, /^~ b-bbbbbbbbbb Captain: rank captain -> pm$/m);
+  assert.match(r.out, /^~ b-bbbbbbbbbb Captain: hcProxy off -> on$/m);
   assert.match(r.out, /^~ b-dddddddddd Junior: lead b-cccccccccc -> b-bbbbbbbbbb$/m);
   assert.match(r.out, /^~ b-eeeeeeeeee Reviewer: kind member -> main$/m);
   assert.match(r.out, /record: .* \(0600\)/);
@@ -155,6 +158,48 @@ test("G1: a corrupt, foreign or 0644 record is refused; approve replaces a corru
     approvedAt: "2026-11-02T00:00:00.000Z", approvedBy: "tester" });
   assert.match(replaced.note, /previous record was unreadable/);
   assert.equal(statSync(replaced.path).mode & 0o777, 0o600);
+});
+
+test("invalid approvals have no trusted value: off is plain and on refuses for the same record", (t) => {
+  const s = scene(t);
+  const { path, record } = approveProject({ project: s.project, env: s.env });
+  const invalidRoster = "[]";
+  for (const [name, text, mode] of [
+    ["unreadable", JSON.stringify(record), 0o000],
+    ["not private", JSON.stringify(record), 0o644],
+    ["not JSON", "{broken", 0o600],
+    ["other version", JSON.stringify({ ...record, v: 999 }), 0o600],
+    ["sha mismatch", JSON.stringify({ ...record, sha256: "invalid" }), 0o600],
+    ["invalid roster", JSON.stringify({ ...record, roster: invalidRoster,
+      sha256: sha256Of(invalidRoster) }), 0o600],
+  ]) {
+    chmodSync(path, 0o600);
+    writeFileSync(path, text);
+    chmodSync(path, mode);
+    for (const working of [false, true]) {
+      const state = approvedProxyState({ project: s.project, env: s.env,
+        bot: { id: ID.main, hcProxy: working } });
+      assert.equal(state.approved, null, name);
+      assert.ok(state.error?.includes(path), `${name}: warning names the invalid record`);
+      if (working) assert.throws(() => approvedProxyEnabled(state, "linux"), /proxy approve first/);
+      else assert.equal(approvedProxyEnabled(state, "linux"), false, name);
+    }
+  }
+  chmodSync(path, 0o600);
+});
+
+test("doctor warns about invalid approval even with no bot switches to inspect", (t) => {
+  const s = scene(t);
+  const { path } = approveProject({ project: s.project, env: s.env });
+  writeFileSync(path, "{broken");
+  writeFileSync(s.bots, JSON.stringify({ version: 1, categories: [], bots: [] }));
+  const result = spawnSync(process.execPath,
+    [CLI, "dsh-tui", "doctor", "--project", s.project, "--json"],
+    { cwd: s.root, env: { ...s.env, PATH: "/usr/bin:/bin" }, encoding: "utf8" });
+  const row = JSON.parse(result.stdout).checks.find((entry) => entry.check === "approved-roster");
+  assert.equal(row.warning, true);
+  assert.ok(row.detail.includes(path));
+  assert.match(row.detail, /not JSON/);
 });
 
 test("G1 (d): proxy approve refuses writable data roots and writes nothing", (t) => {

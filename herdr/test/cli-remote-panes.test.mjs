@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
 import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 
@@ -54,7 +55,7 @@ function scene(t, { terminals = [], tui = true } = {}) {
     machines: [{ name: "vm", id: CORE, state: "connected", uname: "Linux x86_64", home: vm, path: vmBin }] }));
   writeFileSync(logPath, "");
   const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+  const env = { ...process.env, XDG_DATA_HOME: "", PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog,
     AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
   // Run from a pane (t1), as a bot would: hc run's default parent is the calling terminal.
@@ -81,7 +82,10 @@ function scene(t, { terminals = [], tui = true } = {}) {
   };
   const appCalls = () => readJsonLines(appLog);
   const windowNow = () => JSON.parse(readFileSync(appState, "utf8"));
-  return { root, project, app, home, cli, on, calls, hcState, setState, rows, windowShows, fakeWindow, appCalls, windowNow };
+  const approve = () => approveProject({ project,
+    env: { HOME: vm, XDG_DATA_HOME: "" }, approvedBy: "tester" });
+  return { root, project, app, home, cli, on, calls, hcState, setState, rows,
+    windowShows, fakeWindow, appCalls, windowNow, approve };
 }
 
 // The Atlas pane as lab/t8 is: live, under the keep wrapper, no status reported.
@@ -89,11 +93,16 @@ const atlasPane = (extra = {}) => ({ address: "vm/t8", name: null, state: "live"
   foreground: { argv: KEEP, name: "sh" }, status: null, ...extra });
 const keysSent = (calls) => calls.filter((c) => ["send", "keys", "interrupt"].includes(c[0]));
 
-test("a linked opt-in dsh-tui launch refuses before any ordinary pane can start", (t) => {
+test("linked Linux starts require approval, then refuse approved on even with working off", (t) => {
   const s = scene(t);
   const path = join(s.project, ".herdr", "bots.json");
   const file = JSON.parse(readFileSync(path, "utf8"));
   Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: true });
+  writeFileSync(path, JSON.stringify(file));
+  const unapproved = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.match(unapproved.err, /run automagik-herdr proxy approve first/);
+  s.approve();
+  file.bots[0].hcProxy = false;
   writeFileSync(path, JSON.stringify(file));
   for (const verb of ["start", "restart"]) {
     const r = s.cli([verb, "Atlas", ...s.on, "--json"]);
@@ -101,6 +110,106 @@ test("a linked opt-in dsh-tui launch refuses before any ordinary pane can start"
     assert.match(r.err, /hc proxy: start this opted-in bot on its own computer/);
   }
   assert.equal(s.calls().some((call) => call[0] === "run"), false);
+});
+
+test("L4: linked non-Linux starts and restarts ignore hcProxy on", (t) => {
+  const s = scene(t);
+  const path = join(s.project, ".herdr/bots.json");
+  const file = JSON.parse(readFileSync(path));
+  Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: true });
+  writeFileSync(path, JSON.stringify(file));
+  exe(join(s.root, "vm-bin", "dsh-tui"), "#!/bin/sh\nexit 0\n");
+  s.setState((state) => { state.machines[0].uname = "Darwin arm64"; });
+  for (const verb of ["start", "restart"]) {
+    const result = s.cli([verb, "Atlas", ...s.on, "--force", "--json"]);
+    assert.equal(result.code, 0, result.err);
+  }
+  assert.equal(s.calls().some((call) => call.some((word) => word.endsWith("/hcPane.mjs"))), false);
+});
+
+test("linked record path is pinned to recordFileOf for a fixture alias and custom data home", (t) => {
+  const s = scene(t);
+  const file = JSON.parse(readFileSync(join(s.project, ".herdr/bots.json")));
+  Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: true });
+  writeFileSync(join(s.project, ".herdr/bots.json"), JSON.stringify(file));
+  const alias = join(s.root, "project alias");
+  symlinkSync(s.project, alias);
+  const env = { XDG_DATA_HOME: join(s.root, "custom data home") };
+  approveProject({ project: s.project, env, approvedBy: "tester" });
+  const result = s.cli(["start", "Atlas", "--machine", "vm", "--project", alias], env);
+  assert.match(result.err, /linked Linux launches cannot verify the proxy execution path/);
+  const expected = recordFileOf(alias, env);
+  const reads = s.calls().filter((call) => call[0] === "file" && call[1] === "read"
+    && call.at(-1).includes("/approved/"));
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].at(-1), expected);
+});
+
+test("the same invalid record warns off to plain linked argv and refuses working on", (t) => {
+  for (const verb of ["start", "restart"]) {
+    const s = scene(t);
+    const filePath = join(s.project, ".herdr/bots.json");
+    const file = JSON.parse(readFileSync(filePath));
+    Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: false });
+    writeFileSync(filePath, JSON.stringify(file));
+    exe(join(s.root, "vm-bin/dsh-tui"), "#!/bin/sh\nexit 0\n");
+    const initialState = readFileSync(join(s.root, "hc.json"));
+    const args = [verb, "Atlas", ...s.on, "--force", "--json"];
+    const baseline = s.cli(args);
+    assert.equal(baseline.code, 0, baseline.err);
+    const plain = s.calls().filter((call) => call[0] === "run").at(-1);
+    const reset = () => {
+      writeFileSync(join(s.root, "hc.json"), initialState);
+      rmSync(attachPath(s.app), { force: true });
+    };
+    reset();
+    file.bots[0].hcProxy = true;
+    writeFileSync(filePath, JSON.stringify(file));
+    const { path, record } = s.approve();
+    file.bots[0].hcProxy = false;
+    writeFileSync(filePath, JSON.stringify(file));
+    const corrupt = JSON.stringify({ ...record, sha256: "invalid" });
+    writeFileSync(path, corrupt);
+    const off = s.cli(args);
+    assert.equal(off.code, 0, off.err);
+    assert.deepEqual(s.calls().filter((call) => call[0] === "run").at(-1), plain);
+    assert.equal((off.err.match(/WARNING hc proxy:/g) ?? []).length, 1);
+    assert.ok(off.err.includes(path));
+    assert.match(off.err, /does not match its sha256.*starting plain.*automagik-herdr proxy approve/);
+    assert.doesNotMatch(off.out, /^WARNING hc proxy:/m);
+    reset();
+    file.bots[0].hcProxy = true;
+    writeFileSync(filePath, JSON.stringify(file));
+    const before = s.calls().filter((call) => call[0] === "run").length;
+    const on = s.cli(args);
+    assert.notEqual(on.code, 0);
+    assert.match(on.err, /does not match its sha256.*automagik-herdr proxy approve first/);
+    assert.equal(s.calls().filter((call) => call[0] === "run").length, before);
+    assert.equal(readFileSync(path, "utf8"), corrupt);
+  }
+});
+
+test("linked uname failure warns off to a plain start and refuses working on", (t) => {
+  const s = scene(t);
+  const path = join(s.project, ".herdr/bots.json");
+  const file = JSON.parse(readFileSync(path));
+  Object.assign(file.bots[0], { agent: "dsh-tui", hcProxy: false });
+  writeFileSync(path, JSON.stringify(file));
+  exe(join(s.root, "vm-bin/dsh-tui"), "#!/bin/sh\nexit 0\n");
+  s.setState((state) => { state.execUnanswered = ["uname"]; });
+  const off = s.cli(["start", "Atlas", ...s.on, "--json"]);
+  assert.equal(off.code, 0, off.err);
+  assert.match(off.err, /WARNING hc proxy: cannot check the target platform:.*starting plain/);
+  assert.match(off.err, /automagik-herdr proxy approve/);
+  const run = s.calls().find((call) => call[0] === "run");
+  assert.ok(run.includes("dsh-tui"));
+  assert.equal(run.some((word) => word.endsWith("/hcPane.mjs")), false);
+  file.bots[0].hcProxy = true;
+  writeFileSync(path, JSON.stringify(file));
+  const on = s.cli(["restart", "Atlas", ...s.on, "--force", "--json"]);
+  assert.notEqual(on.code, 0);
+  assert.match(on.err, /cannot check the target platform:.*proxy approve first/);
+  assert.equal(s.calls().filter((call) => call[0] === "run").length, 1);
 });
 
 test("start --machine: hc run --on there with the Mac's agent table (programs.json's hermes --tui); the row keeps tN, machine and its core", (t) => {
@@ -975,7 +1084,7 @@ test("start --machine of a dsh-tui bot: a guard folder with a colon is left off 
 
 test("start --machine of a dsh-tui bot: a failed guard probe is named as failed, not as a missing guard", (t) => {
   const s = dshTuiScene(t);
-  s.setState((st) => { st.execTimedOut = ["automagik-herdr"]; });
+  s.setState((st) => { st.execTimedOut = ["automagik-herdr"]; st.machines[0].uname = "Darwin arm64"; });
   const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
   const out = r.json();

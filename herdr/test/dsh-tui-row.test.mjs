@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +16,8 @@ import { join } from "node:path";
 import * as models from "../mods/am-sidebar/models.js";
 import { restartPlan } from "../mods/am-sidebar/restart.js";
 import { GUARD_DIR, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
+import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
+import { fixturePaneEdit } from "./fixture-pane-edit.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -135,14 +137,15 @@ function scene(t, { terminals = [] } = {}) {
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ terminals: terminals.map((x) => ({ cwd: project, ...x })), next: 100 }));
   writeFileSync(logPath, "");
-  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
+  const env = { XDG_DATA_HOME: join(root, "data"), PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
   const cli = (args, extra = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env: { ...env, ...extra }, encoding: "utf8" });
     return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
   };
   const runs = () => readJsonLines(logPath).filter((c) => c[0] === "run");
-  return { root, project, app, cli, runs };
+  const approve = () => approveProject({ project, env, approvedBy: "tester" });
+  return { root, project, app, cli, runs, approve, env };
 }
 /** The program words in an hc run call: after `--`, past `/usr/bin/env` and its VAR= words. */
 const paneWords = (run) => {
@@ -172,6 +175,146 @@ const withPane = (t, opts) => {
   return s;
 };
 
+
+test("M7: fixture pane edits cannot disable the approved switch at the next start or restart",
+  { skip: process.platform !== "linux" }, (t) => {
+  for (const remove of [false, true]) {
+    const s = scene(t);
+    assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+    s.approve();
+    fixturePaneEdit(s, remove);
+    const show = s.cli(["show", "Genie", "--json"]).json();
+    assert.deepEqual(show.hcProxyState, { working: false, approved: true, error: null });
+    assert.match(s.cli(["show", "Genie"]).out, /working off; approved on/);
+    const doctor = s.cli(["dsh-tui", "doctor"]).out;
+    assert.match(doctor, /hcProxy working off; approved on/);
+    for (const verb of ["start", "restart"]) {
+      const result = s.cli([verb, "Genie", "--force", "--json"]);
+      assert.equal(result.code, 0, result.err);
+      assert.match(paneWords(s.runs().at(-1))[2], /\/hcPane\.mjs$/);
+    }
+  }
+});
+
+test("working on requires approval before start or restart when approved off or missing",
+  { skip: process.platform !== "linux" }, (t) => {
+  for (const approval of ["missing", "off", "bot missing"]) {
+    const s = scene(t);
+    if (approval !== "missing") {
+      if (approval === "bot missing") {
+        const file = join(s.project, ".herdr/bots.json");
+        const roster = JSON.parse(readFileSync(file));
+        roster.bots[0].id = "b-otheraaaaa";
+        writeFileSync(file, JSON.stringify(roster));
+        s.approve();
+        roster.bots[0].id = ID;
+        writeFileSync(file, JSON.stringify(roster));
+      } else s.approve();
+    }
+    assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+    for (const verb of ["start", "restart"]) {
+      const result = s.cli([verb, "Genie", "--json"]);
+      assert.notEqual(result.code, 0);
+      assert.match(result.err, /run automagik-herdr proxy approve first/);
+      assert.equal(result.err.trim().split("\n").length, 1);
+    }
+    assert.deepEqual(s.runs(), [], "no plain fallback");
+  }
+});
+
+test("the same invalid record warns off to plain argv and refuses on for local starts and helpers",
+  { skip: process.platform !== "linux" }, (t) => {
+  for (const mode of ["start", "restart", "tree"]) {
+    const s = mode === "start" ? scene(t) : withPane(t, { turn: 3, session: SID });
+    const statePath = join(s.root, "hc.json");
+    if (mode === "tree") {
+      const worktree = join(s.project, ".claude/worktrees/task");
+      mkdirSync(worktree, { recursive: true });
+      const state = JSON.parse(readFileSync(statePath));
+      state.terminals.push({ address: "t6", name: "helper", state: "live", created_ms: 6,
+        cwd: worktree, parent: "t5", die_with_parent: true, labels: { "worker.of": ID },
+        foreground: { argv: ["dsh-tui"], cwd: worktree, name: "dsh-tui" },
+        status: { app: "dsh-tui", state: "idle" } });
+      writeFileSync(statePath, JSON.stringify(state));
+    }
+    const attach = join(s.app, "automagik-herdr/attach.jsonl");
+    const initialState = readFileSync(statePath);
+    const initialAttach = existsSync(attach) ? readFileSync(attach) : null;
+    const reset = () => {
+      writeFileSync(statePath, initialState);
+      if (initialAttach) writeFileSync(attach, initialAttach, { mode: 0o600 });
+      else rmSync(attach, { force: true });
+    };
+    const args = mode === "start" ? ["start", "Genie", "--json"]
+      : ["restart", "Genie", "--fresh", "--force", "--json",
+        ...(mode === "tree" ? ["--tree"] : [])];
+    const baseline = s.cli(args);
+    assert.equal(baseline.code, 0, baseline.err);
+    const count = mode === "tree" ? 2 : 1;
+    const plain = s.runs().slice(-count);
+    reset();
+    assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+    const { path, record } = s.approve();
+    assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "off"]).code, 0);
+    const corrupt = JSON.stringify({ ...record, sha256: "invalid" });
+    writeFileSync(path, corrupt);
+    const off = s.cli(args);
+    assert.equal(off.code, 0, off.err);
+    assert.deepEqual(s.runs().slice(-count), plain, `${mode}: byte-equal plain argv`);
+    assert.equal((off.err.match(/WARNING hc proxy:/g) ?? []).length, count);
+    assert.ok(off.err.includes(path));
+    assert.match(off.err, /does not match its sha256.*starting plain.*automagik-herdr proxy approve/);
+    assert.doesNotMatch(off.out, /^WARNING hc proxy:/m, "warning goes to stderr");
+    const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
+    const warning = doctor.checks.find((row) => row.check === "approved-roster");
+    assert.equal(warning.warning, true);
+    assert.ok(warning.detail.includes(recordFileOf(s.project, s.env)));
+    assert.match(s.cli(["dsh-tui", "doctor"]).out, /WARN approved-roster:.*sha256/);
+    reset();
+    const before = s.runs().length;
+    assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+    const on = s.cli(args);
+    assert.notEqual(on.code, 0);
+    assert.match(on.err, /does not match its sha256.*automagik-herdr proxy approve first/);
+    assert.equal(s.runs().length, before, "working on starts no replacement pane");
+    assert.equal(readFileSync(path, "utf8"), corrupt, "both sides used the same corrupt record");
+  }
+});
+
+test("restart --tree keeps a dsh-tui helper proxied after its working switch is removed",
+  { skip: process.platform !== "linux" }, (t) => {
+  const s = withPane(t, { turn: 3, session: SID });
+  assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  s.approve();
+  fixturePaneEdit(s, true);
+  const worktree = join(s.project, ".claude/worktrees/task");
+  mkdirSync(worktree, { recursive: true });
+  const file = join(s.root, "hc.json");
+  const state = JSON.parse(readFileSync(file));
+  state.terminals.push({ address: "t6", name: "helper", state: "live", created_ms: 6,
+    cwd: worktree, parent: "t5", die_with_parent: true, labels: { "worker.of": ID },
+    foreground: { argv: ["dsh-tui"], cwd: worktree, name: "dsh-tui" },
+    status: { app: "dsh-tui", state: "idle" } });
+  writeFileSync(file, JSON.stringify(state));
+  const result = s.cli(["restart", "Genie", "--tree", "--json"]);
+  assert.equal(result.code, 0, result.err);
+  const helper = paneWords(s.runs().at(-1));
+  assert.match(helper[2], /\/hcPane\.mjs$/);
+  assert.ok(helper.includes("--worker"));
+  assert.ok(helper.includes(s.project), "main project approval, not the helper worktree");
+});
+
+test("L3: malformed roster keeps install checks and adds one failed roster row", (t) => {
+  const s = scene(t);
+  writeFileSync(join(s.project, ".herdr/bots.json"), "{broken");
+  const result = s.cli(["dsh-tui", "doctor", "--json"]);
+  assert.equal(result.code, 1);
+  const report = result.json();
+  assert.ok(report.checks.some((row) => row.check === "dsh-hc-proxy"));
+  assert.equal(report.checks.filter((row) => row.check === "roster" && !row.ok).length, 1);
+  assert.deepEqual(s.runs(), []);
+});
+
 test("start a dsh-tui bot: plain dsh-tui, its briefing after --; no permission, add-dir, approval, model or effort flag", (t) => {
   const s = scene(t);
   const r = s.cli(["start", "Genie", "--json"]);
@@ -187,6 +330,7 @@ test("a per-bot opt-in dsh-tui start runs the per-pane hc helper before DSH",
   { skip: process.platform !== "linux" }, (t) => {
   const s = scene(t);
   assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  s.approve();
   const r = s.cli(["start", "Genie", "--json"]);
   assert.equal(r.code, 0, r.err);
   const words = paneWords(s.runs()[0]);
@@ -243,6 +387,7 @@ test("doctor shows the saved switch and a missing proxy for the attached bot",
   { skip: process.platform !== "linux" }, (t) => {
   const s = withPane(t, { turn: 1 });
   assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  s.approve();
   const before = readFileSync(join(s.project, ".herdr/bots.json"), "utf8");
   const report = s.cli(["dsh-tui", "doctor", "--json"]).json();
   assert.equal(report.bots[0].id, ID);
@@ -251,19 +396,21 @@ test("doctor shows the saved switch and a missing proxy for the attached bot",
   assert.equal(report.bots[0].up, false);
   const check = report.checks.find((row) => row.check === `hc-proxy:${ID}`);
   assert.equal(check.ok, false);
-  assert.match(check.detail, /hcProxy on; proxy runtime path is unavailable/);
+  assert.match(check.detail, /hcProxy working on; approved on; proxy runtime path is unavailable/);
   assert.equal(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"), before);
   assert.deepEqual(s.runs(), [], "doctor never starts a proxy or pane");
 });
 
-test("restart reads the saved switch again; off plus restart restores the plain command",
+test("restart re-reads approval; off plus approve and restart restores the plain command",
   { skip: process.platform !== "linux" }, (t) => {
   const s = withPane(t, { turn: 3, session: SID });
   assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "on"]).code, 0);
+  s.approve();
   assert.equal(s.cli(["restart", "Genie", "--json"]).code, 0);
   assert.match(paneWords(s.runs().at(-1))[2], /\/hcPane\.mjs$/);
   assert.deepEqual(agentWords(s.runs().at(-1)).slice(0, 4), ["dsh-tui", "--resume", SID, "--"]);
   assert.equal(s.cli(["edit", "Genie", "--hc-proxy", "off"]).code, 0);
+  s.approve();
   const rollback = s.cli(["restart", "Genie", "--force", "--json"]);
   assert.equal(rollback.code, 0, rollback.err);
   assert.equal(paneWords(s.runs().at(-1))[0], "dsh-tui");
