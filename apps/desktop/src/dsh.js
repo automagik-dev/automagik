@@ -825,13 +825,16 @@ export function startDsh({
 }) {
   // A file left by an earlier start must not sign this one in: dsh writes its own once it is
   // ready, and this start falls back to it when dsh's output is unavailable. A removal that
-  // fails must not fail the start; dsh replaces the file once it is ready.
+  // fails must not fail the start, but the old file may still name this port with a dead token
+  // (dsh cannot replace it either), so that start learns the URL from dsh's output alone.
+  let fileFallback = Boolean(urlFile)
   if (urlFile) {
     try {
       rmSync(urlFile, { force: true })
     } catch (error) {
+      fileFallback = false
       const reason = error instanceof Error ? error.message : String(error)
-      console.error(`automagik: could not remove the previous launch URL ${urlFile}: ${reason}`)
+      log?.write(`automagik: could not remove the previous launch URL ${urlFile}: ${reason}\n`)
     }
   }
   const child = spawn(node, [bin, '--profile', PROFILE, ...(privacy ? ['--patch', privacy] : []), '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
@@ -866,7 +869,7 @@ export function startDsh({
     }
     child.stdout.on('data', onData)
     child.stderr.on('data', onData)
-    if (urlFile) {
+    if (fileFallback) {
       // dsh's web app also records the URL here (runtime patch web-launch-token-persistence):
       // when its stdout is lost, the file is how the app still learns the launch URL.
       poll = setInterval(() => {

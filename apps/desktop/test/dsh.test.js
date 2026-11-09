@@ -352,21 +352,20 @@ setInterval(() => {}, 1000)
   const urlFile = launchUrlFileOf(home)
   writeFileSync(urlFile, 'http://127.0.0.1:1/?token=stale\n')
   chmodSync(home, 0o500)
-  const reported = []
-  const originalError = console.error
-  console.error = (...args) => reported.push(args.join(' '))
+  const written = []
+  const log = { write: chunk => written.push(String(chunk)) }
   try {
     const port = await freePort()
-    const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, urlFile })
+    const { child, url } = await startDsh({ node: process.execPath, bin, env: process.env, port, cwd: root, urlFile, log })
     scope.stop = () => stopDsh(child)
     assert.equal(url, `http://127.0.0.1:${port}/?token=kept`, 'the start still resolves')
+    const reported = written.filter(line => line.startsWith('automagik:'))
     assert.equal(reported.length, 1)
     assert.ok(reported[0].includes(urlFile), reported[0])
     assert.match(reported[0], /could not remove the previous launch URL/)
     assert.match(reported[0], /EACCES/, reported[0])
   } finally {
     chmodSync(home, 0o700)
-    console.error = originalError
   }
 })
 
