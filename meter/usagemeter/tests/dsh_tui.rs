@@ -353,6 +353,22 @@ fn fork_files(env: &Env) -> (PathBuf, Vec<u8>, PathBuf, Vec<u8>) {
 #[test]
 fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
     let total = |env: &Env| dsh_totals(env).input_uncached;
+    // The sessions (id, parent, first and last time) do not depend on the read order either.
+    let sessions = |env: &Env| -> Vec<(String, Option<String>, i64, i64)> {
+        let s = env.store();
+        let mut st = s
+            .conn
+            .prepare(
+                "SELECT session, parent_session, first_ms, last_ms FROM sessions
+                 WHERE harness = 'dsh-tui' ORDER BY session",
+            )
+            .unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    let mut seen = Vec::new();
     // Parent read first, the child in a later run.
     let env = Env::new();
     let (pp, pb, cp, cb) = fork_files(&env);
@@ -362,6 +378,7 @@ fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
     let r = env.run(&env.opts());
     assert_eq!((r.health.events, r.health.duplicates), (1, 2));
     assert_eq!(total(&env), 307);
+    seen.push(sessions(&env));
     // The child first (its parent's file not there yet, or gone): the copies count once.
     let env = Env::new();
     let (pp, pb, cp, cb) = fork_files(&env);
@@ -372,6 +389,7 @@ fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
     let r = env.run(&env.opts());
     assert_eq!((r.health.events, r.health.duplicates), (0, 2));
     assert_eq!(total(&env), 307);
+    seen.push(sessions(&env));
     // Both in one run.
     let env = Env::new();
     let (pp, pb, cp, cb) = fork_files(&env);
@@ -380,6 +398,9 @@ fn a_forked_session_counts_its_parents_calls_once_in_any_read_order() {
     let r = env.run(&env.opts());
     assert_eq!((r.health.events, r.health.duplicates), (3, 2));
     assert_eq!(total(&env), 307);
+    seen.push(sessions(&env));
+    assert_eq!(seen[0].len(), 2, "{seen:?}");
+    assert!(seen.iter().all(|s| *s == seen[0]), "{seen:#?}");
 }
 
 #[test]
@@ -483,4 +504,167 @@ fn a_session_in_another_format_makes_the_source_unsupported() {
     fs::remove_file(file_of(&env, "sess-old", "session.v2.jsonl")).unwrap();
     let r = env.run(&env.opts());
     assert_eq!(r.summary.unwrap()["sources"]["dsh-tui"]["status"], "ok");
+}
+
+/// A frame by hand: one raw block holding these lines, with the zstd content checksum (XXH64's
+/// low 32 bits over the content) when `checksum`; `tamper` changes a content byte after the
+/// checksum was taken.
+fn raw_frame(lines: &[String], checksum: bool, tamper: bool) -> Vec<u8> {
+    let mut content = lines.join("\n").into_bytes();
+    content.push(b'\n');
+    let mut x = meter::xxh64::Xxh64::default();
+    x.update(&content);
+    let sum = x.finish() as u32;
+    if tamper {
+        // A digit of the first input count: still a valid line, a different number.
+        let at = content
+            .windows(14)
+            .position(|w| w == b"\"inputTokens\":")
+            .unwrap()
+            + 14;
+        content[at] = if content[at] == b'9' { b'8' } else { b'9' };
+    }
+    // Frame header: no single segment, a 1 MiB window, then one last raw block.
+    let mut f = vec![
+        0x28,
+        0xB5,
+        0x2F,
+        0xFD,
+        if checksum { 0x04 } else { 0x00 },
+        0x50,
+    ];
+    let h = 1u32 | ((content.len() as u32) << 3);
+    f.extend_from_slice(&h.to_le_bytes()[..3]);
+    f.extend_from_slice(&content);
+    if checksum {
+        f.extend_from_slice(&sum.to_le_bytes());
+    }
+    f
+}
+
+fn dsh_source(r: &meter::sync::Report) -> serde_json::Value {
+    r.summary.as_ref().unwrap()["sources"]["dsh-tui"].clone()
+}
+
+/// PR 802's review: a call with no readable totalTokens is exact only when all four counts are
+/// readable; otherwise its total is unknown, which is never 0: the line is skipped and counted,
+/// and the source reports degraded with the reason.
+#[test]
+fn a_call_with_no_total_is_exact_only_with_every_count() {
+    let env = Env::new();
+    let p = session_file(&env);
+    let t = at();
+    let line = |seq: i64, usage: &str| {
+        format!(
+            r#"{{"type":"assistant/message","seq":{seq},"time":{t},"data":{{"message":{{"id":"m{seq}","source":{{"model":"model-d"}}}},"usage":{usage}}}}}"#
+        )
+    };
+    let all = line(
+        0,
+        r#"{"inputTokens":3,"outputTokens":4,"cacheReadTokens":5,"cacheWriteTokens":6}"#,
+    );
+    let some = line(1, r#"{"inputTokens":3,"outputTokens":4}"#);
+    let none = line(2, "{}");
+    let bad = line(
+        3,
+        r#"{"inputTokens":"many","outputTokens":1,"cacheReadTokens":1,"cacheWriteTokens":1}"#,
+    );
+    append(&p, &frame(&[header(), all, some, none, bad]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.usage_lines, 1);
+    assert_eq!(r.health.skipped_lines, 3);
+    assert_eq!(
+        dsh_totals(&env),
+        Tokens {
+            input_uncached: 3,
+            output: 4,
+            cache_read: 5,
+            cache_write_5m: 6,
+            ..Tokens::default()
+        }
+    );
+    let src = dsh_source(&r);
+    assert_eq!(src["status"], "degraded", "{src}");
+    assert!(
+        src["reason"]
+            .as_str()
+            .unwrap()
+            .contains("could not be read"),
+        "{src}"
+    );
+}
+
+/// PR 802's review: frames with a content checksum are checked. A frame whose content does not
+/// match counts nothing (not even the lines before the mismatch is found), counts as one skipped
+/// frame, and the next frame is read.
+#[test]
+fn a_frame_whose_checksum_does_not_match_counts_nothing() {
+    let env = Env::new();
+    let p = session_file(&env);
+    append(
+        &p,
+        &raw_frame(&[header(), msg(0, 10, 20, 300)], true, false),
+    );
+    append(&p, &raw_frame(&[msg(1, 90, 90, 90)], true, true));
+    append(&p, &raw_frame(&[msg(2, 1, 2, 3)], true, false));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.skipped_lines, 1);
+    let mut want = tokens(10, 20, 300);
+    want.add(&tokens(1, 2, 3));
+    assert_eq!(dsh_totals(&env), want);
+    assert_eq!(dsh_source(&r)["status"], "degraded");
+}
+
+/// PR 802's review: a corrupted block size makes the reader wait for bytes that never come, which
+/// held back the rest of the file while the source said ok. Once the session has stopped growing,
+/// those bytes are reported: the source is degraded, with how many bytes and sessions.
+#[test]
+fn a_corrupted_block_size_holding_back_a_tail_is_degraded_never_ok() {
+    let env = Env::new();
+    let p = session_file(&env);
+    append(
+        &p,
+        &raw_frame(&[header(), msg(0, 10, 20, 300)], false, false),
+    );
+    let mut torn = raw_frame(&[msg(1, 4, 5, 6)], false, false);
+    // The block header's size field, set near its 21-bit maximum: the frame "ends" far past EOF.
+    let h = 1u32 | (0x1F_0000 << 3);
+    torn[6..9].copy_from_slice(&h.to_le_bytes()[..3]);
+    append(&p, &torn);
+    append(&p, &raw_frame(&[msg(2, 7, 8, 9)], false, false));
+    // The session was last written an hour before the run.
+    let then = std::time::UNIX_EPOCH + std::time::Duration::from_millis((now() - 3_600_000) as u64);
+    fs::File::options()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_modified(then)
+        .unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!(dsh_totals(&env), tokens(10, 20, 300), "the tail waits");
+    let src = dsh_source(&r);
+    assert_eq!(src["status"], "degraded", "{src}");
+    assert!(
+        src["reason"].as_str().unwrap().contains("not whole frames"),
+        "{src}"
+    );
+
+    // A frame being written right now (the file is fresh) is not reported.
+    let env = Env::new();
+    let p = session_file(&env);
+    append(
+        &p,
+        &raw_frame(&[header(), msg(0, 10, 20, 300)], false, false),
+    );
+    let cut = raw_frame(&[msg(1, 4, 5, 6)], false, false);
+    append(&p, &cut[..cut.len() - 5]);
+    let fresh = std::time::UNIX_EPOCH + std::time::Duration::from_millis(now() as u64);
+    fs::File::options()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_modified(fresh)
+        .unwrap();
+    let r = env.run(&env.opts());
+    assert_eq!(dsh_source(&r)["status"], "ok");
 }

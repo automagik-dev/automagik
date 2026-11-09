@@ -17,3 +17,4 @@ pub mod store;
 pub mod summary;
 pub mod sync;
 pub mod time;
+pub mod xxh64;

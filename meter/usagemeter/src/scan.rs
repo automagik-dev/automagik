@@ -500,10 +500,23 @@ fn count_line(
     }
 }
 
+/// How a whole frame decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decoded {
+    /// To its end, and its content checksum (when it has one) matches.
+    Whole,
+    /// It stopped decoding: its headers may not say where it really ends.
+    Broken,
+    /// It decoded, but its content is not what its checksum says: nothing it holds is counted.
+    BadChecksum,
+}
+
 /// Decodes one whole frame and parses its lines as they come out, holding at most one line: a
 /// line longer than `max_line` is skipped and counted, as in a JSONL file, and the rest of the
 /// frame is still read. A frame that stops decoding is counted as one skipped line; the lines
-/// decoded before the error stay counted. Returns whether the frame decoded to its end.
+/// decoded before the error stay counted. A frame with a content checksum (RFC 8878 3.1.1) is
+/// checked against it: on a mismatch everything the frame added (events, the file context, the
+/// health counts) is taken back and the frame counts as one skipped line.
 fn parse_frame(
     frame: &[u8],
     source: Source,
@@ -511,10 +524,14 @@ fn parse_frame(
     ctx: &mut FileCtx,
     events: &mut Vec<UsageEvent>,
     health: &mut Health,
-) -> bool {
+) -> Decoded {
+    let checksum = (frame.get(4).is_some_and(|fhd| fhd & 0x04 != 0) && frame.len() >= 9)
+        .then(|| u32::from_le_bytes(frame[frame.len() - 4..].try_into().unwrap_or([0; 4])));
+    let (events_before, ctx_before, health_before) = (events.len(), ctx.clone(), *health);
+    let mut hash = crate::xxh64::Xxh64::default();
     let Ok(mut decoder) = ruzstd::decoding::StreamingDecoder::new(frame) else {
         health.skipped_lines += 1;
-        return false;
+        return Decoded::Broken;
     };
     let mut chunk = vec![0u8; 64 * 1024];
     let mut line: Vec<u8> = Vec::new();
@@ -525,9 +542,12 @@ fn parse_frame(
             Ok(n) => n,
             Err(_) => {
                 health.skipped_lines += 1;
-                return false;
+                return Decoded::Broken;
             }
         };
+        if checksum.is_some() {
+            hash.update(&chunk[..n]);
+        }
         for piece in chunk[..n].split_inclusive(|b| *b == b'\n') {
             let ends = piece.last() == Some(&b'\n');
             let body = if ends {
@@ -555,7 +575,14 @@ fn parse_frame(
     if !too_long {
         count_line(&line, source, ctx, events, health);
     }
-    true
+    if checksum.is_some_and(|want| want != hash.finish() as u32) {
+        events.truncate(events_before);
+        *ctx = ctx_before;
+        *health = health_before;
+        health.skipped_lines += 1;
+        return Decoded::BadChecksum;
+    }
+    Decoded::Whole
 }
 
 /// [`read_file`] for a multi-frame zstd file: the same chunks, commits and size rule, over whole
@@ -605,21 +632,25 @@ where
             match frame_at(&buf[consumed..]) {
                 Frame::Whole { len, skippable } => {
                     let frame = &buf[consumed..consumed + len];
-                    let decoded = skippable
-                        || parse_frame(
+                    let decoded = if skippable {
+                        Decoded::Whole
+                    } else {
+                        parse_frame(
                             frame,
                             source,
                             limits.max_line,
                             &mut ctx,
                             &mut events,
                             &mut health,
-                        );
+                        )
+                    };
                     // A frame that does not decode may not end where its headers said (a torn
                     // frame's last block runs into the next frame): go on at the next frame start
-                    // inside it, if there is one.
+                    // inside it, if there is one. A frame with a bad checksum ended where its
+                    // headers said: the next frame starts after it.
                     consumed += match decoded {
-                        true => len,
-                        false => {
+                        Decoded::Whole | Decoded::BadChecksum => len,
+                        Decoded::Broken => {
                             memchr::memmem::find(&frame[1..], &ZSTD_MAGIC).map_or(len, |i| 1 + i)
                         }
                     };
@@ -732,35 +763,49 @@ mod tests {
         // The hand-made frame decodes to what it holds.
         let mut ctx = FileCtx::default();
         let (mut ev, mut h) = (Vec::new(), Health::default());
-        assert!(parse_frame(
-            &f,
-            Source::DshTui,
-            1 << 20,
-            &mut ctx,
-            &mut ev,
-            &mut h
-        ));
+        // The hand-made frame's checksum field is zeros, not its content's: refused whole.
+        assert_eq!(
+            parse_frame(&f, Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h),
+            Decoded::BadChecksum
+        );
+        assert_eq!(h.skipped_lines, 1);
+        let f = frame(&[(b"ab\n", false), (b"x", true), (b"\n", false)], false);
+        let mut h = Health::default();
+        assert_eq!(
+            parse_frame(&f, Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h),
+            Decoded::Whole
+        );
         assert_eq!(h, Health::default());
         // A line longer than max_line ("xxx" over 2) is skipped and counted; the frame still
         // decodes to its end.
-        assert!(parse_frame(
-            &f,
-            Source::DshTui,
-            2,
-            &mut ctx,
-            &mut ev,
-            &mut h
-        ));
+        assert_eq!(
+            parse_frame(&f, Source::DshTui, 2, &mut ctx, &mut ev, &mut h),
+            Decoded::Whole
+        );
         assert_eq!(h.skipped_lines, 1);
         // Bytes that are not a frame do not decode.
-        assert!(!parse_frame(
-            b"junk",
-            Source::DshTui,
-            1 << 20,
-            &mut ctx,
-            &mut ev,
-            &mut h
-        ));
+        assert_eq!(
+            parse_frame(b"junk", Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h),
+            Decoded::Broken
+        );
         assert_eq!(h.skipped_lines, 2);
+        // A frame the zstd CLI wrote for "abc", content checksum on: it decodes and checks; with
+        // one content byte changed it is refused whole.
+        let cli = [
+            0x28, 0xB5, 0x2F, 0xFD, 0x04, 0x58, 0x19, 0x00, 0x00, b'a', b'b', b'c', 0x99, 0x09,
+            0x77, 0xAD,
+        ];
+        let mut h = Health::default();
+        assert_eq!(
+            parse_frame(&cli, Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h),
+            Decoded::Whole
+        );
+        let mut bad = cli;
+        bad[10] = b'B';
+        assert_eq!(
+            parse_frame(&bad, Source::DshTui, 1 << 20, &mut ctx, &mut ev, &mut h),
+            Decoded::BadChecksum
+        );
+        assert_eq!(h.skipped_lines, 1);
     }
 }

@@ -355,6 +355,13 @@ impl Store {
                    first_ms = min(first_ms, excluded.first_ms), last_ms = max(last_ms, excluded.last_ms)",
             )?;
             for e in events {
+                // Every session with a usage line has its row, a copy of another session's call
+                // included (a forked dsh-tui session starts with its parent's): which file is read
+                // first then decides only which session a call's tokens go to, never which
+                // sessions exist or their first and last times.
+                if let Some(s) = &e.session {
+                    sess.execute(params![e.key.harness, s, e.parent_session, e.ts_ms])?;
+                }
                 if !e.dedupe_key.is_empty() {
                     seq += 1;
                     if ins.execute(params![key_hash(&e.dedupe_key), seq])? == 0 {
@@ -377,9 +384,6 @@ impl Store {
                     entry.2 = Some(entry.2.unwrap_or(0.0) + usd);
                 }
                 entry.3 += 1;
-                if let Some(s) = &e.session {
-                    sess.execute(params![e.key.harness, s, e.parent_session, e.ts_ms])?;
-                }
             }
         }
         upsert_rows(&tx, &rows, now_ms)?;
