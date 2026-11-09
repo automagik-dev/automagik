@@ -1,0 +1,128 @@
+--- a/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
++++ b/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
+@@ -2365,6 +2365,11 @@
+ 		return outcome.value;
+ 	});
+ }
++/** Report one skipped session folder or file without aborting the whole listing (#861). */
++function warnSkippedSession(kind, path, error) {
++	const reason = (typeof error === "string" ? error : error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, " ");
++	console.warn(`dsh-session: skipped ${kind} ${JSON.stringify(path)}: ${reason}`);
++}
+ /** Whether a filesystem-owned failure should retain its original errno and path. */
+ function isErrnoException(error) {
+ 	return typeof error?.code === "string";
+@@ -2414,6 +2419,8 @@
+ 	*/
+ 	listLimit;
+ 	rootEncodingCheck;
++	/** Skipped paths already reported, so each folder gets one warning line (#861). */
++	skippedPaths = /* @__PURE__ */ new Set();
+ 	generationFormat;
+ 	/**
+ 	* Bounded LRU of parsed, validated stored logs keyed by session id and
+@@ -3070,18 +3077,27 @@
+ 	*/
+ 	async mapSessionDirectories(task, signal) {
+ 		const limit = this.listLimit;
+-		const projects = await settleLimited(limit, await limit(() => this.listProjectDirs(signal)), (project) => this.listSessionDirs(project, signal));
++		const projectPaths = await limit(() => this.listProjectDirs(signal));
++		const projects = await settleLimited(limit, projectPaths, (project) => this.listSessionDirs(project, signal));
+ 		const dirs = [];
+-		let projectFailure;
+-		for (const outcome of projects) {
++		for (const [index, outcome] of projects.entries()) {
+ 			if (outcome.status === "rejected") {
+-				projectFailure = outcome;
+-				break;
++				signal?.throwIfAborted();
++				this.warnSkipped("session project", projectPaths[index], outcome.reason);
++				continue;
+ 			}
+ 			for (const dir of outcome.value) dirs.push(dir);
+ 		}
+-		const results = settledValues(await settleLimited(limit, dirs, task));
+-		if (projectFailure !== void 0) throw projectFailure.reason;
++		const settled = await settleLimited(limit, dirs, task);
++		const results = [];
++		for (const [index, outcome] of settled.entries()) {
++			if (outcome.status === "rejected") {
++				signal?.throwIfAborted();
++				this.warnSkipped("session folder", dirs[index], outcome.reason);
++				continue;
++			}
++			results.push(outcome.value);
++		}
+ 		return results;
+ 	}
+ 	/** Historical logical events depend on the corpus, including members with unreadable headers. */
+@@ -3107,6 +3123,13 @@
+ 		signal?.throwIfAborted();
+ 		return hash.digest("hex");
+ 	}
++	/** Report one skipped session folder or file once per backend instance (#861). */
++	warnSkipped(kind, path, error) {
++		const key = `${kind}\0${path}`;
++		if (this.skippedPaths.has(key)) return;
++		this.skippedPaths.add(key);
++		warnSkippedSession(kind, path, error);
++	}
+ 	async listArtifacts(signal) {
+ 		signal?.throwIfAborted();
+ 		await this.ensureRootEncoding();
+@@ -3120,21 +3143,35 @@
+ 					metadata: await this.readGenerationHeader(selected, void 0, signal)
+ 				};
+ 			} catch (error) {
+-				if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) return {
++				signal?.throwIfAborted();
++				return {
+ 					selected,
+-					metadata: void 0
++					metadata: void 0,
++					error
+ 				};
+-				throw error;
+ 			}
+ 		});
+ 		const artifacts = [];
+ 		const ids = /* @__PURE__ */ new Set();
++		const idPaths = /* @__PURE__ */ new Map();
+ 		for (const outcome of headers) {
+ 			if (outcome.status === "rejected") throw outcome.reason;
+-			const { selected, metadata } = outcome.value;
+-			if (metadata === void 0) continue;
+-			if (ids.has(metadata.header.id)) throw new Error(`duplicate JSONL session id "${metadata.header.id}" appears in multiple project directories`);
+-			ids.add(metadata.header.id);
++			const { selected, metadata, error } = outcome.value;
++			if (error !== void 0) {
++				this.warnSkipped("session folder", dirname(selected.sourcePath), error);
++				continue;
++			}
++			if (metadata === void 0) {
++				this.warnSkipped("session folder", dirname(selected.sourcePath), "no readable session header");
++				continue;
++			}
++			const id = metadata.header.id;
++			if (ids.has(id)) {
++				this.warnSkipped("session folder", dirname(selected.sourcePath), `duplicate session id "${id}" (kept ${JSON.stringify(dirname(idPaths.get(id)))}`);
++				continue;
++			}
++			ids.add(id);
++			idPaths.set(id, selected.sourcePath);
+ 			artifacts.push({
+ 				...metadata,
+ 				path: selected.sourcePath,
+@@ -3527,8 +3564,10 @@
+ 		signal?.throwIfAborted();
+ 		const entries = await readdir(project, { withFileTypes: true });
+ 		signal?.throwIfAborted();
+-		const legacy = entries.find((entry) => entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zstd")));
+-		if (legacy !== void 0) throw this.legacyLayout(join(project, legacy.name));
++		for (const entry of entries) {
++			if (!entry.isFile() || !(entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zstd"))) continue;
++			this.warnSkipped("session file", join(project, entry.name), "unsupported flat-file layout");
++		}
+ 		return entries.filter((entry) => entry.isDirectory()).map((entry) => join(project, entry.name));
+ 	}
+ 	/** Reject a root that already belongs to the other physical encoding. */

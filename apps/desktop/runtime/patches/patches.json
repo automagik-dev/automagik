@@ -96,5 +96,19 @@
         "after": "1ce9ef61e1c8b7390eb821dde804b22cbd95c5911bb7bacb39f8fadf9820d01f"
       }
     ]
+  },
+  {
+    "patch": "session-scan-tolerance.patch",
+    "about": "Session listing: one bad folder in the sessions tree aborted the whole scan, so a backup copy of a session (a sibling folder carrying the original header, e.g. <session>.backup-<timestamp>), a misnamed folder or a stray .jsonl file left the desktop on its startup screen and none of the registered workspaces started (#861). A project, session folder or flat file that cannot be listed is now reported once per path with console.warn and skipped; a header whose id or cwd does not identify its path is reported and skipped, and a duplicate session id keeps the first valid entry and reports the other. The valid sessions still list, the root itself still fails closed, and the scan stays read-only: no event, header or file is rewritten, moved or deleted. Delete it in the DSH release whose listing tolerates a bad folder.",
+    "dsh": "0.2.2-rc.1",
+    "files": [
+      {
+        "package": "@deepseek-ai/dsh-session-persistence-jsonl",
+        "version": "0.2.2-rc.1",
+        "file": "lib/index.js",
+        "before": "69efef5f84dddf947032bc1425067878fa610416c8885acde2ded9b01230c9b7",
+        "after": "66245d8733998224861d4e5af025c2d40f46d815590e96d9728c51c0df58d916"
+      }
+    ]
   }
 ]
