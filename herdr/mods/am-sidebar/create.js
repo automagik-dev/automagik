@@ -160,22 +160,26 @@ export class BotForm {
     const have = new Set(out.map((a) => a.key));
     for (const [key, a] of Object.entries(AGENTS)) {
       if (have.has(key) || !PACK_FORM_AGENTS.has(key)) continue;
-      out.push({ key, name: a.name, installed: await this.programInstalled(a.run?.[0]), icon: null, tint: false });
+      out.push({ key, name: a.name, installed: (await this.programFile(a.run?.[0])) !== null, icon: null, tint: false });
     }
     return out;
   }
 
-  // Whether `program` is one this computer can run: on PATH, in `~/.local/bin`, or beside the
-  // node running Herdr (an nvm-installed agent, as the CLI's programPath looks).
-  async programInstalled(program) {
-    if (typeof program !== "string" || !program) return false;
-    if (program.includes("/")) return fs.exists(program);
+  // Where this computer runs `program` from, as the CLI's programPath finds it: PATH, the
+  // user bin folder where agy installs, then beside the node running Herdr (an nvm install).
+  // Null when it isn't there, so the form and the CLI agree on the program they run.
+  async programFile(program) {
+    if (typeof program !== "string" || !program) return null;
+    if (program.includes("/")) return (await fs.exists(program)) ? program : null;
     const env = typeof process === "undefined" ? {} : process.env;
     const execPath = typeof process === "undefined" ? "" : process.execPath;
     const dirs = [...String(env.PATH ?? "").split(":"), `${home()}/.local/bin`,
       String(execPath ?? "").replace(/\/[^/]*$/, "")].filter(Boolean);
-    for (const dir of dirs) if (await fs.exists(`${dir.replace(/\/+$/, "")}/${program}`)) return true;
-    return false;
+    for (const dir of dirs) {
+      const file = `${dir.replace(/\/+$/, "")}/${program}`;
+      if (await fs.exists(file)) return file;
+    }
+    return null;
   }
 
   // The Antigravity model cache, refreshed once this session when the bot's agent is Antigravity
@@ -194,7 +198,18 @@ export class BotForm {
           await fs.mkdir(`${app}/automagik-herdr`, { recursive: true });
           await fs.writeFile(path, text);
         },
-        exec,
+        // The Herdr mod fs API has no rename: /bin/mv puts the temp file in place, so a reader
+        // never sees half a cache. `agy` is resolved as the CLI resolves it (programFile), then
+        // run by that absolute path, so PATH differences cannot pick another program.
+        rename: async (from, to) => {
+          const r = await exec("/bin/mv", [from, to]);
+          if (r?.code !== 0) throw new Error(`mv failed (${r?.stderr || `exit ${r?.code}`})`);
+        },
+        exec: async (command, args, options) => {
+          const file = await this.programFile(command);
+          if (!file) throw new Error(`${command} isn't installed`);
+          return exec(file, args, options);
+        },
         now: Date.now(),
       });
       if (typeof r.text === "string") this.texts.antigravityModels = r.text;
@@ -305,8 +320,11 @@ export class BotForm {
       const b = this.raw?.bots?.find((x) => x?.id === this.p.bot) ?? file.bots.find((x) => x.id === this.p.bot);
       if (!b) throw new Error(await this.noBot(this.p.bot, this.dir, key, this.readFrom));
       this.fill(formFrom({ mode: "edit", bot: b }));
-      await this.refreshModels();
+      // Snapshot before the model refresh (a slow `agy models`): a field typed while it runs
+      // must still differ from the opened state, or the save would look like no change.
       this.initial = this.snapshot();
+      await this.refreshModels();
+      this.models.clear(); // the refreshed list, not one read before it
       // The model a running pane shows, read from its pane where it runs (machine/tN there).
       this.live = null;
       await this.detect(b, machine);

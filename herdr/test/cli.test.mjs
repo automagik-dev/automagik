@@ -631,6 +631,8 @@ test("Antigravity (#793): a pin comes from `agy models`, cached once; the settin
   assert.deepEqual(s.agyCalls(), ["models"], "one refresh wrote the cache");
   const written = JSON.parse(readFileSync(cache, "utf8"));
   assert.ok(written.models.some((m) => m.id === "claude-sonnet-5-5-high"), "the fixture table is cached");
+  assert.deepEqual(readdirSync(join(s.app, "automagik-herdr")).filter((n) => n.startsWith("antigravity-models.json")),
+    ["antigravity-models.json"], "the temp file was renamed into place");
   // The cache is fresh: a second CLI run reads it and never runs agy.
   const second = s.cli(["create", "--name", "Ag2", "--agent", "antigravity", "--model", "claude-opus-5-5-medium", "--json"]);
   assert.equal(second.code, 0, second.err);

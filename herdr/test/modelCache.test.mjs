@@ -80,6 +80,34 @@ test("refreshAgModels: a missing cache runs `agy models` once, writes the table 
   assert.equal(r.text, written.text);
 });
 
+test("refreshAgModels writes a temp file beside the cache, then renames it into place", async () => {
+  const path = agModelsPath("/app");
+  const calls = [];
+  const r = await refreshAgModels({
+    appHome: "/app", read: () => null, now: NOW,
+    write: (p, text) => { calls.push(["write", p]); assert.match(text, /"source": "agy models"/); },
+    rename: (from, to) => { calls.push(["rename", from, to]); },
+    exec: () => ({ code: 0, stdout: MODELS, stderr: "" }),
+  });
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(calls, [["write", `${path}.tmp-${NOW}`], ["rename", `${path}.tmp-${NOW}`, path]]);
+  // A rename failure is a failed refresh, keeping the last list, and never a half-written cache.
+  const stale = agModelsCacheText(parseAgModelsOutput(MODELS), NOW - AG_MODELS_TTL_MS - 1);
+  const failed = await refreshAgModels({
+    appHome: "/app", read: () => stale, now: NOW, write: () => {}, rename: () => { throw new Error("no rename"); },
+    exec: () => ({ code: 0, stdout: MODELS, stderr: "" }),
+  });
+  assert.deepEqual([failed.refreshed, failed.cache.models.length], [false, 13]);
+  assert.match(failed.why, /couldn't be written/);
+  // The sync path does the same.
+  const syncCalls = [];
+  refreshAgModelsSync({ appHome: "/app", read: () => null, now: NOW,
+    write: (p) => { syncCalls.push(["write", p]); },
+    rename: (from, to) => { syncCalls.push(["rename", from, to]); },
+    exec: () => ({ code: 0, stdout: MODELS, stderr: "" }) });
+  assert.deepEqual(syncCalls, [["write", `${path}.tmp-${NOW}`], ["rename", `${path}.tmp-${NOW}`, path]]);
+});
+
 test("refreshAgModels: agy missing or failing keeps the last list and says why; no list stays none", async () => {
   const stale = agModelsCacheText(parseAgModelsOutput(MODELS), NOW - AG_MODELS_TTL_MS - 1);
   const missing = await refreshAgModels({

@@ -48,11 +48,13 @@ const refused = (r) => `agy models failed (${oneLine(r?.stderr || r?.stdout) || 
  * The cache under `appHome`, refreshed by running `agy models` when it is missing or older than
  * AG_MODELS_TTL_MS. `read(path)`/`write(path, text)` may be sync or async; `exec(command, args,
  * options)` must resolve `{ code, stdout, stderr }` (an `ENOENT` for a missing agy rejects).
+ * With `rename(from, to)`, the write goes to a temp file beside the cache and is renamed into
+ * place, so a reader never sees half a cache; without it the write is direct.
  * Resolves { text (the cache text, the new one when written), cache, refreshed, why (the
  * fallback reason, else null) }. A failed refresh never throws and never drops a list already
  * cached; when agy is missing and nothing is cached, `text` stays null and `why` says so.
  */
-export async function refreshAgModels({ appHome, read, write, exec, now = Date.now() }) {
+export async function refreshAgModels({ appHome, read, write, rename, exec, now = Date.now() }) {
   const path = agModelsPath(appHome);
   let text = null;
   try { text = await read(path); } catch { text = null; }
@@ -67,15 +69,20 @@ export async function refreshAgModels({ appHome, read, write, exec, now = Date.n
   const models = parseAgModelsOutput(r?.stdout);
   if (!models.length) return { text, cache: before, refreshed: false, why: "agy models listed no models" };
   const next = agModelsCacheText(models, now);
-  try { await write(path, next); } catch { return { text, cache: before, refreshed: false, why: "the model cache couldn't be written" }; }
+  const tmp = `${path}.tmp-${now}`;
+  try {
+    if (typeof rename === "function") { await write(tmp, next); await rename(tmp, path); }
+    else await write(path, next);
+  } catch { return { text, cache: before, refreshed: false, why: "the model cache couldn't be written" }; }
   return { text: next, cache: cached(next), refreshed: true, why: null };
 }
 
 /**
- * refreshAgModels over synchronous `read`/`write`/`exec` (the CLI, whose pin checks are sync).
- * Same contract; `exec` returns `{ code, stdout, stderr }` and may throw for a missing agy.
+ * refreshAgModels over synchronous `read`/`write`/`rename`/`exec` (the CLI, whose pin checks
+ * are sync). Same contract; `exec` returns `{ code, stdout, stderr }` and may throw for a missing
+ * agy.
  */
-export function refreshAgModelsSync({ appHome, read, write, exec, now = Date.now() }) {
+export function refreshAgModelsSync({ appHome, read, write, rename, exec, now = Date.now() }) {
   const path = agModelsPath(appHome);
   let text = null;
   try { text = read(path); } catch { text = null; }
@@ -90,6 +97,10 @@ export function refreshAgModelsSync({ appHome, read, write, exec, now = Date.now
   const models = parseAgModelsOutput(r?.stdout);
   if (!models.length) return { text, cache: before, refreshed: false, why: "agy models listed no models" };
   const next = agModelsCacheText(models, now);
-  try { write(path, next); } catch { return { text, cache: before, refreshed: false, why: "the model cache couldn't be written" }; }
+  const tmp = `${path}.tmp-${now}`;
+  try {
+    if (typeof rename === "function") { write(tmp, next); rename(tmp, path); }
+    else write(path, next);
+  } catch { return { text, cache: before, refreshed: false, why: "the model cache couldn't be written" }; }
   return { text: next, cache: cached(next), refreshed: true, why: null };
 }
