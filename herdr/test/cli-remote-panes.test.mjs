@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
 import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
@@ -374,6 +375,24 @@ test("start --machine with a pane-env that is left out: no app home there is use
   assert.equal(startedWith(s).some((w) => w.startsWith("HERDR_APP_HOME=")), false);
   assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
   assert.equal(existsSync(join(s.project, ".claude")), false);
+});
+
+test("linked worker scope: launch uses the linked project's git state and code setting", (t) => {
+  for (const mode of ["git", "non-git", "opt-out"]) {
+    const s = scene(t);
+    packAt(vmApp(s));
+    if (mode === "non-git") rmSync(join(s.project, ".git"), { recursive: true });
+    if (mode === "opt-out") {
+      const edited = s.cli(["edit", "Hedge", "--code", "false", ...s.on]);
+      assert.equal(edited.code, 0, edited.err);
+    }
+    const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+    assert.equal(r.code, 0, r.err);
+    const words = agentPart(startedWith(s));
+    const text = readFileSync(words[words.indexOf("--append-system-prompt-file") + 1], "utf8");
+    assert.equal(text.includes(WORKER_LINE), mode === "git", mode);
+    if (mode !== "git") assert.doesNotMatch(text, /worker/i);
+  }
 });
 
 test("start --machine of a Claude bot: the briefing file and the per-turn hook in that project, both pointing at vm's app home", (t) => {

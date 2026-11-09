@@ -1065,6 +1065,12 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   bots no `category=` label.
 - `planned` marks a bot that is not started yet. It needs no `agent`.
 - `instructions` holds at most 4,000 characters.
+- `code` is an optional boolean, defaulting to `true`. Set `code: false` for a bot whose
+  work is not code with `automagik-herdr edit <bot> --code false`; `--code true` restores it.
+  Create accepts the same option. Both launch and full briefings include the instruction
+  to start a worker only for code bots in a Git working tree, including linked projects.
+  Otherwise that instruction is omitted, leaving the bot's own instructions to lead.
+  Other edits, installs and updates keep the setting in the project's roster.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
   free-text model) is skipped by the sidebar with a note and refused by the CLI. A running
