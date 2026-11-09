@@ -2,13 +2,16 @@ import { createElement as h, useEffect, useRef, useState } from 'react'
 import { call } from './api.js'
 import { CopyIcon, DownloadIcon } from './icons.js'
 import { t } from './i18n.js'
-import { faceAt } from './clay-art.js'
+import { clayArtOf, faceAt, LAMP, MARK_ART } from './clay-art.js'
+import { lookOf } from './characters.js'
+import { GENIE_AURORA, genieTint } from './genie-tint.js'
 
 // -------------------------------------------------------------------------
-// An image being made in the chat (a generate_image call, or an agent's own image tool): Omni
-// paints while it is made, with how long it has run; the partial images a service streams (the
-// Images API sends two) take Omni's place, sharper each time, and the finished image fades in
-// where Omni was. Progress comes from the host (imagegen.js) by polling, since a tool call
+// An image being made in the chat (a generate_image call, or an agent's own image tool): the Bot
+// whose chat it is paints while it is made (Omni its octopus, Genie its lamp, every other Bot
+// the Automagik mark), with how long it has run; the partial images a service streams (the
+// Images API sends two) take the painter's place, sharper each time, and the finished image
+// fades in where the painter was. Progress comes from the host (imagegen.js) by polling, since a tool call
 // reports nothing until it ends. A finished image loads by its id from the image route, so it
 // shows again in a reopened chat.
 
@@ -87,12 +90,73 @@ function useProgress(callId, running) {
   return state
 }
 
+/**
+ * Who paints in a Bot's chat: 'omni' for the Omni Bot (kind `omni`, or the Bot the team draws as
+ * the clay octopus, clayArtOf), 'genie' for a Genie, and 'logo' (the Automagik mark) for every
+ * other Bot and for a chat whose Bot is not known (a group chat, a Bot that left).
+ */
+export function painterOf(bot) {
+  if (!bot) return 'logo'
+  if (bot.kind === 'genie') return 'genie'
+  if (bot.kind === 'omni' || clayArtOf(bot, lookOf(bot)) === 'omni') return 'omni'
+  return 'logo'
+}
+
+const dabs = () => [0, 1, 2, 3].map(key => h('i', { key, className: 'bt-img-dab' }))
+
 /** Omni painting: the clay octopus (the team's own atlas, clay-art.js) and its four dabs. */
 export function OmniPaints({ face = PAINT_FACES[0] }) {
-  return h('div', { className: 'bt-img-paint', 'aria-hidden': true },
-    h('i', { className: 'bt-img-dab' }), h('i', { className: 'bt-img-dab' }), h('i', { className: 'bt-img-dab' }), h('i', { className: 'bt-img-dab' }),
+  return h('div', { className: 'bt-img-paint', 'data-painter': 'omni', 'aria-hidden': true },
+    dabs(),
     h('span', { className: 'bt-img-omni', 'data-face': face },
       h('span', { className: 'bt-clay bt-clay-omni', style: { '--bt-face-at': faceAt(face) } })))
+}
+
+// The mark's own shape (art/mark.webp is 256 by 222).
+const MARK_WIDTH = 124
+const MARK_HEIGHT = Math.round(MARK_WIDTH * 222 / 256)
+
+/** Any other Bot painting ("L1 · Logo paints"): the Automagik clay mark sways among Omni's four dabs. */
+export function LogoPaints() {
+  return h('div', { className: 'bt-img-paint', 'data-painter': 'logo', 'aria-hidden': true },
+    dabs(),
+    h('span', { className: 'bt-img-omni bt-img-logo' },
+      h('img', { className: 'omni-logo omni-mark bt-img-mark', src: MARK_ART, width: MARK_WIDTH, height: MARK_HEIGHT, alt: '', draggable: false })))
+}
+
+// The photo card the lamp puffs out: a frame, its sky, a sun and two hills.
+const photoCard = key => h('svg', { key, className: 'bt-img-pic', viewBox: '0 0 32 26', 'aria-hidden': true },
+  h('rect', { className: 'bt-img-pic-bg', x: 1, y: 1, width: 30, height: 24, rx: 5 }),
+  h('rect', { className: 'bt-img-pic-sky', x: 4, y: 4, width: 24, height: 18, rx: 2.5 }),
+  h('circle', { className: 'bt-img-pic-sun', cx: 21.5, cy: 9.5, r: 3 }),
+  h('path', { className: 'bt-img-pic-h1', d: 'M4.5 22 12 13l7.5 9z' }),
+  h('path', { className: 'bt-img-pic-h2', d: 'M14 22l7.5-6.5L27.5 22z' }))
+
+/**
+ * Genie painting ("G3a · Pictures puff out"): the clay lamp rocks and glows, Genie's clay head
+ * hovers over the spout, and four photo cards leave the spout one after another, rise, drift,
+ * grow a little and fade like smoke. A Genie in its own colour wears it here too (genie-tint.js).
+ */
+export function GeniePaints({ face = PAINT_FACES[0], bot }) {
+  const tint = genieTint(bot?.color)
+  return h('div', { className: 'bt-img-paint', 'data-painter': 'genie', 'aria-hidden': true },
+    h('span', { className: 'bt-img-lampscene' },
+      h('i', { className: 'bt-img-glow' }),
+      h('span', { className: 'bt-img-rise', 'data-face': face },
+        h('span', {
+          className: 'bt-clay bt-clay-genie',
+          'data-tint': tint === GENIE_AURORA ? GENIE_AURORA : undefined,
+          style: { '--bt-face-at': faceAt(face), ...(tint && tint !== GENIE_AURORA ? { filter: tint } : {}) },
+        })),
+      [0, 1, 2].map(key => h('i', { key, className: 'bt-img-spark' })),
+      [0, 1, 2, 3].map(photoCard),
+      h('img', { className: 'bt-img-lamp bt-lamp-art', src: LAMP, alt: '', draggable: false })))
+}
+
+/** The painter of this chat's image: Omni, Genie, or the Automagik mark. */
+export function Painter({ bot, face }) {
+  const who = painterOf(bot)
+  return who === 'omni' ? h(OmniPaints, { face }) : who === 'genie' ? h(GeniePaints, { face, bot }) : h(LogoPaints)
 }
 
 async function copyImage(url) {
@@ -101,12 +165,12 @@ async function copyImage(url) {
 }
 
 /**
- * The image card: Omni paints while the image is made (a partial image the service streams
- * takes Omni's place, sharper each time), and the finished image fades in where Omni was once
- * it has loaded. A call that failed or was stopped says the image was not made, and why; an
- * image that was made but no longer loads says so, and Omni stops painting.
+ * The image card: the chat's Bot (`bot`, painterOf) paints while the image is made (a partial
+ * image the service streams takes its place, sharper each time), and the finished image fades in
+ * where the painter was once it has loaded. A call that failed or was stopped says the image was
+ * not made, and why; an image that was made but no longer loads says so, and the painting stops.
  */
-export function ImageCell({ callId, prompt, size, done, content, isError }) {
+export function ImageCell({ callId, prompt, size, done, content, isError, bot }) {
   const running = !done
   const progress = useProgress(callId, running)
   // Until the host says when it started, the card counts from when it first showed.
@@ -129,11 +193,11 @@ export function ImageCell({ callId, prompt, size, done, content, isError }) {
   const partial = url ? undefined : progress.partial
   const step = progress.count > 0 ? Math.min(progress.count, 2) : 0
   const state = url ? (loaded ? 'done' : 'arriving') : partial ? 'partial' : 'drawing'
-  // Omni stays until there is a picture to show in its place.
+  // The painter stays until there is a picture to show in its place.
   const painting = state === 'drawing' || state === 'arriving'
   return h('figure', { className: 'bt-img', 'data-state': state },
     h('div', { className: 'bt-img-frame', style: painting ? undefined : { aspectRatio: ratioOf(size) } },
-      painting ? h(OmniPaints, { face }) : null,
+      painting ? h(Painter, { bot, face }) : null,
       partial ? h('img', { className: 'bt-img-partial', 'data-step': step, src: partial, alt: '', draggable: false }) : null,
       url ? h('img', { className: 'bt-img-final', src: url, alt: prompt ?? '', onLoad: () => setImage('loaded'), onError: () => setImage('lost') }) : null,
       url && loaded
@@ -149,7 +213,8 @@ export function ImageCell({ callId, prompt, size, done, content, isError }) {
           h('span', { className: 'bt-img-time' }, `${elapsed}s`)))
 }
 
-// No card behind Omni while it paints: only Omni, its dabs and the caption. The frame takes the
+// No card behind the painter while it paints: only the painter, its dabs or its photo cards, and
+// the caption. The frame takes the
 // image's shape, with the card's edge, once there is a picture in it.
 export const IMAGE_CELL_CSS = `
 .bt-img{box-sizing:border-box;margin:6px 0;width:min(100%,440px);display:flex;flex-direction:column;gap:8px}
@@ -163,6 +228,24 @@ export const IMAGE_CELL_CSS = `
 .bt-img-dab:nth-child(2){background:var(--bt-magic-cyan);right:22%;top:30%;animation-delay:.6s}
 .bt-img-dab:nth-child(3){background:var(--bt-magic-pink);left:28%;bottom:30%;animation-delay:1.2s}
 .bt-img-dab:nth-child(4){background:var(--bt-gold);right:26%;bottom:34%;animation-delay:1.8s}
+.bt-img-logo{align-items:center}
+.bt-img-mark{display:block;flex:none;height:auto;filter:drop-shadow(0 3px 4px color-mix(in srgb,var(--bt-ink) 22%,transparent))}
+.bt-img-lampscene{position:absolute;inset:0}
+.bt-img-lampscene .bt-img-lamp{position:absolute;left:50%;bottom:10px;width:132px;height:63px;margin-left:-46px;transform-origin:50% 90%;animation:bt-img-rub 1.6s ease-in-out infinite}
+.bt-img-glow{position:absolute;left:50%;bottom:-6px;width:210px;height:110px;margin-left:-85px;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--bt-gold) 55%,transparent),transparent);animation:bt-img-glow 1.6s ease-in-out infinite}
+.bt-img-rise{position:absolute;left:50%;top:2px;height:112px;margin-left:-86px;display:flex;animation:bt-img-float 2.6s ease-in-out infinite}
+.bt-img-spark{position:absolute;right:21%;top:24%;width:14px;height:14px;background:var(--bt-gold);clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);animation:bt-img-twinkle 1.8s ease-in-out infinite}
+.bt-img-spark:nth-of-type(3){right:13%;top:52%;width:10px;height:10px;background:var(--bt-magic-pink);animation-delay:.6s}
+.bt-img-spark:nth-of-type(4){right:auto;left:14%;top:60%;width:11px;height:11px;background:var(--bt-magic-cyan);animation-delay:1.2s}
+.bt-img-pic{position:absolute;left:50%;bottom:58px;width:36px;height:29px;margin-left:-62px;opacity:0;overflow:visible;--x:104px;--y:-96px;--r:9deg;animation:bt-img-pic 3.2s ease-out infinite}
+.bt-img-pic:nth-of-type(2){--x:-50px;--y:-58px;--r:-10deg;animation-delay:.8s}
+.bt-img-pic:nth-of-type(3){--x:122px;--y:-56px;--r:6deg;animation-delay:1.6s}
+.bt-img-pic:nth-of-type(4){--x:74px;--y:-112px;--r:-6deg;animation-delay:2.4s}
+.bt-img-pic-bg{fill:var(--bt-card);stroke:var(--bt-ink-3);stroke-width:1;vector-effect:non-scaling-stroke}
+.bt-img-pic-sky{fill:color-mix(in srgb,var(--bt-magic-cyan) 38%,var(--bt-card))}
+.bt-img-pic-sun{fill:var(--bt-gold)}
+.bt-img-pic-h1{fill:var(--bt-magic-violet)}
+.bt-img-pic-h2{fill:var(--bt-magic-pink)}
 .bt-img-partial,.bt-img-final{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .bt-img-partial{filter:blur(16px) saturate(1.1);transform:scale(1.06);transition:filter .8s ease,transform .8s ease;animation:bt-img-in .6s ease both}
 .bt-img-partial[data-step="2"]{filter:blur(6px);transform:scale(1.02)}
@@ -180,11 +263,17 @@ export const IMAGE_CELL_CSS = `
 .bt-img-failed-why{font:400 12px/16px var(--bt-font);color:var(--bt-ink-2)}
 @keyframes bt-img-sway{from{transform:rotate(-6deg)}to{transform:rotate(6deg)}}
 @keyframes bt-img-dab{0%{transform:scale(.2);opacity:0}20%{transform:scale(1.1);opacity:1}70%{opacity:.9}100%{transform:scale(.9) translateY(-14px);opacity:0}}
+@keyframes bt-img-rub{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(4deg)}}
+@keyframes bt-img-glow{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.05)}}
+@keyframes bt-img-float{0%,100%{transform:translateY(5px)}50%{transform:translateY(-7px)}}
+@keyframes bt-img-twinkle{0%,100%{transform:scale(.3) rotate(0);opacity:0}50%{transform:scale(1) rotate(45deg);opacity:1}}
+@keyframes bt-img-pic{0%{transform:translate(0,0) scale(.3) rotate(0deg);opacity:0}14%{opacity:1}70%{opacity:.95}100%{transform:translate(var(--x),var(--y)) scale(1.4) rotate(var(--r));opacity:0}}
 @keyframes bt-img-pulse{50%{opacity:.35}}
 @keyframes bt-img-in{from{opacity:0}to{opacity:1}}
-@media (prefers-reduced-motion:reduce){.bt-img-omni,.bt-img-dot,.bt-img-partial,.bt-img-final{animation:none!important}.bt-img-dab{display:none}}
-body[data-bt-motion=quiet] :is(.bt-img-omni,.bt-img-dot,.bt-img-partial,.bt-img-final){animation:none!important}
-body[data-bt-motion=quiet] .bt-img-dab{display:none}
+@media (prefers-reduced-motion:reduce){.bt-img-omni,.bt-img-dot,.bt-img-partial,.bt-img-final,.bt-img-lamp,.bt-img-glow,.bt-img-rise{animation:none!important}.bt-img-dab,.bt-img-spark,.bt-img-pic{display:none}.bt-img-glow{opacity:.6}}
+body[data-bt-motion=quiet] :is(.bt-img-omni,.bt-img-dot,.bt-img-partial,.bt-img-final,.bt-img-lamp,.bt-img-glow,.bt-img-rise){animation:none!important}
+body[data-bt-motion=quiet] :is(.bt-img-dab,.bt-img-spark,.bt-img-pic){display:none}
+body[data-bt-motion=quiet] .bt-img-glow{opacity:.6}
 `
 
 // Settings → Bots: what draws the Bots' images here, so the person knows before asking.

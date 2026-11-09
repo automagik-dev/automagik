@@ -872,10 +872,15 @@ test('a view works its formulas out, draws a chart, and keeps html in a sandboxe
 })
 
 // An image a Bot's agent makes with its own tool (acp-dsh's mirror call of Codex's image tool):
-// the image card shows Omni painting while it is made, then the image, or why it was not made.
+// the image card shows the chat's Bot painting while it is made (Omni here), then the image, or
+// why it was not made.
+const omni = { id: 'omni', name: 'Omni', kind: 'omni', color: 'deepseek', avatar: { shape: 'octopus' } }
+const genie = { id: 'genie', name: 'Genie', kind: 'genie' }
+const painters = team({ bots: [writer, chief, omni, genie], byId: { writer, chief, omni, genie } })
+const omniChat = { sessionId: omni.id, roster: painters }
 const omniPaints = (node) => {
   const paint = find(node, child => child.props?.className === 'bt-img-paint')
-  if (!paint) return undefined
+  if (!paint || paint.props['data-painter'] !== 'omni') return undefined
   const kids = paint.props.children.flat()
   return {
     paint,
@@ -887,7 +892,7 @@ const omniPaints = (node) => {
 
 test('an agent\'s image call draws the image card: Omni paints, then the image, or the failure', () => {
   const args = { id: 'ig-1', title: 'Image generation', kind: 'other', input: { id: 'ig-1' }, image: true }
-  const running = show(call('acp_tool', 'acp_1', { args, running: true }))
+  const running = show(call('acp_tool', 'acp_1', { args, running: true }), omniChat)
   const card = find(running, node => node.type === 'figure')
   assert.ok(card, 'the image card is drawn while the agent makes the image')
   assert.equal(card.props['data-state'], 'drawing')
@@ -906,17 +911,17 @@ test('an agent\'s image call draws the image card: Omni paints, then the image, 
   assert.equal(find(running, node => node.props?.role === 'status').type, 'figcaption')
 
   // The image is kept: it loads where Omni is, and Omni stays until it has loaded.
-  const kept = show(call('acp_tool', 'acp_1', { args, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png. It is on screen in the chat, so do not describe it back.' }))
+  const kept = show(call('acp_tool', 'acp_1', { args, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png. It is on screen in the chat, so do not describe it back.' }), omniChat)
   assert.equal(find(kept, node => node.type === 'figure').props['data-state'], 'arriving')
   const image = find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final')
   assert.equal(image.props.src, 'api/omni-ui/image?id=img-1234abcd-ef')
   assert.equal(typeof image.props.onLoad, 'function')
   assert.ok(omniPaints(kept), 'Omni holds the place until the image has loaded')
 
-  const failed = show(call('acp_tool', 'acp_1', { args, content: 'Codex could not make this image. Try again, or describe it differently.' }))
+  const failed = show(call('acp_tool', 'acp_1', { args, content: 'Codex could not make this image. Try again, or describe it differently.' }), omniChat)
   assert.match(text(failed), /The image was not made.*Codex could not make this image/)
   assert.equal(omniPaints(failed), undefined)
-  const stopped = show(call('acp_tool', 'acp_1', { args, content: 'The image was stopped before it was finished.', isError: true }))
+  const stopped = show(call('acp_tool', 'acp_1', { args, content: 'The image was stopped before it was finished.', isError: true }), omniChat)
   assert.match(text(stopped), /The image was not made.*stopped before it was finished/)
 
   // Another agent's call that answered with an image draws once it ends; its other calls do not.
@@ -929,7 +934,7 @@ test('an agent\'s image call draws the image card: Omni paints, then the image, 
 test('a finished image that does not load says it is gone, and Omni stops painting', () => {
   const args = { id: 'ig-1', title: 'Image generation', kind: 'other', input: { id: 'ig-1' }, image: true }
   const kept = call('acp_tool', 'acp_1', { args, content: 'Image generated and saved as /team/images/img-1234abcd-ef.png.' })
-  const image = find(show(kept), node => node.type === 'img' && node.props.className === 'bt-img-final')
+  const image = find(show(kept, omniChat), node => node.type === 'img' && node.props.className === 'bt-img-final')
   sets.length = 0
   image.props.onError()
   assert.deepEqual(sets, ['lost'], 'an image that fails to load marks the card lost')
@@ -937,7 +942,7 @@ test('a finished image that does not load says it is gone, and Omni stops painti
   stateFor = initial => (initial === 'loading' ? 'lost' : initial)
   effects = []
   let lost
-  try { lost = expand(ToolCell(props(kept))) } finally { stateFor = initial => initial }
+  try { lost = expand(ToolCell(props(kept, omniChat))) } finally { stateFor = initial => initial }
   // The face timer stays off: this context has no setInterval, so a running timer would throw.
   mount()()
   const card = find(lost, node => node.props?.role === 'status')
@@ -950,10 +955,74 @@ test('a finished image that does not load says it is gone, and Omni stops painti
 })
 
 test('a generate_image call paints with the same Omni card', () => {
-  const running = show(call('generate_image', 'gi_1', { args: { prompt: 'A black octopus', size: '1024x1024' }, running: true }))
+  const running = show(call('generate_image', 'gi_1', { args: { prompt: 'A black octopus', size: '1024x1024' }, running: true }), omniChat)
   assert.equal(find(running, node => node.type === 'figure').props['data-state'], 'drawing')
   assert.equal(omniPaints(running).dabs, 4)
   assert.equal(text(find(running, node => node.props?.className === 'bt-img-caption')), 'Painting your image…')
   const kept = show(call('generate_image', 'gi_1', { args: { prompt: 'A black octopus', size: '1536x1024' }, content: 'Drew the image and saved it as /w/images/img-1234abcd-ef.png.' }))
   assert.equal(find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final').props.alt, 'A black octopus')
+})
+
+const painterOf = node => find(node, child => child.props?.className === 'bt-img-paint')
+const imageCall = () => call('generate_image', 'gi_2', { args: { prompt: 'A lamp' }, running: true })
+
+test('Genie paints from the lamp in a Genie\'s chat: photo cards puff out of the spout', () => {
+  const running = show(imageCall(), { sessionId: genie.id, roster: painters })
+  const paint = painterOf(running)
+  assert.equal(paint.props['data-painter'], 'genie')
+  assert.equal(paint.props['aria-hidden'], true)
+  assert.equal(omniPaints(running), undefined, 'no octopus in a Genie\'s chat')
+  assert.equal(findAll(paint, child => child.props?.className === 'bt-img-dab').length, 0)
+  const lamp = find(paint, child => child.type === 'img')
+  assert.match(lamp.props.className, /\bbt-img-lamp\b/)
+  assert.match(lamp.props.src, /^data:image\//)
+  const clay = find(paint, child => child.props?.className === 'bt-clay bt-clay-genie')
+  assert.equal(clay.props.style['--bt-face-at'], 3, 'Genie\'s focused face')
+  assert.equal(clay.props.style.filter, undefined, 'a Genie with no colour is drawn as painted')
+  const cards = findAll(paint, child => child.type === 'svg' && child.props.className === 'bt-img-pic')
+  assert.equal(cards.length, 4, 'four photo cards leave the spout')
+  assert.equal(findAll(cards[0], child => child.props?.className === 'bt-img-pic-sun').length, 1)
+  assert.equal(findAll(cards[0], child => child.type === 'path').length, 2, 'two hills')
+  assert.equal(text(find(running, node => node.props?.className === 'bt-img-caption')), 'Painting your image…')
+
+  // A Genie in its own colour wears it in the scene, as its mark does.
+  const blue = { ...genie, color: 'blue' }
+  const tinted = show(imageCall(), { sessionId: genie.id, roster: team({ bots: [blue], byId: { genie: blue } }) })
+  assert.match(find(tinted, child => child.props?.className === 'bt-clay bt-clay-genie').props.style.filter, /^hue-rotate\(/)
+})
+
+test('every other Bot paints with the Automagik mark, and so does a chat with no known Bot', () => {
+  const logoOf = (options) => {
+    const paint = painterOf(show(imageCall(), options))
+    assert.equal(paint.props['data-painter'], 'logo')
+    assert.equal(paint.props['aria-hidden'], true)
+    assert.equal(findAll(paint, child => child.props?.className === 'bt-img-dab').length, 4, 'Omni\'s four dabs')
+    assert.equal(find(paint, child => child.props?.className === 'bt-clay bt-clay-omni'), undefined)
+    assert.equal(find(paint, child => child.type === 'svg'), undefined, 'no photo cards')
+    const sway = find(paint, child => /\bbt-img-omni\b/.test(child.props?.className ?? ''))
+    assert.match(sway.props.className, /\bbt-img-logo\b/)
+    const mark = find(sway, child => child.type === 'img')
+    assert.match(mark.props.className, /\bomni-mark\b/)
+    assert.match(mark.props.src, /^data:image\//)
+    return mark
+  }
+  // An ordinary Bot's chat.
+  const mark = logoOf({ sessionId: writer.id, roster: painters })
+  assert.equal(mark.props.alt, '')
+  // A group chat: the session is the room, no Bot of its own.
+  logoOf({ sessionId: room.id, roster: painters })
+  // A Bot the roster no longer knows.
+  logoOf({ sessionId: 'gone', roster: painters })
+
+  // The Bot the team draws as the clay octopus (Omni's look) keeps Omni's scene; a photo does not.
+  const looks = { ...writer, color: 'deepseek', avatar: { shape: 'octopus' } }
+  assert.ok(omniPaints(show(imageCall(), { sessionId: writer.id, roster: team({ byId: { writer: looks } }) })))
+  const photo = { ...looks, avatar: { shape: 'octopus', image: 'me.png' } }
+  assert.equal(omniPaints(show(imageCall(), { sessionId: writer.id, roster: team({ byId: { writer: photo } }) })), undefined)
+
+  // The finished image is the same card whoever painted: the painter holds the place, then leaves.
+  const kept = show(call('generate_image', 'gi_2', { args: { prompt: 'A lamp', size: '1536x1024' }, content: 'Drew the image and saved it as /w/images/img-1234abcd-ef.png.' }), { sessionId: genie.id, roster: painters })
+  assert.equal(find(kept, node => node.type === 'figure').props['data-state'], 'arriving')
+  assert.equal(painterOf(kept).props['data-painter'], 'genie')
+  assert.equal(find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final').props.src, 'api/omni-ui/image?id=img-1234abcd-ef')
 })
